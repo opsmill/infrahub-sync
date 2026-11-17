@@ -113,7 +113,7 @@ def test_integration_seeds_the_live_branch(runner: ModuleType, monkeypatch: pyte
 
 
 def test_planned_counts_include_unexecuted_deletes(runner: ModuleType) -> None:
-    """The branch count includes a built-in object whose delete is not executed."""
+    """The per-kind counts include the creates and the deletes of the plan."""
     output = (
         "operations: 3\nby_action: create=2, delete=1\nby_kind: IpamNamespace=2, DcimDevice=1\n"
         "1 delete operation(s) are recorded and NONE will be executed by apply.\n"
@@ -131,7 +131,7 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
         if "register" in command:
             return "config_id: config-1\nregistry_version: 1\n"
         if "plan" in command:
-            return "run_id: plan-1\noperations: 1688\n"
+            return "run_id: plan-1\noperations: 1687\n"
         if "sync" in command:
             return "run_id: sync-1\n"
         if "show" in command:
@@ -145,10 +145,10 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
 
 
 def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The existing default namespace accounts for the unexecuted delete."""
+    """The branch's 7 IpamNamespace match 6 planned creates plus the default namespace (ADR 0047)."""
     plan = (
-        "operations: 1688\nby_action: create=1687, delete=1\nby_kind: DcimDevice=1681, IpamNamespace=7\n"
-        "1 delete operation(s) are recorded and NONE will be executed by apply.\n"
+        "operations: 1687\nby_action: create=1687\nby_kind: DcimDevice=1681, IpamNamespace=6\n"
+        "0 delete operations are recorded.\n"
     )
     monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: plan)
     sdk = ModuleType("infrahub_sdk")
@@ -168,6 +168,40 @@ def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch:
     monkeypatch.setattr(sdk, "InfrahubClientSync", Client, raising=False)
     monkeypatch.setitem(sys.modules, "infrahub_sdk", sdk)
     runner.check_import_counts("plan-1", {"INFRAHUB_ADDRESS": "unused", "INFRAHUB_API_TOKEN": "unused"})
+
+
+@pytest.mark.parametrize(("namespaces", "matches"), [(1, True), (0, False)], ids=["default-held", "default-missing"])
+def test_import_counts_check_a_listed_kind_the_plan_does_not_name(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch, namespaces: int, *, matches: bool
+) -> None:
+    """`INFRAHUB_CREATED_NODES` is compared even when the plan holds no `IpamNamespace` operation."""
+    plan = "operations: 1687\nby_action: create=1687\nby_kind: DcimDevice=1687\n0 delete operations are recorded.\n"
+    monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: plan)
+    sdk = ModuleType("infrahub_sdk")
+    monkeypatch.setattr(sdk, "Config", lambda **_kwargs: object(), raising=False)
+    counted: list[str] = []
+
+    class Client:
+        """Return the branch counts of one import, with or without the default namespace."""
+
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        @staticmethod
+        def count(*, kind: str, branch: str) -> int:
+            assert branch == "netbox-import"
+            counted.append(kind)
+            return {"DcimDevice": 1687, "IpamNamespace": namespaces}[kind]
+
+    monkeypatch.setattr(sdk, "InfrahubClientSync", Client, raising=False)
+    monkeypatch.setitem(sys.modules, "infrahub_sdk", sdk)
+    env = {"INFRAHUB_ADDRESS": "unused", "INFRAHUB_API_TOKEN": "unused"}
+    if matches:
+        runner.check_import_counts("plan-1", env)
+    else:
+        with pytest.raises(RuntimeError, match="IpamNamespace"):
+            runner.check_import_counts("plan-1", env)
+    assert sorted(counted) == ["DcimDevice", "IpamNamespace"]
 
 
 def test_schema_loads_the_pinned_bundle(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:

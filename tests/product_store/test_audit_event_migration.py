@@ -1,17 +1,13 @@
-"""The stored event: its type and resources, the migration of older stores, and the event list.
+"""The stored event: its type and resources, and the event list.
 
-Spec 012 (`dev/specs/archive/012-sync-run-events-logs/data-model.md`, "Event") adds a dotted type, a
-configuration binding, a branch and related resources to the audit event. A store created
-before that change keeps its rows: opening it fills each row's type from its
-``(operation, outcome)`` pair and writes one ``account`` resource for its actor. A request
+Spec 012 (`dev/specs/archive/012-sync-run-events-logs/data-model.md`, "Event") gives the audit
+event a dotted type, a configuration binding, a branch and related resources. A request
 refused for a missing or invalid token keeps no type, so the event list never returns it
 (research R6).
 """
 
 from __future__ import annotations
 
-import sqlite3
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -29,32 +25,10 @@ from tests.product_store.postgresql_isolation import dsn_or_skip, isolated_schem
 from tests.product_store.test_contract import _connect
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
     from pathlib import Path
 
 _NOW = datetime(2026, 11, 6, 10, tzinfo=timezone.utc)
-_LEGACY_AUDIT_TABLE = (
-    "CREATE TABLE audit_events (event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, "
-    "operation TEXT NOT NULL, reason TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL)"
-)
-
-# (event_id, run_id, actor, operation, outcome, expected event_type), from data-model.md's table.
-_LEGACY_ROWS: tuple[tuple[str, str | None, str, str, str, str | None], ...] = (
-    ("a-01", "run-1", "alice", "plan", "accepted", "infrahub_sync.run.accepted"),
-    ("a-02", "run-1", "alice", "plan", "replayed", "infrahub_sync.run.replayed"),
-    ("a-03", "run-1", "bob", "apply", "refused-checksum", "infrahub_sync.run.refused"),
-    ("a-04", "run-1", "bob", "cancel", "refused-run-execution-conflict", "infrahub_sync.run.refused"),
-    ("a-05", "run-1", "alice", "sync", "unavailable", "infrahub_sync.run.unavailable"),
-    ("a-06", "run-1", "alice", "cancel", "accepted", "infrahub_sync.run.accepted"),
-    ("a-07", None, "alice", "register-config", "accepted", "infrahub_sync.config.registered"),
-    ("a-08", None, "alice", "create-config-version", "accepted", "infrahub_sync.config.version_registered"),
-    ("a-09", None, "bob", "register-config", "refused-authorization", "infrahub_sync.config.refused"),
-    ("a-10", None, "bob", "create-config-version", "refused-idempotency-in-progress", "infrahub_sync.config.refused"),
-    ("a-11", None, "alice", "create-config-version", "replayed", "infrahub_sync.config.replayed"),
-    ("a-12", None, "alice", "register-config", "unavailable", "infrahub_sync.config.unavailable"),
-    ("a-13", None, "unauthenticated", "plan", "refused-authentication", None),
-    ("a-14", None, "unauthenticated", "register-config", "refused-authentication", None),
-)
 
 
 def _event(**overrides: Any) -> AuditEvent:  # noqa: ANN401 - field values of any type.
@@ -174,125 +148,6 @@ def test_event_refuses_a_related_resource_without_an_id() -> None:
 def test_event_refuses_a_repeated_related_resource() -> None:
     with pytest.raises(ValidationError):
         _event(related=({"kind": "account", "id": "alice"}, {"kind": "account", "id": "alice"}))
-
-
-# --- Migration of a store created before the change (T003) ------------------------------
-
-
-@dataclass(frozen=True)
-class _Database:
-    """One database in one profile: a raw DB-API connection and the store opened over it."""
-
-    raw: Callable[[], Any]
-    placeholder: str
-    open_store: Callable[[], SQLiteRunStore | PostgreSQLRunStore]
-
-    def execute(self, statement: str, parameters: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
-        connection = self.raw()
-        try:
-            cursor = connection.cursor()
-            cursor.execute(statement.replace("?", self.placeholder), parameters)
-            rows = [tuple(row) for row in cursor.fetchall()] if cursor.description else []
-            connection.commit()
-        finally:
-            connection.close()
-        return rows
-
-
-_MIGRATION_PROFILES = ("sqlite", "postgresql-emulated", pytest.param("postgresql", marks=pytest.mark.integration))
-
-
-@pytest.fixture(params=_MIGRATION_PROFILES)
-def database(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[_Database]:
-    """An empty database in each profile; a real PostgreSQL case runs in its own dropped schema."""
-    path = tmp_path / "store.sqlite3"
-    if request.param == "sqlite":
-        yield _Database(lambda: sqlite3.connect(path), "?", lambda: SQLiteRunStore(path))
-        return
-    if request.param == "postgresql-emulated":
-        yield _Database(lambda: sqlite3.connect(path), "?", lambda: PostgreSQLRunStore(_connect(path)))
-        return
-    schema = isolated_schema(dsn_or_skip("the audit-event migration's PostgreSQL parameter"))
-    schema.create()
-    # pylint: disable-next=import-outside-toplevel,import-error
-    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
-
-    from infrahub_sync.service.storage import PsycopgConnectionFactory
-
-    try:
-        yield _Database(
-            lambda: psycopg.connect(schema.dsn),
-            "%s",
-            lambda: PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(schema.dsn)),
-        )
-    finally:
-        schema.drop()
-
-
-def _create_legacy_store(database: _Database) -> None:
-    database.execute(_LEGACY_AUDIT_TABLE)
-    for offset, (event_id, run_id, actor, operation, outcome, _) in enumerate(_LEGACY_ROWS):
-        database.execute(
-            "INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (event_id, run_id, actor, operation, None, outcome, (_NOW + timedelta(seconds=offset)).isoformat()),
-        )
-
-
-def _snapshot(database: _Database) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
-    events = database.execute(
-        "SELECT event_id, run_id, actor, operation, reason, outcome, created_at, event_type, config_id, "
-        "registry_version, branch FROM audit_events ORDER BY event_id"
-    )
-    resources = database.execute(
-        "SELECT event_id, kind, resource_id FROM audit_event_resources ORDER BY event_id, kind, resource_id"
-    )
-    return events, resources
-
-
-def test_opening_an_older_store_types_every_event_and_records_its_account(database: _Database) -> None:
-    _create_legacy_store(database)
-
-    database.open_store()
-
-    events, resources = _snapshot(database)
-    assert [(row[0], row[7]) for row in events] == [(row[0], row[5]) for row in _LEGACY_ROWS]
-    assert all(row[8:] == (None, None, None) for row in events)
-    assert resources == [(event_id, "account", actor) for event_id, _, actor, *_ in _LEGACY_ROWS]
-
-
-def test_opening_a_migrated_store_again_changes_nothing(database: _Database) -> None:
-    _create_legacy_store(database)
-    database.open_store()
-    first = _snapshot(database)
-
-    database.open_store()
-
-    assert _snapshot(database) == first
-
-
-def test_opening_a_store_whose_columns_were_added_but_not_filled_types_its_events(database: _Database) -> None:
-    """SQLite commits ALTER TABLE at once, so a start-up that failed after it left rows untyped."""
-    _create_legacy_store(database)
-    for column in ("event_type TEXT", "config_id TEXT", "registry_version INTEGER", "branch TEXT"):
-        database.execute(f"ALTER TABLE audit_events ADD COLUMN {column}")
-
-    database.open_store()
-
-    events, resources = _snapshot(database)
-    assert [(row[0], row[7]) for row in events] == [(row[0], row[5]) for row in _LEGACY_ROWS]
-    assert resources == [(event_id, "account", actor) for event_id, _, actor, *_ in _LEGACY_ROWS]
-
-
-def test_migrated_events_read_back_with_their_type_and_account(database: _Database, tmp_path: Path) -> None:
-    _create_legacy_store(database)
-    projection = ProductProjection(database.open_store(), FileArtifactStore(tmp_path / "objects"))
-
-    events = {event.event_id: event for event in projection.audit_events()}
-
-    assert events["a-07"].event_type == "infrahub_sync.config.registered"
-    assert events["a-07"].related == (RelatedResource(kind="account", id="alice"),)
-    assert events["a-13"].event_type is None
 
 
 # --- The event list (T009) ---------------------------------------------------------------

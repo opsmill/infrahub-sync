@@ -179,7 +179,7 @@ out-of-process discovery path, and `errors.py` its failures.
 ### One run: the shared execution surface
 
 [`infrahub_sync/execution.py`][route-execution] provides `execute_run` for service worker
-stages and direct Python callers. The CLI uses the HTTP client; the direct Prefect flow
+stages and the direct Prefect flow. The CLI uses the HTTP client; the direct Prefect flow
 calls [`run_remote_request`][route-remote-request], which resolves a local configuration
 and calls `execute_run` for a plan. The execution module imports no Prefect symbols and
 remains importable in a base install. See
@@ -225,12 +225,10 @@ more to tell whether another page follows:
 
 The columns a list filters on or shows are written with the row: `product_runs.destination_branch`
 when the run is created, `configuration_versions.registered_by` and `registration_reason` and
-`configurations.name` in the transaction that registers a version. Rows written before a column
-existed keep `NULL`, except `configurations.name`, which the start-up that adds the column fills
-from the latest version's package.
+`configurations.name` in the transaction that registers a version.
 
-Start-up creates the list indexes after it adds those columns, each with `CREATE INDEX IF NOT
-EXISTS` (`_RUN_LISTING_INDEXES` in `store.py`):
+Start-up creates the list indexes, each with `CREATE INDEX IF NOT EXISTS`
+(`_RUN_LISTING_INDEXES` in `store.py`):
 
 | Index | Serves |
 |---|---|
@@ -245,7 +243,9 @@ EXISTS` (`_RUN_LISTING_INDEXES` in `store.py`):
 
 [`infrahub_sync/adapters/`][src-infrahub-sync-adapters] holds the nine bundled connectors: `aci`, `genericrestapi`,
 `infrahub`, `ipfabricsync`, `nautobot`, `netbox`, `peeringmanager`, `prometheus` and
-`slurpitsync`, plus the shared `rest_api_client.py`, `utils.py` and `references.py`.
+`slurpitsync`, plus the shared `rest_api_client.py`, `utils.py`, `references.py` and
+`endpoint_records.py`. `endpoint_records.py` holds the endpoint lookup and the record
+conversion that the `netbox` and `nautobot` adapters share.
 `references.py` resolves a source reference to its peer (`peer_unique_id`, `peer_unique_ids`,
 `reference_is_required`). Through an optional relationship, it records a peer that is not
 loaded or not in the source in the adapter's load report, and only logs a peer that a filter

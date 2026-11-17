@@ -78,9 +78,13 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.review import SavedPlan
     from infrahub_sync.potenda import Potenda
     from infrahub_sync.potenda.apply_progress import ApplyProgressObserver
+    from infrahub_sync.potenda.plan_step import PlanStepObserver
     from infrahub_sync.potenda.read_progress import SideReadObserver
 
 logger = logging.getLogger(__name__)
+
+# The level every engine this module builds sets on the `diffsync` logger.
+_DIFFSYNC_LOG_LEVEL = logging.INFO
 
 Operation = Literal["plan", "sync", "verify", "apply"]
 Status = Literal["planned", "applied", "no-change"]
@@ -91,10 +95,10 @@ class PotendaFactory(Protocol):
     """The engine-factory call shape, injected wherever an engine is built.
 
     Spelled as a `Protocol` rather than `Callable[..., Potenda]` so the pinned
-    eight-keyword call shape is part of the type: `Callable[..., ...]` erases the
+    five-keyword call shape is part of the type: `Callable[..., ...]` erases the
     parameter names, and a rename in `utils.get_potenda_from_instance` then
     survives type checking and fails at run time inside the remote boundary
-    instead. Keyword-only, because every caller passes all eight by keyword.
+    instead. Keyword-only, because every caller passes all five by keyword.
 
     Injection exists so the CLI can pass its own thin wrapper over the module
     global (which keeps existing patches on
@@ -106,10 +110,8 @@ class PotendaFactory(Protocol):
         *,
         sync_instance: SyncInstance,
         branch: str | None = ...,
-        show_progress: bool | None = ...,
         verbosity: int = ...,
         run_id: str | None = ...,
-        concurrent_load: bool = ...,
         base_directory: Path | None = ...,
     ) -> Potenda: ...
 
@@ -628,8 +630,8 @@ def resolve_sync_instance(sync_name: str, *, directory: str) -> SyncInstance:
 
     A tolerant per-file walk: the same recursive `**/config.yml` discovery glob
     and exact-`name` match the CLI lookup uses, but every discovered file is read
-    and validated individually rather than through `utils.get_all_sync`'s eager
-    validate-everything pass — one broken neighbor must not block resolution of
+    and validated individually rather than in one eager validate-everything
+    pass — one broken neighbor must not block resolution of
     every other name, and its parse error must not leak that file's contents.
 
     `sync_name` is never used to construct a filesystem path, so traversal-shaped
@@ -893,8 +895,6 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
     sync_instance: SyncInstance,
     run_id: str,
     branch: str | None,
-    verbosity: int,
-    allow_destination_change: bool,
     expected_checksum: str | None,
     ownership: WriteOwnership,
     record_applied: Callable[[ApplyRecord], None],
@@ -910,7 +910,7 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
     factory = _plan_applier_factory if _plan_applier_factory is not None else PlanApplier.open_existing
     try:
         applier = factory(
-            sync_instance, run_id=run_id, branch=branch, verbosity=verbosity, base_directory=base_directory
+            sync_instance, run_id=run_id, branch=branch, verbosity=_DIFFSYNC_LOG_LEVEL, base_directory=base_directory
         )
     except BaseException:
         if sidecar_mode == "sync":
@@ -922,7 +922,6 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
     try:
         record = applier.apply_plan(
             ownership=ownership,
-            allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
             confirm_left_out=confirm_left_out,
             progress=progress,
@@ -1019,8 +1018,6 @@ def _execute_apply_operation(
     sync_instance: SyncInstance,
     run_id: str,
     branch: str | None,
-    verbosity: int,
-    allow_destination_change: bool,
     expected_checksum: str | None,
     ownership: WriteOwnership,
     record_applied: Callable[[ApplyRecord], None],
@@ -1052,8 +1049,6 @@ def _execute_apply_operation(
             sync_instance=sync_instance,
             run_id=run_id,
             branch=branch,
-            verbosity=verbosity,
-            allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
             ownership=ownership,
             record_applied=record_applied,
@@ -1140,15 +1135,10 @@ def execute_run(
     operation: Operation,
     confirm_writes: bool = False,
     branch: str | None = None,
-    # Engine options — defaults are the CLI option defaults at commit 9edc1bc.
-    show_progress: bool | None = None,
-    verbosity: int = logging.INFO,
     run_id: str | None = None,
-    concurrent_load: bool = True,
     full_extract: bool = True,
     print_diff: bool = True,
     potenda_factory: PotendaFactory | None = None,
-    allow_destination_change: bool = False,
     expected_checksum: str | None = None,
     ownership: WriteOwnership | None = None,
     record_applied: Callable[[ApplyRecord], None] | None = None,
@@ -1164,6 +1154,7 @@ def execute_run(
     _read_observer: SideReadObserver | None = None,
     _apply_progress: ApplyProgressObserver | None = None,
     _start_after: int | None = None,
+    _plan_step_observer: PlanStepObserver | None = None,
 ) -> RunResult | SavedPlan:
     """Run one product operation against a resolved instance.
 
@@ -1184,6 +1175,10 @@ def execute_run(
     progress marker and for a resume (spec 016): the observer that saves the marker, and the
     position of the last operation an earlier execution committed. Both default to `None`, so
     the CLI-local and direct Prefect paths apply the whole plan and report nothing.
+
+    `_read_observer` and `_plan_step_observer` are the worker's seams for the timings of a
+    plan: each side's read (spec 013) and the parts of the plan step after the reads (spec 019,
+    research R12). Both are set on the built engine, after the factory call.
 
     `base_directory` names the cache root this run works in. A caller that owns a
     private directory for the run — the Sync service, whose stages share no filesystem
@@ -1226,8 +1221,6 @@ def execute_run(
             sync_instance=sync_instance,
             run_id=run_id,
             branch=branch,
-            verbosity=verbosity,
-            allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
             ownership=ownership,
             record_applied=record_applied,
@@ -1252,20 +1245,19 @@ def execute_run(
         # A plan may have been committed while this command waited for the lock.
         _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id, base_directory=base_directory)
         factory: PotendaFactory = potenda_factory if potenda_factory is not None else get_potenda_from_instance
-        # Pinned call shape: all eight keyword arguments of
+        # Pinned call shape: all five keyword arguments of
         # utils.get_potenda_from_instance, always explicitly.
         ptd = factory(
             sync_instance=sync_instance,
             branch=branch,
-            show_progress=show_progress,
-            verbosity=verbosity,
+            verbosity=_DIFFSYNC_LOG_LEVEL,
             run_id=run_id,
-            concurrent_load=concurrent_load,
             base_directory=base_directory,
         )
         ptd.force_full_extract = full_extract
-        # Set after the factory call so its pinned eight-keyword shape does not change.
+        # Set after the factory call so its pinned five-keyword shape does not change.
         ptd.read_observer = _read_observer
+        ptd.plan_step_observer = _plan_step_observer
         if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
             msg = "get_potenda_from_instance did not allocate a run_dir"
             raise RuntimeError(msg)
@@ -1351,7 +1343,6 @@ def run_remote_request(
 ) -> RunResult:
     """Resolve `sync_name` under `config_directory` and run it with the remote defaults.
 
-    Every engine option stays at its CLI default except `show_progress=False`.
     No public parameter accepts paths, CLI fragments, credentials, or environment
     overrides.
 
@@ -1401,7 +1392,6 @@ def run_remote_request(
             operation=operation,
             confirm_writes=confirm_writes,
             branch=branch,
-            show_progress=False,
             potenda_factory=factory,
             _lock_timeout=_lock_timeout,
         )

@@ -460,13 +460,8 @@ def destination_binding_failure(
     reviewed against one destination must not silently apply to another.
 
     Evaluated at the apply seam (`PlanApplier`), not inside `verify_plan`: like
-    `write_surface`, its subject is the destination adapter rather than the artifact, but
-    unlike every `verify_plan` check it is also **overridable** — the Python `execute_run`
-    surface's `allow_destination_change` argument exists for a deliberate cross-environment
-    apply, although neither the Sync HTTP API nor any CLI command exposes it — so it cannot sit
-    behind a gate whose non-empty result is an unconditional refusal. The override cannot carry
-    a plan to another Infrahub instance: that instance has its own import account, so apply
-    still refuses with `ImportAccountMismatchError` (FR-012).
+    `write_surface`, its subject is the destination adapter rather than the artifact. No
+    caller can override the refusal.
 
     When only the branch differs, the usual cause is an apply without `--branch`, or with
     another one, so the next action names the recorded branch to apply with. When the URL

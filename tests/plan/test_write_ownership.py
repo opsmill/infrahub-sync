@@ -11,7 +11,6 @@ apply as complete.
 from __future__ import annotations
 
 import json
-import logging
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -321,8 +320,6 @@ def _lifecycle(
         sync_instance=SimpleNamespace(name="write-ownership"),  # ty: ignore[invalid-argument-type]
         run_id=RUN_ID,
         branch=None,
-        verbosity=logging.INFO,
-        allow_destination_change=False,
         expected_checksum=None,
         ownership=ownership,  # ty: ignore[invalid-argument-type]
         record_applied=record_applied,

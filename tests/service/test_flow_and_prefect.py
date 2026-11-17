@@ -245,7 +245,7 @@ def test_worker_rejects_missing_registered_package_before_runtime_construction(
         )
     )
     constructed = []
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: constructed.append(True))
@@ -287,7 +287,7 @@ def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeyp
         raise AssertionError(msg)
 
     monkeypatch.setattr(service_flow, "get_run_logger", missing_context)
-    monkeypatch.setattr(service_flow, "RunLoggerBridge", bridge_is_forbidden)
+    monkeypatch.setattr(direct_flow, "RunLoggerBridge", bridge_is_forbidden)
 
     run_logger, prefect_context = service_flow._run_logger()
     with service_flow._remote_log_bridge(run_logger, prefect_context=prefect_context):
@@ -308,13 +308,12 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
 ) -> None:
     """Same acceptance criterion as the direct flow bridge, exercised via the service worker's own import path.
 
-    `service_flow.RunLoggerBridge` is the same class the direct flow uses, but the
-    service worker's `_remote_log_bridge` constructs and owns it independently, so
-    the failure path is proven through this module's usage too rather than assumed
-    from the direct flow's coverage.
+    The service worker's `_remote_log_bridge` enters the direct flow's
+    `remote_log_bridge`, so the failure path is proven through this module's usage
+    too rather than assumed from the direct flow's coverage.
     """
     canary = "service-worker-preflight-secret-canary"
-    source_logger = logging.getLogger(service_flow.SOURCE_LOGGER_NAME)
+    source_logger = logging.getLogger(direct_flow.SOURCE_LOGGER_NAME)
     monkeypatch.setattr(source_logger, "propagate", False)
     monkeypatch.setattr(logging, "raiseExceptions", raise_exceptions)
     # A prior test elsewhere in the suite may have permanently attached the plain
@@ -330,7 +329,7 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
             raise RuntimeError(failure_message)
 
         monkeypatch.setattr(run_logger, "log", _raise_on_log)
-    child_logger_name = f"{service_flow.SOURCE_LOGGER_NAME}.secret-leak-test"
+    child_logger_name = f"{direct_flow.SOURCE_LOGGER_NAME}.secret-leak-test"
     # `logging_registry_snapshot` restores whatever this name (and any
     # descendant's `.parent` reference) held in the process-wide registry
     # before the test ran, whether that was a `Logger`, a `PlaceHolder`, or
@@ -365,8 +364,8 @@ def test_direct_and_service_log_bridges_serialize_ownership_and_restore_state(  
     service_canary = "service-flow-secret-canary"
     direct_logger = _RecordingRunLogger()
     service_logger = _RecordingRunLogger()
-    source_logger = logging.getLogger(service_flow.SOURCE_LOGGER_NAME)
-    child_logger = logging.getLogger(f"{service_flow.SOURCE_LOGGER_NAME}.concurrency-test")
+    source_logger = logging.getLogger(direct_flow.SOURCE_LOGGER_NAME)
+    child_logger = logging.getLogger(f"{direct_flow.SOURCE_LOGGER_NAME}.concurrency-test")
     sentinel_handler = logging.NullHandler()
     original_handlers = list(source_logger.handlers)
     original_level = source_logger.level
@@ -406,12 +405,10 @@ def test_direct_and_service_log_bridges_serialize_ownership_and_restore_state(  
     monkeypatch.setattr("infrahub_sync.orchestration.flow.get_run_logger", lambda: direct_logger)
     monkeypatch.setattr("infrahub_sync.orchestration.flow.collect_secret_values", lambda: (direct_canary,))
     monkeypatch.setattr("infrahub_sync.orchestration.flow.run_remote_request", fail_direct_request)
-    monkeypatch.setenv(service_flow.CONFIG_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(direct_flow.CONFIG_DIR_ENV, str(tmp_path))
     original_ownership_lock = direct_flow._REMOTE_LOGGER_OWNERSHIP_LOCK
-    assert service_flow._REMOTE_LOGGER_OWNERSHIP_LOCK is original_ownership_lock
     ownership_probe = _LoggerOwnershipProbe(original_ownership_lock)
     monkeypatch.setattr(direct_flow, "_REMOTE_LOGGER_OWNERSHIP_LOCK", ownership_probe)
-    monkeypatch.setattr(service_flow, "_REMOTE_LOGGER_OWNERSHIP_LOCK", ownership_probe)
     source_logger.handlers = [sentinel_handler]
     source_logger.setLevel(logging.ERROR)
     source_logger.propagate = True
@@ -495,7 +492,7 @@ def test_service_flow_redacts_worker_logs_exception_chain_and_failed_state(
         store=None,
     )
     monkeypatch.setenv("NETBOX_TOKEN", environment_canary)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (run_logger, True))
 
@@ -570,7 +567,7 @@ def test_service_apply_failure_retains_partial_write_evidence(
     run_id = "run-service-apply-failure"
     projection = _create_product_run(tmp_path.resolve(), run_id)
     partial = ApplyRecord(applied_operations=("op-applied",), failed_operation="op-failed")
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -636,7 +633,7 @@ def test_service_verify_failure_merges_evidence_and_terminalizes_exact_link(
     """Read-only verify failure retains the run lifecycle and closes its execution."""
     run_id = "run-service-verify-failure"
     projection = _create_product_run(tmp_path.resolve(), run_id, operation="verify")
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -667,7 +664,7 @@ def test_success_writeback_persistence_failure_is_not_recorded_as_business_failu
     run_id = "run-service-success-persistence-failure"
     projection = _create_product_run(tmp_path.resolve(), run_id)
     saved = _saved(run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -705,7 +702,7 @@ def test_success_writeback_commit_error_preserves_reread_committed_result(
     run_id = "run-service-success-committed-before-error"
     projection = _create_product_run(tmp_path.resolve(), run_id)
     saved = _saved(run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -740,7 +737,7 @@ def test_service_confirmed_sync_retains_the_semantic_sync_operation(
     run_id = "run-service-semantic-sync"
     projection = _create_product_run(tmp_path.resolve(), run_id, operation="sync")
     saved = _saved(run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -786,7 +783,7 @@ def test_service_plan_worker_updates_the_api_created_run_and_publishes_review(
     projection = _create_product_run(tmp_path.resolve(), run_id)
     saved = _saved(run_id)
     seen: list[str] = []
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -824,7 +821,7 @@ def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     projection = _create_product_run(tmp_path.resolve(), run_id)
     before = projection.lookup_run(run_id).value
     saved = _saved(run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -870,7 +867,7 @@ def test_confirmed_service_sync_calls_plan_verify_apply_in_order_on_one_run(
     projection = _create_product_run(tmp_path.resolve(), run_id, operation="sync")
     saved = _saved(run_id)
     calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -1211,7 +1208,7 @@ def test_a_wrapped_apply_failure_records_the_class_it_was_raised_from(
     run_id = f"run-cause-{type(cause).__name__.lower()}"
     projection = _create_product_run(tmp_path.resolve(), run_id)
     partial = ApplyRecord(failed_operation="op-failed")
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -1258,7 +1255,7 @@ def test_the_recorded_cause_holds_infrahubs_message_and_no_other_error_text(
     projection = _create_product_run(tmp_path.resolve(), run_id)
     infrahub_message = "status planned is not one of the allowed values"
     canary = "kaphaeric-secret-in-a-destination-message"
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -1311,7 +1308,7 @@ def _apply_failure_outcome(
 ) -> tuple[dict[str, Any], Any]:
     """Drive one wrapped apply failure through the service and return its evidence and run."""
     projection = _create_product_run(tmp_path.resolve(), run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -1485,7 +1482,7 @@ def _record_plan_failure(
     raises its sanitized copy.
     """
     projection = _create_product_run(tmp_path.resolve(), run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
@@ -1522,7 +1519,7 @@ def _record_apply_failure(  # noqa: PLR0913 - the stage inputs, its secrets and 
     raises its sanitized copy.
     """
     projection = _create_product_run(tmp_path.resolve(), run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)

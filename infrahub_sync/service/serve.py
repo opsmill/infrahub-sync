@@ -24,14 +24,17 @@ from .orchestration import (
 )
 from .prefect_ui import prefect_ui_url_from_environment
 from .service import RunService
+from .settings import web_directory
 from .start_check import StartRefusedError, check_bootstrap_record
 from .storage import service_product_projection
 from .trust_store import TrustStoreError, install_custom_ca_bundle
+from .web import create_site
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from fastapi import FastAPI
+    from starlette.applications import Starlette
 
 
 class _ClientPerCallOrchestration:
@@ -110,10 +113,39 @@ def build_app(
     return app_factory(service, resolver, configuration_routes, reconciler)
 
 
+def build_service(
+    *,
+    projection_factory: Any = service_product_projection,
+    resolver_factory: Any = EnvironmentPrincipalResolver.from_environment,
+    run_service_factory: Any = RunService,
+    configuration_routes_factory: Any = ConfigurationRoutes,
+    app_factory: Any = create_app,
+    start_check: Any = check_bootstrap_record,
+) -> Starlette:
+    """Construct the served application: the Sync API under ``/api`` and the web interface elsewhere.
+
+    The factories and ``start_check`` pass through to ``build_app`` unchanged. ``INFRAHUB_SYNC_WEB_DIRECTORY`` is read
+    here, once; when it names no built web interface, only the API is served.
+
+    Raises:
+        TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
+        StartRefusedError: when the bootstrap record does not name this version and work pool.
+    """
+    api = build_app(
+        projection_factory=projection_factory,
+        resolver_factory=resolver_factory,
+        run_service_factory=run_service_factory,
+        configuration_routes_factory=configuration_routes_factory,
+        app_factory=app_factory,
+        start_check=start_check,
+    )
+    return create_site(api, web_directory())
+
+
 def main() -> None:
-    """Serve the Sync API; Prefect workers and deployments are separate."""
+    """Serve the Sync API and the web interface; Prefect workers and deployments are separate."""
     try:
-        app = build_app()
+        app = build_service()
     except (TrustStoreError, StartRefusedError) as error:
         raise SystemExit(str(error)) from None
     uvicorn.run(app, host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)

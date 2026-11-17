@@ -495,7 +495,7 @@ On an upgrade to another Sync version, the new Sync API pod refuses to start unt
 has written the bootstrap record, and Kubernetes restarts it. The previous Sync API pod keeps
 answering requests until the new pod is ready. On a test cluster, the new Sync API pod restarted
 2 times and was ready 5 seconds after the new Job completed, and the previous pod answered
-`/version` throughout. These numbers come from one upgrade. The worker uses the `Recreate`
+version requests throughout. These numbers come from one upgrade. The worker uses the `Recreate`
 strategy, so its previous pod stops before the new one starts.
 
 :::warning

@@ -88,11 +88,11 @@ def _order_key(line: dict[str, Any]) -> tuple[Any, ...]:
     return (group, *key, canonical_json_bytes(line))
 
 
-def test_the_manifest_is_format_4_and_records_the_report(plan_problems: PlanProblemFixture) -> None:
+def test_the_manifest_is_format_5_and_records_the_report(plan_problems: PlanProblemFixture) -> None:
     """`report` holds the digest, the size and the counts of `report.jsonl`."""
     planned = plan_fixture(plan_problems)
 
-    assert planned.manifest["format_version"] == 4
+    assert planned.manifest["format_version"] == 5
     assert sorted(path.name for path in _plan_dir(planned).iterdir()) == sorted(
         # The Infrahub adapter keeps last changes, so the format 3 file `last_changes.jsonl` stays.
         [LAST_CHANGES_FILE_NAME, MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, REPORT_FILE_NAME]
@@ -109,7 +109,7 @@ def test_the_manifest_is_format_4_and_records_the_report(plan_problems: PlanProb
     }
     assert planned.manifest["report"]["problems"] == 10
     assert "dropdown_values_checked" not in planned.manifest
-    assert planned.loaded_manifest.format_version == 4
+    assert planned.loaded_manifest.format_version == 5
 
 
 def test_the_report_is_canonical_and_in_the_stable_order(plan_problems: PlanProblemFixture) -> None:
@@ -256,7 +256,7 @@ def test_a_plan_with_no_problem_writes_an_empty_report(plan_problems: PlanProble
 
     assert planned.report_bytes == b""
     assert planned.manifest["report"] == {"digest": report_digest(b""), "size": 0, **ZERO_COUNTS}
-    assert planned.manifest["format_version"] == 4
+    assert planned.manifest["format_version"] == 5
 
 
 def test_a_run_without_a_schema_snapshot_records_that_dropdown_values_were_not_checked(
@@ -293,7 +293,7 @@ def test_format_3_fields_are_kept(tmp_path: Path) -> None:
     )
 
     manifest = json.loads((directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes())
-    assert manifest["format_version"] == 4
+    assert manifest["format_version"] == 5
     assert manifest["report"] == {"digest": report_digest(b""), "size": 0, **ZERO_COUNTS}
     assert (directory / PLAN_DIR_NAME / REPORT_FILE_NAME).read_bytes() == b""
     assert manifest["lineage"]["import_account"] == {"name": "netbox", "id": "account-1"}

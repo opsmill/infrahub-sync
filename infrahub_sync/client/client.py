@@ -21,6 +21,7 @@ from .errors import (
     ClientTimeoutError,
     CompatibilityError,
     ConfigsAPIError,
+    NotSyncAPIError,
     ProtocolError,
     RunTerminalError,
     RunWaitTimeoutError,
@@ -123,8 +124,9 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise ClientInputError(_TOKEN_ARG)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not isfinite(timeout) or timeout <= 0:
             raise ClientInputError(_TIMEOUT_ARG)
+        self._service = url
         self._http = httpx.Client(
-            base_url=url,
+            base_url=f"{url}/api",
             timeout=float(timeout),
             transport=transport,
             follow_redirects=False,
@@ -159,7 +161,20 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         carries_credentials = any((url.username, url.password, url.query, url.fragment))
         if authority_invalid or carries_credentials:
             raise ClientInputError(_SERVICE_URL_ARG)
-        return str(url).rstrip("/")
+        # The value is the Sync service's address; one trailing `api` path segment is the Sync
+        # API's own prefix, which the client adds itself (ADR 0043, decision 4). The path stays
+        # percent-encoded: decoding it would turn `%2F` into `/` and make `%3F` or `%23` invalid.
+        # An empty `?` or `#` passes the check above and is dropped here, so the routes the client
+        # adds never land in a query string or a fragment.
+        path = url.raw_path.partition(b"?")[0].decode("ascii").rstrip("/")
+        if path.endswith("/api"):
+            path = path.removesuffix("/api").rstrip("/")
+        return str(url.copy_with(raw_path=(path or "/").encode("ascii"), fragment=None)).rstrip("/")
+
+    @property
+    def service_url(self) -> str:
+        """Return the Sync service's address, without the `/api` prefix the client adds."""
+        return self._service
 
     def close(self) -> None:
         """Close the underlying HTTP transport."""
@@ -183,7 +198,13 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     def get_version(self) -> VersionResource:
         """Return the unauthenticated server version declaration."""
 
-        response = self._send("get_version", "GET", "/version", authenticated=False)
+        operation = "get_version"
+        response = self._send(operation, "GET", "/version", authenticated=False)
+        self._require_json(response, operation)
+        if response.status_code == 404 and not self._is_error_envelope(response, operation):
+            # A route that does not exist on a Sync API: an older service without `/api`, or
+            # another application at this address.
+            raise self._not_sync_api(response, operation)
         if response.status_code != 200:
             raise self._compatibility_error(response)
         try:
@@ -196,9 +217,13 @@ class SyncClient:  # pylint: disable=too-many-public-methods
 
         operation = "get_status"
         response = self._send(operation, "GET", "/status", authenticated=False)
+        self._require_json(response, operation)
         if response.status_code != 200:
             raise ProtocolError(operation, response.status_code)
-        return self._success(response, operation, ServiceStatusResource, {200})
+        try:
+            return ServiceStatusResource.model_validate(self._json(response, operation))
+        except (ValidationError, TypeError, ValueError):
+            raise ProtocolError(operation, response.status_code) from None
 
     def register_config(self, request: ConfigMutationRequest, idempotency_key: str) -> RegisteredConfigurationResource:
         """Register a configuration package idempotently."""
@@ -317,8 +342,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
 
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
-        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_OFFSET_ARG)
+        self._offset(offset)
         if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
             raise ClientInputError(_LIMIT_ARG)
         # The service refuses an empty name and one with surrounding whitespace (`parse_branch`).
@@ -421,8 +445,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             if bound is not None:
                 params.append((name, self._aware_time(bound, name)))
         params.extend(self._page_params(limit, None).items())
-        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_OFFSET_ARG)
+        self._offset(offset)
         if offset:
             params.append((_OFFSET_ARG, offset))
         return self._request_model(_LIST_EVENTS, "GET", "/events", model=EventPage, success={200}, params=tuple(params))
@@ -502,8 +525,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_LOG_LIMIT:  # pylint: disable=unidiomatic-typecheck
                 raise ClientInputError(_LIMIT_ARG)
             params.append((_LIMIT_ARG, limit))
-        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_OFFSET_ARG)
+        self._offset(offset)
         if offset:
             params.append((_OFFSET_ARG, offset))
         return self._request_model(
@@ -602,8 +624,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             type(expected_checksum) is not str or not _PLAN_CHECKSUM.fullmatch(expected_checksum)  # pylint: disable=unidiomatic-typecheck
         ):
             raise ClientInputError(_EXPECTED_CHECKSUM_ARG)
-        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_OFFSET_ARG)
+        self._offset(offset)
         if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_REPORT_LIMIT:  # pylint: disable=unidiomatic-typecheck
             raise ClientInputError(_LIMIT_ARG)
         params: dict[str, str | int] = {"offset": offset, "limit": limit}
@@ -888,6 +909,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         *,
         config_route: bool = False,
     ) -> _Model:
+        self._require_json(response, operation)
         if response.status_code not in success:
             self._raise_response_error(response, operation, config_route=config_route)
         try:
@@ -962,7 +984,30 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         except Exception:  # noqa: BLE001 - response decoders are contained at the external boundary.
             raise ProtocolError(operation, response.status_code) from None
 
+    @staticmethod
+    def _not_sync_api(response: httpx.Response, operation: str) -> NotSyncAPIError:
+        # Only the address without its query string and the status are kept, never the body.
+        url = response.request.url.copy_with(query=None, fragment=None)
+        return NotSyncAPIError(operation, str(url), response.status_code)
+
+    @classmethod
+    def _require_json(cls, response: httpx.Response, operation: str) -> None:
+        """Refuse an answer that is not a JSON document: it does not come from a Sync API."""
+        media_type = response.headers.get("Content-Type", "").partition(";")[0].strip().lower()
+        if media_type != "application/json" and not media_type.endswith("+json"):
+            raise cls._not_sync_api(response, operation)
+
+    @classmethod
+    def _is_error_envelope(cls, response: httpx.Response, operation: str) -> bool:
+        try:
+            ErrorEnvelope.model_validate(cls._json(response, operation))
+        except (ValidationError, ProtocolError):
+            return False
+        return True
+
     def _raise_response_error(self, response: httpx.Response, operation: str, *, config_route: bool) -> None:
+        # Reached by every operation's error answer, `get_artifact` included.
+        self._require_json(response, operation)
         accepted = _CONFIG_ERROR_STATUSES if config_route else _ERROR_STATUSES
         if response.is_redirect or response.status_code not in accepted:
             raise ProtocolError(operation, response.status_code)
@@ -1029,6 +1074,12 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if not isinstance(value, datetime) or value.utcoffset() is None:
             raise ClientInputError(argument)
         return value.isoformat()
+
+    @staticmethod
+    def _offset(offset: object) -> None:
+        """Refuse an `offset` that is not a non-negative integer."""
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
 
     @staticmethod
     def _positive_integer(value: object, argument: str) -> int:

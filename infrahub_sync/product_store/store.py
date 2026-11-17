@@ -8,14 +8,13 @@ import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from contextlib import suppress
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from math import isfinite
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
-from time import sleep
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
 
@@ -76,7 +75,9 @@ CREATE TABLE IF NOT EXISTS product_runs (
     run_id TEXT PRIMARY KEY, operation TEXT NOT NULL, configuration_reference TEXT NOT NULL,
     actor TEXT, audit_links TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
     phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL,
-    reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE
+    reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
+    config_id TEXT, registry_version INTEGER, package_checksum TEXT, destination_branch TEXT,
+    approved_by TEXT, approved_at TEXT, approved_checksum TEXT, approval_reason TEXT
 );
 CREATE TABLE IF NOT EXISTS artifact_refs (
     run_id TEXT NOT NULL, artifact_id TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL,
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
     cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
     terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
     mutation_receipt_id TEXT UNIQUE, source_read TEXT, destination_read TEXT, apply_progress TEXT,
+    plan_step TEXT,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id)
 );
@@ -137,11 +139,12 @@ CREATE TABLE IF NOT EXISTS audit_event_resources (
 CREATE INDEX IF NOT EXISTS audit_event_resources_kind_resource
     ON audit_event_resources (kind, resource_id);
 CREATE TABLE IF NOT EXISTS configurations (
-    config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL
+    config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, name TEXT
 );
 CREATE TABLE IF NOT EXISTS configuration_versions (
     config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, package_checksum TEXT NOT NULL,
     declared_content TEXT NOT NULL, created_at TEXT NOT NULL,
+    registered_by TEXT, registration_reason TEXT,
     PRIMARY KEY (config_id, registry_version),
     FOREIGN KEY (config_id) REFERENCES configurations(config_id)
 );
@@ -187,42 +190,11 @@ _UPDATE_LATEST_EXECUTION_CANCELLED = (
     "WHERE latest.run_id = product_runs.run_id ORDER BY latest.position DESC LIMIT 1) = ?"
 )
 
-# Nullable run-to-configuration binding columns on ``product_runs``. Added by an
-# introspection-guarded ALTER (see ``_migrate_added_columns``) rather than baked into
-# the ``product_runs`` definition above, so a pre-existing deployment's table is migrated the
-# same way a brand-new one is initialized. ``ProductRun.config_id``, ``registry_version`` and
-# ``package_checksum`` read and write them; a row's three binding columns are either all NULL
-# (unregistered run) or all NOT NULL (registered run), enforced by a CHECK constraint on
-# PostgreSQL and a pair of triggers on SQLite.
-_CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("config_id", "TEXT"),
-    ("registry_version", "INTEGER"),
-    ("package_checksum", "TEXT"),
-)
-# Nullable approval columns on ``product_runs``, read and written as ``ProductRun.approval``.
-# ``approved_by``, ``approved_at`` (UTC ISO 8601 text, like the other run timestamps) and
-# ``approved_checksum`` are all NULL (never approved) or all NOT NULL; ``approval_reason`` is
-# the optional audit reason. Runs stored before approval existed keep NULL and read as unapproved.
-_APPROVAL_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("approved_by", "TEXT"),
-    ("approved_at", "TEXT"),
-    ("approved_checksum", "TEXT"),
-    ("approval_reason", "TEXT"),
-)
-# Every nullable column the start-up migration adds to a pre-existing table, per table. Each is
-# added only when the catalog does not list it, so a second start-up issues no ALTER. Runs
-# created before ``destination_branch`` existed keep NULL; nothing backfills it.
-_ADDED_NULLABLE_COLUMNS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("product_runs", (*_CONFIGURATION_BINDING_COLUMNS, ("destination_branch", "TEXT"), *_APPROVAL_COLUMNS)),
-    ("configuration_versions", (("registered_by", "TEXT"), ("registration_reason", "TEXT"))),
-    ("configurations", (("name", "TEXT"),)),
-)
 # Indexes for listing runs newest first: unfiltered, filtered by configuration, and filtered
 # by configuration and version; for each version's most recently applied run, a partial index
 # over applied runs only, in the order ``_SELECT_LATEST_VERSION_RUNS`` ranks them; and for the
-# configuration list, its name filter and its ``(created_at, config_id)`` order. Created after
-# the column migration because these indexes name columns a pre-existing table only gains
-# there. ``IF NOT EXISTS`` makes each re-run a no-op. SQLite and PostgreSQL both scan an
+# configuration list, its name filter and its ``(created_at, config_id)`` order.
+# ``IF NOT EXISTS`` makes each re-run a no-op. SQLite and PostgreSQL both scan an
 # ascending index backwards for a descending order, and both support partial indexes.
 _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS product_runs_started ON product_runs (started_at, run_id)",
@@ -234,19 +206,6 @@ _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS configurations_name ON configurations (name)",
     "CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at, config_id)",
 )
-_PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("submitted_at", "TEXT"),
-    ("claimed_at", "TEXT"),
-    ("claiming_worker_id", "TEXT"),
-    ("stalled_at", "TEXT"),
-    ("cancellation_requested_at", "TEXT"),
-    ("cancellation_recovery_deadline_at", "TEXT"),
-    ("cancellation_receipt_id", "TEXT"),
-    ("cancellation_acknowledged_at", "TEXT"),
-    ("terminal_at", "TEXT"),
-    ("terminal_state", "TEXT"),
-    ("terminal_outcome", "TEXT"),
-)
 # The read state of each side of a plan or sync execution: one JSON document per side, so the
 # two read threads never write the same column (spec 013, research R3).
 _SIDE_READ_COLUMNS: dict[Side, str] = {"source": "source_read", "destination": "destination_read"}
@@ -257,11 +216,14 @@ _SIDE_READ_FIELDS = frozenset({"state", "started_at", "ended_at", "read_mode", "
 _SIDE_READ_STATES = frozenset({"waiting", "reading", "succeeded", "failed"})
 _SIDE_READ_MODES = frozenset({"full", "incremental"})
 _SIDE_READ_ERROR_CLASS_MAX_LENGTH = 200
-_PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = tuple(
-    (column, "TEXT") for column in _SIDE_READ_COLUMNS.values()
-)
-# The last progress marker of a write execution, one JSON document (spec 016, research R2).
-_PREFECT_EXECUTION_PROGRESS_COLUMNS: tuple[tuple[str, str], ...] = (("apply_progress", "TEXT"),)
+# The parts of the plan step of a `plan` or `sync` execution, one JSON document (spec 019,
+# research R11). The two reads keep their own columns and waiting is derived from the
+# execution's times, so neither is a stored part (FR-015). `preparing` is derived today and
+# accepted so that a later release can store it. The store checks the keys and values before it
+# writes, so the document cannot carry an exception message or a data value (FR-021).
+_PLAN_STEP_FIELDS = frozenset({"running", "parts"})
+_PLAN_STEP_PARTS = frozenset({"preparing", "comparing", "checking", "saving"})
+_PLAN_STEP_PART_FIELDS = frozenset({"started_at", "ended_at"})
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
@@ -277,13 +239,13 @@ _SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK = """NOT (
         AND NEW.prefect_key IS NULL AND NEW.target_run_id IS NULL AND NEW.flow_run_id IS NULL)
 )"""
 _SQLITE_MUTATION_RECEIPT_RESOURCE_INSERT_TRIGGER = f"""
-CREATE TRIGGER {_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES[0]}
+CREATE TRIGGER IF NOT EXISTS {_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES[0]}
 BEFORE INSERT ON mutation_receipts
 FOR EACH ROW WHEN {_SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK}
 BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent'); END;
 """
 _SQLITE_MUTATION_RECEIPT_RESOURCE_UPDATE_TRIGGER = f"""
-CREATE TRIGGER {_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES[1]}
+CREATE TRIGGER IF NOT EXISTS {_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES[1]}
 BEFORE UPDATE ON mutation_receipts
 FOR EACH ROW WHEN {_SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK}
 BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent'); END;
@@ -335,13 +297,6 @@ _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
 # into `prefect_executions`, while an initializer locks the two tables in the opposite
 # order, so PostgreSQL can abort the initializer with 40P01.
 _POSTGRESQL_SCHEMA_INITIALIZATION_RETRY_CODES = _POSTGRESQL_SCHEMA_CONFLICT_CODES | {"40P01"}
-_POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
-# On PostgreSQL, ``_column_nullability`` is the one catalog read that needs nullability, and
-# it projects exactly (column_name, is_nullable). The other two read column names alone. PostgreSQL
-# declares ``information_schema.columns.is_nullable`` over the ``yes_or_no`` domain, so these
-# two strings are the whole set of readable answers.
-_CATALOG_NULLABILITY_ROW_WIDTH = 2
-_CATALOG_NULLABILITY_VALUES = frozenset({"YES", "NO"})
 # The stages one run's admission arbitrates against each other. Cancellation is
 # deliberately outside the set: it targets the execution a write already owns and never
 # reserves a stage of its own, so a claimed write stays cancellable. A resume (spec 016)
@@ -411,13 +366,11 @@ _PREFECT_POSITION_ATTEMPTS = 3
 # The run-bundle protocol fixes these two identifiers, so their one writer is a product
 # stage that may repeat a completed publication after losing the response to it.
 _FIXED_CHECKPOINT_ARTIFACT_IDS = frozenset({PLAN_CHECKPOINT_ARTIFACT_ID, FINAL_CHECKPOINT_ARTIFACT_ID})
-_RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
-# Serializes schema initialization across processes that start together, per schema. Each
-# `CREATE INDEX IF NOT EXISTS` takes a SHARE lock on its table even when the index exists,
-# and the audit-event fill that follows needs ROW EXCLUSIVE on the same table, so two
-# unserialized initializers deadlock. The transaction-level lock is released at commit or
-# rollback.
+# Serializes schema initialization across processes that start together, per schema, so the
+# second initializer finds the tables, indexes and constraints the first one committed
+# instead of creating the same catalog entries at the same time. The transaction-level lock
+# is released at commit or rollback.
 _POSTGRESQL_SCHEMA_INITIALIZATION_LOCK = (
     "SELECT pg_advisory_xact_lock(hashtextextended('infrahub_sync.product_store.schema.' || current_schema(), 0))"
 )
@@ -450,14 +403,6 @@ _CONFIGURATION_LIST_AFTER = (
 )
 _CONFIGURATION_LIST_ORDER = " ORDER BY configurations.created_at DESC, configurations.config_id DESC LIMIT ?"
 _UPDATE_CONFIGURATION_NAME = "UPDATE configurations SET name = ? WHERE config_id = ?"
-# Fill of ``configurations.name`` for rows registered before the column existed, run by the
-# start-up that adds the column: the latest version's package of every configuration whose
-# name is still NULL.
-_SELECT_UNNAMED_CONFIGURATION_PACKAGES = """SELECT configurations.config_id, versions.declared_content
-FROM configurations JOIN configuration_versions AS versions ON versions.config_id = configurations.config_id
-WHERE configurations.name IS NULL AND versions.registry_version = (SELECT MAX(latest.registry_version)
-FROM configuration_versions AS latest WHERE latest.config_id = configurations.config_id)"""
-_FILL_CONFIGURATION_NAME = "UPDATE configurations SET name = ? WHERE config_id = ? AND name IS NULL"
 _INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, registry_version, package_checksum,
 declared_content, created_at, registered_by, registration_reason) VALUES (?, ?, ?, ?, ?, ?, ?)"""
 # The paged version list: summaries without the package, newest version first.
@@ -547,13 +492,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
 last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
 cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
-terminal_outcome, position, source_read, destination_read, apply_progress FROM prefect_executions WHERE run_id = ?
-ORDER BY position"""
+terminal_outcome, position, source_read, destination_read, apply_progress, plan_step FROM prefect_executions
+WHERE run_id = ? ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
 cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
 terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id, source_read, destination_read,
-apply_progress) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+apply_progress, plan_step) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -581,34 +526,6 @@ _EVENT_HAS_RESOURCE = (
 )
 # Event IDs read per related-resource query, well under SQLite's bound-parameter limit.
 _EVENT_RESOURCE_BATCH = 500
-# The columns spec 012 adds to an audit event; all nullable, so a row written before the change stays valid.
-_AUDIT_EVENT_ADDED_COLUMNS = (
-    ("event_type", "TEXT"),
-    ("config_id", "TEXT"),
-    ("registry_version", "INTEGER"),
-    ("branch", "TEXT"),
-)
-_CONFIGURATION_OPERATIONS = "('register-config', 'create-config-version')"
-# The type of an event recorded before spec 012, from its (operation, outcome) pair (data-model.md, "Event types").
-# A request refused for a missing or invalid token keeps no type, so the event list never returns it (research R6).
-# Those rows are left out of the update: they stay NULL for good, and rewriting every one of them on
-# each start-up would cost more as refused requests accumulate.
-_BACKFILL_AUDIT_EVENT_TYPES = f"""UPDATE audit_events SET event_type = CASE
-WHEN operation = 'register-config' AND outcome = 'accepted' THEN 'infrahub_sync.config.registered'
-WHEN operation = 'create-config-version' AND outcome = 'accepted' THEN 'infrahub_sync.config.version_registered'
-WHEN operation IN {_CONFIGURATION_OPERATIONS} AND substr(outcome, 1, 8) = 'refused-' THEN 'infrahub_sync.config.refused'
-WHEN operation IN {_CONFIGURATION_OPERATIONS} AND outcome = 'replayed' THEN 'infrahub_sync.config.replayed'
-WHEN operation IN {_CONFIGURATION_OPERATIONS} AND outcome = 'unavailable' THEN 'infrahub_sync.config.unavailable'
-WHEN outcome = 'accepted' THEN 'infrahub_sync.run.accepted'
-WHEN outcome = 'replayed' THEN 'infrahub_sync.run.replayed'
-WHEN substr(outcome, 1, 8) = 'refused-' THEN 'infrahub_sync.run.refused'
-WHEN outcome = 'unavailable' THEN 'infrahub_sync.run.unavailable'
-END WHERE event_type IS NULL AND outcome <> 'refused-authentication'"""  # noqa: S608 - module-owned literals only.
-# The actor's account is the one related resource an event recorded before spec 012 can name.
-_BACKFILL_AUDIT_EVENT_ACCOUNTS = """INSERT INTO audit_event_resources (event_id, kind, resource_id)
-SELECT event_id, 'account', actor FROM audit_events WHERE NOT EXISTS (
-SELECT 1 FROM audit_event_resources AS resource
-WHERE resource.event_id = audit_events.event_id AND resource.kind = 'account')"""
 _SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"
 
 
@@ -717,7 +634,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave: ...
 
-    def run_is_resumable(self, run_id: str) -> bool: ...
+    def record_plan_step(self, run_id: str, flow_run_id: str, document: Mapping[str, Any]) -> bool: ...
 
     def claim_execution(
         self,
@@ -882,8 +799,6 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
-    def merge_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
-
     def finish(
         self,
         run_id: str,
@@ -917,6 +832,40 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """Translate placeholders in module-owned SQL without string literals containing ``?``."""
         return statement.replace("?", self._placeholder)
 
+    @contextmanager
+    def _reading(self) -> Iterator[_Cursor]:
+        """Yield a cursor on a new connection, then close both without committing."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                yield cursor
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    @contextmanager
+    def _transaction(self) -> Iterator[_Cursor]:
+        """Yield a cursor on a new connection and commit when the block ends.
+
+        An exception from the block or from the commit rolls the transaction back and is
+        raised again. The cursor and then the connection are closed either way.
+        """
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                yield cursor
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
         for attempt in range(_SCHEMA_INITIALIZATION_ATTEMPTS):
             connection = self._connect()
@@ -928,23 +877,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
-                    added = self._migrate_added_columns(cursor)
-                    if ("configurations", "name") in added:
-                        self._fill_configuration_names(cursor)
                     self._ensure_run_listing_indexes(cursor)
-                    self._migrate_prefect_execution_columns(cursor)
-                    self._migrate_mutation_receipts(cursor)
-                    self._migrate_audit_events(cursor)
                     self._ensure_mutation_receipt_resource_constraint(cursor)
                     self._ensure_configuration_binding_constraint(cursor)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # Synchronous DB-API drivers do not share a common error base; retry only
                     # the PostgreSQL SQLSTATEs in `initialization_retry_codes` (duplicate
-                    # catalog entries and a deadlock) and duplicate-column races from a
-                    # concurrent ALTER TABLE ADD COLUMN on either backend.
+                    # catalog entries and a deadlock).
                     connection.rollback()
-                    if _sqlstate(exc) not in self._initialization_retry_codes and not _is_duplicate_column_error(exc):
+                    if _sqlstate(exc) not in self._initialization_retry_codes:
                         raise
                     if attempt + 1 == _SCHEMA_INITIALIZATION_ATTEMPTS:
                         raise
@@ -955,175 +897,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             finally:
                 connection.close()
 
-    def _read_table_columns(self, cursor: _Cursor, table: str) -> frozenset[str]:
-        """Return the existing columns on ``table`` for this store's own dialect.
-
-        The statement is selected from ``self._dialect``, never discovered by running a
-        statement to see whether it fails: on PostgreSQL, a probe-driven failure would abort
-        the surrounding transaction and force a ``rollback()`` that discards every other
-        uncommitted ``CREATE TABLE`` this same call still needs to commit. ``table`` is always
-        one of this module's own table names, never caller input.
-        """
-        if self._dialect == "sqlite":
-            cursor.execute(f"PRAGMA table_info({table})")
-            return frozenset(str(row[1]) for row in cursor.fetchall())
-        cursor.execute(
-            self._sql(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = ? AND table_schema = current_schema()"
-            ),
-            (table,),
-        )
-        return frozenset(str(row[0]) for row in cursor.fetchall())
-
-    def _migrate_added_columns(self, cursor: _Cursor) -> frozenset[tuple[str, str]]:
-        """Additively bring pre-existing tables up to the current nullable column set.
-
-        Covers ``product_runs`` (configuration binding, ``destination_branch`` and approval),
-        ``configuration_versions`` (``registered_by``, ``registration_reason``) and
-        ``configurations`` (``name``). Every column is nullable, so no existing row needs a
-        value, and a column the catalog already lists is skipped. Returns the
-        ``(table, column)`` pairs this call added.
-        """
-        added: set[tuple[str, str]] = set()
-        for table, columns in _ADDED_NULLABLE_COLUMNS:
-            existing = self._read_table_columns(cursor, table)
-            for column, sql_type in columns:
-                if column not in existing:
-                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
-                    added.add((table, column))
-        return frozenset(added)
-
-    def _fill_configuration_names(self, cursor: _Cursor) -> None:
-        """Fill a NULL ``configurations.name`` from the configuration's latest version's package.
-
-        Runs only in the start-up that adds the column, because every configuration
-        registered after that writes its name. Covers configurations registered before the
-        column existed. A package that declares
-        no name, or whose stored content does not decode, leaves the name NULL; content that
-        does not decode is logged as a warning with the ``config_id`` only. Only NULL names are
-        written, so a second start-up changes nothing.
-        """
-        cursor.execute(self._sql(_SELECT_UNNAMED_CONFIGURATION_PACKAGES))
-        for config_id, declared_content in cursor.fetchall():
-            try:
-                content = json.loads(declared_content)
-            except (TypeError, ValueError):
-                # Never log the content: a stored package can hold credentials.
-                logger.warning("Configuration %s: the stored package does not decode; its name stays unset", config_id)
-                continue
-            name = _declared_configuration_name(content)
-            if name is not None:
-                cursor.execute(self._sql(_FILL_CONFIGURATION_NAME), (name, config_id))
-
     @staticmethod
     def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
-        """Create the run-listing indexes once the binding columns are guaranteed to exist."""
+        """Create the indexes for listing runs and configurations."""
         for statement in _RUN_LISTING_INDEXES:
             cursor.execute(statement)
-
-    def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
-        """Add liveness, read-state and apply-progress columns without fabricating values for legacy links."""
-        existing = self._read_table_columns(cursor, "prefect_executions")
-        for column, sql_type in (
-            *_PREFECT_EXECUTION_LIVENESS_COLUMNS,
-            *_PREFECT_EXECUTION_READ_COLUMNS,
-            *_PREFECT_EXECUTION_PROGRESS_COLUMNS,
-        ):
-            if column not in existing:
-                cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
-
-    def _column_nullability(self, cursor: _Cursor, table: str) -> dict[str, str]:
-        """Return each column of ``table`` mapped to ``"YES"`` (nullable) or ``"NO"``.
-
-        SQLite reports ``notnull`` through ``PRAGMA table_info``; PostgreSQL answers from
-        ``information_schema``, whose rows ``_catalog_nullability`` refuses unless each one is
-        exactly readable.
-        """
-        if self._dialect == "sqlite":
-            cursor.execute(f"PRAGMA table_info({table})")
-            return {str(row[1]): "NO" if row[3] else "YES" for row in cursor.fetchall()}
-        cursor.execute(
-            self._sql(
-                "SELECT column_name, is_nullable FROM information_schema.columns "
-                "WHERE table_name = ? AND table_schema = current_schema()"
-            ),
-            (table,),
-        )
-        return _catalog_nullability(cursor.fetchall())
-
-    def _migrate_mutation_receipts(self, cursor: _Cursor) -> None:
-        """Add resource identity columns and preserve every legacy receipt in place."""
-        column_nullability = self._column_nullability(cursor, "mutation_receipts")
-        if "resource_kind" not in column_nullability:
-            cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_kind TEXT")
-        if "resource_id" not in column_nullability:
-            cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_id TEXT")
-        cursor.execute(
-            "UPDATE mutation_receipts SET resource_kind = 'run', resource_id = run_id "
-            "WHERE resource_kind IS NULL OR resource_id IS NULL"
-        )
-        required = [column for column in ("run_id", "prefect_key", "reason") if column_nullability.get(column) == "NO"]
-        if not required:
-            return
-        if self._dialect == "sqlite":
-            # SQLite has no supported additive ALTER that removes NOT NULL. The table has a
-            # fixed, repository-owned legacy shape and a rebuild would also reconstruct the
-            # dependent write_admissions foreign key. Updating these three declarations is the
-            # only in-place migration that preserves rows, indexes, and references.
-            cursor.execute("PRAGMA writable_schema = ON")
-            cursor.execute(
-                "UPDATE sqlite_master SET sql = REPLACE(REPLACE(REPLACE(sql, 'run_id TEXT NOT NULL', 'run_id TEXT'), "
-                "'prefect_key TEXT NOT NULL', 'prefect_key TEXT'), 'reason TEXT NOT NULL', 'reason TEXT') "
-                "WHERE type = 'table' AND name = 'mutation_receipts'"
-            )
-            cursor.execute("PRAGMA writable_schema = OFF")
-        else:
-            for column in required:
-                cursor.execute(f"ALTER TABLE mutation_receipts ALTER COLUMN {column} DROP NOT NULL")
-
-    def _migrate_audit_events(self, cursor: _Cursor) -> None:
-        """Bring legacy audit events up to the typed event, preserving every event in place.
-
-        Spec 012 adds the nullable ``event_type``, ``config_id``, ``registry_version`` and
-        ``branch`` columns, fills ``event_type`` from each row's ``(operation, outcome)`` pair
-        and writes one ``account`` resource per event. A legacy row names no configuration or
-        branch, because the old record did not hold them.
-
-        Both fills run on every start-up, not only the one that adds the columns: SQLite
-        commits ``ALTER TABLE`` at once, so a start-up that failed after adding the columns
-        would otherwise leave the rows untyped for good. Each fill touches only rows it has
-        not filled yet, so a later start-up changes nothing.
-        """
-        existing = self._read_table_columns(cursor, "audit_events")
-        for column, sql_type in _AUDIT_EVENT_ADDED_COLUMNS:
-            if column not in existing:
-                cursor.execute(f"ALTER TABLE audit_events ADD COLUMN {column} {sql_type}")
-        cursor.execute(_BACKFILL_AUDIT_EVENT_TYPES)
-        cursor.execute(_BACKFILL_AUDIT_EVENT_ACCOUNTS)
-        self._allow_audit_events_without_reason(cursor)
-
-    def _allow_audit_events_without_reason(self, cursor: _Cursor) -> None:
-        """Allow an audit event without a reason, preserving every legacy event in place.
-
-        A request may omit its audit reason, and the event then stores NULL rather than a
-        made-up text. Legacy tables declared ``reason TEXT NOT NULL``; this drops that
-        constraint the same way ``_migrate_mutation_receipts`` does, and does nothing on a
-        table that already allows NULL.
-        """
-        if self._column_nullability(cursor, "audit_events").get("reason") != "NO":
-            return
-        if self._dialect == "sqlite":
-            # The same in-place declaration update as ``_migrate_mutation_receipts``, for
-            # the same reason: SQLite has no ALTER that removes NOT NULL.
-            cursor.execute("PRAGMA writable_schema = ON")
-            cursor.execute(
-                "UPDATE sqlite_master SET sql = REPLACE(sql, 'reason TEXT NOT NULL', 'reason TEXT') "
-                "WHERE type = 'table' AND name = 'audit_events'"
-            )
-            cursor.execute("PRAGMA writable_schema = OFF")
-            return
-        cursor.execute("ALTER TABLE audit_events ALTER COLUMN reason DROP NOT NULL")
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
         if self._dialect == "sqlite":
@@ -1142,7 +920,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return cursor.fetchone() is not None
 
     def _ensure_mutation_receipt_resource_constraint(self, cursor: _Cursor) -> None:
-        """Give fresh and legacy receipts the same database-enforced resource shape."""
+        """Give mutation receipts their database-enforced resource shape.
+
+        SQLite commits each ``CREATE TRIGGER`` on its own, so a start-up can stop between the
+        two, and two processes can both find the pair incomplete. ``IF NOT EXISTS`` on each
+        trigger makes both cases complete the pair instead of failing on the trigger that exists.
+        """
         if self._mutation_receipt_resource_constraint_exists(cursor):
             return
         if self._dialect == "sqlite":
@@ -1159,7 +942,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         PostgreSQL has no ``ADD CONSTRAINT IF NOT EXISTS``, and a retry loop that tolerates
         the resulting ``42710`` only buys another attempt, not success: it re-raises once
-        attempts run out, so a repeated construction over an already-migrated database would
+        attempts run out, so a repeated construction over an existing database would
         still fail without this check.
 
         SQLite's enforcement is a *pair* of triggers (``BEFORE INSERT`` and ``BEFORE UPDATE``):
@@ -1167,9 +950,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         from only one would let the other stay missing forever once construction is repeated,
         since a later construction would see the survivor and skip recreating the pair.
 
-        The PostgreSQL query is schema-qualified for the same reason ``_read_table_columns``
-        is: without ``table_schema = current_schema()``, a same-named constraint in another schema
-        would satisfy this check and leave the current schema's table unguarded.
+        The PostgreSQL query is schema-qualified: without ``table_schema = current_schema()``, a
+        same-named constraint in another schema would satisfy this check and leave the current
+        schema's table unguarded.
         """
         if self._dialect == "sqlite":
             cursor.execute(
@@ -1208,33 +991,22 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             )
 
     def create(self, run: ProductRun) -> None:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
+        with self._transaction() as cursor:
             try:
-                try:
-                    self._insert_product_run_row(cursor, run)
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    # Synchronous DB-API drivers do not share an integrity-error
-                    # base class; inspect uniqueness only for the stable run ID.
-                    if _is_unique_violation(exc):
-                        msg = f"Sync run ID {run.run_id!r} already exists"
-                        raise DuplicateRunError(msg) from exc
-                    raise
-                for position, link in enumerate(run.prefect_executions):
-                    # A link embedded in the run being created has no receipt to own it:
-                    # `reserve_mutation` is what mints one, and it runs against a run that
-                    # already exists. Stated rather than defaulted so a caller that does
-                    # have a receipt cannot append without naming it.
-                    self._insert_prefect_execution(cursor, run.run_id, link, position, mutation_receipt_id=None)
-                connection.commit()
-            except Exception:
-                connection.rollback()
+                self._insert_product_run_row(cursor, run)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # Synchronous DB-API drivers do not share an integrity-error
+                # base class; inspect uniqueness only for the stable run ID.
+                if _is_unique_violation(exc):
+                    msg = f"Sync run ID {run.run_id!r} already exists"
+                    raise DuplicateRunError(msg) from exc
                 raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+            for position, link in enumerate(run.prefect_executions):
+                # A link embedded in the run being created has no receipt to own it:
+                # `reserve_mutation` is what mints one, and it runs against a run that
+                # already exists. Stated rather than defaulted so a caller that does
+                # have a receipt cannot append without naming it.
+                self._insert_prefect_execution(cursor, run.run_id, link, position, mutation_receipt_id=None)
 
     def _insert_product_run(self, cursor: _Cursor, run: ProductRun) -> None:
         self._insert_product_run_row(cursor, run)
@@ -1268,47 +1040,33 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         )
 
     def lookup(self, run_id: str) -> LookupResult[ProductRun]:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql(_SELECT_PRODUCT_RUN),
-                    (run_id,),
-                )
-                row = cursor.fetchone()
-                if row is None:
-                    return LookupResult(value=None, reason="run-not-found")
-                cursor.execute(
-                    self._sql(_SELECT_RUN_ARTIFACT_REFERENCES),
-                    (run_id,),
-                )
-                references = cursor.fetchall()
-                cursor.execute(
-                    self._sql(_SELECT_PREFECT_EXECUTIONS),
-                    (run_id,),
-                )
-                links = cursor.fetchall()
-                cursor.execute(self._sql(_SELECT_AUDIT_LINKS), (run_id,))
-                audit_links = cursor.fetchall()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(
+                self._sql(_SELECT_PRODUCT_RUN),
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return LookupResult(value=None, reason="run-not-found")
+            cursor.execute(
+                self._sql(_SELECT_RUN_ARTIFACT_REFERENCES),
+                (run_id,),
+            )
+            references = cursor.fetchall()
+            cursor.execute(
+                self._sql(_SELECT_PREFECT_EXECUTIONS),
+                (run_id,),
+            )
+            links = cursor.fetchall()
+            cursor.execute(self._sql(_SELECT_AUDIT_LINKS), (run_id,))
+            audit_links = cursor.fetchall()
         return LookupResult(value=_run_from_rows(row, references, links, audit_links))
 
     def exists(self, run_id: str) -> bool:
         """Return run existence without hydrating child records."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql("SELECT 1 FROM product_runs WHERE run_id = ?"), (run_id,))
-                return cursor.fetchone() is not None
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql("SELECT 1 FROM product_runs WHERE run_id = ?"), (run_id,))
+            return cursor.fetchone() is not None
 
     def reserve_artifact(self, reference: ArtifactReference) -> None:
         connection = self._connect()
@@ -1332,71 +1090,46 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             connection.close()
 
     def mark_artifact_published(self, reference: ArtifactReference) -> None:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql(
-                        "UPDATE artifact_refs SET published = 1 WHERE run_id = ? AND artifact_id = ? "
-                        "AND digest = ? AND object_key = ? AND manifest_key = ? AND published = 0"
-                    ),
-                    (
-                        reference.run_id,
-                        reference.artifact_id,
-                        reference.digest,
-                        reference.object_key,
-                        reference.manifest_key,
-                    ),
-                )
-                _require_publication_marked(cursor, reference)
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    "UPDATE artifact_refs SET published = 1 WHERE run_id = ? AND artifact_id = ? "
+                    "AND digest = ? AND object_key = ? AND manifest_key = ? AND published = 0"
+                ),
+                (
+                    reference.run_id,
+                    reference.artifact_id,
+                    reference.digest,
+                    reference.object_key,
+                    reference.manifest_key,
+                ),
+            )
+            _require_publication_marked(cursor, reference)
 
     def lookup_artifact_reference(
         self, run_id: str, artifact_id: str, *, visibility: Literal["public", "internal"] | None = None
     ) -> LookupResult[tuple[ArtifactReference, bool]]:
         """Resolve one reference, optionally only when it carries `visibility`."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                if visibility is None:
-                    cursor.execute(self._sql(_SELECT_ARTIFACT_REFERENCE), (run_id, artifact_id))
-                else:
-                    cursor.execute(
-                        self._sql(_SELECT_ARTIFACT_REFERENCE_BY_VISIBILITY),
-                        (run_id, artifact_id, visibility),
-                    )
-                row = cursor.fetchone()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            if visibility is None:
+                cursor.execute(self._sql(_SELECT_ARTIFACT_REFERENCE), (run_id, artifact_id))
+            else:
+                cursor.execute(
+                    self._sql(_SELECT_ARTIFACT_REFERENCE_BY_VISIBILITY),
+                    (run_id, artifact_id, visibility),
+                )
+            row = cursor.fetchone()
         if row is None:
             return LookupResult(value=None, reason="artifact-reference-not-found")
         return LookupResult(value=(_reference_from_row(row), bool(row[10])))
 
     def has_pending_artifacts(self, run_id: str) -> bool:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql("SELECT COUNT(*) FROM artifact_refs WHERE run_id = ? AND published = 0"),
-                    (run_id,),
-                )
-                row = cursor.fetchone()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(
+                self._sql("SELECT COUNT(*) FROM artifact_refs WHERE run_id = ? AND published = 0"),
+                (run_id,),
+            )
+            row = cursor.fetchone()
         return row is not None and int(row[0]) > 0
 
     def add_prefect_execution(
@@ -1530,6 +1263,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         mutation_receipt_id: str | None,
     ) -> None:
+        if link.plan_step is not None:
+            # The same check as `record_plan_step`, before any SQL runs (FR-021).
+            _check_plan_step_document(link.plan_step)
         cursor.execute(
             self._sql(_INSERT_PREFECT_EXECUTION),
             (
@@ -1556,47 +1292,30 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 None if link.source_read is None else _json(link.source_read),
                 None if link.destination_read is None else _json(link.destination_read),
                 None if link.apply_progress is None else _json(link.apply_progress.model_dump(mode="json")),
+                None if link.plan_step is None else _json(link.plan_step),
             ),
         )
 
     def _prefect_execution_exists(self, run_id: str, flow_run_id: str) -> bool:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql("SELECT 1 FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"),
-                    (run_id, flow_run_id),
-                )
-                return cursor.fetchone() is not None
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(
+                self._sql("SELECT 1 FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"),
+                (run_id, flow_run_id),
+            )
+            return cursor.fetchone() is not None
 
     def observe_prefect_execution(
         self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
     ) -> None:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql(
-                        "UPDATE prefect_executions SET last_observed_state = ?, last_observed_at = ? "
-                        "WHERE run_id = ? AND flow_run_id = ?"
-                    ),
-                    (state, observed_at.isoformat(), run_id, flow_run_id),
-                )
-                _require_execution_observed(cursor, run_id, flow_run_id)
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    "UPDATE prefect_executions SET last_observed_state = ?, last_observed_at = ? "
+                    "WHERE run_id = ? AND flow_run_id = ?"
+                ),
+                (state, observed_at.isoformat(), run_id, flow_run_id),
+            )
+            _require_execution_observed(cursor, run_id, flow_run_id)
 
     def claim_execution(
         self,
@@ -1612,15 +1331,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             "UPDATE prefect_executions SET claimed_at = ?, claiming_worker_id = ? "
             "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
             "AND cancellation_requested_at IS NULL "
-            "AND (COALESCE(submitted_at, last_observed_at) IS NULL OR "
-            "infrahub_sync_execution_timestamp_microseconds(COALESCE(submitted_at, last_observed_at)) "
-            "> infrahub_sync_execution_timestamp_microseconds(?))"
+            "AND infrahub_sync_execution_timestamp_microseconds(submitted_at) "
+            "> infrahub_sync_execution_timestamp_microseconds(?)"
             if self._dialect == "sqlite"
             else "UPDATE prefect_executions SET claimed_at = ?, claiming_worker_id = ? "
             "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
             "AND cancellation_requested_at IS NULL "
-            "AND (COALESCE(submitted_at, last_observed_at) IS NULL OR "
-            "CAST(COALESCE(submitted_at, last_observed_at) AS TIMESTAMPTZ) > CAST(? AS TIMESTAMPTZ))"
+            "AND CAST(submitted_at AS TIMESTAMPTZ) > CAST(? AS TIMESTAMPTZ)"
         )
         return self._execution_update(
             statement,
@@ -1647,6 +1364,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             (*(_json(dict(document)) for document in documents.values()), run_id, flow_run_id),
         )
 
+    def record_plan_step(self, run_id: str, flow_run_id: str, document: Mapping[str, Any]) -> bool:
+        """Replace the plan step document of an execution while the execution is not terminal.
+
+        Returns whether a row changed. A write that arrives after the execution's verdict, or
+        for an execution the run does not have, changes nothing. The document is checked
+        before any SQL runs (`_check_plan_step_document`).
+        """
+        _check_plan_step_document(document)
+        return self._execution_update(
+            "UPDATE prefect_executions SET plan_step = ? WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
+            (_json(dict(document)), run_id, flow_run_id),
+        )
+
     def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave:
         """Store a write execution's progress marker while the execution is not terminal.
 
@@ -1661,46 +1391,22 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         execution's `terminal_at` is only ever set, never cleared, so `ended` stays true once read.
         """
         checked = ApplyProgress.model_validate(document.model_dump())
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    "UPDATE prefect_executions SET apply_progress = ? "
+                    "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL"
+                ),
+                (_json(checked.model_dump(mode="json")), run_id, flow_run_id),
+            )
+            answer: ApplyProgressSave = "saved"
+            if cursor.rowcount != 1:
                 cursor.execute(
-                    self._sql(
-                        "UPDATE prefect_executions SET apply_progress = ? "
-                        "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL"
-                    ),
-                    (_json(checked.model_dump(mode="json")), run_id, flow_run_id),
+                    self._sql("SELECT 1 FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"),
+                    (run_id, flow_run_id),
                 )
-                answer: ApplyProgressSave = "saved"
-                if cursor.rowcount != 1:
-                    cursor.execute(
-                        self._sql("SELECT 1 FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"),
-                        (run_id, flow_run_id),
-                    )
-                    answer = "unknown" if cursor.fetchone() is None else "ended"
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            else:
-                return answer
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
-
-    def run_is_resumable(self, run_id: str) -> bool:
-        """Whether the run is resumable: see `_run_is_resumable` (spec 016 data-model.md "State rules")."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                return self._run_is_resumable(cursor, run_id)
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+                answer = "unknown" if cursor.fetchone() is None else "ended"
+        return answer
 
     def _run_is_resumable(self, cursor: _Cursor, run_id: str) -> bool:
         """Whether the run's write was interrupted and nothing holds the run now.
@@ -1906,26 +1612,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     def publish_worker_environment(self, environment: WorkerEnvironment) -> None:
         """Replace one worker's published credential variable names (spec 007 FR-035)."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql(_UPSERT_WORKER_ENVIRONMENT),
-                    (
-                        environment.worker_id,
-                        _json(list(environment.credential_names)),
-                        environment.observed_at.isoformat(),
-                    ),
-                )
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(_UPSERT_WORKER_ENVIRONMENT),
+                (
+                    environment.worker_id,
+                    _json(list(environment.credential_names)),
+                    environment.observed_at.isoformat(),
+                ),
+            )
 
     def write_bootstrap_record(self, record: BootstrapRecord) -> None:
         """Replace the one bootstrap record when it names another version or work pool (spec 018 FR-007b)."""
@@ -1948,16 +1643,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     def worker_environments(self) -> tuple[WorkerEnvironment, ...]:
         """Return every worker's last published credential variable names, by worker."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_WORKER_ENVIRONMENTS))
-                rows = cursor.fetchall()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_WORKER_ENVIRONMENTS))
+            rows = cursor.fetchall()
         return tuple(
             WorkerEnvironment.model_validate(
                 {
@@ -1971,16 +1659,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
         """Return the configuration's durable safety reference, if a write has set one."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_CONFIGURATION_BASELINE), (config_id,))
-                row = cursor.fetchone()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_CONFIGURATION_BASELINE), (config_id,))
+            row = cursor.fetchone()
         if row is None:
             return LookupResult(value=None, reason="configuration-baseline-not-found")
         return LookupResult(
@@ -2010,48 +1691,37 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             raise ValueError(_CANCELLATION_DEADLINE_ERROR)
         if recovery_deadline_at != requested_at + timedelta(seconds=recovery_seconds):
             raise ValueError(_CANCELLATION_DEADLINE_ERROR)
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
-                cursor.execute(
-                    self._sql(
-                        "UPDATE prefect_executions SET cancellation_requested_at = ?, "
-                        "cancellation_recovery_deadline_at = ?, cancellation_receipt_id = ? "
-                        "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
-                        "AND (SELECT COALESCE(MAX(position), -1) FROM prefect_executions WHERE run_id = ?) = ? "
-                        "AND ((cancellation_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM prefect_executions "
-                        "WHERE run_id = ? AND terminal_at IS NULL AND cancellation_requested_at IS NOT NULL)) "
-                        "OR (cancellation_requested_at = ? AND cancellation_recovery_deadline_at = ? "
-                        "AND cancellation_receipt_id = ?)) AND EXISTS (SELECT 1 FROM mutation_receipts "
-                        "WHERE receipt_id = ? AND run_id = ? AND operation = 'cancel' AND state = 'processing')"
-                    ),
-                    (
-                        requested_at.isoformat(),
-                        recovery_deadline_at.isoformat(),
-                        receipt_id,
-                        run_id,
-                        flow_run_id,
-                        run_id,
-                        expected_latest_position,
-                        run_id,
-                        requested_at.isoformat(),
-                        recovery_deadline_at.isoformat(),
-                        receipt_id,
-                        receipt_id,
-                        run_id,
-                    ),
-                )
-                updated = cursor.rowcount == 1
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+            cursor.execute(
+                self._sql(
+                    "UPDATE prefect_executions SET cancellation_requested_at = ?, "
+                    "cancellation_recovery_deadline_at = ?, cancellation_receipt_id = ? "
+                    "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
+                    "AND (SELECT COALESCE(MAX(position), -1) FROM prefect_executions WHERE run_id = ?) = ? "
+                    "AND ((cancellation_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM prefect_executions "
+                    "WHERE run_id = ? AND terminal_at IS NULL AND cancellation_requested_at IS NOT NULL)) "
+                    "OR (cancellation_requested_at = ? AND cancellation_recovery_deadline_at = ? "
+                    "AND cancellation_receipt_id = ?)) AND EXISTS (SELECT 1 FROM mutation_receipts "
+                    "WHERE receipt_id = ? AND run_id = ? AND operation = 'cancel' AND state = 'processing')"
+                ),
+                (
+                    requested_at.isoformat(),
+                    recovery_deadline_at.isoformat(),
+                    receipt_id,
+                    run_id,
+                    flow_run_id,
+                    run_id,
+                    expected_latest_position,
+                    run_id,
+                    requested_at.isoformat(),
+                    recovery_deadline_at.isoformat(),
+                    receipt_id,
+                    receipt_id,
+                    run_id,
+                ),
+            )
+            updated = cursor.rowcount == 1
         return updated
 
     def acknowledge_execution_cancellation(
@@ -2295,16 +1965,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     def pending_executions(self) -> tuple[tuple[str, PrefectExecutionLink], ...]:
         """Return durable non-terminal execution links and their owning run IDs."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql("SELECT DISTINCT run_id FROM prefect_executions WHERE terminal_at IS NULL"))
-                run_ids = tuple(str(row[0]) for row in cursor.fetchall())
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql("SELECT DISTINCT run_id FROM prefect_executions WHERE terminal_at IS NULL"))
+            run_ids = tuple(str(row[0]) for row in cursor.fetchall())
         pending: list[tuple[str, PrefectExecutionLink]] = []
         for run_id in run_ids:
             run = self.lookup(run_id).value
@@ -2313,22 +1976,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return tuple(pending)
 
     def _execution_update(self, statement: str, values: tuple[Any, ...]) -> bool:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(statement), values)
-                updated = cursor.rowcount == 1
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            else:
-                return updated
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            cursor.execute(self._sql(statement), values)
+            updated = cursor.rowcount == 1
+        return updated
 
     def _record_write_ambiguity(
         self,
@@ -2716,16 +2367,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return write is None or write[0] is None or int(verify[0]) > int(write[0])
 
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_MUTATION_RECEIPT), (actor, key_digest))
-                row = cursor.fetchone()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_MUTATION_RECEIPT), (actor, key_digest))
+            row = cursor.fetchone()
         if row is None:
             return LookupResult(value=None, reason="mutation-receipt-not-found")
         return LookupResult(value=_receipt_from_row(row))
@@ -2733,16 +2377,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     def lookup_mutation_for_execution(
         self, run_id: str, flow_run_id: str, operation: str
     ) -> LookupResult[MutationReceipt]:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_MUTATION_RECEIPT_FOR_EXECUTION), (run_id, flow_run_id, operation))
-                row = cursor.fetchone()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_MUTATION_RECEIPT_FOR_EXECUTION), (run_id, flow_run_id, operation))
+            row = cursor.fetchone()
         if row is None:
             return LookupResult(value=None, reason="mutation-receipt-not-found")
         return LookupResult(value=_receipt_from_row(row))
@@ -2780,42 +2417,31 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         Raises:
             ValueError: The receipt is not awaiting completion; nothing is stored.
         """
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
-                active_stage = self._unfinished_execution_purpose(cursor, run_id)
-                stored = False
-                if active_stage is None:
-                    cursor.execute(
-                        self._sql(
-                            "UPDATE product_runs SET approved_by = ?, approved_at = ?, approved_checksum = ?, "
-                            "approval_reason = ? WHERE run_id = ? AND approved_by IS NULL "
-                            "AND (phase = 'planned' OR (reconciliation_required AND phase <> 'cancelled'))"
-                        ),
-                        (*_approval_columns(approval), run_id),
-                    )
-                    stored = cursor.rowcount == 1
-                if stored:
-                    for event in events:
-                        self._insert_event(cursor, event)
-                status, body = (
-                    (200, response)
-                    if stored
-                    else self._approval_refusal(cursor, run_id, receipt.receipt_id, active_stage=active_stage)
+        with self._transaction() as cursor:
+            cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+            active_stage = self._unfinished_execution_purpose(cursor, run_id)
+            stored = False
+            if active_stage is None:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE product_runs SET approved_by = ?, approved_at = ?, approved_checksum = ?, "
+                        "approval_reason = ? WHERE run_id = ? AND approved_by IS NULL "
+                        "AND (phase = 'planned' OR (reconciliation_required AND phase <> 'cancelled'))"
+                    ),
+                    (*_approval_columns(approval), run_id),
                 )
-                self._answer_receipt_row(
-                    cursor, receipt.receipt_id, response_status=status, response_body=body, updated_at=updated_at
-                )
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+                stored = cursor.rowcount == 1
+            if stored:
+                for event in events:
+                    self._insert_event(cursor, event)
+            status, body = (
+                (200, response)
+                if stored
+                else self._approval_refusal(cursor, run_id, receipt.receipt_id, active_stage=active_stage)
+            )
+            self._answer_receipt_row(
+                cursor, receipt.receipt_id, response_status=status, response_body=body, updated_at=updated_at
+            )
         return stored
 
     def cancel_planned_run(  # pylint: disable=too-many-arguments
@@ -2846,39 +2472,28 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         Raises:
             ValueError: The receipt is not awaiting completion; nothing is stored.
         """
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
-                cursor.execute(self._sql("SELECT phase FROM product_runs WHERE run_id = ?"), (run_id,))
-                row = cursor.fetchone()
-                refusal = self._withdrawal_refusal(cursor, run_id, receipt.receipt_id, None if row is None else row[0])
-                withdrawn = refusal is None
-                if refusal is None:
-                    cursor.execute(
-                        self._sql(
-                            "UPDATE product_runs SET phase = 'cancelled', outcome = 'cancelled', finished_at = ? "
-                            "WHERE run_id = ? AND phase = 'planned'"
-                        ),
-                        (_utc_iso(cancelled_at), run_id),
-                    )
-                    for event in events:
-                        self._insert_event(cursor, event)
-                    status, body = 200, response
-                else:
-                    status, body = refusal
-                self._answer_receipt_row(
-                    cursor, receipt.receipt_id, response_status=status, response_body=body, updated_at=updated_at
+        with self._transaction() as cursor:
+            cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+            cursor.execute(self._sql("SELECT phase FROM product_runs WHERE run_id = ?"), (run_id,))
+            row = cursor.fetchone()
+            refusal = self._withdrawal_refusal(cursor, run_id, receipt.receipt_id, None if row is None else row[0])
+            withdrawn = refusal is None
+            if refusal is None:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE product_runs SET phase = 'cancelled', outcome = 'cancelled', finished_at = ? "
+                        "WHERE run_id = ? AND phase = 'planned'"
+                    ),
+                    (_utc_iso(cancelled_at), run_id),
                 )
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+                for event in events:
+                    self._insert_event(cursor, event)
+                status, body = 200, response
+            else:
+                status, body = refusal
+            self._answer_receipt_row(
+                cursor, receipt.receipt_id, response_status=status, response_body=body, updated_at=updated_at
+            )
         return withdrawn
 
     def _withdrawal_refusal(
@@ -2977,28 +2592,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         updated_at: datetime,
         event: AuditEvent | None = None,
     ) -> MutationReceipt:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql(
-                        "UPDATE mutation_receipts SET state = 'accepted', response_status = ?, response_body = ?, "
-                        "flow_run_id = ?, updated_at = ? WHERE receipt_id = ? AND state IN ('reserved', 'processing')"
-                    ),
-                    (response_status, _json(response_body), flow_run_id, updated_at.isoformat(), receipt_id),
-                )
-                completed = cursor.rowcount == 1
-                if completed and event is not None:
-                    self._insert_event(cursor, event)
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    "UPDATE mutation_receipts SET state = 'accepted', response_status = ?, response_body = ?, "
+                    "flow_run_id = ?, updated_at = ? WHERE receipt_id = ? AND state IN ('reserved', 'processing')"
+                ),
+                (response_status, _json(response_body), flow_run_id, updated_at.isoformat(), receipt_id),
+            )
+            completed = cursor.rowcount == 1
+            if completed and event is not None:
+                self._insert_event(cursor, event)
         receipt = self._lookup_mutation_by_id(receipt_id)
         if completed:
             return receipt
@@ -3041,68 +2645,39 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     def claim_mutation(self, receipt_id: str, *, updated_at: datetime) -> bool:
         """Claim one retryable receipt before its service call begins."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql(
-                        "UPDATE mutation_receipts SET state = 'processing', updated_at = ? "
-                        "WHERE receipt_id = ? AND state = 'reserved'"
-                    ),
-                    (updated_at.isoformat(), receipt_id),
-                )
-                claimed = cursor.rowcount == 1
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    "UPDATE mutation_receipts SET state = 'processing', updated_at = ? "
+                    "WHERE receipt_id = ? AND state = 'reserved'"
+                ),
+                (updated_at.isoformat(), receipt_id),
+            )
+            claimed = cursor.rowcount == 1
         return claimed
 
     def release_mutation(self, receipt_id: str, *, updated_at: datetime) -> None:
         """Return an unsuccessful in-flight receipt to retryable reservation state."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql(
-                        "UPDATE mutation_receipts SET state = 'reserved', updated_at = ? "
-                        "WHERE receipt_id = ? AND state = 'processing'"
-                    ),
-                    (updated_at.isoformat(), receipt_id),
-                )
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    "UPDATE mutation_receipts SET state = 'reserved', updated_at = ? "
+                    "WHERE receipt_id = ? AND state = 'processing'"
+                ),
+                (updated_at.isoformat(), receipt_id),
+            )
 
     def _lookup_mutation_by_id(self, receipt_id: str) -> MutationReceipt:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql(
-                        "SELECT receipt_id, actor, key_digest, operation, target_run_id, request_fingerprint, "
-                        "reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body, flow_run_id, "
-                        "created_at, updated_at FROM mutation_receipts WHERE receipt_id = ?"
-                    ),
-                    (receipt_id,),
-                )
-                row = cursor.fetchone()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(
+                self._sql(
+                    "SELECT receipt_id, actor, key_digest, operation, target_run_id, request_fingerprint, "
+                    "reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body, flow_run_id, "
+                    "created_at, updated_at FROM mutation_receipts WHERE receipt_id = ?"
+                ),
+                (receipt_id,),
+            )
+            row = cursor.fetchone()
         if row is None:
             msg = f"Mutation receipt {receipt_id!r} is unavailable"
             raise RunNotFoundError(msg)
@@ -3146,35 +2721,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return resources
 
     def record_audit(self, event: AuditEvent) -> None:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                self._insert_event(cursor, event)
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            self._insert_event(cursor, event)
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                if run_id is None:
-                    cursor.execute(_SELECT_ALL_AUDIT_EVENTS)
-                else:
-                    cursor.execute(self._sql(_SELECT_AUDIT_EVENTS), (run_id,))
-                rows = cursor.fetchall()
-                resources = self._read_event_resources(cursor, rows)
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            if run_id is None:
+                cursor.execute(_SELECT_ALL_AUDIT_EVENTS)
+            else:
+                cursor.execute(self._sql(_SELECT_AUDIT_EVENTS), (run_id,))
+            rows = cursor.fetchall()
+            resources = self._read_event_resources(cursor, rows)
         return tuple(_audit_from_row(row, resources[str(row[0])]) for row in rows)
 
     def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage:
@@ -3223,16 +2780,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     def configuration_exists(self, config_id: str) -> bool:
         """Return configuration existence without hydrating its versions."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_CONFIGURATION), (config_id,))
-                return cursor.fetchone() is not None
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_CONFIGURATION), (config_id,))
+            return cursor.fetchone() is not None
 
     def create_configuration(
         self,
@@ -3372,86 +2922,44 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         raise AssertionError(msg)
 
     def _lookup_configuration_version_by_checksum(self, config_id: str, checksum: str) -> ConfigurationVersion | None:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM), (config_id, checksum))
-                row = cursor.fetchone()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM), (config_id, checksum))
+            row = cursor.fetchone()
         return None if row is None else _configuration_version_from_row(row)
 
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_CONFIGURATION), (config_id,))
-                row = cursor.fetchone()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_CONFIGURATION), (config_id,))
+            row = cursor.fetchone()
         if row is None:
             return LookupResult(value=None, reason="configuration-not-found")
         return LookupResult(value=_configuration_summary_from_row(row))
 
     def lookup_configuration_version(self, config_id: str, registry_version: int) -> LookupResult[ConfigurationVersion]:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION), (config_id, registry_version))
-                row = cursor.fetchone()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION), (config_id, registry_version))
+            row = cursor.fetchone()
         if row is None:
             return LookupResult(value=None, reason="configuration-version-not-found")
         return LookupResult(value=_configuration_version_from_row(row))
 
     def configuration_version_exists(self, config_id: str, registry_version: int) -> bool:
         """Return whether one configuration version exists, without reading its package."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_CONFIGURATION_VERSION_EXISTS), (config_id, registry_version))
-                return cursor.fetchone() is not None
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_CONFIGURATION_VERSION_EXISTS), (config_id, registry_version))
+            return cursor.fetchone() is not None
 
     def list_configurations(self) -> tuple[ConfigurationSummary, ...]:
         """Return every registered configuration in the one stated order (see the SQL)."""
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_CONFIGURATIONS))
-                rows = cursor.fetchall()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_CONFIGURATIONS))
+            rows = cursor.fetchall()
         return tuple(_configuration_summary_from_row(row) for row in rows)
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSIONS), (config_id,))
-                rows = cursor.fetchall()
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSIONS), (config_id,))
+            rows = cursor.fetchall()
         return tuple(_configuration_version_from_row(row) for row in rows)
 
     def list_configuration_page(
@@ -3497,19 +3005,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if limit < 1:
             msg = "limit must be a positive integer"
             raise ValueError(msg)
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(statement), (*parameters, limit + 1, *trailing))
-                rows = cursor.fetchall()
-                page = rows[:limit]
-                if follow_up is not None and page:
-                    follow_up(cursor, page)
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._reading() as cursor:
+            cursor.execute(self._sql(statement), (*parameters, limit + 1, *trailing))
+            rows = cursor.fetchall()
+            page = rows[:limit]
+            if follow_up is not None and page:
+                follow_up(cursor, page)
         return page, len(rows) > limit
 
     def list_configuration_version_page(
@@ -3580,61 +3081,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return RunPage(items=tuple(_run_from_rows(row, (), (), audit_links[row[0]]) for row in rows), has_more=has_more)
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql("UPDATE product_runs SET results = ? WHERE run_id = ?"),
-                    (_json(results), run_id),
-                )
-                _require_run_results_recorded(cursor, run_id)
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
-
-    def merge_results(self, run_id: str, results: Mapping[str, Any]) -> None:
-        """Merge result fields with optimistic concurrency across DB-API providers."""
-        last_conflict: BaseException | None = None
-        for attempt in range(_RESULT_MERGE_ATTEMPTS):
-            connection = self._connect()
-            retry = False
-            try:
-                cursor = connection.cursor()
-                try:
-                    cursor.execute(self._sql("SELECT results FROM product_runs WHERE run_id = ?"), (run_id,))
-                    row = _require_result_row(cursor.fetchone(), run_id)
-                    current_text = str(row[0])
-                    current = _JSON_MAPPING_ADAPTER.validate_json(current_text)
-                    merged = {**current, **results}
-                    cursor.execute(
-                        self._sql("UPDATE product_runs SET results = ? WHERE run_id = ? AND results = ?"),
-                        (_json(merged), run_id, current_text),
-                    )
-                    if cursor.rowcount == 1:
-                        connection.commit()
-                        return
-                    connection.rollback()
-                    retry = True
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    connection.rollback()
-                    if not _is_retryable_write_conflict(exc):
-                        raise
-                    last_conflict = exc
-                    retry = True
-                finally:
-                    cursor.close()
-            finally:
-                connection.close()
-            if retry and attempt + 1 < _RESULT_MERGE_ATTEMPTS:
-                sleep(0.01)
-        msg = f"Could not merge concurrent results for Sync run ID {run_id!r}"
-        raise RuntimeError(msg) from last_conflict
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql("UPDATE product_runs SET results = ? WHERE run_id = ?"),
+                (_json(results), run_id),
+            )
+            _require_run_results_recorded(cursor, run_id)
 
     def _insert_reference(self, cursor: _Cursor, reference: ArtifactReference, *, published: bool) -> None:
         cursor.execute(
@@ -3665,26 +3117,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         summary: Mapping[str, Any],
         results: Mapping[str, Any],
     ) -> None:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(
-                    self._sql(
-                        "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ?, summary = ?, results = ? "
-                        "WHERE run_id = ?"
-                    ),
-                    (phase, outcome, _utc_iso(finished_at), _json(summary), _json(results), run_id),
-                )
-                _require_run_finished(cursor, run_id)
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ?, summary = ?, results = ? "
+                    "WHERE run_id = ?"
+                ),
+                (phase, outcome, _utc_iso(finished_at), _json(summary), _json(results), run_id),
+            )
+            _require_run_finished(cursor, run_id)
 
 
 class SQLiteRunStore(_RelationalRunStore):
@@ -4021,9 +3462,13 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """
         return self._records.record_apply_progress(run_id, flow_run_id, document)
 
-    def run_is_resumable(self, run_id: str) -> bool:
-        """Whether the run's write was interrupted, the run is not cancelled, and no execution is unfinished."""
-        return self._records.run_is_resumable(run_id)
+    def record_plan_step(self, run_id: str, flow_run_id: str, document: Mapping[str, Any]) -> bool:
+        """Store the plan step document on a non-terminal execution; return whether it changed.
+
+        The document names the parts of the plan step with their start and end times, and the
+        part that runs; never an error message or a data value (spec 019 data-model.md).
+        """
+        return self._records.record_plan_step(run_id, flow_run_id, document)
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
@@ -4452,17 +3897,6 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(results), secrets))
         self._records.record_results(redact(run_id, secrets), sanitized)
 
-    def merge_results(
-        self,
-        run_id: str,
-        results: Mapping[str, Any],
-        *,
-        secrets: Sequence[str] = (),
-    ) -> None:
-        """Atomically merge retained result fields without a stale read/replace race."""
-        sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(results), secrets))
-        self._records.merge_results(redact(run_id, secrets), sanitized)
-
     def publish_artifact(
         self,
         run_id: str,
@@ -4789,6 +4223,64 @@ def _side_read_value_allowed(key: str, value: Any) -> bool:
     return _is_iso_timestamp(value)
 
 
+def _check_plan_step_document(document: Mapping[str, Any]) -> None:
+    """Refuse a plan step document that holds a key or a value the plan step does not allow.
+
+    The document holds `parts`, a mapping of part names to `started_at` and an optional
+    `ended_at`, each an ISO 8601 time with a time zone, and an optional `running` that names a
+    part that started and has not ended. The error names the key, never the value, because a
+    refused value may be an exception message or a secret (FR-021).
+    """
+    if not isinstance(document, Mapping):
+        msg = "the plan step document is not a mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    if any(not isinstance(key, str) or key not in _PLAN_STEP_FIELDS for key in document):
+        msg = "the plan step document holds a key that is not allowed"
+        raise ValueError(msg)
+    parts = document.get("parts")
+    if not isinstance(parts, Mapping):
+        msg = "the plan step document has no 'parts' mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    for name, part in parts.items():
+        if not isinstance(name, str) or name not in _PLAN_STEP_PARTS:
+            msg = "the plan step document names a part that is not allowed"
+            raise ValueError(msg)
+        _check_plan_step_part(name, part)
+    if "running" in document:
+        running = document["running"]
+        if not isinstance(running, str) or running not in _PLAN_STEP_PARTS:
+            msg = "the plan step document has a value for 'running' that is not allowed"
+            raise ValueError(msg)
+        if running not in parts or "ended_at" in parts[running]:
+            msg = f"the plan step document names {running!r} as running, but that part did not start or has ended"
+            raise ValueError(msg)
+
+
+def _check_plan_step_part(name: str, part: Any) -> None:
+    """Refuse one part entry of a plan step document; the error names the part, never a value."""
+    if not isinstance(part, Mapping):
+        msg = f"the plan step document has a {name!r} part that is not a mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    if any(not isinstance(key, str) or key not in _PLAN_STEP_PART_FIELDS for key in part):
+        msg = f"the plan step document has a {name!r} part that holds a key that is not allowed"
+        raise ValueError(msg)
+    if "started_at" not in part:
+        msg = f"the plan step document has a {name!r} part with no 'started_at'"
+        raise ValueError(msg)
+    for key, value in part.items():
+        if not isinstance(value, str) or not _is_aware_iso_timestamp(value):
+            msg = f"the plan step document has a value for {name!r} {key!r} that is not allowed"
+            raise ValueError(msg)
+
+
+def _is_aware_iso_timestamp(value: str) -> bool:
+    """Whether `value` is an ISO 8601 timestamp with a time zone."""
+    try:
+        return datetime.fromisoformat(value).utcoffset() is not None
+    except ValueError:
+        return False
+
+
 def _is_iso_timestamp(value: str) -> bool:
     """Whether `value` is an ISO 8601 timestamp, the form of `started_at` and `ended_at`."""
     try:
@@ -4865,13 +4357,28 @@ def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[st
     A side's read state is a progress report, so a damaged value must not stop a run from being
     read. The warning names the run, the column and the error class, never the stored text.
     """
+    return _stored_json_object(value, run_id=run_id, column=column, label="side-read")
+
+
+def _stored_plan_step(value: str | None, *, run_id: str) -> dict[str, Any] | None:
+    """Parse the stored plan step column; a value that is not a JSON object reads as ``None``.
+
+    The timings are a progress report, so a damaged value must not stop a run from being read
+    (FR-019). The response derivation checks each key again before it returns a part.
+    """
+    return _stored_json_object(value, run_id=run_id, column="plan_step", label="plan-step")
+
+
+def _stored_json_object(value: str | None, *, run_id: str, column: str, label: str) -> dict[str, Any] | None:
+    """Parse one stored JSON-object column; the warning names the run, the column and the error class only."""
     if value is None:
         return None
     try:
         document = json.loads(value)
     except (json.JSONDecodeError, TypeError) as exc:
         logger.warning(
-            "Ignoring an unreadable side-read column: run_id=%s column=%s error=%s",
+            "Ignoring an unreadable %s column: run_id=%s column=%s error=%s",
+            label,
             run_id,
             column,
             type(exc).__name__,
@@ -4879,7 +4386,8 @@ def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[st
         return None
     if not isinstance(document, dict):
         logger.warning(
-            "Ignoring a side-read column that is not a JSON object: run_id=%s column=%s type=%s",
+            "Ignoring a %s column that is not a JSON object: run_id=%s column=%s type=%s",
+            label,
             run_id,
             column,
             type(document).__name__,
@@ -4924,7 +4432,7 @@ def _run_from_rows(
                     "attempt": item[4],
                     "last_observed_state": item[5],
                     "last_observed_at": item[6],
-                    "submitted_at": item[7] if item[7] is not None else item[6],
+                    "submitted_at": item[7],
                     "claimed_at": item[8],
                     "claiming_worker_id": item[9],
                     "stalled_at": item[10],
@@ -4938,6 +4446,7 @@ def _run_from_rows(
                     "source_read": _stored_side_read(item[19], run_id=row[0], column="source_read"),
                     "destination_read": _stored_side_read(item[20], run_id=row[0], column="destination_read"),
                     "apply_progress": _stored_apply_progress(item[21], run_id=row[0]),
+                    "plan_step": _stored_plan_step(item[22], run_id=row[0]),
                 }
                 for item in links
             ],
@@ -5183,17 +4692,6 @@ def _filtered(statement: str, conditions: Sequence[str]) -> str:
     return statement + " WHERE " + " AND ".join(conditions) if conditions else statement
 
 
-def _declared_configuration_name(declared_content: Any) -> str | None:
-    """Return ``configuration.name`` from declared package content, or ``None`` when absent."""
-    if not isinstance(declared_content, dict):
-        return None
-    configuration = declared_content.get("configuration")
-    if not isinstance(configuration, dict):
-        return None
-    name = configuration.get("name")
-    return name if isinstance(name, str) and name else None
-
-
 def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:
     return ConfigurationVersion.model_validate(
         {
@@ -5246,12 +4744,6 @@ def _is_unique_violation(exc: BaseException) -> bool:
     return getattr(diagnostic, "sqlstate", None) == "23505"
 
 
-def _is_retryable_write_conflict(exc: BaseException) -> bool:
-    if isinstance(exc, sqlite3.OperationalError):
-        return "database is locked" in str(exc).lower()
-    return _sqlstate(exc) in {"40001", "40P01"}
-
-
 def _sqlstate(exc: BaseException) -> str | None:
     direct = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
     if isinstance(direct, str):
@@ -5259,13 +4751,6 @@ def _sqlstate(exc: BaseException) -> str | None:
     diagnostic = getattr(exc, "diag", None)
     value = getattr(diagnostic, "sqlstate", None)
     return value if isinstance(value, str) else None
-
-
-def _is_duplicate_column_error(exc: BaseException) -> bool:
-    """Recognize a concurrent ``ALTER TABLE ADD COLUMN`` race, not a genuine schema failure."""
-    if isinstance(exc, sqlite3.OperationalError):
-        return "duplicate column name" in str(exc).lower()
-    return _sqlstate(exc) == _POSTGRESQL_DUPLICATE_COLUMN_CODE
 
 
 def _require_checksum_digests_content(checksum: str, declared_content: Mapping[str, Any]) -> None:
@@ -5305,34 +4790,6 @@ def _require_run_results_recorded(cursor: _Cursor, run_id: str) -> None:
     if cursor.rowcount != 1:
         msg = f"Cannot record results for unavailable Sync run ID {run_id!r}"
         raise RunNotFoundError(msg)
-
-
-def _require_result_row(row: Sequence[Any] | None, run_id: str) -> Sequence[Any]:
-    if row is None:
-        msg = f"Cannot merge results for unavailable Sync run ID {run_id!r}"
-        raise RunNotFoundError(msg)
-    return row
-
-
-def _catalog_nullability(rows: Sequence[Sequence[Any]]) -> dict[str, str]:
-    """Read ``(column_name, is_nullable)`` catalog rows, refusing any other row.
-
-    A row qualifies only as exactly two cells whose second cell is already one of the
-    ``yes_or_no`` strings; nothing is coerced into that domain. Nullability decides whether
-    the legacy ``DROP NOT NULL`` migration still has work to do, so an answer that cannot
-    report it is a provider failure rather than a default. Reading any such answer as "not
-    NO" would skip the one-time migration and leave a real ``NOT NULL`` column in place,
-    which no later construction would repair.
-    """
-    nullability: dict[str, str] = {}
-    for row in rows:
-        if len(row) != _CATALOG_NULLABILITY_ROW_WIDTH:
-            raise ProductStoreProviderError
-        is_nullable = row[1]
-        if not isinstance(is_nullable, str) or is_nullable not in _CATALOG_NULLABILITY_VALUES:
-            raise ProductStoreProviderError
-        nullability[str(row[0])] = is_nullable
-    return nullability
 
 
 def _require_cancellation_receipt_row(row: Sequence[Any] | None) -> Sequence[Any]:

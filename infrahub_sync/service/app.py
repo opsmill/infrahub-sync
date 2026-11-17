@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Respons
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from infrahub_sync.client.models import (
     DEFAULT_LOG_LIMIT,
@@ -85,6 +86,24 @@ async def _service_error(_request: Request, exc: ServiceAPIError) -> JSONRespons
     )
     headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
     return JSONResponse(status_code=exc.status, content=_error_content(envelope), headers=headers)
+
+
+_HTTP_ERROR_CODES = {404: "not-found", 405: "method-not-allowed"}
+
+
+async def _http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:  # noqa: RUF029
+    """Return the error envelope for a routing refusal such as an unknown path or a wrong method.
+
+    The exception's headers are kept, so a 405 still names the accepted methods in ``Allow``.
+    """
+    envelope = ErrorEnvelope(
+        error=ErrorDetail(
+            code=_HTTP_ERROR_CODES.get(exc.status_code, "http-error"),
+            message=str(exc.detail),
+            status=exc.status_code,
+        )
+    )
+    return JSONResponse(status_code=exc.status_code, content=_error_content(envelope), headers=exc.headers)
 
 
 def _error_content(envelope: ErrorEnvelope) -> dict[str, Any]:
@@ -390,6 +409,9 @@ def create_app(
             error=ErrorDetail(code="request-invalid", message="the request does not match the API schema", status=422)
         )
         return JSONResponse(status_code=422, content=_error_content(envelope))
+
+    # TODO: Starlette types a handler's exception as `Exception`; drop the ignore once ty accepts a narrower one.
+    application.add_exception_handler(StarletteHTTPException, _http_error)  # ty: ignore[invalid-argument-type]
 
     @application.get("/version")
     def get_version() -> VersionResource:

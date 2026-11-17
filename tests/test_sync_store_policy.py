@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import pytest
 import yaml
 
-from infrahub_sync import SyncInstance
-from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
+from infrahub_sync import SyncInstance, utils
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UnsupportedSyncStoreError
 from infrahub_sync.execution import RunValidationError, execute_run, run_remote_request
 from infrahub_sync.product_store import configs, local_product_projection
 from tests.configuration.validation_packages import package_data
@@ -108,5 +108,43 @@ def test_direct_prefect_request_refuses_a_store_before_adapter_construction(
 
     with pytest.raises(RunValidationError) as raised:
         run_remote_request("store-policy", config_directory=str(tmp_path))
+
+    assert str(raised.value) == UNSUPPORTED_STORE_MESSAGE
+
+
+class _AdapterMustNotBeBuilt:
+    """Stand in for an adapter class and fail the test when it is instantiated."""
+
+    def __init__(self, **_kwargs: object) -> None:
+        pytest.fail("adapter built")
+
+
+@pytest.mark.parametrize("store", [{"type": "redis"}, {"type": "local"}])
+@pytest.mark.parametrize("entry_point", ["plan", "apply"])
+def test_engine_assembly_refuses_a_store_and_builds_no_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: dict[str, Any], entry_point: str
+) -> None:
+    """A store block that reaches engine assembly is refused, not replaced by an in-memory store."""
+    instance = SyncInstance.model_validate(
+        {
+            "name": "store-policy",
+            "directory": str(tmp_path),
+            "source": {"name": "netbox"},
+            "destination": {"name": "infrahub"},
+            "store": store,
+        }
+    )
+    monkeypatch.setattr(
+        utils, "_adapter_classes", lambda *_args, **_kwargs: (_AdapterMustNotBeBuilt, _AdapterMustNotBeBuilt)
+    )
+    monkeypatch.setattr(utils, "import_adapter", lambda **_kwargs: _AdapterMustNotBeBuilt)
+
+    def assemble() -> object:
+        if entry_point == "plan":
+            return utils.get_potenda_from_instance(instance, base_directory=tmp_path)
+        return utils.PlanApplier.open_existing(instance, run_id="store-policy-run", base_directory=tmp_path)
+
+    with pytest.raises(UnsupportedSyncStoreError) as raised:
+        assemble()
 
     assert str(raised.value) == UNSUPPORTED_STORE_MESSAGE

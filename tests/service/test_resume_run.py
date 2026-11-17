@@ -1361,7 +1361,7 @@ def resume_worker(
     assert projection.interrupt_execution(run_id, apply_flow_run_id)
     _pass_verify(projection, run_id)
     resume_flow_run_id = _admit_resume(projection, run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "_claim_current_execution", lambda *_args: (resume_flow_run_id, _WORKER_ID))
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-resume"), False))

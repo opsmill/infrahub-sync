@@ -117,10 +117,10 @@ The Prefect flow calls `run_remote_request`, which uses the same default. Both r
 `_run_plan_lifecycle`, `Potenda.load_both_sides`, and `source_load` / `destination_load`.
 Neither calls `Potenda.persist_cursors_for_run()`. Verify and apply do not extract data.
 
-A direct Python caller must enable incremental extraction, retain a matching schema hash
-and a successful run record, and explicitly persist cursors to use the warm path. This
-safety contract does not enable incremental extraction or add cursor persistence to
-current product flows.
+No supported entry point sets `full_extract=False`. The warm path needs a caller that sets
+it, retains a matching schema hash and a successful run record, and explicitly persists
+cursors. This safety contract does not enable incremental extraction or add cursor
+persistence to current product flows.
 
 An adapter can opt in with `safe_cursor_before_load(model_name) -> CursorState | None`.
 Potenda calls this hook for every resource before it queries the first resource on that
@@ -140,7 +140,7 @@ header or a maximum timestamp from returned rows does not establish this guarant
 
 The bundled NetBox, Nautobot and Infrahub adapters currently provide neither a safe source
 watermark nor a bounded overlap. Potenda therefore extracts those resources in full,
-even if a direct caller requests incremental extraction. It also extracts in full if the
+even when a call sets `full_extract=False`. It also extracts in full if the
 saved cursor is unqualified, the tier changed, or the current source cannot guarantee a
 safe next bound, or the prior resource snapshot is missing. An empty source snapshot is a
 valid baseline and can still use a qualified cursor. An empty destination snapshot
@@ -149,7 +149,7 @@ missing mapped model refuses the load before any resource query; it cannot stand
 for an empty source kind.
 
 The Infrahub adapter has a second reason to read the destination in full. This reason has an
-effect only when a direct caller enables incremental extraction, because the current entry
+effect only when a call sets `full_extract=False`, because the current entry
 points already extract every resource in full. From Infrahub 1.7.0, a
 plan reads who last changed each value and when, in the same read as the values
 (`include_metadata=True`). While `InfrahubAdapter.metadata_read` is true, `cursor_tier_for`

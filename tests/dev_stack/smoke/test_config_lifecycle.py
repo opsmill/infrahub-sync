@@ -314,17 +314,17 @@ def test_raw_http_drives_the_registry_and_records_the_transcript(smoke_env: dict
 
     records = [json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()]
     assert [(record["method"], record["path"], record["status"]) for record in records] == [
-        ("GET", "/version", 200),
-        ("GET", "/status", 200),
-        ("POST", "/configs", 201),
-        ("POST", "/configs", 201),
-        ("POST", f"/configs/{config_id}/versions", 200),
-        ("POST", f"/configs/{config_id}/versions", 201),
-        ("GET", "/configs", 200),
-        ("GET", f"/configs/{config_id}", 200),
-        ("GET", f"/configs/{config_id}/versions", 200),
-        ("GET", f"/configs/{config_id}/versions/1", 200),
-        ("POST", f"/configs/{config_id}/versions/1/validate", 200),
+        ("GET", "/api/version", 200),
+        ("GET", "/api/status", 200),
+        ("POST", "/api/configs", 201),
+        ("POST", "/api/configs", 201),
+        ("POST", f"/api/configs/{config_id}/versions", 200),
+        ("POST", f"/api/configs/{config_id}/versions", 201),
+        ("GET", "/api/configs", 200),
+        ("GET", f"/api/configs/{config_id}", 200),
+        ("GET", f"/api/configs/{config_id}/versions", 200),
+        ("GET", f"/api/configs/{config_id}/versions/1", 200),
+        ("POST", f"/api/configs/{config_id}/versions/1/validate", 200),
     ]
     assert {record["request_headers"]["authorization"] for record in records} == {"<redacted>"}
     assert canary_leaks(smoke_env["infrahub_token"], {str(transcript): transcript.read_text(encoding="utf-8")}) == []

@@ -69,6 +69,41 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         --refresh-package infrahub-sync --reinstall-package infrahub-sync
 
 # ---------------------------------------------------------------------------
+# Web stage: build the web interface; no Node runtime reaches the runtime image.
+# ---------------------------------------------------------------------------
+# node:22-bookworm-slim matches the Node series of the frontend CI job. As above,
+# the tag is for the reader and the digest is the authority.
+FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS web
+
+WORKDIR /src/frontend
+
+# Corepack installs the pnpm release that `packageManager` in package.json names.
+RUN corepack enable
+
+# The install reads only the manifests, so it is copied first: a change to the
+# sources then reuses the installed dependencies instead of installing them again.
+COPY frontend/.npmrc frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+# The `[d]` wildcard lets the copy match nothing when the submodule was not
+# fetched, so the guard below can name the cause instead of the COPY failing
+# with a bare "not found".
+COPY fronten[d]/vendor/infrahub/frontend/packages/ui/package.json ./vendor/infrahub/frontend/packages/ui/
+
+# Without the submodule, `pnpm install --frozen-lockfile` still succeeds and the
+# build fails later in `vite build` with an error that does not name the cause.
+RUN test -f vendor/infrahub/frontend/packages/ui/package.json || { echo "frontend/vendor/infrahub is missing: run git submodule update --init frontend/vendor/infrahub" >&2; exit 1; }
+
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+COPY frontend/index.html frontend/vite.config.ts frontend/tsconfig.json frontend/tsr.config.json ./
+COPY frontend/src ./src
+# Only the design system package of the opsmill/infrahub submodule; the rest of
+# the submodule is not part of the build.
+COPY fronten[d]/vendor/infrahub/frontend/packages/ui ./vendor/infrahub/frontend/packages/ui
+
+RUN pnpm build
+
+# ---------------------------------------------------------------------------
 # Runtime stage
 # ---------------------------------------------------------------------------
 FROM base AS runtime
@@ -76,9 +111,10 @@ FROM base AS runtime
 ARG VERSION
 ARG REVISION
 ARG CREATED
-# The SHA-256 of `Dockerfile`, `pyproject.toml` and `uv.lock`, set only by the
-# development build. The development tasks compare it with the checkout to
-# decide whether the image needs a rebuild. Release builds leave it empty.
+# The SHA-256 of `Dockerfile`, `pyproject.toml`, `uv.lock` and the web interface's
+# build inputs under `frontend/`, set only by the development build. The
+# development tasks compare it with the checkout to decide whether the image
+# needs a rebuild. Release builds leave it empty.
 ARG BUILD_INPUTS=""
 
 LABEL org.opsmill.infrahub-sync.build-inputs="${BUILD_INPUTS}" \
@@ -112,11 +148,14 @@ RUN apt-get update \
 
 COPY --from=build --chown=0:0 /opt/infrahub-sync/venv /opt/infrahub-sync/venv
 COPY --chown=0:0 pyproject.toml uv.lock /opt/infrahub-sync/
+# The built web interface, served by the Sync API at the root.
+COPY --from=web --chown=0:0 /src/frontend/dist /opt/infrahub-sync/web
 
 ENV PATH=/opt/infrahub-sync/venv/bin:$PATH \
     HOME=/var/lib/infrahub-sync \
     PREFECT_HOME=/var/lib/infrahub-sync/prefect \
-    TMPDIR=/tmp/infrahub-sync
+    TMPDIR=/tmp/infrahub-sync \
+    INFRAHUB_SYNC_WEB_DIRECTORY=/opt/infrahub-sync/web
 
 USER 10001:10001
 WORKDIR /var/lib/infrahub-sync

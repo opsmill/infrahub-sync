@@ -86,7 +86,9 @@ class WarmSourceReadMixin:
         """Remove the stored record `source_id` of `kind`, and return its unique ID, when the read stored one."""
         if source_id is None:
             return None
-        unique_id = self._read_state.peer_index.pop((kind, source_id), None)
+        state = self._read_state
+        state.filtered_peer_fields = {item for item in state.filtered_peer_fields if item[:2] != (kind, source_id)}
+        unique_id = state.peer_index.pop((kind, source_id), None)
         if unique_id is None:
             return None
         item = self.store.get(model=kind, identifier=unique_id)
@@ -110,6 +112,7 @@ class WarmSourceReadMixin:
         del state.report.entries[entries_from:]
         state.report.filtered_ids.pop(kind, None)
         state.retained_ids.pop(kind, None)
+        state.filtered_peer_fields = {item for item in state.filtered_peer_fields if item[0] != kind}
         for key in [key for key in state.not_loaded if key[0] == kind]:
             del state.not_loaded[key]
         # The removed records no longer resolve a reference; the cold read indexes its own.

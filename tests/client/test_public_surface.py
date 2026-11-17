@@ -84,6 +84,7 @@ def test_client_originated_exception_taxonomy_is_closed() -> None:
         "ClientTimeoutError",
         "CompatibilityError",
         "ConfigsAPIError",
+        "NotSyncAPIError",
         "ProtocolError",
         "RunTerminalError",
         "RunWaitTimeoutError",

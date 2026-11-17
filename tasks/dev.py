@@ -16,7 +16,7 @@ services (`sync` profile) and a local Infrahub (`infrahub` profile). With
 against those containers' loopback publications. No task writes a PID file or keeps a
 process in the background. `dev.smoke` notices this mode from the running containers
 (the Prefect server runs, no `sync-api` container does) and first checks both host
-processes through the Sync API's `GET /status`.
+processes through the Sync API's `GET /api/status`.
 
 `dev.frontend` runs the web interface's development server on the host, in the
 foreground, against the Sync API of either mode.
@@ -29,8 +29,10 @@ variable that changes the stack changes the tasks too.
 
 `build_inputs_hash()` and `rebuild_decision()` tell whether `infrahub-sync:dev` still
 matches the checkout: the image carries the hash of the files that shape it as a label,
-and a code change alone never changes that hash, because the stack mounts the source
-over the installed copy.
+and a change to the Python source alone never changes that hash, because the stack mounts
+the source over the installed copy. A change to the web interface's build inputs under
+`frontend/` changes it, because the image carries the built web interface. After a change
+there, `dev.start` or `dev.build` rebuilds the image; `dev.restart` does not.
 
 To use an Infrahub started from Infrahub's own Compose file (`docker compose -p infrahub`),
 run `dev.start --infrahub-network infrahub_default`: the stack runs the Sync services only and
@@ -62,7 +64,6 @@ if TYPE_CHECKING:
 NAMESPACE = "INFRAHUB-SYNC-DEV"
 
 API_URL = "http://127.0.0.1:8001"
-PREFECT_URL = "http://127.0.0.1:4230"
 # The development stack's Compose file, relative to the repository root.
 DEV_COMPOSE_FILE = "development/docker-compose.yml"
 # The Infrahub services' own file, which the development file includes.
@@ -87,6 +88,27 @@ DEV_IMAGE = "infrahub-sync:dev"
 BUILD_INPUTS_LABEL = "org.opsmill.infrahub-sync.build-inputs"
 # The files whose bytes decide whether the image must be rebuilt, in hashing order.
 BUILD_INPUT_FILES = ("Dockerfile", "pyproject.toml", "uv.lock")
+# The web interface's build inputs: the paths the Dockerfile's `web` stage copies, in
+# hashing order. A directory contributes every file under it, and a missing path, such
+# as the submodule in a checkout that did not fetch it, contributes nothing.
+BUILD_INPUT_FRONTEND_PATHS = (
+    "frontend/.npmrc",
+    "frontend/package.json",
+    "frontend/pnpm-lock.yaml",
+    "frontend/pnpm-workspace.yaml",
+    "frontend/index.html",
+    "frontend/vite.config.ts",
+    "frontend/tsconfig.json",
+    "frontend/tsr.config.json",
+    "frontend/src",
+    "frontend/vendor/infrahub/frontend/packages/ui",
+)
+# Directories that a local install or build creates and the image build never copies.
+BUILD_INPUT_SKIPPED_DIRECTORIES = frozenset({"node_modules", "dist", "__pycache__"})
+# Files `.dockerignore` keeps out of the build context: hashing them would ask for a rebuild
+# that changes nothing in the image, for example after Finder writes a `.DS_Store`.
+BUILD_INPUT_SKIPPED_FILES = frozenset({".DS_Store"})
+BUILD_INPUT_SKIPPED_SUFFIXES = (".pyc",)
 # The service whose build produces `infrahub-sync:dev`; every Sync-image service uses it.
 BUILD_SERVICE = "prefect-server"
 # What `docker image inspect` prints for a label the image does not carry.
@@ -113,7 +135,7 @@ DEPS_SMOKE_STACK = "dev-deps"
 DEPS_PROFILES = ("infrahub",)
 # Where `dev.api` listens: loopback only, like every publication of the stack.
 HOST_PROCESS_ADDRESS = "127.0.0.1"
-API_FACTORY = "infrahub_sync.service.serve:build_app"
+API_FACTORY = "infrahub_sync.service.serve:build_service"
 DATABASE_URL_VARIABLE = "INFRAHUB_SYNC_DATABASE_URL"
 S3_ENDPOINT_VARIABLE = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 # The bundled store's service, the host name its endpoint names inside the stack.
@@ -127,7 +149,6 @@ FRONTEND_DIRECTORY = "frontend"
 FRONTEND_SUBMODULE = "frontend/vendor/infrahub"
 FRONTEND_UI_PACKAGE = "frontend/vendor/infrahub/frontend/packages/ui"
 FRONTEND_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
-FRONTEND_TOKEN_VARIABLE = "INFRAHUB_SYNC_API_TOKEN"  # noqa: S105 -- a variable name
 FRONTEND_URL = "http://localhost:3000"
 # The `/status` worker states that mean a worker takes runs (see `service._service_status`).
 AVAILABLE_WORKER_STATES = frozenset({"ready", "busy"})
@@ -387,11 +408,47 @@ def resolved_compose(context: Context | None = None, target: ComposeTarget | Non
     return resolved
 
 
+def _frontend_build_inputs(root: Path) -> list[Path]:
+    """Return the files of `BUILD_INPUT_FRONTEND_PATHS` that exist, in hashing order.
+
+    A directory's files are sorted by relative path, without what `.dockerignore` excludes:
+    `node_modules`, `dist` and `__pycache__` directories, `.DS_Store` and `*.pyc` files.
+    """
+    files: list[Path] = []
+    for name in BUILD_INPUT_FRONTEND_PATHS:
+        path = root / name
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            found = (
+                candidate
+                for candidate in path.rglob("*")
+                if candidate.is_file()
+                and candidate.name not in BUILD_INPUT_SKIPPED_FILES
+                and not candidate.name.endswith(BUILD_INPUT_SKIPPED_SUFFIXES)
+                and not BUILD_INPUT_SKIPPED_DIRECTORIES.intersection(candidate.relative_to(path).parts)
+            )
+            files.extend(sorted(found, key=lambda candidate: candidate.relative_to(root).as_posix()))
+    return files
+
+
 def build_inputs_hash(root: Path = REPO_BASE) -> str:
-    """Return the SHA-256 over `Dockerfile`, `pyproject.toml` and `uv.lock`, in that order."""
+    """Return the SHA-256 of the image's build inputs.
+
+    The hash covers the bytes of `Dockerfile`, `pyproject.toml` and `uv.lock`, in that
+    order, then, for every file of the web interface's build inputs, its relative path
+    and its bytes. A checkout without the frontend submodule still yields a hash.
+    """
     digest = hashlib.sha256()
     for name in BUILD_INPUT_FILES:
         digest.update((root / name).read_bytes())
+    for path in _frontend_build_inputs(root):
+        content = path.read_bytes()
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(str(len(content)).encode())
+        digest.update(b"\0")
+        digest.update(content)
     return digest.hexdigest()
 
 
@@ -694,7 +751,7 @@ def in_dependencies_mode(context: Context, settings: DevSettings) -> bool:
 
 
 def check_host_processes(settings: DevSettings) -> None:
-    """Fail naming the missing host process, from the Sync API's `GET /status` alone.
+    """Fail naming the missing host process, from the Sync API's `GET /api/status` alone.
 
     No answer names `dev.api`. An answer whose worker is not available names
     `dev.worker`. The Sync API reads worker availability from Prefect itself, so this
@@ -702,7 +759,7 @@ def check_host_processes(settings: DevSettings) -> None:
     """
     import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
 
-    status_url = f"{settings.sync_api_url}/status"
+    status_url = f"{settings.sync_api_url}/api/status"
     try:
         response = httpx.get(status_url, timeout=10)
         response.raise_for_status()
@@ -750,7 +807,8 @@ def dev_start(context: Context, infrahub_network: str = "") -> None:
     )
     _attach_worker(context, settings)
     _print_urls(settings)
-    print(f" - [{NAMESPACE}] After a code change: `uv run invoke dev.restart`")
+    print(f" - [{NAMESPACE}] After a Python change: `uv run invoke dev.restart`")
+    print(f" - [{NAMESPACE}] After a web interface change: `uv run invoke dev.start`")
 
 
 @task(name="restart")
@@ -819,7 +877,7 @@ def dev_smoke(context: Context) -> None:
     stack = "dev"
     if in_dependencies_mode(context, settings):
         print(
-            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/status"
+            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/api/status"
         )
         check_host_processes(settings)
         stack = DEPS_SMOKE_STACK
@@ -891,37 +949,6 @@ def dev_worker(context: Context) -> None:
         context.run(worker_command(settings), env=environment, pty=True)
 
 
-def frontend_token(bearer_tokens: str, shell_token: str = "") -> str:
-    """Return the bearer token the web interface's development server sends to the Sync API.
-
-    A token the shell exports as INFRAHUB_SYNC_API_TOKEN wins. Otherwise the stack's
-    principals decide: the public development token when a principal has it, or the token
-    of the only principal. With several principals and none of them the development one,
-    the task cannot choose, so it asks for the variable. The token is never printed.
-    """
-    if shell_token:
-        return shell_token
-    try:
-        principals = json.loads(bearer_tokens)
-    except ValueError:
-        principals = None
-    tokens = (
-        [
-            str(principal["token"])
-            for principal in principals.values()
-            if isinstance(principal, dict) and principal.get("token")
-        ]
-        if isinstance(principals, dict)
-        else []
-    )
-    if API_TOKEN in tokens:
-        return API_TOKEN
-    if len(tokens) == 1:
-        return tokens[0]
-    msg = f"Cannot choose a principal from BEARER_TOKENS; export {FRONTEND_TOKEN_VARIABLE} with the token to use"
-    raise DevStackError(msg)
-
-
 def _frontend_submodule_present() -> bool:
     return (REPO_BASE / FRONTEND_UI_PACKAGE / "package.json").is_file()
 
@@ -932,20 +959,19 @@ def dev_frontend(context: Context) -> None:
 
     Fetches the `frontend/vendor/infrahub` submodule when it is missing (a checkout it
     already holds is left as it is), installs the locked dependencies, then runs `pnpm dev`
-    in the foreground. The server forwards `/api` to the Sync API with the bearer token;
-    the token stays in the server process and never reaches the browser bundle.
+    in the foreground. The server forwards `/api` to the Sync API unchanged and adds no
+    token: the person enters a token in the page. The task prints which token to enter,
+    with the label `dev.start` prints for the Sync API, never a token from BEARER_TOKENS.
     """
     settings = dev_settings(context)
-    environment = {
-        FRONTEND_URL_VARIABLE: settings.sync_api_url,
-        FRONTEND_TOKEN_VARIABLE: frontend_token(settings.bearer_tokens, os.environ.get(FRONTEND_TOKEN_VARIABLE, "")),
-    }
+    environment = {FRONTEND_URL_VARIABLE: settings.sync_api_url}
     if not _frontend_submodule_present():
         with context.cd(ESCAPED_REPO_PATH):
             context.run(f"git submodule update --init {FRONTEND_SUBMODULE}", pty=True)
     with context.cd(escape_path(REPO_BASE / FRONTEND_DIRECTORY)):
         context.run("pnpm install --frozen-lockfile", pty=True)
         print(f" - [{NAMESPACE}] Web interface on {FRONTEND_URL}, Sync API {settings.sync_api_url}; Ctrl-C stops it")
+        print(f" - [{NAMESPACE}] Token to enter in the page: {bearer_label(settings.bearer_tokens)}")
         context.run("pnpm dev", env=environment, pty=True)
 
 

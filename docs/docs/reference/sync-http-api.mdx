@@ -13,6 +13,13 @@ separate four-parameter deployment. Use the Sync API when a trusted automation c
 needs reviewed-plan apply, durable results, artifact retrieval, or actor-scoped mutation
 control.
 
+Every route in this document is relative to `/api` on the address of the Sync service. For
+example, `GET /runs` is `http://127.0.0.1:8000/api/runs`, the interactive documentation is at
+`/api/docs` and the OpenAPI document is at `/api/openapi.json`. The root of the address serves the
+web interface. A script that calls the Sync API directly adds `/api` to the address of the Sync
+service. The `infrahub-sync` CLI adds it itself, so `INFRAHUB_SYNC_API_URL` holds the address
+without `/api`.
+
 ## Terms
 
 - **Configuration**: a registered sync definition, identified by `config_id`. Its `name` is
@@ -47,8 +54,7 @@ any of these modules. Ordinary CLI and Python API imports remain Prefect-free.
 You also need:
 
 - a Prefect API and an existing process work pool;
-- a worker with access to the allowed Sync configuration directory, needed only for
-  legacy unregistered runs;
+- a Sync worker that takes runs from that work pool;
 - PostgreSQL for product records; and
 - an S3-compatible bucket for immutable artifacts.
 
@@ -157,7 +163,6 @@ Configure the worker environment before it starts:
 | Variable | Requirement |
 | --- | --- |
 | `PREFECT_API_URL` | Prefect API used by the deployment and worker. |
-| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Legacy runs only. A registered run reads its declared configuration from PostgreSQL and resolves both adapters from installed code, so a worker serving registered runs needs no directory and no configuration mount. Set it only where unregistered runs — which resolve a `SyncConfig` file by name — still have to be served; those runs refuse when it is unset or names no directory. |
 | `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
 | `INFRAHUB_SYNC_S3_BUCKET` | Non-empty bucket for immutable product artifacts. |
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
@@ -183,8 +188,9 @@ The service flow accepts exactly eight bounded parameters:
 | `expected_checksum` | SHA-256 string or `null` | Reviewed checksum required by `apply`. |
 | `confirm_writes` | `bool` | Required for `apply` and composed `sync`. |
 
-`config_id`, `registry_version`, and `package_checksum` must be all present for a
-registered execution or all `null` for a legacy execution.
+`config_id`, `registry_version`, and `package_checksum` must all be present. The worker
+refuses an execution when any of them is `null`, and it refuses a run that has no registered
+configuration, before it reads the source or the destination.
 
 The API rejects configured secret values in flow-bound request fields. Credentials,
 endpoints, adapter instances, and filesystem paths are never flow parameters.
@@ -204,17 +210,18 @@ export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
 python -m infrahub_sync.service.serve
 ```
 
-:::warning First startup after upgrading a legacy product store
+:::warning A product database created by an earlier version is not upgraded
 
-A validated single legacy startup migrates `mutation_receipts.run_id` and
-`mutation_receipts.prefect_key` from `is_nullable=NO/NO` to nullable. Two simultaneous
-first startups while the PostgreSQL catalog is still legacy can deadlock one startup.
-The failed startup fails closed before worker claim or admission, writes no Sync data,
-and the catalog converges through the successful startup.
+Startup creates the tables, indexes and constraints of the product database when they are
+missing. It does not add a column to a table that already exists, so a table that an earlier
+version created keeps the columns of that version.
 
-Restart the failed process after the first migration converges. Repeated or concurrent
-startups against an already-migrated nullable catalog are supported. The failed startup
-does not retry automatically.
+Start this version on an empty database. On a database that an earlier version created,
+startup fails, or a later request fails, when it reaches a missing column. The runs,
+configurations and audit events in the earlier database are not copied to the new one.
+
+Several processes can start at the same time on the same database, whether it is empty or
+already has the tables.
 
 :::
 
@@ -222,7 +229,7 @@ The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and
 network access controls at your ingress boundary. The bearer-token provider is the MVP
 application authentication boundary, not a replacement for transport security.
 
-Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter the configured token
+Open `http://127.0.0.1:8000/api/docs`, select **Authorize**, and enter the configured token
 without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
 
 ## Discovery and liveness
@@ -386,6 +393,65 @@ No field holds an exception message, an address, a secret or configuration conte
 A run can hold `plan`, `verify` and `apply` entries in order. To show one read state for a
 run, use the latest entry whose `purpose` is `plan` or `sync`. The change is additive:
 existing fields keep their meaning and order.
+
+### Timings of the plan step
+
+Each orchestration entry also carries `plan_step`: the start and the end of each part of the
+plan step of a `plan` or `sync` execution. Read it to find which part of a plan takes the
+time, or which part was running when a plan stopped. The routes that return `reads` return
+`plan_step` too; `GET /runs` does not.
+
+`plan_step` and each of its parts are subject to change in a later release.
+
+```json
+"plan_step": {
+  "running": null,
+  "parts": {
+    "waiting":   {"started_at": "2026-11-16T10:00:00Z", "ended_at": "2026-11-16T10:00:04Z", "stopped_at": null},
+    "preparing": {"started_at": "2026-11-16T10:00:04Z", "ended_at": "2026-11-16T10:00:09Z", "stopped_at": null},
+    "comparing": {"started_at": "2026-11-16T10:00:41Z", "ended_at": "2026-11-16T10:01:13Z", "stopped_at": null},
+    "checking":  {"started_at": "2026-11-16T10:01:13Z", "ended_at": "2026-11-16T10:01:15Z", "stopped_at": null},
+    "saving":    {"started_at": "2026-11-16T10:01:15Z", "ended_at": "2026-11-16T10:01:16Z", "stopped_at": null}
+  }
+}
+```
+
+`parts` holds one entry per part that started, in the order the plan step runs them:
+
+| Part | Period |
+| --- | --- |
+| `waiting` | From the submission of the execution (`submitted_at`) to the moment a worker takes it (`claimed_at`). Subject to change. |
+| `preparing` | From `claimed_at` to the start of the earlier of the two reads. Subject to change. |
+| `comparing` | Deriving the operations from the two reads. Subject to change. |
+| `checking` | The checks that run on the derived plan before it is saved, which build the plan report. Subject to change. |
+| `saving` | Writing the plan and publishing it, up to the moment the run returns its plan. Subject to change. |
+
+The two reads run between `preparing` and `comparing`. Their times stay in `reads` and are not
+repeated in `plan_step`.
+
+Each entry holds three times:
+
+- `started_at` is the start of the part.
+- `ended_at` is the end of the part, and is `null` while the part runs.
+- `stopped_at` is set only for the part that was running when the execution failed, was
+  cancelled or was interrupted. It is the execution's `terminal_at`. When Prefect reports the
+  flow run as `failed`, `crashed` or `cancelled` and the execution has no `terminal_state`
+  yet, that part is returned with `started_at` only.
+
+`running` names the part that runs, and is `null` once the execution has a verdict. A part
+that did not start has no entry, so no part holds a duration that was not measured. A
+`waiting` entry is returned only when `claimed_at` is not before `submitted_at`. When an
+execution completed and the stored timings still name a running part, that part has no entry,
+because its end was not recorded; the Sync API logs a warning.
+
+`plan_step` is `null` for a `verify` or `apply` execution, for an execution recorded before the
+Sync API stored these timings, and for a `plan` or `sync` execution that the worker has not
+started yet. When the worker cannot store a timing, it logs a warning with the error class and
+continues the plan. No field holds an error message or a value from the source or destination
+data.
+
+`running` and the part names are strings in the client model, so a client from this release
+reads a run response that holds a part added by a later release.
 
 ## Routes
 
@@ -668,11 +734,7 @@ destination branch. The event types are:
 | `infrahub_sync.config.refused`, `.replayed`, `.unavailable` | The same decisions as for a run, on a configuration request. |
 
 A request refused for a missing or invalid token is not an event, and `GET /events` never
-returns it. Events recorded before this release get a type when the Sync API first starts on
-this release, from their operation and outcome. They name the account of their actor, but no
-configuration, version or branch, because the earlier record did not hold them. A request
-refused for a missing or invalid token that an earlier release recorded gets no type and is
-not listed.
+returns it.
 
 ### Read why a stage failed
 
@@ -731,7 +793,7 @@ Address the exact registered configuration revision by its `config_id` and
 `registry_version`:
 
 ```bash
-curl --request POST http://127.0.0.1:8000/runs \
+curl --request POST http://127.0.0.1:8000/api/runs \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: plan-inventory-2026-08-10" \
   --header "Content-Type: application/json" \
@@ -757,7 +819,7 @@ Read the plan after the worker publishes it:
 
 ```bash
 curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/plan
 ```
 
 The plan response includes its checksum, checksum verification state, summary, verification
@@ -782,7 +844,7 @@ Three routes list the entries, in the order of the saved plan:
 
 ```bash
 curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
-  "http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan/problems?offset=0&limit=500&problem_type=dropdown_value_not_in_choices"
+  "http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/plan/problems?offset=0&limit=500&problem_type=dropdown_value_not_in_choices"
 ```
 
 `GET /runs/{run_id}/plan/problems`, `/plan/left-out` and `/plan/kept` take `offset` and `limit`
@@ -806,7 +868,7 @@ confirmation that the left-out records were reviewed: only an apply request carr
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/verify \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/verify \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: verify-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -830,10 +892,7 @@ The checks, in the order they run and are reported:
 | `lineage` | The plan records an import account, the apply would run with that same import account, and the `source` and `owner` nodes the package names exist in the destination. Reported only for a destination that records lineage, such as Infrahub. |
 
 On success, `GET /runs/{run_id}/results` holds the result under `verification`, with `checks`
-listing every check that passed, in order, and `destination_checked: true`. A run with no
-registered configuration binding cannot be applied by the service: its verification runs the
-file checks only, from `checkpoint` to `format_version`, and reports
-`destination_checked: false`.
+listing every check that passed, in order, and `destination_checked: true`.
 
 When a check fails, the verification stage fails, and `GET /runs/{run_id}` reports the failure
 with the name of the check, what was expected and what was found, as for a refused `apply`.
@@ -863,7 +922,7 @@ to the destination and submits no execution:
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/approve \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/approve \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: approve-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -915,7 +974,7 @@ Apply requires the exact retained checksum and explicit write confirmation:
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/apply \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/apply \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: apply-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -1041,7 +1100,7 @@ confirmation:
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/resume \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/resume \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: resume-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \

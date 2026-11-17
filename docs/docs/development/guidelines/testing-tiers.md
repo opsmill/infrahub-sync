@@ -156,7 +156,7 @@ Three families need more detail than the tables give:
   parameter carries the `integration` mark. Alongside them,
   [`test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py) contributes two standalone
   marked tests that are not parametrized: `test_postgresql_run_store_initializes_against_a_real_server`,
-  a schema-bootstrap check, and `test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema`,
+  a schema-bootstrap check, and `test_postgresql_initialization_ignores_same_named_constraints_in_a_sibling_schema`,
   which creates two schemas. It also adds a `postgresql` parameter to its redaction tests. Only a
   real server can make these checks.
 
@@ -208,11 +208,11 @@ Three families need more detail than the tables give:
   `%s`-translating adapter. They check the store's PostgreSQL code paths, not a PostgreSQL
   server; the real-server cases are the `integration`-marked ones listed above.
 
-V3 refuses configured sync stores, including Redis. The remaining Redis compatibility
-checks are unit tests and need no Redis server:
+V3 refuses configured sync stores, including Redis. The refusal checks are unit tests and
+need no Redis server:
 
 ```bash
-uv run pytest tests/test_redis_store_compat.py tests/test_sync_store_policy.py tests/service/test_sync_store_policy.py
+uv run pytest tests/test_sync_store_policy.py tests/service/test_sync_store_policy.py
 ```
 
 Most of the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration)
@@ -385,11 +385,14 @@ Run these commands from the repository root:
    uv run infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import --reason "import the local NetBox demo data"
    ```
 
-On the pinned dataset and the current example mapping, the plan has 1,688 operations: 1,687
-creates and one delete, which apply does not execute. After the sync, the object count of
-each kind on the `netbox-import` branch equals that kind's planned operations. A different
-count means that the mapping, the adapter, or the pinned data changed. Explain that change
-in the pull request.
+On the pinned dataset and the current example mapping, the plan has 1,687 operations, all
+creates. It holds no delete for the nodes that Infrahub creates itself, such as the built-in
+`default` IP namespace. A second plan on the same data holds 0 operations. After the sync,
+the object count of each kind on the `netbox-import` branch equals that kind's planned
+operations, except `IpamNamespace`: the branch also holds the `default` namespace, so its count
+is one more than the planned creates. `INFRAHUB_CREATED_NODES` in
+`.github/scripts/nightly_e2e.py` records that difference. A different count means that the mapping, the adapter, or the pinned data
+changed. Explain that change in the pull request.
 
 When you finish, remove both stacks and their data volumes:
 
@@ -599,7 +602,7 @@ INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=smoke uv run pytest -m docker t
 
 This is what the image check runs on a pull request, once per platform, on a native
 `linux/amd64` and a native `linux/arm64` runner. It checks that the CLI answers `--help`, that
-the API answers `GET /version`, and that the image carries its OCI labels. The revision label
+the API answers `GET /api/version`, that the image holds the built web interface, and that the image carries its OCI labels. The revision label
 case compares the label to the commit checked out, so a local build without labels fails that
 case. Pass the same `--label` values CI passes to reproduce it in full.
 
@@ -720,7 +723,8 @@ uv run invoke tests.check-310
 
 This reproduces the three CI legs your active environment cannot reach:
 
-1. `ty` with the Python 3.10 exclusions — `--exclude infrahub_sync/service --exclude tests/service`;
+1. `ty` with the Python 3.10 exclusions — `--exclude infrahub_sync/service --exclude tests/service
+   --exclude infrahub_sync/testcontainers --exclude tests/testcontainers`;
 2. the unit tests on Python 3.10 with the `dev` and `prefect` extras;
 3. the unit tests on Python 3.10 with the `dev` extra alone, which is the base install that
    has no service dependencies.

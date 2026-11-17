@@ -85,7 +85,7 @@ def _client(responses: list[dict[str, object] | BaseException]) -> tuple[SyncCli
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.url.path)
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(
                 200,
                 json={"server_version": "3", "api_versions": ["v3-unstable"], "stability": "unstable"},
@@ -142,7 +142,7 @@ def test_wait_pins_the_new_execution_after_an_earlier_terminal_plan() -> None:
     result = client.wait_for_run(accepted, timeout=10, poll_interval=0.001)
 
     assert result.run.phase == "applied"
-    assert calls == ["/version", "/runs/run-1"]
+    assert calls == ["/api/version", "/api/runs/run-1"]
 
 
 def test_unknown_state_polls_to_the_exact_deadline_without_a_final_request(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,7 +161,7 @@ def test_unknown_state_polls_to_the_exact_deadline_without_a_final_request(monke
         client.wait_for_run(accepted, timeout=5, poll_interval=2)
 
     assert clock.sleeps == [2, 2, 1]
-    assert calls == ["/version", "/runs/run-1", "/runs/run-1"]
+    assert calls == ["/api/version", "/api/runs/run-1", "/api/runs/run-1"]
     assert raised.value.run_id == "run-1"
     assert raised.value.execution_state is None
 
@@ -176,7 +176,7 @@ def test_poll_request_uses_remaining_budget_and_cannot_return_after_deadline(
     request_timeouts: list[dict[str, float]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(
                 200,
                 json={"server_version": "3", "api_versions": ["v3-unstable"], "stability": "unstable"},
@@ -287,4 +287,4 @@ def test_observer_exception_aborts_wait_and_propagates_unchanged() -> None:
         )
 
     assert raised.value is failure
-    assert calls == ["/version", "/runs/run-1"]
+    assert calls == ["/api/version", "/api/runs/run-1"]

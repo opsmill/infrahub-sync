@@ -77,7 +77,7 @@ def test_the_plan_finishes_with_every_problem_and_no_write(plan_problems: PlanPr
     assert sorted({problem["problem_type"] for problem in planned.problems}) == sorted(PROBLEM_TYPES)
     assert planned.manifest["report"]["problems"] == 10
     # The stand-in Infrahub client has no write method: a write would have failed the plan.
-    assert planned.loaded_manifest.format_version == 4
+    assert planned.loaded_manifest.format_version == 5
 
 
 def test_dropdown_value_not_in_choices(plan_problems: PlanProblemFixture) -> None:

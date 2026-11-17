@@ -19,7 +19,7 @@ from infrahub_sync.plan.models import (
 _SITE = SourceRecordReference(kind="LocationSite", identity={"name": "paris"}, source_id="1")
 
 
-def test_the_nine_problem_type_names_are_stable() -> None:
+def test_the_ten_problem_type_names_are_stable() -> None:
     assert PROBLEM_TYPES == (
         "dropdown_value_not_in_choices",
         "duplicate_source_identity",
@@ -30,6 +30,7 @@ def test_the_nine_problem_type_names_are_stable() -> None:
         "peer_not_found_in_source",
         "destination_identity_ambiguous",
         "transform_failed",
+        "required_relationship_empty_in_source",
     )
 
 

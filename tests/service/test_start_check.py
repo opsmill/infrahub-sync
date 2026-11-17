@@ -222,7 +222,7 @@ def test_the_api_checks_the_work_pool_it_reconciles(monkeypatch: pytest.MonkeyPa
 
 
 def test_the_api_main_exits_non_zero_on_a_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refused_build() -> NoReturn:
+    def refused_build(**_factories: object) -> NoReturn:
         raise StartRefusedError
 
     monkeypatch.setattr(serve, "build_app", refused_build)

@@ -43,6 +43,7 @@ from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResol
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.orchestration import PrefectOrchestration
 from infrahub_sync.service.service import RunService
+from infrahub_sync.service.web import create_site
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
@@ -139,7 +140,7 @@ def _failed_run(
     flow_run_id = str(uuid5(NAMESPACE_URL, RUN_ID))
     append_execution(projection, RUN_ID, PrefectExecutionLink(flow_run_id=flow_run_id, purpose="plan", attempt=1))
     assert projection.claim_execution(RUN_ID, flow_run_id, worker_id=WORKER_ID)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "_claim_current_execution", lambda _projection, _run_id: (flow_run_id, WORKER_ID))
 
     def fail(*_args: object, **_kwargs: object) -> None:
@@ -204,7 +205,7 @@ def test_no_message_line_or_output_points_at_prefect(
     log_client.mode = mode
     orchestration = PrefectOrchestration(log_client)  # ty: ignore[invalid-argument-type] - the log reader's two calls only.
     test_client = TestClient(
-        create_app(RunService(projection, orchestration, secrets=resolver.secret_values), resolver)
+        create_site(create_app(RunService(projection, orchestration, secrets=resolver.secret_values), resolver), None)
     )
 
     def forward(request: httpx.Request) -> httpx.Response:
@@ -219,7 +220,7 @@ def test_no_message_line_or_output_points_at_prefect(
 
     responses = {
         path: test_client.get(path, headers=headers)
-        for path in (f"/runs/{RUN_ID}", f"/runs/{RUN_ID}/logs", f"/events?run_id={RUN_ID}")
+        for path in (f"/api/runs/{RUN_ID}", f"/api/runs/{RUN_ID}/logs", f"/api/events?run_id={RUN_ID}")
     }
     outputs = {
         command: RUNNER.invoke(cli_app, list(command), obj={"client": sync_client})
@@ -227,11 +228,11 @@ def test_no_message_line_or_output_points_at_prefect(
     }
 
     expected_logs = {"read": 200, "expired": 410, "unavailable": 503}[mode]
-    assert responses[f"/runs/{RUN_ID}/logs"].status_code == expected_logs
-    assert responses[f"/runs/{RUN_ID}"].status_code == 200
-    assert responses[f"/events?run_id={RUN_ID}"].status_code == 200
+    assert responses[f"/api/runs/{RUN_ID}/logs"].status_code == expected_logs
+    assert responses[f"/api/runs/{RUN_ID}"].status_code == 200
+    assert responses[f"/api/events?run_id={RUN_ID}"].status_code == 200
     if mode == "read":
-        served = [item["message"] for item in responses[f"/runs/{RUN_ID}/logs"].json()["items"]]
+        served = [item["message"] for item in responses[f"/api/runs/{RUN_ID}/logs"].json()["items"]]
         assert any("demo-test-017" in line for line in served)
         assert outputs["runs", "logs", RUN_ID].exit_code == 0
     findings = {

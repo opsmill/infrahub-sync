@@ -110,21 +110,20 @@ def test_every_documented_cli_call_names_commands_the_cli_has(call: str) -> None
     assert result.exit_code == 0, f"{call}: {result.output}"
 
 
-def test_the_api_reference_marks_the_configuration_directory_as_legacy_only() -> None:
-    """A registered worker reads declared configuration from PostgreSQL.
+def test_the_api_reference_lists_no_configuration_directory_setting() -> None:
+    """A worker reads declared configuration from PostgreSQL and no directory setting.
 
-    Left as a requirement, the reference would tell every deployed worker to
+    Listed as a worker setting, the reference would tell every deployed worker to
     mount a directory nothing opens — which is the shared filesystem this
     topology exists to remove.
     """
-    row = next(
+    rows = [
         line
         for line in API_REFERENCE.read_text(encoding="utf-8").splitlines()
         if line.startswith("| `INFRAHUB_SYNC_CONFIG_DIRECTORY` |")
-    )
+    ]
 
-    assert "Legacy" in row, row
-    assert "no configuration mount" in row, row
+    assert rows == []
 
 
 # ---------------------------------------------------------------------------

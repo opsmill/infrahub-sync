@@ -135,7 +135,6 @@ def _engine_with_destination_only_object(
         destination=destination,
         config=_instance(flags),  # ty: ignore[invalid-argument-type]  # engine guards config=None
         top_level=["widget"],
-        show_progress=False,
     )
     return engine, destination
 

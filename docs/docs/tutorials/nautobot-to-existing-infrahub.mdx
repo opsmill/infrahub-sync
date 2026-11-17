@@ -239,7 +239,7 @@ Recreate services whose environment changed, then check readiness:
 
 ```sh
 docker compose up -d --wait
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/status
 ```
 
 Continue only when the `/status` response shows `worker.state` as `ready`.
@@ -382,9 +382,13 @@ In the measured run, the source supplied `Global` and `a4-ns-blue` while the
 destination also contained its built-in `default`. The first plan recorded 17
 creates and one delete of `default`. Apply created the intended objects and left
 the built-in namespace unchanged in identifier, name, and description. The second plan contained
-zero creates, zero updates, and the same single recorded delete.
+zero creates, zero updates, and the same single recorded delete. A plan now leaves out
+the deletes of nodes that Infrahub creates itself, such as `default`, as
+[ADR 0047](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
+describes, so a plan of this configuration no longer records that delete.
 
-This follows the saved-plan contract: destination-only objects are recorded as
-deletes, but apply never executes them. Review each identity and verify the
-destination; do not treat an unexpected delete or a remaining create/update as
-acceptable merely because this example includes one recorded delete.
+Under the saved-plan contract, other destination-only objects are still recorded
+as deletes, and apply never executes them. Review the identity of each recorded
+delete and verify the destination. A plan of this configuration is expected to hold
+no delete, so treat any recorded delete, create or update on a second plan as a
+change to investigate.

@@ -10,7 +10,6 @@ from __future__ import annotations
 import inspect
 import json
 import sqlite3
-import sys
 from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -503,43 +502,12 @@ def test_a_well_typed_identifier_still_gets_the_stores_own_answer(tmp_path: Path
     assert raised.value.family == "not-found"
 
 
-def test_a_package_file_is_loaded_from_json_or_yaml(tmp_path: Path) -> None:
-    json_file = tmp_path / "package.json"
-    json_file.write_text('{"format_version": 1}', encoding="utf-8")
-    yaml_file = tmp_path / "package.yml"
-    yaml_file.write_text("format_version: 1\n", encoding="utf-8")
-
-    assert configs_service.load_package_content(json_file) == {"format_version": 1}
-    assert configs_service.load_package_content(yaml_file) == {"format_version": 1}
-
-
-def test_an_unreadable_package_file_is_a_request_refusal(tmp_path: Path) -> None:
-    with pytest.raises(configs_service.ConfigsRequestError):
-        configs_service.load_package_content(tmp_path / "absent.json")
-
-
-def test_a_package_file_too_nested_to_parse_is_a_request_refusal(tmp_path: Path) -> None:
-    # A real parse failure, not a monkeypatched raise. yaml.safe_load recurses once per nesting
-    # level, so a deeply nested file exhausts the interpreter stack and raises RecursionError -
-    # which is not a yaml.YAMLError and is not a defect in the declared package either. It is
-    # the caller's file that cannot be read, so it belongs to the request family like every
-    # other unusable input.
-    depth = sys.getrecursionlimit()
-    nested = tmp_path / "nested.yaml"
-    nested.write_text("[" * depth + "]" * depth, encoding="utf-8")
-
-    with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        configs_service.load_package_content(nested)
-
-    assert raised.value.family == "request"
-
-
 # --- One error boundary, so the declared vocabulary is total -----------------------------
 #
 # What is asserted below is the property, not a list of known escapes: any exception leaving
 # a public service operation is a ConfigsError from the declared vocabulary. Wherever a real
-# failure is available it is caused for real - a registry file that is not a database, a file
-# saved in the wrong encoding, a file describing an infinite structure - because this defect
+# failure is available it is caused for real - a registry file that is not a database -
+# because this defect
 # class survived two adversarial reviews on tests that only ever faked the raise, and a faked
 # raise cannot see which base class production code actually catches. Only the unforeseen
 # arm, which by definition no real dependency reaches, is driven by a monkeypatched raise.
@@ -570,49 +538,6 @@ def _raise_unforeseen(*args: object, **kwargs: object) -> object:
     del args, kwargs
     msg = "Zq7"
     raise _UnforeseenError(msg)
-
-
-def test_a_package_file_saved_in_another_encoding_is_a_request_refusal(tmp_path: Path) -> None:
-    # A real failure: the bytes really are CP1252. This is the likeliest of these mistakes to
-    # reach an operator - a package edited on Windows and saved as-is - and read_text raises
-    # UnicodeDecodeError, which is a ValueError and not an OSError, so the arm one line above
-    # it never saw it.
-    path = tmp_path / "cp1252.yaml"
-    path.write_bytes("format_version: 1\ndescription: café\n".encode("cp1252"))
-
-    with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        configs_service.load_package_content(path)
-
-    assert raised.value.family == "request"
-
-
-def test_a_recursive_package_file_is_a_request_refusal(tmp_path: Path) -> None:
-    # A real failure: an anchor that contains itself is legal YAML describing an infinite
-    # structure. safe_load returns it, and the JSON round-trip is where it breaks - json.dumps
-    # raises ValueError("Circular reference detected"), which the coercion probe swallows and
-    # the coercion itself did not guard. The caller's file is what cannot be read as a
-    # package, so it is a request refusal like every other unusable input.
-    path = tmp_path / "recursive.yaml"
-    path.write_text("&anchor\nkey: *anchor\n", encoding="utf-8")
-
-    with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        configs_service.load_package_content(path)
-
-    assert raised.value.family == "request"
-
-
-def test_a_package_file_whose_key_json_cannot_hold_is_a_request_refusal(tmp_path: Path) -> None:
-    # The same arm, a second real shape: an unquoted YAML date is a date, and a date used as a
-    # mapping key is a TypeError from json.dumps, because default=str stringifies values and
-    # never keys. It arrives at the same place as the recursive file and for the same reason -
-    # the coercion probe reads every dump failure as "coercion needed".
-    path = tmp_path / "dated-key.yaml"
-    path.write_text("? 2024-01-01\n: value\n", encoding="utf-8")
-
-    with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        configs_service.load_package_content(path)
-
-    assert raised.value.family == "request"
 
 
 def _corrupt_registry(tmp_path: Path) -> ProductProjection:
@@ -666,13 +591,6 @@ def test_a_corrupt_registry_file_is_a_storage_refusal(
     assert raised.value.family == "storage"
 
 
-def _load_a_written_package(tmp_path: Path) -> object:
-    """Load one legal package file, so only the patched dependency can fail the call."""
-    path = tmp_path / "package.yaml"
-    path.write_text("format_version: 1\n", encoding="utf-8")
-    return configs_service.load_package_content(path)
-
-
 def test_a_failing_text_helper_leaves_a_public_operation_inside_the_declared_vocabulary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -680,10 +598,10 @@ def test_a_failing_text_helper_leaves_a_public_operation_inside_the_declared_voc
     # The one place a monkeypatched raise is the right tool: this drives the *unforeseen* arm,
     # and an exception type the service has never met is by definition one no real dependency
     # raises today. Every other failure in this section is caused for real.
-    monkeypatch.setattr(configs_service.yaml, "safe_load", _raise_unforeseen)
+    monkeypatch.setattr(configs_service, "parse_configuration_package", _raise_unforeseen)
 
     with pytest.raises(configs_service.ConfigsError) as raised:
-        _load_a_written_package(tmp_path)
+        configs_service.register(package=package_data(), projection=_store(tmp_path))
 
     assert raised.value.family in _DECLARED_FAMILIES
     # The documented default: neither the caller's input nor the store, and it says so rather
@@ -736,7 +654,6 @@ def test_every_public_service_operation_carries_the_error_boundary() -> None:
         "get_version",
         "list_configs",
         "list_versions",
-        "load_package_content",
         "register",
         "validate",
     }
@@ -1746,43 +1663,6 @@ def test_configuration_name_follows_the_latest_registered_version(tmp_path: Path
     summary = configs_service.get_config(config_id=config_id, projection=projection)
     assert replayed.created is False
     assert (summary.name, summary.latest_version) == ("renamed", 2)
-
-
-def test_start_up_that_adds_the_name_column_fills_it_from_the_latest_version(tmp_path: Path) -> None:
-    """The start-up that adds ``configurations.name`` fills it; a package without a name leaves it NULL."""
-    root = tmp_path / "product-cache"
-    root.mkdir()
-    projection = local_product_projection(root)
-    registered = configs_service.register(package=package_data(), projection=projection)
-    config_id = registered.configuration.config_id
-    connection = sqlite3.connect(root / "product-records.sqlite3")
-    try:
-        # A store created before names were stored: drop the column, so that the next start-up
-        # adds it and fills it. Then add a configuration whose package has no name.
-        connection.execute("DROP INDEX configurations_name")
-        connection.execute("ALTER TABLE configurations DROP COLUMN name")
-        connection.execute(
-            "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)",
-            ("config-unnamed", "2026-11-04T09:00:00+00:00"),
-        )
-        connection.execute(
-            "INSERT INTO configuration_versions (config_id, registry_version, package_checksum, declared_content, "
-            "created_at) VALUES (?, ?, ?, ?, ?)",
-            ("config-unnamed", 1, "b" * 64, json.dumps({"format_version": 1}), "2026-11-04T09:00:00+00:00"),
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-    # Two start-ups: the second finds nothing left to fill and changes nothing.
-    for _start in range(2):
-        restarted = local_product_projection(root)
-        named = restarted.lookup_configuration(config_id).value
-        unnamed = restarted.lookup_configuration("config-unnamed").value
-        assert named is not None
-        assert unnamed is not None
-        assert named.name == "from-netbox"
-        assert unnamed.name is None
 
 
 def test_two_configurations_may_share_a_name_and_the_name_filter_returns_both(tmp_path: Path) -> None:

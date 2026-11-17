@@ -32,10 +32,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, get_args
 
 from diffsync import Adapter
+from infrahub_sdk.node.metadata import NodeMetadata
 
 from infrahub_sync import DiffSyncMixin, SyncInstance
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel
-from infrahub_sync.adapters.references import peer_unique_id
+from infrahub_sync.adapters.references import peer_unique_id, peer_unique_ids
 from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.plan.reader import load_plan_artifact
@@ -80,7 +81,12 @@ def reference_is_required(model: type[DiffSyncModel], field_name: str) -> bool:
 
 
 class FixtureSource(DiffSyncMixin, Adapter):
-    """In-memory source adapter that implements `list_records` and `record_to_data` only."""
+    """In-memory source adapter that implements `list_records` and `record_to_data` only.
+
+    A reference is `{"id": <source ID>}`, a list of those for a many relationship, or a
+    string that names the peer's unique ID directly, as the NetBox adapter passes a value
+    that is not a NetBox object (the `namespace_name` of the shipped example).
+    """
 
     type = "ProblemFixture"
 
@@ -112,6 +118,21 @@ class FixtureSource(DiffSyncMixin, Adapter):
                 continue
             if not value:
                 continue
+            if isinstance(value, list):
+                # A many reference: the peers resolve as the NetBox adapter resolves them.
+                data[mapped.name] = peer_unique_ids(
+                    self,
+                    mapped.reference,
+                    [str(peer["id"]) for peer in value],
+                    owner=(element.name, source_id),
+                    field=mapped.name,
+                    required=reference_is_required(model, mapped.name),
+                )
+                continue
+            if not isinstance(value, dict):
+                # A peer named by its unique ID, as the NetBox adapter passes `namespace_name`.
+                data[mapped.name] = value
+                continue
             data[mapped.name] = self._peer(
                 mapped.reference,
                 str(value["id"]),
@@ -128,14 +149,31 @@ class FixtureSource(DiffSyncMixin, Adapter):
 
 @dataclass
 class _StandInNode:
-    """One Infrahub node as the stand-in client returns it."""
+    """One Infrahub node as the stand-in client returns it.
+
+    `metadata` is the node metadata Infrahub returns beside the node, from the row's
+    `node_metadata` key; it is not part of `data`, so it never reaches the model data.
+    """
 
     id: str
     kind: str
     data: dict[str, Any]
+    metadata: NodeMetadata | None = None
 
     def get_kind(self) -> str:
         return self.kind
+
+    def get_node_metadata(self) -> NodeMetadata | None:
+        return self.metadata
+
+
+def _stand_in_node(kind: str, row: Mapping[str, Any]) -> _StandInNode:
+    """A stand-in node of `row`; a `node_metadata` key becomes the node's metadata, not data."""
+    data = dict(row)
+    metadata = data.pop("node_metadata", None)
+    return _StandInNode(
+        id=data["local_id"], kind=kind, data=data, metadata=None if metadata is None else NodeMetadata(metadata)
+    )
 
 
 class _StandInStore:
@@ -156,7 +194,7 @@ class _StandInClient:
         self._nodes = {kind: copy.deepcopy(rows) for kind, rows in nodes.items()}
 
     def all(self, *, kind: str, **_options: Any) -> list[_StandInNode]:  # noqa: ANN401
-        return [_StandInNode(id=row["local_id"], kind=kind, data=dict(row)) for row in self._nodes.get(kind, [])]
+        return [_stand_in_node(kind, row) for row in self._nodes.get(kind, [])]
 
 
 class FixtureDestination(InfrahubAdapter):
@@ -186,8 +224,15 @@ class FixtureDestination(InfrahubAdapter):
         """Read no metadata: the stand-in nodes record no last change."""
         self.metadata_read = False
 
-    def infrahub_node_to_diffsync(self, node: Any, *, mapped: Any = None) -> dict[str, Any]:  # noqa: ANN401, ARG002, PLR6301 - overrides the adapter method
-        """A stand-in node already holds model data."""
+    def infrahub_node_to_diffsync(self, node: Any, *, mapped: Any = None) -> dict[str, Any]:  # noqa: ANN401, ARG002 - overrides the adapter method
+        """A stand-in node already holds model data.
+
+        The stand-in reads no metadata (`metadata_read` is false), so the adapter's read loop
+        does not look for the mark of a node Infrahub created itself. This conversion, which
+        that loop calls once for each node it reads, records the mark instead, through the
+        adapter's own `_record_builtin_node` (spec 019 research R2).
+        """
+        self._record_builtin_node(node)
         return dict(node.data)
 
 
@@ -310,7 +355,6 @@ def build_potenda(  # noqa: PLR0913 - one keyword per part of the fixture a test
         top_level=fixture.order,
         run_dir=run_dir,
         run_id=run_id,
-        show_progress=False,
         concurrent_load=False,
     )
 

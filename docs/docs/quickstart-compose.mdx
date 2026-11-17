@@ -87,7 +87,7 @@ including the image version, is listed in
 
 ```sh
 docker compose up -d --wait --wait-timeout 420
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/status
 ```
 
 `up -d --wait` pulls the images and returns once every service is healthy. In the
@@ -98,10 +98,14 @@ wait a few seconds and repeat the request. If `up` fails, see
 A `ready` worker confirms the deployment is running; it does not check a source or
 destination.
 
+The same address serves the Sync web interface: open `http://127.0.0.1:8001` in a
+browser and enter a Sync API token. The Sync API is under `/api` on that address.
+See [Open the web interface](./compose-deployment.mdx#open-the-web-interface).
+
 ## Identify your installed version
 
 ```sh
-curl --fail --silent --show-error http://127.0.0.1:8001/version
+curl --fail --silent --show-error http://127.0.0.1:8001/api/version
 ```
 
 The response shows `server_version`. If you changed the API port, use that port

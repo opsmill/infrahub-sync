@@ -116,8 +116,8 @@ still come from the worker. For example, the IP Fabric SDK reads `IPF_CERT`, `IP
 and `IPF_TIMEOUT`, and a `.env` file in the worker's working directory.
 
 Direct adapter use without a registered package is different. The
-[Prefect remote run](./prefect-remote-run.mdx) and Python callers that load a `config.yml`
-directory let each adapter read its environment variables, such as `NETBOX_URL`, before the
+[Prefect remote run](./prefect-remote-run.mdx) loads the `config.yml` files under its
+configuration directory and lets each adapter read its environment variables, such as `NETBOX_URL`, before the
 declared settings. Each adapter page lists its variables.
 
 <!-- vale off -->

@@ -11,8 +11,8 @@ import yaml
 from infrahub_sync.plan.config_version import default_config_version
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.writer import PLAN_DIR_NAME
-from infrahub_sync.utils import get_instance
 from tests.plan.artifact_fixtures import RUN_ID
+from tests.sync_instances import get_instance
 from tests.test_potenda_plan_artifact import (
     KINDS,
     _FakeAdapter,

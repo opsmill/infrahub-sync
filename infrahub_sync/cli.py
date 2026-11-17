@@ -34,6 +34,7 @@ from infrahub_sync.client import (
     ConfigMutationRequest,
     ConfigsAPIError,
     CreateRunRequest,
+    NotSyncAPIError,
     PlanResource,
     ProtocolError,
     RegisteredConfigurationResource,
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
         PlanLastChangeResource,
         PlanOperationResource,
         PlanReportPageResource,
+        PlanStepPart,
         PublicRunResource,
         RecoveryAction,
         RunLogLine,
@@ -148,7 +150,10 @@ def main(
         None,
         "--api-url",
         envvar="INFRAHUB_SYNC_API_URL",
-        help="Absolute URL of the Sync API. Defaults to INFRAHUB_SYNC_API_URL.",
+        help=(
+            "Address of the Sync service, for example http://127.0.0.1:8001. The client adds /api. "
+            "Defaults to INFRAHUB_SYNC_API_URL."
+        ),
     ),
     verbosity: Verbosity = typer.Option(Verbosity.default, "--verbosity", help="Log verbosity level."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Shorthand for --verbosity verbose."),  # noqa: FBT003
@@ -164,7 +169,6 @@ def main(
     _setup_logging(level=level)
     ctx.ensure_object(dict)
     ctx.obj["api_url"] = api_url or ""
-    ctx.obj["verbosity"] = level
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 
@@ -222,9 +226,16 @@ def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -
 
 
 _CLIENT_INPUT_HINTS = {
-    "service_url": "set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API",
+    "service_url": (
+        "set INFRAHUB_SYNC_API_URL or pass --api-url to the address of the Sync service, "
+        "for example http://127.0.0.1:8001. The client adds /api."
+    ),
     "token": "set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token",
 }
+_NOT_SYNC_API_HINT = (
+    "Check INFRAHUB_SYNC_API_URL. It holds the address of the Sync service, without /api. "
+    "The Sync service and the CLI must come from the same release."
+)
 
 
 def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object], ...]]:
@@ -282,6 +293,16 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
                 ("terminal_outcome", error.terminal_outcome),
                 ("phase", error.phase),
                 ("outcome", error.outcome),
+            ),
+        )
+    elif isinstance(error, NotSyncAPIError):
+        result = (
+            "not-a-sync-api",
+            (
+                ("operation", error.operation),
+                ("address", error.url),
+                ("status", error.status),
+                ("hint", _NOT_SYNC_API_HINT),
             ),
         )
     elif isinstance(error, ProtocolError):
@@ -922,6 +943,23 @@ def _echo_reads(resource: RunResource) -> None:
                 ("destination_read", _side_read_text(reading.reads.destination)),
             )
         )
+    if reading is not None and reading.plan_step is not None:
+        running = reading.plan_step.running
+        _echo_fields(
+            tuple(
+                (f"plan_{_display(name)}", _plan_part_text(part, running=name == running))
+                for name, part in reading.plan_step.parts.items()
+            )
+        )
+
+
+def _plan_part_text(part: PlanStepPart, *, running: bool) -> str:
+    """Render one part of the plan step: its duration, `running`, or how it stopped (spec 019)."""
+    if part.ended_at is not None:
+        return f"{(part.ended_at - part.started_at).total_seconds():.1f}s"
+    if part.stopped_at is not None:
+        return f"stopped after {(part.stopped_at - part.started_at).total_seconds():.1f}s"
+    return "running" if running else "stopped"
 
 
 def _echo_apply_progress(resource: RunResource) -> None:
@@ -1090,6 +1128,10 @@ def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[P
     relationships = operation.relationships
     if relationships:
         typer.echo(f"  relationships: {json.dumps(relationships, sort_keys=True, separators=(',', ':'))}")
+        # Plan format 5: a one-peer reference with no peer empties that relationship (FR-009).
+        for reference in relationships:
+            if reference.get("cardinality") == "one" and not reference.get("peers"):
+                typer.echo(_display(f"  {reference.get('field')}: becomes empty"))
     for record in last_changes:
         typer.echo(_last_change_line(record))
 
@@ -1932,6 +1974,11 @@ def runs_show(
     keys that have no value. A side with no read state to return reads <none>. Neither line is printed when that
     execution has no read state: a run recorded before the read state, a stage the worker has not started, or a
     stage whose read state the worker could not store.
+    After them, one `plan_<part>` line per part of that execution's plan step that started: `plan_waiting`,
+    `plan_preparing`, `plan_comparing`, `plan_checking` and `plan_saving`. A part that ended shows its duration in
+    seconds, the part that runs shows `running`, and a part that was running when the stage failed, was cancelled or
+    was interrupted shows `stopped after <seconds>s`, or `stopped` when no stop time exists. No plan line is printed
+    for a run recorded before these timings. The plan step lines are subject to change in a later release.
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
     A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
     A run with a write adds a `progress:` line, a `resumable:` line, one `kind` line per kind with its committed,
@@ -2005,7 +2052,11 @@ def runs_plan(
         None, "--type", help="List only the problems of this problem type; requires --problems."
     ),
 ) -> None:
-    """Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records."""
+    """Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records.
+
+    The operations count holds only creates, updates and deletes.
+    A plan with 0 operations can still leave out records: problems, left-out and kept records are not operations.
+    """
     with _client_errors():
         lists = [name for name, chosen in (("problems", problems), ("left_out", left_out), ("kept", kept)) if chosen]
         if len(lists) > 1 or (lists and detail):

@@ -193,7 +193,7 @@ name comes from the project name `infrahub` you gave `docker compose -p` in
 ```bash
 export INFRAHUB_SYNC_API_URL="http://127.0.0.1:8001"
 export INFRAHUB_SYNC_API_TOKEN="infrahub-sync-dev-token"
-curl -sf -H "Authorization: Bearer ${INFRAHUB_SYNC_API_TOKEN}" "${INFRAHUB_SYNC_API_URL}/status"
+curl -sf -H "Authorization: Bearer ${INFRAHUB_SYNC_API_TOKEN}" "${INFRAHUB_SYNC_API_URL}/api/status"
 ```
 
 The response reports `"service": "ready"` when the worker is running. The API token
@@ -318,8 +318,8 @@ to review each plan before it writes.
 
 Run the same `plan` again to confirm the branch matches NetBox. After a successful import,
 the plan lists no creates, apart from records that other users added to the demo in the
-meantime. It records one delete of the built-in `default` IP namespace, and `apply` never
-runs deletes.
+meantime. It holds no delete for the nodes that Infrahub creates itself, such as the
+built-in `default` IP namespace, and `apply` never runs deletes.
 
 ## When a run fails
 

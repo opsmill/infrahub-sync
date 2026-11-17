@@ -19,7 +19,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
-from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResource
+from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResource, PlanStepPart, PlanStepTimings
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
@@ -86,6 +86,7 @@ from .orchestration import (
     normalized_pool_status,
 )
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
+from .plan_step import stage_plan_step
 from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
 from .resume_view import (
@@ -106,6 +107,26 @@ if TYPE_CHECKING:
     from .auth import Principal
 
 logger = logging.getLogger(__name__)
+
+
+def _plan_step_timings(link: PrefectExecutionLink, *, run_id: str, prefect_state: str | None) -> PlanStepTimings | None:
+    """The plan step timings of one execution as the run response returns them (spec 019, FR-014).
+
+    `None` for an execution that stored no plan step document, including every execution
+    recorded before the timings (FR-019).
+    """
+    state = stage_plan_step(link, run_id=run_id, prefect_state=prefect_state)
+    if state is None:
+        return None
+    return PlanStepTimings(
+        running=state.running,
+        parts={
+            name: PlanStepPart(started_at=times.started_at, ended_at=times.ended_at, stopped_at=times.stopped_at)
+            for name, times in state.parts.items()
+        },
+    )
+
+
 # How many plan operations the in-process cache of plan layouts holds, over all its runs
 # (research R14). A tier L plan has about 88,000 operations, and one cached operation takes
 # about 200 bytes, so the bound keeps the cache under about 40 MB in every API process.
@@ -353,8 +374,10 @@ class RunService:
         # so the stored branch is the saved plan's destination branch.
         destination_branch = effective_destination_branch(package.configuration.destination.settings, request.branch)
         if request.operation == "sync" and not request.confirm_writes:
-            self._audit(
-                None,
+            raise self._refusal(
+                409,
+                "confirmation-required",
+                "confirm_writes=true is required for sync",
                 actor=principal.actor,
                 operation="sync",
                 reason=request.reason,
@@ -363,10 +386,12 @@ class RunService:
                 registry_version=request.registry_version,
                 branch=destination_branch,
             )
-            raise self._error(409, "confirmation-required", "confirm_writes=true is required for sync")
         if request.operation == "sync" and approval_required():
-            self._audit(
-                None,
+            raise self._refusal(
+                409,
+                "approval-required-for-sync",
+                "this Sync API requires an approved plan before any write, so sync is refused; "
+                "run plan, approve and apply instead",
                 actor=principal.actor,
                 operation="sync",
                 reason=request.reason,
@@ -374,12 +399,6 @@ class RunService:
                 config_id=request.config_id,
                 registry_version=request.registry_version,
                 branch=destination_branch,
-            )
-            raise self._error(
-                409,
-                "approval-required-for-sync",
-                "this Sync API requires an approved plan before any write, so sync is refused; "
-                "run plan, approve and apply instead",
             )
 
         run = ProductRun(
@@ -530,53 +549,26 @@ class RunService:
             run_id=run_id,
             branch=request.branch,
         )
-        if not request.confirm_writes:
-            self._audit(
-                run_id,
-                actor=principal.actor,
-                operation="apply",
-                reason=request.reason,
-                outcome="refused-confirmation",
-            )
-            raise self._error(409, "confirmation-required", "confirm_writes=true is required for apply", run_id=run_id)
+        self._require_write_confirmation(run_id, request, principal, "apply")
         self._refuse_cancelled(run, principal, "apply", request.reason)
         if approval_required():
             self._require_matching_approval(run, request, principal)
         self._require_supported_run_configuration(run)
         plan = self._plan(run_id)
         if not plan.checksum_ok or plan.checksum != request.expected_checksum:
-            self._audit(
-                run_id,
+            raise self._refusal(
+                409,
+                "checksum-conflict",
+                "expected_checksum does not match the retained reviewed plan",
+                run_id=run_id,
                 actor=principal.actor,
                 operation="apply",
                 reason=request.reason,
                 outcome="refused-checksum",
             )
-            raise self._error(
-                409,
-                "checksum-conflict",
-                "expected_checksum does not match the retained reviewed plan",
-                run_id=run_id,
-            )
         # After the checksum, so the count refers to the plan the person reviewed, and before
         # the reservation, so a refusal takes no write admission (spec 007 FR-010, FR-011).
-        left_out = plan.summary.left_out
-        if left_out > 0 and not request.confirm_left_out:
-            self._audit(
-                run_id,
-                actor=principal.actor,
-                operation="apply",
-                reason=request.reason,
-                outcome="refused-left-out-not-confirmed",
-            )
-            raise ServiceAPIError(
-                409,
-                "left-out-confirmation-required",
-                f"this plan leaves out {left_out} records; confirm with confirm_left_out=true",
-                run_id=run_id,
-                secrets=self._secrets,
-                left_out=left_out,
-            )
+        self._require_left_out_confirmation(run_id, plan, request, principal, "apply")
         receipt = self._reserve_existing(
             run,
             principal,
@@ -625,29 +617,23 @@ class RunService:
                 self._require_matching_approval(run, request, principal, operation=operation)
             return await self._resume_or_replay(existing, parameters, principal, request.reason)
         self._require_non_secret_parameters(principal.actor, operation, request.reason, run_id=run_id)
-        if not request.confirm_writes:
-            self._audit(
-                run_id,
-                actor=principal.actor,
-                operation=operation,
-                reason=request.reason,
-                outcome="refused-confirmation",
-            )
-            raise self._error(409, "confirmation-required", "confirm_writes=true is required for resume", run_id=run_id)
+        self._require_write_confirmation(run_id, request, principal, operation)
         # A resume refuses every run it cannot resume with `run-not-resumable`, and the message
         # says why (FR-013). These checks come before the saved plan is read: a `sync` run that
         # stopped in its plan part wrote nothing and may have saved no plan (FR-017, research
         # R14). The store checks them again on the run's locked row.
         not_resumable = _not_resumable_before_plan(run)
         if not_resumable is not None:
-            self._audit(
-                run_id,
+            raise self._refusal(
+                409,
+                "run-not-resumable",
+                not_resumable,
+                run_id=run_id,
                 actor=principal.actor,
                 operation=operation,
                 reason=request.reason,
                 outcome="refused-run-not-resumable",
             )
-            raise self._error(409, "run-not-resumable", not_resumable, run_id=run_id)
         if approval_required():
             self._require_matching_approval(run, request, principal, operation=operation)
         self._require_supported_run_configuration(run)
@@ -664,42 +650,20 @@ class RunService:
             )
             raise
         if not plan.checksum_ok or plan.checksum != request.expected_checksum:
-            self._audit(
-                run_id, actor=principal.actor, operation=operation, reason=request.reason, outcome="refused-checksum"
-            )
-            raise self._error(
+            raise self._refusal(
                 409,
                 "checksum-conflict",
                 f"expected_checksum {request.expected_checksum} does not match the saved plan's checksum "
                 f"{plan.checksum}",
                 run_id=run_id,
-            )
-        left_out = plan.summary.left_out
-        if left_out > 0 and not request.confirm_left_out:
-            self._audit(
-                run_id,
                 actor=principal.actor,
                 operation=operation,
                 reason=request.reason,
-                outcome="refused-left-out-not-confirmed",
+                outcome="refused-checksum",
             )
-            raise ServiceAPIError(
-                409,
-                "left-out-confirmation-required",
-                f"this plan leaves out {left_out} records; confirm with confirm_left_out=true",
-                run_id=run_id,
-                secrets=self._secrets,
-                left_out=left_out,
-            )
-        requested = self._new_receipt(
-            actor=principal.actor,
-            idempotency_key=idempotency_key,
-            operation=operation,
-            target_run_id=run_id,
-            run_id=run_id,
-            body=body,
-            reason=request.reason,
-            now=datetime.now(timezone.utc),
+        self._require_left_out_confirmation(run_id, plan, request, principal, operation)
+        requested = self._run_receipt(
+            run_id, principal, idempotency_key, operation=operation, reason=request.reason, body=body
         )
         reserved, created = self._projection.reserve_resume(run_id, requested, secrets=self._secrets)
         self._require_matching_receipt(reserved, requested)
@@ -720,8 +684,69 @@ class RunService:
         """
         if run.phase != "cancelled":
             return
-        self._audit(run.run_id, actor=principal.actor, operation=operation, reason=reason, outcome="refused-cancelled")
-        raise self._error(409, "run-cancelled", RUN_CANCELLED_MESSAGE, run_id=run.run_id)
+        raise self._refusal(
+            409,
+            "run-cancelled",
+            RUN_CANCELLED_MESSAGE,
+            run_id=run.run_id,
+            actor=principal.actor,
+            operation=operation,
+            reason=reason,
+            outcome="refused-cancelled",
+        )
+
+    def _require_write_confirmation(
+        self, run_id: str, request: ApplyRunRequest | ResumeRunRequest, principal: Principal, operation: str
+    ) -> None:
+        """Refuse an `apply` or a `resume` that does not confirm its writes.
+
+        Raises:
+            ServiceAPIError: ``409 confirmation-required``.
+        """
+        if request.confirm_writes:
+            return
+        raise self._refusal(
+            409,
+            "confirmation-required",
+            f"confirm_writes=true is required for {operation}",
+            run_id=run_id,
+            actor=principal.actor,
+            operation=operation,
+            reason=request.reason,
+            outcome="refused-confirmation",
+        )
+
+    def _require_left_out_confirmation(
+        self,
+        run_id: str,
+        plan: PlanResource,
+        request: ApplyRunRequest | ResumeRunRequest,
+        principal: Principal,
+        operation: str,
+    ) -> None:
+        """Refuse a plan that leaves out records unless the request confirms them.
+
+        Raises:
+            ServiceAPIError: ``409 left-out-confirmation-required``, carrying the count.
+        """
+        left_out = plan.summary.left_out
+        if left_out <= 0 or request.confirm_left_out:
+            return
+        self._audit(
+            run_id,
+            actor=principal.actor,
+            operation=operation,
+            reason=request.reason,
+            outcome="refused-left-out-not-confirmed",
+        )
+        raise ServiceAPIError(
+            409,
+            "left-out-confirmation-required",
+            f"this plan leaves out {left_out} records; confirm with confirm_left_out=true",
+            run_id=run_id,
+            secrets=self._secrets,
+            left_out=left_out,
+        )
 
     def _require_matching_approval(
         self,
@@ -875,14 +900,15 @@ class RunService:
         active = next((link for link in reversed(run.prefect_executions) if link.terminal_at is None), None)
         if active is None and (run.phase == "planned" or run_is_resumable(run)):
             return
-        self._audit(
-            run.run_id, actor=principal.actor, operation="approve", reason=reason, outcome="refused-not-approvable"
-        )
-        raise self._error(
+        raise self._refusal(
             409,
             "run-not-approvable",
             not_approvable_message(run.phase, None if active is None else active.purpose),
             run_id=run.run_id,
+            actor=principal.actor,
+            operation="approve",
+            reason=reason,
+            outcome="refused-not-approvable",
         )
 
     def _require_approvable_plan(
@@ -890,33 +916,27 @@ class RunService:
     ) -> None:
         """Refuse an unverified plan, a checksum other than the plan's, and a second approval."""
         if not plan.checksum_ok:
-            self._audit(
-                run.run_id,
+            raise self._refusal(
+                409,
+                "plan-checksum-unverified",
+                "the saved plan's checksum was not verified when it was published; create and review a new plan",
+                run_id=run.run_id,
                 actor=principal.actor,
                 operation="approve",
                 reason=request.reason,
                 outcome="refused-plan-unverified",
             )
-            raise self._error(
-                409,
-                "plan-checksum-unverified",
-                "the saved plan's checksum was not verified when it was published; create and review a new plan",
-                run_id=run.run_id,
-            )
         if request.expected_checksum != plan.checksum:
-            self._audit(
-                run.run_id,
-                actor=principal.actor,
-                operation="approve",
-                reason=request.reason,
-                outcome="refused-checksum",
-            )
-            raise self._error(
+            raise self._refusal(
                 409,
                 "checksum-mismatch",
                 f"expected_checksum {request.expected_checksum} does not match the saved plan's checksum "
                 f"{plan.checksum}",
                 run_id=run.run_id,
+                actor=principal.actor,
+                operation="approve",
+                reason=request.reason,
+                outcome="refused-checksum",
             )
         if run.approval is not None:
             self._audit(
@@ -959,14 +979,16 @@ class RunService:
                 return self._withdraw_planned_run(run, request, principal, idempotency_key, receipt)
             if run.phase == "cancelled":
                 self._refuse_already_cancelled(run_id, principal, request.reason)
-            self._audit(
-                run_id,
+            raise self._refusal(
+                409,
+                "no-active-execution",
+                "the run has no service execution to cancel",
+                run_id=run_id,
                 actor=principal.actor,
                 operation="cancel",
                 reason=request.reason,
                 outcome="refused-no-execution",
             )
-            raise self._error(409, "no-active-execution", "the run has no service execution to cancel", run_id=run_id)
         try:
             link = await select_cancellable_execution(
                 run,
@@ -991,10 +1013,16 @@ class RunService:
                 return self._withdraw_planned_run(run, request, principal, idempotency_key, receipt)
             if run.phase == "cancelled":
                 self._refuse_already_cancelled(run_id, principal, request.reason)
-            self._audit(
-                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="refused-terminal"
+            raise self._refusal(
+                409,
+                "execution-terminal",
+                "the service execution is already terminal",
+                run_id=run_id,
+                actor=principal.actor,
+                operation="cancel",
+                reason=request.reason,
+                outcome="refused-terminal",
             )
-            raise self._error(409, "execution-terminal", "the service execution is already terminal", run_id=run_id)
         if receipt is None:
             receipt = self._reserve_existing(
                 run,
@@ -1166,8 +1194,16 @@ class RunService:
 
     def _refuse_already_cancelled(self, run_id: str, principal: Principal, reason: str | None) -> NoReturn:
         """Audit and refuse a cancel request for a run that is already cancelled."""
-        self._audit(run_id, actor=principal.actor, operation="cancel", reason=reason, outcome="refused-cancelled")
-        raise self._error(409, "run-already-cancelled", RUN_ALREADY_CANCELLED_MESSAGE, run_id=run_id)
+        raise self._refusal(
+            409,
+            "run-already-cancelled",
+            RUN_ALREADY_CANCELLED_MESSAGE,
+            run_id=run_id,
+            actor=principal.actor,
+            operation="cancel",
+            reason=reason,
+            outcome="refused-cancelled",
+        )
 
     def _withdraw_planned_run(
         self,
@@ -1601,15 +1637,8 @@ class RunService:
         body: dict[str, Any],
         admit_write: bool = False,
     ) -> MutationReceipt:
-        receipt = self._new_receipt(
-            actor=principal.actor,
-            idempotency_key=idempotency_key,
-            operation=operation,
-            target_run_id=run.run_id,
-            run_id=run.run_id,
-            body=body,
-            reason=reason,
-            now=datetime.now(timezone.utc),
+        receipt = self._run_receipt(
+            run.run_id, principal, idempotency_key, operation=operation, reason=reason, body=body
         )
         reserved, _ = self._projection.reserve_mutation(
             receipt,
@@ -1618,6 +1647,28 @@ class RunService:
         )
         self._require_matching_receipt(reserved, receipt)
         return reserved
+
+    def _run_receipt(
+        self,
+        run_id: str,
+        principal: Principal,
+        idempotency_key: str,
+        *,
+        operation: str,
+        reason: str | None,
+        body: dict[str, Any],
+    ) -> MutationReceipt:
+        """Build the receipt of a request that acts on an existing run."""
+        return self._new_receipt(
+            actor=principal.actor,
+            idempotency_key=idempotency_key,
+            operation=operation,
+            target_run_id=run_id,
+            run_id=run_id,
+            body=body,
+            reason=reason,
+            now=datetime.now(timezone.utc),
+        )
 
     def _lookup_existing_receipt(
         self,
@@ -1629,15 +1680,8 @@ class RunService:
         reason: str | None,
         body: dict[str, Any],
     ) -> MutationReceipt | None:
-        requested = self._new_receipt(
-            actor=principal.actor,
-            idempotency_key=idempotency_key,
-            operation=operation,
-            target_run_id=run.run_id,
-            run_id=run.run_id,
-            body=body,
-            reason=reason,
-            now=datetime.now(timezone.utc),
+        requested = self._run_receipt(
+            run.run_id, principal, idempotency_key, operation=operation, reason=reason, body=body
         )
         existing = self._projection.lookup_mutation(requested.actor, requested.key_digest).value
         if existing is None:
@@ -1714,33 +1758,30 @@ class RunService:
             "request_fingerprint",
         )
         if any(getattr(stored, field) != getattr(requested, field) for field in binding):
-            self._audit(
-                stored.run_id,
-                actor=requested.actor,
-                operation=requested.operation,
-                reason=requested.reason,
-                outcome="refused-idempotency",
-            )
-            raise self._error(
+            raise self._refusal(
                 409,
                 "idempotency-conflict",
                 "Idempotency-Key was already used by this actor for different content",
                 run_id=stored.run_id,
                 mutation_id=stored.receipt_id,
+                actor=requested.actor,
+                operation=requested.operation,
+                reason=requested.reason,
+                outcome="refused-idempotency",
             )
 
     def _owned_run(self, run_id: str, principal: Principal, operation: str, reason: str | None) -> ProductRun:
         run = self._required_run(run_id)
         if not principal.administrator and run.actor != principal.actor:
-            self._audit(
-                run_id,
+            raise self._refusal(
+                403,
+                "forbidden",
+                "only the initiating actor or an administrator may mutate this run",
+                run_id=run_id,
                 actor=principal.actor,
                 operation=operation,
                 reason=reason,
                 outcome="refused-authorization",
-            )
-            raise self._error(
-                403, "forbidden", "only the initiating actor or an administrator may mutate this run", run_id=run_id
             )
         return run
 
@@ -1928,9 +1969,11 @@ class RunService:
                         terminal_outcome=link.terminal_outcome,
                         prefect_flow_run_url=link_url,
                         reads=stage_reads(link, run_id=run.run_id, prefect_state=link.last_observed_state),
+                        plan_step=_plan_step_timings(link, run_id=run.run_id, prefect_state=link.last_observed_state),
                     )
                 )
                 continue
+            prefect_state = observed.state if observed.available else link.last_observed_state
             live = None if observed.state is None else redact(observed.state, self._secrets)
             reason = None if observed.reason is None else redact(observed.reason, self._secrets)
             orchestration.append(
@@ -1951,11 +1994,8 @@ class RunService:
                     terminal_state=link.terminal_state,
                     terminal_outcome=link.terminal_outcome,
                     prefect_flow_run_url=link_url,
-                    reads=stage_reads(
-                        link,
-                        run_id=run.run_id,
-                        prefect_state=observed.state if observed.available else link.last_observed_state,
-                    ),
+                    reads=stage_reads(link, run_id=run.run_id, prefect_state=prefect_state),
+                    plan_step=_plan_step_timings(link, run_id=run.run_id, prefect_state=prefect_state),
                 )
             )
         operations = self._plan_operations(run)
@@ -2051,19 +2091,45 @@ class RunService:
     ) -> None:
         for name, value in parameters.items():
             if value is not None and redact(value, self._secrets) != value:
-                self._audit(
-                    run_id,
+                raise self._refusal(
+                    422,
+                    "secret-parameter-refused",
+                    f"{name} must be a non-secret reference",
+                    run_id=run_id,
                     actor=actor,
                     operation=operation,
                     reason=reason,
                     outcome="refused-secret-parameter",
                 )
-                raise self._error(
-                    422,
-                    "secret-parameter-refused",
-                    f"{name} must be a non-secret reference",
-                    run_id=run_id,
-                )
+
+    def _refusal(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        *,
+        actor: str,
+        operation: str,
+        reason: str | None,
+        outcome: str,
+        run_id: str | None = None,
+        mutation_id: str | None = None,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+        branch: str | None = None,
+    ) -> ServiceAPIError:
+        """Record the event of a refusal, then return the error for the caller to raise."""
+        self._audit(
+            run_id,
+            actor=actor,
+            operation=operation,
+            reason=reason,
+            outcome=outcome,
+            config_id=config_id,
+            registry_version=registry_version,
+            branch=branch,
+        )
+        return self._error(status, code, message, run_id=run_id, mutation_id=mutation_id)
 
     def _error(
         self,

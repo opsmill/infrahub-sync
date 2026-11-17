@@ -13,7 +13,7 @@ Run `docker compose ps` to see each container and the health of PostgreSQL, the 
 store, and Prefect. Then ask the Sync API whether a worker is live:
 
 ```sh
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/status
 ```
 
 The response's `worker.state` is one of three values:
@@ -61,7 +61,8 @@ Set `VERSION`, and optionally `INFRAHUB_SYNC_DOCKER_IMAGE`, in `.env`, then run
 `docker compose up -d --wait`. Compose recreates only the services whose image changed.
 See [Choose an image](../compose-deployment#choose-an-image). This release has no
 in-place state migration, so a release that needs a new state requires a fresh
-deployment.
+deployment. Startup does not add a column to a product database table that an earlier
+version created, so a release that adds a column needs an empty product database.
 
 ### Changes when you move to the release that reports plan problems
 

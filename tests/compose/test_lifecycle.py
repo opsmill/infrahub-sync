@@ -119,7 +119,7 @@ def observe_worker_states() -> set[str]:
     observed: set[str] = set()
     deadline = time.monotonic() + BUSY_OBSERVATION_SECONDS
     while time.monotonic() < deadline:
-        response = httpx.get(f"http://127.0.0.1:{API_PORT}/status", timeout=15)
+        response = httpx.get(f"http://127.0.0.1:{API_PORT}/api/status", timeout=15)
         response.raise_for_status()
         observed.add(response.json()["worker"]["state"])
         if "busy" in observed:
@@ -352,7 +352,7 @@ def test_a_stopped_worker_ages_into_degraded_while_the_api_stays_reachable(start
         assert degraded
         # The half that makes this DEGRADED rather than STOPPED, asked of the
         # published surface an operator would use.
-        answered = httpx.get(f"{started.api}/version", timeout=30)
+        answered = httpx.get(f"{started.api}/api/version", timeout=30)
         assert answered.status_code == 200, answered.text
         assert worker_state(started) == "no-live-worker"
     finally:

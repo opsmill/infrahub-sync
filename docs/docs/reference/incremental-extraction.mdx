@@ -33,8 +33,8 @@ prior extraction used to detect changes), and the **schema sub-hash** (a digest 
 mapped schema, used to invalidate a cursor when the mapping changes) live under the run's
 cache root. The incremental path and the adapter cursor contract are implemented there.
 Every managed stage that extracts (`plan` and `sync`) requests a full extraction (`full_extract=True`), so incremental
-extraction is not reachable through the managed path. A direct caller of `execute_run` may
-instead set `full_extract=False` and reuse a persistent cache root across runs; that call
+extraction is not reachable through the managed path. No supported entry point sets
+`full_extract=False`. A call that sets it and reuses a persistent cache root across runs
 reaches the per-resource incremental branch when a prior successful run exists there with a
 matching schema sub-hash. No product code writes the cursor sidecar there either, though, so
 every resource still falls back to a full extraction on that path too, one resource at a

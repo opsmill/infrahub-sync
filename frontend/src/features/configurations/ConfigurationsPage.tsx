@@ -155,7 +155,6 @@ function Reason({ row, quiet }: { row: ConfigurationRow; quiet: boolean }) {
       {(e.at || last) && (
         <p className="pl-5 text-subtle text-xs">
           {e.at && <When iso={e.at.iso} prefix={e.at.prefix} className={LIFT} />}
-          {e.by && <> by {e.by}</>}
           {/* The space before the dot is the only place the line can break between the two facts. */}
           {e.at && last && (
             <>
