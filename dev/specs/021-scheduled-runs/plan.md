@@ -186,9 +186,20 @@ grow by a method and a mount each.
 - **Settings by user story.** `overlap_policy = queue` and `start_late_by_at_most_seconds` are
   fields of the record from the start, and are refused with `schedule-setting-not-available`
   until user story 3 is delivered. The record then needs no change of its table.
-- **User story 2 before its confirmation.** The option `default-branch` is refused with
-  `schedule-setting-not-available` until the product owner confirms the amendment of principle I.
-  The tasks of user story 2 remove that refusal as their last step.
+- **A write target that is not delivered is refused.** `ScheduleService` receives the set of
+  write targets that are delivered. `serve.py` passes that set; the unit tests pass both.
+    - `branch-review` is refused with `schedule-setting-not-available` until the worker side of
+      user story 1 exists. Without this, a schedule would start a run at every start that fails in
+      the worker, and on a Sync API that requires approval those runs would be accepted with no
+      approval and no review.
+    - `default-branch` is refused the same way until the product owner confirms the amendment of
+      principle I.
+    - While branch review is not delivered, a request that names no write target is refused. The
+      default branch is never chosen for the operator.
+  The last task of each of the two phases adds its write target to the set.
+- **Flow parameters.** The parameters `branch_review` and `earlier_branches` are added to the
+  signature of `service_sync_run` with the service side, and the flow refuses a run that sets
+  `branch_review` until the worker side exists.
 - **Decision records.** Two records are written when this specification is extracted: the Sync
   API process starts scheduled runs (R1, R2), and a write to a branch that Infrahub Sync created
   for a run needs no Sync approval (R6, amends ADR 0037).

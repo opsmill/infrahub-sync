@@ -28,9 +28,10 @@ task comes before the implementation task it covers.
 | 6 | Can start after phase 3. |
 | 7 | Follows the phases that are delivered. |
 
-Phase 3 alone gives a team nothing to use: a schedule with branch review cannot run before
-phase 4, and the default branch cannot be chosen before the last task of phase 5. Merge phase 3
-with phase 4 or with phase 5.
+Phase 3 alone gives a team nothing to use. Both write targets are refused with
+`schedule-setting-not-available` until they are delivered: branch review by the last task of
+phase 4, the default branch by the last task of phase 5. Until one of the two is merged, no
+schedule can be created outside the unit tests.
 
 ---
 
@@ -76,19 +77,19 @@ start, skips a start when a run is in progress, and records it all.
 
 ### Tests for User Story 1
 
-- [ ] T015 [P] [US1] Write `tests/service/test_schedule_routes.py` for contracts/http-api.md: create with defaults and `next_start_at`; every refusal code of the create and change tables; list, view, change, pause, resume, delete; owner and administrator rules (acceptance scenarios 1, 10 to 13, 16); idempotency replay; one event for each accepted, refused and replayed request; a canary credential in a request never appears in a record or an event (FR-025)
+- [ ] T015 [P] [US1] Write `tests/service/test_schedule_routes.py` for contracts/http-api.md: a write target outside the set of delivered write targets answers `422 schedule-setting-not-available`, and so does a request with no write target while branch review is not in the set; create with defaults and `next_start_at`; every refusal code of the create and change tables; list, view, change, pause, resume, delete; owner and administrator rules (acceptance scenarios 1, 10 to 13, 16); idempotency replay; one event for each accepted, refused and replayed request; a canary credential in a request never appears in a record or an event (FR-025)
 - [ ] T016 [P] [US1] Write `tests/service/test_schedule_loop.py` with an injected clock and a fake orchestration: a start creates one run with `trigger_type`, `schedule_id`, `scheduled_start_at`, the owner as actor and version (scenario 2); a second pass and a second loop create no second run; a change or a take-over between two attempts creates no second run; an orchestration that is unavailable leaves a run that later passes submit, with a growing wait, and the start is never recorded as missed; `reject` skips and names the run in progress (scenario 7); a start more than 60 seconds late is recorded as missed with no run; more than 500 missed starts give 500 events and one summary; a configuration version that cannot be run records `start_failed`; 30 starts give 30 runs or recorded starts (SC-002)
 - [ ] T017 [P] [US1] Write `tests/service/test_schedule_owner.py`: the owner's actor is removed, the schedule stops with `owner-not-found` and an event (scenario 14); a resume is refused while the reason holds and succeeds when the actor exists again (scenario 15); a paused or stopped schedule records no missed start
-- [ ] T018 [P] [US1] Write `tests/service/test_schedule_approval.py`: with required approval, a schedule that writes to the default branch is refused at creation and at a change (scenario 8); a run with branch review is accepted with no approval (scenario 9); a restart with approval turned on stops a default-branch schedule with `approval-required`
+- [ ] T018 [P] [US1] Write `tests/service/test_schedule_approval.py`, with both write targets in the set of delivered write targets: with required approval, a schedule that writes to the default branch is refused at creation and at a change (scenario 8); a run with branch review is accepted with no approval (scenario 9); a restart with approval turned on stops a default-branch schedule with `approval-required`
 - [ ] T019 [P] [US1] Write `tests/service/test_schedule_branch_review.py`, service part: branch review is refused for a version that declares a destination branch (scenario 16); the run's destination branch is the derived name, the same for two attempts; a `schedule_branches` row in the state `pending` exists with the run; `verify`, `apply` and `resume` on the run answer `409 scheduled-run-not-appliable` (scenario 17)
 - [ ] T020 [P] [US1] Extend `tests/service/test_http_api.py` (route set, 401 and 422 on every schedule route, run fields and filters) and `tests/service/test_events_route.py` (`related=schedule:<id>` returns the schedule's events and its runs' events, with `details`; scenario 18)
 - [ ] T021 [P] [US1] Write `tests/client/test_schedules.py` and `tests/cli/test_schedule_commands.py` for contracts/cli.md, and add the eight commands to the matrix in `tests/cli/test_parity_and_closure.py`
 
 ### Implementation for User Story 1
 
-- [ ] T022 [US1] Create `infrahub_sync/service/schedules.py`: a `ScheduleService` with create, change, pause, resume and delete; cadence validation through `schedule_cadence.py`; the owner or administrator rule; the refusals `schedule-name-in-use`, `approval-required-for-schedule`, `schedule-branch-declared`, `schedule-setting-not-available` (for `queue`, the late-start duration and the default-branch write target), `schedule-stopped`, `schedule-deleted`; receipts of the kind `schedule`; one event for each decision in the transaction of its answer
+- [ ] T022 [US1] Create `infrahub_sync/service/schedules.py`: a `ScheduleService` with create, change, pause, resume and delete; cadence validation through `schedule_cadence.py`; the owner or administrator rule; the refusals `schedule-name-in-use`, `approval-required-for-schedule`, `schedule-branch-declared`, `schedule-setting-not-available` (for `queue`, the late-start duration, and a write target that is not in the set of delivered write targets that the constructor receives; `serve.py` passes an empty set, the unit tests pass both; the approval refusal is checked first; a request with no write target is refused while branch review is not delivered), `schedule-stopped`, `schedule-deleted`; receipts of the kind `schedule`; one event for each decision in the transaction of its answer
 - [ ] T023 [US1] Create `infrahub_sync/service/schedule_routes.py` with a `schedule_router(service, authenticate, idempotency_key)` factory and mount it in `_include_routers` of `infrahub_sync/service/app.py`; build `ScheduleService` in `infrahub_sync/service/serve.py`
-- [ ] T024 [US1] Add `start_scheduled_run(schedule, start_at)` to `RunService` in `infrahub_sync/service/service.py`: the steps of `create_run` with the owner's principal, the key and fingerprint of R2, `trigger_type`, `schedule_id`, `scheduled_start_at`, the derived branch name and the `pending` branch row for branch review, `confirm_left_out` and `branch_review` as flow parameters; reuse `_submit`; submit again a run of the start that exists and was not submitted (R2, R4, R11)
+- [ ] T024 [US1] Add `start_scheduled_run(schedule, start_at)` to `RunService` in `infrahub_sync/service/service.py`: the steps of `create_run` with the owner's principal, the key and fingerprint of R2, `trigger_type`, `schedule_id`, `scheduled_start_at`, the derived branch name and the `pending` branch row for branch review, `confirm_left_out`, `branch_review` and `earlier_branches` as flow parameters, which this task also adds to the signature of `service_sync_run` in `infrahub_sync/service/flow.py` together with a typed refusal of a run that sets `branch_review`; reuse `_submit`; submit again a run of the start that exists and was not submitted (R2, R4, R11)
 - [ ] T025 [US1] Refuse `verify`, `apply` and `resume` of a scheduled run with branch review in `infrahub_sync/service/service.py` with `409 scheduled-run-not-appliable` (FR-028)
 - [ ] T026 [US1] Create `infrahub_sync/service/schedule_loop.py`: `ScheduleLoop.run_once()` with an injected clock; for each active schedule whose `next_start_at` has passed: the owner check, the approval check, the on-time check of 60 seconds, `run_in_progress` and the `reject` policy, `start_scheduled_run`, then `advance_schedule` with the events; the retry wait for a run that was not submitted; named error classes only, and one schedule's failure does not stop the pass (R2, R6, R7, R8, R10)
 - [ ] T027 [US1] Start the schedule loop as a second task in the lifespan of `create_app` in `infrahub_sync/service/app.py`, with a cadence of 5 seconds, cancelled on shutdown; build it in `infrahub_sync/service/serve.py`; re-enter it in `infrahub_sync/service/web.py` as the liveness loop is
@@ -118,9 +119,11 @@ schedule's earlier one.
 
 ### Implementation for User Story 1, worker side
 
+- [ ] T059 [US1] BLOCKED (INFP-655): check in `infrahub_sync/service/flow.py` and `infrahub_sync/service/apply_guard.py` whether the worker can call Infrahub and the store after the stage result is committed and the write guard is released (R11 steps 6 and 7, research "Facts not known"); record the answer in `research.md` before T034
 - [ ] T033 [US1] BLOCKED (INFP-655): in the `sync` branch of `_execute_stage` in `infrahub_sync/service/flow.py`, for a run with `branch_review`: create the branch, plan on it, delete it and end when the plan has no operation, then verify and apply on it; save `branch_review.branch` and `branch_state` with the stage result (R11 steps 1 to 5)
 - [ ] T034 [US1] BLOCKED (INFP-655): after the stage result is committed in `infrahub_sync/service/flow.py`, open the proposed change and handle `earlier_branches` (R11 steps 6 and 7); save the second part of `branch_review` and its events with one store call; add the failure classes of these steps to `infrahub_sync/service/failure_cause.py`
 - [ ] T035 [US1] BLOCKED (INFP-655): update `schedule_branches` from the two parts of `branch_review` in `infrahub_sync/product_store/store.py`, and return `open_branch` on the schedule resource
+- [ ] T058 [US1] BLOCKED (INFP-655): add `branch-review` to the set of delivered write targets in `infrahub_sync/service/serve.py` and remove the flow's refusal of `branch_review` in `infrahub_sync/service/flow.py`. This is the last task of the phase
 
 **Checkpoint**: user story 1 works end to end on the development stack.
 
@@ -144,7 +147,7 @@ and the team chooses whether it writes when records are left out.
 - [ ] T038 [US2] In the `sync` branch of `_execute_stage` in `infrahub_sync/service/flow.py`: when `confirm_left_out` is true, skip `_left_out_stop` and pass `confirm_left_out=True` to the apply step; carry the plan's `left_out` count into the stage result and into `details.left_out` of the result event (R5, FR-005)
 - [ ] T039 [US2] Record `left_out_set_by` and `left_out_set_at` in `ScheduleService` in `infrahub_sync/service/schedules.py`, and add `--write-when-left-out` and `--no-write-when-left-out` to `schedules create` and `schedules change` in `infrahub_sync/cli.py`
 - [ ] T040 [US2] BLOCKED (INFP-655): for a run with branch review whose plan leaves out records and whose setting is off, delete the branch, end with `left-out-review-required` and the next action "correct the source records or turn the setting on", in `infrahub_sync/service/flow.py`; cover scenarios 5 and 6 in `tests/service/test_schedule_branch_review.py`
-- [ ] T041 [US2] GATED (principle I): remove the refusal `schedule-setting-not-available` for the write target `default-branch` in `infrahub_sync/service/schedules.py` and add `--write-to-default-branch` and `--write-to-branch-review` to `infrahub_sync/cli.py`. Do this only after the amendment of constitution principle I is merged
+- [ ] T041 [US2] GATED (principle I): add `default-branch` to the set of delivered write targets in `infrahub_sync/service/serve.py` and add `--write-to-default-branch` and `--write-to-branch-review` to `infrahub_sync/cli.py`. Do this only after the amendment of constitution principle I is merged
 
 **Checkpoint**: user story 2 works on the development stack once T041 is merged.
 
@@ -201,7 +204,7 @@ Within a phase:
 - T008 → T009 → T010 → T011. T007, T012, T013 and T014 are independent of them, except that T014
   needs T008.
 - T022 → T023. T024 → T026 → T027. T025 and T028 need T024. T030 needs T029.
-- T033 → T034 → T035.
+- T059 → T033 → T034 → T035 → T058.
 - T045 and T046 touch the same file: do them in that order.
 
 ### Parallel examples
@@ -229,8 +232,8 @@ Within a phase:
 | 1 Setup | 2 | 0 |
 | 2 Foundational | 12 | 0 |
 | 3 User story 1, service side | 16 | 0 |
-| 4 User story 1, worker side | 5 | 5 blocked |
+| 4 User story 1, worker side | 7 | 7 blocked |
 | 5 User story 2 | 6 | 1 blocked, 1 gated |
 | 6 User story 3 | 7 | 0 |
 | 7 Polish | 9 | 0 |
-| Total | 57 | 6 blocked, 1 gated |
+| Total | 59 | 8 blocked, 1 gated |

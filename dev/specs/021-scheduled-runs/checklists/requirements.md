@@ -36,11 +36,15 @@
 - The specification names the existing commands, routes and settings that a team uses today
   (`sync`, `GET /events`, `INFRAHUB_SYNC_REQUIRE_APPROVAL`, `--confirm-left-out`), because the
   requirements are stated against them. It names no new route, table or library.
-- Three points are not decided. The specification records them as dependencies and assumptions,
-  not as clarification markers, because none of them changes user story 1:
+- Four points are not decided. The specification records them as dependencies and assumptions,
+  not as clarification markers, because each needs a decision of the product owner and none
+  of them changes what the tasks build first:
     - who delivers the two prerequisite capabilities of INFP-655, and when
     - whether the event system is delivered before user story 1
-    - whether constitution principle I is amended for user story 2
-- FR-024 and FR-025 are not in the idea brief under those numbers. FR-024 states the pause,
-  resume, change, delete, list and view actions that the brief's first journey names. FR-025
-  states the project's rule on secrets for the new records.
+    - whether constitution principle I is amended, for a write to a review branch and for a write
+      to the default branch
+    - what a team does with a run with branch review that stopped for records left out (FR-028)
+- FR-024 to FR-028 are not in the idea brief. FR-024 states the pause, resume, change, delete,
+  list and view actions that the brief's first journey names. FR-025 states the project's rule
+  on secrets for the new records. FR-026 is the take-over that the brief had inside FR-013.
+  FR-027 and FR-028 come from the critique. `alignment-check.md` lists every difference.

@@ -70,7 +70,7 @@ Refusals:
 | 409 | `schedule-branch-declared` | `write_target` is `branch-review` and the configuration version declares its own destination branch. |
 | 422 | `schedule-cron-invalid` | The cron expression is not valid. The message holds the reason. |
 | 422 | `schedule-timezone-invalid` | The time zone name is not known. |
-| 422 | `schedule-setting-not-available` | `overlap_policy` is `queue` or `start_late_by_at_most_seconds` is set, before user story 3 is delivered. `write_target` is `default-branch`, before user story 2 is delivered. |
+| 422 | `schedule-setting-not-available` | `overlap_policy` is `queue` or `start_late_by_at_most_seconds` is set, before user story 3 is delivered. `write_target` is `default-branch`, before user story 2 is delivered. `write_target` is `branch-review`, or is absent, before the worker side of user story 1 is delivered. |
 
 ## `GET /schedules`
 

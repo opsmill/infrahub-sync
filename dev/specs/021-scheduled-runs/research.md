@@ -99,7 +99,7 @@ more than once); Prefect's own cron schedule classes (they belong to deployments
 
 - The principal is the schedule's owner, built from the actor name (R8).
 - `operation` is `sync` and `confirm_writes` is true.
-- The run row holds `trigger_type = "scheduled"` and `schedule_id`.
+- The run row holds `trigger_type = "scheduled"`, `schedule_id` and `scheduled_start_at` (R2).
 - The flow receives `confirm_left_out` when the schedule's left-out setting is on.
 - The refusal `approval-required-for-sync` does not apply when the write target is branch review
   (R6).
@@ -140,6 +140,12 @@ this specification.
 
 **Rationale**: FR-002. The check lives where `approval_required()` is already read: the service,
 not the worker (`service/service.py:389`).
+
+**A write target that is not delivered yet** is refused with `422
+schedule-setting-not-available`: branch review until the worker side of user story 1 exists, and
+the default branch until user story 2 is delivered. The approval refusal is checked first. When
+branch review is not delivered and the request names no write target, the request is refused: a
+write to the default branch is never chosen for the operator (FR-003).
 
 **Decision record**: the rule amends ADR 0037 and needs its own ADR, written when the
 specification is extracted.
@@ -356,8 +362,9 @@ The routes are in [contracts/http-api.md](contracts/http-api.md) and the command
 ## R14. Time is injected
 
 **Decision**: The loop takes a `clock`, as `RunLivenessReconciler` does (`service/liveness.py:138`).
-The new `RunService` method takes the start time as an argument and uses it for `started_at`.
-Tests pass a clock that they advance.
+The new `RunService` method takes the start time as an argument, stores it as
+`scheduled_start_at`, and reads `started_at` from the injected clock (R2). Tests pass a clock that
+they advance.
 
 **Rationale**: `create_run` reads `datetime.now` directly (`service/service.py:355`). The tests
 of this feature need a start time they control. The project uses no time-freezing library.
@@ -367,6 +374,13 @@ of this feature need a start time they control. The project uses no time-freezin
 - Whether a schedule should start a run while one of its proposed changes is approved and not
   merged. This plan starts it, as the specification says, and the two proposed changes then hold
   the same changes.
+- Whether the worker can open the proposed change and replace earlier ones after the stage result
+  is committed (R11, steps 6 and 7). At that point the execution is terminal and the write guard
+  is released. This was not checked against `service/flow.py`; phase 4 of the tasks checks it
+  first.
+- Whether Prefect refuses a flow run that carries a parameter the flow does not declare. The
+  tasks add the new flow parameters to the flow's signature in phase 3 so that the answer does
+  not matter.
 - The interface of the two prerequisite capabilities of INFP-655. The contract in
   [contracts/branch-review.md](contracts/branch-review.md) is what this plan needs; the
   prerequisite may deliver it in another form.
