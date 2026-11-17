@@ -1,0 +1,19 @@
+dev/specs/020-product-store-failure-cause/alignment-check.md
+  s_313229fc4d1c44::t_527d0a1cb76834 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "770ee05857fdbe3dc5fff0446f607b17ca11c093",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
