@@ -1,0 +1,21 @@
+dev/specs/020-product-store-failure-cause/quickstart.md
+  s_313229fc4d1c44::t_a3c467c65bd760 14-34
+dev/specs/020-product-store-failure-cause/tasks.md
+  s_313229fc4d1c44::t_ee5661047ff2fa 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ef242a2f1ab51c60ce40c83435ff05287bd365d",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
