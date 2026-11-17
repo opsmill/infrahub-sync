@@ -4407,8 +4407,8 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         are deleted first. Two callers that fail at the same moment do not conflict.
 
         Raises:
-            ValueError: the lower-case name is empty or longer than 64 characters. Nothing is
-                written.
+            ValueError: the lower-case name is empty, longer than 64 characters or holds a NUL
+                character. Nothing is written.
         """
         return self._records.record_sign_in_failure(name, now=now, bound=bound)
 

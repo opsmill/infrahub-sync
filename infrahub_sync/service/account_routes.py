@@ -103,9 +103,14 @@ def sign_in_refused() -> ServiceAPIError:
 
 
 def is_countable_name(name: str) -> bool:
-    """Return whether failed sign-ins are counted for this name: it has 1 to 64 characters."""
+    """Return whether failed sign-ins are counted for this name: 1 to 64 characters, none of them NUL."""
     # The lower-case form of a name can be longer than the name, and it is the stored key.
-    return 0 < len(name) <= SIGN_IN_NAME_MAX_LENGTH and len(name_key(name)) <= SIGN_IN_NAME_MAX_LENGTH
+    # PostgreSQL stores no NUL character in a text, so a name that holds one is never read there.
+    return (
+        0 < len(name) <= SIGN_IN_NAME_MAX_LENGTH
+        and len(name_key(name)) <= SIGN_IN_NAME_MAX_LENGTH
+        and "\x00" not in name
+    )
 
 
 def sign_in_refused_until(service: RunService, name: str) -> datetime | None:

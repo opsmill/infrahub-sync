@@ -164,8 +164,10 @@ def test_a_cleared_name_starts_again_from_one(projection: ProductProjection) -> 
     assert projection.record_sign_in_failure("alice", now=_T0 + timedelta(minutes=1)).failed_count == 1
 
 
-@pytest.mark.parametrize("name", ["", "a" * (SIGN_IN_NAME_MAX_LENGTH + 1)])
-def test_an_empty_name_and_a_name_over_64_characters_write_nothing(projection: ProductProjection, name: str) -> None:
+@pytest.mark.parametrize("name", ["", "a" * (SIGN_IN_NAME_MAX_LENGTH + 1), "al\x00ice"], ids=["empty", "65", "nul"])
+def test_a_name_that_is_empty_too_long_or_holds_a_nul_character_writes_nothing(
+    projection: ProductProjection, name: str
+) -> None:
     with pytest.raises(ValueError, match="1 to 64 characters") as refused:
         projection.record_sign_in_failure(name, now=_T0)
 

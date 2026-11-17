@@ -407,8 +407,10 @@ def test_the_fixed_hash_accepts_no_password_for_an_account_with_no_password(monk
         # 64 characters whose lower-case form, the stored key, has 128.
         "İ" * SIGN_IN_NAME_MAX_LENGTH,
         "",
+        # PostgreSQL refuses a NUL character in a text, which would answer 503.
+        "al\x00ice",
     ],
-    ids=["65-characters", "5000-characters", "longer-in-lower-case", "empty"],
+    ids=["65-characters", "5000-characters", "longer-in-lower-case", "empty", "nul-character"],
 )
 def test_a_name_that_no_account_can_have_writes_nothing_and_runs_no_check(api: _Api, name: str) -> None:
     response = api.sign_in(name)

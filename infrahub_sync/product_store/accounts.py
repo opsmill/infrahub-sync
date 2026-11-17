@@ -559,13 +559,14 @@ def record_sign_in_failure(
       the table never holds more than ``bound`` rows.
 
     Raises:
-        ValueError: the lower-case name is empty or longer than ``SIGN_IN_NAME_MAX_LENGTH``, or
-            ``bound`` is below one. Nothing is written.
+        ValueError: the lower-case name is empty, longer than ``SIGN_IN_NAME_MAX_LENGTH`` or
+            holds a NUL character, or ``bound`` is below one. Nothing is written.
     """
     key = name_key(name)
-    if not key or len(key) > SIGN_IN_NAME_MAX_LENGTH:
+    if not key or len(key) > SIGN_IN_NAME_MAX_LENGTH or "\x00" in key:
         # The name is not quoted: it can be anything a caller typed in a sign-in request.
-        msg = f"a failed sign-in is counted for a name of 1 to {SIGN_IN_NAME_MAX_LENGTH} characters"
+        # PostgreSQL stores no NUL character in a text.
+        msg = f"a failed sign-in is counted for a name of 1 to {SIGN_IN_NAME_MAX_LENGTH} characters with no NUL"
         raise ValueError(msg)
     if bound < 1:
         msg = "the bound of the failed sign-in table must be at least one row"
