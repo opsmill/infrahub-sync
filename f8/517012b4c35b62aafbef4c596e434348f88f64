@@ -1,0 +1,32 @@
+dev/specs/021-scheduled-runs/alignment-check.md
+  s_29b17f91da9f30::t_4e9686a2c0c2bc 15,21,24-25,31,57-58,62-64
+dev/specs/021-scheduled-runs/research.md
+  s_29b17f91da9f30::t_4e9686a2c0c2bc 102,144-149,365-367,377-383
+dev/specs/021-scheduled-runs/plan.md
+  s_29b17f91da9f30::t_4e9686a2c0c2bc 189-202
+dev/specs/021-scheduled-runs/critiques/critique-20261117.md
+  s_29b17f91da9f30::t_4e9686a2c0c2bc 30,32,34,40,46-47,53,59-62,68,70,76-78,84-87,93,99,105-106,112,118-119,121,132-134,143-145
+dev/specs/021-scheduled-runs/checklists/requirements.md
+  s_29b17f91da9f30::t_4e9686a2c0c2bc 39-41,44-49
+  s_29b17f91da9f30::t_5ac41d6a1482f4 50
+dev/specs/021-scheduled-runs/contracts/http-api.md
+  s_29b17f91da9f30::t_4e9686a2c0c2bc 73
+dev/specs/021-scheduled-runs/tasks.md
+  s_29b17f91da9f30::t_4e9686a2c0c2bc 31-34,80,83,90,92,122,126,150,207,235,239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f8517012b4c35b62aafbef4c596e434348f88f64",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
