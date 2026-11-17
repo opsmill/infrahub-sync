@@ -163,8 +163,9 @@ grow by a method and a mount each.
   service rules, the routes, the admission in the worker, the client and the CLI. Each step has its unit tests
   before the next.
 - **Two records of one schedule.** The stored schedule is the source. One step makes the Prefect
-  schedules of the deployment match it, by slug. It runs when the API process starts, after the
-  bootstrap job, and after each schedule request. In the same step at startup, the API process
+  schedules of the deployment match it, by slug. It runs at the end of the bootstrap job, when the API process starts, and after each schedule
+  request. The bootstrap job needs it because applying the deployment again removes its Prefect
+  schedules (R13). In the same step at startup, the API process
   stops a schedule whose owner's actor no longer exists or whose write target now needs
   approval.
 - **What the unit tier cannot show.** Prefect's scheduler does not run in the unit tier. The

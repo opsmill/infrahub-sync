@@ -108,9 +108,16 @@ repeats.
 **Alternatives considered**: declare `cronsim` and compute start times in Sync. Rejected with the
 loop of R1.
 
-**Not verified**: the exact error that Prefect raises for an invalid cron expression or time zone
-name, and whether `get_dates` can be called in the API process without a database session. The
-first task of the foundation checks both.
+**Checked** in the installed Prefect 3.8.6, on 2026-11-17:
+
+- An invalid cron expression and an unknown time zone name raise a Pydantic `ValidationError`
+  when the `CronSchedule` is built.
+- Prefect accepts a six-field expression, whose first field is seconds. The Sync API refuses any
+  expression that does not have five fields, before it builds the `CronSchedule`, so the shortest
+  cadence is one minute.
+- `get_dates` runs with no database session.
+- For `30 2 * * *` in `Europe/Paris`, the night that has no 02:30 gives one start, at 01:30 local
+  time, and the night that has 02:30 twice gives one start, the first. A start is never doubled.
 
 ## R4. A scheduled run is a `sync` run with three extra facts
 
@@ -385,10 +392,16 @@ fragment states it again.
 - `GET /schedules` pages with a cursor (ADR 0032), newest first by `(created_at, schedule_id)`.
 - Receipts gain the resource kind `schedule` (`product_store/models.py:522`).
 - Request and resource models go in `infrahub_sync/client/models.py`, which the service re-exports.
+- The bootstrap job removes the Prefect schedules of the deployment each time it runs. It applies
+  the deployment with `apply_deployments`, which treats `schedules` as a field it owns: the
+  definition has none, so a deployment that holds schedules does not match, and the update sends
+  an empty list (`opsmill_prefect_extras/deployments.py:325-346, 399-417`). The vendored package
+  is frozen and is not changed. The bootstrap job therefore runs the step that makes Prefect
+  match the store, after it applies the deployment (`service/bootstrap.py:304-368`).
 - The store is written first and Prefect second. When the Prefect call fails, the request
   answers `503` and the stored schedule keeps a flag that it is not yet in Prefect. One step
   makes the Prefect schedules of the deployment match the stored schedules, by slug: it runs
-  when the API process starts and after each schedule request. A Prefect schedule that
+  at the end of the bootstrap job, when the API process starts, and after each schedule request. A Prefect schedule that
   someone changed in the Prefect interface is put back by that step.
 - A schedule has a generated identifier and a unique name. The CLI accepts either, as
   `_resolve_config` does for configurations (`cli.py:373`).
@@ -417,9 +430,6 @@ and a lateness they control.
   is committed (R11, steps 6 and 7). At that point the execution is terminal and the write guard
   is released. This was not checked against `service/flow.py`; phase 4 of the tasks checks it
   first.
-- Whether the bootstrap job, which applies the deployment again at each start
-  (`service/bootstrap.py:304-368`), removes the schedules of the deployment. If it does, the
-  step of R13 that makes Prefect match the store must run after it. The foundation checks this.
 - Whether Prefect deletes the flow runs it created ahead when a schedule is changed, paused or
   deleted. The admission of R2 does not depend on it: a flow run of a schedule that is not
   active, or of a cadence that no longer holds its start time, creates no run.

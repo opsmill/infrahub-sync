@@ -12,7 +12,7 @@ Table `schedules` of the product store. One row for each schedule, kept after de
 | `name` | text | Identifier pattern of the API. Unique among schedules that are not deleted. |
 | `config_id` | text | A registered configuration. |
 | `registry_version` | integer | A registered version of that configuration. |
-| `cron` | text | A cron expression that Prefect's `CronSchedule` accepts (R3). |
+| `cron` | text | A five-field cron expression that Prefect's `CronSchedule` accepts (R3). |
 | `timezone` | text | A time zone name that Prefect's `CronSchedule` accepts. Default `UTC`. |
 | `write_target` | text | `branch-review` (default) or `default-branch`. |
 | `write_when_left_out` | boolean | Default false. |
