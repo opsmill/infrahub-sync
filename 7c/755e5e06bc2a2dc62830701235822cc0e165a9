@@ -1,0 +1,39 @@
+dev/specs/021-scheduled-runs/tasks.md
+  s_cf9ada8f865389::t_efd10a7a529a47 46,52-53
+infrahub_sync/product_store/models.py
+  s_cf9ada8f865389::t_760a6f6c622bd6 3-4,19-22,377-382,386,400-406,541,566-568,571-572,712-716,722-732,739-741,750,752-753,757-760,769,773,777-810,816-817,834,854,857-859,895-1027
+tests/product_store/test_contract.py
+  s_cf9ada8f865389::t_0b805b49eefe61 41-43,48,51-53,92-93,112-114,135-137,148-152,4207-4209,4211-4213,4284-4285,4297-4312,5157-5671
+tests/product_store/test_postgresql_isolation.py
+  s_cf9ada8f865389::t_5259b0b1ec1b63 175-184,187-219,228-231,233,279-280,286-392
+tests/product_store/test_run_approval.py
+  s_cf9ada8f865389::t_14fc6dc6cf0a62 27-28,112-148
+infrahub_sync/product_store/__init__.py
+  s_1316dcfd5a8426::t_8e4bd9b3195070 15,30-32,47,81-82,101-103
+infrahub_sync/product_store/store.py
+  s_1316dcfd5a8426::t_2ac8790f855f47 79-80,129,156-171,173-186,234-245,276,294,479-481,484-485,493-495,546,549-550,569-584,924-926,950-967,970-971,1107-1111,2760,3122-3130,4438-4440,4622-4624,4630-4639,4641,4663
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c755e5e06bc2a2dc62830701235822cc0e165a9",
+  "prompts": {},
+  "sessions": {
+    "s_1316dcfd5a8426": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ade2ca607a905a932",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
