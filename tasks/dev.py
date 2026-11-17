@@ -548,10 +548,13 @@ def dev_settings(context: Context | None = None, *, infrahub_network: str = "", 
     settings = parse_dev_settings(resolved, infrahub_network=network, preset=selected)
     if selected.netbox:
         return settings
+    # The NetBox check only decides a credential default, so a failed check does not stop
+    # tasks that never use NetBox; the worker then gets no NetBox credential by default.
     try:
         netbox_running = netbox_state(runner, load_netbox_env()) == "running"
     except NetboxError as exc:
-        raise DevStackError(str(exc)) from None
+        print(f" - [{NAMESPACE}] {exc}; the worker gets no NetBox credential by default")
+        netbox_running = False
     return replace(settings, local_netbox=netbox_running)
 
 

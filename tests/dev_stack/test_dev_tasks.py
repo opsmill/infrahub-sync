@@ -75,6 +75,8 @@ class FakeDocker:
         self.probe_ok = True
         # Whether the local NetBox (`netbox-absent` project, see the `fake` fixture) runs.
         self.netbox_running = False
+        # False makes the local NetBox probes fail, as when Docker does not answer them.
+        self.netbox_probe_ok = True
         self.commands: list[str] = []
         self.envs: list[dict[str, str] | None] = []
 
@@ -87,7 +89,7 @@ class FakeDocker:
             return _Result("\n".join(sorted(existing)), ok=self.probe_ok)
         if "label=com.docker.compose.project=netbox-absent" in command:
             running_probe = command.startswith("docker ps --quiet")
-            return _Result("netbox-id" if self.netbox_running and running_probe else "")
+            return _Result("netbox-id" if self.netbox_running and running_probe else "", ok=self.netbox_probe_ok)
         return None
 
     def run(self, command: str, **kwargs: Any) -> _Result:  # noqa: ANN401 -- Invoke's keyword arguments
@@ -620,6 +622,19 @@ def test_a_failed_container_probe_is_refused_rather_than_read_as_no_infrahub(
         _body(dev.dev_restart)(context)
 
     assert fake.compose_commands() == []
+
+
+def test_a_failed_netbox_probe_does_not_stop_the_settings(
+    context: Context, fake: FakeDocker, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The NetBox check only sets a credential default; tasks such as `dev.api` still run."""
+    fake.netbox_probe_ok = False
+
+    settings = dev.dev_settings(context)
+
+    assert settings.preset.name == "infrahub"
+    assert not settings.netbox_credential
+    assert "the worker gets no NetBox credential by default" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("task_object", [dev.dev_stop, dev.dev_destroy, dev.dev_logs])
