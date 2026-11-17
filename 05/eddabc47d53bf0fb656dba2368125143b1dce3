@@ -1,0 +1,25 @@
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_055d1975e7c926 31
+  s_cf9ada8f865389::t_872598636dcb81 26
+  s_cf9ada8f865389::t_a2b3cd173bb08b 29
+dev/specs/022-local-accounts/notes.md
+  s_cf9ada8f865389::t_fd9346a7b5de0c 39,41-46,48-51
+  s_cf9ada8f865389::t_7754a1a10034f7 79-80
+  s_cf9ada8f865389::t_b8be27892e82b8 1-38,40,47,52-78,81-228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05eddabc47d53bf0fb656dba2368125143b1dce3",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
