@@ -1,0 +1,37 @@
+dev/adr/0048-a-product-store-failure-shows-its-sqlstate-and-sync-refuses-another-layout.md
+  s_e27e0562681035::t_84fa6fca079d72 53,55-60,101-103
+dev/specs/020-product-store-failure-cause/contracts/failure-text.md
+  s_e27e0562681035::t_2f2ba748921719 8,14-17,24,27-29
+dev/specs/020-product-store-failure-cause/contracts/start-up.md
+  s_e27e0562681035::t_576eb00612fbdc 9,11,43-46
+dev/specs/020-product-store-failure-cause/spec.md
+  s_e27e0562681035::t_71cc498a066048 105-111
+docs/docs/compose-deployment.mdx
+  s_e27e0562681035::t_7ebbf5c41c113d 1164-1165,1168,1173-1182
+docs/docs/development/guidelines/secret-redaction.md
+  s_e27e0562681035::t_d150ad92144ec3 29,108
+docs/docs/development/knowledge/configuration-foundation.md
+  s_e27e0562681035::t_8a6b38014c08fa 128-131
+docs/docs/operations/day-2-operations.mdx
+  s_e27e0562681035::t_00341c72caee0b 106-115,119-121,123-129,141
+tests/service/test_compose_bootstrap.py
+  s_e27e0562681035::t_849374314b274c 507-508,518-521
+tests/service/test_storage.py
+  s_e27e0562681035::t_b31250f0d7eafb 863,870-873
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66cd49775b2c3131128ba7f56f94b06a3c2ad59d",
+  "prompts": {},
+  "sessions": {
+    "s_e27e0562681035": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a174389c08e291358",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
