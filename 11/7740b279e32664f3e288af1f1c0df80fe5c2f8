@@ -1,0 +1,73 @@
+frontend/vite.config.ts
+  s_c4f9bd3d1fabe8::t_5e36084f6406cd 24
+  s_c4f9bd3d1fabe8::t_899e7de5d4cf4b 9-23
+  s_c4f9bd3d1fabe8::t_0c625ce2fb9f47 36
+frontend/src/api/token.ts
+  s_c4f9bd3d1fabe8::t_2230705638d32d 70
+infrahub_sync/service/app.py
+  s_c4f9bd3d1fabe8::t_7d9025d9399349 413
+infrahub_sync/client/client.py
+  s_c4f9bd3d1fabe8::t_65ecea72965f69 167-169,172
+  s_c4f9bd3d1fabe8::t_faa2bc7bb06e67 165-166
+tests/client/test_client.py
+  s_c4f9bd3d1fabe8::t_eff4f8bf09e4ad 165-167
+  s_c4f9bd3d1fabe8::t_940d8bf2e167bc 168-171
+frontend/src/features/runs/run-sections.tsx
+  s_c4f9bd3d1fabe8::t_b514d1e0845ad7 6
+  s_c4f9bd3d1fabe8::t_277409dad990dc 71
+frontend/src/api/client.ts
+  s_c4f9bd3d1fabe8::t_63bbf41a487be9 6
+  s_c4f9bd3d1fabe8::t_528a16dbc683e8 36-39,41-42,44,47-67
+tests/test_workflow_contracts.py
+  s_c4f9bd3d1fabe8::t_b6d88f45422f08 121-123
+  s_c4f9bd3d1fabe8::t_43752c38d90dc5 760-761
+  s_c4f9bd3d1fabe8::t_1feb51c414bec6 775
+  s_c4f9bd3d1fabe8::t_3cf8f7304625d5 675
+frontend/src/features/runs/plan-download.tsx
+  s_c4f9bd3d1fabe8::t_6f3cfc62a098ae 116-121
+  s_c4f9bd3d1fabe8::t_2a5044465463ef 63-67,70-73
+  s_c4f9bd3d1fabe8::t_5fe1fdc2e42997 5,7
+frontend/src/features/runs/RunActions.tsx
+  s_c4f9bd3d1fabe8::t_6a0dd458803057 865,871-872,886-888
+  s_c4f9bd3d1fabe8::t_ec7f17ffff6d85 828-837,840-848
+tests/service/test_settings_web_directory.py
+  s_c4f9bd3d1fabe8::t_aaaae7f21aefee 65-89
+  s_c4f9bd3d1fabe8::t_f143f094e28275 5
+Dockerfile
+  s_c4f9bd3d1fabe8::t_010fffa4d9a362 83-84,86-89,98-102
+  s_c4f9bd3d1fabe8::t_4f5f6803939ee4 103
+frontend/src/routes/__root.tsx
+  s_c4f9bd3d1fabe8::t_969f7bf894e8ff 282-283
+infrahub_sync/service/settings.py
+  s_c4f9bd3d1fabe8::t_759b5c6d2126ba 60-61,66-78
+frontend/src/features/runs/RunPage.tsx
+  s_c4f9bd3d1fabe8::t_1a83b93532d935 678-685
+.github/workflows/workflow-nightly-e2e.yml
+  s_c4f9bd3d1fabe8::t_021da40f857fb7 83-87
+  s_c4f9bd3d1fabe8::t_8fa537b933fa17 312-315
+infrahub_sync/service/web.py
+  s_c4f9bd3d1fabe8::t_3f6929c0cfd0af 185-187
+tasks/dev.py
+  s_c4f9bd3d1fabe8::t_61417ac11e8e9e 414-415,427-428
+  s_c4f9bd3d1fabe8::t_53d052a2d06fc2 107-111
+tests/service/test_web_site.py
+  s_c4f9bd3d1fabe8::t_aab25791aac213 179-189
+tests/dev_stack/test_build_inputs.py
+  s_c4f9bd3d1fabe8::t_4e3bd7dee47531 121-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "117740b279e32664f3e288af1f1c0df80fe5c2f8",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
