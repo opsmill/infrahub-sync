@@ -1,0 +1,47 @@
+infrahub_sync/product_store/models.py
+  s_cf9ada8f865389::t_a136de1f084a17 326-330,334
+infrahub_sync/service/app.py
+  s_cf9ada8f865389::t_b4e939938e4397 350-358
+  s_cf9ada8f865389::t_3f46ef4c7f2055 453-456
+  s_cf9ada8f865389::t_9448fb400091a2 27
+  s_cf9ada8f865389::t_44f46806b3d168 65
+  s_cf9ada8f865389::t_981fb4f64c48a1 6
+infrahub_sync/service/service.py
+  s_cf9ada8f865389::t_e4cfb5de27c070 344-347
+  s_53b50d9d96dc6f::t_4e4dcff1ede9df 103,106
+tests/service/test_account_presentation.py
+  s_cf9ada8f865389::t_048c32fd373a6c 370-372
+  s_cf9ada8f865389::t_6ee7f024d1f735 1-132,134-149,151-295,297-306,308-369,373-635
+  s_cf9ada8f865389::t_06a2ed7a27e1f5 133
+  s_cf9ada8f865389::t_c264df0ae3e460 150
+  s_cf9ada8f865389::t_4da6eaf3675b4b 296
+  s_cf9ada8f865389::t_07e9732c7aec04 307
+infrahub_sync/service/presentation.py
+  s_cf9ada8f865389::t_f8f7324537a3ee 1-168
+dev/specs/022-local-accounts/tasks.md
+  s_53b50d9d96dc6f::t_85e6f0b4adee85 114,122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1f8bb4c28bb616e60ea64523a5f0f154434f104",
+  "prompts": {},
+  "sessions": {
+    "s_53b50d9d96dc6f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a2a12db07477f87c5",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
