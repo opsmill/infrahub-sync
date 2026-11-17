@@ -1,0 +1,36 @@
+dev/specs/022-local-accounts/research.md
+  s_cf9ada8f865389::t_92ca2e59287157 6-7,12-33,35-42,46-49,53,55-74,76-79,84-93,95-97,99-102,116-118,122,124-127,131-156,165-167,172-180,182,190-197,201-211,216-244,249-252,254-257,266-280,286,288,292-293,300-306,310,316-317,320-323
+dev/specs/022-local-accounts/data-model.md
+  s_cf9ada8f865389::t_4e982a3a27a8ac 5,12-19,21,23,27-29,41-42,53,59,62,64,66,68-69,74,79,81-84,88-93,95-96,99-100
+dev/specs/022-local-accounts/contracts/http-api.md
+  s_cf9ada8f865389::t_f8af2f5517c064 81
+  s_cf9ada8f865389::t_de8cc97ffeb368 9-17,34-35,48-49,63-64,72-74
+dev/specs/022-local-accounts/critiques/critique-20261117.md
+  s_cf9ada8f865389::t_22b93b15269655 1-133
+dev/specs/022-local-accounts/contracts/cli.md
+  s_cf9ada8f865389::t_ccebc17b507cd4 7-8,26,39-44
+dev/specs/022-local-accounts/contracts/environment.md
+  s_cf9ada8f865389::t_53498f2e582d1e 8,11-16,18-19
+dev/specs/022-local-accounts/plan.md
+  s_cf9ada8f865389::t_3b9442ffa0b9b9 12-16,19-20,25-26,38-39,43-49,60,62-64,68-72,83-87,100-102,116,119-120,146,148,150-153,156,158-159,163-166,181,184-189,198,200-201,212-220,230-232
+dev/specs/022-local-accounts/quickstart.md
+  s_cf9ada8f865389::t_d7829212df4c31 38,66-67,80-88
+dev/specs/022-local-accounts/spec.md
+  s_cf9ada8f865389::t_10ca49f2595416 77-83,89-91,98-100,105-108,129-141,176,178-180,182-184,187-188,192,195-198,201-210,250-255,258-259,261-269,275-278,320-321,338-339,347-355,363-367,386-388,395-397,417-418,426-428,455-456,473-478,491-492
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c25da1ec24614e384aeb7a5adb43bea81e08a2d7",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
