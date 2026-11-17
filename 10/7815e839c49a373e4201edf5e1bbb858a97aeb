@@ -1,0 +1,197 @@
+tests/service/test_sync_store_policy.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 66
+tests/test_sync_store_policy.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 10-11,113-148
+  s_c4f9bd3d1fabe8::t_f651ac1702e5f7 149-150
+dev/adr/0044-the-base-install-declares-no-redis-client.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1-54
+tests/service/test_registered_plan_apply.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 96,201,231,342
+docs/docs/development/knowledge/sync-architecture.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 100
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 206,215-216
+infrahub_sync/service/orchestration.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 209-210
+.github/workflows/workflow-linter.yml
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 103
+infrahub_sync/utils.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 14,33,162-163,259-267,329,382-383,393-394,397,408,424,430,434,438
+tests/service/test_registered_schema_guard.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 223
+docs/docs/reference/prefect-remote-run.mdx
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 55-63
+tests/product_store/test_audit_event_migration.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1,3-4,28
+tests/product_store/test_configs_service.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 509-510,601,604
+infrahub_sync/plugin_loader.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 226,318,338,347,354,361
+infrahub_sync/potenda/__init__.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 465-466
+tests/sync_instances.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1-78
+docs/docs/configuration-package.mdx
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 183
+tests/plan/test_source_identity_collision.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 158
+tests/test_sync_config_order.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1,39,52
+docs/docs/running-a-sync.mdx
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 325
+infrahub_sync/__init__.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 214
+docs/docs/adapters/infrahub.mdx
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 131
+infrahub_sync/service/flow.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 48,127-131,258-267,269,348,429-437,535,543,545-548,554,560-561,753-755,815-824,833,856,913,1422
+docs/docs/operations/day-2-operations.mdx
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 64-65
+tests/product_store/test_postgresql_isolation.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 190-191,193,223-224,227,232
+tests/service/test_service_worker.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 446
+tasks/linter.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 18,22-23,27,30
+dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 3-4
+tests/product_store/test_run_approval.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1,43,52,74
+tests/runtime_schema/test_model_builder.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 41-42
+tests/service/test_prefect_wording.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 143
+tests/service/test_plan_checkpoint.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 174,192,215,446,479,516
+AGENTS.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 215,271
+infrahub_sync/orchestration/flow.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 31,152-180,205-241
+tests/service/test_resume_run.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1364
+tests/service/test_worker_run_binding.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1-138
+tests/plan/test_config_version.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 44
+tests/test_potenda_plan_artifact.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1376
+tasks/tests.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 10,89,121
+docs/docs/development/guidelines/testing-tiers.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 159,211-212,215,723-724
+tests/plan/test_keyed_create_refusal.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 32,80-86,250,276,297-299,321,360
+infrahub_sync/product_store/store.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 11-12,77-79,140,145,190-191,228,234,356-359,806-839,858,860,873,894-899,916,924-926,965,967-973,975-980,1014-1033,1038-1040,1064-1078,1084-1092,1098-1103,1267-1272,1277-1285,1301-1302,1307,1348-1357,1359-1360,1362-1363,1569-1577,1581-1583,1597-1599,1629-1659,1903-1905,1914-1917,2305-2307,2315-2317,2355-2366,2368-2379,2407-2422,2424-2431,2530-2540,2583-2591,2596-2603,2606-2615,2659-2660,2663-2669,2718-2720,2860-2862,2866-2868,2874-2876,2883-2885,2889-2891,2895-2897,2943-2948,3019-3024,3055-3063,4236
+infrahub_sync/adapters/endpoint_records.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1-81
+tests/service/test_apply_checkpoint_order.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 226
+tests/service/test_verify_destination.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 223
+infrahub_sync/service/service.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 356-359,369-373,531,538,546,548-550,599,606-610,632,641,643-645,666-728,882,887-890,898,906,908-909,915-918,961-965,995-1003,1176-1185,1619-1620,1630,1632,1639-1641,1645-1646,1651-1664,1740,1746-1749,1755-1759,2074,2079-2082,2085-2112
+  s_c4f9bd3d1fabe8::t_95f65feb106a30 2113
+docs/docs/development/guidelines/secret-redaction.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 28
+infrahub_sync/adapters/netbox.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 21,72,81,85,88,100,103,105-106
+tests/test_get_potenda_top_level.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 14-15,29,38
+dev/adr/README.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 28-29,133-135
+tests/service/test_run_log_next_step.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 308,519,585,721
+infrahub_sync/execution.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 85-87,97,100,632-633,912,1242,1247,1252
+tests/service/test_read_progress.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 390-393,398,479,523,525,533,560,603,627
+tests/product_store/test_contract.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 58,157-158,779,782,786-788,791-793,796,798-799,824,831,1261,4043,4070,4137-4138,4151,4182-4186,4189,4248,4343,4357-4359,4430-4432,4465-4466,4468-4470,4500,4728-4747
+  s_c4f9bd3d1fabe8::t_4841c86634d8c1 4748-4749
+changelog/+remove-unused-code-and-duplication.housekeeping.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1
+tests/service/test_sync_checkpoint_order.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 204
+tests/plan/test_destination_binding.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 10-12
+tests/test_credential_canary.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 15
+docs/docs/development/adr-index.mdx
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 49
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 120-123,143,152
+infrahub_sync/client/client.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 345,448,528,627,1078-1082
+  s_c4f9bd3d1fabe8::t_f1d06653e352cc 1083
+docs/docs/reference/sync-http-api.mdx
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 57,182-184,203,205-207,209-214,668,826
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 104-107,348-353
+docs/docs/reference/config.mdx
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 119-120
+tests/service/test_flow_and_prefect.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 248,290,311-313,316,332,367-368,408,495,570,636,667,705,740,786,824,870,1211,1258,1311,1485,1522
+tests/integration/test_saved_plan_apply_integration.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 126,128,729,741,758
+tests/service/test_stage_scratch.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 139,143,267,292,340,372,395
+tests/service/test_worker_claim.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 83,177,182,212,292
+infrahub_sync/load_report.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 12
+tests/compose/test_documentation.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 113-114,116,120,124,126
+tests/service/test_managed_write_guard.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 259,272
+tests/service/test_sync_left_out_stop.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 226
+docs/docs/reference/incremental-extraction.mdx
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 36-37
+docs/docs/development/knowledge/execution-surface.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 8,12-13,58,73,78,161-163
+infrahub_sync/adapters/nautobot.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 21,127,136,140,143,166,169,171-172
+tests/plan/test_destination_only_peer.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 44
+tests/product_store/test_resume_admissions.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 170-184,194,222,289,388,500,511,525,565,652,679
+tests/service/test_failure_without_traceback.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 105
+infrahub_sync/plan/verify.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 463-464
+tests/test_execution_surface.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 44-45,1522
+tests/test_generated_examples.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 26-27
+pyproject.toml
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 26-28
+tests/service/test_worker_configuration_directory.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1,3-6,54-55,60,63
+docs/docs/development/knowledge/repository-tour.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 182,228,230-231,246-248
+changelog/+remove-unsupported-paths.removed.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 1
+tests/runtime_schema/test_worker_path.py
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 184,204,307,325,661,671-674
+docs/docs/development/knowledge/index.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 9-11,59
+docs/docs/development/knowledge/configuration-foundation.md
+  s_c4f9bd3d1fabe8::t_989d63aeaa97c5 81,83-87,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "107815e839c49a373e4201edf5e1bbb858a97aeb",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
