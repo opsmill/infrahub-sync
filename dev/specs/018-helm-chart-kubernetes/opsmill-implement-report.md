@@ -44,9 +44,9 @@
   after `dev.deps` has run, `dev.api` and `dev.worker` refuse to start until `dev.deps` runs again.
 
 **Chunk 9b**
-- The CI job reads two repository secrets that the subagent named:
-  `INFRAHUB_SYNC_REGISTRY_USERNAME` and `INFRAHUB_SYNC_REGISTRY_PASSWORD`. Whether they exist is not
-  known.
+- The CI job read two repository secrets that the subagent named. After the run, the user chose
+  the names the other OpsMill repositories use, `HARBOR_USERNAME` and `HARBOR_PASSWORD` (H
+  `d4e2470`).
 - The warning is written when either secret is empty, not when pytest skips the test.
 
 **Chunk 9c**
@@ -123,8 +123,10 @@ was Critical.
   the work pool.
 
 **The CI job**
-- Its secret names were chosen without a source: `INFRAHUB_SYNC_REGISTRY_USERNAME` and
-  `INFRAHUB_SYNC_REGISTRY_PASSWORD`. A maintainer must confirm them or rename them.
+- It logs in with `HARBOR_USERNAME` and `HARBOR_PASSWORD`, which already exist in `infrahub-helm`,
+  so it runs on pull requests from that repository. It fails until `appVersion` names a served
+  Sync image with the start check and tini. Whether that account can read the restricted Sync
+  image is not known.
 - Its warning step was not run in GitHub Actions; it is recorded as deferred in section 4.
 
 **The chart**
@@ -143,15 +145,12 @@ was Critical.
 
 ## 7. Suggested next steps
 
-1. Confirm or rename the two registry secrets of the `e2e-infrahub-sync` job. Add them to
-   `infrahub-helm` only once `appVersion` names a Sync image that the registry serves and that
-   contains the start check. With a login set, the test fails on today's default (`3.0.0a5`):
-   the registry does not serve that image, and it has no start check. `H/tests/README.md` says
-   this too.
-2. Decide whether the worker should wait for runs in progress before it exits on SIGTERM
-   (verification.md, "Worker stop on SIGTERM").
-3. Decide on the deferred findings in section 5.
+1. Expect the `e2e-infrahub-sync` job to fail until `appVersion` names a Sync image that the
+   registry serves and that contains the start check and tini (`H/tests/README.md`).
+2. A worker that waits for runs in progress before it exits on SIGTERM is a later improvement
+   with its own spec, as the user decided. It is not part of this spec.
+3. Decide on the deferred findings in section 5 and of the two code reviews.
 4. Release an Infrahub Sync version that contains the start check. Then set the chart's
    `appVersion` to it and publish the chart, as described in the plan's "Release order".
-6. Open the pull requests when ready: one in `infrahub-sync` into `feature/v3-develop` and one in
+5. Open the pull requests when ready: one in `infrahub-sync` into `feature/v3-develop` and one in
    `infrahub-helm` into `stable`.

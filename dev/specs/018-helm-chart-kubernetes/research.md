@@ -234,7 +234,7 @@ The documentation tells the operator to read the Sync release from the chart's `
   `kubectl wait --for=condition=complete`, call `/version` and `/whoami`, read the worker state
   from `/status`, upgrade with a changed setting, wait for the new Job, check again. The test
   takes the image from `INFRAHUB_SYNC_E2E_IMAGE` when set, and registry credentials from
-  `INFRAHUB_SYNC_REGISTRY_USERNAME` and `INFRAHUB_SYNC_REGISTRY_PASSWORD` when set. Before it
+  `HARBOR_USERNAME` and `HARBOR_PASSWORD` when set. Before it
   installs, it checks that the image can be resolved. When it cannot and no credential is given,
   the test is skipped with a message that says why. Once the image resolves, a pod that does not
   become ready fails the test; it is never a skip. The CI job exists from the start and reports a

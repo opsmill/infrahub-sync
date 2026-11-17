@@ -285,7 +285,7 @@ or one of the bootstrap's settings changes, and it keeps the data.
 - [X] T020 [US2] Write the end-to-end test `H/tests/e2e/test_infrahub_sync.py` with marker
   `sync`. Follow the structure and fixtures of `H/tests/e2e/test_infrahub_mcp.py`.
   1. Create the credentials Secret, with a generated token and passwords.
-  2. When `INFRAHUB_SYNC_REGISTRY_USERNAME` and `INFRAHUB_SYNC_REGISTRY_PASSWORD` are set, create
+  2. When `HARBOR_USERNAME` and `HARBOR_PASSWORD` are set, create
      an image pull Secret.
   3. Resolve the image from `INFRAHUB_SYNC_E2E_IMAGE`, or from the chart's `appVersion`.
   4. Skip with a message when the image cannot be resolved and no credential is given.
