@@ -144,6 +144,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_REQUIRE_APPROVAL` | `false` | Set on `sync-api`. When `true`, `apply` refuses a plan that has no approval matching the checksum it names, and `sync` is refused; operators run `plan`, `approve` and `apply` instead. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any case. Any other value, including an empty one, stops `sync-api` at startup. The service reads it for each `apply` or `sync` request, so restart `sync-api` to change it; stored runs and approvals are not changed. `infrahub-sync whoami` prints the value as `approval_required`. See [Require an approved plan](./running-a-sync.mdx#require-an-approved-plan). |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |
 | `INFRAHUB_SYNC_PREFECT_UI_URL` | empty | The address you open the Prefect UI at, for example `http://127.0.0.1:4200`. Run responses and `infrahub-sync runs show` then link each flow run to its Prefect UI page. Empty turns the link off. The Sync API refuses to start when the value is not an absolute `http` or `https` URL, or when it carries credentials, a query or a fragment; see [Valid values of `INFRAHUB_SYNC_PREFECT_UI_URL`](#valid-values-of-infrahub_sync_prefect_ui_url). |
+| `INFRAHUB_SYNC_WEB_DIRECTORY` | `/opt/infrahub-sync/web`, set in the image | The directory of the built web interface that `sync-api` serves at the root of its address. The Compose file does not read it from `.env`, so the image value applies. When the variable is empty, or names a directory without `index.html`, the Sync API still starts under `/api`, and a browser that opens the root address receives the text "The web interface is not included in this install." See [Open the web interface](#open-the-web-interface). |
 
 ### An example `.env`
 
@@ -476,7 +477,9 @@ answers is answered by the first run against it.
 
 The deployment publishes one port, the Sync API, and binds it to loopback by
 default: `http://127.0.0.1:8001`. It serves no Prefect UI, and the Prefect API,
-PostgreSQL and the object store publish no port. To view the Prefect UI during a
+PostgreSQL and the object store publish no port. The same port serves the Sync
+web interface at its root and the Sync API under `/api`; see
+[Open the web interface](#open-the-web-interface). To view the Prefect UI during a
 support session, see [Open the Prefect UI](#open-the-prefect-ui).
 
 External exposure and TLS termination are not part of this topology.
@@ -533,6 +536,50 @@ check and the start.
 The default deployment serves no Prefect UI and does not publish the Prefect
 port. Only the Sync services reach the Prefect API, on the deployment's own
 network.
+
+## Open the web interface
+
+The Sync API port also serves the Sync web interface, in which a person views
+configurations and runs and acts on them. Open the address of the Sync API port in
+a browser, by default `http://127.0.0.1:8001`. The web interface needs no other
+port, service or setting.
+
+Each person signs in to the web interface with a Sync API token:
+
+1. The web interface asks for a Sync API token. Enter a token and select
+   **Continue**.
+2. The web interface checks the token with the Sync API before it accepts it. When
+   the Sync API refuses the token, the page says so, and you can enter another one.
+3. Every request the web interface sends to the Sync API carries that token, so the
+   person acts with the permissions of its principal, as with the CLI.
+
+To remove the token from the browser tab, select the Sync service status at the top
+of the page, then select **Remove token**. The web interface also removes the token and asks
+for a new one when the Sync API refuses a request with it, for example after an
+operator changed or removed the token.
+
+The web interface keeps the token for the browser tab only, in the tab's session
+storage. Closing the tab removes it, and the Sync service sets no cookie. The Sync
+service never sends a token to the browser: each person enters their own.
+
+To give each person their own token, add one principal per person to
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` in `.env`, then recreate `sync-api` with
+`docker compose up -d --wait`:
+
+```dotenv
+INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "<principal token>", "administrator": true}, "alice@example.com": {"token": "<another token>", "administrator": false}}
+```
+
+Any principal can create and inspect a run. Only the principal that created a
+run, or an administrator, can verify, approve, apply or cancel it. See
+[Configure principals](./reference/sync-http-api.mdx#configure-principals).
+
+The Sync API is served under `/api` on the same port, for example
+`http://127.0.0.1:8001/api/status`. Keep `INFRAHUB_SYNC_API_URL` set to the address
+without `/api`: the CLI adds it. A script that calls the Sync API directly adds
+`/api` to the address. A request outside `/api` from a client that does not accept
+HTML, such as an earlier route address called by a script, receives a "not found"
+error that states that the Sync API is served under `/api`.
 
 ## Open the Prefect UI
 
@@ -650,7 +697,7 @@ of its commands has a plain `docker compose` equivalent.
 | `init` | Write `.env` by hand, or generate it as shown in [An example `.env`](#an-example-env). There is no instance identity: the Compose project name, which defaults to the directory name, plays that role. |
 | `preflight` | `docker compose version --short`, expecting 2.24 or later, then `docker compose config --quiet`, which names the first missing credential. `up` reports a pull failure or a port in use. |
 | `start` | `docker compose up -d --wait`, then check the worker as in [Status](#status). |
-| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8001/status` and read `worker.state`. |
+| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8001/api/status` and read `worker.state`. |
 | `logs` | `docker compose logs --no-color --tail 200 [service]` |
 | `stop` | `docker compose stop` |
 | `restart` | `docker compose restart sync-api sync-worker`, then check the worker. It does not pick up a changed `.env`. |
@@ -925,11 +972,13 @@ authorize a command, or prove what a write reached.
 
 ### Over HTTP or from Python
 
-The same deployment answers directly. `/status` needs no credential:
+The same deployment answers directly. Every Sync API route is under `/api`, so a
+script adds `/api` to `INFRAHUB_SYNC_API_URL`; the CLI and `SyncClient` add it
+themselves. `/api/status` needs no credential:
 
 ```bash
 export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
-curl -sS "$INFRAHUB_SYNC_API_URL/status"
+curl -sS "$INFRAHUB_SYNC_API_URL/api/status"
 ```
 
 An authenticated call is what the CLI is for: `configs list` reads the same
@@ -946,7 +995,7 @@ printf 'header = "Authorization: Bearer %s"\n' \
   "$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)" \
   > "$CURL_CONFIG"
 
-curl -sS --config "$CURL_CONFIG" "$INFRAHUB_SYNC_API_URL/configs"
+curl -sS --config "$CURL_CONFIG" "$INFRAHUB_SYNC_API_URL/api/configs"
 
 rm -f "$CURL_CONFIG"
 ```
@@ -986,7 +1035,7 @@ printf 'header = "Authorization: Bearer %s"\n' \
 curl -sS -X POST --config "$CURL_CONFIG" \
   -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' \
   -d '{"reason": "second opinion before applying"}' \
-  "$INFRAHUB_SYNC_API_URL/runs/RUN_ID/verify"
+  "$INFRAHUB_SYNC_API_URL/api/runs/RUN_ID/verify"
 
 rm -f "$CURL_CONFIG"
 ```
@@ -995,11 +1044,11 @@ rm -f "$CURL_CONFIG"
 
 ```bash
 docker compose ps
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/status
 ```
 
 `docker compose ps` shows each container and the health of `postgres`,
-`object-store`, and `prefect-server`. The `/status` response needs no
+`object-store`, and `prefect-server`. The `/api/status` response needs no
 authentication; its `worker.state` says whether a worker is live:
 
 | `worker.state` | What it means |
@@ -1012,7 +1061,7 @@ To read the worker state without the published port, ask from inside the
 deployment's network:
 
 ```bash
-docker compose run --rm --no-deps -T sync-bootstrap python -c "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])"
+docker compose run --rm --no-deps -T sync-bootstrap python -c "import httpx; print(httpx.get('http://sync-api:8000/api/status', timeout=5).json()['worker']['state'])"
 ```
 
 Container state establishes absence and nothing else. A paused or hung worker

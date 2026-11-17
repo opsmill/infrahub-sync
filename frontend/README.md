@@ -18,9 +18,9 @@ To run this application against the local development stack, from the repository
 uv run invoke dev.frontend
 ```
 
-The task fetches the submodule when it is missing, installs the dependencies and sets the
-variables described in [Calling the Sync API](#calling-the-sync-api). To run it against another
-Sync API, export those variables and run:
+The task fetches the submodule when it is missing, installs the dependencies, sets the
+variable described in [Calling the Sync API](#calling-the-sync-api) and prints where to find
+the token to enter in the page. To run it against another Sync service, export that variable and run:
 
 ```bash
 pnpm install
@@ -43,18 +43,18 @@ import { Button } from "@infrahub/ui";
 
 ### Calling the Sync API
 
-The browser sends API requests to `/api` on the frontend's own origin. In development, the Vite
-server forwards them to the Sync API, removes the `/api` prefix and adds the bearer token. It
-reads the same environment variables as the `infrahub-sync` CLI, from the shell only, not from a
-`.env` file:
+The browser sends API requests to `/api` on the page's own origin, where the Sync service serves
+the Sync API. Each person enters their own Sync API token in the page. The page sends it as a
+bearer token with every request and keeps it for the browser tab only.
 
-- `INFRAHUB_SYNC_API_URL`, by default `http://127.0.0.1:8001`
-- `INFRAHUB_SYNC_API_TOKEN`
-
-The token is not included in the browser bundle.
+In development, the Vite server forwards every request under `/api` to the Sync service without
+changing the path and without adding a token, so you enter a token in the page as in a deployment.
+The server reads the Sync service's address from the same environment variable as the
+`infrahub-sync` CLI, from the shell only, not from a `.env` file: `INFRAHUB_SYNC_API_URL`, by
+default `http://127.0.0.1:8001`.
 
 `src/api/types.generated.ts` holds TypeScript types for every Sync API route. It is generated
-from the `/openapi.json` of the running Sync API. Regenerate it after the API changes:
+from `/api/openapi.json` of the running Sync service. Regenerate it after the API changes:
 
 ```bash
 pnpm codegen:openapi
@@ -80,8 +80,9 @@ export const Route = createFileRoute("/runs/$runId")({
 | `/runs` | Every run, newest first, with filters and older pages. | `GET /runs` |
 | `/runs/{run_id}` | The plan, verify and apply steps with their timings, the failure detail, the planned changes by kind, the run's files and its executions. **Verify**, **Apply** and **Cancel run** act on the run. | `GET /runs/{run_id}`, `GET /runs/{run_id}/plan`, `GET /runs/{run_id}/artifacts`, `POST /runs/{run_id}/verify`, `POST /runs/{run_id}/apply`, `POST /runs/{run_id}/cancel` |
 
-The top bar reads `GET /status` for the worker state and `GET /me` for the actor the token
-authenticates as. A run in progress is read again every 2 seconds; lists every 10 seconds.
+The top bar reads `GET /status` for the worker state and `GET /me` to check that the Sync API
+accepts the token; it does not display the token's actor. A run in progress is read again every
+2 seconds; lists every 10 seconds.
 
 Each write sends an `Idempotency-Key`. A dialog keeps its key until a field changes, so sending
 again after a lost response retries the same request instead of creating a second run.
@@ -99,6 +100,15 @@ To build this application for production:
 
 ```bash
 pnpm build
+```
+
+The build writes the page and its assets to `dist/`. The Sync service serves that directory at
+the root of its address when `INFRAHUB_SYNC_WEB_DIRECTORY` names it, and the Sync API under `/api`.
+The container image builds the web interface and sets this variable itself. To serve your build
+from the Sync API that `dev.api` runs on the host, with the development stack started:
+
+```bash
+INFRAHUB_SYNC_WEB_DIRECTORY=$PWD/frontend/dist uv run invoke dev.api   # from the repository root
 ```
 
 ### Styling

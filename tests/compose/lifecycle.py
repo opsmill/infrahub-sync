@@ -204,7 +204,7 @@ class Deployment:
 STATUS_DEPENDENCIES = ("postgres", "object-store", "prefect-server")
 # The worker state the Sync API reports, asked from inside the deployment so the
 # answer does not depend on how the host maps container ports onto loopback.
-STATUS = "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])"
+STATUS = "import httpx; print(httpx.get('http://sync-api:8000/api/status', timeout=5).json()['worker']['state'])"
 
 
 def wait_for(description: str, probe: Callable[[], object], *, timeout: int = READY_TIMEOUT_SECONDS) -> object:
@@ -228,7 +228,7 @@ def wait_for(description: str, probe: Callable[[], object], *, timeout: int = RE
 def api_client(deployment: Deployment, token: str) -> httpx.Client:
     """An authenticated client for the deployment's published Sync API."""
     return httpx.Client(
-        base_url=deployment.api,
+        base_url=f"{deployment.api}/api",
         headers={"Authorization": f"Bearer {token}"},
         timeout=60,
     )
@@ -241,7 +241,7 @@ def idempotency(prefix: str) -> dict[str, str]:
 
 def worker_state(deployment: Deployment) -> str:
     """Return the worker state the unauthenticated status endpoint reports."""
-    response = httpx.get(f"{deployment.api}/status", timeout=30)
+    response = httpx.get(f"{deployment.api}/api/status", timeout=30)
     response.raise_for_status()
     return str(response.json()["worker"]["state"])
 

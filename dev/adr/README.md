@@ -127,6 +127,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0042 — The v2 gate passes on no creates and no updates, and on reviewed lists for everything else](0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md)
   — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
   out and deletes are kept.
+- [0043 — The Sync service serves the web interface at the root of its address and the Sync API under `/api`](0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md)
+  — why every Sync API route moved under `/api`, why the web interface keeps a person's token for
+  the browser tab, and why the CLI adds `/api` to `INFRAHUB_SYNC_API_URL`.
 - [0044 — The base install declares no Redis client, and no code imports the Redis store](0044-the-base-install-declares-no-redis-client.md)
   — why the `redis` dependency and the `RedisStore` import were removed, and the refusal a
   configured store gets. Supersedes 0008.

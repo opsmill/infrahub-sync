@@ -40,7 +40,7 @@ def test_resume_posts_the_request_with_the_idempotency_key_and_parses_the_progre
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         sent.append(request)
         return httpx.Response(202, json=accepted)
@@ -49,7 +49,7 @@ def test_resume_posts_the_request_with_the_idempotency_key_and_parses_the_progre
     resource = _client(handler).resume("run-1", request, "resume-key")
 
     [posted] = sent
-    assert (posted.method, posted.url.path) == ("POST", "/runs/run-1/resume")
+    assert (posted.method, posted.url.path) == ("POST", "/api/runs/run-1/resume")
     assert posted.headers["Idempotency-Key"] == "resume-key"
     assert json.loads(posted.content) == {
         "expected_checksum": _CHECKSUM,
@@ -67,7 +67,7 @@ def test_resume_posts_the_request_with_the_idempotency_key_and_parses_the_progre
 
 def test_a_run_from_a_sync_api_that_predates_resume_has_no_progress_view() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(200, json=_run("run-1"))
 
@@ -80,7 +80,7 @@ def test_a_run_from_a_sync_api_that_predates_resume_has_no_progress_view() -> No
 @pytest.mark.parametrize("code", ["verify-required", "run-not-resumable", "run-execution-conflict"])
 def test_a_refused_resume_raises_an_api_error_with_its_code(code: str) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(
             409,

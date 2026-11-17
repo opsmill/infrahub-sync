@@ -230,7 +230,7 @@ def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: 
     exchanges = [
         (record["method"], record["path"], record["status"]) for record in map(json.loads, captured.splitlines())
     ]
-    assert exchanges == [("POST", "/configs", 201), ("POST", "/configs", 201)]
+    assert exchanges == [("POST", "/api/configs", 201), ("POST", "/api/configs", 201)]
     artifacts.update(
         {
             "NetBox Python register resource": from_python,
@@ -299,10 +299,10 @@ def test_the_netbox_package_validates_identically_through_every_interface(
         (record["method"], record["path"], record["status"]) for record in map(json.loads, captured.splitlines())
     ]
     assert exchanges == [
-        ("POST", "/configs", 201),
-        ("POST", "/configs", 201),
-        ("POST", f"/configs/{clean['config_id']}/versions/{clean['registry_version']}/validate", 200),
-        ("POST", f"/configs/{warned['config_id']}/versions/{warned['registry_version']}/validate", 200),
+        ("POST", "/api/configs", 201),
+        ("POST", "/api/configs", 201),
+        ("POST", f"/api/configs/{clean['config_id']}/versions/{clean['registry_version']}/validate", 200),
+        ("POST", f"/api/configs/{warned['config_id']}/versions/{warned['registry_version']}/validate", 200),
     ]
     artifacts[str(transcript)] = captured
     artifacts.update(
@@ -339,8 +339,8 @@ def test_validating_the_netbox_package_reads_no_source(
         (record["method"], record["path"], record["status"]) for record in map(json.loads, captured.splitlines())
     ]
     assert exchanges == [
-        ("POST", "/configs", 201),
-        ("POST", f"/configs/{version['config_id']}/versions/{version['registry_version']}/validate", 200),
+        ("POST", "/api/configs", 201),
+        ("POST", f"/api/configs/{version['config_id']}/versions/{version['registry_version']}/validate", 200),
     ]
     assert (
         canary_leaks(

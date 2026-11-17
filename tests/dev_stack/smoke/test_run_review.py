@@ -346,10 +346,10 @@ def test_raw_http_verifies_a_plan_and_reads_its_artifact_and_results(
     captured = transcript.read_text(encoding="utf-8")
     recorded = {(json.loads(line)["method"], json.loads(line)["path"]) for line in captured.splitlines()}
     assert recorded >= {
-        ("POST", f"/runs/{run_id}/verify"),
-        ("GET", f"/runs/{run_id}/results"),
-        ("GET", f"/runs/{run_id}/artifacts"),
-        ("GET", f"/runs/{run_id}/artifacts/{PLAN_ARTIFACT_ID}"),
+        ("POST", f"/api/runs/{run_id}/verify"),
+        ("GET", f"/api/runs/{run_id}/results"),
+        ("GET", f"/api/runs/{run_id}/artifacts"),
+        ("GET", f"/api/runs/{run_id}/artifacts/{PLAN_ARTIFACT_ID}"),
     }
     assert (
         canary_leaks(

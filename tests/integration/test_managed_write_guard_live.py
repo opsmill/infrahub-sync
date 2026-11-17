@@ -120,7 +120,7 @@ def live_stack_fixture() -> LiveStack:
     except dev.DevStackError as exc:
         pytest.skip(f"development stack settings unavailable ({exc}); start the stack with `invoke dev.start`")
     for description, url in (
-        ("Sync API", f"{settings.sync_api_url}/openapi.json"),
+        ("Sync API", f"{settings.sync_api_url}/api/openapi.json"),
         ("Infrahub", f"{settings.infrahub_url}/api/config"),
         ("Prefect", f"{settings.prefect_url}/api/health"),
     ):
@@ -153,7 +153,7 @@ def live_stack_fixture() -> LiveStack:
 def api_fixture(live_stack: LiveStack) -> Iterator[httpx.Client]:
     """A bearer-authenticated client for the live Sync API."""
     with httpx.Client(
-        base_url=live_stack.sync_api,
+        base_url=f"{live_stack.sync_api}/api",
         headers={"Authorization": f"Bearer {live_stack.bearer_token}"},
         timeout=60,
     ) as client:

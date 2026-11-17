@@ -34,6 +34,7 @@ from infrahub_sync.client import (
     ConfigMutationRequest,
     ConfigsAPIError,
     CreateRunRequest,
+    NotSyncAPIError,
     PlanResource,
     ProtocolError,
     RegisteredConfigurationResource,
@@ -148,7 +149,10 @@ def main(
         None,
         "--api-url",
         envvar="INFRAHUB_SYNC_API_URL",
-        help="Absolute URL of the Sync API. Defaults to INFRAHUB_SYNC_API_URL.",
+        help=(
+            "Address of the Sync service, for example http://127.0.0.1:8001. The client adds /api. "
+            "Defaults to INFRAHUB_SYNC_API_URL."
+        ),
     ),
     verbosity: Verbosity = typer.Option(Verbosity.default, "--verbosity", help="Log verbosity level."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Shorthand for --verbosity verbose."),  # noqa: FBT003
@@ -221,9 +225,16 @@ def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -
 
 
 _CLIENT_INPUT_HINTS = {
-    "service_url": "set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API",
+    "service_url": (
+        "set INFRAHUB_SYNC_API_URL or pass --api-url to the address of the Sync service, "
+        "for example http://127.0.0.1:8001. The client adds /api."
+    ),
     "token": "set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token",
 }
+_NOT_SYNC_API_HINT = (
+    "Check INFRAHUB_SYNC_API_URL. It holds the address of the Sync service, without /api. "
+    "The Sync service and the CLI must come from the same release."
+)
 
 
 def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object], ...]]:
@@ -281,6 +292,16 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
                 ("terminal_outcome", error.terminal_outcome),
                 ("phase", error.phase),
                 ("outcome", error.outcome),
+            ),
+        )
+    elif isinstance(error, NotSyncAPIError):
+        result = (
+            "not-a-sync-api",
+            (
+                ("operation", error.operation),
+                ("address", error.url),
+                ("status", error.status),
+                ("hint", _NOT_SYNC_API_HINT),
             ),
         )
     elif isinstance(error, ProtocolError):

@@ -10,8 +10,22 @@
 !LICENSE.txt
 !infrahub_sync
 !opsmill_prefect_extras
+# The web interface's build inputs, path by path: `!frontend` alone would admit the
+# whole 122 MB opsmill/infrahub submodule and a local `node_modules`.
+!frontend/.npmrc
+!frontend/package.json
+!frontend/pnpm-lock.yaml
+!frontend/pnpm-workspace.yaml
+!frontend/index.html
+!frontend/vite.config.ts
+!frontend/tsconfig.json
+!frontend/tsr.config.json
+!frontend/src
+!frontend/vendor/infrahub/frontend/packages/ui
 
-# Build outputs of the two allowed trees; nothing here belongs in an image.
+# Build outputs of the allowed trees; nothing here belongs in an image.
 **/__pycache__
 **/*.pyc
 **/.DS_Store
+**/node_modules
+**/dist
