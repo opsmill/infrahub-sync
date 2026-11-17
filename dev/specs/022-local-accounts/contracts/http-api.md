@@ -6,8 +6,15 @@ requires `Authorization: Bearer <API token or session token>`. Resource shapes a
 
 ## Existing routes
 
-No change of path, request or response. `actor` in every response holds an account name, or
-`Deleted account <identifier>`.
+No change of path, request or response. `actor`, `approved_by` and `registered_by` in every
+response hold an account name, or `Deleted account <short identifier>`. This is also true of an
+answer that is replayed for an `Idempotency-Key`.
+
+- The message of the `already-approved` refusal no longer names the account. The approval in its
+  details does.
+- Every `reason` has a maximum length of 512 characters. A longer one answers `422`.
+- A `reason` that contains `ifs_pat_` or `ifs_ses_` answers `422`, code
+  `secret-parameter-refused`.
 
 | Case | Answer |
 | --- | --- |
@@ -24,6 +31,8 @@ No change of path, request or response. `actor` in every response holds an accou
 
 - A wrong name, a wrong password, a disabled account and a name refused after repeated failures
   all answer `401`, code `sign-in-refused`, with one fixed message.
+- A sign-in that waits more than 5 seconds for a password check answers `503`, code
+  `sign-in-busy`.
 - `POST /auth/sign-out` with an API token answers `422`, code `not-a-session`.
 
 ## The caller's own account
@@ -36,7 +45,8 @@ No change of path, request or response. `actor` in every response holds an accou
 | `POST /me/tokens` | `{"name", "expires_at"?}` | `201` `CreatedTokenResource` |
 | `DELETE /me/tokens/{token_id}` | none | `204` |
 
-- A wrong `current_password` answers `403`, code `current-password-refused`.
+- A wrong `current_password` answers `403`, code `current-password-refused`, and counts as a
+  failed sign-in attempt. While the name is refused, the route answers the same code.
 - A `new_password` shorter than 12 characters answers `422`, code `password-too-short`.
 - A token name the account already uses answers `409`, code `token-name-taken`.
 - An `expires_at` in the past answers `422`, code `expiry-in-the-past`.
@@ -50,7 +60,8 @@ No change of path, request or response. `actor` in every response holds an accou
 | `GET /accounts/{name}` | none | `200` `AccountResource` |
 | `PATCH /accounts/{name}` | `{"administrator"?, "disabled"?}` | `200` `AccountResource` |
 | `PUT /accounts/{name}/password` | `{"new_password"}` | `204`. Every session of the account ends. |
-| `DELETE /accounts/{name}` | none | `200` `{"placeholder": "Deleted account <identifier>"}` |
+| `POST /accounts/{name}/unlock` | none | `204`. Ends a refusal after repeated failures. |
+| `DELETE /accounts/{name}` | none | `200` `{"placeholder": "Deleted account <short identifier>"}` |
 | `GET /accounts/{name}/tokens` | none | `200` list of `TokenResource` |
 | `DELETE /accounts/{name}/tokens/{token_id}` | none | `204` |
 
@@ -58,15 +69,16 @@ No change of path, request or response. `actor` in every response holds an accou
   table.
 - An unknown name answers `404`, code `account-not-found`.
 - A name that exists, without regard to case, answers `409`, code `account-name-taken`.
-- A name that does not match the name rule answers `422`, code `account-name-invalid`.
+- A name that does not match the name rule, or that the product reserves, answers `422`, code
+  `account-name-invalid`.
+- No answer contains an account identifier (`acct_…`).
 - Any change to an account that the environment manages answers `409`, code
   `environment-managed-account`. The message names `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` or
   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`. The same code answers `PUT /me/password`,
   `POST /me/tokens` and `DELETE /me/tokens/{token_id}` when the caller is `admin`.
 - Every mutation route of this document accepts an optional `reason` in its body or, for
   `DELETE`, in the query. It is recorded in the audit event. A `reason` that contains a secret
-  the process knows, or the value the request presented, answers `422`, as on the existing
-  routes.
+  the process knows, or a token prefix, answers `422`, as on the existing routes.
 
 ## What no answer contains
 

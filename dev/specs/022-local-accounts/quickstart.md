@@ -35,6 +35,7 @@ uv run infrahub-sync accounts create alice       # type an initial password twic
 uv run infrahub-sync logout
 uv run infrahub-sync login --name alice
 uv run infrahub-sync whoami                      # actor: alice, administrator: false
+uv run infrahub-sync password                    # replace the initial password
 uv run infrahub-sync runs list
 uv run infrahub-sync tokens create ci-nightly    # prints the value once
 INFRAHUB_SYNC_API_TOKEN=<value> uv run infrahub-sync whoami   # actor: alice
@@ -62,7 +63,8 @@ Expected: it does not start and names the variable.
 ## Scenario 4: repeated failures
 
 Sign in as `alice` with a wrong password 5 times, then with the right password. Expected: the
-sixth attempt is refused with the same message. Her token `ci-nightly` still works.
+sixth attempt is refused with the same message. Her token `ci-nightly` still works. As `admin`,
+run `infrahub-sync accounts unlock alice`. Expected: she signs in.
 
 ## Scenario 5: disable, enable, delete (User Story 3)
 
@@ -75,8 +77,15 @@ uv run infrahub-sync runs list                   # her runs show the placeholder
 uv run infrahub-sync accounts create alice
 ```
 
-Expected: the new `alice` cannot apply or cancel a run of the deleted account, and a search of
-the product database finds the old name only in free-text reasons, if a person typed it there.
+Expected: the new `alice` cannot apply or cancel a run of the deleted account, the old runs still
+display the placeholder, and a search of the product database finds the old name only in
+free-text reasons, if a person typed it there.
+
+## Scenario 5a: the `admin` password cannot be tested through a reason
+
+As `alice`, create a plan run with `--reason` set to the development password of `admin`.
+Expected: the request is accepted like any other reason. A reason that contains `ifs_pat_` is
+refused.
 
 ## Scenario 6: the web interface (User Stories 2 and 4)
 
