@@ -158,7 +158,7 @@ lines of scenario 5.
 
 ### Tests for User Story 1
 
-- [ ] T027 [P] [US1] Write `tests/service/test_sign_in.py`: sign-in returns a session token that
+- [X] T027 [P] [US1] Write `tests/service/test_sign_in.py`: sign-in returns a session token that
   resolves; a wrong name, a wrong password and a disabled account get one identical answer;
   the sixth attempt after five failures is refused with the right password; an attempt during
   the refusal does not move `refused_until`; a success clears the count; a name with no account
@@ -194,10 +194,10 @@ lines of scenario 5.
 
 ### Implementation for User Story 1
 
-- [ ] T033 [US1] In `infrahub_sync/product_store/accounts.py` and
+- [X] T033 [US1] In `infrahub_sync/product_store/accounts.py` and
   `infrahub_sync/product_store/store.py`, add the functions for `sign_in_attempts`: record a
   failure, read the refusal, clear a name, and the bound of 10,000 rows (research R6).
-- [ ] T034 [US1] Create `infrahub_sync/service/account_routes.py` with `POST /auth/sign-in` and
+- [X] T034 [US1] Create `infrahub_sync/service/account_routes.py` with `POST /auth/sign-in` and
   `POST /auth/sign-out` as [contracts/http-api.md](contracts/http-api.md) defines them,
   including the fixed-hash verification for a name with no account and the gate of T010; mount
   it in `infrahub_sync/service/app.py`.

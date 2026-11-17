@@ -1860,6 +1860,8 @@ def test_confirmation_schema_errors_and_openapi_contract(
 
     paths = openapi["paths"]
     assert set(paths) == {
+        "/auth/sign-in",
+        "/auth/sign-out",
         "/events",
         "/me",
         "/runs",
@@ -1882,7 +1884,8 @@ def test_confirmation_schema_errors_and_openapi_contract(
     }
     for path, route in paths.items():
         for operation in route.values():
-            if path in {"/status", "/version"}:
+            # A sign-in presents a name and a password, not a bearer value.
+            if path in {"/status", "/version", "/auth/sign-in"}:
                 assert "security" not in operation
                 continue
             assert "401" in operation["responses"]

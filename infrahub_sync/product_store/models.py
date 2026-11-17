@@ -711,7 +711,7 @@ RunPage: TypeAlias = StorePage[ProductRun]
 
 
 # An event's dotted type, ``infrahub_sync.<resource>.<action>`` (spec 012, FR-012).
-EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config)\.[a-z_]+$"
+EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|account)\.[a-z_]+$"
 # The kinds of resource an event names besides its primary resource, in the order an event lists them.
 RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "branch"]
 _RELATED_KIND_ORDER: dict[str, int] = {"account": 0, "config": 1, "config_version": 2, "branch": 3}

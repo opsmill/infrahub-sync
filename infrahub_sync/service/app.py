@@ -26,6 +26,7 @@ from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUP
 from infrahub_sync.plan.models import PROBLEM_TYPES
 from infrahub_sync.product_store import Account
 
+from .account_routes import account_router
 from .auth import Principal, PrincipalResolver
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
 from .config_routes import (
@@ -310,13 +311,17 @@ def _include_routers(
     idempotency_key: Callable[..., str],
     configuration_routes: ConfigurationRoutes | None,
 ) -> None:
-    """Add the routes built outside ``create_app``: configurations, approval, events, run logs and the saved plan."""
+    """Add the routes built outside ``create_app``.
+
+    They are the configurations, the approval, the events, the run logs, the saved plan and the accounts.
+    """
     if configuration_routes is not None:
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
     application.include_router(approve_router(service, authenticate, idempotency_key))
     application.include_router(events_router(service, authenticate))
     application.include_router(run_logs_router(service, authenticate))
     application.include_router(plan_router(service, authenticate))
+    application.include_router(account_router(service, authenticate))
 
 
 def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable[..., Principal]:

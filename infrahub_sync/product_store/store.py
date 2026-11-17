@@ -26,6 +26,7 @@ from infrahub_sync.execution import REDACTED, json_string_forms, redact, redact_
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import accounts as account_statements
 from infrahub_sync.product_store.accounts import (
+    SIGN_IN_ATTEMPTS_BOUND,
     AccountIdentifierAllocationError,
     AccountNameTakenError,
     AccountTokenNameTakenError,
@@ -68,6 +69,7 @@ from infrahub_sync.product_store.models import (
     RunFilters,
     RunPage,
     RunReference,
+    SignInAttempt,
     WorkerEnvironment,
     already_approved_body,
     approval_error_body,
@@ -413,6 +415,12 @@ _SCHEMA_INITIALIZATION_ATTEMPTS = 2
 # is released at commit or rollback.
 _POSTGRESQL_SCHEMA_INITIALIZATION_LOCK = (
     "SELECT pg_advisory_xact_lock(hashtextextended('infrahub_sync.product_store.schema.' || current_schema(), 0))"
+)
+# Two failed sign-ins recorded at the same moment read and then write the same table. This
+# transaction-level lock makes them run one after the other in one schema.
+_POSTGRESQL_SIGN_IN_ATTEMPTS_LOCK = (
+    "SELECT pg_advisory_xact_lock(hashtextextended('infrahub_sync.product_store.sign_in_attempts.' "
+    "|| current_schema(), 0))"
 )
 # Measured, not guessed: across roughly 4,800 trials of 8 concurrent distinct-checksum
 # add_configuration_version() callers against SQLite (the tightest case, single-writer
@@ -899,6 +907,14 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         token_digest: str | None,
         now: datetime | None = None,
     ) -> Account: ...
+
+    def read_sign_in_attempt(self, name: str) -> SignInAttempt | None: ...
+
+    def record_sign_in_failure(
+        self, name: str, *, now: datetime | None = None, bound: int = SIGN_IN_ATTEMPTS_BOUND
+    ) -> SignInAttempt: ...
+
+    def clear_sign_in_attempts(self, name: str) -> bool: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
@@ -3390,6 +3406,33 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         # token of another account already has the digest.
         raise DuplicateCredentialError(_DUPLICATE_CREDENTIAL_MESSAGE)
 
+    def read_sign_in_attempt(self, name: str) -> SignInAttempt | None:
+        """Return the failed sign-ins counted for this name, in any letter case, or nothing."""
+        with self._reading() as cursor:
+            return account_statements.read_sign_in_attempt(cursor, self._sql, name)
+
+    def record_sign_in_failure(
+        self, name: str, *, now: datetime | None = None, bound: int = SIGN_IN_ATTEMPTS_BOUND
+    ) -> SignInAttempt:
+        """Count one failed sign-in for this name, in one transaction.
+
+        Two callers that fail at the same moment are serialized, so no count is lost and no
+        caller receives the error of a duplicate row: PostgreSQL takes a lock for the
+        transaction, and SQLite takes its write lock before the first read. See
+        ``accounts.record_sign_in_failure``.
+        """
+        with self._transaction() as cursor:
+            if self._dialect == "postgresql":
+                cursor.execute(_POSTGRESQL_SIGN_IN_ATTEMPTS_LOCK)
+            else:
+                cursor.execute(_SQLITE_BEGIN_IMMEDIATE)
+            return account_statements.record_sign_in_failure(cursor, self._sql, name, now=_now(now), bound=bound)
+
+    def clear_sign_in_attempts(self, name: str) -> bool:
+        """Delete the failed sign-ins counted for this name. Return whether a row was deleted."""
+        with self._transaction() as cursor:
+            return account_statements.clear_sign_in_attempts(cursor, self._sql, name)
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         with self._transaction() as cursor:
             cursor.execute(
@@ -4344,6 +4387,34 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             token_digest=token_digest,
             now=now,
         )
+
+    def read_sign_in_attempt(self, name: str) -> SignInAttempt | None:
+        """Return the failed sign-ins counted for this name, in any letter case, or nothing.
+
+        The row can hold a refusal that has passed: the caller compares ``refused_until`` with
+        its clock.
+        """
+        return self._records.read_sign_in_attempt(name)
+
+    def record_sign_in_failure(
+        self, name: str, *, now: datetime | None = None, bound: int = SIGN_IN_ATTEMPTS_BOUND
+    ) -> SignInAttempt:
+        """Count one failed sign-in for this name, and return what the store then holds for it.
+
+        The count restarts when the window of 15 minutes or a refusal has passed. The fifth
+        failure of a window refuses the name for 15 minutes. A name that is refused keeps its row
+        as it is. The table never holds more than ``bound`` rows: the rows with the oldest window
+        are deleted first. Two callers that fail at the same moment do not conflict.
+
+        Raises:
+            ValueError: the lower-case name is empty or longer than 64 characters. Nothing is
+                written.
+        """
+        return self._records.record_sign_in_failure(name, now=now, bound=bound)
+
+    def clear_sign_in_attempts(self, name: str) -> bool:
+        """Delete the failed sign-ins counted for this name. Return whether a row was deleted."""
+        return self._records.clear_sign_in_attempts(name)
 
     def record_results(
         self,

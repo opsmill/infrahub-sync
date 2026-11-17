@@ -11,6 +11,7 @@ import logging
 import sys
 import threading
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
@@ -49,7 +50,7 @@ from infrahub_sync.product_store.models import (
     not_approvable_message,
 )
 
-from .events import RUN_CANCELLED, run_decision_type, run_event
+from .events import RUN_CANCELLED, account_event, run_decision_type, run_event
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
     ApplyRunRequest,
@@ -320,6 +321,14 @@ class _PlanLayoutCache:
                 self._operations -= len(dropped)
 
 
+@dataclass(frozen=True)
+class AccountAccess:
+    """What the account routes use of the service: the product store and the clock of the service."""
+
+    projection: ProductProjection
+    now: Callable[[], datetime]
+
+
 class RunService:
     """Direct application service; Prefect owns all execution mechanics."""
 
@@ -344,6 +353,23 @@ class RunService:
     def read_accounts(self, account_ids: Sequence[str]) -> dict[str, Account]:
         """Return the accounts among these identifiers, deleted or not, in one store call."""
         return self._projection.lookup_accounts(account_ids)
+
+    @property
+    def accounts(self) -> AccountAccess:
+        """Return the product store and the clock, for the account routes."""
+        return AccountAccess(projection=self._projection, now=self._clock)
+
+    def record_account_event(
+        self, event_type: str, *, actor: str, account_id: str, operation: str, reason: str | None = None
+    ) -> None:
+        """Record the event of an account action that ``actor`` made on the account ``account_id``.
+
+        Both are account identifiers. The event holds no password and no token value.
+        """
+        event = account_event(
+            event_type, actor=actor, account_id=account_id, operation=operation, reason=reason, created_at=self._clock()
+        )
+        self._projection.record_audit(event, secrets=self._secrets)
 
     async def create_run(
         self, request: CreateRunRequest, principal: Principal, idempotency_key: str

@@ -22,7 +22,13 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
-from infrahub_sync.product_store.models import Account, AccountSession, AccountToken, ResolvedCredential
+from infrahub_sync.product_store.models import (
+    Account,
+    AccountSession,
+    AccountToken,
+    ResolvedCredential,
+    SignInAttempt,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -37,6 +43,16 @@ ACCOUNT_ID_PREFIX = "acct_"
 # session causes at most one write a minute.
 LAST_USED_WRITE_INTERVAL = timedelta(minutes=1)
 _IDENTIFIER_BATCH = 500
+# The refusal after repeated failed sign-ins for one name (research R6): the failures of one
+# window are counted, and the name is refused for a period when the count reaches the limit.
+SIGN_IN_FAILURE_WINDOW = timedelta(minutes=15)
+SIGN_IN_FAILURE_LIMIT = 5
+SIGN_IN_REFUSAL_PERIOD = timedelta(minutes=15)
+# The largest number of rows of ``sign_in_attempts``, so that failed sign-ins for names that no
+# account has cannot fill the store.
+SIGN_IN_ATTEMPTS_BOUND = 10_000
+# The longest name that gets a row. A longer name is refused by the caller before any write.
+SIGN_IN_NAME_MAX_LENGTH = 64
 
 _ACCOUNT_FIELDS = (
     "account_id",
@@ -111,6 +127,22 @@ _COUNT_MATCHING_ENVIRONMENT_TOKENS = (
 )
 _DELETE_ENVIRONMENT_TOKENS = "DELETE FROM account_tokens WHERE account_id = ? AND environment_managed = ?"
 _DELETE_SIGN_IN_ATTEMPTS = "DELETE FROM sign_in_attempts WHERE name_key = ?"
+_SELECT_SIGN_IN_ATTEMPT = (
+    "SELECT name_key, failed_count, window_started_at, refused_until FROM sign_in_attempts WHERE name_key = ?"
+)
+_INSERT_SIGN_IN_ATTEMPT = (
+    "INSERT INTO sign_in_attempts (name_key, failed_count, window_started_at, refused_until) VALUES (?, ?, ?, ?)"
+)
+_UPDATE_SIGN_IN_ATTEMPT = (
+    "UPDATE sign_in_attempts SET failed_count = ?, window_started_at = ?, refused_until = ? WHERE name_key = ?"
+)
+_COUNT_SIGN_IN_ATTEMPTS = "SELECT COUNT(*) FROM sign_in_attempts"
+# Every time of the table is written by ``_utc_iso``, so the order of the text is the order of
+# the times.
+_DELETE_OLDEST_SIGN_IN_ATTEMPTS = (
+    "DELETE FROM sign_in_attempts WHERE name_key IN ("
+    "SELECT name_key FROM sign_in_attempts ORDER BY window_started_at, name_key LIMIT ?)"
+)
 
 # The row of a digest with its account: the row identifier, the expiry date, the last recorded
 # use, then the account columns.
@@ -487,3 +519,78 @@ def resolve_digest(cursor: _Cursor, sql: Sql, digest: str, *, now: datetime) -> 
             cursor.execute(sql(update), (_utc_iso(now), resolved.credential_id))
         return resolved
     return None
+
+
+def _sign_in_attempt_from_row(row: Sequence[Any]) -> SignInAttempt:
+    return SignInAttempt(name_key=row[0], failed_count=row[1], window_started_at=row[2], refused_until=row[3])
+
+
+def read_sign_in_attempt(cursor: _Cursor, sql: Sql, name: str) -> SignInAttempt | None:
+    """Return the failed sign-ins counted for this name, in any letter case, or nothing.
+
+    The row can hold a refusal that has passed: the caller compares ``refused_until`` with its clock.
+    """
+    cursor.execute(sql(_SELECT_SIGN_IN_ATTEMPT), (name_key(name),))
+    row = cursor.fetchone()
+    return None if row is None else _sign_in_attempt_from_row(row)
+
+
+def clear_sign_in_attempts(cursor: _Cursor, sql: Sql, name: str) -> bool:
+    """Delete the failed sign-ins counted for this name. Return whether a row was deleted."""
+    cursor.execute(sql(_DELETE_SIGN_IN_ATTEMPTS), (name_key(name),))
+    return cursor.rowcount == 1
+
+
+def record_sign_in_failure(
+    cursor: _Cursor, sql: Sql, name: str, *, now: datetime, bound: int = SIGN_IN_ATTEMPTS_BOUND
+) -> SignInAttempt:
+    """Count one failed sign-in for this name, and return what the store then holds for it.
+
+    The caller owns the transaction and the lock that makes two recordings run one after the
+    other: the function reads the row and then writes it.
+
+    - A name that is refused at ``now`` keeps its row as it is: the attempt is not counted and
+      ``refused_until`` does not move.
+    - A row whose refusal has passed, or whose window started more than
+      ``SIGN_IN_FAILURE_WINDOW`` ago, starts a new window with a count of one.
+    - Otherwise the count grows by one. When it reaches ``SIGN_IN_FAILURE_LIMIT``, the name is
+      refused until ``now`` plus ``SIGN_IN_REFUSAL_PERIOD``.
+    - A new row is added only after the rows with the oldest window are deleted to make room, so
+      the table never holds more than ``bound`` rows.
+
+    Raises:
+        ValueError: the lower-case name is empty or longer than ``SIGN_IN_NAME_MAX_LENGTH``, or
+            ``bound`` is below one. Nothing is written.
+    """
+    key = name_key(name)
+    if not key or len(key) > SIGN_IN_NAME_MAX_LENGTH:
+        # The name is not quoted: it can be anything a caller typed in a sign-in request.
+        msg = f"a failed sign-in is counted for a name of 1 to {SIGN_IN_NAME_MAX_LENGTH} characters"
+        raise ValueError(msg)
+    if bound < 1:
+        msg = "the bound of the failed sign-in table must be at least one row"
+        raise ValueError(msg)
+    current = read_sign_in_attempt(cursor, sql, key)
+    if current is not None and current.refused_until is not None and current.refused_until > now:
+        return current
+    window_expired = current is not None and (
+        current.refused_until is not None or now - current.window_started_at > SIGN_IN_FAILURE_WINDOW
+    )
+    if current is None or window_expired:
+        failed_count, window_started_at = 1, now
+    else:
+        failed_count, window_started_at = current.failed_count + 1, current.window_started_at
+    refused_until = now + SIGN_IN_REFUSAL_PERIOD if failed_count >= SIGN_IN_FAILURE_LIMIT else None
+    attempt = SignInAttempt(
+        name_key=key, failed_count=failed_count, window_started_at=window_started_at, refused_until=refused_until
+    )
+    values = (failed_count, _utc_iso(window_started_at), _optional_utc_iso(refused_until))
+    if current is None:
+        cursor.execute(sql(_COUNT_SIGN_IN_ATTEMPTS))
+        excess = _count(cursor) - bound + 1
+        if excess > 0:
+            cursor.execute(sql(_DELETE_OLDEST_SIGN_IN_ATTEMPTS), (excess,))
+        cursor.execute(sql(_INSERT_SIGN_IN_ATTEMPT), (key, *values))
+    else:
+        cursor.execute(sql(_UPDATE_SIGN_IN_ATTEMPT), (*values, key))
+    return attempt
