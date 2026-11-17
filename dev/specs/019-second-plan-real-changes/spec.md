@@ -89,6 +89,13 @@ Sources:
   fields and the empty-plan check ship; the measurement of tiers S and M (FR-031 to FR-036) moves
   to a GitHub issue.
 
+### Session 2026-11-17
+
+- Q: Infrahub 1.11.9 records the creator `__system__` on IPAM nodes that a sync imported, so the
+  creator alone would leave out their deletes. How does a plan tell a node that Infrahub creates
+  itself? → A: By the creator `__system__` and a kind in an explicit list kept in the package,
+  which holds `IpamNamespace` only (FR-002).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A second plan on unchanged data is empty (Priority: P1)
@@ -285,7 +292,16 @@ tier M.
   source record matches it. The `default` IP namespace is the first such node; the plan phase of
   this specification lists the others that the Infrahub version in use creates.
 - **FR-002**: The rule of FR-001 MUST apply to every configuration and every source adapter. It
-  MUST NOT depend on the name of the configuration or on a list kept in the package.
+  MUST NOT depend on the name of the configuration or on the name of a node. A destination node
+  counts as created by Infrahub itself only when both conditions hold:
+  - its node metadata names the creator `__system__`;
+  - its kind is in the list of kinds that Infrahub creates itself, kept in the package. That list
+    holds `IpamNamespace` only, and a kind is added only when a probe of a new branch finds a node
+    of that kind.
+
+  The creator alone is not enough, because Infrahub 1.11.9 also records `__system__` as the
+  creator of `IpamPrefix`, `IpamIPAddress` and `IpamAggregate` nodes that a sync imported
+  (ADR 0043, amendment of 2026-11-17).
 - **FR-003**: When a source record matches a node that Infrahub creates itself, the plan MUST
   treat that node like any other node of its kind.
 - **FR-004**: The three places that accept the delete of the `default` IP namespace by name MUST

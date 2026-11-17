@@ -113,8 +113,9 @@ Consequences of the amendment:
 
 - An imported `IpamPrefix`, `IpamIPAddress` or `IpamAggregate` node that the source deletes gets
   its delete again, whatever its creator.
-- The rule now depends on a list kept in the package, which FR-002 of the spec forbids. The list
-  holds kinds, not names, and the creator still decides which node of a listed kind is built in.
+- The rule now depends on a list of kinds kept in the package. FR-002 of the spec first forbade
+  any such list; it is amended to allow a list of kinds and to forbid only names. The creator
+  still decides which node of a listed kind is built in.
   A node that Infrahub creates itself, of a kind not in the list, gets a delete again until the
   list names its kind.
 - An `IpamNamespace` that a sync imported with the creator `__system__`, if Infrahub records one,
