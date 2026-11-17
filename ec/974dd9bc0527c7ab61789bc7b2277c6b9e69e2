@@ -1,0 +1,264 @@
+tests/plan/test_builtin_deletes.py
+  s_4c94b159df7a98::t_0c9e50ac54f21c 9,108
+tests/cli/test_client_commands.py
+  s_4c94b159df7a98::t_dff0469a282e27 15,2459-2462,2466-2484
+  s_4c94b159df7a98::t_9f815f22e26470 2485-2486
+dev/specs/017-serve-web-interface/contracts/web-token.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-49
+changelog/+web-interface-left-out.fixed.md
+  s_4c94b159df7a98::t_dff0469a282e27 1
+tests/client/test_not_sync_api.py
+  s_4c94b159df7a98::t_dff0469a282e27 1-139
+dev/specs/017-serve-web-interface/critiques/critique.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-113
+README.md
+  s_4c94b159df7a98::t_dff0469a282e27 96-97
+tasks/docs.py
+  s_4c94b159df7a98::t_dff0469a282e27 58-60
+frontend/src/main.tsx
+  s_4c94b159df7a98::t_dff0469a282e27 5-6,13-18,23
+dev/specs/019-second-plan-real-changes/spec.md
+  s_4c94b159df7a98::t_0c9e50ac54f21c 304
+docker-compose.yml
+  s_4c94b159df7a98::t_dff0469a282e27 285
+tests/dev_stack/smoke/test_service_api.py
+  s_4c94b159df7a98::t_dff0469a282e27 149,336-341
+tests/image/test_build_context.py
+  s_4c94b159df7a98::t_dff0469a282e27 20
+tests/test_workflow_contracts.py
+  s_4c94b159df7a98::t_dff0469a282e27 121-123,675,760-761,775,988-996,2067-2070,2074-2079,2090
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_4c94b159df7a98::t_0c9e50ac54f21c 180
+dev/adr/0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md
+  s_4c94b159df7a98::t_0c9e50ac54f21c 73
+infrahub_sync/service/settings.py
+  s_4c94b159df7a98::t_dff0469a282e27 7-10,16-18,21-23,56-85
+  s_4c94b159df7a98::t_0fc29f160d8367 86-87
+dev/specs/019-second-plan-real-changes/opsmill-implement-report.md
+  s_4c94b159df7a98::t_0c9e50ac54f21c 20
+frontend/src/features/runs/RunActions.tsx
+  s_4c94b159df7a98::t_dff0469a282e27 7-15,33,179,287,291-292,307,382-392,394,466-478,492-621,743-745,747-753,756-761,768-795,800-946,948-977,980-1020,1022-1069
+frontend/src/api/queries.ts
+  s_4c94b159df7a98::t_dff0469a282e27 172-191,377
+frontend/src/routes/__root.tsx
+  s_4c94b159df7a98::t_dff0469a282e27 17,200,218,277-286
+tests/image/test_image_artifact.py
+  s_4c94b159df7a98::t_dff0469a282e27 72-101,273-304
+  s_4c94b159df7a98::t_b744ab3ef2a965 305-306
+tasks/dev.py
+  s_4c94b159df7a98::t_dff0469a282e27 19,32-35,91-111,138,411-434,436-441,445-451,754,762,810-811,880,962-964,967,974
+dev/specs/019-second-plan-real-changes/plan.md
+  s_4c94b159df7a98::t_0c9e50ac54f21c 159,176,178
+tests/dev_stack/smoke/conftest.py
+  s_4c94b159df7a98::t_dff0469a282e27 112
+tests/plan/second_plan.py
+  s_4c94b159df7a98::t_0c9e50ac54f21c 26
+tests/service/test_prefect_wording.py
+  s_4c94b159df7a98::t_dff0469a282e27 46,208,223,231-233,235
+changelog/+web-interface-approve.added.md
+  s_4c94b159df7a98::t_dff0469a282e27 1
+tests/compose/test_testcontainers_fixture.py
+  s_4c94b159df7a98::t_dff0469a282e27 164,266
+dev/adr/0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md
+  s_4c94b159df7a98::t_0c9e50ac54f21c 58
+tests/dev_stack/test_dev_tasks.py
+  s_4c94b159df7a98::t_dff0469a282e27 10,420,432-457
+infrahub_sync/service/app.py
+  s_4c94b159df7a98::t_dff0469a282e27 15,91-108,413-414
+  s_4c94b159df7a98::t_da37aff9f221e0 415
+tests/dev_stack/smoke/test_schema_drift.py
+  s_4c94b159df7a98::t_dff0469a282e27 163-164
+pyproject.toml
+  s_4c94b159df7a98::t_dff0469a282e27 281-283,429-431,463-465
+frontend/src/features/runs/run-sections.tsx
+  s_4c94b159df7a98::t_dff0469a282e27 1,3,6-7,10,40-133,172-177
+dev/specs/019-second-plan-real-changes/research.md
+  s_4c94b159df7a98::t_0c9e50ac54f21c 80
+development/docker-compose.yml
+  s_4c94b159df7a98::t_dff0469a282e27 278
+tests/dev_stack/smoke/test_run_review.py
+  s_4c94b159df7a98::t_dff0469a282e27 349-352
+dev/specs/017-serve-web-interface/research.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-337
+tests/service/test_environment_names.py
+  s_4c94b159df7a98::t_dff0469a282e27 13,42,74
+docs/docs/development-stack.mdx
+  s_4c94b159df7a98::t_dff0469a282e27 103-104,191,210-214,216-217,219-222,497
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_4c94b159df7a98::t_0c9e50ac54f21c 387
+  s_4c94b159df7a98::t_dff0469a282e27 242
+frontend/src/api/actions.ts
+  s_4c94b159df7a98::t_dff0469a282e27 32-36,42-45
+  s_4c94b159df7a98::t_38e3f3ae2f226b 46
+dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-87
+docs/docs/operations/day-2-operations.mdx
+  s_4c94b159df7a98::t_dff0469a282e27 16
+dev/specs/017-serve-web-interface/tasks.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-161
+infrahub_sync/client/client.py
+  s_4c94b159df7a98::t_dff0469a282e27 24,127,129,164-177,201-207,220,223-226,912,987-1007,1009-1010
+tests/compose/lifecycle.py
+  s_4c94b159df7a98::t_dff0469a282e27 207,231,244
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_0c9e50ac54f21c 62
+dev/specs/017-serve-web-interface/alignment-check.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-37
+tests/compose/test_lifecycle.py
+  s_4c94b159df7a98::t_dff0469a282e27 122,355
+tests/data/v2_gate/expected_deletes.yml
+  s_4c94b159df7a98::t_0c9e50ac54f21c 18
+tests/service/test_serve_site.py
+  s_4c94b159df7a98::t_dff0469a282e27 1-92
+dev/specs/017-serve-web-interface/quickstart.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-94
+frontend/src/components/token-entry.tsx
+  s_4c94b159df7a98::t_dff0469a282e27 1-89
+infrahub_sync/client/errors.py
+  s_4c94b159df7a98::t_dff0469a282e27 51-64
+.github/workflows/workflow-nightly-e2e.yml
+  s_4c94b159df7a98::t_dff0469a282e27 83-87,312-314
+  s_4c94b159df7a98::t_439d975e289638 315
+dev/specs/017-serve-web-interface/data-model.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-80
+tests/client/test_public_surface.py
+  s_4c94b159df7a98::t_dff0469a282e27 87
+frontend/src/features/runs/left-out.tsx
+  s_4c94b159df7a98::t_dff0469a282e27 1-119
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_4c94b159df7a98::t_dff0469a282e27 196
+tests/dev_stack/smoke/test_run_completion.py
+  s_4c94b159df7a98::t_dff0469a282e27 217,356
+dev/specs/017-serve-web-interface/plan.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-215
+Dockerfile
+  s_4c94b159df7a98::t_dff0469a282e27 71-105,114-117,141-142,147-148
+infrahub_sync/client/__init__.py
+  s_4c94b159df7a98::t_dff0469a282e27 10,104
+.github/file-filters.yml
+  s_4c94b159df7a98::t_dff0469a282e27 81-82,94-95
+examples/netbox_to_infrahub/README.md
+  s_4c94b159df7a98::t_0c9e50ac54f21c 130
+frontend/README.md
+  s_4c94b159df7a98::t_dff0469a282e27 21-23,46-48,50-54,57,83-85,105-111
+  s_4c94b159df7a98::t_5b5229328ad9de 112-113
+frontend/package.json
+  s_4c94b159df7a98::t_dff0469a282e27 12
+changelog/421.added.md
+  s_4c94b159df7a98::t_dff0469a282e27 1
+infrahub_sync/service/web.py
+  s_4c94b159df7a98::t_dff0469a282e27 1-246
+dev/specs/017-serve-web-interface/spec.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-398
+tests/service/test_http_errors.py
+  s_4c94b159df7a98::t_dff0469a282e27 1-73
+.github/scripts/nightly_e2e.py
+  s_4c94b159df7a98::t_0c9e50ac54f21c 25,212
+docs/docs/quickstart-compose.mdx
+  s_4c94b159df7a98::t_dff0469a282e27 90,101-104,108
+tests/dev_stack/test_deps_mode.py
+  s_4c94b159df7a98::t_dff0469a282e27 216,428,442,453
+tests/service/test_web_site.py
+  s_4c94b159df7a98::t_dff0469a282e27 1-461
+tests/image/conftest.py
+  s_4c94b159df7a98::t_dff0469a282e27 52,280-281,291
+docs/docs/compose-deployment.mdx
+  s_4c94b159df7a98::t_dff0469a282e27 147,480-482,540-583,700,982-984,988,1005,1045,1054,1058,1071
+infrahub_sync/service/serve.py
+  s_4c94b159df7a98::t_dff0469a282e27 27,30,36,106-131,133,135
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_4c94b159df7a98::t_dff0469a282e27 243,246
+docs/docs/reference/python-api.mdx
+  s_4c94b159df7a98::t_dff0469a282e27 15-19,135-137
+  s_4c94b159df7a98::t_354747a63b964e 138
+dev/adr/README.md
+  s_4c94b159df7a98::t_54e6427743f00c 139-142
+  s_4c94b159df7a98::t_dff0469a282e27 130-132
+dev/specs/017-serve-web-interface/checklists/requirements.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-43
+frontend/vite.config.ts
+  s_4c94b159df7a98::t_dff0469a282e27 7-23,36
+changelog/421.changed.md
+  s_4c94b159df7a98::t_dff0469a282e27 1
+docs/docs/reference/sync-http-api.mdx
+  s_4c94b159df7a98::t_dff0469a282e27 16-22,222,786,812,837,861,915,967,1093
+dev/specs/017-serve-web-interface/opsmill-implement-report.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-191
+tests/client/test_resume.py
+  s_4c94b159df7a98::t_dff0469a282e27 43,52,70,83
+tests/dev_stack/test_build_inputs.py
+  s_4c94b159df7a98::t_dff0469a282e27 3-5,63,70-140
+  s_4c94b159df7a98::t_4135719586fc80 141-142
+infrahub_sync/adapters/infrahub.py
+  s_4c94b159df7a98::t_0c9e50ac54f21c 100,1051
+infrahub_sync/cli.py
+  s_4c94b159df7a98::t_dff0469a282e27 37,153-156,229-232,235-238,298-305
+  s_4c94b159df7a98::t_ada1669e199065 306-307
+changelog/+web-interface-resume.added.md
+  s_4c94b159df7a98::t_dff0469a282e27 1
+tests/client/test_wait.py
+  s_4c94b159df7a98::t_dff0469a282e27 88,145,164,179,290
+frontend/src/api/token.ts
+  s_4c94b159df7a98::t_dff0469a282e27 1-96
+tests/integration/test_managed_write_guard_live.py
+  s_4c94b159df7a98::t_dff0469a282e27 123,156
+.dockerignore
+  s_4c94b159df7a98::t_dff0469a282e27 13-24,26,30-31
+dev/specs/017-serve-web-interface/contracts/http-routing.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-65
+frontend/src/api/client.ts
+  s_4c94b159df7a98::t_dff0469a282e27 6,36-83,85-93,95
+frontend/src/features/runs/RunPage.tsx
+  s_4c94b159df7a98::t_dff0469a282e27 18,48-56,273,456-464,466-471,484-486,522,580-587,593-597,599-603,607-625,633-635,677-685
+tests/dev_stack/smoke/test_netbox_package.py
+  s_4c94b159df7a98::t_dff0469a282e27 233,302-305,342-343
+docs/docs/development/guidelines/testing-tiers.md
+  s_4c94b159df7a98::t_dff0469a282e27 605
+.github/workflows/ci-docker-image.yml
+  s_4c94b159df7a98::t_dff0469a282e27 151-152
+infrahub_sync/testcontainers/docker-compose.yml
+  s_4c94b159df7a98::t_dff0469a282e27 285
+tests/cli/test_apply_confirm_left_out.py
+  s_4c94b159df7a98::t_dff0469a282e27 134
+tests/client/test_client.py
+  s_4c94b159df7a98::t_dff0469a282e27 31,153-187,193,201,211,227,254,258-264,276-278,282-286,291,316,336-341,349-353,359,365,391,427-428,465,501,521,539,557,608,626,646,664,750,757,772,806,845,855,868,901,903,931,969,1069,1095,1219,1226
+tests/dev_stack/smoke/test_config_lifecycle.py
+  s_4c94b159df7a98::t_dff0469a282e27 317-327
+tests/test_nightly_e2e.py
+  s_4c94b159df7a98::t_0c9e50ac54f21c 148
+tests/adapters/test_infrahub_builtin_nodes.py
+  s_4c94b159df7a98::t_0c9e50ac54f21c 4,197
+changelog/+web-interface-no-actor.changed.md
+  s_4c94b159df7a98::t_dff0469a282e27 1
+dev/specs/017-serve-web-interface/contracts/cli-client.md
+  s_4c94b159df7a98::t_dff0469a282e27 1-49
+docs/docs/reference/cli.mdx
+  s_4c94b159df7a98::t_dff0469a282e27 14-16,26
+frontend/src/features/runs/plan-download.tsx
+  s_4c94b159df7a98::t_dff0469a282e27 5,7,63-67,70-73,116-121
+  s_4c94b159df7a98::t_40bb17f142b217 122
+frontend/src/features/runs/run-notices.tsx
+  s_4c94b159df7a98::t_dff0469a282e27 82,90-91,144-148,188-201
+tests/service/test_settings_web_directory.py
+  s_4c94b159df7a98::t_dff0469a282e27 1-104
+dev/adr/0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md
+  s_4c94b159df7a98::t_32aff2f30cfc97 1
+frontend/src/api/types.generated.ts
+  s_4c94b159df7a98::t_417080181f9772 56,190-209,320-339,380-456,461-507,511-514,524-528,534-575,749-754,993-1019,1065-1106,1112-1115,1122-1126,1203,1231-1301,1388-1390,1396-1401,1908,1925,1993,2010,2078,2084,2096,2164,2167-2169,2175-2179,2182,2187,2255,2268,2346,2359,2454-2462,2744,2775-2865,2983-3338
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec974dd9bc0527c7ab61789bc7b2277c6b9e69e2",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
