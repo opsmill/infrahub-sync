@@ -1,0 +1,23 @@
+dev/specs/020-product-store-failure-cause/opsmill-implement-report.md
+  s_313229fc4d1c44::t_74af4de93bb23e 101-109,134-135,162-165,174-176
+dev/specs/020-product-store-failure-cause/research.md
+  s_313229fc4d1c44::t_f805aceae37457 139-141
+dev/specs/020-product-store-failure-cause/spec.md
+  s_313229fc4d1c44::t_1215747df61a33 105-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7b93f09eb7ce8b2ffc1b9fdf1df214b2efa0d81",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
