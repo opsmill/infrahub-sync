@@ -35,7 +35,7 @@ import shlex
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from invoke import Context, task
 
@@ -432,11 +432,20 @@ def host_infrahub_url() -> str:
     """
     from . import dev  # noqa: PLC0415 -- dev imports this module at load time
 
-    settings = dev.dev_settings()
-    if settings.infrahub is None:
+    try:
+        settings = dev.dev_settings()
+    except dev.DevStackError as exc:
+        raise NetboxError(str(exc)) from None
+    if settings.infrahub is None and settings.infrahub_network:
         msg = (
             f"{dev.INFRAHUB_NETWORK_VARIABLE} names {settings.infrahub_network}, whose address on this host "
             "is not known; pass --infrahub-url"
+        )
+        raise NetboxError(msg)
+    if settings.infrahub is None:
+        msg = (
+            f"the development stack runs the {settings.preset.name!r} preset, without a local Infrahub; "
+            "pass --infrahub-url, or start it with `uv run invoke dev.start --preset infrahub`"
         )
         raise NetboxError(msg)
     return settings.infrahub.url
@@ -480,13 +489,63 @@ def _ready(context: Context, values: dict[str, str]) -> None:
     print(f"     Token: {netbox_token(values)}")
 
 
-@task(name="start")
-def start(context: Context) -> None:
-    """Bring up the disposable local NetBox, then print its URL and development token."""
-    values = load_netbox_env()
+def _start_netbox(context: Context, values: dict[str, str]) -> None:
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
     _ready(context, values)
+
+
+def netbox_state(context: Context, values: dict[str, str]) -> Literal["absent", "stopped", "running"]:
+    """Report whether the local NetBox runs, exists without running, or does not exist.
+
+    NetBox exists when its project has a container, running or stopped, or a data volume:
+    stopped containers and a `docker compose down` without `--volumes` both keep its data.
+
+    Raises:
+        NetboxError: when Docker does not answer, so a caller never mistakes an unreadable
+            state for an absent NetBox and replaces its data.
+    """
+    label = shlex.quote(f"label=com.docker.compose.project={values['COMPOSE_PROJECT_NAME']}")
+    running = _docker_output(context, f"ps --quiet --filter {label} --filter label=com.docker.compose.service=netbox")
+    containers = _docker_output(context, f"ps --all --quiet --filter {label}")
+    volumes = _docker_output(context, f"volume ls --quiet --filter {label}")
+    if running is None or containers is None or volumes is None:
+        msg = "Docker did not answer; cannot tell whether the local NetBox exists"
+        raise NetboxError(msg)
+    if running:
+        return "running"
+    if containers or volumes:
+        return "stopped"
+    return "absent"
+
+
+def ensure_netbox(context: Context, values: dict[str, str]) -> None:
+    """Make the local NetBox run for the development stack, without replacing data it holds.
+
+    A running NetBox is left as it is. A stopped NetBox, or one whose data volume remains,
+    is started with its data. Only a NetBox that does not exist at all gets the `demo`
+    dataset, the same restore `netbox.seed --dataset demo` runs: there is nothing to lose,
+    and NetBox starts against the restored data instead of migrating an empty database.
+    """
+    state = netbox_state(context, values)
+    if state == "running":
+        print(f" - [{NAMESPACE}] NetBox already runs; its data is kept")
+        _ready(context, values)
+        return
+    if state == "stopped":
+        print(f" - [{NAMESPACE}] Starting the existing local NetBox; its data is kept")
+        _start_netbox(context, values)
+        return
+    print(f" - [{NAMESPACE}] No local NetBox exists; creating one with the {DEMO_DATASET!r} dataset")
+    sql_file = fetch_demo_sql()
+    restore_demo_database(context, values, sql_file)
+    _ready(context, values)
+
+
+@task(name="start")
+def start(context: Context) -> None:
+    """Bring up the disposable local NetBox, then print its URL and development token."""
+    _start_netbox(context, load_netbox_env())
 
 
 @task

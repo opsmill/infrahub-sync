@@ -24,7 +24,10 @@ with the Sync API and worker on the host, for a debugger.
   file includes `development/docker-compose.infrahub.yml` with Compose `include:`, and every
   Infrahub service has the `infrahub` profile.
 - **One task namespace with two modes.** `dev.start` starts the core services and both
-  profiles. `dev.deps` starts the core services and the `infrahub` profile, prints the
+  profiles. (Since amended: a preset decides the profiles. The default `sync` preset starts the
+  `sync` profile only, and `dev.deps` no profile; the `infrahub` and `preview` presets add the
+  `infrahub` profile. See `tasks/dev.py` and the development stack documentation.)
+  `dev.deps` starts the core services and the `infrahub` profile, prints the
   addresses and returns; `dev.api` and `dev.worker` then run the host processes in the
   foreground. No task writes a PID file or starts a background process.
 - **An Infrahub that already runs.** `--infrahub-network` or

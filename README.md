@@ -74,11 +74,14 @@ To run from source, continue below.
 
 You need Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. The
 development stack, `development/docker-compose.yml`, builds the image from your checkout, for your host's own architecture, and
-runs the Sync API, the worker, PostgreSQL, object storage, Prefect and a local Infrahub:
+runs the Sync API, the worker, PostgreSQL, object storage and Prefect. A preset adds a local
+Infrahub, or a local Infrahub and NetBox:
 
 ```bash
 uv sync --extra dev --extra prefect --extra service   # once
-uv run invoke dev.start
+uv run invoke dev.start      # the `sync` preset: syncs into an Infrahub you already run
+uv run invoke dev.infrahub   # the `infrahub` preset: adds a local Infrahub
+uv run invoke dev.preview    # the `preview` preset: adds a local Infrahub, NetBox and sample data
 ```
 
 `dev.start` builds `infrahub-sync:dev` when the image is missing or its build inputs
@@ -89,7 +92,7 @@ its containers, so after a code change run `uv run invoke dev.restart`.
 |---|---|
 | **Sync API** | `http://127.0.0.1:8001` — bearer token `infrahub-sync-dev-token` |
 | **Prefect UI** | `http://127.0.0.1:4230` |
-| **Infrahub** | `http://127.0.0.1:8000` |
+| **Infrahub** (`infrahub` and `preview` presets) | `http://127.0.0.1:8000` |
 | **PostgreSQL** | `127.0.0.1:5440` |
 
 ```bash
@@ -97,13 +100,15 @@ curl -sf http://127.0.0.1:8001/api/version
 curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/api/status
 ```
 
-The stack starts with no source and no destination. To continue to a first sync from a
+The `sync` and `infrahub` presets start with no source and no destination; `preview` starts the
+local NetBox as a source and loads the smoke dataset into the local Infrahub. To continue to a first sync from a
 local NetBox into the stack's Infrahub, follow
 [Run from source](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-from-source)
 in the documentation. In short:
 
-- The worker reaches the stack's Infrahub at `http://infrahub-server:8000`. To use an Infrahub
-  started from Infrahub's own Compose file instead, run
+- With a local Infrahub, the worker reaches it at `http://infrahub-server:8000`. With the `sync`
+  preset, it reaches an Infrahub on your machine at `http://host.docker.internal:8000`. To use an
+  Infrahub started from Infrahub's own Compose file instead, run
   `export INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK=infrahub_default` before `uv run invoke dev.start`.
   The later `dev.start` and `dev.restart` commands then keep the worker on that network.
 - `uv run invoke netbox.seed --dataset demo` starts a local NetBox with the official demo

@@ -183,10 +183,10 @@ def schema(env: dict[str, str]) -> None:
 def start_stack(env: dict[str, str]) -> None:
     """Start the development stack, allowing the Infrahub health check one cold-start retry."""
     try:
-        run("uv", "run", "--no-sync", "invoke", "dev.start", env=env)
+        run("uv", "run", "--no-sync", "invoke", "dev.start", "--preset", "infrahub", env=env)
     except subprocess.CalledProcessError:
         time.sleep(30)
-        run("uv", "run", "--no-sync", "invoke", "dev.start", env=env)
+        run("uv", "run", "--no-sync", "invoke", "dev.start", "--preset", "infrahub", env=env)
 
 
 def parsed_fields(output: str) -> dict[str, str]:

@@ -1,8 +1,8 @@
 # Development stack
 
-`development/docker-compose.yml` runs the whole Sync service, built from this checkout, and a
-disposable Infrahub to sync into: PostgreSQL, the object store, the Prefect server, the Sync
-API, the worker and Infrahub. The published page is
+`development/docker-compose.yml` runs the whole Sync service, built from this checkout:
+PostgreSQL, the object store, the Prefect server, the Sync API and the worker. A preset adds a
+disposable Infrahub to sync into, and the local NetBox. The published page is
 [Local development stack](../docs/docs/development-stack.mdx). It covers every `dev.*` task,
 the addresses, the development-only credentials, both modes (everything in containers, or the
 Sync API and the worker on the host with `dev.deps`), and how to run the tests.
@@ -11,15 +11,20 @@ Sync API and the worker on the host with `dev.deps`), and how to run the tests.
 
 ```bash
 uv sync --extra dev --extra prefect --extra service
-uv run invoke dev.start
+uv run invoke dev.start      # preset `sync`: the Sync service only
+uv run invoke dev.infrahub   # preset `infrahub`: plus a local Infrahub
+uv run invoke dev.preview    # preset `preview`: plus the local NetBox and the smoke dataset
 ```
 
-`dev.start` builds `infrahub-sync:dev` when the image is missing or its build inputs changed,
-starts every service and waits until each is healthy, then prints the addresses. The stack
+`dev.start --preset NAME` and `INFRAHUB_SYNC_DEV_PRESET` select a preset too; without either, a
+task follows the stack's containers, which never select `preview`. `dev.start` builds `infrahub-sync:dev` when the image is
+missing or its build inputs changed, starts the preset's services and waits until each is
+healthy, then prints the addresses. The stack
 mounts the checkout's code into its containers, so after a code change run
 `uv run invoke dev.restart`. Requires Docker and Python 3.11 to 3.13.
 
-Two tasks write to Infrahub, and each says what it will write before writing:
+Two tasks write to the stack's own Infrahub, so they need the `infrahub` or `preview` preset,
+and each says what it will write before writing. `dev.preview` runs `dev.seed` itself:
 
 - `dev.seed` loads the example schema, creates the `InfraDevice` named `core01` on `main`,
   then forks the `preview-smoke` branch from it. Running it again on a stack that already holds
