@@ -176,8 +176,9 @@ class _Api:
     service: RunService
     owner: Account
     administrator: Account
-    owner_headers: dict[str, str]
-    administrator_headers: dict[str, str]
+    # Left out of the representation: pytest prints it when a test fails, and these hold token values.
+    owner_headers: dict[str, str] = field(repr=False)
+    administrator_headers: dict[str, str] = field(repr=False)
     reads: list[list[str]] = field(default_factory=list)
 
 
