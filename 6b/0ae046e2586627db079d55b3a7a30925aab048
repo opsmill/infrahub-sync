@@ -1,0 +1,21 @@
+dev/specs/021-scheduled-runs/research.md
+  s_564c364058ca9c::t_78df989a8e9f81 493-497
+tests/service/test_schedule_cadence.py
+  s_564c364058ca9c::t_e559c5d9ff3084 77-80,83-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b0ae046e2586627db079d55b3a7a30925aab048",
+  "prompts": {},
+  "sessions": {
+    "s_564c364058ca9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abf5fe180b33ba309",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
