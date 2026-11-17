@@ -12,8 +12,8 @@ Table `schedules` of the product store. One row for each schedule, kept after de
 | `name` | text | Identifier pattern of the API. Unique among schedules that are not deleted. |
 | `config_id` | text | A registered configuration. |
 | `registry_version` | integer | A registered version of that configuration. |
-| `cron` | text | A five-field cron expression that `cronsim` accepts (R3). |
-| `timezone` | text | A name that `zoneinfo` accepts. Default `UTC`. |
+| `cron` | text | A cron expression that Prefect's `CronSchedule` accepts (R3). |
+| `timezone` | text | A time zone name that Prefect's `CronSchedule` accepts. Default `UTC`. |
 | `write_target` | text | `branch-review` (default) or `default-branch`. |
 | `write_when_left_out` | boolean | Default false. |
 | `left_out_set_by` | text or null | The actor who last turned `write_when_left_out` on. |
@@ -23,7 +23,10 @@ Table `schedules` of the product store. One row for each schedule, kept after de
 | `state` | text | `active`, `paused`, `stopped` or `deleted`. |
 | `state_reason` | text or null | For `stopped`: `owner-not-found` or `approval-required`. |
 | `owner` | text | The actor name of the owner (R8). No token is stored. |
-| `next_start_at` | timestamp or null | In UTC. Null when the state is not `active`. |
+| `next_start_at` | timestamp or null | In UTC. Null when the state is not `active`. Computed, not stored (R3). |
+| `last_start_at` | timestamp or null | The most recent start that was admitted or recorded (R10). |
+| `prefect_schedule_id` | text or null | The Prefect schedule of this schedule (R1). |
+| `prefect_synced` | boolean | False while the Prefect schedule does not match this record (R13). |
 | `waiting_start_at` | timestamp or null | The start that waits under the `queue` policy. |
 | `created_at`, `updated_at` | timestamp | In UTC. |
 
@@ -34,9 +37,9 @@ Rules:
   branch (R11).
 - `left_out_set_by` and `left_out_set_at` are set when `write_when_left_out` changes from false to
   true, and cleared when it changes to false.
-- `next_start_at` is computed from `cron` and `timezone` when the schedule is created, changed,
-  resumed or taken over, and after each start. It is always later than the time of the
-  computation.
+- `next_start_at` is computed from `cron` and `timezone` each time the schedule is returned. It
+  is always later than the time of the computation.
+- The Prefect schedule is active only when the state is `active`.
 - A change may set `registry_version`, `cron`, `timezone`, `write_target`, `write_when_left_out`,
   `overlap_policy` and `start_late_by_at_most_seconds`. It may not set `name`, `config_id` or
   `owner`.
@@ -48,8 +51,8 @@ State transitions:
 | (none) | create | `active` |
 | `active` | pause | `paused` |
 | `paused` | resume | `active` |
-| `active` | the owner's actor does not exist on the Sync API, at a start | `stopped`, reason `owner-not-found` |
-| `active` | the Sync API requires approval and the write target is the default branch, at a start | `stopped`, reason `approval-required` |
+| `active` | the owner's actor does not exist on the Sync API, when the API process starts | `stopped`, reason `owner-not-found` |
+| `active` | the Sync API requires approval and the write target is the default branch, when the API process starts | `stopped`, reason `approval-required` |
 | `stopped` | resume, when the reason no longer holds | `active` |
 | `stopped` (`owner-not-found`) | take over by an administrator (user story 3) | `active`, with the administrator as owner |
 | `stopped` (`approval-required`) | change of the write target to `branch-review` | `active` |
@@ -74,7 +77,8 @@ Table `schedule_branches`. One row for each run with branch review.
 
 Rules:
 
-- `pending`: written by the service in the transaction that creates the run. The branch may or
+- `pending`: written by the admission of a scheduled start, in the transaction that creates the
+  run. The branch may or
   may not exist in Infrahub.
 - `open`: the run finished its write and opened its proposed change.
 - `removed`: the run itself deleted its branch, because the plan held no operation or the run
@@ -131,7 +135,7 @@ Three columns on `product_runs`, and the same three fields on `ProductRun`, `Run
   also named in a `CHECK` constraint, SQLite triggers and model invariants (R12).
 - A scheduled run's receipt has the resource kind `run`, the owner as actor, the key digest of
   `schedule:<schedule_id>:<scheduled_start_at>`, and a request fingerprint computed from the
-  schedule identifier and the start time only (R2).
+  schedule identifier and the start time only. The admission writes it already accepted (R2).
 
 ## Stage result of a scheduled `sync` (changed, in the run's results)
 
@@ -154,15 +158,27 @@ that is known when the write is committed (`branch`, `branch_state`) is saved wi
 result. The part that follows the write (`proposed_change_id`, `replaced`, `kept`, `failure`) is
 saved by a second store call with its events.
 
-## Flow parameters of a scheduled run (changed, in memory only)
+## Flow parameters and admission result of a scheduled run (changed, in memory only)
 
-The service adds these to the parameters of `service_sync_run`:
+The Prefect schedule gives the flow run two parameters:
 
 | Parameter | Meaning |
 | --- | --- |
-| `confirm_left_out` | Exists today. True when the schedule's left-out setting is on (R5). |
+| `schedule_id` | New. The Sync schedule. |
+| `stage` | Exists today. Always `sync`. |
+
+`run_id` becomes optional in the signature of `service_sync_run`: a flow run of the Sync API
+carries it, and a scheduled flow run gets it from the admission.
+
+The admission of R2 returns one of two results:
+
+- **Not started**: the cause (`schedule-not-active`, `missed`, `skipped-run-in-progress`,
+  `skipped-start-waiting`, `queued`, `failed`). The flow run ends with no run record.
+- **Started**: the run identifier, the configuration binding of the run, and the values the
+  stage needs from the schedule:
+
+| Value | Meaning |
+| --- | --- |
+| `confirm_left_out` | True when the schedule's left-out setting is on (R5). |
 | `branch_review` | True for the write target `branch-review`. |
 | `earlier_branches` | The schedule's rows in the states `pending` and `open`: run identifier, branch, proposed change identifier. |
-
-The flow reads them only after it claimed its execution, so only a run that the service started
-can carry them.

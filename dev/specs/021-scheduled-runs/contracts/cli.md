@@ -68,6 +68,7 @@ it applies to:
 - `warning: a newer version of this configuration exists: <config_id> version <n>` (user story 3)
 - `warning: this schedule is stopped: <state_reason>`, followed by the action that the reason
   needs
+- `warning: this schedule is not yet handed to the task manager`, when `prefect_synced` is false
 
 A warning does not change the exit code.
 
@@ -81,8 +82,8 @@ A warning does not change the exit code.
 ## Validation
 
 The CLI and the client send the cron expression and the time zone as text. Only the Sync API
-validates them, so the CLI and the client models still import on Python 3.10 without the
-`service` extra.
+validates them, with Prefect, so the CLI and the client models still import on Python 3.10
+without the `service` extra.
 
 ## Exit codes
 

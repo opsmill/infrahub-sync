@@ -27,6 +27,7 @@ existing rules for a repeated key. Errors use the existing error body.
   "next_start_at": "2026-11-18T01:00:00Z",
   "waiting_start_at": null,
   "last_run_id": "…",
+  "prefect_synced": true,
   "open_branch": {"run_id": "…", "branch": "sync/from-netbox-nightly-20261117-a1b2c3", "proposed_change_id": "…"},
   "created_at": "2026-11-17T09:12:00Z",
   "updated_at": "2026-11-17T09:12:00Z"
@@ -69,6 +70,7 @@ Refusals:
 | 409 | `approval-required-for-schedule` | `write_target` is `default-branch` and the Sync API requires approval. The message names `INFRAHUB_SYNC_REQUIRE_APPROVAL`. |
 | 409 | `schedule-branch-declared` | `write_target` is `branch-review` and the configuration version declares its own destination branch. |
 | 422 | `schedule-cron-invalid` | The cron expression is not valid. The message holds the reason. |
+| 503 | `orchestration-unavailable` | The schedule is stored and the task manager could not be reached. The schedule starts no run until a later request, or a restart of the Sync API, hands it to the task manager. `GET /schedules/{schedule_id}` shows `prefect_synced: false`. |
 | 422 | `schedule-timezone-invalid` | The time zone name is not known. |
 | 422 | `schedule-setting-not-available` | `overlap_policy` is `queue` or `start_late_by_at_most_seconds` is set, before user story 3 is delivered. `write_target` is `default-branch`, before user story 2 is delivered. `write_target` is `branch-review`, or is absent, before the worker side of user story 1 is delivered. |
 

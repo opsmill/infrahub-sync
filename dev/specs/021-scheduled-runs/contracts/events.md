@@ -25,22 +25,19 @@ Written by the Sync API in the transaction that saves the answer. The actor is t
 
 ## Events of a start
 
-Written by the schedule loop in the transaction that advances the schedule. The actor is the
-schedule's owner. `operation` is `schedule-start`. `details.start_at` holds the start time.
+Written by the worker when it admits a scheduled flow run, in the transaction of that decision.
+The actor is the schedule's owner. `operation` is `schedule-start`. `details.start_at` holds the start time.
 
 | Event type | When | `run_id` | `outcome` |
 | --- | --- | --- | --- |
 | `infrahub_sync.schedule.start_skipped` | A run of the same configuration is in progress, or a start already waits. | The run in progress. | `skipped-run-in-progress` or `skipped-start-waiting` |
 | `infrahub_sync.schedule.start_queued` | The start waits under the `queue` policy (user story 3). | The run in progress. | `queued` |
-| `infrahub_sync.schedule.start_missed` | The start time passed while the Sync service was not running. | The late run, if one started. | `missed-skipped` or `missed-started-late` |
+| `infrahub_sync.schedule.start_missed` | The start time passed while the worker or the task manager was not running. Recorded when the next flow run of the schedule is admitted. | The late run, if one started. | `missed-skipped` or `missed-started-late` |
 | `infrahub_sync.schedule.start_failed` | The run could not be created, for example because the configuration version can no longer be run. `details.cause` holds the refusal code. | none | `failed` |
-| `infrahub_sync.schedule.stopped` | The schedule moved to the state `stopped`. | none | `owner-not-found` or `approval-required` |
+| `infrahub_sync.schedule.stopped` | The schedule moved to the state `stopped`. Written by the Sync API when it starts. `details.start_at` is absent. | none | `owner-not-found` or `approval-required` |
 
 - A start that creates a run on time writes no schedule event. The run's own events
   (`infrahub_sync.run.accepted` and the stage result) name the schedule.
-- A start whose run exists and could not be submitted to Prefect is retried and writes no
-  `start_failed` event. The run's `infrahub_sync.run.unavailable` event is written once for each
-  attempt, as today.
 - When more than 500 starts of one schedule were missed, the oldest are recorded in one
   `start_missed` event whose `details` hold `starts`, `first_start_at` and `last_start_at`.
 

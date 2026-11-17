@@ -13,26 +13,27 @@ uv run ruff check .
 uv run invoke tests.tests-unit
 ```
 
-The unit tier uses the SQLite product store, a fake orchestration and a clock that the test
-advances. It needs no Infrahub and no Prefect server. It shows:
+The unit tier uses the SQLite product store, a fake orchestration and times that the test
+passes. It needs no Infrahub and no Prefect server, so it does not show that Prefect creates the
+flow runs: sections 3 and 4 do. It shows:
 
 | What | Where |
 | --- | --- |
-| Start times from a cron expression and a time zone, including a daylight-saving change | `tests/service/test_schedule_cadence.py` |
+| A cadence is validated and its next start computed by Prefect, including a daylight-saving change | `tests/service/test_schedule_cadence.py` |
+| The Prefect schedule of a schedule is created, updated, deactivated and deleted, and a failed call is repaired by the next match | `tests/service/test_schedule_prefect.py` |
 | Schedule routes, refusals, owner and administrator rules, idempotency | `tests/service/test_schedule_routes.py` |
-| The loop: a start creates one run, a repeated pass creates no second run, `reject` skips | `tests/service/test_schedule_loop.py` |
-| A run that could not be handed to the task manager is retried and never recorded as missed; an old unresolved receipt does not block a schedule | `tests/service/test_schedule_loop.py` |
-| A change of the schedule or a take-over between two attempts of one start creates no second run | `tests/service/test_schedule_loop.py` |
+| The admission: a scheduled flow run creates one run, a second flow run of the same start creates none, `reject` skips, a late start is recorded as missed | `tests/service/test_schedule_admission.py` |
+| An old unresolved receipt does not block a schedule; a flow run with `schedule_id` that Prefect's scheduler did not create is refused | `tests/service/test_schedule_admission.py` |
 | The owner's actor is removed: the schedule stops, and a resume succeeds when the actor exists again | `tests/service/test_schedule_owner.py` |
 | Branch review is refused for a version that declares a branch; `verify`, `apply` and `resume` are refused on a run with branch review | `tests/service/test_schedule_branch_review.py` |
 | The store records of a run's branch from a worker result that the test writes: `pending`, `open`, `removed`, `replaced`, `kept` | `tests/service/test_schedule_branch_review.py` |
 | The approval setting and the two write targets | `tests/service/test_schedule_approval.py` |
 | The left-out setting reaches the `sync` stage | `tests/service/test_schedule_left_out.py` |
 | Missed starts, the late run and the `queue` policy (user story 3) | `tests/service/test_schedule_missed_starts.py` |
-| Schedule records and the compare-and-set advance | `tests/product_store/test_schedules.py` |
+| Schedule records and two admissions of one start | `tests/product_store/test_schedules.py` |
 | Client methods and CLI commands, and the command, method and route matrix | `tests/client/test_schedules.py`, `tests/cli/test_schedule_commands.py`, `tests/cli/test_parity_and_closure.py` |
 | The documented event types match the code | `tests/test_run_events_docs.py` |
-| The CLI and the client import without `cronsim` | `tests/client/test_public_surface.py` |
+| The CLI and the client import without Prefect | `tests/client/test_public_surface.py` |
 
 Requirements with no acceptance scenario of their own in the specification are shown here:
 FR-019 and the daylight-saving edge case in `test_schedule_missed_starts.py` and
@@ -46,8 +47,8 @@ credential.
 uv run invoke tests.tests-product-store-postgresql
 ```
 
-It runs the schedule store tests against PostgreSQL, including two loops that advance the same
-schedule at the same time: one of them records the start.
+It runs the schedule store tests against PostgreSQL, including two admissions of the same start
+at the same time: one of them creates the run.
 
 ## 3. Development stack: a schedule that writes to the default branch (user story 2)
 
@@ -101,10 +102,11 @@ Expected, with a source that changes between two starts:
 
 On the development stack, with a schedule that starts every 5 minutes:
 
-1. Stop the `sync-api` service before a start time and start it again 2 minutes after.
+1. Stop the `sync-worker` service before a start time and start it again 2 minutes after.
    Expected: one run starts, and the events hold `start_missed` with `missed-started-late`.
-2. Set `--start-late-by-at-most 1m`, stop the service before a start time and start it again
+2. Set `--start-late-by-at-most 1m`, stop the worker before a start time and start it again
    3 minutes after. Expected: no run, and `start_missed` with `missed-skipped`.
+3. Stop the `sync-api` service across a start time. Expected: the run starts on time.
 
 ## 6. Documentation
 

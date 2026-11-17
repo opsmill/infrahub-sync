@@ -7,17 +7,17 @@
 ## Summary
 
 An operator creates a schedule for one version of a configuration, with a cron expression and a
-time zone. The Sync API process starts a `sync` run at each start time, as the schedule's owner.
+time zone. Prefect starts a `sync` run at each start time, as the schedule's owner.
 By default the run writes to a new Infrahub branch and opens a proposed change, which replaces
 the schedule's earlier unapproved one. On a Sync API that does not require approval, a schedule
 can write to the default branch instead.
 
 Technical approach, from [research.md](research.md):
 
-- A schedule loop in the Sync API process starts runs through `RunService`. Prefect schedules
-  are not used (R1).
-- A start creates one run: the idempotency key is derived from the schedule and the start time,
-  and the schedule advances by compare-and-set (R2).
+- Prefect holds the cadence: each Sync schedule has one Prefect schedule on the existing
+  deployment, as Infrahub does for its system workflows. Infrahub Sync has no loop (R1).
+- The worker admits a flow run that Prefect's scheduler created: it writes the run record, or
+  records why the start does not run. One run for each schedule and start time (R2).
 - The worker's `sync` stage gains the left-out setting (R5) and the branch review steps (R11):
   the branch is created before the plan, and the proposed change is opened after the write is
   committed.
@@ -28,7 +28,7 @@ Technical approach, from [research.md](research.md):
 
 | Part | State |
 | --- | --- |
-| Schedule record, routes, client, CLI, loop, `reject` policy, trigger type, events (user story 1, service side) | Can be built now. |
+| Schedule record, routes, Prefect schedule, client, CLI, admission of a start, `reject` policy, trigger type, events (user story 1, service side) | Can be built now. |
 | Branch creation, proposed change, replacement, no branch left for a plan with no change (user story 1, worker side) | **Blocked** until the two capabilities of INFP-655 exist. See [contracts/branch-review.md](contracts/branch-review.md). |
 | Write to the default branch and the left-out setting (user story 2) | Can be built now. **Must not be delivered** before the product owner confirms the amendment of constitution principle I. |
 | `queue` policy, late run, newer-version warning, take-over (user story 3) | Can be built now, after the service side of user story 1. |
@@ -47,26 +47,26 @@ user story 2 is delivered first.
 client models also run on Python 3.10.
 
 **Primary Dependencies**: FastAPI 0.141.1, Prefect 3.8.6, Pydantic 2, Typer, httpx, psycopg 3.
-Two packages become direct dependencies of the `service` extra: `cronsim` and `tzdata`. Both are
-already in `uv.lock` (R3).
+No new dependency: Prefect validates the cadence and computes the start times (R3).
 
 **Storage**: the product store: PostgreSQL in a deployment, SQLite in the unit tier. Two new
 tables, three new columns and two indexes on `product_runs`, one new column on `audit_events`
 (R12).
 
-**Testing**: pytest. Unit tier with the SQLite store, a fake orchestration and an injected clock
-(R14). PostgreSQL product store tier for the compare-and-set. Smoke tier on the development
-stack.
+**Testing**: pytest. Unit tier with the SQLite store, a fake orchestration and times that the
+test passes (R14). PostgreSQL product store tier for two admissions of one start. Smoke tier on
+the development stack, which is the only tier that runs Prefect's scheduler.
 
 **Target Platform**: the Compose deployment (`docker-compose.yml`), Linux containers.
 
 **Project Type**: a web service with a worker, a CLI and an HTTP client, in one Python package.
 
-**Performance Goals**: a run starts within 15 seconds of its start time while the Sync API
-process is running. One loop pass with no start due costs one indexed query.
+**Performance Goals**: a run starts within 30 seconds of its start time while the worker and the
+Prefect server are running. Prefect marks a run late after 15 seconds, and the worker asks for
+work every 10 seconds.
 
-**Constraints**: no credential in a schedule record or an event. No new container. `POST /runs`
-is not changed. A product database of an earlier build must be replaced (R12).
+**Constraints**: no credential in a schedule record or an event. No new container and no
+periodic task in the API process. `POST /runs` is not changed. A product database of an earlier build must be replaced (R12).
 
 **Scale/Scope**: tens of schedules for each deployment, with cadences from one minute to one
 week. About 8 routes, 8 CLI commands, 2 tables.
@@ -78,15 +78,15 @@ week. About 8 routes, 8 CLI commands, 2 tables.
 | Principle | Result | Note |
 | --- | --- | --- |
 | I. Read-only and dry-run by default | **Open. Two amendments are needed.** | Branch review is the default write target, and nothing reaches the default branch before a person merges in Infrahub. That meets the purpose of the principle, but its text asks for a person's approval of every `sync`, and a review branch is part of the destination system. A write to the default branch needs an explicit option (`--write-to-default-branch`) and still writes without a person's approval of each run. See Complexity Tracking. |
-| II. Sync idempotency and safety | Pass | A start creates one run (R2). Repeating the branch review steps is safe (contract, requirement 4). A failed run replaces nothing. |
+| II. Sync idempotency and safety | Pass | A start creates one run (R2). Making the Prefect schedules match the stored ones can be repeated (R13). Repeating the branch review steps is safe (contract, requirement 4). A failed run replaces nothing. |
 | III. Adapter symmetry and pattern consistency | Pass | No adapter contract changes in this plan. Routes, models, client methods and commands follow the existing conventions (R13). |
-| IV. Type safety and explicit contracts | Pass | New models are Pydantic models with closed literals. New refusals have their own codes. The schedule loop catches named exception classes (store, orchestration and service errors), not `Exception`. |
-| V. Test discipline | Pass | Each requirement has a unit test with an injected clock. The concurrent advance has a PostgreSQL test. |
+| IV. Type safety and explicit contracts | Pass | New models are Pydantic models with closed literals. New refusals have their own codes. |
+| V. Test discipline | Pass | Each requirement has a unit test with times that the test passes. Two admissions of one start have a PostgreSQL test. What Prefect's scheduler does is shown only on the development stack. |
 | VI. Security, secrets, and input boundaries | Pass | A schedule stores an actor name, never a token (R8). Events hold identifiers only (FR-025). The cron expression and the time zone are validated at the API boundary. |
-| VII. Simplicity and maintainability | Pass | No new container, no new installed package, no interface with a single implementation: the prerequisite is a contract document, and the code that calls it is written when it exists. |
+| VII. Simplicity and maintainability | Pass | No new container, no new package, no scheduler of our own: Prefect's is used. No interface with a single implementation: the prerequisite is a contract document, and the code that calls it is written when it exists. |
 
-Re-check after design and after the critique: the result is the same. The design adds one
-periodic task to the API process and no new abstraction.
+Re-check after design, after the critique and after the move to Prefect schedules: the result is
+the same. The design adds no periodic task and no new abstraction.
 
 ## Project Structure
 
@@ -120,18 +120,18 @@ infrahub_sync/
 │   ├── models.py            # Schedule and schedule branch records; event and receipt kinds
 │   └── store.py             # Two tables, two run columns, schedule methods, run in progress
 └── service/
-    ├── app.py               # Mounts the schedule router; starts the schedule loop
+    ├── app.py               # Mounts the schedule router; matches Prefect to the store at startup
     ├── auth.py              # Read the principal of a named actor
     ├── events.py            # Schedule event types and builders
-    ├── flow.py              # Left-out setting in the sync stage; branch review steps (blocked)
+    ├── flow.py              # Admission of a scheduled flow run; left-out setting; branch review steps (blocked)
     ├── failure_cause.py     # Failure classes of the branch review steps (blocked)
     ├── models.py            # Re-exports and emitted variants of the schedule models
-    ├── schedule_cadence.py  # New: start times from a cron expression and a time zone
-    ├── schedule_loop.py     # New: the periodic pass that starts, skips and records starts
+    ├── orchestration.py     # Create, update and delete the Prefect schedule of a schedule
+    ├── schedule_cadence.py  # New: validate a cadence and compute start times with Prefect
     ├── schedule_routes.py   # New: the schedule router
-    ├── schedules.py         # New: schedule requests, rules and the scheduled run
-    ├── serve.py             # Builds the schedule loop
-    └── service.py           # The method that starts a scheduled run
+    ├── schedules.py         # New: schedule requests, rules, and the match of Prefect to the store
+    ├── serve.py             # Builds the schedule service
+    └── service.py           # Refuses verify, apply and resume of a run with branch review
 
 tests/
 ├── service/                 # test_schedule_*.py; test_http_api.py route set
@@ -151,28 +151,27 @@ docs/docs/
 
 frontend/src/api/types.generated.ts                # Regenerated; no interface change
 changelog/+scheduled-runs.added.md
-pyproject.toml                                     # `cronsim` and `tzdata` in the service extra
 ```
 
-**Structure Decision**: the feature stays inside the existing package. The service gains four
+**Structure Decision**: the feature stays inside the existing package. The service gains three
 modules with the prefix `schedule`, so that `service.py` and `app.py`, which are already large,
 grow by a method and a mount each.
 
 ## Implementation notes
 
 - **Order of work.** The product store and the models come first, then the cadence module, the
-  service rules, the routes, the loop, the client and the CLI. Each step has its unit tests
+  service rules, the routes, the admission in the worker, the client and the CLI. Each step has its unit tests
   before the next.
-- **The loop and the liveness loop.** The schedule loop is a second task in the same lifespan.
-  One failed pass is logged and the next pass runs. It catches the named error classes of the
-  store, the orchestration and the service, and a failure of one schedule does not stop the
-  pass for the others. It does not share a task with the liveness loop, so a slow Prefect call
-  in one does not delay the other.
-- **Python 3.10.** `cronsim` and `zoneinfo` are imported only in
-  `service/schedule_cadence.py`. `client/models.py` and `cli.py` carry the cron expression and
-  the time zone as text and do not validate them.
-- **Lock file.** Declaring `cronsim` and `tzdata` changes `uv.lock`. Run `uv lock` and commit
-  the file, because the image installs with `uv sync --frozen --extra service`.
+- **Two records of one schedule.** The stored schedule is the source. One step makes the Prefect
+  schedules of the deployment match it, by slug. It runs when the API process starts, after the
+  bootstrap job, and after each schedule request. In the same step at startup, the API process
+  stops a schedule whose owner's actor no longer exists or whose write target now needs
+  approval.
+- **What the unit tier cannot show.** Prefect's scheduler does not run in the unit tier. The
+  unit tests call the admission with a flow run that the test describes. That Prefect creates
+  the flow runs at the right times, in the right time zone, is shown on the development stack.
+- **Python 3.10.** Prefect is imported only in the service modules. `client/models.py` and
+  `cli.py` carry the cron expression and the time zone as text and do not validate them.
 - **An earlier product database.** At startup the service checks that `product_runs` and
   `audit_events` hold the new columns, and refuses to start with a message that says the
   database must be replaced.
@@ -197,11 +196,11 @@ grow by a method and a mount each.
     - While branch review is not delivered, a request that names no write target is refused. The
       default branch is never chosen for the operator.
   The last task of each of the two phases adds its write target to the set.
-- **Flow parameters.** The parameters `branch_review` and `earlier_branches` are added to the
-  signature of `service_sync_run` with the service side, and the flow refuses a run that sets
-  `branch_review` until the worker side exists.
-- **Decision records.** Two records are written when this specification is extracted: the Sync
-  API process starts scheduled runs (R1, R2), and a write to a branch that Infrahub Sync created
+- **Flow parameters.** `service_sync_run` gains the parameter `schedule_id`, and `run_id` becomes
+  optional. The schedule's settings reach the stage through the result of the admission, not as
+  flow parameters. The flow refuses a run with branch review until the worker side exists.
+- **Decision records.** Two records are written when this specification is extracted: Prefect
+  holds the cadence and the worker admits a scheduled flow run (R1, R2), and a write to a branch that Infrahub Sync created
   for a run needs no Sync approval (R6, amends ADR 0037).
 - **Product documents outside this repository.** The INFP-656 card and
   `infrahub-sync-process/product/capabilities.md` describe a schedule inside the configuration, a

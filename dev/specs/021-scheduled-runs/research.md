@@ -3,121 +3,142 @@
 Each entry states a decision, why, and what was rejected. File and line references are to
 `feature/v3-develop` at `7987596f`.
 
-## R1. The Sync API process starts scheduled runs; Prefect schedules are not used
+## R1. Prefect holds the cadence: one Prefect schedule for each Sync schedule
 
-**Decision**: A schedule loop runs in the Sync API process, next to the liveness loop that
-`create_app` already starts in its lifespan (`infrahub_sync/service/app.py:334-356`). At each
-pass it reads the schedules whose next start time has passed and starts a run for each through
-`RunService`, by the same steps as `POST /runs`.
+**Decision**: Each Sync schedule has one Prefect schedule on the existing deployment
+`infrahub-sync-service/run`. The Sync API creates it with
+`create_deployment_schedules`, with a `CronSchedule(cron, timezone)`, the slug of the Sync
+schedule's identifier, and the parameters `schedule_id` and `stage = "sync"`. A pause, a resume, a
+change of the cadence and a deletion update or delete that Prefect schedule
+(`update_deployment_schedule`, `delete_deployment_schedule`). Prefect's scheduler creates the flow
+runs. Infrahub Sync has no loop of its own.
+
+**What was checked** in the installed Prefect 3.8.6:
+
+- `DeploymentScheduleCreate` has the fields `schedule`, `active`, `parameters`, `slug` and
+  `replaces`, so each schedule of one deployment carries its own parameters.
+- `CronSchedule` has `cron` and `timezone`.
+- A flow run holds `auto_scheduled` and `expected_start_time`.
+- The scheduler service is on by default. It creates at least 3 runs and at least one hour of
+  runs ahead for each schedule, at most 100 runs, and handles a new schedule within 5 seconds.
+  The late-runs service marks a run as late after 15 seconds.
+- Sync's Prefect server starts Prefect's own services with their defaults
+  (`service/prefect_server.py:34-38`).
+
+**What the other OpsMill products do**:
+
+- Infrahub puts a `cron` on a workflow definition, and `to_deployment` turns it into a
+  `DeploymentScheduleCreate(schedule=CronSchedule(cron=...))`
+  (`infrahub/backend/infrahub/workflows/models.py:52, 86-87`). Six system workflows use it, for
+  example `git_repositories_sync` every minute. Infrahub has no schedule that a user creates.
+- The Prefect package vendored in this repository has the same `cron` field on its
+  `WorkflowDefinition` (`opsmill_prefect_extras/workflows/definitions.py:129, 284-285`).
+- Styrmin has a `BackupSchedule` record that a user creates, with a `cron_expression` and a
+  `prefect_deployment_id` column. Its service only stores the record
+  (`styrmin/backend/styrmin_backend/services/backup/scheduler.py`); no code sets
+  `prefect_deployment_id` or starts a backup from it. The intended design is the one of this
+  decision, and it is not built there.
 
 **Rationale**:
 
-- A flow run that Prefect creates from a deployment schedule is refused today. The flow claims
-  its execution with `claim_execution`, which updates a `prefect_executions` row that only
-  `RunService._submit` creates (`service/flow.py:518-533`, `product_store/store.py:1302-1327`).
-  The refusal text names this case: "a run started by hand from the deployment" is refused.
-- A run needs its `product_runs` row, its receipt and its write admission before the flow run
-  exists (`service/service.py:404-422`). Only the Sync API writes them.
-- ADR 0019 makes Prefect an internal component, and ADR 0024 makes the stored run record the
-  source of what Prefect shows. A schedule that Prefect owns would put the decision to start
-  outside the run record.
-- The loop needs no new container. The API process already runs one periodic task.
+- Prefect already runs a scheduler in Sync's deployment, with cron and time zone handling, a
+  pause for each schedule, and the list of coming runs in its interface. AD-1 gives Prefect
+  "dispatch, scheduling, retries, cancellation, and workers".
+- It needs no periodic task in the API process, no new package, and no rule for two API processes.
+- The product owner asked for it.
+
+**What it changes in the worker**: a flow run that Prefect's scheduler created has no run record,
+and the flow refuses such a flow run today (`service/flow.py:518-533`). R2 adds the admission of a
+scheduled start.
 
 **Alternatives considered**:
 
-- A `cron` on the `infrahub-sync-service/run` deployment. Rejected for the reasons above, and
-  because one deployment cannot hold one schedule for each configuration version with different
-  parameters without Sync writing Prefect deployment schedules through the Prefect API.
-- A separate scheduler container. Rejected: one more service to deploy and monitor, with no gain
-  while the API process is a single process (`service/serve.py:132-138`).
+- A loop in the Sync API process that starts runs through `RunService`. It was the first design
+  of this plan. Rejected: it builds a second scheduler next to the one Prefect runs.
+- One Prefect deployment for each Sync schedule. Rejected: the worker admits only the deployment
+  `run` (`service/worker.py:118-130`), and one deployment with several schedules needs no change
+  there.
 
-## R2. A start is started once: one run for each schedule and start time, then a compare-and-set advance
+## R2. A scheduled flow run is admitted by the worker: one run for each schedule and start time
 
-**Decision**: For the start at time `T` of schedule `S`, the loop:
+**Decision**: `service_sync_run` gains a second way in. When the flow run is `auto_scheduled` and
+carries `schedule_id`, the flow calls one store method before anything else:
+`admit_scheduled_start(schedule_id, scheduled_start_at, flow_run_id, worker_id)`, with
+`scheduled_start_at` = the flow run's `expected_start_time`. In one transaction it:
 
-1. Starts the run. The run row holds `schedule_id = S` and `scheduled_start_at = T`, and a unique
-   index on that pair allows one run. The receipt's idempotency key is
-   `sha256("schedule:" + S + ":" + T)`, and its request fingerprint is computed from `S` and `T`
-   only. Everything else about the run is derived from the stored schedule and from `T`,
-   including the branch name (R11), so a repeated attempt builds the same request.
-2. Then advances the schedule: one store call sets `next_start_at` to the following start only if
-   the stored value still equals `T`, and saves the events of the start in the same transaction.
+1. Reads the schedule. A schedule that is not `active` ends the flow run with no run record.
+2. Records, as missed starts, the starts of the cadence between the schedule's last admitted start
+   and this one that have no run (R10).
+3. Decides whether this start runs: the lateness check (R10) and the overlap check (R7). A start
+   that does not run is recorded as an event and ends the flow run in a completed state.
+4. Otherwise creates the run row (`trigger_type`, `schedule_id`, `scheduled_start_at`, the owner
+   as actor, the version and branch from the schedule), its accepted receipt, its write admission
+   and its execution row, already claimed by this worker.
 
-Before step 1, the loop reads whether a run with `(S, T)` exists:
+The flow then continues as the `sync` stage of that run. A unique index on
+`(schedule_id, scheduled_start_at)` allows one run: a flow run that Prefect retries, or a second
+flow run for the same start, finds the run and is refused as today.
 
-- It exists and was submitted: go to step 2.
-- It exists and was not submitted, because the process stopped or Prefect could not be reached:
-  submit it again. `reserve_mutation` returns the stored receipt on the unique `(actor,
-  key_digest)` and `_submit` reuses its stored Prefect key (`product_store/store.py:2103-2109`,
-  `service/service.py:1565`). The loop retries on each pass, with a wait that doubles from 5
-  seconds to 5 minutes, whatever the age of the start. Such a start is never recorded as missed.
-- It does not exist: create it.
-
-`started_at` of the run is the time the run was created, not `T`, so the run list keeps its
-order (`product_store/store.py:195`).
+A flow run with `schedule_id` that is not `auto_scheduled`, for example one started by hand from
+the Prefect interface, is refused.
 
 **Rationale**:
 
-- A stop of the process between step 1 and step 2 loses nothing: the next pass finds the run and
-  advances (SC-002).
-- A change of the schedule or a take-over between two attempts does not create a second run or an
-  `idempotency-conflict`, because the fingerprint holds only `S` and `T` and the unique index
-  holds whatever the actor is. Today `_require_matching_receipt` compares the whole request body
-  (`service/service.py:1734-1771`).
-- Two API processes that run the loop create one run and record a skipped or missed start once.
-  The deployment runs one process (`service/serve.py:132-138`), so this is a test case.
+- The stored run record still exists before any work, as ADR 0024 requires. It is written by the
+  worker, which already has the product store, instead of by the Sync API.
+- Prefect gives each scheduled flow run an idempotency key from its schedule and start time, and
+  the unique index gives the same guarantee in the product store.
+- The worker cannot ask the Sync API: it has no API token, and adding one would add a credential.
 
-**Alternatives considered**: advance first, then start. Rejected: a stop between the two loses
-the start with no record.
+**What the worker cannot check**: whether the owner's actor still exists and whether the Sync API
+requires approval. Both are settings of the API process. R6 and R8 check them in the API process
+when it starts, and deactivate the Prefect schedule.
 
-## R3. The cron expression is read with `cronsim`, and time zones with `zoneinfo` and `tzdata`
+## R3. Prefect validates the cron expression and the time zone; no new package
 
-**Decision**: Declare `cronsim` and `tzdata` in the `service` extra of `pyproject.toml`. Accept a
-standard five-field cron expression. Compute start times with `cronsim` on a datetime that
-carries the schedule's `zoneinfo.ZoneInfo`, and store them in UTC.
+**Decision**: The Sync API validates a cadence by building the Prefect `CronSchedule` it will
+send, and computes `next_start_at` with the server-side schedule class of the installed Prefect
+(`prefect.server.schemas.schedules.CronSchedule.get_dates`), which is what the scheduler uses.
+`pyproject.toml` gets no new dependency.
 
-**Rationale**:
+**Rationale**: the cadence that the operator views and the cadence that Prefect runs are computed
+by the same code, including a start that falls in the hour a daylight-saving change removes or
+repeats.
 
-- Both packages are already in `uv.lock`: `cronsim` 2.7 through `pydocket`, which `prefect`
-  3.8.6 requires, and `tzdata` 2026.5. Declaring them makes the dependency explicit; it installs
-  nothing new. `croniter` and `apscheduler` are not in the lock.
-- `cronsim` handles a start that falls in the hour a daylight-saving change removes or repeats,
-  which the specification lists as an edge case.
-- `zoneinfo` is in the standard library of every Python version the service supports (3.11 to
-  3.13). Declaring `tzdata` removes the dependency on a time zone database in the image.
+**Alternatives considered**: declare `cronsim` and compute start times in Sync. Rejected with the
+loop of R1.
 
-**Alternatives considered**: `croniter` (a new package, and its maintenance status has changed
-more than once); Prefect's own cron schedule classes (they belong to deployments, see R1).
-
-**Not verified**: whether `python:3.13-slim-bookworm` ships a system time zone database. With
-`tzdata` declared, the answer does not matter.
+**Not verified**: the exact error that Prefect raises for an invalid cron expression or time zone
+name, and whether `get_dates` can be called in the API process without a database session. The
+first task of the foundation checks both.
 
 ## R4. A scheduled run is a `sync` run with three extra facts
 
-**Decision**: `RunService` gains one method that the loop calls. It follows `create_run`
-(`service/service.py:343-444`) with these differences:
+**Decision**: The run that the admission of R2 creates holds what `create_run` writes
+(`service/service.py:343-444`), with these differences:
 
-- The principal is the schedule's owner, built from the actor name (R8).
+- The actor is the schedule's owner, read from the stored schedule (R8).
 - `operation` is `sync` and `confirm_writes` is true.
 - The run row holds `trigger_type = "scheduled"`, `schedule_id` and `scheduled_start_at` (R2).
-- The flow receives `confirm_left_out` when the schedule's left-out setting is on.
+- The admission returns the schedule's left-out setting and write target to the flow. They are
+  not flow parameters: the Prefect schedule carries only `schedule_id` and `stage`.
 - The refusal `approval-required-for-sync` does not apply when the write target is branch review
   (R6).
 
 `POST /runs` is not changed. Its runs record `trigger_type = "manual"`.
 
 **Rationale**: The specification asks for the same lifecycle, history and events as a run that a
-person starts. Reusing the receipt, the run row, the write admission and `_submit` gives that.
+person starts. Writing the same receipt, run row, write admission and execution row gives that.
 
 **Trigger types**: this specification writes `manual` and `scheduled`. INFP-656 also names
 `system`, for a run that another system starts. Nothing distinguishes such a run from a manual
 one today, so `system` is left to INFP-658.
 
-## R5. The left-out setting reaches the worker as the existing `confirm_left_out` parameter
+## R5. The left-out setting reaches the engine as the existing `confirm_left_out` argument
 
 **Decision**: The `sync` branch of `_execute_stage` (`service/flow.py:930-998`) skips
-`_left_out_stop` and passes `confirm_left_out=True` to its apply step when the flow parameter is
-true. `CreateRunRequest` gets no new field.
+`_left_out_stop` and passes `confirm_left_out=True` to its apply step when the schedule's
+left-out setting, which the admission of R2 returns, is on. `CreateRunRequest` gets no new field.
 
 **Rationale**: The flow parameter exists (`service/flow.py:1421`) and reaches the engine for
 `apply` and `resume` (`flow.py:895`). The `sync` branch ignores it today. A person who wants this
@@ -131,10 +152,10 @@ this specification.
 - `POST /schedules` and a change of the write target are refused with `409
   approval-required-for-schedule` when `approval_required()` is true and the write target is the
   default branch.
-- The loop checks the same condition before each start, because the setting comes from the
-  environment of the process (`service/settings.py:47-53`) and a restart can turn it on. A schedule that no
-  longer passes is moved to the state `stopped` with the reason `approval-required`, and records
-  an event.
+- The setting comes from the environment of the API process (`service/settings.py:47-53`), and a
+  restart can turn it on. When the API process starts, it checks every active schedule (R8). A
+  schedule that no longer passes is moved to the state `stopped` with the reason
+  `approval-required`, its Prefect schedule is deactivated, and an event is recorded.
 - A scheduled run with branch review is accepted whatever the setting is. The service generates
   the branch name, so the caller cannot name the default branch or an existing branch.
 
@@ -150,7 +171,7 @@ write to the default branch is never chosen for the operator (FR-003).
 **Decision record**: the rule amends ADR 0037 and needs its own ADR, written when the
 specification is extracted.
 
-## R7. Overlap: one store question, asked before each start
+## R7. Overlap: one store question, asked when a start is admitted
 
 **Decision**: A new store method answers "which run of configuration X is in progress". A run is
 in progress when either holds:
@@ -160,11 +181,12 @@ in progress when either holds:
   already arbitrates, `product_store/store.py:299-305`), and the receipt is younger than the
   admission time limit `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` (default 300).
 
-The loop asks before each start:
+The admission of R2 asks it:
 
 - `reject`: when a run is in progress, the start is skipped and the event names that run.
-- `queue` (user story 3): the schedule stores the waiting start. A later pass starts it when no
-  run is in progress. A further start while one waits is skipped.
+- `queue` (user story 3): the schedule stores the waiting start, and the flow run returns a
+  Prefect state that schedules it again one minute later, until no run is in progress. A
+  further start while one waits is skipped.
 
 **Rationale**:
 
@@ -174,6 +196,8 @@ The loop asks before each start:
 - The age limit is needed because nothing resolves a receipt that has no execution: the liveness
   loop reads only `prefect_executions` (`service/liveness.py:151-156`). Without the limit, a
   request of a person that stopped half-way would block every later start.
+- Prefect's own concurrency limit of a deployment is not used: it counts flow runs of one
+  deployment, and the rule here is one run for each configuration, whoever started it.
 - "Any run" includes a `plan` or a `verify` of a person. FR-014 asks for that.
 - The question and the start are not one transaction. A person can start a run between the two.
   SC-006 does not depend on this check: the write guard of ADR 0010 still serializes writers
@@ -185,11 +209,12 @@ The loop asks before each start:
 **Alternatives considered**: take the write guard in the API process. Rejected: the guard is a
 session lock that the worker must hold for the whole write.
 
-## R8. The owner is an actor name; the resolver says whether that actor still has a token
+## R8. The owner is an actor name; the API process checks it when it starts
 
 **Decision**: A schedule stores its owner's actor name and no token. `PrincipalResolver` gains
-one method that returns the `Principal` of a named actor, or `None`. The loop calls it before each
-start. `None` moves the schedule to `stopped` with the reason `owner-not-found`. A resume
+one method that returns the `Principal` of a named actor, or `None`. The API process calls it for
+every active schedule when it starts, in the same step that makes the Prefect schedules match
+the stored ones (R13). Actors change only at a restart, so no later check is needed. `None` moves the schedule to `stopped` with the reason `owner-not-found`. A resume
 succeeds when the actor exists again. A take-over by an administrator (user story 3) sets the
 owner to that administrator and the state to `active`.
 
@@ -224,12 +249,12 @@ both as assumptions.
   keys (`start_at`, `starts`, `first_start_at`, `last_start_at`, `left_out`, `branch`,
   `proposed_change_id`, `replaced_run_id`, `cause`). It is stored in a new nullable column of
   `audit_events`. `reason` keeps its meaning: the text of the person who made the request.
-- `commit_claimed_execution`, `complete_mutation` and the new advance method of R2 take a
+- `commit_claimed_execution`, `complete_mutation` and the admission method of R2 take a
   sequence of events. Today the first two take one (`product_store/store.py:2548-2556,
   3464-3475`), and a scheduled run can write three in one transaction.
 - An event that concerns a run sets `run_id`: the run that a start created, or the run in
   progress that caused a skipped start.
-- An event that the loop writes has the schedule's owner as its actor, because `actor` is
+- An event that the admission writes has the schedule's owner as its actor, because `actor` is
   required (`models.py:734-780`).
 
 The event types are listed in [contracts/events.md](contracts/events.md).
@@ -243,26 +268,35 @@ pass. Older ones are recorded in one event whose `details` hold their count and 
 last start times. A schedule that starts every minute and a service that was not running for a
 week would otherwise write 10,080 events in one transaction.
 
-## R10. Missed starts in user story 1 and in user story 3
+## R10. Missed and late starts follow from how Prefect creates runs
 
 **Decision**:
 
-- A start is on time when the loop processes it within 60 seconds of its time. The loop's cadence
-  is 5 seconds, so this only fails when the process was not running or was blocked.
-- User story 1: a start that is not on time is a missed start. It is recorded and no run starts.
-  A restart of the Sync API that lasts more than 60 seconds across a start time therefore loses
-  that start until user story 3 is delivered. The specification accepts this.
-- User story 3: the schedule's `start_late_by_at_most_seconds` (default 3600) replaces the 60
-  seconds for the most recent missed start. Earlier missed starts are recorded and never run.
+- Prefect creates the flow runs of a schedule ahead of time (R1). When the worker or the Prefect
+  server was not running at a start time, the flow run waits and starts when the worker returns.
+  The admission of R2 then compares the time with `expected_start_time`:
+    - User story 1: a start that is more than 5 minutes late does not run. It is recorded as a
+      missed start.
+    - User story 3: the schedule's `start_late_by_at_most_seconds` (default 3600) replaces the 5
+      minutes for the most recent start. An earlier late start never runs.
+- When the Prefect server was not running for longer than the runs it had created ahead, some
+  starts have no flow run at all. The admission of the next start records them: it computes the
+  starts of the cadence since the last admitted start (R3) and writes one missed-start event for
+  each one that has no run.
+- A restart of the Sync API does not lose a start. The API process is not involved in a start.
 
-**Rationale**: the specification delivers the late run with user story 3, and FR-017 asks for one
-run however many starts were missed.
+**Rationale**: FR-017 asks for one run however many starts were missed, and FR-018 for a record
+of every missed start. The late check must be ours: Prefect runs a late flow run whatever its
+age.
+
+**Consequence**: missed starts are recorded when the next start is admitted, not when the
+service returns. A schedule that is paused or stopped records none.
 
 ## R11. Branch review runs in the worker: the branch first, the proposed change after the write
 
-**Decision**: The service derives the branch name when it creates the run, stores it as the run's
-destination branch, and writes a `schedule_branches` row in the state `pending` in the same
-transaction. In the worker, the `sync` stage of a run with branch review does this under the
+**Decision**: The admission of R2 derives the branch name when it creates the run, stores it as
+the run's destination branch, and writes a `schedule_branches` row in the state `pending` in the
+same transaction. In the worker, the `sync` stage of a run with branch review does this under the
 write guard:
 
 1. Create the branch through the prerequisite.
@@ -351,6 +385,11 @@ fragment states it again.
 - `GET /schedules` pages with a cursor (ADR 0032), newest first by `(created_at, schedule_id)`.
 - Receipts gain the resource kind `schedule` (`product_store/models.py:522`).
 - Request and resource models go in `infrahub_sync/client/models.py`, which the service re-exports.
+- The store is written first and Prefect second. When the Prefect call fails, the request
+  answers `503` and the stored schedule keeps a flag that it is not yet in Prefect. One step
+  makes the Prefect schedules of the deployment match the stored schedules, by slug: it runs
+  when the API process starts and after each schedule request. A Prefect schedule that
+  someone changed in the Prefect interface is put back by that step.
 - A schedule has a generated identifier and a unique name. The CLI accepts either, as
   `_resolve_config` does for configurations (`cli.py:373`).
 - A deleted schedule keeps its row in the state `deleted`, so that a run's `schedule_id` and the
@@ -361,13 +400,13 @@ The routes are in [contracts/http-api.md](contracts/http-api.md) and the command
 
 ## R14. Time is injected
 
-**Decision**: The loop takes a `clock`, as `RunLivenessReconciler` does (`service/liveness.py:138`).
-The new `RunService` method takes the start time as an argument, stores it as
-`scheduled_start_at`, and reads `started_at` from the injected clock (R2). Tests pass a clock that
-they advance.
+**Decision**: `admit_scheduled_start` takes the current time and the start time as arguments, and
+the flow reads the current time from one function that tests replace. Tests of the admission pass
+both times. The project uses no time-freezing library.
 
-**Rationale**: `create_run` reads `datetime.now` directly (`service/service.py:355`). The tests
-of this feature need a start time they control. The project uses no time-freezing library.
+**Rationale**: `create_run` and `flow.py` read `datetime.now` directly
+(`service/service.py:355`, `service/flow.py:814`). The tests of this feature need a start time
+and a lateness they control.
 
 ## Facts not known at the time of writing
 
@@ -378,9 +417,13 @@ of this feature need a start time they control. The project uses no time-freezin
   is committed (R11, steps 6 and 7). At that point the execution is terminal and the write guard
   is released. This was not checked against `service/flow.py`; phase 4 of the tasks checks it
   first.
-- Whether Prefect refuses a flow run that carries a parameter the flow does not declare. The
-  tasks add the new flow parameters to the flow's signature in phase 3 so that the answer does
-  not matter.
+- Whether the bootstrap job, which applies the deployment again at each start
+  (`service/bootstrap.py:304-368`), removes the schedules of the deployment. If it does, the
+  step of R13 that makes Prefect match the store must run after it. The foundation checks this.
+- Whether Prefect deletes the flow runs it created ahead when a schedule is changed, paused or
+  deleted. The admission of R2 does not depend on it: a flow run of a schedule that is not
+  active, or of a cadence that no longer holds its start time, creates no run.
+- Which Prefect state a flow returns to be scheduled again later (the `queue` policy, R7).
 - The interface of the two prerequisite capabilities of INFP-655. The contract in
   [contracts/branch-review.md](contracts/branch-review.md) is what this plan needs; the
   prerequisite may deliver it in another form.

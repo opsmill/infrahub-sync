@@ -66,7 +66,8 @@ Sources:
   actor is a name that the Sync API maps to a token.
 - **Skipped start**: a start for which no run was started, because of the overlap policy or
   because the start was missed by more than the allowed duration.
-- **Missed start**: a start whose time passed while the Sync service was not running.
+- **Missed start**: a start whose time passed while the worker or the task manager of the Sync
+  service was not running.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -192,7 +193,7 @@ is removed from the Sync API, an administrator takes the schedule over.
 is delivered, a missed start is skipped and recorded, and only the `reject` policy exists.
 
 **Independent Test**: In the unit tier, with a clock that the test controls, let start times
-pass while the loop does not run, start a run before a start time, register a newer version,
+pass while the worker does not run, start a run before a start time, register a newer version,
 and take over a stopped schedule. Check the runs and the events each time.
 
 **Acceptance Scenarios**:
@@ -253,8 +254,10 @@ and take over a stopped schedule. Check the runs and the events each time.
   no further run starts. The open proposed change of the schedule stays in Infrahub.
 - The configuration version that a schedule names can no longer be run. No run is created, and
   the start is recorded as failed with the reason.
-- The Sync API cannot reach its task manager at a start time. The run is created, and the Sync
-  API keeps trying to hand it over until it succeeds. The start is not recorded as missed.
+- The Sync API cannot reach its task manager when an operator creates or changes a schedule. The
+  request reports it, the schedule is stored, and it starts no run until it is handed over.
+- The Sync API is not running at a start time. The run still starts, because the Sync API takes
+  no part in a start.
 - Two schedules name the same configuration. Each start follows the overlap policy of its own
   schedule, and two runs of that configuration never write at the same time.
 - The Sync API is restarted with required approval turned on, while a schedule writes to the
@@ -383,8 +386,8 @@ and take over a stopped schedule. Check the runs and the events each time.
 
 In user story 1, FR-014 covers the `reject` policy only, and a missed start is skipped and
 recorded with no late run. The `queue` policy and the late run arrive with user story 3. Until
-then, a restart of the Sync service that lasts more than one minute across a start time loses
-that start, and the schedule does not show a "start late by at most" duration.
+then, a start that the worker can begin only more than five minutes late does not run, and the
+schedule does not show a "start late by at most" duration.
 
 ### Key Entities *(include if feature involves data)*
 
