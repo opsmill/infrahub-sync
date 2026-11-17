@@ -55,7 +55,21 @@ export async function fetchWithToken(url: string, signal?: AbortSignal): Promise
   const request = new Request(url, {
     headers: token ? { Authorization: bearer(token) } : undefined,
   });
-  const response = await fetch(request, { signal });
+  // The wait for the response headers is limited as for the typed client; reading a long body
+  // is not, so the timer stops once the headers arrive.
+  const headers = new AbortController();
+  const timer = setTimeout(
+    () => headers.abort(new DOMException("No answer from the Sync API.", "TimeoutError")),
+    REQUEST_TIMEOUT_MS
+  );
+  let response: Response;
+  try {
+    response = await fetch(request, {
+      signal: signal ? AbortSignal.any([signal, headers.signal]) : headers.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (response.ok) return response;
   handleUnauthorized(request, response);
   let body: unknown;
