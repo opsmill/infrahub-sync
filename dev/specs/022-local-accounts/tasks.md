@@ -127,7 +127,7 @@ sign in is the `admin` token from the environment.
 
 ### Removal of the old variable
 
-- [ ] T021 Create the shared fixture in `tests/service/accounts.py` (and register it in
+- [X] T021 Create the shared fixture in `tests/service/accounts.py` (and register it in
   `tests/conftest.py` if other test packages need it): a store with seeded accounts (one
   administrator, one non-administrator), their API tokens, and a `StoreAccountResolver`.
 - [ ] T022 Move the 18 files of `tests/service/` that build `EnvironmentPrincipalResolver` or

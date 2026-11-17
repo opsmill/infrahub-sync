@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,10 +26,10 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.service.accounts import seed_accounts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -97,10 +96,9 @@ def _package() -> ConfigurationPackage:
 
 
 @pytest.fixture
-def events_api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient, ProductProjection]:
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+def events_api(tmp_path: Path) -> tuple[TestClient, ProductProjection]:
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     service = RunService(projection, _FakeOrchestration(), secrets=resolver.secret_values)
     return TestClient(create_app(service, resolver)), projection
 
