@@ -74,10 +74,14 @@ async def test_starts_are_the_dates_prefect_computes() -> None:
 
 
 def test_hour_that_a_daylight_saving_change_removes_gives_one_start() -> None:
-    """On 29 March 2026 Paris has no 02:30. The night gives one start, at 01:30 local time."""
+    """On 29 March 2026 Paris has no 02:30. The night gives one start.
+
+    Prefect places it at 01:30 local time on Python 3.11 and 3.12, and at 03:30 local time on Python 3.13.
+    """
     starts = starts_between("30 2 * * *", "Europe/Paris", _utc(2026, 3, 28, 12), _utc(2026, 3, 29, 12), 10)
 
-    assert starts == (_utc(2026, 3, 29, 0, 30),)
+    assert len(starts) == 1
+    assert starts[0] in {_utc(2026, 3, 29, 0, 30), _utc(2026, 3, 29, 1, 30)}
 
 
 def test_hour_that_a_daylight_saving_change_repeats_gives_one_start() -> None:

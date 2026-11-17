@@ -490,3 +490,8 @@ Checked since, for R3, in the installed Prefect 3.8.6 on 2026-11-17 while writin
 - An unknown time zone raises a `ValidationError` with no field location; an invalid expression
   raises one with the location `cron`. The module's error names the field from that difference.
 - `get_dates` returns a start that is equal to its `start` argument, and awaits nothing.
+- The start of the night that has no 02:30 depends on the Python version, because Prefect computes
+  it with different libraries. For `30 2 * * *` in `Europe/Paris` on 29 March 2026, Python 3.11.8
+  gives 01:30 local time (00:30 UTC), as R3 records, and Python 3.13 gives 03:30 local time
+  (01:30 UTC). Both give one start. The night that has 02:30 twice gives the first one on both.
+  Python 3.12 was not checked.
