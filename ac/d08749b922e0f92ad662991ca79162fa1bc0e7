@@ -1,0 +1,27 @@
+dev/specs/021-scheduled-runs/contracts/http-api.md
+  s_29b17f91da9f30::t_5ab502120202b7 72
+dev/specs/021-scheduled-runs/data-model.md
+  s_29b17f91da9f30::t_756ee9923a7a76 15
+dev/specs/021-scheduled-runs/plan.md
+  s_29b17f91da9f30::t_9ca56539faacac 166-168
+dev/specs/021-scheduled-runs/research.md
+  s_29b17f91da9f30::t_e7865b864a2dd4 111-120,395-400,404
+dev/specs/021-scheduled-runs/tasks.md
+  s_29b17f91da9f30::t_67a75ac653b646 38,40,51,95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "acd08749b922e0f92ad662991ca79162fa1bc0e7",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
