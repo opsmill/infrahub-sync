@@ -886,7 +886,8 @@ export function ResumeDialog({
   // As in the Apply dialog, the person types the branch the write goes to, even when the run
   // and the plan record none.
   const branch = run.destination_branch ?? plan.destination_branch ?? writesTo;
-  const matches = branch === undefined || typed.trim() === branch;
+  // As in the Apply dialog, the resume waits until the branch is known and typed.
+  const matches = branch !== undefined && typed.trim() === branch;
   const label = resumeLabel(run);
   const position = progress?.position;
   const counts = progress?.by_kind.length
@@ -946,7 +947,9 @@ export function ResumeDialog({
       disabledReason={
         checksumRefused ? (
           "The Sync service refuses to resume this plan."
-        ) : !matches && branch ? (
+        ) : branch === undefined ? (
+          "The destination branch could not be read. Close this dialog and open it again."
+        ) : !matches ? (
           <>
             Type <BranchBadge branch={branch} /> to continue.
           </>
