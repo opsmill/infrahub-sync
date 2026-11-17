@@ -109,7 +109,7 @@ def smoke_env(smoke_settings: dict[str, Any]) -> dict[str, Any]:
     probes = {
         "Infrahub": f"{infrahub_host_url(smoke_settings)}/api/config",
         "Prefect": f"{smoke_settings['urls']['prefect']}/api/health",
-        "Sync API": f"{smoke_settings['urls']['sync_api']}/openapi.json",
+        "Sync API": f"{smoke_settings['urls']['sync_api']}/api/openapi.json",
     }
     for description, url in probes.items():
         try:

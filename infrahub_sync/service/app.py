@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Respons
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from infrahub_sync.client.models import (
     DEFAULT_LOG_LIMIT,
@@ -24,7 +25,7 @@ from infrahub_sync.client.models import (
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.models import PROBLEM_TYPES
 
-from .auth import Principal, PrincipalResolver
+from .auth import CROSS_ORIGIN_REFUSED, AnonymousAccess, Principal, PrincipalResolver, anonymous_refusal
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
 from .config_routes import (
     CONFIG_ID_PATTERN,
@@ -87,6 +88,24 @@ async def _service_error(_request: Request, exc: ServiceAPIError) -> JSONRespons
     return JSONResponse(status_code=exc.status, content=_error_content(envelope), headers=headers)
 
 
+_ROUTING_ERRORS: dict[int, tuple[str, str]] = {
+    404: ("not-found", "no Sync API route matches this path"),
+    405: ("method-not-allowed", "this Sync API route does not accept this method"),
+}
+
+
+async def _routing_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:  # noqa: RUF029
+    """Return the error envelope for a path or method that no route matches, or another HTTP error.
+
+    The web interface reports any error body without an envelope as an unavailable Sync API, so an
+    unknown path must not return FastAPI's default ``{"detail": ...}`` body. Another HTTP error keeps
+    its detail as the message.
+    """
+    code, message = _ROUTING_ERRORS.get(exc.status_code, ("http-error", str(exc.detail)))
+    envelope = ErrorEnvelope(error=ErrorDetail(code=code, message=message, status=exc.status_code))
+    return JSONResponse(status_code=exc.status_code, content=_error_content(envelope), headers=exc.headers)
+
+
 def _error_content(envelope: ErrorEnvelope) -> dict[str, Any]:
     """Dump an error envelope, leaving ``details`` out when the refusal has none.
 
@@ -132,6 +151,23 @@ def _report_limit(value: str | None) -> int:
     if value is None:
         return MAX_REPORT_LIMIT
     return parse_bounded_integer(value, minimum=MIN_LIMIT, maximum=MAX_REPORT_LIMIT)
+
+
+def _anonymous_principal(service: RunService, request: Request, access: AnonymousAccess) -> Principal:
+    """Return the anonymous principal for a request without a token, or refuse and audit the request.
+
+    Raises:
+        ServiceAPIError: 403 for a request from another origin, 401 for a host that is not allowed.
+    """
+    reason = anonymous_refusal(request.headers.get("host"), request.headers.get("origin"), access.allowed_hosts)
+    if reason is None:
+        return access.principal
+    service.record_authentication_refusal(request.url.path, reason)
+    if reason == CROSS_ORIGIN_REFUSED:
+        raise ServiceAPIError(
+            403, CROSS_ORIGIN_REFUSED, "a request without a token must come from the Sync API's own origin"
+        )
+    raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
 
 
 def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
@@ -303,8 +339,13 @@ def create_app(
     resolver: PrincipalResolver,
     configuration_routes: ConfigurationRoutes | None = None,
     reconciler: RunLivenessReconciler | None = None,
+    *,
+    anonymous: AnonymousAccess | None = None,
 ) -> FastAPI:
     """Create the service application from explicit providers.
+
+    With ``anonymous`` set, a request without an ``Authorization`` header acts as its principal when
+    its ``Host`` is an allowed host and it has no ``Origin`` header or one that matches its ``Host``.
 
     Raises:
         ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
@@ -343,6 +384,10 @@ def create_app(
         request: Request,
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
     ) -> Principal:
+        # `HTTPBearer` returns None both without the header and for another scheme, so the header
+        # itself decides: a credential that does not resolve never falls back to the anonymous principal.
+        if anonymous is not None and "authorization" not in request.headers:
+            return _anonymous_principal(service, request, anonymous)
         token = credentials.credentials.lstrip(" ") if credentials is not None else ""
         if not token:
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
@@ -359,6 +404,7 @@ def create_app(
         return value
 
     application.add_exception_handler(ServiceAPIError, _service_error)  # ty: ignore[invalid-argument-type]
+    application.add_exception_handler(StarletteHTTPException, _routing_error)  # ty: ignore[invalid-argument-type]
 
     @application.exception_handler(ConfigurationAPIError)
     async def configuration_error(_request: Request, exc: ConfigurationAPIError) -> JSONResponse:  # noqa: RUF029

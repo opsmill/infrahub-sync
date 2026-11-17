@@ -3,6 +3,7 @@ import createFetchClient from "openapi-fetch";
 import createQueryHooks from "openapi-react-query";
 
 import { isEnvelope, isTimeout, REQUEST_TIMEOUT_MS, SyncApiUnavailable } from "./errors";
+import { readToken } from "./token";
 import type { paths } from "./types.generated";
 
 export const queryClient = new QueryClient({
@@ -30,6 +31,18 @@ export const fetchClient = createFetchClient<paths>({
         ? { signal: AbortSignal.any([request.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) }
         : undefined
     ),
+});
+
+// A stored token goes with every request. A request that names its own token, such as the token
+// page checking a pasted one, keeps it.
+fetchClient.use({
+  onRequest({ request }) {
+    const token = readToken();
+    if (token && !request.headers.has("Authorization")) {
+      request.headers.set("Authorization", `Bearer ${token}`);
+    }
+    return request;
+  },
 });
 
 fetchClient.use({

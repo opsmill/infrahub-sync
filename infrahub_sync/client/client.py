@@ -107,6 +107,11 @@ _POLL_INTERVAL_ARG = "poll_interval"
 _STAGE_ARG = "stage"
 
 
+# The Sync API serves every route under this path of its address, so that the web interface can use
+# the root. `INFRAHUB_SYNC_API_URL` names the address without it, and the client adds it.
+API_PATH_PREFIX = "/api"
+
+
 class SyncClient:  # pylint: disable=too-many-public-methods
     """One side-effect-free synchronous client for every shipped Sync API route."""
 
@@ -124,7 +129,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not isfinite(timeout) or timeout <= 0:
             raise ClientInputError(_TIMEOUT_ARG)
         self._http = httpx.Client(
-            base_url=url,
+            base_url=f"{url}{API_PATH_PREFIX}",
             timeout=float(timeout),
             transport=transport,
             follow_redirects=False,

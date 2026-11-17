@@ -143,6 +143,8 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
 | `INFRAHUB_SYNC_REQUIRE_APPROVAL` | `false` | Set on `sync-api`. When `true`, `apply` refuses a plan that has no approval matching the checksum it names, and `sync` is refused; operators run `plan`, `approve` and `apply` instead. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any case. Any other value, including an empty one, stops `sync-api` at startup. The service reads it for each `apply` or `sync` request, so restart `sync-api` to change it; stored runs and approvals are not changed. `infrahub-sync whoami` prints the value as `approval_required`. See [Require an approved plan](./running-a-sync.mdx#require-an-approved-plan). |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |
+| `INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR` | empty | Set on `sync-api`. The actor of a principal in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` that requests without a token act as, so that the web interface opens without a token. Empty turns this off. See [Open the web interface](#open-the-web-interface). |
+| `INFRAHUB_SYNC_SERVICE_ANONYMOUS_HOSTS` | `localhost,127.0.0.1,::1` | Set on `sync-api`. The host names that a request without a token must use to act as that actor. Add the name you publish the Sync API under, without a port. An entry with a port or IPv6 brackets stops `sync-api` at start-up. |
 | `INFRAHUB_SYNC_PREFECT_UI_URL` | empty | The address you open the Prefect UI at, for example `http://127.0.0.1:4200`. Run responses and `infrahub-sync runs show` then link each flow run to its Prefect UI page. Empty turns the link off. The Sync API refuses to start when the value is not an absolute `http` or `https` URL, or when it carries credentials, a query or a fragment; see [Valid values of `INFRAHUB_SYNC_PREFECT_UI_URL`](#valid-values-of-infrahub_sync_prefect_ui_url). |
 
 ### An example `.env`
@@ -475,11 +477,86 @@ package is valid is answered by `configs validate`, and whether its destination
 answers is answered by the first run against it.
 
 The deployment publishes one port, the Sync API, and binds it to loopback by
-default: `http://127.0.0.1:8001`. It serves no Prefect UI, and the Prefect API,
+default: `http://127.0.0.1:8001`. That address serves the web interface at its
+root and the Sync API under `/api`, as described in
+[Open the web interface](#open-the-web-interface). It serves no Prefect UI, and the Prefect API,
 PostgreSQL and the object store publish no port. To view the Prefect UI during a
 support session, see [Open the Prefect UI](#open-the-prefect-ui).
 
 External exposure and TLS termination are not part of this topology.
+
+## Open the web interface {#open-the-web-interface}
+
+The Sync API address serves two things:
+
+- the web interface at its root, for example `http://127.0.0.1:8001/`
+- the Sync API under `/api`, for example `http://127.0.0.1:8001/api/status`,
+  with its reference at `http://127.0.0.1:8001/api/docs`
+
+The CLI and the Python client keep `INFRAHUB_SYNC_API_URL` set to the address
+without `/api`, and add `/api` to each request themselves. A script or a health
+check that calls the Sync API directly uses the `/api` paths.
+
+The web interface acts as a principal from `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`,
+like the CLI. It gets that principal in one of two ways.
+
+### Without a token
+
+Set `INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR` in `.env` to the actor of one
+principal, then restart `sync-api`:
+
+```bash
+INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "<random>", "administrator": true}, "web-ui": {"token": "<another random>"}}
+INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR=web-ui
+```
+
+Every request without an `Authorization` header then acts as `web-ui`. The
+Sync API logs one line at start-up that names the actor and the allowed host
+names. When the principal is an administrator, that line is a warning, because
+everyone who reaches the address can then register configuration versions and
+act on every run.
+
+This applies to every HTTP client that sends no `Authorization` header, not only
+browsers, for example `curl`. The `infrahub-sync` CLI and the Python client
+still need `INFRAHUB_SYNC_API_TOKEN`.
+
+Two checks limit which requests act as that principal:
+
+- The `Host` header must name a host in `INFRAHUB_SYNC_SERVICE_ANONYMOUS_HOSTS`,
+  by default `localhost`, `127.0.0.1` and `::1`. This stops a web page on another
+  site from reaching the Sync API through a host name that it points at
+  `127.0.0.1`. When you publish the Sync API under a host name, such as
+  `sync.example.net`, add that name. Until then, requests without a token through
+  that name are refused with 401, and requests with a token still work.
+- A request that carries an `Origin` header for another host or port, or an
+  `Origin` of `null`, is refused with 403 and the code `cross-origin-refused`.
+  This stops a page on another site from sending requests from the operator's
+  browser.
+
+A request that carries an `Authorization` header always acts as its token's
+principal, or is refused with 401. A refused token never falls back to the
+anonymous principal.
+
+### With a personal token
+
+When `INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR` is not set, the web interface shows
+a page that explains why the Sync API refuses its requests, and offers a field
+for a bearer token. The web interface checks a pasted token with the Sync API and
+stores it only when the Sync API accepts it.
+
+The browser keeps the token for that address, in every tab and after a reload,
+until the person selects **Forget token** in the Sync service details at the top
+right. On a shared computer, select **Forget token** when you finish. When the
+Sync API refuses a stored token, for example after you remove its principal, the
+web interface says so and offers to replace or forget it.
+
+### Runs belong to the actor that started them
+
+A principal that is not an administrator acts only on runs that its own actor
+started. A run started without a token belongs to the anonymous principal. A
+person who later pastes a personal token that is not an administrator cannot
+cancel, verify or apply that run, and the reverse also holds. Use an
+administrator token to act on runs that another actor started.
 
 ## Choose an image
 
@@ -650,7 +727,7 @@ of its commands has a plain `docker compose` equivalent.
 | `init` | Write `.env` by hand, or generate it as shown in [An example `.env`](#an-example-env). There is no instance identity: the Compose project name, which defaults to the directory name, plays that role. |
 | `preflight` | `docker compose version --short`, expecting 2.24 or later, then `docker compose config --quiet`, which names the first missing credential. `up` reports a pull failure or a port in use. |
 | `start` | `docker compose up -d --wait`, then check the worker as in [Status](#status). |
-| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8001/status` and read `worker.state`. |
+| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8001/api/status` and read `worker.state`. |
 | `logs` | `docker compose logs --no-color --tail 200 [service]` |
 | `stop` | `docker compose stop` |
 | `restart` | `docker compose restart sync-api sync-worker`, then check the worker. It does not pick up a changed `.env`. |
@@ -925,11 +1002,11 @@ authorize a command, or prove what a write reached.
 
 ### Over HTTP or from Python
 
-The same deployment answers directly. `/status` needs no credential:
+The same deployment answers directly, under `/api`. `/api/status` needs no credential:
 
 ```bash
 export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
-curl -sS "$INFRAHUB_SYNC_API_URL/status"
+curl -sS "$INFRAHUB_SYNC_API_URL/api/status"
 ```
 
 An authenticated call is what the CLI is for: `configs list` reads the same
@@ -946,7 +1023,7 @@ printf 'header = "Authorization: Bearer %s"\n' \
   "$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)" \
   > "$CURL_CONFIG"
 
-curl -sS --config "$CURL_CONFIG" "$INFRAHUB_SYNC_API_URL/configs"
+curl -sS --config "$CURL_CONFIG" "$INFRAHUB_SYNC_API_URL/api/configs"
 
 rm -f "$CURL_CONFIG"
 ```
@@ -986,7 +1063,7 @@ printf 'header = "Authorization: Bearer %s"\n' \
 curl -sS -X POST --config "$CURL_CONFIG" \
   -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' \
   -d '{"reason": "second opinion before applying"}' \
-  "$INFRAHUB_SYNC_API_URL/runs/RUN_ID/verify"
+  "$INFRAHUB_SYNC_API_URL/api/runs/RUN_ID/verify"
 
 rm -f "$CURL_CONFIG"
 ```
@@ -995,11 +1072,11 @@ rm -f "$CURL_CONFIG"
 
 ```bash
 docker compose ps
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/status
 ```
 
 `docker compose ps` shows each container and the health of `postgres`,
-`object-store`, and `prefect-server`. The `/status` response needs no
+`object-store`, and `prefect-server`. The `/api/status` response needs no
 authentication; its `worker.state` says whether a worker is live:
 
 | `worker.state` | What it means |
@@ -1012,7 +1089,7 @@ To read the worker state without the published port, ask from inside the
 deployment's network:
 
 ```bash
-docker compose run --rm --no-deps -T sync-bootstrap python -c "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])"
+docker compose run --rm --no-deps -T sync-bootstrap python -c "import httpx; print(httpx.get('http://sync-api:8000/api/status', timeout=5).json()['worker']['state'])"
 ```
 
 Container state establishes absence and nothing else. A paused or hung worker

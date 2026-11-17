@@ -17,6 +17,7 @@ DOCKERFILE = REPO_ROOT / "Dockerfile"
 ALLOWED_CONTEXT = {
     "LICENSE.txt",
     "README.md",
+    "frontend",
     "infrahub_sync",
     "opsmill_prefect_extras",
     "pyproject.toml",

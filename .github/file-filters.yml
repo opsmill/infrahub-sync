@@ -90,6 +90,8 @@ image_inputs:
   - "LICENSE.txt"
   - "infrahub_sync/**"
   - "opsmill_prefect_extras/**"
+  # The image builds the web interface from these sources and the design system submodule.
+  - "frontend/**"
   - "docker-compose.yml"
   - "tests/image/**"
   - "tests/docker_image.py"

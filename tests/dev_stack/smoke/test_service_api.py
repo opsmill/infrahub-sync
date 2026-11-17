@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
+from infrahub_sync.client import API_PATH_PREFIX
 from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 from tests.dev_stack.smoke.conftest import infrahub_host_url
 from tests.dev_stack.smoke.evidence import canary_leaks, transcript_hooks
@@ -146,7 +147,8 @@ def _client(smoke_env: dict[str, Any], token: str | None) -> httpx.Client:
     headers = {}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
-    return httpx.Client(base_url=smoke_env["urls"]["sync_api"], headers=headers, timeout=30)
+    # `urls.sync_api` is the address without `/api`, as `INFRAHUB_SYNC_API_URL` is; the routes are under `/api`.
+    return httpx.Client(base_url=f"{smoke_env['urls']['sync_api']}{API_PATH_PREFIX}", headers=headers, timeout=30)
 
 
 def authenticated_client(smoke_env: dict[str, Any], *, transcript: Path) -> httpx.Client:
@@ -333,12 +335,12 @@ def test_service_plan_and_apply_lifecycle(smoke_env: dict[str, Any], evidence_di
     captured = transcript.read_text(encoding="utf-8")
     exchanges = {(entry["method"], entry["path"], entry["status"]) for entry in map(json.loads, captured.splitlines())}
     assert exchanges >= {
-        ("POST", "/configs", 201),
-        ("POST", f"/configs/{config_id}/versions/{registry_version}/validate", 200),
-        ("POST", "/runs", 202),
-        ("GET", f"/runs/{run_id}/plan", 200),
-        ("POST", f"/runs/{run_id}/apply", 202),
-        ("GET", f"/runs/{run_id}/results", 200),
+        ("POST", "/api/configs", 201),
+        ("POST", f"/api/configs/{config_id}/versions/{registry_version}/validate", 200),
+        ("POST", "/api/runs", 202),
+        ("GET", f"/api/runs/{run_id}/plan", 200),
+        ("POST", f"/api/runs/{run_id}/apply", 202),
+        ("GET", f"/api/runs/{run_id}/results", 200),
     }
     assert (
         canary_leaks(

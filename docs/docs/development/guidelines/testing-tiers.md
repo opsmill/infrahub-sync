@@ -599,7 +599,7 @@ INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=smoke uv run pytest -m docker t
 
 This is what the image check runs on a pull request, once per platform, on a native
 `linux/amd64` and a native `linux/arm64` runner. It checks that the CLI answers `--help`, that
-the API answers `GET /version`, and that the image carries its OCI labels. The revision label
+the API answers `GET /api/version`, and that the image carries its OCI labels. The revision label
 case compares the label to the commit checked out, so a local build without labels fails that
 case. Pass the same `--label` values CI passes to reproduce it in full.
 

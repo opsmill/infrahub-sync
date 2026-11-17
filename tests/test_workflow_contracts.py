@@ -668,6 +668,8 @@ def test_nightly_route_is_dispatch_only_and_requires_an_exact_merged_commit() ->
         "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
         "fetch-depth": 0,
         "persist-credentials": False,
+        # The image and the development stack build the web interface from this submodule.
+        "submodules": True,
     }
     guard_step = next(step for step in steps if step.get("id") == "sha_guard")
     guard = guard_step["run"]
@@ -748,6 +750,8 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
         "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
         "fetch-depth": 0,
         "persist-credentials": False,
+        # The image and the development stack build the web interface from this submodule.
+        "submodules": True,
     }
     guard = next(step for step in steps if step.get("id") == "sha_guard")["run"]
     assert ANCESTRY_CHECK in guard
@@ -2063,7 +2067,12 @@ def test_the_image_filter_covers_every_input_the_dockerfile_copies() -> None:
     inputs = build_context_inputs()
 
     assert inputs, "no COPY line in the Dockerfile reads from the build context"
-    uncovered = sorted(name for name in inputs if name not in patterns and f"{name}/**" not in patterns)
+    folders = tuple(pattern.removesuffix("**") for pattern in patterns if pattern.endswith("/**"))
+    uncovered = sorted(
+        name
+        for name in inputs
+        if name not in patterns and f"{name}/**" not in patterns and not name.startswith(folders)
+    )
     assert not uncovered, f"the image is built from {uncovered}, which {IMAGE_INPUTS_FILTER} does not name"
 
 

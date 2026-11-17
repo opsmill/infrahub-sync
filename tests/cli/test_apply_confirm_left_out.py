@@ -131,7 +131,7 @@ def test_the_client_sends_the_field_only_when_it_is_true() -> None:
     bodies: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         bodies.append(json.loads(request.content))
         return httpx.Response(202, json=_run_payload())

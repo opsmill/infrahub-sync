@@ -32,8 +32,11 @@ Before you push, run the checks the CI job runs:
 ```bash
 pnpm check
 pnpm typecheck
+pnpm test
 pnpm build
 ```
+
+`pnpm test` runs the Vitest tests (`src/**/*.test.ts` and `*.test.tsx`) in jsdom.
 
 Import components from the package name:
 
@@ -43,18 +46,33 @@ import { Button } from "@infrahub/ui";
 
 ### Calling the Sync API
 
-The browser sends API requests to `/api` on the frontend's own origin. In development, the Vite
-server forwards them to the Sync API, removes the `/api` prefix and adds the bearer token. It
-reads the same environment variables as the `infrahub-sync` CLI, from the shell only, not from a
-`.env` file:
+The browser sends API requests to `/api` on its own origin. The Sync API serves every route under
+`/api`, and the released image serves the built web interface at every other path, so the same
+paths work in development and in a deployment.
 
-- `INFRAHUB_SYNC_API_URL`, by default `http://127.0.0.1:8001`
-- `INFRAHUB_SYNC_API_TOKEN`
+In development, the Vite server forwards `/api` requests to the Sync API without their `Origin`
+header. The browser's `Origin` names the Vite server, so with anonymous access on, the Sync API
+would otherwise refuse every write as coming from another site. It reads the
+same environment variables as the `infrahub-sync` CLI, from the shell only, not from a `.env`
+file:
+
+- `INFRAHUB_SYNC_API_URL`, the Sync API address without `/api`, by default `http://127.0.0.1:8001`
+- `INFRAHUB_SYNC_API_TOKEN`, optional. When it is set, the Vite server adds it as the bearer token
+  to every request, and it replaces a token stored in the browser.
 
 The token is not included in the browser bundle.
 
+### Tokens in the browser
+
+When the Sync API refuses `GET /api/me` with 401, the page shows a token page instead. It names
+`INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR`, the setting that lets requests without a token act as one
+actor, and offers a field for a bearer token. A pasted token is checked with `GET /api/me` and
+stored only when the Sync API accepts it. It is kept in `localStorage` under
+`infrahub-sync.api-token`, sent with every request, and shared by every tab of the same address,
+until the person selects **Forget token** in the Sync service details of the top bar.
+
 `src/api/types.generated.ts` holds TypeScript types for every Sync API route. It is generated
-from the `/openapi.json` of the running Sync API. Regenerate it after the API changes:
+from the `/api/openapi.json` of the running Sync API. Regenerate it after the API changes:
 
 ```bash
 pnpm codegen:openapi
@@ -80,8 +98,8 @@ export const Route = createFileRoute("/runs/$runId")({
 | `/runs` | Every run, newest first, with filters and older pages. | `GET /runs` |
 | `/runs/{run_id}` | The plan, verify and apply steps with their timings, the failure detail, the planned changes by kind, the run's files and its executions. **Verify**, **Apply** and **Cancel run** act on the run. | `GET /runs/{run_id}`, `GET /runs/{run_id}/plan`, `GET /runs/{run_id}/artifacts`, `POST /runs/{run_id}/verify`, `POST /runs/{run_id}/apply`, `POST /runs/{run_id}/cancel` |
 
-The top bar reads `GET /status` for the worker state and `GET /me` for the actor the token
-authenticates as. A run in progress is read again every 2 seconds; lists every 10 seconds.
+The routes above are relative to `/api`. The top bar reads `GET /api/status` for the worker state
+and `GET /api/me` for the actor the requests act as. A run in progress is read again every 2 seconds; lists every 10 seconds.
 
 Each write sends an `Idempotency-Key`. A dialog keeps its key until a field changes, so sending
 again after a lost response retries the same request instead of creating a second run.

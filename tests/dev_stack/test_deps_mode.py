@@ -114,7 +114,7 @@ class FakeDocker:
 
 
 class FakeHttp:
-    """Stands in for `httpx.get`: records every URL and answers `/status` as told."""
+    """Stands in for `httpx.get`: records every URL and answers `/api/status` as told."""
 
     def __init__(self) -> None:
         self.urls: list[str] = []
@@ -425,7 +425,7 @@ def test_dev_smoke_names_dev_api_when_status_does_not_answer(
     with pytest.raises(dev.DevStackError, match=r"dev\.api"):
         _body(dev.dev_smoke)(context)
 
-    assert http.urls == ["http://127.0.0.1:8001/status"]
+    assert http.urls == ["http://127.0.0.1:8001/api/status"]
     assert dev.SMOKE_COMMAND not in fake.commands
     assert smoke == []
 
@@ -439,7 +439,7 @@ def test_dev_smoke_names_dev_worker_when_status_reports_no_available_worker(
     with pytest.raises(dev.DevStackError, match=r"dev\.worker"):
         _body(dev.dev_smoke)(context)
 
-    assert http.urls == ["http://127.0.0.1:8001/status"]
+    assert http.urls == ["http://127.0.0.1:8001/api/status"]
     assert dev.SMOKE_COMMAND not in fake.commands
     assert smoke == []
 
@@ -449,8 +449,8 @@ def test_dev_smoke_with_both_host_processes_runs_the_suite_for_a_host_worker(
 ) -> None:
     _body(dev.dev_smoke)(context)
 
-    # Only the Sync API's /status; never the Prefect API on 4230.
-    assert http.urls == ["http://127.0.0.1:8001/status"]
+    # Only the Sync API's /api/status; never the Prefect API on 4230.
+    assert http.urls == ["http://127.0.0.1:8001/api/status"]
     assert not any(":4230" in command for command in fake.commands)
     assert smoke == ["http://127.0.0.1:8000"]
     command, kwargs = fake.calls[-1]

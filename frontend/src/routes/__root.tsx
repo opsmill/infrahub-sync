@@ -1,6 +1,6 @@
 import { Button, Popover, PopoverDialog, PopoverTrigger } from "@infrahub/ui";
 import { TanStackDevtools } from "@tanstack/react-devtools";
-import { type QueryClient, useQuery } from "@tanstack/react-query";
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtoolsPanel } from "@tanstack/react-query-devtools";
 import {
   createLink,
@@ -10,16 +10,25 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
-import { type ComponentPropsWithRef, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type ComponentPropsWithRef,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "tailwind-variants";
 
 import { describeError, meQuery, statusQuery, versionQuery } from "#/api/queries";
+import { deleteToken, useHasStoredToken, useOnTokenChangedInAnotherTab } from "#/api/token";
 import { announce, LiveRegion } from "#/components/announcer";
 import { FOCUS, FOCUS_RAC } from "#/components/classes";
 import { StateIcon } from "#/components/icons";
 import { Notice } from "#/components/page";
 import { When } from "#/components/run-status";
 import { ThemeMenu } from "#/components/theme-menu";
+import { TokenGate } from "#/components/token-gate";
 import { fmt, NO_WORKER_SENTENCE, queueSentence, type RunState } from "#/domain/run-state";
 
 import "../styles.css";
@@ -202,6 +211,9 @@ function StatusMenu() {
   const status = useQuery(statusQuery());
   const version = useQuery(versionQuery());
   const me = useQuery(meQuery());
+  const queryClient = useQueryClient();
+  const hasToken = useHasStoredToken();
+  const [forgetFailed, setForgetFailed] = useState(false);
   const actor = me.data?.actor;
   const w = status.data?.worker;
   const workerRows = s.showDetail && w;
@@ -291,6 +303,31 @@ function StatusMenu() {
               )}
             </div>
           )}
+          {hasToken && (
+            <div className="mt-3 flex flex-col items-start gap-1.5 border-border border-t pt-3">
+              <p className="text-pretty text-subtle text-xs">
+                This browser sends a stored token with every request.
+              </p>
+              <Button
+                variant="outline"
+                size="xs"
+                onPress={() => {
+                  if (!deleteToken()) {
+                    setForgetFailed(true);
+                    return;
+                  }
+                  void queryClient.resetQueries();
+                }}
+              >
+                Forget token
+              </Button>
+              {forgetFailed && (
+                <p role="alert" className="text-danger text-xs">
+                  This browser blocks site data for this address, so it could not forget the token.
+                </p>
+              )}
+            </div>
+          )}
         </PopoverDialog>
       </Popover>
     </PopoverTrigger>
@@ -346,9 +383,23 @@ const TITLE_SETTLE_MS = 300;
 /** After this time the title is read even while the page still loads, and later changes are not. */
 const TITLE_WATCH_MS = 3_000;
 
+/** Whether the Sync API refused this browser's requests, which shows the token page instead of the page. */
+function useRefused(): boolean {
+  const me = useQuery(meQuery());
+  const failure = useLastFailure(me);
+  return failure.failed && describeError(failure.error).status === 401;
+}
+
 function RootComponent() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const section = sectionOf(pathname);
+  const queryClient = useQueryClient();
+  const refused = useRefused();
+  const hasToken = useHasStoredToken();
+  const reloadData = useCallback(() => void queryClient.resetQueries(), [queryClient]);
+
+  // Another tab stored or forgot a token, so every answer on this page may belong to another actor.
+  useOnTokenChangedInAnotherTab(reloadData);
 
   const mainRef = useRef<HTMLElement>(null);
   const lastPath = useRef(pathname);
@@ -440,7 +491,7 @@ function RootComponent() {
         tabIndex={-1}
         className="mx-auto max-w-[1200px] px-4 pb-24 outline-none"
       >
-        <Outlet />
+        {refused ? <TokenGate storedTokenRefused={hasToken} onChange={reloadData} /> : <Outlet />}
         <WorkerNotice />
       </main>
       {import.meta.env.DEV && (

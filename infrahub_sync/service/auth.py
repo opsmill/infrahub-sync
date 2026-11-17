@@ -5,7 +5,9 @@ from __future__ import annotations
 import hmac
 import json
 import os
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Final, Literal, Protocol
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -28,6 +30,80 @@ class PrincipalResolver(Protocol):
     def secret_values(self) -> tuple[str, ...]: ...
 
     def resolve(self, token: str) -> Principal | None: ...
+
+
+class PrincipalDirectory(Protocol):
+    """Look up a configured principal by its actor name, as start-up does for anonymous access."""
+
+    def principal_for_actor(self, actor: str) -> Principal | None: ...
+
+
+CROSS_ORIGIN_REFUSED: Final = "cross-origin-refused"
+HOST_NOT_ALLOWED: Final = "anonymous-host-not-allowed"
+AnonymousRefusal = Literal["cross-origin-refused", "anonymous-host-not-allowed"]
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _host_and_port(url: str, default_port: int | None = None) -> tuple[str, int | None] | None:
+    """Return the lowercase host name and the port of ``url``, or ``None`` when it names no host.
+
+    IPv6 brackets are removed, so ``//[::1]:8001`` gives ``("::1", 8001)``. A URL without a port
+    gives ``default_port``.
+    """
+    try:
+        parts = urlsplit(url)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return None
+    return (host.lower(), default_port if port is None else port) if host else None
+
+
+def is_host_name(entry: str) -> bool:
+    """Return whether ``entry`` is a lowercase host name with no port and no IPv6 brackets.
+
+    ``sync.example.net``, ``127.0.0.1`` and ``::1`` are host names; ``sync.example.net:8001``,
+    ``[::1]`` and ``LocalHost`` are not, because a request's ``Host`` never matches them.
+    """
+    url = f"//[{entry}]" if ":" in entry else f"//{entry}"
+    return bool(entry) and _host_and_port(url) == (entry, None)
+
+
+@dataclass(frozen=True)
+class AnonymousAccess:
+    """The principal that requests without a token act as, and the host names they must use.
+
+    Raises:
+        ValueError: ``allowed_hosts`` is empty or holds an entry that is not a host name, which
+            would refuse every request without a token.
+    """
+
+    principal: Principal
+    allowed_hosts: frozenset[str]
+
+    def __post_init__(self) -> None:
+        if not self.allowed_hosts or not all(is_host_name(entry) for entry in self.allowed_hosts):
+            msg = "allowed_hosts must hold at least one lowercase host name without a port or brackets"
+            raise ValueError(msg)
+
+
+def anonymous_refusal(host: str | None, origin: str | None, allowed_hosts: frozenset[str]) -> AnonymousRefusal | None:
+    """Return why a request without a token may not act as the anonymous principal, or ``None``.
+
+    A request whose ``Origin`` names another host or port, or is ``null``, comes from another site
+    and is refused first (``cross-origin-refused``). A request whose ``Host`` names a host that is
+    not allowed, such as a DNS-rebound name, is refused next (``anonymous-host-not-allowed``).
+    Comparing ``Origin`` with ``Host`` rather than with a full URL stays correct behind a TLS proxy.
+    """
+    if origin is not None:
+        default_port = _DEFAULT_PORTS.get(origin.partition(":")[0].lower())
+        source = _host_and_port(origin, default_port)
+        target = _host_and_port(f"//{host}", default_port) if host else None
+        if source is None or source != target:
+            return CROSS_ORIGIN_REFUSED
+    target = _host_and_port(f"//{host}") if host else None
+    if target is None or target[0] not in allowed_hosts:
+        return HOST_NOT_ALLOWED
+    return None
 
 
 class _ConfiguredPrincipal(BaseModel):
@@ -86,3 +162,10 @@ class EnvironmentPrincipalResolver:
             if hmac.compare_digest(token.encode(), entry.token.encode()):
                 matched = Principal(actor=actor, administrator=entry.administrator)
         return matched
+
+    def principal_for_actor(self, actor: str) -> Principal | None:
+        """Return the configured principal with this actor name, or ``None``."""
+        for configured_actor, entry in self._entries:
+            if configured_actor == actor:
+                return Principal(actor=configured_actor, administrator=entry.administrator)
+        return None

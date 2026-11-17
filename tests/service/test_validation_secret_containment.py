@@ -283,7 +283,7 @@ def _validate(
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": BEARER, "administrator": True}}))
     app = serve.build_app(projection_factory=lambda: projection)
     response = TestClient(app).post(
-        f"/configs/{version.config_id}/versions/{version.registry_version}/validate",
+        f"/api/configs/{version.config_id}/versions/{version.registry_version}/validate",
         headers={"Authorization": f"Bearer {BEARER}"},
     )
     assert response.status_code == 200, response.text

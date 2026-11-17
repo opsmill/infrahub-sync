@@ -2845,3 +2845,33 @@ def test_an_execution_recorded_before_the_read_state_returns_reads_null(
     run_id = _create(client).json()["run"]["run_id"]
 
     assert _reads(client, run_id) is None
+
+
+def test_an_unknown_path_returns_the_not_found_envelope(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """The web interface reads an error without an envelope as an unavailable Sync API (spec 023 FR-004)."""
+    client, _projection, _orchestration = service_api
+
+    response = client.get("/no-such-route", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+
+    assert response.status_code == 404
+    assert response.json()["error"] == {
+        "code": "not-found",
+        "message": "no Sync API route matches this path",
+        "status": 404,
+        "run_id": None,
+        "mutation_id": None,
+    }
+
+
+def test_a_method_a_route_does_not_accept_returns_the_method_not_allowed_envelope(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+
+    response = client.delete("/version")
+
+    assert response.status_code == 405
+    assert response.json()["error"]["code"] == "method-not-allowed"
+    assert response.headers["allow"] == "GET"

@@ -16,7 +16,7 @@ services (`sync` profile) and a local Infrahub (`infrahub` profile). With
 against those containers' loopback publications. No task writes a PID file or keeps a
 process in the background. `dev.smoke` notices this mode from the running containers
 (the Prefect server runs, no `sync-api` container does) and first checks both host
-processes through the Sync API's `GET /status`.
+processes through the Sync API's `GET /api/status`.
 
 `dev.frontend` runs the web interface's development server on the host, in the
 foreground, against the Sync API of either mode.
@@ -128,7 +128,7 @@ FRONTEND_UI_PACKAGE = "frontend/vendor/infrahub/frontend/packages/ui"
 FRONTEND_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
 FRONTEND_TOKEN_VARIABLE = "INFRAHUB_SYNC_API_TOKEN"  # noqa: S105 -- a variable name
 FRONTEND_URL = "http://localhost:3000"
-# The `/status` worker states that mean a worker takes runs (see `service._service_status`).
+# The `/api/status` worker states that mean a worker takes runs (see `service._service_status`).
 AVAILABLE_WORKER_STATES = frozenset({"ready", "busy"})
 
 
@@ -463,7 +463,11 @@ def compose(context: Context, arguments: str, target: ComposeTarget | None = Non
 
 
 def _build(context: Context, *, no_cache: bool = False, project: str = "") -> None:
-    """Build `infrahub-sync:dev` with the build-inputs label; the benchmark runner pins the project."""
+    """Build `infrahub-sync:dev` with the build-inputs label; the benchmark runner pins the project.
+
+    The image builds the web interface, which needs the design system from the frontend submodule.
+    """
+    _ensure_frontend_submodule(context)
     arguments = f"build --build-arg BUILD_INPUTS={build_inputs_hash()}"
     if no_cache:
         arguments += " --no-cache"
@@ -693,7 +697,7 @@ def in_dependencies_mode(context: Context, settings: DevSettings) -> bool:
 
 
 def check_host_processes(settings: DevSettings) -> None:
-    """Fail naming the missing host process, from the Sync API's `GET /status` alone.
+    """Fail naming the missing host process, from the Sync API's `GET /api/status` alone.
 
     No answer names `dev.api`. An answer whose worker is not available names
     `dev.worker`. The Sync API reads worker availability from Prefect itself, so this
@@ -701,7 +705,7 @@ def check_host_processes(settings: DevSettings) -> None:
     """
     import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
 
-    status_url = f"{settings.sync_api_url}/status"
+    status_url = f"{settings.sync_api_url}/api/status"
     try:
         response = httpx.get(status_url, timeout=10)
         response.raise_for_status()
@@ -818,7 +822,7 @@ def dev_smoke(context: Context) -> None:
     stack = "dev"
     if in_dependencies_mode(context, settings):
         print(
-            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/status"
+            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/api/status"
         )
         check_host_processes(settings)
         stack = DEPS_SMOKE_STACK
@@ -925,6 +929,13 @@ def _frontend_submodule_present() -> bool:
     return (REPO_BASE / FRONTEND_UI_PACKAGE / "package.json").is_file()
 
 
+def _ensure_frontend_submodule(context: Context) -> None:
+    """Fetch the `frontend/vendor/infrahub` submodule when it is missing; a fetched one is left as it is."""
+    if not _frontend_submodule_present():
+        with context.cd(ESCAPED_REPO_PATH):
+            context.run(f"git submodule update --init {FRONTEND_SUBMODULE}", pty=True)
+
+
 @task(name="frontend")
 def dev_frontend(context: Context) -> None:
     """Run the web interface's development server on the host, against the stack's Sync API.
@@ -939,9 +950,7 @@ def dev_frontend(context: Context) -> None:
         FRONTEND_URL_VARIABLE: settings.sync_api_url,
         FRONTEND_TOKEN_VARIABLE: frontend_token(settings.bearer_tokens, os.environ.get(FRONTEND_TOKEN_VARIABLE, "")),
     }
-    if not _frontend_submodule_present():
-        with context.cd(ESCAPED_REPO_PATH):
-            context.run(f"git submodule update --init {FRONTEND_SUBMODULE}", pty=True)
+    _ensure_frontend_submodule(context)
     with context.cd(escape_path(REPO_BASE / FRONTEND_DIRECTORY)):
         context.run("pnpm install --frozen-lockfile", pty=True)
         print(f" - [{NAMESPACE}] Web interface on {FRONTEND_URL}, Sync API {settings.sync_api_url}; Ctrl-C stops it")

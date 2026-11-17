@@ -78,10 +78,11 @@ def external_image_references(dockerfile: str) -> list[str]:
     for raw_line in dockerfile.splitlines():
         line = raw_line.strip()
         if line.startswith("FROM "):
-            words = line.split()
-            references.append(words[1])
-            if len(words) >= 4 and words[2].upper() == "AS":
-                stages.add(words[3])
+            # `--platform=...` and other flags come before the image reference.
+            words = [word for word in line.split()[1:] if not word.startswith("--")]
+            references.append(words[0])
+            if len(words) >= 3 and words[1].upper() == "AS":
+                stages.add(words[2])
         elif line.startswith("COPY --from="):
             references.append(line.removeprefix("COPY --from=").split()[0])
     return [reference for reference in references if reference not in stages]
@@ -276,8 +277,8 @@ def started_container(image_ref: str, storage_network: str, storage: str) -> Ite
 
 
 def wait_for_api(container: str, *, timeout: int = API_READY_SECONDS) -> dict[str, object]:
-    """Return the served `GET /version` document once the container's API answers it."""
-    probe = "import json,httpx;print(json.dumps(httpx.get('http://127.0.0.1:8000/version', timeout=5).raise_for_status().json()))"
+    """Return the served `GET /api/version` document once the container's API answers it."""
+    probe = "import json,httpx;print(json.dumps(httpx.get('http://127.0.0.1:8000/api/version', timeout=5).raise_for_status().json()))"
     deadline = time.monotonic() + timeout
     last = "no attempt made"
     while time.monotonic() < deadline:
@@ -287,4 +288,4 @@ def wait_for_api(container: str, *, timeout: int = API_READY_SECONDS) -> dict[st
         last = result.stderr.strip()[-400:]
         time.sleep(2)
     logs = docker(["logs", "--tail", "40", container]).stdout
-    pytest.fail(f"the image's default command did not answer GET /version within {timeout}s: {last}\n{logs}")
+    pytest.fail(f"the image's default command did not answer GET /api/version within {timeout}s: {last}\n{logs}")

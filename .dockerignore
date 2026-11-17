@@ -10,8 +10,21 @@
 !LICENSE.txt
 !infrahub_sync
 !opsmill_prefect_extras
+!frontend
 
-# Build outputs of the two allowed trees; nothing here belongs in an image.
+# The web interface's sources, without installed packages or a local build. Of
+# the design system submodule, only the one workspace package it uses.
+frontend/node_modules
+frontend/dist
+frontend/vendor/infrahub/*
+!frontend/vendor/infrahub/frontend
+frontend/vendor/infrahub/frontend/*
+!frontend/vendor/infrahub/frontend/packages
+frontend/vendor/infrahub/frontend/packages/*
+!frontend/vendor/infrahub/frontend/packages/ui
+frontend/vendor/infrahub/frontend/packages/ui/node_modules
+
+# Build outputs of the allowed trees; nothing here belongs in an image.
 **/__pycache__
 **/*.pyc
 **/.DS_Store

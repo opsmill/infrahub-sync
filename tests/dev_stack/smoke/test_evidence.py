@@ -34,7 +34,7 @@ def _records(path: Path) -> list[dict[str, Any]]:
 
 def _client(path: Path, handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
     return httpx.Client(
-        base_url="http://sync.invalid",
+        base_url="http://sync.invalid/api",
         transport=httpx.MockTransport(handler),
         event_hooks=transcript_hooks(path),
     )
@@ -48,7 +48,7 @@ def test_the_transcript_records_the_exchange_with_the_authorization_value_remove
 
     (record,) = _records(path)
     assert record["method"] == "POST"
-    assert record["path"] == "/configs"
+    assert record["path"] == "/api/configs"
     assert record["status"] == 201
     # The header name is evidence that the route was called authenticated; the value is not.
     assert record["request_headers"]["authorization"] == "<redacted>"

@@ -13,6 +13,24 @@ separate four-parameter deployment. Use the Sync API when a trusted automation c
 needs reviewed-plan apply, durable results, artifact retrieval, or actor-scoped mutation
 control.
 
+## Paths under `/api` {#paths-under-api}
+
+The Sync API serves every route under `/api` of its address. The route names on this page
+are relative to `/api`: `GET /runs` is `http://127.0.0.1:8001/api/runs` on a compose
+deployment, and `http://127.0.0.1:8000/api/runs` on a server started directly. The root of the
+address serves the web interface; see
+[Open the web interface](../compose-deployment.mdx#open-the-web-interface). The old paths at the
+root are not kept as aliases.
+
+`/api/openapi.json` lists each route without the prefix and names `/api` as its server URL.
+The CLI and the Python client read `INFRAHUB_SYNC_API_URL` as the address without `/api` and
+add the prefix themselves. A request to a path under `/api` that matches no route returns the
+error envelope with status 404 and code `not-found`; a method that a route does not accept
+returns status 405 and code `method-not-allowed`.
+
+The request paths that the audit history records, such as the path of a refused
+authentication, start with `/api`.
+
 ## Terms
 
 - **Configuration**: a registered sync definition, identified by `config_id`. Its `name` is
@@ -81,6 +99,41 @@ persists, returns, or submits them to Prefect.
 Any authenticated principal can create and inspect a run. Only the initiating actor or an
 administrator can verify, approve, apply, or cancel it. Every accepted mutation and authorization
 refusal records secret-safe actor, reason, and outcome evidence.
+
+### Requests without a token {#requests-without-a-token}
+
+`INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR` names the actor of one principal above. When it is set,
+a request without an `Authorization` header acts as that principal. This lets the web interface
+open without a token, and it applies to every client that sends no token. The principal may be
+an administrator. The service then logs a warning at start-up, because every client that reaches
+the address can register configuration versions and act on every run.
+
+The service resolves the principal of a request in this order:
+
+1. A request with an `Authorization` header acts as its bearer token's principal, or is refused
+   with 401. A header that holds no bearer token, or a token that does not resolve, never acts as
+   the anonymous principal.
+2. Without the header, and with `INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR` unset, the request is
+   refused with 401.
+3. A request whose `Origin` header names another host or port than its `Host` header, or is
+   `null`, is refused with 403 and the code `cross-origin-refused`.
+4. A request whose `Host` header names a host that is not in
+   `INFRAHUB_SYNC_SERVICE_ANONYMOUS_HOSTS` is refused with 401. The default is
+   `localhost,127.0.0.1,::1`; the host is compared without its port and without case.
+5. Otherwise the request acts as the anonymous principal.
+
+Steps 3 and 4 stop a web page on another site from using an operator's browser to reach the
+Sync API, directly or through a host name that it points at the Sync API's address. The audit
+history records these refusals with the reasons `cross-origin-refused` and
+`anonymous-host-not-allowed`.
+
+When `INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR` is set, the service stops at start-up with an error
+that names the variable and no value in these cases:
+
+- The actor is not in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
+- `INFRAHUB_SYNC_SERVICE_ANONYMOUS_HOSTS` names no host, or lists an entry with a port or IPv6
+  brackets, such as `sync.example.net:8001` or `[::1]`. A `Host` header is compared without its
+  port, so such an entry could never match.
 
 ## Deploy the service flow
 
@@ -212,15 +265,16 @@ The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and
 network access controls at your ingress boundary. The bearer-token provider is the MVP
 application authentication boundary, not a replacement for transport security.
 
-Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter the configured token
+Open `http://127.0.0.1:8000/api/docs`, select **Authorize**, and enter the configured token
 without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
 
 ## Discovery and liveness
 
-`GET /status` and `GET /version` are the two unauthenticated lifecycle and
+`GET /status` and `GET /version`, at `/api/status` and `/api/version`, are the two unauthenticated lifecycle and
 server-discovery routes. They intentionally disclose neither a configured work-pool
 name, worker or run identity, credential, nor Prefect endpoint. All run and
-configuration routes remain bearer-authenticated.
+configuration routes require a bearer token, or act as the anonymous principal described in
+[Requests without a token](#requests-without-a-token).
 
 `GET /version` returns the installed server version and the currently supported
 unstable API identifier:
@@ -379,7 +433,8 @@ existing fields keep their meaning and order.
 
 ## Routes
 
-Every route below requires `Authorization: Bearer <token>`. Every `POST` route that writes or
+Every route below requires `Authorization: Bearer <token>`, or acts as the anonymous principal
+as described in [Requests without a token](#requests-without-a-token). Every `POST` route that writes or
 requests a change also requires a non-empty `Idempotency-Key` header and a JSON body;
 `POST /configs/{config_id}/versions/{registry_version}/validate` is the one exception, since it
 only re-checks an already-registered version and takes no body. The body's `reason` is
@@ -717,7 +772,7 @@ Address the exact registered configuration revision by its `config_id` and
 `registry_version`:
 
 ```bash
-curl --request POST http://127.0.0.1:8000/runs \
+curl --request POST http://127.0.0.1:8000/api/runs \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: plan-inventory-2026-08-10" \
   --header "Content-Type: application/json" \
@@ -743,7 +798,7 @@ Read the plan after the worker publishes it:
 
 ```bash
 curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/plan
 ```
 
 The plan response includes its checksum, checksum verification state, summary, verification
@@ -768,7 +823,7 @@ Three routes list the entries, in the order of the saved plan:
 
 ```bash
 curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
-  "http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan/problems?offset=0&limit=500&problem_type=dropdown_value_not_in_choices"
+  "http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/plan/problems?offset=0&limit=500&problem_type=dropdown_value_not_in_choices"
 ```
 
 `GET /runs/{run_id}/plan/problems`, `/plan/left-out` and `/plan/kept` take `offset` and `limit`
@@ -792,7 +847,7 @@ confirmation that the left-out records were reviewed: only an apply request carr
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/verify \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/verify \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: verify-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -846,7 +901,7 @@ to the destination and submits no execution:
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/approve \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/approve \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: approve-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -898,7 +953,7 @@ Apply requires the exact retained checksum and explicit write confirmation:
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/apply \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/apply \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: apply-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -1024,7 +1079,7 @@ confirmation:
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/resume \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/resume \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: resume-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -1199,9 +1254,10 @@ of `already-approved`. Other errors have no `details` field.
 
 | Status | Meaning |
 | --- | --- |
-| `401` | Missing or invalid authentication. |
-| `403` | The actor does not own the mutation and is not an administrator. |
-| `404` | The Sync run or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
+| `401` | Missing or invalid authentication, or a request without a token through a host name that is not allowed. |
+| `403` | The actor does not own the mutation and is not an administrator, or a request without a token comes from another origin (`cross-origin-refused`). |
+| `404` | No route matches the path (`not-found`), the Sync run or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
+| `405` | The route does not accept the method (`method-not-allowed`). |
 | `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). For approval: a run that cannot be approved (`run-not-approvable`), a plan whose checksum is unconfirmed (`plan-checksum-unverified`), a checksum that differs from the plan's (`checksum-mismatch`), or a second approval (`already-approved`). When the service requires approval: an apply without an approval (`approval-required`) or with a different checksum (`approval-checksum-mismatch`), or a `sync` (`approval-required-for-sync`). For a cancelled run: an `approve` or `apply` (`run-cancelled`), or a second cancel (`run-already-cancelled`). |
 | `410` | The retained plan or artifact has expired, or the orchestrator no longer holds a flow run whose log `GET /runs/{run_id}/logs` reads (`log-expired`). |
 | `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |

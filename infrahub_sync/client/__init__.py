@@ -1,6 +1,6 @@
 """Public synchronous client for the Sync HTTP API."""
 
-from .client import SyncClient
+from .client import API_PATH_PREFIX, SyncClient
 from .errors import (
     APIError,
     ClientInputError,
@@ -71,6 +71,7 @@ from .models import (
 )
 
 __all__ = [
+    "API_PATH_PREFIX",
     "APIError",
     "ApplyProgressKindResource",
     "ApplyProgressResource",

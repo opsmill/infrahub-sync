@@ -43,6 +43,7 @@ from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResol
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.orchestration import PrefectOrchestration
 from infrahub_sync.service.service import RunService
+from infrahub_sync.service.site import create_site
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
@@ -203,12 +204,16 @@ def test_no_message_line_or_output_points_at_prefect(
     log_client = _PrefectLogClient(flow_run_id, records)
     log_client.mode = mode
     orchestration = PrefectOrchestration(log_client)  # ty: ignore[invalid-argument-type] - the log reader's two calls only.
-    test_client = TestClient(
-        create_app(RunService(projection, orchestration, secrets=resolver.secret_values), resolver)
+    # Every request reaches the Sync API under `/api`, as it does at a deployment's address.
+    site_client = TestClient(
+        create_site(
+            create_app(RunService(projection, orchestration, secrets=resolver.secret_values), resolver),
+            web_directory=None,
+        )
     )
 
     def forward(request: httpx.Request) -> httpx.Response:
-        response = test_client.request(
+        response = site_client.request(
             request.method, request.url.raw_path.decode(), headers=dict(request.headers), content=request.content
         )
         return httpx.Response(response.status_code, headers=response.headers, content=response.content)
@@ -218,7 +223,7 @@ def test_no_message_line_or_output_points_at_prefect(
     headers = {"Authorization": f"Bearer {OWNER_TOKEN}"}
 
     responses = {
-        path: test_client.get(path, headers=headers)
+        path: site_client.get(f"/api{path}", headers=headers)
         for path in (f"/runs/{RUN_ID}", f"/runs/{RUN_ID}/logs", f"/events?run_id={RUN_ID}")
     }
     outputs = {

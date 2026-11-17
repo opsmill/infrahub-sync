@@ -35,7 +35,7 @@ with SyncClient.from_environment(timeout=30) as client:
     status = client.get_status()
 ```
 
-The first protected operation checks `/version` before sending the bearer token. The client
+The first protected operation checks `/api/version` before sending the bearer token. The client
 requires the server to declare `v3-unstable` and caches a successful compatibility check for that
 client instance.
 

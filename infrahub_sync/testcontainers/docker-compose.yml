@@ -272,6 +272,14 @@ services:
       # http://127.0.0.1:${INFRAHUB_SYNC_PREFECT_PORT:-4200}. An empty value turns
       # the link off.
       INFRAHUB_SYNC_PREFECT_UI_URL: "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"
+      # Optional: the actor that requests without a token act as, for example
+      # the web interface at http://127.0.0.1:${INFRAHUB_SYNC_API_PORT:-8001}/.
+      # It applies to every client without a token, not only browsers. Empty
+      # means off: such requests are refused and the web interface asks for a token.
+      INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR: "${INFRAHUB_SYNC_SERVICE_ANONYMOUS_ACTOR:-}"
+      # The host names those requests must use. Add the name you publish the
+      # Sync API under, without a port.
+      INFRAHUB_SYNC_SERVICE_ANONYMOUS_HOSTS: "${INFRAHUB_SYNC_SERVICE_ANONYMOUS_HOSTS:-localhost,127.0.0.1,::1}"
     read_only: true
     volumes: *sync-ca
     tmpfs: *sync-scratch
@@ -282,7 +290,7 @@ services:
         - "CMD"
         - "python"
         - "-c"
-        - "import httpx; httpx.get('http://127.0.0.1:8000/version', timeout=5).raise_for_status()"
+        - "import httpx; httpx.get('http://127.0.0.1:8000/api/version', timeout=5).raise_for_status()"
       interval: 5s
       timeout: 10s
       retries: 30

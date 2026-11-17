@@ -137,6 +137,93 @@ def test_the_api_logs_none_of_the_secrets_it_was_started_with(started_container:
     assert not leaked, f"injected secrets #{leaked} appear in the API container's logs"
 
 
+WEB_DIRECTORY = "/opt/infrahub-sync/web"
+
+
+def test_the_image_ships_the_built_web_interface(image_ref: str) -> None:
+    """Spec 023 FR-002: the runtime image serves the web interface from its static build."""
+    probe = f"import pathlib,sys; sys.exit(0 if pathlib.Path('{WEB_DIRECTORY}/index.html').is_file() else 1)"
+
+    result = run_in_image(image_ref, ["python", "-c", probe])
+
+    assert result.returncode == 0, f"{WEB_DIRECTORY}/index.html is missing: {result.stderr}"
+
+
+def test_the_image_ships_neither_node_nor_the_frontend_sources(image_ref: str) -> None:
+    """Spec 023 FR-002: only the built files reach the runtime stage."""
+    probe = (
+        "import pathlib,shutil,sys;"
+        "root=pathlib.Path('/opt/infrahub-sync');"
+        "found=[str(p) for p in root.rglob('*') if p.suffix in ('.tsx','.ts') or p.name in ('frontend','node_modules')];"
+        "found+=[name for name in ('node','pnpm','npm') if shutil.which(name)];"
+        "print(found); sys.exit(1 if found else 0)"
+    )
+
+    result = run_in_image(image_ref, ["python", "-c", probe])
+
+    assert result.returncode == 0, f"the runtime image holds Node or frontend sources: {result.stdout}"
+
+
+def test_the_default_command_serves_the_web_interface_and_the_api(started_container: str) -> None:
+    """Spec 023 FR-001, FR-007: `/` is the web interface and `/api/version` is the Sync API."""
+    wait_for_api(started_container)
+    probe = (
+        "import httpx;"
+        "page=httpx.get('http://127.0.0.1:8000/', headers={'Accept': 'text/html'}, timeout=5);"
+        "api=httpx.get('http://127.0.0.1:8000/api/version', timeout=5);"
+        "print(page.status_code, page.headers['content-type'], api.status_code, api.headers['content-type'], sep='|')"
+    )
+
+    result = docker(["exec", started_container, "python", "-c", probe])
+
+    assert result.returncode == 0, result.stderr
+    page_status, page_type, api_status, api_type = result.stdout.strip().splitlines()[-1].split("|")
+    assert (page_status, api_status) == ("200", "200")
+    assert page_type.startswith("text/html")
+    assert api_type == "application/json"
+
+
+_INLINE_SCRIPT_PROBE = """
+import base64, hashlib, html.parser, httpx
+
+class Scripts(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.inline, self.bodies = False, []
+    def handle_starttag(self, tag, attrs):
+        if tag == "script" and "src" not in dict(attrs):
+            self.inline = True
+            self.bodies.append("")
+    def handle_endtag(self, tag):
+        if tag == "script":
+            self.inline = False
+    def handle_data(self, data):
+        if self.inline:
+            self.bodies[-1] += data
+
+page = httpx.get("http://127.0.0.1:8000/", headers={"Accept": "text/html"}, timeout=5)
+parser = Scripts()
+parser.feed(page.text)
+policy = page.headers["content-security-policy"]
+script_src = next(part for part in policy.split(";") if part.strip().startswith("script-src"))
+for body in parser.bodies:
+    digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
+    print(len(parser.bodies), f"'sha256-{digest}'" in script_src.split(), sep="|")
+"""
+
+
+def test_the_policy_allows_every_inline_script_of_the_built_page(started_container: str) -> None:
+    """Spec 023 FR-006: a change to the built page's inline scripts must not be blocked by the policy."""
+    wait_for_api(started_container)
+
+    result = docker(["exec", started_container, "python", "-c", _INLINE_SCRIPT_PROBE])
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.strip().splitlines()
+    assert lines, "the built page has no inline script; remove its hash from the policy test"
+    assert all(line.endswith("|True") for line in lines), result.stdout
+
+
 def test_the_worker_command_form_is_available(image_ref: str) -> None:
     result = run_in_image(image_ref, ["python", "-m", "infrahub_sync.service.worker", "--help"])
 

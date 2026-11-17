@@ -1093,7 +1093,7 @@ def test_build_app_binds_one_projection_and_passes_configuration_dependency(
         assert product_projection is projection_dependency
         return route_dependency
 
-    def application(run: object, resolver: object, routes: object, reconciler: object) -> object:
+    def application(run: object, resolver: object, routes: object, reconciler: object, **_kwargs: object) -> object:
         del reconciler
         received.extend((run, resolver, routes))
         return object()
@@ -1133,7 +1133,9 @@ def test_build_app_composes_one_service_projection_for_runs_and_configurations(
         received.append("routes")
         return object()
 
-    def app_factory(run_service: object, resolver: object, routes: object, reconciler: object) -> object:
+    def app_factory(
+        run_service: object, resolver: object, routes: object, reconciler: object, **_kwargs: object
+    ) -> object:
         del run_service, resolver, routes, reconciler
         received.append("app")
         return object()
@@ -1161,7 +1163,9 @@ def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
     class Resolver:
         secret_values: tuple[str, ...] = ()
 
-    def app_factory(_service: object, _resolver: object, _routes: object, reconciler: RunLivenessReconciler) -> object:
+    def app_factory(
+        _service: object, _resolver: object, _routes: object, reconciler: RunLivenessReconciler, **_kwargs: object
+    ) -> object:
         captured.append(reconciler)
         return object()
 
@@ -1200,7 +1204,7 @@ def test_build_app_passes_the_validated_prefect_ui_url_to_the_run_service(
         resolver_factory=Resolver,
         run_service_factory=run_service_factory,
         configuration_routes_factory=lambda **_kwargs: object(),
-        app_factory=lambda *_args: object(),
+        app_factory=lambda *_args, **_kwargs: object(),
     )
 
     assert received == [expected]

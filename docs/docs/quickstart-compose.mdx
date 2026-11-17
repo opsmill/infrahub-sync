@@ -87,11 +87,11 @@ including the image version, is listed in
 
 ```sh
 docker compose up -d --wait --wait-timeout 420
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/status
 ```
 
 `up -d --wait` pulls the images and returns once every service is healthy. In the
-`/status` response, `worker.state` must be `ready`. If it reads `no-live-worker`,
+`/api/status` response, `worker.state` must be `ready`. If it reads `no-live-worker`,
 wait a few seconds and repeat the request. If `up` fails, see
 [Compose operator troubleshooting](./operations/compose-troubleshooting.mdx).
 
@@ -101,7 +101,7 @@ destination.
 ## Identify your installed version
 
 ```sh
-curl --fail --silent --show-error http://127.0.0.1:8001/version
+curl --fail --silent --show-error http://127.0.0.1:8001/api/version
 ```
 
 The response shows `server_version`. If you changed the API port, use that port

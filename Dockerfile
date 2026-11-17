@@ -69,6 +69,33 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         --refresh-package infrahub-sync --reinstall-package infrahub-sync
 
 # ---------------------------------------------------------------------------
+# Web stage: build the web interface into static files. Node stays in this
+# stage; the runtime stage copies only the built files.
+#
+# `$BUILDPLATFORM` builds the files once for every target architecture, since
+# they do not depend on it.
+# ---------------------------------------------------------------------------
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS web
+
+# Corepack installs the pnpm release that `frontend/package.json` names, and
+# checks it against the hash recorded there.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
+
+WORKDIR /src/frontend
+
+# The dependencies change only when the lock does, so they install from their
+# own layer. The design system is a workspace package from the
+# `frontend/vendor/infrahub` submodule.
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml frontend/.npmrc ./
+COPY frontend/vendor/infrahub/frontend/packages/ui/package.json ./vendor/infrahub/frontend/packages/ui/
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+COPY frontend ./
+RUN pnpm build
+
+# ---------------------------------------------------------------------------
 # Runtime stage
 # ---------------------------------------------------------------------------
 FROM base AS runtime
@@ -102,11 +129,13 @@ RUN groupadd --system --gid 10001 infrahub-sync \
 
 COPY --from=build --chown=0:0 /opt/infrahub-sync/venv /opt/infrahub-sync/venv
 COPY --chown=0:0 pyproject.toml uv.lock /opt/infrahub-sync/
+COPY --from=web --chown=0:0 /src/frontend/dist /opt/infrahub-sync/web
 
 ENV PATH=/opt/infrahub-sync/venv/bin:$PATH \
     HOME=/var/lib/infrahub-sync \
     PREFECT_HOME=/var/lib/infrahub-sync/prefect \
-    TMPDIR=/tmp/infrahub-sync
+    TMPDIR=/tmp/infrahub-sync \
+    INFRAHUB_SYNC_SERVICE_WEB_DIRECTORY=/opt/infrahub-sync/web
 
 USER 10001:10001
 WORKDIR /var/lib/infrahub-sync
