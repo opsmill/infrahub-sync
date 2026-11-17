@@ -161,7 +161,7 @@ class TestPlanAndApply(sync_testcontainers.TestInfrahubSyncDocker):
         sync_api_url: str, sync_api_token: str, planted_tag: str, infrahub_port: int
     ) -> None:
         with httpx.Client(
-            base_url=sync_api_url, headers={"Authorization": f"Bearer {sync_api_token}"}, timeout=60
+            base_url=f"{sync_api_url}/api", headers={"Authorization": f"Bearer {sync_api_token}"}, timeout=60
         ) as client:
             config_id, registry_version = register(
                 client, tag_package("testcontainers-tags"), "testcontainers: register the tag package"
@@ -263,4 +263,4 @@ class TestSettingsReachTheProject(sync_testcontainers.TestInfrahubSyncDocker):
         ).stdout.strip()
         assert published == f"127.0.0.1:{exported_api_port}"
         assert sync_api_url == f"http://127.0.0.1:{exported_api_port}"
-        assert httpx.get(f"{sync_api_url}/version", timeout=30).status_code == 200
+        assert httpx.get(f"{sync_api_url}/api/version", timeout=30).status_code == 200

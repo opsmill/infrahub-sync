@@ -675,7 +675,7 @@ class TestMyPackage(TestInfrahubSyncDocker):
 
     def test_the_api_answers(self, sync_api_url: str, sync_api_token: str) -> None:
         headers = {"Authorization": f"Bearer {sync_api_token}"}
-        assert httpx.get(f"{sync_api_url}/configs", headers=headers).status_code == 200
+        assert httpx.get(f"{sync_api_url}/api/configs", headers=headers).status_code == 200
 ```
 
 The class adds these fixtures to the ones `TestInfrahubDocker` provides, such as
@@ -685,7 +685,8 @@ The class adds these fixtures to the ones `TestInfrahubDocker` provides, such as
 - `infrahub_sync_compose_files`: the extra Compose files for the Sync deployment.
 - `infrahub_sync_compose`: the Sync deployment, written to disk and not started.
 - `infrahub_sync_app`: the started Sync deployment.
-- `sync_api_url`: the Sync API address on `127.0.0.1`, at the port Docker published.
+- `sync_api_url`: the Sync service address on `127.0.0.1`, at the port Docker published. Like
+  `INFRAHUB_SYNC_API_URL`, it does not include `/api`: add it to a path you request directly.
 - `sync_api_token`: the token of the test deployment's administrator principal.
 
 Two variables select the Sync image, the same two the root file reads:

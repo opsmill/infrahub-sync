@@ -196,7 +196,8 @@ class Deployment:
 
     @property
     def api(self) -> str:
-        return f"http://127.0.0.1:{self.api_port}"
+        """The Sync API's root on the published port; the web interface is served at the address itself."""
+        return f"http://127.0.0.1:{self.api_port}/api"
 
 
 # The dependencies whose health is an answer from the service -- a PostgreSQL
@@ -204,7 +205,7 @@ class Deployment:
 STATUS_DEPENDENCIES = ("postgres", "object-store", "prefect-server")
 # The worker state the Sync API reports, asked from inside the deployment so the
 # answer does not depend on how the host maps container ports onto loopback.
-STATUS = "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])"
+STATUS = "import httpx; print(httpx.get('http://sync-api:8000/api/status', timeout=5).json()['worker']['state'])"
 
 
 def wait_for(description: str, probe: Callable[[], object], *, timeout: int = READY_TIMEOUT_SECONDS) -> object:

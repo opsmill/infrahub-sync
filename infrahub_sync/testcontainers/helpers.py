@@ -301,7 +301,7 @@ class TestInfrahubSyncDocker(TestInfrahubDocker):
     @pytest.fixture(scope="class")
     @classmethod
     def sync_api_url(cls, infrahub_sync_app: InfrahubSyncDockerCompose) -> str:
-        """The Sync API's URL on the loopback address, at the port Docker published it on."""
+        """The Sync service address on the loopback address, at the published port; the Sync API is under `/api`."""
         port = infrahub_sync_app.get_service_port(service_name=SYNC_API_SERVICE, port=SYNC_API_CONTAINER_PORT)
         return f"http://127.0.0.1:{port}"
 
