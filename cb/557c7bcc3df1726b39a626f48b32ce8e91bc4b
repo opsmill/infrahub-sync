@@ -1,0 +1,19 @@
+dev/specs/020-product-store-failure-cause/tasks.md
+  s_313229fc4d1c44::t_d926e0e4e2697a 1-259
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cb557c7bcc3df1726b39a626f48b32ce8e91bc4b",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
