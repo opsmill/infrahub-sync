@@ -1,0 +1,21 @@
+dev/specs/021-scheduled-runs/checklists/requirements.md
+  s_29b17f91da9f30::t_1e3665163ef179 1-46
+dev/specs/021-scheduled-runs/spec.md
+  s_29b17f91da9f30::t_4f8cf2e1c1d50c 1-424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7b4cfc5d2ca402192eb298313588b64634910b1",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
