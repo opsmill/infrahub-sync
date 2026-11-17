@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import threading
 from typing import TYPE_CHECKING
 
@@ -15,8 +14,7 @@ from fastapi.testclient import TestClient
 
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.service import serve
-from infrahub_sync.service.auth import PRINCIPALS_ENV
-from infrahub_sync.service.settings import WEB_DIRECTORY_ENV
+from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV, WEB_DIRECTORY_ENV
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,7 +35,8 @@ class _RecordingReconciler:
 def test_build_service_serves_the_api_under_api_and_runs_the_liveness_loop(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": "serve-site-token-0001", "administrator": True}}))
+    monkeypatch.setenv(ADMIN_ACCOUNT_PASSWORD_ENV, "serve-site-password-0001")
+    monkeypatch.delenv(ADMIN_ACCOUNT_TOKEN_ENV, raising=False)
     monkeypatch.delenv(WEB_DIRECTORY_ENV, raising=False)
     monkeypatch.delenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", raising=False)
     reconcilers: list[_RecordingReconciler] = []
@@ -66,7 +65,8 @@ def test_build_service_serves_the_web_interface_named_by_the_environment(
     directory = tmp_path / "web"
     directory.mkdir()
     (directory / "index.html").write_text(page, encoding="utf-8")
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": "serve-site-token-0002", "administrator": True}}))
+    monkeypatch.setenv(ADMIN_ACCOUNT_PASSWORD_ENV, "serve-site-password-0002")
+    monkeypatch.delenv(ADMIN_ACCOUNT_TOKEN_ENV, raising=False)
     monkeypatch.setenv(WEB_DIRECTORY_ENV, str(directory))
     monkeypatch.delenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", raising=False)
     monkeypatch.setattr(serve, "RunLivenessReconciler", _RecordingReconciler)

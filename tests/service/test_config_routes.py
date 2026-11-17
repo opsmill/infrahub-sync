@@ -33,7 +33,7 @@ from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store.configs import ValidationReport
 from infrahub_sync.service import serve
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver, Principal, Resolution
 from infrahub_sync.service.config_routes import ConfigurationAPIError, ConfigurationRoutes
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.serve import build_app
@@ -1054,7 +1054,7 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
     class Resolver:
         @staticmethod
         def resolve(_token: str) -> object:
-            return type("Principal", (), {"administrator": True})()
+            return Resolution.accepted(Principal(actor="operator", administrator=True))
 
     runs = Runs()
     config_service = ConfigService()

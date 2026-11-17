@@ -38,6 +38,7 @@ from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResol
 from infrahub_sync.service.config_routes import ConfigurationRoutes
 from infrahub_sync.service.orchestration import Submission
 from infrahub_sync.service.service import RunService
+from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -280,7 +281,8 @@ def _validate(
     monkeypatch: pytest.MonkeyPatch, projection: ProductProjection, version: ConfigurationVersion
 ) -> dict[str, Any]:
     """Drive the real serialized validation response for the one registered version."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": BEARER, "administrator": True}}))
+    monkeypatch.setenv(ADMIN_ACCOUNT_PASSWORD_ENV, "administrator-password-0001")
+    monkeypatch.setenv(ADMIN_ACCOUNT_TOKEN_ENV, BEARER)
     app = serve.build_app(projection_factory=lambda: projection)
     response = TestClient(app).post(
         f"/configs/{version.config_id}/versions/{version.registry_version}/validate",

@@ -99,6 +99,19 @@ _DELETE_SESSION = "DELETE FROM account_sessions WHERE session_id = ?"
 _DELETE_SESSIONS = "DELETE FROM account_sessions WHERE account_id = ?"
 _UPDATE_SESSION_LAST_USED = "UPDATE account_sessions SET last_used_at = ? WHERE session_id = ?"
 
+# The statements that apply the account the environment defines. The token digest is compared in
+# SQL, so no digest is read out of the store.
+_UPDATE_ACCOUNT_ENVIRONMENT_FLAGS = (
+    "UPDATE accounts SET administrator = ?, disabled = ?, environment_managed = ?, updated_at = ? WHERE account_id = ?"
+)
+_COUNT_ENVIRONMENT_TOKENS = "SELECT COUNT(*) FROM account_tokens WHERE account_id = ? AND environment_managed = ?"
+_COUNT_MATCHING_ENVIRONMENT_TOKENS = (
+    "SELECT COUNT(*) FROM account_tokens "
+    "WHERE account_id = ? AND environment_managed = ? AND name = ? AND digest = ? AND expires_at IS NULL"
+)
+_DELETE_ENVIRONMENT_TOKENS = "DELETE FROM account_tokens WHERE account_id = ? AND environment_managed = ?"
+_DELETE_SIGN_IN_ATTEMPTS = "DELETE FROM sign_in_attempts WHERE name_key = ?"
+
 # The row of a digest with its account: the row identifier, the expiry date, the last recorded
 # use, then the account columns.
 _SELECT_TOKEN_BY_DIGEST = (
@@ -371,6 +384,82 @@ def delete_sessions(cursor: _Cursor, sql: Sql, account_id: str) -> int:
     """Delete every session of the account. Return the number deleted."""
     cursor.execute(sql(_DELETE_SESSIONS), (account_id,))
     return cursor.rowcount
+
+
+def _count(cursor: _Cursor) -> int:
+    """Return the number that a ``SELECT COUNT(*)`` statement just read."""
+    row = cursor.fetchone()
+    return 0 if row is None else int(row[0])
+
+
+def apply_environment_account(
+    cursor: _Cursor,
+    sql: Sql,
+    *,
+    name: str,
+    password_hash_for: Callable[[str | None], str | None],
+    token_name: str,
+    token_digest: str | None,
+    now: datetime,
+) -> Account:
+    """Make the account that the environment defines match the environment, and return it.
+
+    The caller owns the transaction and, on PostgreSQL, the lock that serializes two processes.
+
+    - The account is created when no account has the name, as an active administrator that the
+      environment manages. An existing account gets those three states back when one differs.
+    - ``password_hash_for`` receives the stored hash, or nothing for a new account. It returns the
+      hash to store, or nothing when the stored hash already fits the password. A new hash for an
+      existing account ends the sessions of the account.
+    - The account keeps one token that the environment manages, with ``token_digest``; it has none
+      when ``token_digest`` is empty.
+    - The record of failed sign-in attempts for the name is deleted.
+
+    A statement that would change nothing is not sent, so a second call with the same environment
+    leaves every row as it is.
+    """
+    account = read_account_by_name(cursor, sql, name)
+    if account is None:
+        account = create_account(
+            cursor,
+            sql,
+            name=name,
+            password_hash=password_hash_for(None),
+            administrator=True,
+            environment_managed=True,
+            now=now,
+        )
+    else:
+        if not account.administrator or account.disabled or not account.environment_managed:
+            cursor.execute(
+                sql(_UPDATE_ACCOUNT_ENVIRONMENT_FLAGS), (True, False, True, _utc_iso(now), account.account_id)
+            )
+        password_hash = password_hash_for(account.password_hash)
+        if password_hash is not None:
+            set_account_password_hash(cursor, sql, account.account_id, password_hash=password_hash, now=now)
+            delete_sessions(cursor, sql, account.account_id)
+    account_id = account.account_id
+
+    cursor.execute(sql(_COUNT_ENVIRONMENT_TOKENS), (account_id, True))
+    managed_tokens = _count(cursor)
+    matching_tokens = 0
+    if token_digest is not None:
+        cursor.execute(sql(_COUNT_MATCHING_ENVIRONMENT_TOKENS), (account_id, True, token_name, token_digest))
+        matching_tokens = _count(cursor)
+    wanted_tokens = 0 if token_digest is None else 1
+    if (managed_tokens, matching_tokens) != (wanted_tokens, wanted_tokens):
+        cursor.execute(sql(_DELETE_ENVIRONMENT_TOKENS), (account_id, True))
+        if token_digest is not None:
+            create_token(
+                cursor, sql, account_id, name=token_name, digest=token_digest, environment_managed=True, now=now
+            )
+
+    cursor.execute(sql(_DELETE_SIGN_IN_ATTEMPTS), (name_key(name),))
+    applied = read_account(cursor, sql, account_id)
+    if applied is None:  # pragma: no cover - the row was written or read in this transaction.
+        msg = "the account that the environment defines is missing after it was applied"
+        raise RuntimeError(msg)
+    return applied
 
 
 def resolve_digest(cursor: _Cursor, sql: Sql, digest: str, *, now: datetime) -> ResolvedCredential | None:

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
 
+from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.service import auth, deploy, serve, settings
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 RETIRED_NAMES = (
     "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS",
@@ -49,9 +53,11 @@ def test_a_retired_bearer_token_name_is_ignored(monkeypatch: pytest.MonkeyPatch)
         auth.EnvironmentPrincipalResolver.from_environment()
 
 
-def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_WORK_POOL", "retired-pool")
-    monkeypatch.setenv(auth.PRINCIPALS_ENV, PRINCIPALS)
+    monkeypatch.setenv(settings.ADMIN_ACCOUNT_PASSWORD_ENV, "service-password-canary-0001")
+    monkeypatch.delenv(settings.ADMIN_ACCOUNT_TOKEN_ENV, raising=False)
+    projection = local_product_projection(tmp_path)
     captured: dict[str, Any] = {}
 
     class _Reconciler:
@@ -60,7 +66,7 @@ def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pyte
 
     monkeypatch.setattr(serve, "RunLivenessReconciler", _Reconciler)
     serve.build_app(
-        projection_factory=object,
+        projection_factory=lambda: projection,
         run_service_factory=lambda *_args, **_kwargs: object(),
         configuration_routes_factory=lambda **_kwargs: object(),
         app_factory=lambda *args: args,

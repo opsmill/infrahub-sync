@@ -524,7 +524,7 @@ def test_duplicate_reconcilers_converge_through_execution_cas(tmp_path) -> None:
 def test_lifespan_continues_after_ordinary_failure_and_cancels_cleanly(tmp_path) -> None:
     """A transient provider failure does not kill the loop, and shutdown propagates cancellation."""
     from infrahub_sync.service.app import create_app
-    from infrahub_sync.service.auth import Principal
+    from infrahub_sync.service.auth import Principal, Resolution
     from infrahub_sync.service.service import RunService
 
     class _Reconciler:
@@ -551,9 +551,9 @@ def test_lifespan_continues_after_ordinary_failure_and_cancels_cleanly(tmp_path)
         secret_values = ()
 
         @staticmethod
-        def resolve(token: str) -> Principal:
+        def resolve(token: str) -> Resolution:
             del token
-            return Principal(actor="operator")
+            return Resolution.accepted(Principal(actor="operator"))
 
     projection = local_product_projection(tmp_path)
     reconciler = _Reconciler()
@@ -958,7 +958,7 @@ def test_request_time_reconciliation_terminalizes_each_pending_link(tmp_path) ->
     from fastapi.testclient import TestClient
 
     from infrahub_sync.service.app import create_app
-    from infrahub_sync.service.auth import Principal
+    from infrahub_sync.service.auth import Principal, Resolution
     from infrahub_sync.service.service import RunService
 
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
@@ -981,9 +981,9 @@ def test_request_time_reconciliation_terminalizes_each_pending_link(tmp_path) ->
         secret_values = ()
 
         @staticmethod
-        def resolve(token: str) -> Principal:
+        def resolve(token: str) -> Resolution:
             del token
-            return Principal(actor="operator")
+            return Resolution.accepted(Principal(actor="operator"))
 
     app = create_app(RunService(projection, orchestration), _Resolver(), reconciler=reconciler)  # type: ignore[arg-type]
     response = TestClient(app).get("/runs/run-request-reconcile", headers={"Authorization": "Bearer token"})

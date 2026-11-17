@@ -249,7 +249,7 @@ def test_admission_reads_registered_binding_before_allocating_run(
         reason="plan registered package",
     )
     service = RunService(projection, orchestration)
-    principal = EnvironmentPrincipalResolver.from_environment().resolve(OWNER_TOKEN)
+    principal = EnvironmentPrincipalResolver.from_environment().resolve(OWNER_TOKEN).principal
     assert principal is not None
 
     _status, body = asyncio.run(service.create_run(request, principal, "registered-key"))

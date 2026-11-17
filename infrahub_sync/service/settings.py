@@ -8,17 +8,38 @@ so a malformed value stops the service instead of silently meaning "off".
 ``INFRAHUB_SYNC_WEB_DIRECTORY`` names the directory of the built web interface. It is read once,
 when the service application is built, and never stops the service: a value that names no usable
 directory is logged and treated as unset.
+
+``INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`` and ``INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`` define the
+``admin`` account. They are read once, when the served application is built, and a value that is
+not accepted stops the service. ``INFRAHUB_SYNC_SESSION_IDLE_SECONDS`` is the period without
+activity after which a session ends. No message of this module contains a value.
 """
 
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
+from .credentials import TOKEN_PREFIXES
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
 REQUIRE_APPROVAL_ENV = "INFRAHUB_SYNC_REQUIRE_APPROVAL"
 WEB_DIRECTORY_ENV = "INFRAHUB_SYNC_WEB_DIRECTORY"
+ADMIN_ACCOUNT_PASSWORD_ENV = "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"
+ADMIN_ACCOUNT_TOKEN_ENV = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"
+SESSION_IDLE_SECONDS_ENV = "INFRAHUB_SYNC_SESSION_IDLE_SECONDS"
+
+PASSWORD_MIN_LENGTH = 12
+ADMIN_ACCOUNT_TOKEN_MIN_LENGTH = 16
+SESSION_IDLE_SECONDS_DEFAULT = 28800
+SESSION_IDLE_SECONDS_MINIMUM = 60
+_SESSION_IDLE_SECONDS_MAX_DIGITS = 12
 
 logger = structlog.get_logger(__name__)
 
@@ -85,10 +106,80 @@ def web_directory() -> Path | None:
     return directory
 
 
+class AccountSettingsError(ValueError):
+    """A variable that defines accounts or sessions holds a value that is not accepted.
+
+    The message names the variable and the rule, never the value.
+    """
+
+
+@dataclass(frozen=True)
+class AdminAccountSettings:
+    """The password and the optional API token of the ``admin`` account, as the environment gives them."""
+
+    password: str = field(repr=False)
+    token: str | None = field(default=None, repr=False)
+
+
+def admin_account_settings(environ: Mapping[str, str] | None = None) -> AdminAccountSettings:
+    """Return the validated variables of the ``admin`` account.
+
+    An empty token counts as unset: ``admin`` then has no API token.
+
+    Raises:
+        AccountSettingsError: the password is unset, empty or shorter than 12 characters, or the
+            token is shorter than 16 characters or starts with ``ifs_pat_`` or ``ifs_ses_``.
+    """
+    env = os.environ if environ is None else environ
+    password = env.get(ADMIN_ACCOUNT_PASSWORD_ENV, "")
+    if not password:
+        msg = f"{ADMIN_ACCOUNT_PASSWORD_ENV} must be set: it is the password of the admin account"
+        raise AccountSettingsError(msg)
+    if len(password) < PASSWORD_MIN_LENGTH:
+        msg = f"{ADMIN_ACCOUNT_PASSWORD_ENV} must have at least {PASSWORD_MIN_LENGTH} characters"
+        raise AccountSettingsError(msg)
+    token = env.get(ADMIN_ACCOUNT_TOKEN_ENV, "")
+    if not token:
+        return AdminAccountSettings(password=password)
+    if len(token) < ADMIN_ACCOUNT_TOKEN_MIN_LENGTH:
+        msg = f"{ADMIN_ACCOUNT_TOKEN_ENV} must have at least {ADMIN_ACCOUNT_TOKEN_MIN_LENGTH} characters"
+        raise AccountSettingsError(msg)
+    if token.startswith(TOKEN_PREFIXES):
+        msg = f"{ADMIN_ACCOUNT_TOKEN_ENV} must not start with {' or '.join(TOKEN_PREFIXES)}"
+        raise AccountSettingsError(msg)
+    return AdminAccountSettings(password=password, token=token)
+
+
+def session_idle_seconds(environ: Mapping[str, str] | None = None) -> int:
+    """Return the period without activity, in seconds, after which a session ends.
+
+    Unset or empty means the default of 28800 seconds.
+
+    Raises:
+        AccountSettingsError: the value is not a whole number of at least 60.
+    """
+    env = os.environ if environ is None else environ
+    value = env.get(SESSION_IDLE_SECONDS_ENV, "").strip()
+    if not value:
+        return SESSION_IDLE_SECONDS_DEFAULT
+    # The length is checked first: Python refuses to convert a very long text of digits.
+    if not (value.isascii() and value.isdigit()) or len(value) > _SESSION_IDLE_SECONDS_MAX_DIGITS:
+        msg = f"{SESSION_IDLE_SECONDS_ENV} must be a whole number of at least {SESSION_IDLE_SECONDS_MINIMUM}"
+        raise AccountSettingsError(msg)
+    if int(value) < SESSION_IDLE_SECONDS_MINIMUM:
+        msg = f"{SESSION_IDLE_SECONDS_ENV} must be a whole number of at least {SESSION_IDLE_SECONDS_MINIMUM}"
+        raise AccountSettingsError(msg)
+    return int(value)
+
+
 def validate_settings() -> None:
     """Refuse to start the service when a setting holds a value that is not accepted.
+
+    The variables of the ``admin`` account are not read here: the served application reads them
+    once, applies them and removes the password from the environment of the process.
 
     Raises:
         ValueError: A setting holds a value that is not accepted; the message names the variable.
     """
     approval_required()
+    session_idle_seconds()

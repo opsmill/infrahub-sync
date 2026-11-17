@@ -317,6 +317,34 @@ def _include_routers(
     application.include_router(plan_router(service, authenticate))
 
 
+def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable[..., Principal]:
+    """Return the dependency that resolves the bearer value of a request to its principal.
+
+    A missing or unknown value answers ``401 unauthenticated``. An API token after its expiry date
+    answers ``401 token-expired``. Every refusal is recorded, without the value.
+    """
+    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+
+    def authenticate(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
+    ) -> Principal:
+        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
+        if not token:
+            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
+            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+        resolution = resolver.resolve(token)
+        if resolution.principal is not None:
+            return resolution.principal
+        if resolution.refusal == "token-expired":
+            service.record_authentication_refusal(request.url.path, "expired-bearer-token")
+            raise ServiceAPIError(401, "token-expired", "the API token has expired")
+        service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
+        raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+
+    return authenticate
+
+
 def create_app(
     service: RunService,
     resolver: PrincipalResolver,
@@ -356,21 +384,7 @@ def create_app(
                     await task
 
     application = FastAPI(title="Infrahub Sync API", version=installed_server_version(), lifespan=lifespan)
-    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
-
-    def authenticate(
-        request: Request,
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
-    ) -> Principal:
-        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
-        if not token:
-            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        principal = resolver.resolve(token)
-        if principal is None:
-            service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        return principal
+    authenticate = _authenticator(service, resolver)
 
     def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
         if value is None or not value.strip():
@@ -449,7 +463,9 @@ def create_app(
     def get_me(principal: Annotated[Principal, Depends(authenticate)]) -> PrincipalResource:
         """Return the caller's actor name, administrator flag and the approval setting; performs no other action."""
         return PrincipalResource(
-            actor=principal.actor,
+            # A principal of the product store carries its account name; the identifier in
+            # `actor` is never shown.
+            actor=principal.actor if principal.name is None else principal.name,
             administrator=principal.administrator,
             approval_required=approval_required(),
         )

@@ -419,6 +419,9 @@ _POSTGRESQL_SCHEMA_INITIALIZATION_LOCK = (
 # locking), the worst observed attempt count for any one caller was 5-7. This budget
 # supports up to 8 concurrent writers with margin above that observed worst case.
 _CONFIGURATION_VERSION_ATTEMPTS = 8
+# Takes SQLite's write lock before the first read of a transaction, so two threads that read and
+# then write the same rows run one after the other instead of refusing each other.
+_SQLITE_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
 # An account identifier has 128 random bits and a short identifier 32. A second attempt is
 # needed about once in four billion creations for each account that exists.
 _ACCOUNT_IDENTIFIER_ATTEMPTS = 4
@@ -886,6 +889,16 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def delete_account_sessions(self, account_id: str) -> int: ...
 
     def resolve_digest(self, digest: str, *, now: datetime | None = None) -> ResolvedCredential | None: ...
+
+    def apply_environment_account(
+        self,
+        *,
+        name: str,
+        password_hash_for: Callable[[str | None], str | None],
+        token_name: str,
+        token_digest: str | None,
+        now: datetime | None = None,
+    ) -> Account: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
@@ -3335,6 +3348,48 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         with self._transaction() as cursor:
             return account_statements.resolve_digest(cursor, self._sql, digest, now=_now(now))
 
+    def apply_environment_account(
+        self,
+        *,
+        name: str,
+        password_hash_for: Callable[[str | None], str | None],
+        token_name: str,
+        token_digest: str | None,
+        now: datetime | None = None,
+    ) -> Account:
+        """Make the account that the environment defines match the environment, in one transaction.
+
+        Two callers that start together are serialized: PostgreSQL takes the lock of schema
+        initialization for the transaction, and SQLite takes its write lock before the first read.
+        See ``accounts.apply_environment_account``.
+
+        Raises:
+            DuplicateCredentialError: another token of the store already holds this digest.
+        """
+        try:
+            with self._transaction() as cursor:
+                if self._dialect == "postgresql":
+                    cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
+                else:
+                    cursor.execute(_SQLITE_BEGIN_IMMEDIATE)
+                return account_statements.apply_environment_account(
+                    cursor,
+                    self._sql,
+                    name=name,
+                    password_hash_for=password_hash_for,
+                    token_name=token_name,
+                    token_digest=token_digest,
+                    now=_now(now),
+                )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # DB-API drivers do not share an integrity-error base class;
+            # inspect only documented SQLite/PostgreSQL uniqueness markers.
+            if not _is_unique_violation(exc):
+                raise
+        # Raised outside the handler: see ``create_account_token``. The lock leaves one cause: a
+        # token of another account already has the digest.
+        raise DuplicateCredentialError(_DUPLICATE_CREDENTIAL_MESSAGE)
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         with self._transaction() as cursor:
             cursor.execute(
@@ -4260,6 +4315,35 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         the caller checks the account's state, a token's expiry date and a session's idle period.
         """
         return self._records.resolve_digest(digest, now=now)
+
+    def apply_environment_account(
+        self,
+        *,
+        name: str,
+        password_hash_for: Callable[[str | None], str | None],
+        token_name: str,
+        token_digest: str | None,
+        now: datetime | None = None,
+    ) -> Account:
+        """Make the account that the environment defines match the environment, in one transaction.
+
+        The account is created when it is missing. ``password_hash_for`` receives the stored hash,
+        or nothing for a new account, and returns the hash to store, or nothing to keep the stored
+        one; a new hash for an existing account ends its sessions. The account keeps one token
+        that the environment manages, or none when ``token_digest`` is empty. The record of failed
+        sign-in attempts for the name is deleted. Two processes that start together do not
+        conflict. The store reads no password and returns no digest.
+
+        Raises:
+            DuplicateCredentialError: another token of the store already holds this digest.
+        """
+        return self._records.apply_environment_account(
+            name=name,
+            password_hash_for=password_hash_for,
+            token_name=token_name,
+            token_digest=token_digest,
+            now=now,
+        )
 
     def record_results(
         self,

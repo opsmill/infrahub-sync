@@ -69,26 +69,26 @@ sign in is the `admin` token from the environment.
 
 ### Passwords, tokens and the resolver
 
-- [ ] T010 [P] Create `infrahub_sync/service/credentials.py`: `hash_password` and
+- [X] T010 [P] Create `infrahub_sync/service/credentials.py`: `hash_password` and
   `verify_password` with `hashlib.scrypt`, an explicit `maxmem` and the stored format of
   research R2; `new_api_token` and `new_session_token` with the prefixes `ifs_pat_` and
   `ifs_ses_`; `digest`; `contains_token_prefix`; a fixed hash for names with no account; and a
   gate that lets at most two verifications run at once and raises a specific exception after 5
   seconds of waiting.
-- [ ] T011 [P] Write `tests/service/test_credentials.py`: a hash verifies its password and no
+- [X] T011 [P] Write `tests/service/test_credentials.py`: a hash verifies its password and no
   other, two hashes of one password differ, a hash made with lower parameters still verifies,
   the parameters in the code are not below the setting recorded in T002, token values have the
   prefix and 32 random bytes, and the gate refuses a third concurrent verification after its
   wait.
-- [ ] T012 In `infrahub_sync/service/auth.py`: give `Principal` the fields `name`, the kind of
+- [X] T012 In `infrahub_sync/service/auth.py`: give `Principal` the fields `name`, the kind of
   value presented and `session_id`, with `actor` holding the account identifier; make
   `PrincipalResolver.resolve` return a result that is a `Principal` or a refusal code; add
   `StoreAccountResolver`, which calls `resolve_digest` and applies the idle period; keep
   `secret_values` and return the `admin` token only.
-- [ ] T013 Add the three variables of [contracts/environment.md](contracts/environment.md) to
+- [X] T013 Add the three variables of [contracts/environment.md](contracts/environment.md) to
   `infrahub_sync/service/settings.py`, with their validation and messages that name the
   variable and never the value.
-- [ ] T014 In `infrahub_sync/service/auth.py`, add `apply_admin_account(projection, settings)`:
+- [X] T014 In `infrahub_sync/service/auth.py`, add `apply_admin_account(projection, settings)`:
   the transaction of research R5 (create or update `admin`, replace its environment-managed
   token, delete its sessions when the password changed, delete its `sign_in_attempts` row),
   under the schema initialization lock on PostgreSQL. After it returns, remove the password
@@ -96,14 +96,14 @@ sign in is the `admin` token from the environment.
 - [ ] T015 In `infrahub_sync/service/serve.py`, call `apply_admin_account` in `build_app` before
   the resolver is built, build `StoreAccountResolver`, and delete
   `EnvironmentPrincipalResolver` and `PRINCIPALS_ENV` from `infrahub_sync/service/auth.py`.
-- [ ] T016 In `infrahub_sync/service/app.py`, make `authenticate` use the result of `resolve`:
+- [X] T016 In `infrahub_sync/service/app.py`, make `authenticate` use the result of `resolve`:
   `401 unauthenticated` as today, and `401 token-expired` for an expired token. Make `GET /me`
   return `Principal.name` in `actor`.
-- [ ] T017 [P] Write `tests/service/test_account_resolver.py`: a token and a session resolve to
+- [X] T017 [P] Write `tests/service/test_account_resolver.py`: a token and a session resolve to
   the account identifier and name; an unknown value, a disabled account, a deleted account, an
   expired token and an idle session are refused with the right code; a request after a disable
   is refused with no restart.
-- [ ] T018 [P] Write `tests/service/test_admin_account.py`: first start creates `admin`; a
+- [X] T018 [P] Write `tests/service/test_admin_account.py`: first start creates `admin`; a
   second start changes nothing; a changed password replaces the hash and ends the sessions; a
   removed token variable removes the token; a missing or short password and a token with a
   reserved prefix stop the start with a message that names the variable; the password is absent

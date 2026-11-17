@@ -1,0 +1,191 @@
+"""Password hashes and the values a request presents to the Sync API.
+
+A password is stored as an scrypt hash. The stored text names the algorithm and carries the cost
+parameters, the salt and the derived key, so a hash made with other parameters still verifies::
+
+    scrypt$<N>$<r>$<p>$<salt>$<derived key>
+
+The salt and the derived key are base64 text without padding.
+
+An API token and a session token are random values. The store holds only their SHA-256 digest:
+a random 256-bit value cannot be guessed, so it needs no slow hash.
+
+No function of this module logs a password, a token value, a digest or a hash, or puts one in an
+exception message.
+"""
+
+from __future__ import annotations
+
+import binascii
+import hashlib
+import hmac
+import secrets
+import threading
+from base64 import b64decode, b64encode
+from contextlib import contextmanager
+from functools import lru_cache
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+API_TOKEN_PREFIX = "ifs_pat_"
+SESSION_TOKEN_PREFIX = "ifs_ses_"
+TOKEN_PREFIXES = (API_TOKEN_PREFIX, SESSION_TOKEN_PREFIX)
+# The random part of a token value: 32 bytes, written as 43 URL-safe characters.
+TOKEN_RANDOM_BYTES = 32
+
+# The scrypt setting N=2^15, r=8, p=3 of the OWASP Password Storage Cheat Sheet, confirmed on
+# 2026-11-17 (dev/specs/022-local-accounts/notes.md, T002). One verification needs about 32 MiB.
+SCRYPT_ALGORITHM = "scrypt"
+SCRYPT_N = 2**15
+SCRYPT_R = 8
+SCRYPT_P = 3
+SALT_BYTES = 16
+DERIVED_KEY_BYTES = 32
+# `hashlib.scrypt` refuses the setting above without an explicit `maxmem`. The same value is the
+# ceiling for a stored hash: a row whose parameters need more memory is not verified, so a
+# corrupted or hostile row cannot exhaust the memory of the process.
+SCRYPT_MAXMEM = 64 * 1024 * 1024
+# `p` costs processor time, not memory, so it has its own ceiling.
+_SCRYPT_MAX_P = 16
+_SCRYPT_MAX_KEY_BYTES = 128
+_HASH_FIELDS = 6
+
+VERIFICATION_LIMIT = 2
+VERIFICATION_WAIT_SECONDS = 5.0
+
+
+class SignInBusyError(RuntimeError):
+    """A password verification waited too long for one of the places of the gate."""
+
+
+def _encode(value: bytes) -> str:
+    return b64encode(value).decode("ascii").rstrip("=")
+
+
+def _decode(text: str) -> bytes:
+    return b64decode(text + "=" * (-len(text) % 4), validate=True)
+
+
+def scrypt_memory_bytes(n: int, r: int, p: int) -> int:
+    """Return the memory that one scrypt computation with these parameters needs."""
+    return 128 * r * (n + p + 2)
+
+
+def _derive(password: str, salt: bytes, *, n: int, r: int, p: int, length: int) -> bytes:
+    return hashlib.scrypt(password.encode("utf-8"), salt=salt, n=n, r=r, p=p, maxmem=SCRYPT_MAXMEM, dklen=length)
+
+
+def hash_password(password: str, *, n: int = SCRYPT_N, r: int = SCRYPT_R, p: int = SCRYPT_P) -> str:
+    """Return the text to store for a password, made with a new random salt."""
+    salt = secrets.token_bytes(SALT_BYTES)
+    key = _derive(password, salt, n=n, r=r, p=p, length=DERIVED_KEY_BYTES)
+    return f"{SCRYPT_ALGORITHM}${n}${r}${p}${_encode(salt)}${_encode(key)}"
+
+
+def _parse(stored_hash: str) -> tuple[int, int, int, bytes, bytes] | None:
+    """Return the parameters, the salt and the key of a stored hash that is safe to verify."""
+    fields = stored_hash.split("$")
+    if len(fields) != _HASH_FIELDS or fields[0] != SCRYPT_ALGORITHM:
+        return None
+    try:
+        n, r, p = (int(field) for field in fields[1:4])
+        salt, key = _decode(fields[4]), _decode(fields[5])
+    except (ValueError, binascii.Error):
+        return None
+    if n < 2 or n & (n - 1) or r < 1 or not 1 <= p <= _SCRYPT_MAX_P:
+        return None
+    if not salt or not 1 <= len(key) <= _SCRYPT_MAX_KEY_BYTES:
+        return None
+    if scrypt_memory_bytes(n, r, p) > SCRYPT_MAXMEM:
+        return None
+    return n, r, p, salt, key
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    """Return whether the stored hash was made from this password.
+
+    A text that is not a hash of this module, or whose parameters are above the ceilings, verifies
+    no password. The comparison of the derived keys takes the same time whatever the keys hold.
+    """
+    parsed = _parse(stored_hash)
+    if parsed is None:
+        return False
+    n, r, p, salt, key = parsed
+    try:
+        derived = _derive(password, salt, n=n, r=r, p=p, length=len(key))
+    except ValueError:
+        # OpenSSL refused the parameters. The message is not kept: it describes a stored row.
+        return False
+    return hmac.compare_digest(derived, key)
+
+
+@lru_cache(maxsize=1)
+def no_account_hash() -> str:
+    """Return a fixed hash to verify against when a name has no account.
+
+    It is made once for the process, from a random password that is not kept, so no password
+    verifies it. A sign-in with an unknown name then takes the time of a sign-in with a known one.
+    """
+    return hash_password(secrets.token_urlsafe(TOKEN_RANDOM_BYTES))
+
+
+def new_api_token() -> str:
+    """Return a new API token value: the prefix ``ifs_pat_`` and 32 random bytes."""
+    return API_TOKEN_PREFIX + secrets.token_urlsafe(TOKEN_RANDOM_BYTES)
+
+
+def new_session_token() -> str:
+    """Return a new session token value: the prefix ``ifs_ses_`` and 32 random bytes."""
+    return SESSION_TOKEN_PREFIX + secrets.token_urlsafe(TOKEN_RANDOM_BYTES)
+
+
+def digest(value: str) -> str:
+    """Return the SHA-256 digest, in hexadecimal, that the store holds for a token value."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def contains_token_prefix(text: str) -> bool:
+    """Return whether a text contains the prefix of an API token or of a session token."""
+    return any(prefix in text for prefix in TOKEN_PREFIXES)
+
+
+class VerificationGate:
+    """Let a fixed number of password verifications run at the same time in this process.
+
+    Two verifications need about 64 MiB together, whatever the number of sign-in requests. A
+    verification that waits longer than ``wait_seconds`` for a place is refused.
+    """
+
+    def __init__(self, *, limit: int = VERIFICATION_LIMIT, wait_seconds: float = VERIFICATION_WAIT_SECONDS) -> None:
+        self._places = threading.BoundedSemaphore(limit)
+        self._wait_seconds = wait_seconds
+
+    @contextmanager
+    def place(self) -> Iterator[None]:
+        """Hold one place of the gate for the duration of the block.
+
+        Raises:
+            SignInBusyError: no place became free within the wait.
+        """
+        if not self._places.acquire(timeout=self._wait_seconds):
+            msg = "too many password verifications are running; try again"
+            raise SignInBusyError(msg)
+        try:
+            yield
+        finally:
+            self._places.release()
+
+    def verify(self, password: str, stored_hash: str) -> bool:
+        """Verify a password while holding one place of the gate.
+
+        Raises:
+            SignInBusyError: no place became free within the wait.
+        """
+        with self.place():
+            return verify_password(password, stored_hash)
+
+
+# The gate of the process: every sign-in route verifies through it.
+PASSWORD_VERIFICATION_GATE = VerificationGate()

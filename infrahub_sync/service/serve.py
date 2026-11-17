@@ -11,7 +11,7 @@ from prefect.client.orchestration import get_client
 from infrahub_sync.execution import collect_secret_values
 
 from .app import create_app
-from .auth import EnvironmentPrincipalResolver
+from .auth import StoreAccountResolver, apply_admin_account
 from .config_routes import ConfigurationRoutes
 from .liveness import LivenessPolicy, RunLivenessReconciler
 from .orchestration import (
@@ -24,7 +24,13 @@ from .orchestration import (
 )
 from .prefect_ui import prefect_ui_url_from_environment
 from .service import RunService
-from .settings import web_directory
+from .settings import (
+    ADMIN_ACCOUNT_PASSWORD_ENV,
+    AccountSettingsError,
+    admin_account_settings,
+    session_idle_seconds,
+    web_directory,
+)
 from .storage import service_product_projection
 from .trust_store import TrustStoreError, install_custom_ca_bundle
 from .web import create_site
@@ -63,7 +69,7 @@ class _ClientPerCallOrchestration:
 def build_app(
     *,
     projection_factory: Any = service_product_projection,
-    resolver_factory: Any = EnvironmentPrincipalResolver.from_environment,
+    resolver_factory: Any = None,
     run_service_factory: Any = RunService,
     configuration_routes_factory: Any = ConfigurationRoutes,
     app_factory: Any = create_app,
@@ -73,15 +79,31 @@ def build_app(
     The CA bundle is installed here, before any client exists, so `main()` and an ASGI server
     that calls this factory (`uvicorn --factory`, as `dev.api` does) trust the same certificates.
 
+    Without a ``resolver_factory``, the ``admin`` account of the store is made to match
+    ``INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`` and ``INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN``, the
+    password is removed from the environment of the process, and callers are resolved from the
+    accounts of the store.
+
     Raises:
         TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
+        AccountSettingsError: when a variable of the ``admin`` account or the idle period of a
+            session holds a value that is not accepted. The message names the variable.
     """
     install_custom_ca_bundle()
     policy = LivenessPolicy.from_environment(worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10"))
     # Validated before any dependency is built, so a bad address stops start-up with no side effect.
     prefect_ui_url = prefect_ui_url_from_environment()
+    admin_account = admin_account_settings() if resolver_factory is None else None
+    idle_seconds = session_idle_seconds()
     projection = projection_factory()
-    resolver = resolver_factory()
+    if admin_account is None:
+        resolver = resolver_factory()
+    else:
+        apply_admin_account(projection, admin_account)
+        # Removed before the secret values are collected below: the password is in no list of
+        # secret values, so no free-text check can be used to test candidate passwords.
+        os.environ.pop(ADMIN_ACCOUNT_PASSWORD_ENV, None)
+        resolver = StoreAccountResolver(projection, idle_seconds=idle_seconds, admin_token=admin_account.token)
     # The configuration diagnostics quote declared keys, so this surface needs the ordinary
     # environment secrets as well as the principal resolver's bearer tokens.
     configuration_secrets = tuple(dict.fromkeys((*collect_secret_values(), *resolver.secret_values)))
@@ -106,7 +128,7 @@ def build_app(
 def build_service(
     *,
     projection_factory: Any = service_product_projection,
-    resolver_factory: Any = EnvironmentPrincipalResolver.from_environment,
+    resolver_factory: Any = None,
     run_service_factory: Any = RunService,
     configuration_routes_factory: Any = ConfigurationRoutes,
     app_factory: Any = create_app,
@@ -133,7 +155,7 @@ def main() -> None:
     """Serve the Sync API and the web interface; Prefect workers and deployments are separate."""
     try:
         app = build_service()
-    except TrustStoreError as error:
+    except (TrustStoreError, AccountSettingsError) as error:
         raise SystemExit(str(error)) from None
     uvicorn.run(app, host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)
 
