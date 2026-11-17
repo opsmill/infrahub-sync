@@ -1,0 +1,20 @@
+tests/service/test_service_worker.py
+  s_313229fc4d1c44::t_1888dbec05cea1 739-740
+  s_313229fc4d1c44::t_6f01fac8cb9d60 691-695,697,700-702
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3452d14d0ac830436169c19e569328221c80a954",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
