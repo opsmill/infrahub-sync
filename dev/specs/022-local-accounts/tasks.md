@@ -287,13 +287,13 @@ tokens.
 
 ### Tests for User Story 3
 
-- [ ] T055 [P] [US3] Write `tests/product_store/test_account_deletion.py`: the deletion empties
+- [X] T055 [P] [US3] Write `tests/product_store/test_account_deletion.py`: the deletion empties
   the name, the key and the hash, deletes tokens, sessions and attempts, and keeps the
   identifier and the short identifier; after it, a search of every table and of
   `mutation_receipts.response_body` finds the name only in the free-text columns; no run,
   approval or audit row changed; the name can be created again with a new identifier. Run on
   both store dialects.
-- [ ] T056 [P] [US3] Extend `tests/service/test_account_routes.py`: delete returns the
+- [X] T056 [P] [US3] Extend `tests/service/test_account_routes.py`: delete returns the
   placeholder; past runs, approvals, audit events and configuration versions display it with
   one short identifier; an approval of the deleted account stays valid and an administrator
   applies the plan; a new account with the same name cannot apply, approve, cancel or resume
@@ -304,10 +304,10 @@ tokens.
 
 ### Implementation for User Story 3
 
-- [ ] T057 [US3] Add the deletion of research R7 to `infrahub_sync/product_store/accounts.py`
+- [X] T057 [US3] Add the deletion of research R7 to `infrahub_sync/product_store/accounts.py`
   and expose it through `infrahub_sync/product_store/store.py`, as one transaction that also
   writes the audit event.
-- [ ] T058 [US3] In `infrahub_sync/service/account_routes.py`, add `DELETE /accounts/{name}`,
+- [X] T058 [US3] In `infrahub_sync/service/account_routes.py`, add `DELETE /accounts/{name}`,
   `administrator` in `PATCH /accounts/{name}`, `GET /accounts/{name}/tokens` and
   `DELETE /accounts/{name}/tokens/{token_id}`.
 - [ ] T059 [P] [US3] Add the matching methods to `infrahub_sync/client/client.py` and the

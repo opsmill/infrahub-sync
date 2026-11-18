@@ -78,6 +78,18 @@ def _delete_token(api: AccountApi, caller: dict[str, str]) -> None:
     assert api.call("DELETE", f"/me/tokens/{token_id}", caller, params={"reason": _REASON}).status_code == 204
 
 
+def _set_level(api: AccountApi, caller: dict[str, str]) -> None:
+    body = {"administrator": True, "reason": _REASON}
+    assert api.call("PATCH", "/accounts/alice", caller, json=body).status_code == 200
+
+
+def _delete_account_token(api: AccountApi, caller: dict[str, str]) -> None:
+    api.token("alice")
+    token_id = api.store.list_account_tokens(api.identifier("alice"))[0].token_id
+    path = f"/accounts/alice/tokens/{token_id}"
+    assert api.call("DELETE", path, caller, params={"reason": _REASON}).status_code == 204
+
+
 # Each action: the event type, the operation, the caller, the account acted on, and the request.
 _ACTIONS: list[tuple[str, str, str, str, Callable[[AccountApi, dict[str, str]], None]]] = [
     ("created", "create-account", "root", "carol", _create_account),
@@ -88,10 +100,12 @@ _ACTIONS: list[tuple[str, str, str, str, Callable[[AccountApi, dict[str, str]], 
     ("password_changed", "change-password", "alice", "alice", _change_password),
     ("token_created", "create-token", "alice", "alice", _create_token),
     ("token_deleted", "delete-token", "alice", "alice", _delete_token),
+    ("level_set", "set-account-level", "root", "alice", _set_level),
+    ("token_deleted", "delete-account-token", "root", "alice", _delete_account_token),
 ]
 
 
-@pytest.mark.parametrize("case", _ACTIONS, ids=[row[0] for row in _ACTIONS])
+@pytest.mark.parametrize("case", _ACTIONS, ids=[row[1] for row in _ACTIONS])
 def test_each_account_action_writes_one_event_that_names_the_account_acted_on(
     api: AccountApi, case: tuple[str, str, str, str, Callable[[AccountApi, dict[str, str]], None]]
 ) -> None:
@@ -116,7 +130,7 @@ def test_each_account_action_writes_one_event_that_names_the_account_acted_on(
 def test_every_account_event_type_matches_the_pattern_of_the_store() -> None:
     names = [name for name in dir(event_types) if name.startswith("ACCOUNT_")]
 
-    assert len(names) == 11
+    assert len(names) == 13
     for name in names:
         value = getattr(event_types, name)
         assert value.startswith("infrahub_sync.account.")

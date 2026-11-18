@@ -44,6 +44,10 @@ ACCOUNT_PASSWORD_CHANGED = f"{_ACCOUNT_PREFIX}password_changed"
 ACCOUNT_UNLOCKED = f"{_ACCOUNT_PREFIX}unlocked"
 ACCOUNT_TOKEN_CREATED = f"{_ACCOUNT_PREFIX}token_created"
 ACCOUNT_TOKEN_DELETED = f"{_ACCOUNT_PREFIX}token_deleted"
+# An administrator changed the level of an account.
+ACCOUNT_LEVEL_SET = f"{_ACCOUNT_PREFIX}level_set"
+# An administrator deleted an account. The store writes this event in the transaction of the deletion.
+ACCOUNT_DELETED = f"{_ACCOUNT_PREFIX}deleted"
 # A request for an account action that was refused: its outcome says why.
 ACCOUNT_REFUSED = f"{_ACCOUNT_PREFIX}refused"
 

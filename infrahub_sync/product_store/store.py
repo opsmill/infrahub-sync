@@ -869,6 +869,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def enable_account(self, account_id: str, *, now: datetime | None = None) -> bool: ...
 
+    def delete_account(self, account_id: str, *, event: AuditEvent, now: datetime | None = None) -> Account | None: ...
+
     def create_account_token(
         self,
         account_id: str,
@@ -3267,6 +3269,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         with self._transaction() as cursor:
             return account_statements.enable_account(cursor, self._sql, account_id, now=_now(now))
 
+    def delete_account(self, account_id: str, *, event: AuditEvent, now: datetime | None = None) -> Account | None:
+        """Delete the account and write the event of the deletion, in one transaction.
+
+        Return the account as it was before the deletion, or nothing when no account that is not
+        deleted has the identifier; the event is then not written. A failure of the event rolls
+        the deletion back.
+        """
+        with self._transaction() as cursor:
+            deleted = account_statements.delete_account(cursor, self._sql, account_id, now=_now(now))
+            if deleted is not None:
+                self._insert_event(cursor, event)
+            return deleted
+
     def create_account_token(
         self,
         account_id: str,
@@ -4292,6 +4307,19 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def enable_account(self, account_id: str, *, now: datetime | None = None) -> bool:
         """Enable the account. Return whether an account changed."""
         return self._records.enable_account(account_id, now=now)
+
+    def delete_account(
+        self, account_id: str, *, event: AuditEvent, now: datetime | None = None, secrets: Sequence[str] = ()
+    ) -> Account | None:
+        """Delete the account and write the secret-safe event of the deletion, in one transaction.
+
+        The name, the key and the password hash are emptied, the tokens, the sessions and the
+        failed sign-ins of the name are deleted, and the identifier and the short identifier stay.
+        No run, approval, receipt, audit event or configuration version changes. Return the account
+        as it was before the deletion, or nothing when no account that is not deleted has the
+        identifier.
+        """
+        return self._records.delete_account(account_id, event=_redact_event(event, secrets), now=now)
 
     def create_account_token(
         self,

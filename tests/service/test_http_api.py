@@ -1869,6 +1869,8 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/accounts/{name}",
         "/accounts/{name}/password",
         "/accounts/{name}/unlock",
+        "/accounts/{name}/tokens",
+        "/accounts/{name}/tokens/{token_id}",
         "/auth/sign-in",
         "/auth/sign-out",
         "/events",

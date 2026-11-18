@@ -91,6 +91,12 @@ _UPDATE_ACCOUNT_PASSWORD_HASH = (
 _UPDATE_ACCOUNT_DISABLED = (
     "UPDATE accounts SET disabled = ?, updated_at = ? WHERE account_id = ? AND deleted_at IS NULL"
 )
+# The deletion empties what names the account and what signs it in, and keeps the two identifiers
+# that every record holds or displays (research R7).
+_UPDATE_ACCOUNT_DELETED = (
+    "UPDATE accounts SET name = NULL, name_key = NULL, password_hash = NULL, deleted_at = ?, updated_at = ? "
+    "WHERE account_id = ? AND deleted_at IS NULL"
+)
 
 _TOKEN_COLUMNS = "token_id, account_id, name, created_at, expires_at, last_used_at, environment_managed"
 _INSERT_TOKEN = (
@@ -330,6 +336,29 @@ def enable_account(cursor: _Cursor, sql: Sql, account_id: str, *, now: datetime)
     """Enable the account. It has no token and no session until it creates one."""
     cursor.execute(sql(_UPDATE_ACCOUNT_DISABLED), (False, _utc_iso(now), account_id))
     return cursor.rowcount == 1
+
+
+def delete_account(cursor: _Cursor, sql: Sql, account_id: str, *, now: datetime) -> Account | None:
+    """Delete the account: empty its name, its key and its password hash, and set its deletion time.
+
+    The row keeps the identifier and the short identifier. The tokens, the sessions and the failed
+    sign-ins counted for the name of the account are deleted. No other table changes. Return the
+    account as it was before the deletion, or nothing when no account that is not deleted has the
+    identifier; nothing is then written.
+    """
+    account = read_account(cursor, sql, account_id)
+    if account is None or account.deleted_at is not None:
+        return None
+    deleted_at = _utc_iso(now)
+    cursor.execute(sql(_UPDATE_ACCOUNT_DELETED), (deleted_at, deleted_at, account_id))
+    if cursor.rowcount != 1:
+        # Another transaction deleted the account after the read.
+        return None
+    delete_tokens(cursor, sql, account_id)
+    delete_sessions(cursor, sql, account_id)
+    if account.name_key is not None:
+        cursor.execute(sql(_DELETE_SIGN_IN_ATTEMPTS), (account.name_key,))
+    return account
 
 
 def create_token(

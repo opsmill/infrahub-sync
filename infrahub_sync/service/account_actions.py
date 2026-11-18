@@ -4,14 +4,17 @@
 reads the product store, the clock and the free-text check through the ``RunService`` it is given.
 
 - ``sign_in`` and ``sign_out`` open and end a session.
-- ``create_account``, ``list_accounts``, ``read_account``, ``update_account``,
-  ``set_account_password`` and ``unlock_account`` are the actions of an administrator on an account.
+- ``create_account``, ``list_accounts``, ``read_account``, ``update_account`` (state and level),
+  ``set_account_password``, ``unlock_account``, ``delete_account``, ``list_account_tokens`` and
+  ``delete_account_token`` are the actions of an administrator on an account.
 - ``change_own_password``, ``list_own_tokens``, ``create_own_token`` and ``delete_own_token`` are the
   actions of an account on itself.
 
 Each accepted action writes one audit event that names the account acted on by its identifier. The
 event is written right after the store call of the action, not in its transaction: a failure
-between the two leaves the action done and its event missing.
+between the two leaves the action done and its event missing. The deletion of an account is the
+exception: the store writes its event in the transaction of the deletion, because after it the
+account has no name that a later event could be checked against.
 
 No function of this module puts a password, a token value, a session token, a digest or a hash in
 a log line, an exception or an audit record. A session token is in one place, the answer of a
@@ -38,8 +41,10 @@ from infrahub_sync.product_store.accounts import (
 from . import credentials
 from .events import (
     ACCOUNT_CREATED,
+    ACCOUNT_DELETED,
     ACCOUNT_DISABLED,
     ACCOUNT_ENABLED,
+    ACCOUNT_LEVEL_SET,
     ACCOUNT_PASSWORD_CHANGED,
     ACCOUNT_PASSWORD_SET,
     ACCOUNT_REFUSED,
@@ -48,7 +53,9 @@ from .events import (
     ACCOUNT_TOKEN_CREATED,
     ACCOUNT_TOKEN_DELETED,
     ACCOUNT_UNLOCKED,
+    account_event,
 )
+from .presentation import deleted_account_placeholder
 from .service import REASON_REFUSED_MESSAGE, RunService, ServiceAPIError
 from .settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV, PASSWORD_MIN_LENGTH, session_idle_seconds
 
@@ -87,7 +94,7 @@ TOKEN_NAME_TAKEN_MESSAGE = "the account already has a token with this name"
 TOKEN_NOT_FOUND_MESSAGE = "the account has no token with this identifier"
 TOKEN_NAME_REFUSED_MESSAGE = "name must not contain a secret or a token"
 EXPIRY_IN_THE_PAST_MESSAGE = "expires_at must be a time in the future"
-NO_CHANGE_MESSAGE = "the request names no change; give 'disabled'"
+NO_CHANGE_MESSAGE = "the request names no change; give 'disabled', 'administrator' or both"
 _REASON_MESSAGE = "reason must be printable and trimmed"
 _TOKEN_NAME_MESSAGE = "a token name must be printable and trimmed"
 _ENVIRONMENT_MANAGED_MESSAGE = (
@@ -149,15 +156,16 @@ class CreateAccountRequest(_SecretRequest):
 
 
 class UpdateAccountRequest(BaseModel):
-    """The change of the state of an account: disabled, or enabled again.
+    """The change of the state of an account, of its level, or of both.
 
-    The level of an account is not a field yet. A request that names ``administrator`` does not
-    match the schema; the change of level adds the field here.
+    ``disabled`` disables the account or enables it again. ``administrator`` sets its level. A
+    field left out keeps its value.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     disabled: StrictBool | None = None
+    administrator: StrictBool | None = None
     reason: Reason = None
 
 
@@ -212,6 +220,14 @@ class AccountResource(BaseModel):
     environment_managed: bool
     created_at: datetime
     sign_in_refused_until: datetime | None = None
+
+
+class DeletedAccountResource(BaseModel):
+    """The answer of a deletion: what every record of the account displays from now on."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    placeholder: str
 
 
 class SessionResource(BaseModel):
@@ -548,9 +564,15 @@ def read_account(service: RunService, name: str) -> AccountResource:
 
 
 def update_account(service: RunService, principal: Principal, name: str, body: UpdateAccountRequest) -> AccountResource:
-    """Disable an account, which deletes its tokens and its sessions, or enable it again.
+    """Disable an account, which deletes its tokens and its sessions, enable it again, or set its level.
 
-    A request for the state that the account already has changes nothing and writes no event.
+    Every refusal comes before the first change. A field whose value the account already has
+    changes nothing and writes no event; each field that changes writes its own event. The
+    resolver reads the account at each request, so a new level applies from the next request of
+    the account, with no new sign-in.
+
+    Only an administrator reaches this action, so an account cannot raise its own level (FR-011):
+    an administrator can lower its own level or keep it.
 
     Raises:
         ServiceAPIError: ``404 account-not-found``, ``409 environment-managed-account``, or
@@ -558,25 +580,103 @@ def update_account(service: RunService, principal: Principal, name: str, body: U
     """
     _require_safe_reason(service, principal, "update-account", body.reason)
     account = _find_account(service, name)
-    if body.disabled is None:
+    if body.disabled is None and body.administrator is None:
         raise ServiceAPIError(422, "request-invalid", NO_CHANGE_MESSAGE)
     if account.environment_managed:
         raise _environment_managed(ADMIN_ACCOUNT_PASSWORD_ENV)
-    if body.disabled == account.disabled:
-        return _resource(service, account)
     projection, now = service.accounts.projection, service.accounts.now()
-    if body.disabled:
-        projection.disable_account(account.account_id, now=now)
-    else:
-        projection.enable_account(account.account_id, now=now)
-    service.record_account_event(
-        ACCOUNT_DISABLED if body.disabled else ACCOUNT_ENABLED,
+    if body.disabled is not None and body.disabled != account.disabled:
+        if body.disabled:
+            projection.disable_account(account.account_id, now=now)
+        else:
+            projection.enable_account(account.account_id, now=now)
+        service.record_account_event(
+            ACCOUNT_DISABLED if body.disabled else ACCOUNT_ENABLED,
+            actor=principal.actor,
+            account_id=account.account_id,
+            operation="disable-account" if body.disabled else "enable-account",
+            reason=body.reason,
+        )
+    if body.administrator is not None and body.administrator != account.administrator:
+        projection.set_account_level(account.account_id, administrator=body.administrator, now=now)
+        service.record_account_event(
+            ACCOUNT_LEVEL_SET,
+            actor=principal.actor,
+            account_id=account.account_id,
+            operation="set-account-level",
+            reason=body.reason,
+        )
+    return read_account(service, name)
+
+
+def delete_account(service: RunService, principal: Principal, name: str, reason: str | None) -> DeletedAccountResource:
+    """Delete an account, and return the placeholder that its records display from now on.
+
+    The store empties the name, the key and the password hash, deletes the tokens, the sessions
+    and the failed sign-ins of the name, and writes the event, in one transaction. No run,
+    approval, audit event or configuration version changes, and a run in progress continues. An
+    administrator may delete its own account: its next request is refused.
+
+    Raises:
+        ServiceAPIError: ``404 account-not-found``, for an unknown or already deleted account, or
+            ``409 environment-managed-account``.
+    """
+    operation = "delete-account"
+    _require_safe_reason(service, principal, operation, reason)
+    account = _find_account(service, name)
+    if account.environment_managed:
+        raise _environment_managed(ADMIN_ACCOUNT_PASSWORD_ENV)
+    now = service.accounts.now()
+    event = account_event(
+        ACCOUNT_DELETED,
         actor=principal.actor,
         account_id=account.account_id,
-        operation="disable-account" if body.disabled else "enable-account",
-        reason=body.reason,
+        operation=operation,
+        reason=reason,
+        created_at=now,
     )
-    return read_account(service, name)
+    deleted = service.accounts.projection.delete_account(
+        account.account_id, event=event, now=now, secrets=service.accounts.secrets
+    )
+    if deleted is None:
+        # Another request deleted the account after it was read.
+        raise ServiceAPIError(404, "account-not-found", ACCOUNT_NOT_FOUND_MESSAGE)
+    return DeletedAccountResource(placeholder=deleted_account_placeholder(deleted.short_id))
+
+
+def list_account_tokens(service: RunService, name: str) -> list[TokenResource]:
+    """Return the API tokens of an account, oldest first, without any value.
+
+    Raises:
+        ServiceAPIError: ``404 account-not-found``.
+    """
+    account = _find_account(service, name)
+    return [token_resource(token) for token in service.accounts.projection.list_account_tokens(account.account_id)]
+
+
+def delete_account_token(
+    service: RunService, principal: Principal, name: str, token_id: str, reason: str | None
+) -> None:
+    """Delete one API token of an account; its value is refused afterwards.
+
+    The account that the environment manages is refused before its token is looked for, as
+    ``delete_own_token`` does: its one token is defined by the environment.
+
+    Raises:
+        ServiceAPIError: ``404 account-not-found``, ``409 environment-managed-account``, or
+            ``404 token-not-found`` for a token that the account does not have.
+    """
+    operation = "delete-account-token"
+    _require_safe_reason(service, principal, operation, reason)
+    account = _find_account(service, name)
+    if account.environment_managed:
+        raise _environment_managed(ADMIN_ACCOUNT_TOKEN_ENV)
+    # PostgreSQL stores no NUL character in a text, so an identifier that holds one names no token.
+    if "\x00" in token_id or not service.accounts.projection.delete_account_token(account.account_id, token_id):
+        raise ServiceAPIError(404, "token-not-found", TOKEN_NOT_FOUND_MESSAGE)
+    service.record_account_event(
+        ACCOUNT_TOKEN_DELETED, actor=principal.actor, account_id=account.account_id, operation=operation, reason=reason
+    )
 
 
 def set_account_password(service: RunService, principal: Principal, name: str, body: SetPasswordRequest) -> None:

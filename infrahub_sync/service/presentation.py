@@ -39,10 +39,15 @@ _ACCOUNT_ID_MARK = b"acct_"
 _Convert = Callable[[str], str]
 
 
+def deleted_account_placeholder(short_id: str) -> str:
+    """Return what every answer shows in place of a deleted account with this short identifier."""
+    return f"Deleted account {short_id}"
+
+
 def display_name(account: Account) -> str:
     """Return the name shown for an account: its name, or the placeholder of a deleted account."""
     if account.deleted_at is not None or account.name is None:
-        return f"Deleted account {account.short_id}"
+        return deleted_account_placeholder(account.short_id)
     return account.name
 
 

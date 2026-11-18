@@ -3,7 +3,7 @@
 ``account_router`` builds every route of this module, and ``app.py`` mounts it once:
 
 - ``POST /auth/sign-in`` and ``POST /auth/sign-out``;
-- ``/accounts`` and ``/accounts/{name}``, for an administrator;
+- ``/accounts``, ``/accounts/{name}`` and ``/accounts/{name}/tokens``, for an administrator;
 - ``/me/password`` and ``/me/tokens``, for the account of the caller.
 
 A route calls one function of ``account_actions``, which holds the requests, the answers and the
@@ -31,6 +31,7 @@ from .account_actions import (
     CreateAccountRequest,
     CreatedTokenResource,
     CreateTokenRequest,
+    DeletedAccountResource,
     SessionResource,
     SetPasswordRequest,
     SignInRequest,
@@ -139,7 +140,7 @@ def _administrator_router(service: RunService, authenticate: _Authenticate) -> A
     def update_account(
         principal: Annotated[Principal, administrator("update-account")], name: str, body: UpdateAccountRequest
     ) -> AccountResource:
-        """Disable an account, which deletes its tokens and its sessions, or enable it again."""
+        """Disable an account, which deletes its tokens and its sessions, enable it again, or set its level."""
         return actions.update_account(service, principal, name, body)
 
     @router.put("/accounts/{name}/password", status_code=204, responses=_ACCOUNT_ERRORS)
@@ -155,6 +156,30 @@ def _administrator_router(service: RunService, authenticate: _Authenticate) -> A
     ) -> None:
         """End the refusal of an account's sign-ins that follows repeated failures."""
         actions.unlock_account(service, principal, name, None if body is None else body.reason)
+
+    @router.delete("/accounts/{name}", responses=_ACCOUNT_ERRORS)
+    def delete_account(
+        principal: Annotated[Principal, administrator("delete-account")], name: str, reason: _ReasonQuery = None
+    ) -> DeletedAccountResource:
+        """Delete an account; its records display the placeholder of the answer. It cannot be reversed."""
+        return actions.delete_account(service, principal, name, reason)
+
+    @router.get("/accounts/{name}/tokens", responses=_ACCOUNT_ERRORS)
+    def list_account_tokens(
+        _principal: Annotated[Principal, administrator("list-account-tokens")], name: str
+    ) -> list[TokenResource]:
+        """Return the API tokens of an account, without any value."""
+        return actions.list_account_tokens(service, name)
+
+    @router.delete("/accounts/{name}/tokens/{token_id}", status_code=204, responses=_ACCOUNT_ERRORS)
+    def delete_account_token(
+        principal: Annotated[Principal, administrator("delete-account-token")],
+        name: str,
+        token_id: str,
+        reason: _ReasonQuery = None,
+    ) -> None:
+        """Delete one API token of an account; its value is refused afterwards."""
+        actions.delete_account_token(service, principal, name, token_id, reason)
 
     return router
 
