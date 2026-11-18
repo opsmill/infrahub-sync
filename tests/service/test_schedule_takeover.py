@@ -22,6 +22,7 @@ from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.product_store import ExecutionFinishWriteback, ProductRun, RunFilters
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.auth import PRINCIPALS_ENV
+from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.service.schedule_fixtures import (
     ADMIN_TOKEN,
     OTHER_TOKEN,
@@ -120,6 +121,30 @@ def test_an_administrator_takes_over_a_stopped_schedule_and_the_next_start_runs(
     assert isinstance(result, dict)
     (run,) = _runs(again, schedule_id)
     assert run.actor == "admin"
+
+
+def test_a_take_over_keeps_a_default_branch_schedule_stopped_while_approval_is_required(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-002: the schedule could write to the default branch with no approved plan; it stays stopped."""
+    schedule_id = api.create(write_target="default-branch")["schedule_id"]
+    again = _restart(api, monkeypatch, WITHOUT_OWNER)
+    assert again.stored(schedule_id).state_reason == "owner-not-found"
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+
+    response = again.post(schedule_id, "take-over", ADMIN_TOKEN)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["owner"], body["state"], body["state_reason"]) == ("admin", "stopped", "approval-required")
+    assert again.orchestration.by_slug(schedule_id).active is False
+    stopped = [
+        event for event in again.projection.audit_events() if event.event_type == "infrahub_sync.schedule.stopped"
+    ]
+    assert [(event.actor, event.operation, event.outcome) for event in stopped[1:]] == [
+        ("admin", "schedule-take-over", "approval-required")
+    ]
+    assert TAKEN_OVER in again.event_types()
 
 
 def test_a_take_over_of_an_active_schedule_changes_only_the_owner(api: ScheduleApi) -> None:

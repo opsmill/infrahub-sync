@@ -492,9 +492,12 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     ) -> tuple[int, dict[str, Any]]:
         """Make the calling administrator the owner of a schedule (FR-026).
 
-        A schedule stopped because its owner's actor does not exist becomes active. A schedule
-        stopped for another reason keeps its state, and a paused schedule stays paused. A take-over
-        by the owner changes nothing.
+        A schedule stopped because its owner's actor does not exist becomes active, unless it
+        writes to the default branch while the Sync API requires approval: it then stays stopped
+        with the reason ``approval-required``, as the start of the API process would stop it, and
+        the ``schedule.stopped`` event records the new reason. A schedule stopped for another
+        reason keeps its state, and a paused schedule stays paused. A take-over by the owner
+        changes nothing.
 
         Raises:
             ServiceAPIError: ``403 forbidden`` for a caller who is not an administrator,
@@ -513,16 +516,56 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 outcome="refused-authorization",
             )
 
+        # Set by the last decision: whether the schedule stays stopped for another reason.
+        stopped_again: list[ScheduleRecord] = []
+
         def taken_over(schedule: ScheduleRecord, now: datetime) -> ScheduleRecord:
             del now
+            stopped_again.clear()
             changes: dict[str, Any] = {}
             if schedule.owner != principal.actor:
                 changes["owner"] = principal.actor
             if schedule.state_reason == "owner-not-found":
-                changes.update(state="active", state_reason=None)
+                if self._reason_holds(schedule, "approval-required"):
+                    changes["state_reason"] = "approval-required"
+                    stopped_again.append(schedule)
+                else:
+                    changes.update(state="active", state_reason=None)
             return schedule.model_copy(update=changes) if changes else schedule
 
-        return await self._act(schedule_id, context, request.model_dump(mode="json"), idempotency_key, taken_over)
+        try:
+            answer = await self._act(schedule_id, context, request.model_dump(mode="json"), idempotency_key, taken_over)
+        except ServiceAPIError as error:
+            # The change is stored when only the task manager could not be reached.
+            if error.code == "orchestration-unavailable":
+                self._record_stopped_again(stopped_again, principal.actor)
+            raise
+        self._record_stopped_again(stopped_again, principal.actor)
+        return answer
+
+    def _record_stopped_again(self, schedules: Sequence[ScheduleRecord], actor: str) -> None:
+        """Write the ``schedule.stopped`` event of a take-over that left the schedule stopped for approval."""
+        for schedule in schedules:
+            self._projection.record_audit(
+                schedule_event(
+                    event_type=SCHEDULE_STOPPED,
+                    actor=actor,
+                    operation=TAKE_OVER,
+                    reason=None,
+                    outcome="approval-required",
+                    schedule_id=schedule.schedule_id,
+                    config_id=schedule.config_id,
+                    registry_version=schedule.registry_version,
+                    created_at=self._clock(),
+                ),
+                secrets=self._secrets,
+            )
+            logger.warning(
+                "schedules.stopped",
+                schedule_id=schedule.schedule_id,
+                state_reason="approval-required",
+                step="take-over",
+            )
 
     # ------------------------------------------------------------------
     # The match with Prefect, and the start of the API process

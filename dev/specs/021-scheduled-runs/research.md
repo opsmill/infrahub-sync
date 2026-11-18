@@ -619,3 +619,9 @@ starts (`tests/service/test_schedule_missed_starts.py`):
 - Not observed: a process worker taking the flow run again after the scheduled time, and how the
   worker treats a child process that ends with a state that is not final. These need a running
   Prefect server, worker and deployment.
+- Prefect does not delete the waiting flow run. Every deletion of the scheduled runs of a
+  deployment, when the deployment is created again, changed or paused, or when one of its
+  schedules is changed or deleted, goes through `_delete_scheduled_runs`, which deletes only flow
+  runs with `run_count == 0` (`server/models/deployments.py`, `_delete_scheduled_runs`;
+  `server/api/deployments.py`). The waiting flow run has run once, so a change of any Sync
+  schedule leaves it in place. Read from the source code only.
