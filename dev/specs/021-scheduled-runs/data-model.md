@@ -44,9 +44,9 @@ Rules:
 - `next_start_at` is computed from `cron` and `timezone` each time the schedule is returned. It
   is always later than the time of the computation.
 - The Prefect schedule is active only when the state is `active`.
-- A stopped schedule that becomes active gets `consecutive_failures` set to 0, whatever reason it
-  stopped for, so a stop for `repeated-failures` that a resume later stored with another reason
-  does not keep its count.
+- A schedule that leaves the reason `repeated-failures` gets `consecutive_failures` set to 0: when
+  a resume makes it active, and when a resume stores another reason to stop it, so a later change
+  that makes it active does not keep the old count.
 - `consecutive_failures` is updated in the transaction that saves the end of a scheduled run: plus
   one for a run that ends as failed, interrupted or ambiguous; zero for a run that succeeds or ends
   with no change; unchanged for a run that a person cancelled or that stopped for a review of
@@ -70,8 +70,8 @@ State transitions:
 | `active` | the Sync API requires approval and the write target is the default branch, when the API process starts | `stopped`, reason `approval-required` |
 | `active` | the worker admits a start while `INFRAHUB_SYNC_REQUIRE_APPROVAL` is on in its environment and the write target is the default branch | `stopped`, reason `approval-required`, in the transaction of the admission; the start creates no run |
 | `active` | the fifth consecutive failed run ends | `stopped`, reason `repeated-failures` |
-| `stopped` | resume, when the reason no longer holds and no other reason holds | `active`, with `consecutive_failures` at 0 |
-| `stopped` | resume, when the reason no longer holds and another reason holds (owner's actor missing, or approval required with the default branch as write target) | `stopped` with the reason that holds, in one write with its event; the resume is refused with `schedule-stopped` |
+| `stopped` | resume, when the reason no longer holds and no other reason holds | `active` |
+| `stopped` | resume, when the reason no longer holds and another reason holds (owner's actor missing, or approval required with the default branch as write target) | `stopped` with the reason that holds, in one write with its event; the resume is refused with `schedule-stopped`. From `repeated-failures`, `consecutive_failures` is set to 0 |
 | `stopped` (`repeated-failures`) | resume, when no other reason holds | `active`, with `consecutive_failures` at 0 |
 | `stopped` (`owner-not-found`) | take over by an administrator (user story 3) | `active`, with the administrator as owner |
 | `stopped` (`owner-not-found`) | take over by an administrator, when the Sync API requires approval and the write target is the default branch | `stopped`, reason `approval-required`, with the administrator as owner |

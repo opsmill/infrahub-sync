@@ -13,8 +13,8 @@ run.
 | Create a branch for a run | A branch name | The branch exists in Infrahub, created from the default branch, with no synchronization to Git. The run's schema read, plan, verify and apply steps use it. | FR-001, FR-029 |
 | Delete a branch | A branch name that Infrahub Sync created | The branch no longer exists. | FR-020, FR-022, FR-029 |
 | Open a proposed change | A branch that a run wrote to, a title, a description | The identifier of an open proposed change from the branch to the default branch | FR-001, FR-030 |
-| Read a proposed change | An identifier | One of `open`, `approved`, `merging`, `merged`, `closed`, `canceled` | FR-021, FR-031 |
-| Close a proposed change | An identifier, a comment | The proposed change is closed and holds the comment, or it was already `closed`, `canceled` or `merged` | FR-020, FR-030 |
+| Read a proposed change | An identifier | One of `open`, `approved`, `merging`, `merged`, `closed`, `canceled`, or `missing` when Infrahub holds no proposed change with the identifier (a person deleted it) | FR-021, FR-031 |
+| Close a proposed change | An identifier, a comment | The proposed change is closed and holds the comment, or it was already `closed`, `canceled` or `merged`, or it is `missing` | FR-020, FR-030 |
 
 ## Rules
 
@@ -24,9 +24,12 @@ run.
 2. **`approved` means a person approved.** The state is `approved` when the proposed change is
    open and its `approved_by` holds at least one account.
 3. **Failures are typed.** Each operation fails with a failure class that the run's failure record
-   can hold (ADR 0021), with no text from Infrahub.
+   can hold (ADR 0021), with no text from Infrahub. A branch list that Infrahub answers in a form
+   that cannot be read fails with `branch_list_failed`.
 4. **Repeating is safe.** Creating a branch that already exists, closing a proposed change that is
-   already closed, canceled or merged, and deleting a branch that no longer exists succeed. Infrahub
+   already closed, canceled, merged or missing, and deleting a branch that no longer exists
+   succeed. A missing proposed change is kept with the cause `missing`, and its branch is left
+   alone. Infrahub
    refuses an update of a proposed change that is not open, so the close reads the state first.
 6. **The destination is `main`.** Infrahub accepts a proposed change only to `main`. A run with
    branch review on a destination whose default branch is another one fails before it creates its
