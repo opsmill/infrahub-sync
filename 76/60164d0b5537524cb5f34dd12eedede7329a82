@@ -1,0 +1,42 @@
+tests/image/test_demo_assets.py
+  s_531f0e8d1dd35e::t_087cf79d08d378 1-31,33-52,54
+  s_531f0e8d1dd35e::t_965b258e8d9f5b 32,53
+dev/adr/0048-demo-assets-ship-in-the-wheel.md
+  s_531f0e8d1dd35e::t_38a5a71b517df7 60-61
+  s_531f0e8d1dd35e::t_104e29ac52349d 1-59
+.dockerignore
+  s_531f0e8d1dd35e::t_63172bbf455939 13-16
+dev/adr/README.md
+  s_531f0e8d1dd35e::t_6a68a41bb27416 147-150
+Dockerfile
+  s_531f0e8d1dd35e::t_600b8e6aed8b70 57-61
+docs/docs/contributing.mdx
+  s_531f0e8d1dd35e::t_8b5ad62daa6447 185-186
+tests/demo/test_wheel_assets.py
+  s_531f0e8d1dd35e::t_d5d4433073d871 1-53
+.github/file-filters.yml
+  s_531f0e8d1dd35e::t_6a68a41bb27416 81-82
+  s_531f0e8d1dd35e::t_143d9ded10a35f 95-96
+tests/image/test_build_context.py
+  s_531f0e8d1dd35e::t_af3cf20d8d37b3 20,25,29-35,39-48,64-66
+pyproject.toml
+  s_531f0e8d1dd35e::t_41867d9ad6e8fd 178-187
+dev/specs/024-demo-ready-netbox/tasks.md
+  s_531f0e8d1dd35e::t_e85ea0cd438561 62-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7660164d0b5537524cb5f34dd12eedede7329a82",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
