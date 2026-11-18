@@ -627,8 +627,8 @@ def create_account(service: RunService, principal: Principal, body: CreateAccoun
     """Create an account with its first password; the administrator who asks is the actor of the event.
 
     Raises:
-        ServiceAPIError: ``422 account-name-invalid``, ``409 account-name-taken``,
-            ``422 password-too-short`` or ``password-too-long``, ``503 sign-in-busy``.
+        ServiceAPIError: ``422 secret-parameter-refused``, ``account-name-invalid``, ``password-too-short``,
+            ``password-too-long`` or ``password-invalid``, ``409 account-name-taken``, ``503 sign-in-busy``.
     """
     operation = "create-account"
     _require_safe_reason(service, principal, operation, body.reason)
@@ -819,8 +819,9 @@ def set_account_password(service: RunService, principal: Principal, name: str, b
     """Replace the password of an account: its sessions end, its tokens stay, its refusal ends.
 
     Raises:
-        ServiceAPIError: ``404 account-not-found``, ``409 environment-managed-account``,
-            ``422 password-too-short`` or ``password-too-long``, ``503 sign-in-busy``.
+        ServiceAPIError: ``422 secret-parameter-refused`` for a reason, ``404 account-not-found``,
+            ``409 environment-managed-account``, ``422 password-too-short``, ``password-too-long``
+            or ``password-invalid``, ``503 sign-in-busy``.
     """
     operation = "set-account-password"
     _require_safe_reason(service, principal, operation, body.reason)
@@ -892,8 +893,9 @@ def change_own_password(service: RunService, principal: Principal, body: ChangeP
     refused, the current password is not checked.
 
     Raises:
-        ServiceAPIError: ``409 environment-managed-account``, ``422 password-too-short`` or
-            ``password-too-long``, ``403 current-password-refused``, ``503 sign-in-busy``.
+        ServiceAPIError: ``422 secret-parameter-refused`` for a reason,
+            ``409 environment-managed-account``, ``422 password-too-short``, ``password-too-long``
+            or ``password-invalid``, ``403 current-password-refused``, ``503 sign-in-busy``.
     """
     operation = "change-password"
     _require_safe_reason(service, principal, operation, body.reason)
