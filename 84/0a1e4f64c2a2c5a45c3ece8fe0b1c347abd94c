@@ -1,0 +1,36 @@
+dev/specs/024-demo-ready-netbox/research.md
+  s_531f0e8d1dd35e::t_1ba93e290b1ec2 35-38
+  s_531f0e8d1dd35e::t_839f35173ffc2b 84-91
+dev/specs/024-demo-ready-netbox/spec.md
+  s_531f0e8d1dd35e::t_fb7949292321c8 265-266
+  s_531f0e8d1dd35e::t_7d4213f291683e 288-290
+dev/specs/024-demo-ready-netbox/critiques/critique-20261118.md
+  s_531f0e8d1dd35e::t_8ccab1d2c4446b 1-117
+dev/specs/024-demo-ready-netbox/contracts/demo-prepare-cli.md
+  s_531f0e8d1dd35e::t_4b0904f2f7e45b 9
+dev/specs/024-demo-ready-netbox/contracts/dev-demo-task.md
+  s_531f0e8d1dd35e::t_bba16f6f78a965 7-9,11-14
+dev/specs/024-demo-ready-netbox/quickstart.md
+  s_531f0e8d1dd35e::t_aed5aa69afe83e 42-43,46-49
+dev/specs/024-demo-ready-netbox/plan.md
+  s_531f0e8d1dd35e::t_e273ddf145a544 29
+  s_531f0e8d1dd35e::t_18da57edb70db6 139-142
+  s_531f0e8d1dd35e::t_f6dd3e85cc60d5 154-165
+  s_531f0e8d1dd35e::t_12800b675ee9ea 133-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "840a1e4f64c2a2c5a45c3ece8fe0b1c347abd94c",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
