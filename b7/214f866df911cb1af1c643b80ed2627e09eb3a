@@ -1,0 +1,21 @@
+dev/specs/021-scheduled-runs/contracts/branch-review.md
+  s_e88c4e5969117b::t_02b831f97ca0e5 16-17,27-28,30-32
+dev/specs/021-scheduled-runs/data-model.md
+  s_e88c4e5969117b::t_b56c3b7f64205b 47-49,73-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7214f866df911cb1af1c643b80ed2627e09eb3a",
+  "prompts": {},
+  "sessions": {
+    "s_e88c4e5969117b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a21e58ad49a466157",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
