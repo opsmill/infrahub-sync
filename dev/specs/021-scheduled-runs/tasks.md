@@ -178,15 +178,15 @@ a take-over by an administrator.
 
 ## Phase 7: Polish & cross-cutting concerns
 
-- [ ] T049 [P] Rewrite `docs/docs/orchestration.mdx` around the built-in schedule: create a schedule, review its proposed change, the two write targets, the left-out setting, a stopped schedule, missed starts, and the warning that a person's edit on a schedule's branch is deleted by the next run. Describe only what is delivered. State that Infrahub Sync sends no notification for a scheduled run and give the commands to check a schedule (FR-033)
-- [ ] T050 [P] Remove or correct "no built-in schedule" in `docs/docs/operations/supported-platforms-and-limits.mdx`, `docs/docs/readme.mdx`, `docs/docs/migrating-from-netbox-or-nautobot.mdx` and `docs/docs/reference/prefect-remote-run.mdx`
-- [ ] T051 [P] Update `docs/docs/reference/sync-http-api.mdx` (routes, the CLI and API action table, schedule events and `details`, the approval section, the run fields) and `docs/docs/reference/durable-product-records.mdx` (schedule and schedule branch records); keep `tests/test_run_events_docs.py` passing
-- [ ] T052 [P] Add the schedule loop, the start of a scheduled run and the branch records to `docs/docs/development/knowledge/sync-architecture.md` and `docs/docs/development/knowledge/repository-tour.md`
-- [ ] T053 Run `uv run invoke docs.generate` and commit `docs/docs/reference/cli.mdx`
+- [X] T049 [P] Rewrite `docs/docs/orchestration.mdx` around the built-in schedule: create a schedule, review its proposed change, the two write targets, the left-out setting, a stopped schedule, missed starts, and the warning that a person's edit on a schedule's branch is deleted by the next run. Describe only what is delivered. State that Infrahub Sync sends no notification for a scheduled run and give the commands to check a schedule (FR-033)
+- [X] T050 [P] Remove or correct "no built-in schedule" in `docs/docs/operations/supported-platforms-and-limits.mdx`, `docs/docs/readme.mdx`, `docs/docs/migrating-from-netbox-or-nautobot.mdx` and `docs/docs/reference/prefect-remote-run.mdx`
+- [X] T051 [P] Update `docs/docs/reference/sync-http-api.mdx` (routes, the CLI and API action table, schedule events and `details`, the approval section, the run fields) and `docs/docs/reference/durable-product-records.mdx` (schedule and schedule branch records); keep `tests/test_run_events_docs.py` passing
+- [X] T052 [P] Add the schedule loop, the start of a scheduled run and the branch records to `docs/docs/development/knowledge/sync-architecture.md` and `docs/docs/development/knowledge/repository-tour.md`
+- [X] T053 Run `uv run invoke docs.generate` and commit `docs/docs/reference/cli.mdx`
 - [ ] T054 Regenerate `frontend/src/api/types.generated.ts` with `pnpm codegen:openapi` against a running Sync service. Change no interface file
 - [ ] T055 Add the smoke test of section 3 of quickstart.md to `tests/dev_stack/smoke/test_scheduled_run.py` (after T041), and state the permissions of the worker's token in Infrahub in `docs/docs/compose-deployment.mdx` (from T059); check on the development stack that a run starts within 1 minute of its start time (SC-007)
-- [ ] T056 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, `uv run invoke tests.tests-product-store-postgresql`, the three `--help` checks of `AGENTS.md`, and `uv run invoke docs.docusaurus`
-- [ ] T057 Run every section of [quickstart.md](quickstart.md) and record the results in the implementation report
+- [X] T056 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, `uv run invoke tests.tests-product-store-postgresql`, the three `--help` checks of `AGENTS.md`, and `uv run invoke docs.docusaurus`
+- [X] T057 Run every section of [quickstart.md](quickstart.md) and record the results in the implementation report
 
 ---
 
