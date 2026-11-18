@@ -1,0 +1,50 @@
+dev/specs/025-register-config-web/research.md
+  s_eefe1fec4652ae::t_583160993c8a79 103-116
+dev/specs/025-register-config-web/quickstart.md
+  s_eefe1fec4652ae::t_6ef9f68c23c442 53,58-60
+dev/specs/025-register-config-web/plan.md
+  s_eefe1fec4652ae::t_cdb632b41b879b 133-135
+dev/specs/025-register-config-web/contracts/sync-api.md
+  s_eefe1fec4652ae::t_5f704cfe3fdfd6 74-75
+dev/specs/025-register-config-web/data-model.md
+  s_eefe1fec4652ae::t_3c8e32ca174e30 64-65,67
+dev/specs/025-register-config-web/spec.md
+  s_eefe1fec4652ae::t_497f088081a570 167-169
+  s_eefe1fec4652ae::t_06a924864515c8 340
+  s_eefe1fec4652ae::t_4dd299b50fd4cd 259-260
+  s_eefe1fec4652ae::t_31e3a16ff4fd9a 198,200-202,204-206,208,214,217
+  s_eefe1fec4652ae::t_aecd59ce8604d2 353-354
+  s_eefe1fec4652ae::t_99a50c2cdf2dcc 339,341
+  s_eefe1fec4652ae::t_7f85545dd0f814 306-312
+  s_eefe1fec4652ae::t_1d2cc27838e1e4 369-373
+  s_eefe1fec4652ae::t_b40f4466e5a2bb 318-321,325-326
+dev/specs/025-register-config-web/contracts/web-interface.md
+  s_eefe1fec4652ae::t_d844ce331b2d48 43-47
+  s_eefe1fec4652ae::t_d5686e45b7424f 56
+dev/specs/025-register-config-web/tasks.md
+  s_eefe1fec4652ae::t_3df1cf0f94c945 74
+  s_eefe1fec4652ae::t_9b28e43aa97009 96,98-100
+  s_eefe1fec4652ae::t_00a004723697eb 113
+  s_eefe1fec4652ae::t_2ad95340496477 116
+  s_eefe1fec4652ae::t_ed5fd6b3837ac6 51
+  s_eefe1fec4652ae::t_03bd9bc542e015 44
+  s_eefe1fec4652ae::t_376c1a09b55540 73
+dev/specs/025-register-config-web/alignment-check.md
+  s_eefe1fec4652ae::t_dfc991235f3665 26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ab4afc737fe0feaa2650c6200bdcaa1e1ce1660",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
