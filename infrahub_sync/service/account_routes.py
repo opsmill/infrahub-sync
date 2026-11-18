@@ -1,233 +1,202 @@
-"""The routes of the local accounts of the Sync API: sign-in and sign-out.
+"""The routes of the local accounts of the Sync API (spec 022, contracts/http-api.md).
 
-``account_router`` builds every route of this module, and ``app.py`` mounts it once. A route
-reads the product store, the clock and the audit record through the ``RunService`` it is given,
-when a request arrives and never when the router is built.
+``account_router`` builds every route of this module, and ``app.py`` mounts it once:
 
-The functions that a later account route needs are public and take the service first:
+- ``POST /auth/sign-in`` and ``POST /auth/sign-out``;
+- ``/accounts`` and ``/accounts/{name}``, for an administrator;
+- ``/me/password`` and ``/me/tokens``, for the account of the caller.
 
-- ``sign_in_refused_until``, ``record_failed_sign_in`` and ``clear_failed_sign_ins`` count the
-  failed sign-ins of one name (research R6);
-- ``verify_account_password`` checks a password through the gate that limits the checks running
-  at the same time (research R2);
-- ``account_resource`` builds what an answer shows of an account.
+A route calls one function of ``account_actions``, which holds the requests, the answers and the
+actions. A route reads the product store, the clock and the audit record through the
+``RunService`` it is given, when a request arrives and never when the router is built.
 
-No function of this module puts a password, a session token, a digest or a hash in a log line, an
-exception or an audit record. The session token is in one place: the answer of a sign-in.
+An ``/accounts`` route checks that the caller is an administrator in a dependency, so the refusal
+comes before the request body is read.
 """
 
 from collections.abc import Callable
-from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends, Query, Request
 
-from infrahub_sync.product_store import Account
-from infrahub_sync.product_store.accounts import SIGN_IN_NAME_MAX_LENGTH, name_key
+from infrahub_sync.client.models import REASON_MAX_LENGTH
 
-from . import credentials
+from . import account_actions as actions
+from .account_actions import (
+    PASSWORD_MAX_LENGTH,
+    AccountResource,
+    AccountState,
+    ChangePasswordRequest,
+    CreateAccountRequest,
+    CreatedTokenResource,
+    CreateTokenRequest,
+    SessionResource,
+    SetPasswordRequest,
+    SignInRequest,
+    TokenResource,
+    UnlockRequest,
+    UpdateAccountRequest,
+    account_resource,
+    clear_failed_sign_ins,
+    is_countable_name,
+    record_failed_sign_in,
+    sign_in_refused,
+    sign_in_refused_until,
+    verify_account_password,
+)
 from .auth import Principal
-from .events import ACCOUNT_SIGNED_IN, ACCOUNT_SIGNED_OUT
 from .models import ErrorEnvelope
-from .service import RunService, ServiceAPIError
-from .settings import session_idle_seconds
+from .service import RunService
 
-# The longest password that is checked. A longer one is refused before any hash is computed, so
-# the size of a request cannot set the cost of a password check.
-PASSWORD_MAX_LENGTH = 1024
-# One message for a wrong name, a wrong password, a disabled account and a name that is refused
-# after repeated failures, so that an answer does not show which of them happened (FR-003).
-SIGN_IN_REFUSED_MESSAGE = "the account name or the password was not accepted"
-SIGN_IN_BUSY_MESSAGE = "too many sign-ins are in progress; try again in a few seconds"
-NOT_A_SESSION_MESSAGE = "this request presents an API token; only a session can be signed out"
+__all__ = [
+    "PASSWORD_MAX_LENGTH",
+    "AccountResource",
+    "CreatedTokenResource",
+    "SessionResource",
+    "SignInRequest",
+    "TokenResource",
+    "account_resource",
+    "account_router",
+    "clear_failed_sign_ins",
+    "is_countable_name",
+    "record_failed_sign_in",
+    "sign_in_refused",
+    "sign_in_refused_until",
+    "verify_account_password",
+]
 
-_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {status: {"model": ErrorEnvelope} for status in (401, 422, 503)}
+
+def _errors(*statuses: int) -> dict[int | str, dict[str, Any]]:
+    """Return the error answers of a route for the OpenAPI document."""
+    return {status: {"model": ErrorEnvelope} for status in statuses}
 
 
-class SignInRequest(BaseModel):
-    """The name and the password of a sign-in.
+_SIGN_IN_ERRORS = _errors(401, 422, 503)
+_ACCOUNT_ERRORS = _errors(401, 403, 404, 409, 422, 503)
+_OWN_ERRORS = _errors(401, 403, 404, 409, 422, 503)
 
-    Neither field has a length rule here: a value that is too long or empty gets the answer of a
-    wrong password, not the answer of a request that does not match the schema. The password is
-    left out of the printed form of the request.
+_Authenticate = Callable[..., Principal]
+_ReasonQuery = Annotated[str | None, Query(min_length=1, max_length=REASON_MAX_LENGTH)]
+
+
+def _sign_in_router(service: RunService, authenticate: _Authenticate) -> APIRouter:
+    """Return the routes that open and end a session."""
+    router = APIRouter()
+
+    @router.post("/auth/sign-in", responses=_SIGN_IN_ERRORS)
+    def sign_in(body: SignInRequest, request: Request) -> SessionResource:
+        """Open a session with an account name and its password; the answer holds the session token once."""
+        return actions.sign_in(service, body, request.url.path)
+
+    @router.post("/auth/sign-out", status_code=204, responses=_SIGN_IN_ERRORS)
+    def sign_out(principal: Annotated[Principal, Depends(authenticate)]) -> None:
+        """End the session of the request; its session token is refused afterwards."""
+        actions.sign_out(service, principal)
+
+    return router
+
+
+def _administrator_router(service: RunService, authenticate: _Authenticate) -> APIRouter:
+    """Return the routes of an administrator on the accounts.
+
+    Every route answers ``403 forbidden`` to a caller that is not an administrator, before any
+    other check of the request.
     """
+    router = APIRouter()
 
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    def administrator(operation: str) -> Any:
+        """Return the dependency that lets an administrator through and records a refusal under this operation."""
 
-    name: str
-    password: str
+        def require(principal: Annotated[Principal, Depends(authenticate)]) -> Principal:
+            actions.require_administrator(service, principal, operation)
+            return principal
 
-    def __repr__(self) -> str:
-        """Show no field: the name is what a caller typed and the password is a secret."""
-        return "SignInRequest()"
+        return Depends(require)
 
-    __str__ = __repr__
+    @router.get("/accounts", responses=_ACCOUNT_ERRORS)
+    def list_accounts(
+        _principal: Annotated[Principal, administrator("list-accounts")], state: AccountState = "all"
+    ) -> list[AccountResource]:
+        """Return the accounts that are not deleted, by name; one state only when ``state`` names it."""
+        return actions.list_accounts(service, state)
 
+    @router.post("/accounts", status_code=201, responses=_ACCOUNT_ERRORS)
+    def create_account(
+        principal: Annotated[Principal, administrator("create-account")], body: CreateAccountRequest
+    ) -> AccountResource:
+        """Create an account with its first password."""
+        return actions.create_account(service, principal, body)
 
-class AccountResource(BaseModel):
-    """What an answer shows of an account: never its identifier and never its password hash."""
+    @router.get("/accounts/{name}", responses=_ACCOUNT_ERRORS)
+    def read_account(_principal: Annotated[Principal, administrator("read-account")], name: str) -> AccountResource:
+        """Return one account by its name, in any letter case."""
+        return actions.read_account(service, name)
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    @router.patch("/accounts/{name}", responses=_ACCOUNT_ERRORS)
+    def update_account(
+        principal: Annotated[Principal, administrator("update-account")], name: str, body: UpdateAccountRequest
+    ) -> AccountResource:
+        """Disable an account, which deletes its tokens and its sessions, or enable it again."""
+        return actions.update_account(service, principal, name, body)
 
-    name: str
-    administrator: bool
-    disabled: bool
-    environment_managed: bool
-    created_at: datetime
-    sign_in_refused_until: datetime | None = None
+    @router.put("/accounts/{name}/password", status_code=204, responses=_ACCOUNT_ERRORS)
+    def set_account_password(
+        principal: Annotated[Principal, administrator("set-account-password")], name: str, body: SetPasswordRequest
+    ) -> None:
+        """Replace the password of an account; every session of the account ends."""
+        actions.set_account_password(service, principal, name, body)
 
+    @router.post("/accounts/{name}/unlock", status_code=204, responses=_ACCOUNT_ERRORS)
+    def unlock_account(
+        principal: Annotated[Principal, administrator("unlock-account")], name: str, body: UnlockRequest | None = None
+    ) -> None:
+        """End the refusal of an account's sign-ins that follows repeated failures."""
+        actions.unlock_account(service, principal, name, None if body is None else body.reason)
 
-class SessionResource(BaseModel):
-    """The answer of a sign-in: the session token, the account and the idle period of a session.
-
-    The token is returned once. The store keeps its digest only.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    token: str
-    account: AccountResource
-    idle_seconds: int
-
-    def __repr__(self) -> str:
-        """Show the account name only, so that no log line or traceback holds the session token."""
-        return f"SessionResource(account={self.account.name!r})"
-
-    __str__ = __repr__
-
-
-def sign_in_refused() -> ServiceAPIError:
-    """Return the one refusal of a sign-in, whatever its cause."""
-    return ServiceAPIError(401, "sign-in-refused", SIGN_IN_REFUSED_MESSAGE)
-
-
-def is_countable_name(name: str) -> bool:
-    """Return whether failed sign-ins are counted for this name: 1 to 64 characters, none of them NUL."""
-    # The lower-case form of a name can be longer than the name, and it is the stored key.
-    # PostgreSQL stores no NUL character in a text, so a name that holds one is never read there.
-    return (
-        0 < len(name) <= SIGN_IN_NAME_MAX_LENGTH
-        and len(name_key(name)) <= SIGN_IN_NAME_MAX_LENGTH
-        and "\x00" not in name
-    )
+    return router
 
 
-def sign_in_refused_until(service: RunService, name: str) -> datetime | None:
-    """Return the time until which a sign-in for this name is refused, or nothing when it is not."""
-    attempt = service.accounts.projection.read_sign_in_attempt(name)
-    if attempt is None or attempt.refused_until is None or attempt.refused_until <= service.accounts.now():
-        return None
-    return attempt.refused_until
+def _own_account_router(service: RunService, authenticate: _Authenticate) -> APIRouter:
+    """Return the routes of the caller on its own account: its password and its API tokens."""
+    router = APIRouter()
+
+    @router.put("/me/password", status_code=204, responses=_OWN_ERRORS)
+    def change_own_password(
+        principal: Annotated[Principal, Depends(authenticate)], body: ChangePasswordRequest
+    ) -> None:
+        """Replace the caller's password; the other sessions of the account end and its tokens stay."""
+        actions.change_own_password(service, principal, body)
+
+    @router.get("/me/tokens", responses=_OWN_ERRORS)
+    def list_own_tokens(principal: Annotated[Principal, Depends(authenticate)]) -> list[TokenResource]:
+        """Return the API tokens of the caller's account, without any value."""
+        return actions.list_own_tokens(service, principal)
+
+    @router.post("/me/tokens", status_code=201, responses=_OWN_ERRORS)
+    def create_own_token(
+        principal: Annotated[Principal, Depends(authenticate)], body: CreateTokenRequest
+    ) -> CreatedTokenResource:
+        """Create an API token for the caller's account; the answer holds its value this once."""
+        return actions.create_own_token(service, principal, body)
+
+    @router.delete("/me/tokens/{token_id}", status_code=204, responses=_OWN_ERRORS)
+    def delete_own_token(
+        principal: Annotated[Principal, Depends(authenticate)], token_id: str, reason: _ReasonQuery = None
+    ) -> None:
+        """Delete one API token of the caller's account; its value is refused afterwards."""
+        actions.delete_own_token(service, principal, token_id, reason)
+
+    return router
 
 
-def record_failed_sign_in(service: RunService, name: str) -> None:
-    """Count one failed sign-in, or one wrong current password, for this name.
-
-    The fifth failure in 15 minutes refuses the name for 15 minutes. A failure for a name that is
-    refused is not counted.
-    """
-    service.accounts.projection.record_sign_in_failure(name, now=service.accounts.now())
-
-
-def clear_failed_sign_ins(service: RunService, name: str) -> bool:
-    """Forget the failed sign-ins of this name, which ends a refusal. Return whether there were any."""
-    return service.accounts.projection.clear_sign_in_attempts(name)
-
-
-def verify_account_password(account: Account | None, password: str) -> bool:
-    """Check a password against the hash of an account, with one hash computation in every case.
-
-    A name with no account and an account with no password are checked against a fixed hash, so
-    the duration of the check does not show whether the account exists. The check holds one place
-    of the gate of the process.
-
-    Raises:
-        ServiceAPIError: ``503 sign-in-busy`` when no place of the gate became free in time.
-    """
-    stored_hash = None if account is None else account.password_hash
-    try:
-        verified = credentials.PASSWORD_VERIFICATION_GATE.verify(
-            password, credentials.no_account_hash() if stored_hash is None else stored_hash
-        )
-    except credentials.SignInBusyError:
-        raise ServiceAPIError(503, "sign-in-busy", SIGN_IN_BUSY_MESSAGE) from None
-    return verified and stored_hash is not None
-
-
-def account_resource(account: Account, *, refused_until: datetime | None = None) -> AccountResource:
-    """Return what an answer shows of an account; ``refused_until`` is a refusal that is in force.
-
-    Raises:
-        ValueError: the account is deleted, so it has no name to show.
-    """
-    if account.name is None:
-        msg = "a deleted account has no resource"
-        raise ValueError(msg)
-    return AccountResource(
-        name=account.name,
-        administrator=account.administrator,
-        disabled=account.disabled,
-        environment_managed=account.environment_managed,
-        created_at=account.created_at,
-        sign_in_refused_until=refused_until,
-    )
-
-
-def _sign_in(service: RunService, body: SignInRequest, path: str) -> SessionResource:
-    """Open a session for the account of a name and a password, or refuse with one answer."""
-    name = body.name
-    if not is_countable_name(name) or not 0 < len(body.password) <= PASSWORD_MAX_LENGTH:
-        # No account can have this name or this password. Nothing is read, checked or written.
-        raise sign_in_refused()
-    if sign_in_refused_until(service, name) is not None:
-        # Before the password check: the attempt is not counted and the refusal does not move.
-        service.record_authentication_refusal(path, "sign-in-refused")
-        raise sign_in_refused()
-    account = service.accounts.projection.lookup_account_by_name(name)
-    verified = verify_account_password(account, body.password)
-    if account is None or not verified or account.disabled or account.deleted_at is not None:
-        record_failed_sign_in(service, name)
-        # The record holds one reason for every cause, and no name.
-        service.record_authentication_refusal(path, "sign-in-refused")
-        raise sign_in_refused()
-    clear_failed_sign_ins(service, name)
-    token = credentials.new_session_token()
-    service.accounts.projection.create_account_session(
-        account.account_id, digest=credentials.digest(token), now=service.accounts.now()
-    )
-    service.record_account_event(
-        ACCOUNT_SIGNED_IN, actor=account.account_id, account_id=account.account_id, operation="sign-in"
-    )
-    return SessionResource(token=token, account=account_resource(account), idle_seconds=session_idle_seconds())
-
-
-def _sign_out(service: RunService, principal: Principal) -> None:
-    """End the session that the request presented."""
-    if principal.kind != "session" or principal.session_id is None:
-        raise ServiceAPIError(422, "not-a-session", NOT_A_SESSION_MESSAGE)
-    service.accounts.projection.delete_account_session(principal.session_id)
-    service.record_account_event(
-        ACCOUNT_SIGNED_OUT, actor=principal.actor, account_id=principal.actor, operation="sign-out"
-    )
-
-
-def account_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
+def account_router(service: RunService, authenticate: _Authenticate) -> APIRouter:
     """Return the routes of the local accounts (spec 022, contracts/http-api.md).
 
     The routes are synchronous: a password check and a store call block, so each request runs in
     the thread pool.
     """
     router = APIRouter()
-
-    @router.post("/auth/sign-in", responses=_ERROR_RESPONSES)
-    def sign_in(body: SignInRequest, request: Request) -> SessionResource:
-        """Open a session with an account name and its password; the answer holds the session token once."""
-        return _sign_in(service, body, request.url.path)
-
-    @router.post("/auth/sign-out", status_code=204, responses=_ERROR_RESPONSES)
-    def sign_out(principal: Annotated[Principal, Depends(authenticate)]) -> None:
-        """End the session of the request; its session token is refused afterwards."""
-        _sign_out(service, principal)
-
+    router.include_router(_sign_in_router(service, authenticate))
+    router.include_router(_administrator_router(service, authenticate))
+    router.include_router(_own_account_router(service, authenticate))
     return router

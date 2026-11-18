@@ -186,6 +186,18 @@ class VerificationGate:
         with self.place():
             return verify_password(password, stored_hash)
 
+    def hash(self, password: str) -> str:
+        """Return the text to store for a new password, computed while holding one place of the gate.
 
-# The gate of the process: every sign-in route verifies through it.
+        A hash costs the memory of a verification, so both share the places of the gate.
+
+        Raises:
+            SignInBusyError: no place became free within the wait.
+        """
+        with self.place():
+            return hash_password(password)
+
+
+# The gate of the process: every sign-in route verifies through it, and every route that stores a
+# new password hashes through it.
 PASSWORD_VERIFICATION_GATE = VerificationGate()

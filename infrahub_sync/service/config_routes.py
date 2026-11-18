@@ -55,7 +55,7 @@ from .paging import (
     timestamp_key,
     version_key,
 )
-from .service import ServiceAPIError
+from .service import REASON_REFUSED_MESSAGE, ServiceAPIError, is_free_text
 
 CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # Most findings one validation-report page returns, and the default page size.
@@ -400,7 +400,27 @@ class ConfigurationRoutes:
         ``config_id`` names the configuration a refused version request was for; a refused
         registration has none yet.
         """
-        self._audit(actor, operation, reason, "refused-authorization", config_id)
+        self._audit(actor, operation, self._recordable(reason), "refused-authorization", config_id)
+
+    @_provider_error_boundary
+    def require_safe_reason(
+        self, actor: str, operation: str, reason: str | None, *, config_id: str | None = None
+    ) -> None:
+        """Refuse a ``reason`` that holds a secret of the process or the prefix of a token.
+
+        The check runs before anything records the reason, and the event of the refusal holds no
+        reason.
+
+        Raises:
+            ServiceAPIError: ``422 secret-parameter-refused``.
+        """
+        if self._recordable(reason) != reason:
+            self._audit(actor, operation, None, "refused-secret-parameter", config_id)
+            raise ServiceAPIError(422, "secret-parameter-refused", REASON_REFUSED_MESSAGE)
+
+    def _recordable(self, reason: str | None) -> str | None:
+        """Return the reason when a record can hold it as it was sent, else nothing."""
+        return reason if reason is None or is_free_text(reason, self._secrets) else None
 
     def _audit(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -464,6 +484,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         if not principal.administrator:
             routes.audit_refusal(principal.actor, "register-config", body.reason)
             raise ServiceAPIError(403, "forbidden", "administrator access is required")
+        routes.require_safe_reason(principal.actor, "register-config", body.reason)
         status, content = routes.mutate(
             actor=principal.actor,
             idempotency_key=key,
@@ -485,6 +506,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         if not principal.administrator:
             routes.audit_refusal(principal.actor, "create-config-version", body.reason, config_id=config_id)
             raise ServiceAPIError(403, "forbidden", "administrator access is required")
+        routes.require_safe_reason(principal.actor, "create-config-version", body.reason, config_id=config_id)
         status, content = routes.mutate(
             actor=principal.actor,
             idempotency_key=key,

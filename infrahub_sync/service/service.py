@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import threading
 from collections import OrderedDict
@@ -43,6 +44,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.product_store.configs import CONFIGURATION_NOT_FOUND_REASON, CONFIGURATION_VERSION_NOT_FOUND_REASON
 from infrahub_sync.product_store.models import (
+    ACCOUNT_ID_PATTERN,
     RUN_ALREADY_CANCELLED_MESSAGE,
     RUN_CANCELLED_MESSAGE,
     RunApproval,
@@ -50,6 +52,7 @@ from infrahub_sync.product_store.models import (
     not_approvable_message,
 )
 
+from .credentials import contains_token_prefix
 from .events import RUN_CANCELLED, account_event, run_decision_type, run_event
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
@@ -321,12 +324,34 @@ class _PlanLayoutCache:
                 self._operations -= len(dropped)
 
 
+REASON_REFUSED_MESSAGE = "reason must not contain a secret or a token"
+
+
+def is_free_text(value: str, secrets: Sequence[str]) -> bool:
+    """Return whether a free-text value of a request can be recorded as it was sent.
+
+    It cannot when it holds a secret that the process knows, or the prefix of an API token or of
+    a session token: the store holds only the digest of a token, so the process cannot list them.
+    """
+    return redact(value, secrets) == value and not contains_token_prefix(value)
+
+
 @dataclass(frozen=True)
 class AccountAccess:
-    """What the account routes use of the service: the product store and the clock of the service."""
+    """What the account routes use of the service: the product store, the clock and the free-text check."""
 
     projection: ProductProjection
     now: Callable[[], datetime]
+    secrets: tuple[str, ...] = ()
+
+    def accepts_free_text(self, value: str) -> bool:
+        """Return whether a free-text value holds no secret of the process and no token prefix."""
+        return is_free_text(value, self.secrets)
+
+    def account_identifier(self, name: str) -> str | None:
+        """Return the identifier of the account that has this name, in any letter case, or nothing."""
+        account = self.projection.lookup_account_by_name(name)
+        return None if account is None else account.account_id
 
 
 class RunService:
@@ -357,17 +382,30 @@ class RunService:
     @property
     def accounts(self) -> AccountAccess:
         """Return the product store and the clock, for the account routes."""
-        return AccountAccess(projection=self._projection, now=self._clock)
+        return AccountAccess(projection=self._projection, now=self._clock, secrets=self._secrets)
 
     def record_account_event(
-        self, event_type: str, *, actor: str, account_id: str, operation: str, reason: str | None = None
+        self,
+        event_type: str,
+        *,
+        actor: str,
+        account_id: str,
+        operation: str,
+        reason: str | None = None,
+        outcome: str = "accepted",
     ) -> None:
         """Record the event of an account action that ``actor`` made on the account ``account_id``.
 
         Both are account identifiers. The event holds no password and no token value.
         """
         event = account_event(
-            event_type, actor=actor, account_id=account_id, operation=operation, reason=reason, created_at=self._clock()
+            event_type,
+            actor=actor,
+            account_id=account_id,
+            operation=operation,
+            reason=reason,
+            outcome=outcome,
+            created_at=self._clock(),
         )
         self._projection.record_audit(event, secrets=self._secrets)
 
@@ -375,6 +413,7 @@ class RunService:
         self, request: CreateRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Reserve one product identity and accept its first service execution."""
+        self._require_safe_reason(principal.actor, request.operation, request.reason)
         self._require_non_secret_parameters(
             principal.actor,
             request.operation,
@@ -509,6 +548,7 @@ class RunService:
         self, run_id: str, request: VerifyRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Accept an independently auditable, read-only verification."""
+        self._require_safe_reason(principal.actor, "verify", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "verify", request.reason)
         body = request.model_dump(mode="json")
         # The branch the run was created for, so the destination-binding check compares the
@@ -546,6 +586,7 @@ class RunService:
         self, run_id: str, request: ApplyRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Accept apply only for the exact reviewed retained plan."""
+        self._require_safe_reason(principal.actor, "apply", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "apply", request.reason)
         body = request.model_dump(mode="json")
         parameters = self._stage_parameters(
@@ -628,6 +669,7 @@ class RunService:
         checksum of the plan it saved before its apply part (FR-017).
         """
         operation = "resume"
+        self._require_safe_reason(principal.actor, operation, request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, operation, request.reason)
         body = request.model_dump(mode="json")
         # The branch the run was planned against, as `verify` uses: the saved plan's destination.
@@ -830,6 +872,7 @@ class RunService:
         order of the HTTP contract, and the approval is stored in the same store transaction
         that completes the request's receipt, so a retry with the same key replays the body.
         """
+        self._require_safe_reason(principal.actor, "approve", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "approve", request.reason)
         body = request.model_dump(mode="json")
         existing = self._lookup_existing_receipt(
@@ -990,6 +1033,7 @@ class RunService:
         ``cancelled`` in one store transaction and nothing is sent to Prefect (``200``). A run
         already cancelled, or in any other phase with nothing running, is refused (``409``).
         """
+        self._require_safe_reason(principal.actor, "cancel", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "cancel", request.reason)
         body = request.model_dump(mode="json")
         receipt = self._lookup_existing_receipt(
@@ -1446,7 +1490,7 @@ class RunService:
                 run_id=run_id,
                 config_id=config_id,
                 event_types=event_types,
-                related=tuple(_related_resource(value) for value in related),
+                related=tuple(self._stored_related(_related_resource(value)) for value in related),
                 since=since,
                 until=until,
             )
@@ -1455,6 +1499,19 @@ class RunService:
             raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
         page = self._projection.list_events(filters, limit=page_size, offset=offset)
         return public_event_page(page.items, limit=page_size, offset=offset, has_more=page.has_more)
+
+    def _stored_related(self, resource: RelatedResource) -> RelatedResource:
+        """Return the related resource as the store holds it: an account by its identifier.
+
+        A caller names an account by its name. A value that is an identifier is used as it is. A
+        name that no account has is used as it is too: a record made before the accounts existed
+        holds a plain name, and any other record does not match it.
+        """
+        # PostgreSQL stores no NUL character in a text, so a name that holds one is never read there.
+        if resource.kind != "account" or re.fullmatch(ACCOUNT_ID_PATTERN, resource.id) or "\x00" in resource.id:
+            return resource
+        account_id = self.accounts.account_identifier(resource.id)
+        return resource if account_id is None else RelatedResource(kind="account", id=account_id)
 
     async def read_run_logs(
         self, run_id: str, *, stage: str | None = None, limit: int = DEFAULT_LOG_LIMIT, offset: int = 0
@@ -2121,7 +2178,7 @@ class RunService:
         **parameters: str | None,
     ) -> None:
         for name, value in parameters.items():
-            if value is not None and redact(value, self._secrets) != value:
+            if value is not None and not is_free_text(value, self._secrets):
                 raise self._refusal(
                     422,
                     "secret-parameter-refused",
@@ -2132,6 +2189,26 @@ class RunService:
                     reason=reason,
                     outcome="refused-secret-parameter",
                 )
+
+    def _require_safe_reason(
+        self, actor: str, operation: str, reason: str | None, *, run_id: str | None = None
+    ) -> None:
+        """Refuse a ``reason`` that holds a secret of the process or the prefix of a token.
+
+        The check runs before anything records the reason. The event of the refusal holds no
+        reason: a token that the process cannot list would otherwise be stored as it was sent.
+        """
+        if reason is not None and not is_free_text(reason, self._secrets):
+            raise self._refusal(
+                422,
+                "secret-parameter-refused",
+                REASON_REFUSED_MESSAGE,
+                run_id=run_id,
+                actor=actor,
+                operation=operation,
+                reason=None,
+                outcome="refused-secret-parameter",
+            )
 
     def _refusal(
         self,

@@ -701,8 +701,13 @@ def test_authentication_idempotency_and_secret_boundaries(
         assert response.json()["error"]["code"] == "unauthenticated"
         assert response.headers["WWW-Authenticate"] == "Bearer"
 
-    first = _create(client, reason=f"requested because {ADMIN_TOKEN}", authorization=f"Bearer    {OWNER_TOKEN}")
-    replay = _create(client, reason=f"requested because {ADMIN_TOKEN}")
+    # A reason that holds the token of `admin` is refused before the request reserves its key,
+    # and the event of the refusal holds no reason.
+    assert (
+        _create(client, reason=f"requested because {ADMIN_TOKEN}").json()["error"]["code"] == "secret-parameter-refused"
+    )
+    first = _create(client, reason="requested by the owner", authorization=f"Bearer    {OWNER_TOKEN}")
+    replay = _create(client, reason="requested by the owner")
     conflict = _create(client, reason="different reason")
 
     assert first.status_code == replay.status_code == 202
@@ -1860,10 +1865,17 @@ def test_confirmation_schema_errors_and_openapi_contract(
 
     paths = openapi["paths"]
     assert set(paths) == {
+        "/accounts",
+        "/accounts/{name}",
+        "/accounts/{name}/password",
+        "/accounts/{name}/unlock",
         "/auth/sign-in",
         "/auth/sign-out",
         "/events",
         "/me",
+        "/me/password",
+        "/me/tokens",
+        "/me/tokens/{token_id}",
         "/runs",
         "/runs/{run_id}",
         "/runs/{run_id}/plan",

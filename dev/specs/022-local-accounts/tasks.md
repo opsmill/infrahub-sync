@@ -165,22 +165,22 @@ lines of scenario 5.
   is counted; a name over 64 characters writes nothing; the table never exceeds its bound;
   a waiting sign-in answers `503 sign-in-busy`; sign-out ends the session; sign-out with an API
   token answers `422`.
-- [ ] T028 [P] [US1] Write `tests/service/test_account_routes.py` for User Story 1: create,
+- [X] T028 [P] [US1] Write `tests/service/test_account_routes.py` for User Story 1: create,
   list by state, read; a taken name, an invalid name and each reserved name are refused; set
   password ends every session; disable refuses the next request of the password, the session
   and the token, and keeps the name on past runs; enable restores the password and no token;
   unlock ends a refusal; every route answers `403` to a non-administrator; every change to
   `admin` answers `409 environment-managed-account` and names the variable.
-- [ ] T029 [P] [US1] Write `tests/service/test_token_routes.py`: create returns the value once;
+- [X] T029 [P] [US1] Write `tests/service/test_token_routes.py`: create returns the value once;
   list never shows it; a taken name and a past expiry are refused; a deleted token and an
   expired token are refused with their codes; own password change needs the current password,
   ends the other sessions, keeps the tokens, and a wrong current password counts as a failed
   attempt.
-- [ ] T030 [P] [US1] Write `tests/service/test_free_text.py`: a `reason` that contains
+- [X] T030 [P] [US1] Write `tests/service/test_free_text.py`: a `reason` that contains
   `ifs_pat_` or `ifs_ses_` is refused on a run route and a configuration route; a `reason` of
   513 characters is refused; a `reason` equal to the `admin` password is accepted like any other
   text; a `reason` that contains the `admin` token is refused.
-- [ ] T031 [P] [US1] Write `tests/service/test_account_events.py`: each account action writes
+- [X] T031 [P] [US1] Write `tests/service/test_account_events.py`: each account action writes
   one audit event with the type `infrahub_sync.account.<action>`, the identifier of the account
   acted on as a related resource, and no password or token value; a refused sign-in writes no
   name.
@@ -201,16 +201,16 @@ lines of scenario 5.
   `POST /auth/sign-out` as [contracts/http-api.md](contracts/http-api.md) defines them,
   including the fixed-hash verification for a name with no account and the gate of T010; mount
   it in `infrahub_sync/service/app.py`.
-- [ ] T035 [US1] In `infrahub_sync/service/account_routes.py`, add `GET /accounts`,
+- [X] T035 [US1] In `infrahub_sync/service/account_routes.py`, add `GET /accounts`,
   `POST /accounts`, `GET /accounts/{name}`, `PATCH /accounts/{name}` for `disabled` only,
   `PUT /accounts/{name}/password` and `POST /accounts/{name}/unlock`, with the name rule and the
   reserved names of research R8 and the refusal for an environment-managed account.
-- [ ] T036 [US1] In `infrahub_sync/service/account_routes.py`, add `PUT /me/password`,
+- [X] T036 [US1] In `infrahub_sync/service/account_routes.py`, add `PUT /me/password`,
   `GET /me/tokens`, `POST /me/tokens` and `DELETE /me/tokens/{token_id}`.
-- [ ] T037 [US1] Add the account event types to `infrahub_sync/service/events.py` and write
+- [X] T037 [US1] Add the account event types to `infrahub_sync/service/events.py` and write
   each account action's audit event through the existing `record_audit` path, in the
   transaction of the action where the store method allows it.
-- [ ] T038 [US1] In `infrahub_sync/service/service.py` and
+- [X] T038 [US1] In `infrahub_sync/service/service.py` and
   `infrahub_sync/service/config_routes.py`, make the free-text check refuse a value for which
   `contains_token_prefix` is true; give every `reason` field in `infrahub_sync/client/models.py`
   and `infrahub_sync/service/models.py` a maximum length of 512.

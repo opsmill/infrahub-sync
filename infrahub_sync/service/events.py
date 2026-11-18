@@ -33,6 +33,19 @@ CONFIG_VERSION_RETRIEVED = f"{_CONFIG_PREFIX}version_retrieved"
 # The events of the account actions. An action is written with underscores, as every event type is.
 ACCOUNT_SIGNED_IN = f"{_ACCOUNT_PREFIX}signed_in"
 ACCOUNT_SIGNED_OUT = f"{_ACCOUNT_PREFIX}signed_out"
+ACCOUNT_CREATED = f"{_ACCOUNT_PREFIX}created"
+ACCOUNT_DISABLED = f"{_ACCOUNT_PREFIX}disabled"
+ACCOUNT_ENABLED = f"{_ACCOUNT_PREFIX}enabled"
+# An administrator set the password of an account.
+ACCOUNT_PASSWORD_SET = f"{_ACCOUNT_PREFIX}password_set"
+# An account changed its own password.
+ACCOUNT_PASSWORD_CHANGED = f"{_ACCOUNT_PREFIX}password_changed"
+# An administrator ended the refusal that follows repeated failed sign-ins.
+ACCOUNT_UNLOCKED = f"{_ACCOUNT_PREFIX}unlocked"
+ACCOUNT_TOKEN_CREATED = f"{_ACCOUNT_PREFIX}token_created"
+ACCOUNT_TOKEN_DELETED = f"{_ACCOUNT_PREFIX}token_deleted"
+# A request for an account action that was refused: its outcome says why.
+ACCOUNT_REFUSED = f"{_ACCOUNT_PREFIX}refused"
 
 
 def _decision_action(outcome: str) -> str | None:

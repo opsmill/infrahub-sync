@@ -84,6 +84,8 @@ _LEGAL_EXECUTION_VERDICTS = {
 }
 _REGISTRY_VERSION_MESSAGE = "registry_version must be an integer in the registry allocatable range"
 _REASON_MESSAGE = "reason must be printable and trimmed"
+# The longest reason a request can give for an action.
+REASON_MAX_LENGTH = 512
 _JSON_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
 _ARTIFACT_TIME_MESSAGE = "artifact-reference timestamps must include a timezone"
 _EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"
@@ -120,7 +122,7 @@ class CreateRunRequest(_RequestModel):
     registry_version: int
     branch: str | None = None
     confirm_writes: bool = False
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
     @field_validator("registry_version", mode="before")
     @classmethod
@@ -133,7 +135,7 @@ class CreateRunRequest(_RequestModel):
 class VerifyRunRequest(_RequestModel):
     """Request verification of a saved run plan."""
 
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class ApplyRunRequest(_RequestModel):
@@ -148,7 +150,7 @@ class ApplyRunRequest(_RequestModel):
     confirm_writes: bool = False
     confirm_left_out: StrictBool = False
     branch: str | None = None
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
     # No return annotation on purpose: with one, Pydantic replaces the model's serialization
     # JSON schema (and so the OpenAPI document) with a bare object.
@@ -164,13 +166,13 @@ class ApproveRunRequest(_RequestModel):
     """Request approval of a run's saved plan, bound to the reviewed checksum, without applying it."""
 
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class CancelRunRequest(_RequestModel):
     """Request cancellation of an accepted run."""
 
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class ResumeRunRequest(_RequestModel):
@@ -183,7 +185,7 @@ class ResumeRunRequest(_RequestModel):
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirm_writes: bool = False
     confirm_left_out: StrictBool = False
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class ConfigMutationRequest(_RequestModel):
@@ -191,7 +193,7 @@ class ConfigMutationRequest(_RequestModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
     package: dict[str, Any]
-    reason: str | None = Field(default=None, min_length=1, max_length=512)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
     @field_validator("reason")
     @classmethod
