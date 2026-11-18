@@ -127,6 +127,8 @@ function PasswordSection({ name }: { name: string }) {
   const edit = (set: (value: string) => void) => (value: string) => {
     set(value);
     setProblem(undefined);
+    // A refusal of the Sync API is about the passwords as they were sent, so an edit clears it.
+    setError(undefined);
     setDone(false);
   };
 
@@ -242,7 +244,7 @@ function TokensSection({ readOnly }: { readOnly: boolean }) {
         <EmptyPanel title="No API tokens">
           <p className="text-foreground-muted">
             {readOnly
-              ? "The environment of the Sync service sets the token of this account."
+              ? "This account has no API token. Only the environment of the Sync service can set one."
               : "Create a token for each script, so you can delete one without stopping the others."}
           </p>
         </EmptyPanel>

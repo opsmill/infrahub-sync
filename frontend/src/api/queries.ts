@@ -233,16 +233,30 @@ export const runLogQuery = (runId: string, stage: string) =>
 /** The states `GET /accounts` filters on. */
 export type AccountState = "active" | "disabled" | "all";
 
-/** The API tokens of the signed-in account, oldest first. */
-export const myTokensQuery = () => $api.queryOptions("get", "/me/tokens");
+/**
+ * The API tokens of the signed-in account, oldest first. The account lists poll as the other lists
+ * do, so a change made by another administrator or in another tab shows up.
+ */
+export const myTokensQuery = () =>
+  $api.queryOptions("get", "/me/tokens", {}, { refetchInterval: poll(LIST_REFRESH_MS) });
 
 /** Every account in a state, by name. Only an administrator can read it. */
 export const accountsQuery = (state: AccountState) =>
-  $api.queryOptions("get", "/accounts", { params: { query: { state } } });
+  $api.queryOptions(
+    "get",
+    "/accounts",
+    { params: { query: { state } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
 
 /** The API tokens of another account, oldest first. Only an administrator can read them. */
 export const accountTokensQuery = (name: string) =>
-  $api.queryOptions("get", "/accounts/{name}/tokens", { params: { path: { name } } });
+  $api.queryOptions(
+    "get",
+    "/accounts/{name}/tokens",
+    { params: { path: { name } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
 
 /** The newest run of each configuration, from one page of `GET /runs`. */
 export function latestRunByConfig(runs: Run[]): Map<string, Run> {
@@ -475,7 +489,7 @@ const ACCOUNT_ERRORS: Record<string, { title: string; detail?: string }> = {
   "environment-managed-account": {
     title: "The deployment's environment defines the admin account",
     detail:
-      "Its password and its token are set in the environment of the Sync service, and it is always an active administrator.",
+      "The environment of the Sync service defines this account, which is always an active administrator. Change its password or its token there.",
   },
   "account-name-taken": {
     title: "An account with this name exists",
