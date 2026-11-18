@@ -164,7 +164,11 @@ other flow run of that deployment. Research R1 of spec 021 records why.
 - **The API process checks what the worker cannot.** At start-up, `ScheduleService.start` stops
   each active schedule whose owner's actor no longer exists, or that writes to the default
   branch while `INFRAHUB_SYNC_REQUIRE_APPROVAL` is on, and writes the `schedule.stopped` event.
-  The worker has no API token and does not read either setting.
+  The worker has no API token and cannot check the owner's actor. It does read
+  `INFRAHUB_SYNC_REQUIRE_APPROVAL` from its own environment: `decide_start` refuses a start of a
+  schedule that writes to the default branch while it is on, and the admission stops the schedule
+  with the reason `approval-required` (research R6 of spec 021). When the stop step of
+  `ScheduleService.start` fails on a store error, it is tried three times, then logged.
 - **The worker admits the start.** A flow run that carries `schedule_id` and no `run_id` takes
   the second way into `service_sync_run` (`service/flow.py`). The flow refuses it unless Prefect's
   scheduler created it (`auto_scheduled`). `admit_scheduled_start`

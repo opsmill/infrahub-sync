@@ -315,7 +315,9 @@ schedule that is not deleted for each name and for each configuration.
 
 The store saves the end of a scheduled run and the schedule's count of failed runs in one
 transaction. At the fifth failed run in a row, the same transaction stops the schedule and saves
-its `infrahub_sync.schedule.stopped` event.
+its `infrahub_sync.schedule.stopped` event. When the worker handles a start of a schedule that writes to the default
+branch while approval is required, the transaction that records the start also stops the schedule
+with the reason `approval-required` and saves its event.
 
 The table `schedule_branches` holds one row for each run with branch review: the schedule, the
 run, the branch, the proposed change once the run opened one, the state and, for a replaced row,
@@ -327,7 +329,7 @@ the run that replaced it. The states are:
 | `open` | The run wrote to the branch and opened its proposed change. |
 | `removed` | The run deleted its own branch, because its plan had no change. |
 | `replaced` | A later run of the schedule closed the proposed change, if any, and deleted the branch. |
-| `kept` | A person merged or closed the proposed change. The schedule never touches it again. |
+| `kept` | A person merged, closed or deleted the proposed change. The schedule never touches it again. |
 
 Because the `pending` row is written before the branch exists, a run that fails, is interrupted
 or is cancelled never leaves a branch that no record names. The next successful run of the

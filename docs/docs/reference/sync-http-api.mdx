@@ -894,14 +894,14 @@ The event types are:
 | `infrahub_sync.config.refused`, `.replayed`, `.unavailable` | The same decisions as for a run, on a configuration request. |
 | `infrahub_sync.schedule.created`, `.changed`, `.paused`, `.resumed`, `.deleted`, `.taken_over` | The Sync API accepted a request on a schedule. `operation` is `schedule-create`, `schedule-change`, `schedule-pause`, `schedule-resume`, `schedule-delete` or `schedule-take-over`. |
 | `infrahub_sync.schedule.refused`, `.replayed` | The Sync API refused a request on a schedule, or a retry with the same idempotency key received the stored answer. `outcome` names the cause of a refusal. |
-| `infrahub_sync.schedule.start_skipped` | A start created no run, because a run of the configuration was in progress, a proposed change of the schedule was approved and not merged, or another start was waiting. `outcome` is `skipped-run-in-progress`, `skipped-approved-change-open` or `skipped-start-waiting`; `run_id` names the run in progress, or the run that opened the approved proposed change. |
+| `infrahub_sync.schedule.start_skipped` | A start created no run, because a run of the configuration was in progress, a proposed change of the schedule was approved and not merged, another start was waiting, or the schedule writes to the default branch while the worker's `INFRAHUB_SYNC_REQUIRE_APPROVAL` is on. `outcome` is `skipped-run-in-progress`, `skipped-approved-change-open`, `skipped-start-waiting` or `skipped-approval-required`; `run_id` names the run in progress, or the run that opened the approved proposed change. After `skipped-approval-required`, the schedule is stopped. |
 | `infrahub_sync.schedule.start_queued` | A start waits for the run in progress to end, under the `queue` policy. `outcome` is `queued`. |
 | `infrahub_sync.schedule.start_missed` | A start passed while the worker or the task manager was not running. `outcome` is `missed-started-late` when a late run started, with its `run_id`, and `missed-skipped` otherwise. |
 | `infrahub_sync.schedule.start_failed` | A start created no run, for example because the configuration version can no longer be run. `outcome` is `failed` and `details.cause` holds the reason. |
-| `infrahub_sync.schedule.stopped` | A schedule moved to the state `stopped`. `outcome` is the reason: `owner-not-found`, `approval-required` or `repeated-failures`. Recorded when the Sync API starts, by a resume or a take-over that found the reason, or with the end of the fifth failed run in a row, whose `run_id` it names. |
+| `infrahub_sync.schedule.stopped` | A schedule moved to the state `stopped`. `outcome` is the reason: `owner-not-found`, `approval-required` or `repeated-failures`. Recorded when the Sync API starts, by a resume or a take-over that found the reason, by the worker when it handles a start of a schedule that writes to the default branch while approval is required, or with the end of the fifth failed run in a row, whose `run_id` it names. |
 | `infrahub_sync.schedule.proposed_change_opened` | A run with branch review opened its proposed change. `outcome` is `opened`. |
 | `infrahub_sync.schedule.proposed_change_replaced` | A run closed an earlier proposed change of the schedule, or deleted an earlier branch that had none. One event for each. `outcome` is `replaced`. |
-| `infrahub_sync.schedule.proposed_change_kept` | An earlier proposed change was left in place because a person merged, closed or approved it. `outcome` is `kept-merged`, `kept-closed` or `kept-approved`. |
+| `infrahub_sync.schedule.proposed_change_kept` | An earlier proposed change was left in place because a person merged, closed, deleted or approved it. `outcome` is `kept-merged`, `kept-closed`, `kept-missing` or `kept-approved`. |
 | `infrahub_sync.schedule.proposed_change_failed` | Opening the proposed change, or replacing an earlier one, failed. `outcome` is `failed` and `details.cause` holds the failure class. The result of the write does not change. |
 
 A start that creates a run on time records no schedule event: the run's own events name the
@@ -942,8 +942,8 @@ is `null` or absent:
     - a `sync` that stopped after its plan for a review of the left-out records:
       `left_out_review_required`;
     - the branch and the proposed change of a scheduled run that writes to a branch for review:
-      `destination_default_branch_not_main`, `branch_create_failed`, `branch_delete_failed`,
-      `proposed_change_open_failed`, `proposed_change_read_failed`,
+      `destination_default_branch_not_main`, `branch_list_failed`, `branch_create_failed`,
+      `branch_delete_failed`, `proposed_change_open_failed`, `proposed_change_read_failed`,
       `proposed_change_close_failed`;
     - any other error: `internal_error`.
 - `system`: `{"role": "source" or "destination", "adapter": <name>}`.
@@ -1453,7 +1453,7 @@ The schedule routes answer these refusals:
 | 409 | `approval-required-for-schedule` | `write_target` is `default-branch` and the Sync API requires approval. |
 | 409 | `schedule-branch-declared` | `write_target` is `branch-review` and the configuration version declares its own destination branch. |
 | 409 | `schedule-deleted` | A change, pause, resume or take-over of a deleted schedule. |
-| 409 | `schedule-stopped` | A resume of a stopped schedule whose reason still holds, or of a paused schedule that the resume stopped. The message names the reason and the action it needs. |
+| 409 | `schedule-stopped` | A resume of a stopped schedule whose reason still holds, or of a paused or stopped schedule that the resume stopped for another reason. The message names the reason and the action it needs. |
 | 409 | `schedule-changed` | Another request changed the schedule during each of three attempts to save this one. Send the request again. |
 | 409 | `idempotency-conflict`, `idempotency-in-progress` | As for the other routes; see [Idempotency and retries](#idempotency-and-retries). |
 | 422 | `schedule-cron-invalid` | The cron expression is not valid or does not have five fields. |
@@ -1465,9 +1465,10 @@ The schedule routes answer these refusals:
 | 503 | `configuration-version-invalid` | The registered configuration version cannot be read. |
 | 503 | `orchestration-unavailable` | The schedule is stored and the task manager could not be reached. It starts no run until a later request on a schedule, or a restart of the Sync API, hands it over. |
 
-A resume of a paused schedule whose owner's actor no longer exists, or that writes to the
-default branch while the service requires approval, stores the schedule as stopped with that
-reason and answers `409 schedule-stopped`. A take-over of a schedule stopped for
+A resume of a paused schedule, or of a stopped schedule whose reason no longer holds (also
+`repeated-failures`), whose owner's actor no longer exists, or that writes to the default branch
+while the service requires approval, stores the schedule as stopped with that reason and answers
+`409 schedule-stopped`. A take-over of a schedule stopped for
 `owner-not-found` makes it active, unless it writes to the default branch while the service
 requires approval: it then stays stopped with the reason `approval-required`.
 

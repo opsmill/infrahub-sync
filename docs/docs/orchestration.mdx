@@ -105,7 +105,8 @@ A schedule closes only the proposed changes and deletes only the branches that i
 - When a person approved a proposed change of the schedule and has not merged it, the schedule
   starts no run. Each start is recorded as skipped with the outcome `skipped-approved-change-open`.
   After a person merges or closes that proposed change, the next start runs.
-- A proposed change that a person merged or closed is never touched again.
+- A proposed change that a person merged, closed or deleted is never touched again, and neither
+  is its branch. A deleted proposed change is recorded with the outcome `kept-missing`.
 - When a run fails or is interrupted after it created its branch, the earlier proposed change
   stays open. The next successful run deletes the branch of the failed run.
 
@@ -141,6 +142,13 @@ The Sync API refuses this write target while it requires approval
 (`approval-required-for-schedule`); the message names `INFRAHUB_SYNC_REQUIRE_APPROVAL`. When the
 Sync API is restarted with approval required, it stops each schedule that writes to the default
 branch with the reason `approval-required`.
+
+The worker checks the same setting, from its own environment, before each scheduled run. When
+approval is required, a start of a schedule that writes to the default branch creates no run: it
+is recorded as `infrahub_sync.schedule.start_skipped` with the outcome
+`skipped-approval-required`, and the schedule stops with the reason `approval-required`. Set
+`INFRAHUB_SYNC_REQUIRE_APPROVAL` to the same value on the Sync API and on every worker; the
+Compose deployment does this.
 
 ### The left-out setting
 
@@ -196,14 +204,18 @@ and the action it needs:
 | Reason | When | What to do |
 | --- | --- | --- |
 | `owner-not-found` | The owner's actor no longer exists on the Sync API when the Sync API starts. | An administrator takes the schedule over with `infrahub-sync schedules take-over`, or the owner's actor is restored and the schedule is resumed. |
-| `approval-required` | The schedule writes to the default branch and the Sync API requires approval. | Change the write target to `branch-review`. |
+| `approval-required` | The schedule writes to the default branch and the Sync API requires approval, when the Sync API starts, when a resume finds it, or when the worker handles a start. | Change the write target to `branch-review`. |
 | `repeated-failures` | Five runs in a row failed, were interrupted or ended ambiguous. | Check the last runs of the schedule, then resume it. |
 
 A run that succeeds or ends with no change sets the count of failed runs back to zero. A skipped
 or missed start, a run that a person cancelled and a run that stopped for a review of records left
-out do not change the count. A resume of a schedule stopped for `repeated-failures` always
-succeeds and sets the count to zero. A resume of a schedule stopped for another reason is refused
-with `schedule-stopped` while the reason still holds.
+out do not change the count. A resume of a schedule stopped for another reason is refused with
+`schedule-stopped` while the reason still holds. A resume also checks the other reasons: when the
+owner's actor no longer exists, or the schedule writes to the default branch while approval is
+required, the resume of a paused schedule or of a schedule stopped for `repeated-failures` is
+refused with `schedule-stopped`, and the schedule stops with that reason. Otherwise a resume of a
+schedule stopped for `repeated-failures` succeeds. A stopped schedule that becomes active has its
+count set to zero.
 
 ## Change, pause, resume, delete and take over a schedule
 
