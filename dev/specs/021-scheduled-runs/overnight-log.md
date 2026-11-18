@@ -93,3 +93,18 @@ this session.
   branch and is not small, take `default-branch` out of `serve.py` and untick T041. Also search for
   the old bootstrap statement in tasks, docstrings, knowledge pages and the report.
 - **Next**: following the answer.
+- Review of `066898b3..HEAD` (the fix pass, the rebase and tonight's commits), read-only:
+  every approval path is safe where the worker reads `INFRAHUB_SYNC_REQUIRE_APPROVAL`; Prefect's
+  delete on a schedule change removes only auto-scheduled runs, so a person's submitted run is
+  never removed; `create_scheduled_runs` creates runs only for active Prefect schedules, and the
+  worker refuses any that does not match an active Sync schedule. One critical finding, on
+  Kubernetes only: the chart does not pass the setting to the worker (other repository; under
+  Blocked). Four low findings, not fixed. The startup stop docstring was corrected.
+- Corrected the old bootstrap statement in `research.md`, `plan.md`, `bootstrap.py` and a test
+  docstring, and quickstart section 5 step 1 (7-minute delay, 10-minute schedule), in `0f91ed11`.
+  Final checks on that tree: lint passes, unit tier `9631 passed, 4 skipped`, PostgreSQL tier
+  `287 passed`.
+- Final run on the stack after restarting `sync-api` and `sync-worker` with the final code:
+  integration test `1 passed` (2026-11-18T18:30Z); both smoke tests `2 passed in 228.46s`
+  (2026-11-18T18:34:17Z). `docs.generate` changes nothing and `docs.docusaurus` builds.
+- Morning report written: [morning-report.md](morning-report.md).

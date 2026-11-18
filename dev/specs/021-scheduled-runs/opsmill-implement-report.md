@@ -1,19 +1,20 @@
 # Implementation report: Scheduled runs that write without a person present
 
-**Status**: INCOMPLETE. All 13 chunks ran and every test written locally passed. Five tasks stay
-open, because each needs a development stack that runs this branch, and the two write targets are
-still refused for users.
+**Status**: all 63 tasks done on 2026-11-18, after the rebase onto `feature/v3-develop`. Both write
+targets are turned on, and both were observed end to end on a development stack of this branch.
+Section 8 describes the work after the rebase. Sections 1 to 7 describe the state on 2026-11-18
+before the rebase: their commit SHAs no longer exist on the branch (the rebase rewrote them; the
+commit subjects are unchanged), and their statements that the write targets are off and that five
+tasks are open are no longer true.
 
 | Item | Value |
 | --- | --- |
 | Spec directory | `dev/specs/021-scheduled-runs` |
 | Branch | `021-scheduled-runs`, in the worktree `.worktrees/021-scheduled-runs`, not pushed |
-| Base commit | `56223bf7` (2026-11-17 23:33 +0100) |
-| Head commit before this report | `e7a7e68d` (2026-11-18 16:27 +0100) |
-| Commits | 37, each with only the `Co-Authored-By` trailer |
-| Change set | 91 files, 17,742 lines added, 330 removed |
-| Tasks | 58 of 63 ticked |
-| Wall-clock time | about 17 hours, including two usage-limit stops and one change of model |
+| Base after the rebase | `origin/feature/v3-develop` at the time of the rebase (2026-11-18) |
+| Tasks | 63 of 63 ticked |
+
+## Before the rebase
 
 ## 1. What this build does and does not do
 
@@ -159,3 +160,39 @@ Four reviewers read `56223bf7..e07df66a`: code and documentation, error handling
 5. Remove the throwaway container with `docker rm -f sync021-pg` when the PostgreSQL tests are no
    longer needed.
 6. Open a pull request when the steps above are done; this run did not open one.
+
+## 8. After the rebase (2026-11-18, evening and night)
+
+The full log, with the advisor questions and answers, is
+[overnight-log.md](overnight-log.md).
+
+### What changed
+
+| Commit | What it does |
+| --- | --- |
+| `75f6d4af` | Fits the schedule steps to the bootstrap record and the start check that `feature/v3-develop` added. |
+| `60ae14d4` | Holds SQLAlchemy below 2.1. With 2.1.6, Prefect 3.8.6's scheduler created no flow run for any schedule. |
+| `f3d20ce9` | Checks the write target of a schedule before its configuration, and fixes the defects of the branch review smoke test. |
+| `6942d2a1` | Turns branch review on (T032, T058). |
+| `0202ccc2` | Turns the default branch on, adds `--write-to-default-branch` and `--write-to-branch-review`, and the default-branch smoke test (T041, T055). |
+| `b6197ba4` | Documentation for both write targets turned on. |
+| `aa430587` | Regenerates the frontend API types (T054). |
+| `0e701add`, `681bb9e3` | Asks Prefect to create the flow runs of the schedules right after the match step changes a Prefect schedule, so the first start after a create, change or resume is not lost. |
+| `7374b30f`, `0f91ed11` | Documents the starts that get no flow run, and corrects the bootstrap statement and quickstart section 5. |
+| `ea0cef2c`, `5999b819` | States on the Kubernetes page that the chart does not pass the approval setting to the worker. |
+
+### Observed on the development stack `infrahub-sync-021` (Infrahub 1.11.9)
+
+- The five branch and proposed change operations passed against Infrahub.
+- Branch review: a schedule opened a proposed change and replaced it at the next start.
+- Default branch: nine scheduled runs started between 0.3 s before and 7.1 s after their start time.
+- With approval required, the worker stopped a default-branch schedule and created no run, and the
+  Sync API refused to create one.
+- A late run started after the stack was stopped and started again. On the development stack it
+  then failed, because Infrahub was not ready yet (see Blocked in the overnight log).
+
+### Final checks
+
+On the tree of `0f91ed11`: lint passes, unit tier `9631 passed, 4 skipped`, PostgreSQL tier
+`287 passed`, Python 3.10 legs passed (after the SQLAlchemy pin). The smoke file and the
+integration test were run again at the end of the night; their result is in the overnight log.
