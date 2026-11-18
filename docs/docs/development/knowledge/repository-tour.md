@@ -43,8 +43,9 @@ behavior.
   module imports nothing from `cli.py`. It never takes a password as an argument: it reads it from
   a prompt without echo, or from standard input with `--password-stdin`.
 - `infrahub_sync/cli_session.py` — the session file that `login` writes: `sessions.json` in the
-  directory that `typer.get_app_dir("infrahub-sync")` returns, mode `0600`, one session token for
-  each Sync API address. It needs no `service` extra, so it works on Python 3.10. The lookup is
+  directory that `typer.get_app_dir("infrahub-sync")` returns, mode `0600`, one session token and
+  account name for each normalized Sync API address. It needs no `service` extra, so it works on
+  Python 3.10. The lookup is
   in the CLI, not in `SyncClient`, so a script that uses the client as a library reads no file.
 
 The command surface is `configs` (including the local `configs convert`), `runs`, `plan`,
@@ -124,8 +125,9 @@ The local accounts live in these service modules
   `Principal.actor` holds the account identifier and `Principal.name` the account name.
   `apply_admin_account` makes the `admin` account match the environment at start.
 - `credentials.py` hashes and verifies passwords with `hashlib.scrypt`, makes token and session
-  values, computes their digests, and limits the password checks that run at the same time
-  (`VerificationGate`).
+  values, computes their digests, limits the password checks and hashes that run at the same
+  time (`VerificationGate`), and lets one password check for each account name run at a time in
+  the process (`one_check_per_name`).
 - `settings.py` also reads `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`,
   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` and `INFRAHUB_SYNC_SESSION_IDLE_SECONDS`. `serve.py`
   applies the `admin` variables, then removes the password variable from the environment of the

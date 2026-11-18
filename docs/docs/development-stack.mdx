@@ -365,7 +365,7 @@ resolved Compose file, so they print and use the values you set.
 | `STORAGE_POSTGRES_PORT` | `5440` | PostgreSQL's host port |
 | `MINIO_PORT` | `9010` | The object store's host port |
 | `SYNC_IMAGE` | `infrahub-sync:dev` | The image tag the stack builds and runs |
-| `ADMIN_ACCOUNT_PASSWORD` | `infrahub-sync-dev-password` | The password of the Sync API's `admin` account, at least 12 characters |
+| `ADMIN_ACCOUNT_PASSWORD` | `infrahub-sync-dev-password` | The password of the Sync API's `admin` account, 12 to 1,024 characters |
 | `ADMIN_ACCOUNT_TOKEN` | `infrahub-sync-dev-token` | The API token of the Sync API's `admin` account, at least 16 characters |
 
 Compose also reads a `.env` file from the `development/` directory. The repository ignores

@@ -67,7 +67,8 @@ unless your shell exports `INFRAHUB_SYNC_API_TOKEN`: Compose then uses the expor
   [The `.env` file](../compose-deployment#configuration-prerequisites) describes.
 - **`sync-api` does not start after a change to `.env`.** Its log names the variable it
   refused, in one of these cases:
-    - `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is shorter than 12 characters;
+    - `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is empty, shorter than 12 characters, longer than
+      1,024 characters, or not valid UTF-8 text;
     - `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is shorter than 16 characters, or starts with
       `ifs_pat_` or `ifs_ses_`;
     - `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number of at least 60.

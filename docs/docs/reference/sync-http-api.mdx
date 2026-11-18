@@ -130,9 +130,14 @@ The refusals of these routes:
 - After 5 failed sign-ins for one name in 15 minutes, the API refuses that name for 15 minutes.
   An attempt during the refusal does not extend it. API tokens of the account keep working.
 - A wrong `current_password` answers `403`, code `current-password-refused`, and counts as a
-  failed sign-in.
-- When two password checks already run in the API process and no place frees within 5 seconds,
-  the request answers `503`, code `sign-in-busy`, and is not counted.
+  failed sign-in. While the name is refused, the route answers the same code without checking
+  the password.
+- A request answers `503`, code `sign-in-busy`, and is not counted, when it waits more than
+  5 seconds:
+    - for one of the two places of the API process that check or hash a password, which a
+      sign-in, `PUT /me/password`, `POST /accounts` and `PUT /accounts/{name}/password` take;
+    - or, for a sign-in or `PUT /me/password`, for the end of another password check of the
+      same account name in the API process.
 - A new password shorter than 12 characters answers `422`, code `password-too-short`. One
   longer than 1,024 characters answers `422`, code `password-too-long`. One that holds a
   character that UTF-8 cannot encode, such as a lone surrogate, answers `422`, code
@@ -1382,7 +1387,7 @@ of `already-approved`. Other errors have no `details` field.
 | `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). For approval: a run that cannot be approved (`run-not-approvable`), a plan whose checksum is unconfirmed (`plan-checksum-unverified`), a checksum that differs from the plan's (`checksum-mismatch`), or a second approval (`already-approved`). When the service requires approval: an apply without an approval (`approval-required`) or with a different checksum (`approval-checksum-mismatch`), or a `sync` (`approval-required-for-sync`). For a cancelled run: an `approve` or `apply` (`run-cancelled`), or a second cancel (`run-already-cancelled`). |
 | `410` | The retained plan or artifact has expired, or the orchestrator no longer holds a flow run whose log `GET /runs/{run_id}/logs` reads (`log-expired`). |
 | `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
-| `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved, or the orchestrator cannot be reached to read a run's log (`log-unavailable`). |
+| `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved, or the orchestrator cannot be reached to read a run's log (`log-unavailable`). For the account routes: a password check or hash that waited more than 5 seconds for a place, or for another check of the same account name (`sign-in-busy`). |
 
 Error messages name "the orchestrator", not Prefect, and never hold its address.
 

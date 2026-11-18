@@ -23,7 +23,7 @@ own token, and to recover access when every other administrator is locked out.
   password, a level (administrator or not) and a state (active or disabled). An administrator
   creates, disables, enables and deletes accounts through the Sync API and the CLI.
 - **The environment defines the `admin` account.** `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is
-  required and has at least 12 characters. `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is optional, has
+  required and has 12 to 1,024 characters of valid UTF-8 text. `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is optional, has
   at least 16 characters and must not start with `ifs_pat_` or `ifs_ses_`.
     - At each start, `sync-api` makes the row `admin` match these variables in one transaction:
       it creates the row when it is missing, stores a new password hash and deletes the sessions
@@ -53,10 +53,11 @@ own token, and to recover access when every other administrator is locked out.
 - **Passwords are hashed with scrypt** from the Python standard library
   (`hashlib.scrypt`): N = 2^15, r = 8, p = 3, a random 16-byte salt and a 32-byte derived key,
   with `maxmem` set to 64 MiB. The stored text names the algorithm and its parameters, so the
-  parameters can be raised later and an old hash still verifies. At most two password checks
-  run at the same time in one `sync-api` process; a sign-in that waits more than 5 seconds for
-  its turn gets `503 sign-in-busy`. Password hashing therefore uses at most about 64 MiB,
-  whatever the number of sign-in requests.
+  parameters can be raised later and an old hash still verifies. At most two password checks or
+  hashes of a new password run at the same time in one `sync-api` process; a request that waits
+  more than 5 seconds for its turn gets `503 sign-in-busy`. Password hashing therefore uses at
+  most about 64 MiB, whatever the number of requests. A password has at most 1,024 characters,
+  so the size of a request does not set the cost of a check.
 - **Repeated failed sign-ins refuse the name for a period.** After 5 failed sign-ins for one name
   within 15 minutes, a sign-in for that name is refused for 15 minutes before the password is
   checked, and the account is not disabled. A wrong current password in a password change counts
@@ -65,7 +66,12 @@ own token, and to recover access when every other administrator is locked out.
   hash, so the answer does not show whether the account exists. An administrator ends the refusal
   for any account, `admin` included; a restart of `sync-api` also ends it for `admin`. Requests
   with a token are not affected. The table holds at most 10,000 rows; to make room, it deletes
-  rows whose window has passed first and never deletes a refusal in force.
+  rows whose window has passed first and never deletes a refusal in force, and when only
+  refusals in force remain, a new name is not recorded.
+    - Each `sync-api` process runs one password check for a name at a time, and reads the
+      refusal again immediately before the check. A request that waits more than 5 seconds for
+      the check of the same name gets `503 sign-in-busy`. The lock is held in the memory of the
+      process, so with P processes at most 5 + (P − 1) passwords are checked for each refusal.
 - **No cookie.** The service sets no cookie. The CLI keeps its session token in `sessions.json`
   in its application directory, with mode `0600`. The web interface keeps the bearer value it
   uses in `sessionStorage`, for the browser tab only
