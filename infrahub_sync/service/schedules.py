@@ -784,9 +784,10 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         """Store a paused or stopped schedule as stopped with ``reason``, with its event, in one write.
 
         A paused schedule moves to ``stopped`` directly, and a stopped schedule gets the reason
-        that holds now in place of the one it stopped for (data-model.md). The Prefect schedule
-        of a paused or stopped schedule is already inactive, as a stopped schedule needs, so
-        ``prefect_synced`` keeps its value. The event names the caller of the request that
+        that holds now in place of the one it stopped for (data-model.md). The state stays
+        inactive for Prefect, so ``prefect_synced`` keeps its value; a schedule that the worker
+        stopped can still have an active Prefect schedule until the next match; its admission
+        of a start answers ``schedule-not-active`` meanwhile. The event names the caller of the request that
         found the reason.
 
         Raises:

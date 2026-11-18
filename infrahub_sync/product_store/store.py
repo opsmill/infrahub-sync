@@ -3652,8 +3652,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         writes the version, the cadence, the write settings, the state and its reason, the
         owner, the Prefect schedule fields and ``updated_at``. It does not write
         ``last_start_at`` or the count of failed runs, which the admission of a start and the
-        end of a run own; a stopped schedule that becomes active, such as one resumed after
-        ``repeated-failures``, gets the count set to zero (FR-032). It clears ``waiting_start_at`` when the schedule leaves the
+        end of a run own; a schedule that leaves the reason ``repeated-failures``, by a resume
+        or by a stop with another reason, gets the count set to zero (FR-032). It clears ``waiting_start_at`` when the schedule leaves the
         state ``active`` or its cadence or overlap policy changes: the waiting flow run then
         creates no run, and the wait must not block the later starts.
 
@@ -3679,9 +3679,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             if schedule.state not in _SCHEDULE_TRANSITIONS[stored.state]:
                 msg = f"a schedule in the state {stored.state!r} cannot move to the state {schedule.state!r}"
                 raise ScheduleTransitionError(msg)
-            # A stopped schedule that becomes active counts its failed runs from zero again, also
-            # when a stop for repeated failures was later given another reason.
-            resumed_after_failures = stored.state == "stopped" and schedule.state == "active"
+            # A schedule that leaves a stop for repeated failures counts its failed runs from zero
+            # again: when it is resumed, and when a resume stores another reason to stop it, so a
+            # later change that makes it active does not keep the old count.
+            resumed_after_failures = (
+                stored.state_reason == "repeated-failures" and schedule.state_reason != "repeated-failures"
+            )
             cursor.execute(
                 self._sql(_UPDATE_SCHEDULE),
                 (

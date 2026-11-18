@@ -12,6 +12,7 @@ pytest.importorskip("prefect")
 pytest.importorskip("fastapi")
 
 from infrahub_sync.service.auth import PRINCIPALS_ENV
+from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.service.schedule_fixtures import ADMIN_TOKEN, PRINCIPALS, ScheduleApi, restarted, schedule_api
 
 if TYPE_CHECKING:
@@ -214,3 +215,29 @@ def test_a_resume_after_repeated_failures_always_succeeds_and_clears_the_count(
     assert (body["state"], body["state_reason"], body["consecutive_failures"]) == ("active", None, 0)
     assert again.orchestration.by_slug(schedule_id).active is True
     assert again.stored(schedule_id).created_at == stored.created_at
+
+
+def test_a_resume_after_the_owner_returns_checks_approval_too(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-002: the owner's actor exists again, but the schedule writes to the default branch while approval is on."""
+    schedule_id = api.create(write_target="default-branch")["schedule_id"]
+    stopped = _restart(api, monkeypatch, WITHOUT_OWNER)
+    assert stopped.stored(schedule_id).state_reason == "owner-not-found"
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+    again = _restart(api, monkeypatch, PRINCIPALS)
+
+    response = again.post(schedule_id, "resume")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "schedule-stopped"
+    assert "approval-required" in response.json()["error"]["message"]
+    stored = again.stored(schedule_id)
+    assert (stored.state, stored.state_reason) == ("stopped", "approval-required")
+    events = [
+        event for event in again.projection.audit_events() if event.event_type == "infrahub_sync.schedule.stopped"
+    ]
+    assert [(event.operation, event.outcome) for event in events] == [
+        ("schedule-start", "owner-not-found"),
+        ("schedule-resume", "approval-required"),
+    ]
