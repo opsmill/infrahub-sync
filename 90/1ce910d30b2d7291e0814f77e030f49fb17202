@@ -1,0 +1,23 @@
+docs/docs/reference/cli.mdx
+  s_cf9ada8f865389::t_1e235c73c1ce1f 39-41,51-107,684-901
+  s_cf9ada8f865389::t_29dd9d56a6aa6e 5-10,17-19
+tasks/docs.py
+  s_cf9ada8f865389::t_df4997170189ca 49-54
+  s_cf9ada8f865389::t_fbbd613e9c0cab 61-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "901ce910d30b2d7291e0814f77e030f49fb17202",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
