@@ -1,0 +1,19 @@
+tests/service/test_no_secret_output.py
+  s_cf9ada8f865389::t_7686d1d0c298f0 199-203,214-219,348-351,353,357,369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "81ef6025a13abc96655bb2229a073a9582b9aec1",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
