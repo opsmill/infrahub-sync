@@ -74,14 +74,17 @@ define it and the sessions:
 
 | Variable | Required | Rule |
 | --- | --- | --- |
-| `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | yes | The password of `admin`. At least 12 characters. No default value. |
+| `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | yes | The password of `admin`. 12 to 1,024 characters of valid UTF-8 text. No default value. |
 | `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` | no | One API token of `admin`. At least 16 characters, and it must not start with `ifs_pat_` or `ifs_ses_`. Empty or unset: `admin` has no API token. |
 | `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` | no | The number of seconds without a request after which a session ends. Default `28800` (8 hours). A whole number of at least 60. Empty means the default. |
 
 The API applies the first two at each start, then removes the password from its own process
 environment. A value that breaks a rule stops the start with a message that names the variable
-and never shows the value. The API and the CLI refuse every change to `admin`: its password and
-its token change only through these variables and a restart of the API.
+and never shows the value. The API and the CLI refuse every change to the password, the tokens,
+the level or the state of `admin`, and its deletion: its password and its token change only
+through these variables and a restart of the API. An administrator can end a refusal after
+repeated failed sign-ins for any account, `admin` included, with `POST /accounts/{name}/unlock`;
+a restart of the API also ends it for `admin`.
 
 `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, which defined the callers in earlier releases, is no
 longer read. A process that still has it starts and ignores it.
@@ -97,8 +100,8 @@ run is the name of the account.
 
 ### Sign-in, sign-out and account routes
 
-These routes take no `Idempotency-Key`. Each mutation accepts an optional `reason` of at most
-512 characters, and records it in the audit history. The `DELETE` routes take it as a query
+These routes take no `Idempotency-Key`. Each mutation except sign-in and sign-out accepts an
+optional `reason` of at most 512 characters, and records it in the audit history. The `DELETE` routes take it as a query
 parameter; the other routes take it in the JSON body.
 
 | Route | Who | Behavior |
@@ -114,7 +117,7 @@ parameter; the other routes take it in the JSON body.
 | `GET /accounts/{name}` | administrator | Returns one account. |
 | `PATCH /accounts/{name}` | administrator | Takes `{"disabled"?, "administrator"?}`, at least one of the two. `disabled`: `true` disables the account, `false` enables it; disabling deletes the API tokens of the account and ends its sessions. `administrator` sets the level, which applies from the next request of the account. A value the account already has changes nothing and writes no audit event. |
 | `PUT /accounts/{name}/password` | administrator | Takes `{"new_password"}`. Every session of the account ends. |
-| `POST /accounts/{name}/unlock` | administrator | Ends a refusal after repeated failed sign-ins. |
+| `POST /accounts/{name}/unlock` | administrator | Ends a refusal after repeated failed sign-ins. Accepted for `admin` too. |
 | `DELETE /accounts/{name}` | administrator | Deletes the account and returns `{"placeholder": "Deleted account <short identifier>"}`. Cannot be reversed. See [Deleting an account](#deleting-an-account). |
 | `GET /accounts/{name}/tokens` | administrator | Lists the API tokens of the account, without their values. |
 | `DELETE /accounts/{name}/tokens/{token_id}` | administrator | Deletes one API token of the account. |
@@ -128,18 +131,33 @@ The refusals of these routes:
   An attempt during the refusal does not extend it. API tokens of the account keep working.
 - A wrong `current_password` answers `403`, code `current-password-refused`, and counts as a
   failed sign-in.
-- A password shorter than 12 characters answers `422`, code `password-too-short`.
+- When two password checks already run in the API process and no place frees within 5 seconds,
+  the request answers `503`, code `sign-in-busy`, and is not counted.
+- A new password shorter than 12 characters answers `422`, code `password-too-short`. One
+  longer than 1,024 characters answers `422`, code `password-too-long`. One that holds a
+  character that UTF-8 cannot encode, such as a lone surrogate, answers `422`, code
+  `password-invalid`.
+- An account name outside the rule of names, or a reserved name, answers `422`, code
+  `account-name-invalid`. A name that an account already has, in any letter case, answers `409`,
+  code `account-name-taken`.
+- A token name that the account already uses answers `409`, code `token-name-taken`. An
+  `expires_at` that is not in the future answers `422`, code `expiry-in-the-past`.
 - A caller that is not an administrator receives `403`, code `forbidden`, on the `/accounts`
   routes. So an account cannot raise its own level.
 - An unknown or deleted account name answers `404`, code `account-not-found`.
 - A `PATCH /accounts/{name}` body with neither `disabled` nor `administrator` answers `422`,
   code `request-invalid`.
 - A token ID that the account does not have answers `404`, code `token-not-found`.
-- A change to `admin`, including a change of its level, its deletion, the deletion of its token,
-  `PUT /me/password` and the `/me/tokens` mutations called by `admin`, answers `409`, code
-  `environment-managed-account`. The message names the variable to change instead:
-  `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, or `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` for its token.
-- A `reason` that contains a token value, or the prefix `ifs_pat_` or `ifs_ses_`, answers `422`.
+- A change to `admin` answers `409`, code `environment-managed-account`, except
+  `POST /accounts/admin/unlock`, which is accepted:
+    - a change of its password, with `PUT /accounts/admin/password` or `PUT /me/password`: the
+      message names `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`;
+    - the deletion of its token, or a `/me/tokens` mutation called by `admin`: the message names
+      `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`;
+    - a change of its state or its level, or its deletion: the message says that `admin` is
+      always an active administrator that the environment defines.
+- A `reason`, or a token name, that contains a secret value of the process or the prefix
+  `ifs_pat_` or `ifs_ses_` answers `422`, code `secret-parameter-refused`.
 
 A request with no token, an unknown or deleted token, or a token of a disabled account answers
 `401`, code `unauthenticated`. An API token used after its expiry date answers `401`, code

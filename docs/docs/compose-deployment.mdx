@@ -108,8 +108,8 @@ required variable INFRAHUB_SYNC_PRODUCT_PASSWORD is missing a value: INFRAHUB_SY
 | `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | `sync-api`: the password of the `admin` account |
 
 `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is the password of `admin`, the
-administrator account that always exists. It has at least 12 characters and no
-default value. `sync-api` applies it at each start, then removes it from its own
+administrator account that always exists. It has 12 to 1,024 characters of
+valid UTF-8 text and no default value. `sync-api` applies it at each start, then removes it from its own
 process environment. To change it, see [Recover or rotate the `admin` account](#recover-or-rotate-the-admin-account).
 
 The database connection strings are composed inside the file from the role,
@@ -247,9 +247,11 @@ Records of earlier runs keep the caller names that the old variable defined.
 
 ### Recover or rotate the `admin` account
 
-Only `.env` changes the `admin` account. The CLI and the Sync API refuse to
-change its password or its token, or to disable it, and the refusal names the
-variable to edit instead. To set a new password after a lost one, or to replace
+Only `.env` changes the password and the token of the `admin` account. The CLI
+and the Sync API refuse to change its password or its token, and the refusal
+names the variable to edit instead. They also refuse to disable or delete
+`admin`, or to change its level: `admin` is always an active administrator, and
+no variable changes that. To set a new password after a lost one, or to replace
 the `admin` token:
 
 1. Edit `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` or
@@ -272,7 +274,8 @@ changes.
 
 `sync-api` does not start in each of these cases:
 
-- `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is shorter than 12 characters.
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is shorter than 12 characters, longer
+  than 1,024 characters, or not valid UTF-8 text.
 - `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is shorter than 16 characters, or starts
   with `ifs_pat_` or `ifs_ses_`.
 - `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number of at least 60.

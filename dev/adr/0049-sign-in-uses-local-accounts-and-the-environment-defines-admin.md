@@ -33,9 +33,10 @@ own token, and to recover access when every other administrator is locked out.
       together do not conflict.
     - The process then removes the password variable from its own environment, so the password
       is in no list of secret values that a free-text check compares a `reason` with.
-    - Every account route refuses a change to `admin` with `409 environment-managed-account`.
-      To rotate the password or to recover access, an operator edits the variable and restarts
-      `sync-api`.
+    - Every account route that changes the password, the tokens, the level or the state of
+      `admin`, or deletes it, refuses with `409 environment-managed-account`. The route that ends
+      the refusal after repeated failed sign-ins (`unlock`) accepts `admin`. To rotate the
+      password or to recover access, an operator edits the variable and restarts `sync-api`.
 - **A request presents a bearer value.** Each request keeps the header
   `Authorization: Bearer <value>`. The value is one of two kinds:
     - an API token (`ifs_pat_` and 32 random bytes), which an account creates for itself and
@@ -62,8 +63,9 @@ own token, and to recover access when every other administrator is locked out.
   as a failure. An attempt made during the refusal does not count and does not extend it. A name
   that has no account is counted in the same way and runs one password check against a fixed
   hash, so the answer does not show whether the account exists. An administrator ends the refusal
-  for another account; a restart of `sync-api` ends it for `admin`. Requests with a token are not
-  affected. The table holds at most 10,000 rows.
+  for any account, `admin` included; a restart of `sync-api` also ends it for `admin`. Requests
+  with a token are not affected. The table holds at most 10,000 rows; to make room, it deletes
+  rows whose window has passed first and never deletes a refusal in force.
 - **No cookie.** The service sets no cookie. The CLI keeps its session token in `sessions.json`
   in its application directory, with mode `0600`. The web interface keeps the bearer value it
   uses in `sessionStorage`, for the browser tab only

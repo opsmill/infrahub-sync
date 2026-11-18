@@ -449,25 +449,39 @@ def test_every_route_answers_unauthenticated_without_a_token(
     _error(api.call(method, path, json=body), 401, "unauthenticated")
 
 
+# The refusal of a change that no variable makes: the state, the level or the deletion of ``admin``.
+_ADMIN_STATE_REFUSAL = (
+    "admin is always an active administrator that the environment defines; it cannot be disabled, deleted "
+    "or have its level changed"
+)
+_PASSWORD_VARIABLE_REFUSAL = (
+    f"the environment of the Sync API manages this account; change {ADMIN_ACCOUNT_PASSWORD_ENV} and restart "
+    "the Sync API"
+)
+_TOKEN_VARIABLE_REFUSAL = (
+    f"the environment of the Sync API manages this account; change {ADMIN_ACCOUNT_TOKEN_ENV} and restart the Sync API"
+)
+
+
 @pytest.mark.parametrize(
-    ("method", "path", "body"),
+    ("method", "path", "body", "message"),
     [
-        ("PATCH", "/accounts/admin", {"disabled": True}),
-        ("PATCH", "/accounts/Admin", {"disabled": False}),
-        ("PUT", "/accounts/admin/password", {"new_password": NEW_PASSWORD}),
+        ("PATCH", "/accounts/admin", {"disabled": True}, _ADMIN_STATE_REFUSAL),
+        ("PATCH", "/accounts/Admin", {"disabled": False}, _ADMIN_STATE_REFUSAL),
+        ("PUT", "/accounts/admin/password", {"new_password": NEW_PASSWORD}, _PASSWORD_VARIABLE_REFUSAL),
     ],
     ids=["disable", "enable", "set-password"],
 )
 @pytest.mark.parametrize("caller", ["root", "admin"])
-def test_every_change_to_admin_is_refused_and_names_the_variable(
-    api: AccountApi, method: str, path: str, body: dict[str, Any], caller: str
+def test_every_change_to_admin_is_refused_with_what_changes_it(  # noqa: PLR0913, PLR0917
+    api: AccountApi, method: str, path: str, body: dict[str, Any], message: str, caller: str
 ) -> None:
     headers = bearer(ADMIN_TOKEN) if caller == "admin" else api.token_headers("root")
     events = len(api.account_events())
 
     response = api.call(method, path, headers, json=body)
 
-    assert ADMIN_ACCOUNT_PASSWORD_ENV in _error(response, 409, "environment-managed-account")["message"]
+    assert _error(response, 409, "environment-managed-account")["message"] == message
     admin = api.store.lookup_account_by_name("admin")
     assert admin is not None
     assert (admin.disabled, admin.password_hash) == (False, text_hash(ADMIN_PASSWORD))
@@ -856,17 +870,17 @@ def test_a_token_of_another_account_is_not_found_under_this_account(api: Account
 
 
 @pytest.mark.parametrize(
-    ("method", "path", "body", "variable"),
+    ("method", "path", "body", "message"),
     [
-        ("PATCH", "/accounts/admin", {"administrator": False}, ADMIN_ACCOUNT_PASSWORD_ENV),
-        ("DELETE", "/accounts/Admin", None, ADMIN_ACCOUNT_PASSWORD_ENV),
-        ("DELETE", "/accounts/admin/tokens/{token_id}", None, ADMIN_ACCOUNT_TOKEN_ENV),
+        ("PATCH", "/accounts/admin", {"administrator": False}, _ADMIN_STATE_REFUSAL),
+        ("DELETE", "/accounts/Admin", None, _ADMIN_STATE_REFUSAL),
+        ("DELETE", "/accounts/admin/tokens/{token_id}", None, _TOKEN_VARIABLE_REFUSAL),
     ],
     ids=["set-level", "delete", "delete-token"],
 )
 @pytest.mark.parametrize("caller", ["root", "admin"])
-def test_admin_cannot_be_deleted_or_changed_and_the_refusal_names_the_variable(  # noqa: PLR0913, PLR0917
-    api: AccountApi, method: str, path: str, body: dict[str, Any] | None, variable: str, caller: str
+def test_admin_cannot_be_deleted_or_changed_and_the_refusal_says_what_changes_it(  # noqa: PLR0913, PLR0917
+    api: AccountApi, method: str, path: str, body: dict[str, Any] | None, message: str, caller: str
 ) -> None:
     """Scenario 7 of User Story 3."""
     headers = bearer(ADMIN_TOKEN) if caller == "admin" else api.token_headers("root")
@@ -875,7 +889,7 @@ def test_admin_cannot_be_deleted_or_changed_and_the_refusal_names_the_variable( 
 
     response = api.call(method, path.format(token_id=admin_token.token_id), headers, json=body)
 
-    assert variable in _error(response, 409, "environment-managed-account")["message"]
+    assert _error(response, 409, "environment-managed-account")["message"] == message
     admin = api.store.lookup_account_by_name("admin")
     assert admin is not None
     assert (admin.administrator, admin.deleted_at) == (True, None)

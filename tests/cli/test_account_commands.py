@@ -257,6 +257,20 @@ def test_the_message_of_the_admin_account_names_both_variables() -> None:
 
     assert "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD" in message
     assert "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN" in message
+    # No variable disables, deletes or changes the level of admin, and the message says so.
+    assert "cannot be disabled, deleted or have its level changed" in message
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        ("password-too-long", "a password has at most 1024 characters"),
+        ("password-invalid", "a password holds only characters that UTF-8 can encode"),
+        ("token-not-found", "the account has no token with this identifier"),
+    ],
+)
+def test_the_cli_has_the_fixed_message_of_each_password_and_token_refusal(code: str, message: str) -> None:
+    assert ACCOUNT_ERROR_MESSAGES[code] == message
 
 
 def test_tokens_delete_sends_the_identifier_and_the_reason(sync_api: FakeSyncAPI) -> None:
@@ -421,6 +435,8 @@ def test_a_password_command_without_a_terminal_names_password_stdin(
         (409, "account-name-taken"),
         (422, "account-name-invalid"),
         (422, "password-too-short"),
+        (422, "password-too-long"),
+        (422, "password-invalid"),
         (503, "sign-in-busy"),
     ],
 )

@@ -105,7 +105,7 @@ def build_app(
         os.environ.pop(ADMIN_ACCOUNT_PASSWORD_ENV, None)
         resolver = StoreAccountResolver(projection, idle_seconds=idle_seconds, admin_token=admin_account.token)
     # The configuration diagnostics quote declared keys, so this surface needs the ordinary
-    # environment secrets as well as the principal resolver's bearer tokens.
+    # environment secrets as well as the `admin` token that the environment defines.
     configuration_secrets = tuple(dict.fromkeys((*collect_secret_values(), *resolver.secret_values)))
     configuration_routes = configuration_routes_factory(product_projection=projection, secrets=configuration_secrets)
     orchestration = _ClientPerCallOrchestration()

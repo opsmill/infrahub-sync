@@ -37,7 +37,7 @@ TOKEN_PREFIXES = (API_TOKEN_PREFIX, SESSION_TOKEN_PREFIX)
 TOKEN_RANDOM_BYTES = 32
 
 # The scrypt setting N=2^15, r=8, p=3 of the OWASP Password Storage Cheat Sheet, confirmed on
-# 2026-11-17 (dev/specs/022-local-accounts/notes.md, T002). One verification needs about 32 MiB.
+# 2026-11-17 (ADR 0049). One verification needs about 32 MiB.
 SCRYPT_ALGORITHM = "scrypt"
 SCRYPT_N = 2**15
 SCRYPT_R = 8

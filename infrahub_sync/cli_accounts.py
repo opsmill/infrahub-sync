@@ -52,14 +52,16 @@ ACCOUNT_ERROR_MESSAGES = {
     "account-name-taken": "an account already has this name",
     "password-too-short": "a password has at least 12 characters",
     "password-too-long": "a password has at most 1024 characters",
+    "password-invalid": "a password holds only characters that UTF-8 can encode",
     "current-password-refused": "the current password was not accepted",
     "token-name-taken": "the account already has a token with this name",
     "token-not-found": "the account has no token with this identifier",
     "expiry-in-the-past": "the expiry date must be a time in the future",
     "environment-managed-account": (
-        "the environment of the Sync API manages the admin account; change "
-        "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD for its password or INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN "
-        "for its token, and restart the Sync API"
+        "the environment of the Sync API defines the admin account: it is always an active administrator "
+        "and cannot be disabled, deleted or have its level changed; to change its password or its token, "
+        "change INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD or INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN and restart "
+        "the Sync API"
     ),
 }
 _PASSWORD_STDIN_HELP = "Read the password from standard input instead of a prompt."

@@ -1871,7 +1871,7 @@ def _echo_verification_operations(verification: dict[str, Any]) -> None:
 
 @app.command("whoami")
 def whoami_cmd(ctx: typer.Context) -> None:
-    """Show the actor the API token authenticates as and whether it is an administrator."""
+    """Show the account that the API token or the saved session belongs to, whether it is an administrator, and whether approval is required."""
     with _client_errors():
         principal = _client(ctx).me()
         _echo_fields(

@@ -20,15 +20,18 @@ describes. From a repository checkout, run each command as `uv run infrahub-sync
 The `admin` account always exists and is an administrator. Its password and its API token come
 from two variables of the `sync-api` service:
 
-- `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`: required, at least 12 characters, no default value.
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`: required, 12 to 1,024 characters of valid UTF-8 text,
+  no default value.
 - `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`: optional, at least 16 characters, and it must not start
   with `ifs_pat_` or `ifs_ses_`. Empty or unset, `admin` has no API token.
 
 `sync-api` applies both at each start. The CLI and the Sync API refuse to change the password,
-the tokens or the level of `admin`, and refuse to disable or delete it. The refusal names the
-variable to edit. To
-replace a lost `admin` password, or to rotate its token, edit the variable and recreate
-`sync-api` alone; see
+the tokens or the level of `admin`, and refuse to disable or delete it. The refusal of a password
+or token change names the variable to edit. The refusal of a change of state or level, or of a
+deletion, says that `admin` is always an active administrator: no variable changes that. An
+administrator can still end a refusal after repeated failed sign-ins for `admin` with
+`infrahub-sync accounts unlock admin`. To replace a lost `admin` password, or to rotate its token,
+edit the variable and recreate `sync-api` alone; see
 [Recover or rotate the `admin` account](../compose-deployment.mdx#recover-or-rotate-the-admin-account).
 
 ## Sign in from a workstation

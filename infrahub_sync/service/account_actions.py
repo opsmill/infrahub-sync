@@ -110,6 +110,10 @@ _TOKEN_NAME_MESSAGE = "a token name must be printable and trimmed"
 _ENVIRONMENT_MANAGED_MESSAGE = (
     "the environment of the Sync API manages this account; change {variable} and restart the Sync API"
 )
+_ADMIN_STATE_MESSAGE = (
+    "admin is always an active administrator that the environment defines; it cannot be disabled, deleted "
+    "or have its level changed"
+)
 
 _ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
 
@@ -576,9 +580,10 @@ def _hash_new_password(password: str) -> str:
         raise ServiceAPIError(422, "password-invalid", PASSWORD_INVALID_MESSAGE) from None
 
 
-def _environment_managed(variable: str) -> ServiceAPIError:
-    """Return the refusal of a change to the account that the environment manages; it names the variable."""
-    return ServiceAPIError(409, "environment-managed-account", _ENVIRONMENT_MANAGED_MESSAGE.format(variable=variable))
+def _environment_managed(variable: str | None = None) -> ServiceAPIError:
+    """Return the refusal of a change to ``admin``: it names the variable of a password or a token change."""
+    message = _ADMIN_STATE_MESSAGE if variable is None else _ENVIRONMENT_MANAGED_MESSAGE.format(variable=variable)
+    return ServiceAPIError(409, "environment-managed-account", message)
 
 
 def _find_account(service: RunService, name: str) -> Account:
@@ -608,7 +613,6 @@ def _own_account(service: RunService, principal: Principal) -> Account:
 
 
 def _unauthenticated() -> ServiceAPIError:
-    """Return the refusal of a request whose account is no longer active."""
     return ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
 
 
@@ -695,7 +699,7 @@ def update_account(service: RunService, principal: Principal, name: str, body: U
     if body.disabled is None and body.administrator is None:
         raise ServiceAPIError(422, "request-invalid", NO_CHANGE_MESSAGE)
     if account.environment_managed:
-        raise _environment_managed(ADMIN_ACCOUNT_PASSWORD_ENV)
+        raise _environment_managed()
     projection, now, secrets = service.accounts.projection, service.accounts.now(), service.accounts.secrets
     if body.disabled is not None and body.disabled != account.disabled:
         # The store writes each event in the transaction of its change.
@@ -743,7 +747,7 @@ def delete_account(service: RunService, principal: Principal, name: str, reason:
     _require_safe_reason(service, principal, operation, reason)
     account = _find_account(service, name)
     if account.environment_managed:
-        raise _environment_managed(ADMIN_ACCOUNT_PASSWORD_ENV)
+        raise _environment_managed()
     now = service.accounts.now()
     event = account_event(
         ACCOUNT_DELETED,
@@ -795,11 +799,7 @@ def delete_account_token(
 def _delete_token(
     service: RunService, principal: Principal, account: Account, token_id: str, *, operation: str, reason: str | None
 ) -> None:
-    """Delete one API token of an account and write its event, in one transaction.
-
-    Raises:
-        ServiceAPIError: ``404 token-not-found`` for a token that the account does not have.
-    """
+    """Delete one API token of an account and write its event, or refuse with ``404 token-not-found``."""
     event = _event(
         service,
         ACCOUNT_TOKEN_DELETED,

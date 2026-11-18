@@ -62,7 +62,7 @@ def test_a_hash_made_with_lower_parameters_still_verifies() -> None:
 
 
 def test_the_parameters_in_the_code_are_not_below_the_recorded_setting() -> None:
-    """The setting of notes.md, T002: N=2^15, r=8, p=3, with a 16-byte salt."""
+    """The setting of ADR 0049: N=2^15, r=8, p=3, with a 16-byte salt."""
     assert credentials.SCRYPT_N >= 2**15
     assert credentials.SCRYPT_R >= 8
     assert credentials.SCRYPT_P >= 3
