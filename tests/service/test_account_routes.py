@@ -915,3 +915,57 @@ def test_a_sign_in_during_which_an_administrator_sets_the_password_opens_no_sess
     assert api.store.list_account_sessions(alice.account_id) == ()
     assert api.sign_in("alice", PASSWORD).status_code == 401
     assert api.sign_in("alice", NEW_PASSWORD).status_code == 200
+
+
+# JSON allows a lone surrogate, which UTF-8 cannot encode. The body is sent as bytes: the client
+# would refuse to encode such a text itself.
+_SURROGATE_PASSWORD_JSON = '"correct-horse-\\ud800-battery"'  # noqa: S105 - a test value, not a secret.
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/accounts", '{"name": "frank", "password": PASSWORD}'),
+        ("PUT", "/accounts/alice/password", '{"new_password": PASSWORD}'),
+    ],
+    ids=("create", "set-password"),
+)
+def test_a_new_password_that_utf_8_cannot_encode_is_refused_as_invalid(
+    api: AccountApi, root: dict[str, str], method: str, path: str, body: str
+) -> None:
+    hashes = api.gate.hashes
+    events = len(api.events())
+
+    response = api.call(
+        method,
+        path,
+        {**root, "Content-Type": "application/json"},
+        content=body.replace("PASSWORD", _SURROGATE_PASSWORD_JSON).encode(),
+    )
+
+    error = _error(response, 422, "password-invalid")
+    assert error["message"] == "a password holds only characters that UTF-8 can encode"
+    assert "correct-horse" not in response.text
+    assert api.gate.hashes == hashes
+    assert len(api.events()) == events
+    assert api.store.lookup_account_by_name("frank") is None
+    assert api.sign_in("alice", PASSWORD).status_code == 200
+
+
+def test_a_hash_that_fails_to_encode_the_password_is_answered_as_invalid(
+    api: AccountApi, root: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The rule of the request is checked before the hash; this case reaches the hash anyway.
+    monkeypatch.setattr(account_actions, "_require_new_password", lambda _password: None)
+    monkeypatch.setattr(credentials, "PASSWORD_VERIFICATION_GATE", credentials.VerificationGate())
+
+    response = api.call(
+        "POST",
+        "/accounts",
+        {**root, "Content-Type": "application/json"},
+        content=f'{{"name": "frank", "password": {_SURROGATE_PASSWORD_JSON}}}'.encode(),
+    )
+
+    _error(response, 422, "password-invalid")
+    assert "correct-horse" not in response.text
+    assert api.store.lookup_account_by_name("frank") is None

@@ -25,6 +25,7 @@ from base64 import b64decode, b64encode
 from contextlib import contextmanager
 from functools import lru_cache
 from typing import TYPE_CHECKING
+from weakref import WeakValueDictionary
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -56,6 +57,7 @@ VERIFICATION_LIMIT = 2
 VERIFICATION_WAIT_SECONDS = 5.0
 
 
+_PASSWORD_ENCODING_MESSAGE = "the password holds a character that UTF-8 cannot encode"
 _NOT_ADMITTED_MESSAGE = "the password was not checked: the caller withdrew the check once a place was held"
 
 
@@ -65,6 +67,14 @@ class SignInBusyError(RuntimeError):
 
 class VerificationNotAdmittedError(RuntimeError):
     """The caller's ``admit`` check refused a verification once a place of the gate was held."""
+
+
+class PasswordEncodingError(ValueError):
+    """A password holds a character that UTF-8 cannot encode, such as a lone surrogate.
+
+    The message never holds the password: ``UnicodeEncodeError`` keeps the whole text in its
+    ``object`` attribute, so it is neither the cause nor the context of this error.
+    """
 
 
 def _encode(value: bytes) -> str:
@@ -80,12 +90,27 @@ def scrypt_memory_bytes(n: int, r: int, p: int) -> int:
     return 128 * r * (n + p + 2)
 
 
+def is_encodable(text: str) -> bool:
+    """Return whether UTF-8 can encode the text: false for a lone surrogate, which JSON allows."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _derive(password: str, salt: bytes, *, n: int, r: int, p: int, length: int) -> bytes:
+    if not is_encodable(password):
+        raise PasswordEncodingError(_PASSWORD_ENCODING_MESSAGE)
     return hashlib.scrypt(password.encode("utf-8"), salt=salt, n=n, r=r, p=p, maxmem=SCRYPT_MAXMEM, dklen=length)
 
 
 def hash_password(password: str, *, n: int = SCRYPT_N, r: int = SCRYPT_R, p: int = SCRYPT_P) -> str:
-    """Return the text to store for a password, made with a new random salt."""
+    """Return the text to store for a password, made with a new random salt.
+
+    Raises:
+        PasswordEncodingError: UTF-8 cannot encode the password.
+    """
     salt = secrets.token_bytes(SALT_BYTES)
     key = _derive(password, salt, n=n, r=r, p=p, length=DERIVED_KEY_BYTES)
     return f"{SCRYPT_ALGORITHM}${n}${r}${p}${_encode(salt)}${_encode(key)}"
@@ -110,6 +135,11 @@ def _parse(stored_hash: str) -> tuple[int, int, int, bytes, bytes] | None:
     return n, r, p, salt, key
 
 
+def is_readable_hash(stored_hash: str) -> bool:
+    """Return whether a stored text is a hash of this module whose parameters are within the ceilings."""
+    return _parse(stored_hash) is not None
+
+
 def verify_password(password: str, stored_hash: str) -> bool:
     """Return whether the stored hash was made from this password.
 
@@ -123,7 +153,8 @@ def verify_password(password: str, stored_hash: str) -> bool:
     try:
         derived = _derive(password, salt, n=n, r=r, p=p, length=len(key))
     except ValueError:
-        # OpenSSL refused the parameters. The message is not kept: it describes a stored row.
+        # OpenSSL refused the parameters, or UTF-8 cannot encode the password. The message is not
+        # kept: it describes a stored row or holds the password.
         return False
     return hmac.compare_digest(derived, key)
 
@@ -215,3 +246,33 @@ class VerificationGate:
 # The gate of the process: every sign-in route verifies through it, and every route that stores a
 # new password hashes through it.
 PASSWORD_VERIFICATION_GATE = VerificationGate()
+
+# One lock for each lower-case name whose password is being checked in this process. A lock leaves
+# the map when no request holds it, so the map does not grow with the names that were tried.
+_NAME_LOCKS: WeakValueDictionary[str, threading.Lock] = WeakValueDictionary()
+_NAME_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def one_check_per_name(key: str) -> Iterator[None]:
+    """Let one password check for this lower-case name run at a time in this process, with its count.
+
+    A burst of sign-ins for one name then reads the refusal, checks the password and counts the
+    failure one after the other: a refusal that the fifth failure starts applies to the next check
+    of the process. The lock is per process; several processes each run one check at a time.
+
+    Raises:
+        SignInBusyError: the lock did not become free within the wait of the gate.
+    """
+    with _NAME_LOCKS_GUARD:
+        lock = _NAME_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _NAME_LOCKS[key] = lock
+    if not lock.acquire(timeout=VERIFICATION_WAIT_SECONDS):
+        msg = "another password check for this name is running; try again"
+        raise SignInBusyError(msg)
+    try:
+        yield
+    finally:
+        lock.release()

@@ -25,6 +25,7 @@ from infrahub_sync.service.credentials import digest, new_session_token, verify_
 from infrahub_sync.service.settings import (
     ADMIN_ACCOUNT_PASSWORD_ENV,
     ADMIN_ACCOUNT_TOKEN_ENV,
+    PASSWORD_MAX_LENGTH,
     SESSION_IDLE_SECONDS_ENV,
     AccountSettingsError,
     AdminAccountSettings,
@@ -310,6 +311,15 @@ def test_an_unset_or_empty_token_variable_means_no_token(environment: dict[str, 
         pytest.param({ADMIN_ACCOUNT_PASSWORD_ENV: ""}, ADMIN_ACCOUNT_PASSWORD_ENV, id="password-empty"),
         pytest.param({ADMIN_ACCOUNT_PASSWORD_ENV: "short-secre"}, ADMIN_ACCOUNT_PASSWORD_ENV, id="password-of-11"),
         pytest.param(
+            {ADMIN_ACCOUNT_PASSWORD_ENV: "p" * (PASSWORD_MAX_LENGTH + 1)},
+            ADMIN_ACCOUNT_PASSWORD_ENV,
+            id="password-of-1025",
+        ),
+        # A byte that is not UTF-8 reaches Python as a lone surrogate.
+        pytest.param(
+            {ADMIN_ACCOUNT_PASSWORD_ENV: _PASSWORD + "\udcff"}, ADMIN_ACCOUNT_PASSWORD_ENV, id="password-not-utf-8"
+        ),
+        pytest.param(
             {ADMIN_ACCOUNT_PASSWORD_ENV: _PASSWORD, ADMIN_ACCOUNT_TOKEN_ENV: "short-token-015"},
             ADMIN_ACCOUNT_TOKEN_ENV,
             id="token-of-15",
@@ -470,3 +480,26 @@ def test_a_resolver_given_to_the_factory_leaves_the_store_without_an_admin_accou
     serve.build_app(projection_factory=lambda: projection, resolver_factory=_Resolver)
 
     assert projection.lookup_account_by_name("admin") is None
+
+
+def test_a_password_variable_of_1024_characters_is_accepted() -> None:
+    password = "p" * PASSWORD_MAX_LENGTH
+
+    assert admin_account_settings({ADMIN_ACCOUNT_PASSWORD_ENV: password}).password == password
+
+
+@pytest.mark.parametrize(
+    ("password", "rule"),
+    [
+        ("p" * (PASSWORD_MAX_LENGTH + 1), "must have at most 1024 characters"),
+        (_PASSWORD + "\ud800", "must be valid UTF-8 text"),
+    ],
+    ids=("over-the-maximum", "lone-surrogate"),
+)
+def test_a_password_variable_that_no_sign_in_can_use_is_refused_with_the_rule(password: str, rule: str) -> None:
+    with pytest.raises(AccountSettingsError) as refused:
+        admin_account_settings({ADMIN_ACCOUNT_PASSWORD_ENV: password})
+
+    assert str(refused.value) == f"{ADMIN_ACCOUNT_PASSWORD_ENV} {rule}"
+    assert password not in str(refused.value)
+    assert refused.value.__cause__ is None

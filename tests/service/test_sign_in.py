@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from structlog.testing import capture_logs
 
 pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
@@ -796,3 +797,53 @@ def test_a_sign_in_during_which_the_account_is_disabled_and_enabled_again_opens_
     assert api.rows("SELECT COUNT(*) FROM account_sessions") == [(0,)]
     assert api.rows("SELECT COUNT(*) FROM sign_in_attempts") == [(0,)]
     assert [event.event_type for event in api.store.audit_events() if event.outcome == "accepted"] == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"name": "Alice", "password": "correct-horse-\\ud800-battery"}',
+        '{"name": "Al\\ud800ice", "password": "correct-horse-battery"}',
+    ],
+    ids=("password", "name"),
+)
+def test_a_value_that_utf_8_cannot_encode_is_refused_with_no_check_and_no_count(api: _Api, body: str) -> None:
+    response = api.client.post("/auth/sign-in", content=body.encode(), headers={"Content-Type": "application/json"})
+
+    assert (response.status_code, response.json()) == (401, _REFUSAL)
+    assert api.gate.checked == []
+    assert api.rows("SELECT COUNT(*) FROM sign_in_attempts") == [(0,)]
+
+
+def test_a_stored_hash_that_cannot_be_read_is_a_wrong_password_and_is_logged_without_the_hash(
+    real_gate: _Api,
+) -> None:
+    api = real_gate
+    damaged = "scrypt$32768$8$3$not-base64!$a2V5"
+    account = api.store.create_account(name="Dora", password_hash=damaged, now=_T0)
+    wrong = api.sign_in("Dora", _WRONG_PASSWORD)
+
+    with capture_logs() as logs:
+        response = api.sign_in("Dora")
+
+    assert _answer(response)[:2] == _answer(wrong)[:2]
+    assert (response.status_code, response.json()) == (401, _REFUSAL)
+    attempt = api.store.read_sign_in_attempt("Dora")
+    assert attempt is not None
+    assert attempt.failed_count == 2
+    unreadable = [log for log in logs if log["event"] == "account_password_hash_unreadable"]
+    assert unreadable == [
+        {"event": "account_password_hash_unreadable", "account_id": account.account_id, "log_level": "warning"}
+    ]
+    assert damaged not in repr(logs)
+    assert _PASSWORD not in repr(logs)
+
+
+def test_a_readable_hash_and_a_wrong_password_log_nothing(real_gate: _Api, real_hash: str) -> None:
+    api = real_gate
+    api.store.create_account(name="Carol", password_hash=real_hash, now=_T0)
+
+    with capture_logs() as logs:
+        assert api.sign_in("Carol", _WRONG_PASSWORD).status_code == 401
+
+    assert [log for log in logs if log["event"] == "account_password_hash_unreadable"] == []

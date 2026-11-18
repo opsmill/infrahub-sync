@@ -473,3 +473,37 @@ def test_a_token_created_while_the_account_is_disabled_does_not_exist_when_it_is
     assert (refused.value.status, refused.value.code) == (401, "unauthenticated")
     assert api.store.list_account_tokens(account.account_id) == ()
     assert [event for event in api.events() if event.operation == "create-token"] == []
+
+
+_SURROGATE = '"correct-horse-\\ud800-battery"'
+
+
+def _change_password_bytes(api: AccountApi, headers: dict[str, str], body: str) -> Response:
+    """Send a password change whose body holds a lone surrogate, as bytes the client does not encode."""
+    return api.call("PUT", "/me/password", {**headers, "Content-Type": "application/json"}, content=body.encode())
+
+
+def test_a_new_password_that_utf_8_cannot_encode_is_refused_as_invalid(api: AccountApi, alice: dict[str, str]) -> None:
+    checks, hashes = api.gate.checks, api.gate.hashes
+
+    response = _change_password_bytes(api, alice, f'{{"current_password": "{PASSWORD}", "new_password": {_SURROGATE}}}')
+
+    _error(response, 422, "password-invalid")
+    assert "correct-horse" not in response.text
+    assert (api.gate.checks, api.gate.hashes) == (checks, hashes)
+    assert api.store.read_sign_in_attempt("alice") is None
+    assert api.sign_in("alice", PASSWORD).status_code == 200
+
+
+def test_a_current_password_that_utf_8_cannot_encode_is_refused_without_a_check(
+    api: AccountApi, alice: dict[str, str]
+) -> None:
+    checks = api.gate.checks
+
+    response = _change_password_bytes(
+        api, alice, f'{{"current_password": {_SURROGATE}, "new_password": "{NEW_PASSWORD}"}}'
+    )
+
+    _error(response, 403, "current-password-refused")
+    assert api.gate.checks == checks
+    assert api.store.read_sign_in_attempt("alice") is None

@@ -11,6 +11,7 @@ import pytest
 
 from infrahub_sync.service import credentials
 from infrahub_sync.service.credentials import (
+    PasswordEncodingError,
     SignInBusyError,
     VerificationGate,
     VerificationNotAdmittedError,
@@ -257,3 +258,22 @@ def test_the_gate_asks_admit_while_it_holds_a_place_and_checks_nothing_when_refu
     assert _PASSWORD not in str(refused.value)
     assert gate.verify(_PASSWORD, "stored", admit=lambda: True) is True
     assert checked == ["stored"]
+
+
+def test_a_password_that_utf_8_cannot_encode_is_not_hashed_and_verifies_nothing() -> None:
+    password = "correct-horse-\ud800-battery"  # noqa: S105 - a test value, not a secret.
+
+    with pytest.raises(PasswordEncodingError) as refused:
+        hash_password(password, **_FAST)
+
+    assert password not in str(refused.value)
+    assert refused.value.__cause__ is None
+    assert refused.value.__context__ is None
+    assert verify_password(password, hash_password(_PASSWORD, **_FAST)) is False
+    assert credentials.is_encodable(password) is False
+    assert credentials.is_encodable(_PASSWORD) is True
+
+
+def test_a_readable_hash_is_told_from_a_damaged_one() -> None:
+    assert credentials.is_readable_hash(hash_password(_PASSWORD, **_FAST)) is True
+    assert credentials.is_readable_hash("scrypt$32768$8$3$not-base64!$a2V5") is False

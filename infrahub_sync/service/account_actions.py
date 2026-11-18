@@ -22,12 +22,11 @@ sign-in, and the value of an API token is in one place, the answer of its creati
 from __future__ import annotations
 
 import re
-import threading
-from contextlib import contextmanager, suppress
+from contextlib import suppress
 from datetime import datetime  # noqa: TC003 - Pydantic reads the annotation of a field when the class is built.
 from typing import TYPE_CHECKING, Annotated, Literal
-from weakref import WeakValueDictionary
 
+import structlog
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from infrahub_sync.client.models import REASON_MAX_LENGTH
@@ -60,18 +59,21 @@ from .events import (
 )
 from .presentation import deleted_account_placeholder
 from .service import REASON_REFUSED_MESSAGE, RunService, ServiceAPIError
-from .settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV, PASSWORD_MIN_LENGTH, session_idle_seconds
+from .settings import (
+    ADMIN_ACCOUNT_PASSWORD_ENV,
+    ADMIN_ACCOUNT_TOKEN_ENV,
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    session_idle_seconds,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
     from infrahub_sync.product_store import Account, AccountToken, AuditEvent
 
     from .auth import Principal
 
-# The longest password that is checked or stored. A longer one is refused before any hash is
-# computed, so the size of a request cannot set the cost of a password check.
-PASSWORD_MAX_LENGTH = 1024
 TOKEN_NAME_MAX_LENGTH = 64
 # The rule of an account name (research R8): no space, so a name differs from every placeholder
 # and is safe in a URL path.
@@ -93,6 +95,9 @@ ACCOUNT_NAME_INVALID_MESSAGE = (
 ACCOUNT_NAME_TAKEN_MESSAGE = "an account already has this name"
 PASSWORD_TOO_SHORT_MESSAGE = f"a password has at least {PASSWORD_MIN_LENGTH} characters"
 PASSWORD_TOO_LONG_MESSAGE = f"a password has at most {PASSWORD_MAX_LENGTH} characters"
+PASSWORD_INVALID_MESSAGE = "a password holds only characters that UTF-8 can encode"
+# The event of the log line that tells the operator that a stored password hash cannot be read.
+PASSWORD_HASH_UNREADABLE_EVENT = "account_password_hash_unreadable"
 # One message for a wrong current password and for a name that is refused after repeated failures.
 CURRENT_PASSWORD_REFUSED_MESSAGE = "the current password was not accepted"
 TOKEN_NAME_TAKEN_MESSAGE = "the account already has a token with this name"
@@ -107,10 +112,8 @@ _ENVIRONMENT_MANAGED_MESSAGE = (
 )
 
 _ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
-# One lock for each lower-case name whose password is being checked in this process. A lock leaves
-# the map when no request holds it, so the map does not grow with the names that were tried.
-_NAME_LOCKS: WeakValueDictionary[str, threading.Lock] = WeakValueDictionary()
-_NAME_LOCKS_GUARD = threading.Lock()
+
+logger = structlog.get_logger(__name__)
 
 AccountState = Literal["active", "disabled", "all"]
 
@@ -308,13 +311,17 @@ def _event(
 
 
 def is_countable_name(name: str) -> bool:
-    """Return whether failed sign-ins are counted for this name: 1 to 64 characters, none of them NUL."""
+    """Return whether failed sign-ins are counted for this name: 1 to 64 characters that can be stored.
+
+    No character is NUL, and UTF-8 can encode each one.
+    """
     # The lower-case form of a name can be longer than the name, and it is the stored key.
     # PostgreSQL stores no NUL character in a text, so a name that holds one is never read there.
     return (
         0 < len(name) <= SIGN_IN_NAME_MAX_LENGTH
         and len(name_key(name)) <= SIGN_IN_NAME_MAX_LENGTH
         and "\x00" not in name
+        and credentials.is_encodable(name)
     )
 
 
@@ -342,32 +349,6 @@ def clear_failed_sign_ins(service: RunService, name: str) -> bool:
     return service.accounts.projection.clear_sign_in_attempts(name)
 
 
-@contextmanager
-def one_check_per_name(name: str) -> Iterator[None]:
-    """Let one password check for this name run at a time in this process, with its count.
-
-    A burst of sign-ins for one name then reads the refusal, checks the password and counts the
-    failure one after the other: a refusal that the fifth failure starts applies to the next check
-    of the process. The lock is per process; several processes each run one check at a time.
-
-    Raises:
-        ServiceAPIError: ``503 sign-in-busy`` when the lock did not become free in the wait of the
-            gate. Nothing is checked and nothing is counted.
-    """
-    key = name_key(name)
-    with _NAME_LOCKS_GUARD:
-        lock = _NAME_LOCKS.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _NAME_LOCKS[key] = lock
-    if not lock.acquire(timeout=credentials.VERIFICATION_WAIT_SECONDS):
-        raise ServiceAPIError(503, "sign-in-busy", SIGN_IN_BUSY_MESSAGE)
-    try:
-        yield
-    finally:
-        lock.release()
-
-
 def verify_account_password(account: Account | None, password: str, *, admit: Callable[[], bool] | None = None) -> bool:
     """Check a password against the hash of an account, with one hash computation in every case.
 
@@ -375,6 +356,9 @@ def verify_account_password(account: Account | None, password: str, *, admit: Ca
     the duration of the check does not show whether the account exists. The check holds one place
     of the gate of the process. ``admit`` is called once the place is held, immediately before the
     check: see ``VerificationGate.verify``.
+
+    A stored hash that cannot be read verifies no password, as a wrong password does, and is
+    logged with the identifier of the account, never the hash.
 
     Raises:
         ServiceAPIError: ``503 sign-in-busy`` when no place of the gate became free in time.
@@ -387,6 +371,14 @@ def verify_account_password(account: Account | None, password: str, *, admit: Ca
         verified = gate.verify(password, checked_hash, admit=admit)
     except credentials.SignInBusyError:
         raise ServiceAPIError(503, "sign-in-busy", SIGN_IN_BUSY_MESSAGE) from None
+    if (
+        not verified
+        and account is not None
+        and stored_hash is not None
+        and not credentials.is_readable_hash(stored_hash)
+    ):
+        # The answer and the count stay those of a wrong password; the log line holds no hash.
+        logger.warning(PASSWORD_HASH_UNREADABLE_EVENT, account_id=account.account_id)
     return verified and stored_hash is not None
 
 
@@ -401,17 +393,21 @@ def _check_password_of_name(service: RunService, name: str, account: Account | N
     Raises:
         ServiceAPIError: ``503 sign-in-busy``.
     """
-    with one_check_per_name(name):
-        try:
-            verified = verify_account_password(
-                account, password, admit=lambda: sign_in_refused_until(service, name) is None
-            )
-        except credentials.VerificationNotAdmittedError:
-            return None
-        if not verified or account is None or account.disabled or account.deleted_at is not None:
-            record_failed_sign_in(service, name)
-            return False
-        return True
+    try:
+        with credentials.one_check_per_name(name_key(name)):
+            try:
+                verified = verify_account_password(
+                    account, password, admit=lambda: sign_in_refused_until(service, name) is None
+                )
+            except credentials.VerificationNotAdmittedError:
+                return None
+            if not verified or account is None or account.disabled or account.deleted_at is not None:
+                record_failed_sign_in(service, name)
+                return False
+            return True
+    except credentials.SignInBusyError:
+        # The check of another request for the name did not end within the wait of the gate.
+        raise ServiceAPIError(503, "sign-in-busy", SIGN_IN_BUSY_MESSAGE) from None
 
 
 def account_resource(account: Account, *, refused_until: datetime | None = None) -> AccountResource:
@@ -447,7 +443,7 @@ def token_resource(token: AccountToken) -> TokenResource:
 def sign_in(service: RunService, body: SignInRequest, path: str) -> SessionResource:
     """Open a session for the account of a name and a password, or refuse with one answer."""
     name = body.name
-    if not is_countable_name(name) or not 0 < len(body.password) <= PASSWORD_MAX_LENGTH:
+    if not is_countable_name(name) or not _is_checkable_password(body.password):
         # No account can have this name or this password. Nothing is read, checked or written.
         raise sign_in_refused()
     if sign_in_refused_until(service, name) is not None:
@@ -462,9 +458,7 @@ def sign_in(service: RunService, body: SignInRequest, path: str) -> SessionResou
         raise sign_in_refused()
     token = credentials.new_session_token()
     try:
-        # One transaction: the session is inserted only while the account is active and has the
-        # password that was checked; the failed sign-ins of the name are deleted and the event
-        # is written with it.
+        # One transaction: inserted only while the account is active with the checked password.
         service.accounts.projection.create_account_session(
             account.account_id,
             digest=credentials.digest(token),
@@ -551,24 +545,35 @@ def _require_account_name(name: str) -> None:
         raise ServiceAPIError(422, "account-name-invalid", ACCOUNT_NAME_INVALID_MESSAGE)
 
 
+def _is_checkable_password(password: str) -> bool:
+    """Return whether an account can have this password: 1 to 1,024 characters that UTF-8 can encode."""
+    return 0 < len(password) <= PASSWORD_MAX_LENGTH and credentials.is_encodable(password)
+
+
 def _require_new_password(password: str) -> None:
-    """Refuse a new password that is too short, or too long to be hashed."""
+    """Refuse a new password that is too short, too long to be hashed, or that UTF-8 cannot encode."""
     if len(password) < PASSWORD_MIN_LENGTH:
         raise ServiceAPIError(422, "password-too-short", PASSWORD_TOO_SHORT_MESSAGE)
     if len(password) > PASSWORD_MAX_LENGTH:
         raise ServiceAPIError(422, "password-too-long", PASSWORD_TOO_LONG_MESSAGE)
+    if not credentials.is_encodable(password):
+        raise ServiceAPIError(422, "password-invalid", PASSWORD_INVALID_MESSAGE)
 
 
 def _hash_new_password(password: str) -> str:
     """Return the hash to store for a new password, computed in one place of the gate of the process.
 
     Raises:
-        ServiceAPIError: ``503 sign-in-busy`` when no place of the gate became free in time.
+        ServiceAPIError: ``503 sign-in-busy`` when no place of the gate became free in time, or
+            ``422 password-invalid`` when UTF-8 cannot encode the password.
     """
     try:
         return credentials.PASSWORD_VERIFICATION_GATE.hash(password)
     except credentials.SignInBusyError:
         raise ServiceAPIError(503, "sign-in-busy", SIGN_IN_BUSY_MESSAGE) from None
+    except (credentials.PasswordEncodingError, UnicodeEncodeError):
+        # Neither error is chained: ``UnicodeEncodeError`` holds the whole password.
+        raise ServiceAPIError(422, "password-invalid", PASSWORD_INVALID_MESSAGE) from None
 
 
 def _environment_managed(variable: str) -> ServiceAPIError:
@@ -899,16 +904,14 @@ def change_own_password(service: RunService, principal: Principal, body: ChangeP
     if sign_in_refused_until(service, name) is not None:
         raise _refuse_current_password(service, principal)
     _require_new_password(body.new_password)
-    if not 0 < len(body.current_password) <= PASSWORD_MAX_LENGTH:
+    if not _is_checkable_password(body.current_password):
         # No account has this password: nothing is checked and nothing is counted, as at sign-in.
         raise _refuse_current_password(service, principal)
-    # A wrong password is counted; a name that became refused while the request waited is
-    # answered in the same way, with no check and no count.
+    # A name that became refused while the request waited gets the same answer, uncounted.
     if not _check_password_of_name(service, name, account, body.current_password):
         raise _refuse_current_password(service, principal)
     password_hash = _hash_new_password(body.new_password)
-    # One transaction: the hash, the end of every other session, the end of the refusal and the
-    # event. A request made with an API token keeps no session.
+    # One transaction. A request made with an API token keeps no session.
     replaced = service.accounts.projection.replace_account_password(
         account.account_id,
         password_hash=password_hash,

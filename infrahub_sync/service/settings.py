@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from .credentials import TOKEN_PREFIXES
+from .credentials import TOKEN_PREFIXES, is_encodable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -36,6 +36,9 @@ ADMIN_ACCOUNT_TOKEN_ENV = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"
 SESSION_IDLE_SECONDS_ENV = "INFRAHUB_SYNC_SESSION_IDLE_SECONDS"
 
 PASSWORD_MIN_LENGTH = 12
+# The longest password that is checked or stored. A longer one is refused before any hash is
+# computed, so the size of a request cannot set the cost of a password check.
+PASSWORD_MAX_LENGTH = 1024
 ADMIN_ACCOUNT_TOKEN_MIN_LENGTH = 16
 SESSION_IDLE_SECONDS_DEFAULT = 28800
 SESSION_IDLE_SECONDS_MINIMUM = 60
@@ -127,8 +130,9 @@ def admin_account_settings(environ: Mapping[str, str] | None = None) -> AdminAcc
     An empty token counts as unset: ``admin`` then has no API token.
 
     Raises:
-        AccountSettingsError: the password is unset, empty or shorter than 12 characters, or the
-            token is shorter than 16 characters or starts with ``ifs_pat_`` or ``ifs_ses_``.
+        AccountSettingsError: the password is unset, empty, shorter than 12 or longer than 1,024
+            characters, or not valid UTF-8 text; or the token is shorter than 16 characters or
+            starts with ``ifs_pat_`` or ``ifs_ses_``.
     """
     env = os.environ if environ is None else environ
     password = env.get(ADMIN_ACCOUNT_PASSWORD_ENV, "")
@@ -137,6 +141,14 @@ def admin_account_settings(environ: Mapping[str, str] | None = None) -> AdminAcc
         raise AccountSettingsError(msg)
     if len(password) < PASSWORD_MIN_LENGTH:
         msg = f"{ADMIN_ACCOUNT_PASSWORD_ENV} must have at least {PASSWORD_MIN_LENGTH} characters"
+        raise AccountSettingsError(msg)
+    if len(password) > PASSWORD_MAX_LENGTH:
+        # No sign-in could succeed with it: a sign-in refuses a longer password before any check.
+        msg = f"{ADMIN_ACCOUNT_PASSWORD_ENV} must have at most {PASSWORD_MAX_LENGTH} characters"
+        raise AccountSettingsError(msg)
+    if not is_encodable(password):
+        # A byte that is not UTF-8 reaches Python as a lone surrogate, which cannot be hashed.
+        msg = f"{ADMIN_ACCOUNT_PASSWORD_ENV} must be valid UTF-8 text"
         raise AccountSettingsError(msg)
     token = env.get(ADMIN_ACCOUNT_TOKEN_ENV, "")
     if not token:
