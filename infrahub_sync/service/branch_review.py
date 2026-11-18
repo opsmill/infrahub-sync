@@ -131,7 +131,9 @@ class ProposedChangeCloseFailedError(BranchReviewError):
 class CloseResult:
     """What `close_proposed_change` found and did.
 
-    `state` is the state read before acting. `closed_now` is true when this call closed it.
+    `state` is the state read before acting. `closed_now` is true when this call closed it. The
+    data model's `branch_review.kept` cause comes from `state` when `closed_now` is false:
+    `approved`, `merged` (also for `merging`) or `closed`.
     """
 
     state: ProposedChangeState
@@ -143,7 +145,7 @@ class CloseResult:
         return self.closed_now or self.state in _DONE_STATES
 
     @property
-    def kept(self) -> bool:
+    def left_in_place(self) -> bool:
         """The proposed change stays: a person approved it, or Infrahub is merging it."""
         return not self.done
 

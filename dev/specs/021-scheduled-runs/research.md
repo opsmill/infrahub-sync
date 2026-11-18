@@ -556,6 +556,29 @@ commit `0dcbe157dd` (`git describe`: `infrahub-v1.12.0b0-31-g0dcbe157dd`; its ge
       row in a final state (`store.py:3626-3640`), so two runs that replace the same row cannot
       both record it.
 
+Checked since, for R15, from the source code only on 2026-11-18 while writing
+`infrahub_sync/service/branch_review.py` (task T062), in the Infrahub checkout above and at the
+tag `infrahub-v1.11.11`, and in the installed `infrahub-sdk` 1.23.2. None of it was checked
+against a running Infrahub.
+
+- Infrahub answers 404 to a GraphQL request sent to a branch that does not exist, before it reads
+  the request (`graphql/app.py:133-138`; line 128 at `infrahub-v1.11.11`). The SDK raises
+  `URLNotFoundError` for it (`infrahub_sdk/client.py:2484-2485`).
+- The SDK sends every request to the client's default branch unless the call names another
+  one (`client.py:2460`), and `client.branch.create`, `delete`, `get` and `all` name none
+  (`infrahub_sdk/branch.py:182-252`). On a client whose default branch is the run's branch,
+  they fail while that branch does not exist. The module therefore sends its own branch list,
+  `BranchCreate` and `BranchDelete` documents to `main` with `execute_graphql(...,
+  branch_name="main")`. `BranchCreate` and `BranchDelete` are exempt from
+  `edit_default_branch` (`default_branch_checker.py:20-29`). Both accept
+  `wait_until_completion` at `infrahub-v1.11.11` too.
+- The branch check of rule 6 reads that 404 to the branch list sent to `main` as "the default
+  branch is not `main`". An address that reaches a server on a wrong path also answers 404 and
+  is recorded the same way.
+- A read of the schedule's earlier proposed changes before the run's branch exists (T063)
+  must name `branch="main"`; `CoreProposedChange` is branch-agnostic
+  (`core/schema/definitions/core/propose_change.py:26`).
+
 Checked since, for R3, in the installed Prefect 3.8.6 on 2026-11-17 while writing
 `infrahub_sync/service/schedule_cadence.py`:
 

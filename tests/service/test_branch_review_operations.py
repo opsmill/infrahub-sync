@@ -42,7 +42,7 @@ from infrahub_sync.service.branch_review import (
     open_proposed_change,
     read_proposed_change,
 )
-from infrahub_sync.service.failure_cause import failure_class, failure_record
+from infrahub_sync.service.failure_cause import failure_class, failure_record, operator_cause
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -145,7 +145,8 @@ def _ok(key: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
 def _assert_no_infrahub_text(exc: BaseException) -> None:
     """The typed error and the failure record hold no text from Infrahub and no token."""
     record = failure_record("sync", exc, secrets=())
-    rendered = json.dumps(record) + str(exc) + repr(exc)
+    cause = operator_cause(exc, secrets=())
+    rendered = json.dumps(record) + json.dumps(cause) + str(exc) + repr(exc)
     assert INFRAHUB_TEXT not in rendered
     assert TOKEN not in rendered
 
@@ -413,7 +414,7 @@ def test_close_open_proposed_change_comments_then_closes() -> None:
 
     assert result == CloseResult(state="open", closed_now=True)
     assert result.done
-    assert not result.kept
+    assert not result.left_in_place
     assert [(call.operation, call.variables) for call in client.calls] == [
         ("SyncProposedChangeRead", {"id": PROPOSED_CHANGE_ID}),
         ("SyncChangeCommentCreate", {"text": "Replaced by pc-2 (run r-2)", "change": PROPOSED_CHANGE_ID}),
@@ -423,7 +424,7 @@ def test_close_open_proposed_change_comments_then_closes() -> None:
 
 
 @pytest.mark.parametrize(
-    ("state", "approvers", "done", "kept"),
+    ("state", "approvers", "done", "left_in_place"),
     [
         ("closed", 0, True, False),
         ("canceled", 0, True, False),
@@ -433,14 +434,16 @@ def test_close_open_proposed_change_comments_then_closes() -> None:
     ],
     ids=["closed", "canceled", "merged", "merging", "approved"],
 )
-def test_close_acts_only_on_an_open_proposed_change(state: str, approvers: int, *, done: bool, kept: bool) -> None:
+def test_close_acts_only_on_an_open_proposed_change(
+    state: str, approvers: int, *, done: bool, left_in_place: bool
+) -> None:
     client = FakeInfrahub(handlers={"SyncProposedChangeRead": _proposed_change(state, approvers)})
 
     result = close_proposed_change(_sdk(client), PROPOSED_CHANGE_ID, "Replaced by pc-2 (run r-2)")
 
     assert not result.closed_now
     assert result.done is done
-    assert result.kept is kept
+    assert result.left_in_place is left_in_place
     assert client.operations() == ["SyncProposedChangeRead"]
 
 
@@ -470,8 +473,12 @@ def test_close_failure_maps_to_its_class(failing: str) -> None:
         (ServerNotReachableError(address=f"http://x?{TOKEN}"), "system_unreachable"),
         (ServerNotResponsiveError(url=f"http://x?{TOKEN}", timeout=60), "system_timeout"),
         (AuthenticationError(INFRAHUB_TEXT), "token_rejected"),
+        (
+            GraphQLError(errors=[{"message": "You do not have one of the following permissions: x"}]),
+            "permission_missing",
+        ),
     ],
-    ids=["unreachable", "timeout", "token"],
+    ids=["unreachable", "timeout", "token", "permission"],
 )
 def test_transport_failure_of_an_operation_keeps_the_transport_class(error: BaseException, expected: str) -> None:
     client = FakeInfrahub(handlers={"SyncBranchCreate": _raise(error), "SyncBranchList": _raise(error)})
