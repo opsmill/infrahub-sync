@@ -77,7 +77,13 @@ def _wait_for_runs(client: httpx.Client, schedule_id: str, count: int) -> list[d
 
 
 def _proposed_change(infrahub: Any, proposed_change_id: str) -> Any:  # noqa: ANN401 - the SDK's node.
-    return infrahub.get(kind="CoreProposedChange", id=proposed_change_id, branch="main", include=["comments"])
+    return infrahub.get(kind="CoreProposedChange", id=proposed_change_id, branch="main")
+
+
+def _comments(infrahub: Any, proposed_change_id: str) -> list[str]:  # noqa: ANN401 - the SDK's sync client.
+    """The text of each comment on a proposed change, read as `CoreChangeComment` nodes."""
+    nodes = infrahub.filters(kind="CoreChangeComment", change__ids=[proposed_change_id], branch="main")
+    return [node.text.value for node in nodes]
 
 
 def _branch_names(infrahub: Any) -> set[str]:  # noqa: ANN401 - the SDK's sync client.
@@ -128,8 +134,7 @@ def test_a_schedule_with_branch_review_opens_and_replaces_its_proposed_changes(
                 # that names the second, and its branch no longer exists.
                 assert second_review["replaced"] == [first["run_id"]], second_review
                 assert first["destination_branch"] not in _branch_names(infrahub)
-                old = _proposed_change(infrahub, first_review["proposed_change_id"])
-                comments = [comment.text.value for comment in old.comments.peers] if old.comments.peers else []
+                comments = _comments(infrahub, first_review["proposed_change_id"])
                 assert any(second_review["proposed_change_id"] in comment for comment in comments), comments
             else:
                 # The source did not change: the run left no branch and no proposed change.

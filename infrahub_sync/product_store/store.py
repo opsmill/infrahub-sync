@@ -3775,7 +3775,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """Save the part of a run's ``branch_review`` that follows its write, in one transaction.
 
         The run's own branch row moves from ``pending`` to ``open`` when the run opened its
-        proposed change. Each run of ``outcome.replaced`` moves to ``replaced`` and each run
+        proposed change; a row that another run already handled stays as it is. Each run of ``outcome.replaced`` moves to ``replaced`` and each run
         of ``outcome.kept`` whose cause is ``merged`` or ``closed`` moves to ``kept``; a run
         kept because it is ``approved`` stays ``open``. An earlier row that is no longer in
         the state ``pending`` or ``open`` was handled by another run: it is left as it is,
@@ -3785,7 +3785,6 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         Raises:
             ScheduleNotFoundError: The run has no branch row.
-            ScheduleTransitionError: The run opened a proposed change but its row is not ``pending``.
         """
         by_run = earlier_events or {}
         with self._transaction() as cursor:
@@ -3799,11 +3798,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 raise ScheduleNotFoundError(msg)
             own = _schedule_branch_from_row(row)
             if outcome.proposed_change_id is not None:
-                if own.state != "pending":
-                    msg = f"a schedule branch in the state {own.state!r} cannot move to the state 'open'"
-                    raise ScheduleTransitionError(msg)
+                # A later run of the schedule may have replaced this run's `pending` row while
+                # the proposed change was opened (research R15); that row stays as it is.
                 cursor.execute(
-                    self._sql("UPDATE schedule_branches SET state = 'open', proposed_change_id = ? WHERE run_id = ?"),
+                    self._sql(
+                        "UPDATE schedule_branches SET state = 'open', proposed_change_id = ? "
+                        "WHERE run_id = ? AND state = 'pending'"
+                    ),
                     (outcome.proposed_change_id, outcome.run_id),
                 )
             handled: list[str] = []
@@ -4946,8 +4947,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         run's branch row was still ``pending`` or ``open``. Returns the outcome as saved.
 
         Raises:
-            ScheduleNotFoundError, ScheduleTransitionError: see
-            `_RelationalRunStore.record_branch_review_outcome`.
+            ScheduleNotFoundError: The run has no branch row.
         """
         checked = BranchReviewOutcome.model_validate(outcome.model_dump())
         return self._records.record_branch_review_outcome(

@@ -447,6 +447,21 @@ def _stored(api: ScheduleApi, run_id: str) -> ProductRun:
     return stored
 
 
+def test_the_client_of_the_branch_steps_is_built_from_the_resolved_destination_settings(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
+) -> None:
+    """The real `build_client`, with no request: the address and token of the version, the run's branch."""
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_TOKEN", "branch-review-token-canary")
+    schedule = _schedule(api)
+
+    settings = service_flow._destination_settings(api.projection, schedule)
+    client = service_flow.review_ops.build_client(settings, "sync/nightly-20260302-adcace")
+
+    assert client.address == "https://infrahub.example"
+    assert client.default_branch == "sync/nightly-20260302-adcace"
+    assert client.config.api_token == "branch-review-token-canary"  # noqa: S105 - a test value.
+
+
 def test_the_branch_is_created_before_the_plan_and_the_write_goes_to_it(
     monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, infrahub: FakeInfrahub
 ) -> None:

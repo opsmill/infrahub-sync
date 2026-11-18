@@ -958,6 +958,21 @@ def test_the_outcome_of_a_branch_review_moves_the_rows_and_merges_the_result(pro
     assert all(by_run[row.run_id][0].event_id in written for row in (replaced, pending, merged, approved))
 
 
+def test_an_own_row_that_another_run_replaced_stays_replaced(projection: ProductProjection) -> None:
+    """Research R15: a later run replaced the row while this run opened its proposed change."""
+    schedule = _branch_schedule(projection)
+    own = _branch_run(projection, schedule, 0)
+    later = _branch_run(projection, schedule, 1)
+    replaced = projection.update_schedule_branch(
+        own.model_copy(update={"state": "replaced", "replaced_by_run_id": later.run_id})
+    )
+
+    saved = projection.record_branch_review_outcome(BranchReviewOutcome(run_id=own.run_id, proposed_change_id="pc-0"))
+
+    assert saved.proposed_change_id == "pc-0"
+    assert projection.lookup_schedule_branch(own.run_id).value == replaced
+
+
 def test_a_failed_proposed_change_leaves_the_row_pending(projection: ProductProjection) -> None:
     schedule = _branch_schedule(projection)
     own = _branch_run(projection, schedule, 0)

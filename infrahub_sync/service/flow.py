@@ -1310,7 +1310,6 @@ def _branch_review_stop(
         finished_at=datetime.now(timezone.utc),
         summary={"sync_name": sync_name, **dict.fromkeys(ACTION_KEYS, 0)},
         results=result,
-        baseline=_baseline_writeback(saved.manifest),
     )
     return result, writeback
 
