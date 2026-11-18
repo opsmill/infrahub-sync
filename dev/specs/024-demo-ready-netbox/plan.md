@@ -26,7 +26,7 @@ the Sync HTTP client in `infrahub_sync/client/`, Invoke (development tasks), hat
 **Storage**: none new. The command writes through the Infrahub API and the Sync API.
 
 **Testing**: pytest. Unit tests for the command with a fake Sync client and a fake Infrahub schema
-API; a build test that the wheel holds the assets; an image test (`tests/image/`) that the image
+API; a unit test of the source-tree asset path; a build test that the wheel holds the assets; an image test (`tests/image/`) that the image
 holds them; Invoke task unit tests in the style of the existing `tests/tasks/` (or the location the
 current task tests use). The end-to-end run is a manual quickstart scenario, because it needs
 Docker, Infrahub and NetBox.
@@ -130,13 +130,16 @@ Contract: [contracts/demo-prepare-cli.md](contracts/demo-prepare-cli.md).
    moved from `tasks/netbox.py` (R-2). The replacement refuses a package whose shape changed.
 3. Load the schema into the Infrahub at `--infrahub-address` (defaults to `--infrahub-url`; they
    differ when the command runs somewhere other than the worker) with `InfrahubClientSync`, the
-   token from `INFRAHUB_API_TOKEN`, waiting for convergence (R-4). Report `loaded` or `unchanged`.
+   token from `INFRAHUB_API_TOKEN`, waiting for convergence up to `--schema-timeout` seconds
+   (default 120) (R-4). Report `loaded` or `unchanged`.
    On failure, stop with exit code 1 and the cause; register nothing (FR-009).
 4. Register or version the configuration through the Sync client (R-3): look up configurations by
    the package name; none → `register_config`; one or more → `create_config_version` on the newest.
    A 200 answer means unchanged; a 201 answer means a new version. Use a deterministic idempotency
-   key derived from the package checksum, so a retried call after a timeout does not create a
-   second configuration.
+   key per operation and target (critique E2): `demo-prepare-register-<sha12>` for a registration,
+   `demo-prepare-version-<config_id>-<sha12>` for a version, where `<sha12>` is the first 12 hex
+   characters of the package text's SHA-256. A retried call replays; a key is never reused for a
+   different route or body.
 5. Print a summary: schema state, configuration ID, version, whether anything changed. Never print
    a token. With `--json`, print the same as one JSON object for scripts and a later Styrmin action.
 
@@ -148,10 +151,18 @@ Contract: [contracts/dev-demo-task.md](contracts/dev-demo-task.md).
   preset seeds the smoke schema into the same Infrahub; the demo Infrahub holds only the destination
   schema (R-7).
 - `dev.demo` = `dev.start --preset demo`, then ensure NetBox holds the `demo` dataset (seed it only
-  when NetBox is new, as `preview` does), then run `infrahub-sync demo prepare` inside the `sync-api`
-  container with the worker addresses (`http://netbox:8080`, `http://infrahub-server:8000`) and the
-  stack's Infrahub admin token and Sync development token passed as environment variables of the
-  `exec`, never as arguments. Running it in the container proves the image path (FR-005).
+  when NetBox is new, as `preview` does; otherwise print the dataset found when it can tell, and
+  always the `netbox.seed --dataset demo` command that reloads it), then run
+  `infrahub-sync demo prepare` **on the host** (`uv run`, source tree) with the worker addresses
+  written into the package (`http://netbox:8080`, `http://infrahub-server:8000`),
+  `--infrahub-address` set to the stack's published Infrahub address, and the Sync API's loopback
+  address. The Infrahub admin token and the Sync development token are passed in the process
+  environment, never as arguments.
+- Why the host and not the `sync-api` container (critique E1): the development stack bind-mounts
+  `../infrahub_sync` over the installed package, which hides the assets the wheel bundles, and it
+  does not mount `examples/` or `tests/data/`. The image path is proven instead by an image test
+  (the built image holds the assets) and by quickstart scenario 3 (`docker run` of the built image,
+  no source mount). Both paths run the same command (FR-005).
 - The worker's NetBox and Infrahub credentials already default to the local tokens through
   `_stack_env` (FR-002); the `demo` preset sets `netbox_credential` like `preview`.
 - Print the web interface address (the Sync API address, which serves the interface at its root),

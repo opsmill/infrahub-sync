@@ -39,12 +39,14 @@ Expected: `schema: unchanged`, `configuration: unchanged`.
 
 ## Scenario 3: the image path (US2, SC-002)
 
-With the stack from scenario 1 running, run the command from the image against the same services,
-with another NetBox address:
+With the stack from scenario 1 running, run the command from the built image, with no source
+mount, on the stack's network, with another NetBox address:
 
 ```bash
-docker compose -p <stack project> exec -e INFRAHUB_API_TOKEN sync-api \
-  infrahub-sync demo prepare --netbox-url https://demo.netbox.dev --infrahub-url http://infrahub-server:8000
+docker run --rm --network <stack network> \
+  -e INFRAHUB_API_TOKEN -e INFRAHUB_SYNC_API_URL=http://sync-api:8000 -e INFRAHUB_SYNC_API_TOKEN \
+  infrahub-sync:dev infrahub-sync demo prepare \
+  --netbox-url https://demo.netbox.dev --infrahub-url http://infrahub-server:8000
 ```
 
 Expected: `configuration: versioned`, version 2. No token in the output.

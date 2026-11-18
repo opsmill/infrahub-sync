@@ -6,6 +6,7 @@ infrahub-sync [--url URL] demo prepare
     --infrahub-url URL        Infrahub address written into the package (the worker's view)
     [--infrahub-address URL]  Infrahub address this command uses for the schema load;
                               defaults to --infrahub-url
+    [--schema-timeout SECONDS] Wait for schema convergence; default 120
     [--reason TEXT]           Audit reason for the registration
     [--json]                  Print the result as one JSON object
 ```

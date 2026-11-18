@@ -262,7 +262,8 @@ clone to an applied plan.
   setup command leaves the destination schema loaded and the NetBox configuration registered, with
   no other manual step.
 - **SC-003**: At least 3 solution architects or sales engineers complete plan, review and apply on
-  their own and send written feedback.
+  their own and send written feedback. Measured during the round, after delivery; no task
+  implements it.
 - **SC-004**: Running the setup command a second time changes nothing, every time.
 - **SC-005**: No token value appears in the output or logs of the setup command, or in the
   registered package.
@@ -284,5 +285,6 @@ clone to an applied plan.
 
 - Which OpsMill Infrahub demo, and which source, a later "existing environment" way of trying
   Sync targets.
-- Where colleagues send feedback (a channel or an issue label); the maintainer names it before the
-  page is published.
+- Where colleagues send feedback: the maintainer names the channel in the invitation to the round.
+  The page asks for feedback through that channel and names no public tracker, because feedback
+  can name customers.

@@ -32,8 +32,10 @@
 - **Decision**: `list_configs(name=<package name>)`. None → `register_config`. Otherwise
   `create_config_version` on the newest; the client documents it as "create or retrieve an identical
   configuration version", and the route answers 200 for an identical version and 201 for a new one.
-  The idempotency key is `demo-prepare-<sha256 of the package text>` so that a retry after a lost
-  answer replays instead of creating a second configuration.
+  The idempotency key is per operation and target: `demo-prepare-register-<sha12>` or
+  `demo-prepare-version-<config_id>-<sha12>`, so that a retry after a lost answer replays instead
+  of creating a second configuration, and a key is never reused for another route or body (the
+  service answers 409 `idempotency-conflict` to that).
 - **Rationale**: uses the API's own identity rules; no new endpoint.
 - **Alternatives considered**: always `register_config`: registering changed content creates a new
   configuration ID at version 1 (documented in "Run a first sync"), which breaks FR-008.
@@ -79,11 +81,14 @@
 
 ## R-8. Where feedback goes
 
-- **Decision**: the page ends with a "Send feedback" section that asks for an issue in
-  `opsmill/infrahub-sync` titled `Demo feedback: <short title>`. The maintainer can replace it with
-  another destination before the round starts.
-- **Rationale**: the spec leaves the destination to the maintainer; a public issue tracker is the
-  existing channel and needs no new label.
+- **Decision** (revised after critique P2): the page ends with a "Send feedback" section that asks
+  for feedback through the channel named in the invitation to the round, and lists what to include:
+  the way of trying the demo used, the step where they got stuck, the command or screen, and the
+  message shown. The page names no public tracker.
+- **Rationale**: solution architects think of customers while trying the demo, and feedback can
+  name them; a public issue tracker would publish that. The spec leaves the destination to the
+  maintainer, who names it in the invitation.
+- **Alternatives considered**: public GitHub issues (rejected, above).
 
 ## R-9. The web interface in the development stack
 

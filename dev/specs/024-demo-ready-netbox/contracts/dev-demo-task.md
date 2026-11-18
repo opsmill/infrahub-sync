@@ -4,10 +4,14 @@
   It writes nothing into Infrahub.
 - `dev.demo`:
   1. Starts the `demo` preset (builds the image when its inputs changed, as `dev.start` does).
-  2. Loads the NetBox `demo` dataset when NetBox is new; keeps an existing NetBox's data and says so.
+  2. Loads the NetBox `demo` dataset when NetBox is new; keeps an existing NetBox's data, says so,
+     names the dataset when it can tell, and prints `uv run invoke netbox.seed --dataset demo` to
+     reload it.
   3. Runs `infrahub-sync demo prepare --netbox-url http://netbox:8080
-     --infrahub-url http://infrahub-server:8000` inside the `sync-api` container, with the stack's
-     Infrahub admin token and Sync development token passed as `exec` environment variables.
+     --infrahub-url http://infrahub-server:8000 --infrahub-address <published Infrahub address>`
+     on the host from the source tree, against the Sync API's loopback address, with the stack's
+     Infrahub admin token and Sync development token in the process environment. It does not run
+     in the `sync-api` container, whose source mount hides the bundled assets (critique E1).
   4. Prints: web interface address, Sync API address, which token to enter (never a token the user
      set), the configuration ID, and the next commands:
 
