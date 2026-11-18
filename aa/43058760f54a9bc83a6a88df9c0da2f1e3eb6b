@@ -1,0 +1,29 @@
+dev/specs/021-scheduled-runs/tasks.md
+  s_29b17f91da9f30::t_f3ac247d99e77f 186
+frontend/src/api/types.generated.ts
+  s_1f476d0309de10::t_8c59320bdc49bd 76,320-463,771-797,905-949,983-1010,1081,1128,1292-1332,1491-1500,1702-1801,2048-2049,3174-3818
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aa43058760f54a9bc83a6a88df9c0da2f1e3eb6b",
+  "prompts": {},
+  "sessions": {
+    "s_1f476d0309de10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9f84489118728054",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
