@@ -27,6 +27,11 @@ import { useDocumentTitle } from "#/lib/title";
 type Token = components["schemas"]["TokenResource"];
 
 export const Route = createFileRoute("/account")({
+  // Nothing is awaited: the page shows its own loading and error states.
+  loader: ({ context: { queryClient } }) => {
+    void queryClient.prefetchQuery(meQuery());
+    void queryClient.prefetchQuery(myTokensQuery());
+  },
   component: AccountPage,
 });
 
@@ -98,6 +103,7 @@ function PasswordSection({ name }: { name: string }) {
     (problem && problemField === "current") ||
     (!problem && describeAccountError(error).code === "current-password-refused");
   const [pending, setPending] = useState(false);
+  const invalidate = useInvalidateAccounts();
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,6 +121,9 @@ function PasswordSection({ name }: { name: string }) {
     setPassword("");
     setRepeat("");
     setPending(false);
+    // A wrong current password counts as a failed sign-in, and a new password clears the count,
+    // so the lists of accounts are read again whatever the answer.
+    void invalidate();
     if (result.ok) {
       setDone(true);
       announce("Password changed. Your other sessions ended; your API tokens still work.");

@@ -48,6 +48,17 @@ export const Route = createFileRoute("/accounts")({
   validateSearch: (s: Record<string, unknown>): AccountsSearch => ({
     state: s.state === "active" || s.state === "disabled" ? s.state : undefined,
   }),
+  loaderDeps: ({ search }) => ({ state: search.state }),
+  // Nothing is awaited and nothing is thrown: the page shows its own loading and error states.
+  // Only an administrator can read the accounts, so the list is asked for after /me answers.
+  loader: ({ context: { queryClient }, deps }) => {
+    void queryClient
+      .fetchQuery(meQuery())
+      .then((me) => {
+        if (me.administrator) void queryClient.prefetchQuery(accountsQuery(deps.state ?? "all"));
+      })
+      .catch(() => undefined);
+  },
   component: AccountsRoute,
 });
 
