@@ -2400,10 +2400,12 @@ _OVERLAP_POLICY_HELP = (
     "What a start does while a run of the configuration is in progress: reject skips the start, queue makes "
     "one start wait and run when the run in progress ends."
 )
-_START_LATE_HELP = (
+_START_LATE_HELP_BASE = (
     "How late the most recent start may begin after a time when the Sync service was not running, such as "
-    "30m or 2h (from 1m to 7d). The Sync API uses 1h when the option is not given."
+    "30m or 2h (from 1m to 7d)."
 )
+_START_LATE_HELP = f"{_START_LATE_HELP_BASE} The Sync API uses 1h when the option is not given."
+_CHANGE_START_LATE_HELP = f"{_START_LATE_HELP_BASE} When the option is not given, the duration does not change."
 _DURATION = re.compile(r"(\d+)([smhd])")
 _DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
@@ -2662,7 +2664,7 @@ def schedules_change(  # pylint: disable=too-many-arguments
     ),
     overlap_policy: OverlapPolicyOption | None = typer.Option(None, "--overlap-policy", help=_OVERLAP_POLICY_HELP),
     start_late_by_at_most: str | None = typer.Option(
-        None, "--start-late-by-at-most", callback=_start_late_seconds, help=_START_LATE_HELP
+        None, "--start-late-by-at-most", callback=_start_late_seconds, help=_CHANGE_START_LATE_HELP
     ),
     reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),

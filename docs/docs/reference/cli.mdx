@@ -749,7 +749,7 @@ $ infrahub-sync schedules change [OPTIONS] {SCHEDULE}
 * `--write-to-default-branch / --write-to-branch-review`: Change where each run writes: to the branch that a sync run of the configuration writes to, or to a new branch with a proposed change for review. A Sync API that requires an approved plan refuses the default branch.
 * `--write-when-left-out / --no-write-when-left-out`: Turn on or off the left-out setting: when on, a run whose plan leaves out records writes the other records instead of stopping after the plan. Applies only to a schedule that writes to the default branch; the Sync API refuses it for branch review.
 * `--overlap-policy <reject|queue>`: What a start does while a run of the configuration is in progress: reject skips the start, queue makes one start wait and run when the run in progress ends.
-* `--start-late-by-at-most <str>`: How late the most recent start may begin after a time when the Sync service was not running, such as 30m or 2h (from 1m to 7d). The Sync API uses 1h when the option is not given.
+* `--start-late-by-at-most <str>`: How late the most recent start may begin after a time when the Sync service was not running, such as 30m or 2h (from 1m to 7d). When the option is not given, the duration does not change.
 * `--reason <str>`: Optional audit reason.
 * `--idempotency-key <str>`: Retry key.
 * `--help`: Show this message and exit.
