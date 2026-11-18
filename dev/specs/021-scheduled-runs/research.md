@@ -169,6 +169,20 @@ this specification.
 **Rationale**: FR-002. The check lives where `approval_required()` is already read: the service,
 not the worker (`service/service.py:389`).
 
+**Added after the review of the implementation: the worker checks the setting too.** Any gap in
+the checks of the Sync API would let a schedule that writes to the default branch run with no
+approved plan. Two such gaps were found: a resume of a stopped schedule did not check approval,
+and a store error at the start of the API process skipped the stop step. So the admission of a
+scheduled start in the worker (`decide_start`) also reads `approval_required()`, from the
+worker's own environment. When it is true and the write target is the default branch, the start
+creates no run: the admission records it with the cause `approval-required` and the event
+`schedule.start_skipped` (`skipped-approval-required`), and moves the schedule to the state
+`stopped` with the reason `approval-required` and its `schedule.stopped` event, in the same
+transaction. The Compose deployment passes `INFRAHUB_SYNC_REQUIRE_APPROVAL` to `sync-worker` as
+to `sync-api`. A value that is not accepted makes the admission fail with no run and no write.
+The start of the API process now tries its stop step three times when the store fails, then logs
+an error; the worker check is what guarantees FR-002.
+
 **A write target that is not delivered yet** is refused with `422
 schedule-setting-not-available`: branch review until the worker side of user story 1 exists, and
 the default branch until user story 2 is delivered. The approval refusal is checked first. When

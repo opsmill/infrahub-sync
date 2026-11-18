@@ -124,11 +124,14 @@ and a resume of an active schedule answer `200` and change nothing.
 | 403 | `forbidden` | The caller is neither the owner nor an administrator. |
 | 404 | `schedule-not-found` | |
 | 409 | `schedule-deleted` | |
-| 409 | `schedule-stopped` | A resume of a stopped schedule whose reason still holds. The message names the reason and the action it needs. |
+| 409 | `schedule-stopped` | A resume of a stopped schedule whose reason still holds, or of a paused or stopped schedule for which another reason to stop holds: the owner's actor does not exist, or the schedule writes to the default branch while the Sync API requires approval. The message names the reason and the action it needs. |
 | 409 | `schedule-changed` | As for a change. It also answers a deletion and a take-over. |
 
-A resume of a stopped schedule whose reason no longer holds answers `200`, and the schedule is
-active.
+A resume of a stopped schedule whose reason no longer holds, and for which no other reason to
+stop holds, answers `200`, and the schedule is active. This applies to `repeated-failures` too.
+When a resume of a paused schedule, or of a stopped schedule whose reason no longer holds, finds
+another reason to stop it, the schedule is stored in the state `stopped` with that reason and
+its `schedule.stopped` event in one write, and the resume is refused with `schedule-stopped`.
 
 ## `POST /schedules/{schedule_id}/delete`
 

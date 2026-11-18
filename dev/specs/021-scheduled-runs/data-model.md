@@ -44,6 +44,9 @@ Rules:
 - `next_start_at` is computed from `cron` and `timezone` each time the schedule is returned. It
   is always later than the time of the computation.
 - The Prefect schedule is active only when the state is `active`.
+- A stopped schedule that becomes active gets `consecutive_failures` set to 0, whatever reason it
+  stopped for, so a stop for `repeated-failures` that a resume later stored with another reason
+  does not keep its count.
 - `consecutive_failures` is updated in the transaction that saves the end of a scheduled run: plus
   one for a run that ends as failed, interrupted or ambiguous; zero for a run that succeeds or ends
   with no change; unchanged for a run that a person cancelled or that stopped for a review of
@@ -61,13 +64,15 @@ State transitions:
 | (none) | create | `active` |
 | `active` | pause | `paused` |
 | `paused` | resume | `active` |
-| `paused` | resume, when the owner's actor does not exist on the Sync API | `stopped`, reason `owner-not-found`; the resume is refused with `schedule-stopped` |
-| `paused` | resume, when the Sync API requires approval and the write target is the default branch | `stopped`, reason `approval-required`; the resume is refused with `schedule-stopped` |
+| `paused` | resume, when the owner's actor does not exist on the Sync API | `stopped` directly, in one write with its event, reason `owner-not-found`; the resume is refused with `schedule-stopped` |
+| `paused` | resume, when the Sync API requires approval and the write target is the default branch | `stopped` directly, in one write with its event, reason `approval-required`; the resume is refused with `schedule-stopped` |
 | `active` | the owner's actor does not exist on the Sync API, when the API process starts | `stopped`, reason `owner-not-found` |
 | `active` | the Sync API requires approval and the write target is the default branch, when the API process starts | `stopped`, reason `approval-required` |
+| `active` | the worker admits a start while `INFRAHUB_SYNC_REQUIRE_APPROVAL` is on in its environment and the write target is the default branch | `stopped`, reason `approval-required`, in the transaction of the admission; the start creates no run |
 | `active` | the fifth consecutive failed run ends | `stopped`, reason `repeated-failures` |
-| `stopped` | resume, when the reason no longer holds | `active` |
-| `stopped` (`repeated-failures`) | resume, always | `active`, with `consecutive_failures` at 0 |
+| `stopped` | resume, when the reason no longer holds and no other reason holds | `active`, with `consecutive_failures` at 0 |
+| `stopped` | resume, when the reason no longer holds and another reason holds (owner's actor missing, or approval required with the default branch as write target) | `stopped` with the reason that holds, in one write with its event; the resume is refused with `schedule-stopped` |
+| `stopped` (`repeated-failures`) | resume, when no other reason holds | `active`, with `consecutive_failures` at 0 |
 | `stopped` (`owner-not-found`) | take over by an administrator (user story 3) | `active`, with the administrator as owner |
 | `stopped` (`owner-not-found`) | take over by an administrator, when the Sync API requires approval and the write target is the default branch | `stopped`, reason `approval-required`, with the administrator as owner |
 | `stopped` (`approval-required`) | change of the write target to `branch-review` | `active` |
@@ -99,8 +104,9 @@ Rules:
 - `removed`: the run itself deleted its branch, because the plan held no operation.
 - `replaced`: a later run of the schedule closed the proposed change, if any, and deleted the
   branch.
-- `kept`: a person merged or closed the proposed change. The schedule never touches the branch
-  or the proposed change again.
+- `kept`: a person merged, closed or deleted the proposed change. The schedule never touches the
+  branch or the proposed change again. A proposed change that Infrahub no longer holds is kept
+  with the cause `missing`, so a deleted proposed change does not fail every later start.
 - A row in the state `open` whose proposed change a person approved stays `open`. While it is
   approved and open, the schedule starts no run (FR-031).
 - A later successful run handles every row of its schedule in the states `pending` and `open`
@@ -164,7 +170,7 @@ review:
 | `branch_review.branch_state` | text | `written`, or `removed` when the run deleted its branch. |
 | `branch_review.proposed_change_id` | text or null | The proposed change the run opened. |
 | `branch_review.replaced` | list | For each earlier run that was replaced: its run identifier. |
-| `branch_review.kept` | list | For each earlier run that was left in place: its run identifier and the cause, `approved` (approved while this run was writing), `merged` or `closed`. |
+| `branch_review.kept` | list | For each earlier run that was left in place: its run identifier and the cause, `approved` (approved while this run was writing), `merged`, `closed` or `missing` (Infrahub no longer holds the proposed change). |
 | `branch_review.failure` | text or null | The failure class when opening the proposed change or replacing an earlier one failed. The write verdict does not change. |
 
 The result also holds `left_out`, the plan's count of records left out, for every scheduled run.
