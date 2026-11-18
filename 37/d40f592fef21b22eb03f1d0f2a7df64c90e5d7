@@ -1,0 +1,22 @@
+tests/compose/test_container_cli.py
+  s_cf9ada8f865389::t_2b6bcaa58946c1 151-153,155
+tests/compose/test_managed_run.py
+  s_cf9ada8f865389::t_fe9658b8e9b39f 39-41
+  s_cf9ada8f865389::t_93f44627d59faa 56,60-62,67-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37d40f592fef21b22eb03f1d0f2a7df64c90e5d7",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
