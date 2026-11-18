@@ -1,0 +1,57 @@
+tests/service/test_sign_in.py
+  s_cf9ada8f865389::t_dc0e2c120fd9bd 78-83,87-88,91-95,98-101
+  s_cf9ada8f865389::t_2eb8138cbec9a0 412
+  s_cf9ada8f865389::t_36e094270b9b6d 721-762,767-769,771,773-777
+  s_cf9ada8f865389::t_9214288509a716 763-766,770,772,778-780
+  s_cf9ada8f865389::t_3ed7d1de5d41db 49,60
+infrahub_sync/product_store/accounts.py
+  s_cf9ada8f865389::t_865e411ebb0ae3 195-198
+  s_cf9ada8f865389::t_dc538738939393 635-642
+  s_cf9ada8f865389::t_d2b98d9798fa44 146
+  s_cf9ada8f865389::t_9828163b6382f4 148-151,154-155
+  s_cf9ada8f865389::t_4d994fbf4cd914 596-598,603-605
+tests/service/account_api.py
+  s_cf9ada8f865389::t_55815e6d9a599c 35,52
+  s_cf9ada8f865389::t_c3988c858b2bf4 63-68,73-74,77-81,84-87
+infrahub_sync/product_store/store.py
+  s_cf9ada8f865389::t_091c1145af7f82 4434-4436,4441-4442
+infrahub_sync/service/credentials.py
+  s_cf9ada8f865389::t_0265db5098db51 30
+  s_cf9ada8f865389::t_e651600614c605 59-61,66-67
+  s_cf9ada8f865389::t_cf6bea311899bf 187,190-193,196,199-200
+  s_cf9ada8f865389::t_e1f7b260a0cb7c 68-69
+tests/product_store/test_sign_in_attempts.py
+  s_cf9ada8f865389::t_92be319dfda333 23,279-333
+tests/service/test_credentials.py
+  s_cf9ada8f865389::t_0a97554849bb28 16,235-259
+tests/service/test_token_routes.py
+  s_cf9ada8f865389::t_4c74620a0140f2 16,18,417-447
+infrahub_sync/service/account_actions.py
+  s_cf9ada8f865389::t_bd2ba2e5082f3f 26,30
+  s_cf9ada8f865389::t_e6e67c94a2131e 367
+  s_cf9ada8f865389::t_c4deeb24af1c4e 831-833
+  s_cf9ada8f865389::t_d08bfa0e4e0312 313-314,317
+  s_cf9ada8f865389::t_baf2ecdff5f485 438-439
+  s_cf9ada8f865389::t_ce40d08807cf1f 325-351,356-357,361,364-365,373-394
+  s_cf9ada8f865389::t_a3f88972560a8e 66-67
+  s_cf9ada8f865389::t_23d9b7123c390b 110-113
+  s_cf9ada8f865389::t_4da8f9cead2251 27,316
+  s_cf9ada8f865389::t_cd8f1863a099b9 40
+  s_cf9ada8f865389::t_cb19c9ca3ffb13 395-396
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3d3b353b4c20568b8f547668b81ce924a19d639",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
