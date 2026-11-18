@@ -31,8 +31,9 @@ from pydantic_core import to_json
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
-from infrahub_sync.configuration.runtime import resolve_runtime_instance
+from infrahub_sync.configuration.runtime import effective_destination_branch, resolve_runtime_instance
 from infrahub_sync.configuration.storage import (
     UNSUPPORTED_STORE_MESSAGE,
     UNSUPPORTED_STORE_REASON,
@@ -95,6 +96,8 @@ from infrahub_sync.runtime_schema import (
     RuntimeModelScope,
     build_runtime_model_plan,
 )
+from infrahub_sync.runtime_schema import worker as runtime_schema_worker
+from infrahub_sync.runtime_schema.errors import RuntimeSchemaError
 from infrahub_sync.utils import PlanApplier
 
 from . import branch_review as review_ops
@@ -146,6 +149,12 @@ LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
 # How long a start that waits under the `queue` policy waits before its flow run checks again
 # whether a run of the configuration is in progress (spec 021, research R7).
 QUEUED_START_RECHECK_SECONDS = 60
+# How long a start whose destination does not answer yet waits before its flow run reads the
+# destination again (spec 021, FR-035).
+DESTINATION_RECHECK_SECONDS = 60
+# The schema read reasons of a destination that does not answer yet: no connection, a server
+# error or no answer in time. A refused token or a missing branch does not wait.
+_NOT_READY_REASONS = frozenset({"timeout", "unreachable"})
 _REGISTERED_PLAN_CHECKSUM_MISMATCH = "registered saved plan checksum does not match the approved expected_checksum"
 _WORKER_BINDING_PARAMETERS_INVALID = "service worker configuration binding parameters must all be present"
 # The one refusal of a run that names no registered configuration, whichever stage it asks for
@@ -697,6 +706,18 @@ def _admit_scheduled_flow_run(
         )
     start = facts.expected_start_time.astimezone(timezone.utc)
     now = _now()
+    not_ready = _destination_not_ready(projection, schedule_id, start, now)
+    if not_ready is not None:
+        # The destination does not answer yet, for example while it starts again after a
+        # maintenance: Prefect runs this flow run again one minute later, while the start can
+        # still run. No run is created, so the wait counts as no failure (FR-035).
+        recheck_at = now + timedelta(seconds=DESTINATION_RECHECK_SECONDS)
+        message = (
+            f"the start {start.isoformat()} of schedule {schedule_id} waits for its destination "
+            f"to answer ({not_ready}); this flow run starts again at {recheck_at.isoformat()}"
+        )
+        lines.info(message)
+        return AwaitingRetry(scheduled_time=recheck_at, message=message)
     try:
         admission = admit_scheduled_start(
             projection,
@@ -761,6 +782,39 @@ def _admit_scheduled_flow_run(
         branch_review=review,
         scheduled=_ScheduledRun(confirm_left_out=admission.confirm_left_out),
     )
+
+
+def _destination_not_ready(
+    projection: ProductProjection, schedule_id: str, start: datetime, now: datetime
+) -> str | None:
+    """Return why the destination of a scheduled start does not answer yet, or `None` (spec 021, FR-035).
+
+    The worker reads the destination schema of the schedule's version, as the `sync` stage
+    does first, on the branch the run reads: the default branch for both write targets, since
+    a branch review creates its branch later. Only a read that fails because the destination
+    cannot be reached, answers with a server error or does not answer in time makes the start
+    wait. The start waits only while it can still run one recheck later, within its late-start
+    duration; after that the start runs, and its run records the destination failure. A schedule
+    that is not active, and any other failure, wait for nothing: the admission decides.
+    """
+    schedule = projection.lookup_schedule(schedule_id).value
+    if schedule is None or schedule.state != "active":
+        return None
+    last_wait = start + timedelta(seconds=schedule.start_late_by_at_most_seconds - DESTINATION_RECHECK_SECONDS)
+    if now > last_wait:
+        return None
+    stored = projection.lookup_configuration_version(schedule.config_id, schedule.registry_version).value
+    if stored is None:
+        return None
+    try:
+        package = parse_configuration_package(stored.declared_content)
+        branch = effective_destination_branch(package.configuration.destination.settings, None)
+        runtime_schema_worker.read_destination_schema_snapshot(package, branch)
+    except DestinationSchemaReadError as exc:
+        return exc.reason if exc.reason in _NOT_READY_REASONS else None
+    except (ConfigurationPackageParseError, RuntimeSchemaError):
+        return None
+    return None
 
 
 def _destination_settings(projection: ProductProjection, schedule: ScheduleRecord) -> Mapping[str, Any]:

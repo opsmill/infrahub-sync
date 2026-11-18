@@ -38,6 +38,9 @@ The actor is the schedule's owner. `operation` is `schedule-start`. `details.sta
 
 - A start that creates a run on time writes no schedule event. The run's own events
   (`infrahub_sync.run.accepted` and the stage result) name the schedule.
+- A start that waits because its destination does not answer yet (FR-035) writes no event: the
+  worker has not admitted it. The flow run log holds one line for each wait. When the start runs
+  late, its `start_missed` event with `missed-started-late` records the delay.
 - When more than 500 starts of one schedule were missed, the oldest are recorded in one
   `start_missed` event whose `details` hold `starts`, `first_start_at` and `last_start_at`.
 

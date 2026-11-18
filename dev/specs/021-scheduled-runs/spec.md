@@ -89,6 +89,13 @@ Sources:
 - Q: How soon after its start time must a scheduled run start? → A: Within 1 minute, while the
   worker and the task manager are running.
 
+### Session 2026-11-18
+
+- Q: What does a start do when its destination does not answer yet, for example when Infrahub
+  starts again after the Sync service? → A: It waits and checks again every minute, while it can
+  still run within its late-start duration. The wait creates no run and counts as no failure
+  (FR-035).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Scheduled sync with review in Infrahub (Priority: P1)
@@ -390,6 +397,12 @@ and take over a stopped schedule. Check the runs and the events each time.
 - **FR-018**: A missed start outside that duration MUST be skipped. Every missed start MUST be
   recorded as an event that states whether a late run started.
 - **FR-019**: A late run MUST follow the schedule's overlap policy like any other start.
+- **FR-035**: When the destination of an active schedule cannot be reached, answers with a server
+  error, or does not answer in time, a start MUST wait and check the destination again one minute
+  later, as long as it can still run within its late-start duration after that minute. The wait
+  MUST create no run and MUST NOT count as a failed run. A refused token, a missing permission or
+  a missing branch MUST NOT make a start wait. When the start can no longer wait, its run MUST
+  start and record the destination failure.
 
 #### Proposed changes
 
@@ -449,7 +462,7 @@ and take over a stopped schedule. Check the runs and the events each time.
 | --- | --- |
 | 1 (P1) | FR-001, FR-002, FR-006, FR-008 to FR-015, FR-020 to FR-025, FR-027 to FR-034 |
 | 2 (P2) | FR-003, FR-004, FR-005 |
-| 3 (P3) | FR-007, FR-016 to FR-019, FR-026 |
+| 3 (P3) | FR-007, FR-016 to FR-019, FR-026, FR-035 |
 
 In user story 1, FR-014 covers the `reject` policy only, and a missed start is skipped and
 recorded with no late run. The `queue` policy and the late run arrive with user story 3. Until

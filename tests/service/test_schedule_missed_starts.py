@@ -20,9 +20,11 @@ pytest.importorskip("fastapi")
 
 from prefect.states import State
 
+from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.product_store import AuditEvent, ExecutionFinishWriteback, ProductRun, RunFilters, ScheduleRecord
+from infrahub_sync.runtime_schema import worker as runtime_schema_worker
 from infrahub_sync.service import flow as service_flow
-from infrahub_sync.service.flow import QUEUED_START_RECHECK_SECONDS
+from infrahub_sync.service.flow import DESTINATION_RECHECK_SECONDS, QUEUED_START_RECHECK_SECONDS
 from tests.service.schedule_fixtures import OWNER_TOKEN, WORKER_ID, ScheduleApi, headers, schedule_api
 
 if TYPE_CHECKING:
@@ -414,3 +416,111 @@ def test_prefect_accepts_the_state_that_runs_a_waiting_start_again(
             assert client.set_flow_run_state(flow_run_id, move).status == SetStateStatus.ACCEPT
         assert client.read_flow_run(flow_run_id).expected_start_time == expected
     assert api.stored(schedule_id).waiting_start_at == start
+
+
+# The worker's real check before admission; `schedule_api` replaces it for every other test.
+_DESTINATION_NOT_READY = service_flow._destination_not_ready
+
+
+def _destination(monkeypatch: pytest.MonkeyPatch, reason: str | None) -> list[str]:
+    """Make the destination schema read fail with ``reason``, or answer when ``reason`` is ``None``.
+
+    Returns the list of branches the check read, oldest first.
+    """
+    read: list[str] = []
+
+    def read_schema(_package: object, branch: str) -> dict[str, Any]:
+        read.append(branch)
+        if reason is not None:
+            message = "the destination schema read failed"
+            raise DestinationSchemaReadError(message, reason=reason)
+        return {}
+
+    monkeypatch.setattr(service_flow, "_destination_not_ready", _DESTINATION_NOT_READY)
+    monkeypatch.setattr(runtime_schema_worker, "read_destination_schema_snapshot", read_schema)
+    return read
+
+
+def _waits_for_destination(state: object, now: datetime) -> bool:
+    """Whether the flow run returned the state that makes Prefect read the destination again one minute later."""
+    return (
+        isinstance(state, State)
+        and state.is_scheduled()
+        and state.name == "AwaitingRetry"
+        and state.state_details.scheduled_time == now + timedelta(seconds=DESTINATION_RECHECK_SECONDS)
+    )
+
+
+@pytest.mark.parametrize("reason", ["unreachable", "timeout"])
+def test_a_start_waits_while_its_destination_does_not_answer(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, reason: str
+) -> None:
+    """FR-035: the Sync service and Infrahub start again after a maintenance; Infrahub answers last.
+
+    The start waits with no run and no failure, then runs once Infrahub answers, and records
+    that it started late.
+    """
+    schedule_id = _schedule(api)
+    read = _destination(monkeypatch, reason)
+    flow_run_id = str(uuid4())
+    waiting_at = T0 + timedelta(minutes=6)
+
+    waited = _start(monkeypatch, api, schedule_id, T0, waiting_at, flow_run_id=flow_run_id)
+
+    assert _waits_for_destination(waited, waiting_at)
+    assert _runs(api, schedule_id) == []
+    assert _events(api, MISSED) == []
+    assert api.stored(schedule_id).consecutive_failures == 0
+    assert read == ["main"]
+
+    _destination(monkeypatch, None)
+    ran = _start(monkeypatch, api, schedule_id, T0, waiting_at + timedelta(minutes=1), flow_run_id=flow_run_id)
+
+    assert isinstance(ran, dict)
+    (run,) = _runs(api, schedule_id)
+    assert run.scheduled_start_at == T0
+    (missed,) = _events(api, MISSED)
+    assert (missed.outcome, missed.run_id) == ("missed-started-late", run.run_id)
+
+
+@pytest.mark.parametrize("reason", ["unauthorized", "forbidden", "nobranch"])
+def test_a_start_does_not_wait_for_a_destination_that_refuses_it(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, reason: str
+) -> None:
+    """A refused token, a missing permission or a missing branch is no outage: the run starts and records it."""
+    schedule_id = _schedule(api)
+    _destination(monkeypatch, reason)
+
+    result = _start(monkeypatch, api, schedule_id, T0, T0 + ON_TIME)
+
+    assert isinstance(result, dict)
+    assert len(_runs(api, schedule_id)) == 1
+
+
+def test_a_start_stops_waiting_one_recheck_before_its_late_start_duration_ends(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
+) -> None:
+    """A start that could not run after one more minute runs now, and its run records the destination failure."""
+    schedule_id = _schedule(api, late_limit=600)
+    _destination(monkeypatch, "unreachable")
+    last_wait = T0 + timedelta(seconds=600 - DESTINATION_RECHECK_SECONDS)
+
+    waited = _start(monkeypatch, api, schedule_id, T0, last_wait)
+    ran = _start(monkeypatch, api, schedule_id, T0, last_wait + timedelta(seconds=1))
+
+    assert _waits_for_destination(waited, last_wait)
+    assert isinstance(ran, dict)
+    assert len(_runs(api, schedule_id)) == 1
+
+
+def test_a_paused_schedule_does_not_read_its_destination(monkeypatch: pytest.MonkeyPatch, api: ScheduleApi) -> None:
+    schedule_id = _schedule(api)
+    read = _destination(monkeypatch, "unreachable")
+    assert api.post(schedule_id, "pause").status_code == 200
+
+    state = _start(monkeypatch, api, schedule_id, T0, T0 + ON_TIME)
+
+    assert isinstance(state, State)
+    assert state.is_completed()
+    assert read == []
+    assert _runs(api, schedule_id) == []

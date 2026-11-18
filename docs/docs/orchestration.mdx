@@ -195,6 +195,15 @@ older ones in one event that holds their count and their first and last start ti
 stopped schedule records no missed start. A late run follows the overlap policy like any other
 start.
 
+Before a start runs, the worker reads the schema of the configuration's destination. When
+Infrahub cannot be reached, answers with a server error or does not answer in time, for example
+because it is still starting after a maintenance, the start waits and the worker reads the schema
+again one minute later. The wait creates no run and does not count toward the five failed runs
+that stop a schedule. The start waits only as long as it can still run within its
+`--start-late-by-at-most` duration; after that its run starts and records the failure to reach
+Infrahub. A refused token, a missing permission or a missing branch does not make a start wait.
+The flow run of a waiting start shows the state `AwaitingRetry` in the Prefect interface.
+
 A late start can only run when Prefect created its flow run before the start time. Prefect creates
 the flow runs of each schedule ahead of time: at least the next three starts, and every start of
 the next hour. A start that passes while the Prefect server is stopped therefore keeps its flow run

@@ -19,6 +19,7 @@ from infrahub_sync.product_store import (
     ScheduleRecord,
     local_product_projection,
 )
+from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.orchestration import (
@@ -290,7 +291,12 @@ def schedule_api(
     delivered: Collection[str] = BOTH_WRITE_TARGETS,
     principals: dict[str, dict[str, Any]] | None = None,
 ) -> ScheduleApi:
-    """Build a Sync API with one registered configuration and the given set of delivered write targets."""
+    """Build a Sync API with one registered configuration and the given set of delivered write targets.
+
+    The destination of every scheduled start answers: the worker's check before admission
+    (FR-035) is replaced, so no test reads a destination unless it asks for that check.
+    """
+    monkeypatch.setattr(service_flow, "_destination_not_ready", lambda *_args: None)
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps(PRINCIPALS if principals is None else principals))
     projection = local_product_projection(tmp_path.resolve())
     config_id = projection.create_configuration(package()).config_id
