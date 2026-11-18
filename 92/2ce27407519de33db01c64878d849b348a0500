@@ -1,0 +1,60 @@
+tests/service/test_schedule_prefect.py
+  s_29b17f91da9f30::t_b951ca72aacc44 642-644
+  s_29b17f91da9f30::t_b65e84be967096 19-20,22
+  s_29b17f91da9f30::t_5140193918b138 571-579
+  s_29b17f91da9f30::t_9fb4e88d0303b1 611-624
+  s_29b17f91da9f30::t_4e7be766ffc646 569-570,580-610,625-641,645-659
+infrahub_sync/service/orchestration.py
+  s_29b17f91da9f30::t_c0cdb06b7b8943 511
+  s_29b17f91da9f30::t_bdfd55438703d8 29
+  s_29b17f91da9f30::t_30cc73563b4eb8 553
+  s_29b17f91da9f30::t_c8e064085dfc99 392-396
+  s_29b17f91da9f30::t_5ac6cad93b0f50 565,571
+  s_29b17f91da9f30::t_b649ecfce9bbe3 523-529,531
+tests/service/test_schedule_approval.py
+  s_29b17f91da9f30::t_10d9bb7fd3216f 20
+  s_29b17f91da9f30::t_f875d3c06292f9 16-19
+  s_29b17f91da9f30::t_d9405430174d89 8
+  s_29b17f91da9f30::t_43ddeaab02609a 27-28
+  s_29b17f91da9f30::t_21647be0209f1c 220-223
+  s_29b17f91da9f30::t_609b8eabd0bb13 9
+  s_29b17f91da9f30::t_7300ef567c0217 217-219,224-326
+infrahub_sync/service/bootstrap.py
+  s_29b17f91da9f30::t_8b148de7503bf0 375-377
+infrahub_sync/service/schedules.py
+  s_29b17f91da9f30::t_21256cc16d5f55 77-80
+  s_29b17f91da9f30::t_347a0856df5d99 618-623,625-638
+  s_29b17f91da9f30::t_abcaa3ec7a6dda 476-482,486
+  s_29b17f91da9f30::t_5ca6f6b9146548 138-141,144-145,148-157,165-168,170-206
+  s_29b17f91da9f30::t_b8dd0135fad0dd 694-699,706-712
+  s_29b17f91da9f30::t_7dd4e226e1391d 808-810
+  s_29b17f91da9f30::t_21b8bb4c4199d7 497-502
+  s_29b17f91da9f30::t_b4f2f2fd32f152 784,786-790,793-794,796
+  s_29b17f91da9f30::t_a1cab7c3eb62ce 13
+tests/service/test_schedule_bootstrap.py
+  s_e88c4e5969117b::t_fa5c3008dc1bec 172-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "922ce27407519de33db01c64878d849b348a0500",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e88c4e5969117b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a21e58ad49a466157",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
