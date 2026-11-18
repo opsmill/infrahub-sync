@@ -23,10 +23,12 @@ _CLI_INVOCATION = (
     r"(?<![\w.-])(?:uv\s+run\s+)?infrahub-sync\s+"
     r"(?=(?:configs|runs|plan|verify|whoami|diff|sync|apply|generate|list)\b)"
 )
-# `configs list --name` filters configurations by name and is a current option. Every other
-# command lost `--name` when configurations moved to the registry, so only that one
-# invocation is exempt from the removed-option rule.
+# `configs list --name` filters configurations by name and is a current option, and
+# `schedules create --name` names a new schedule (spec 021). Every other command lost `--name`
+# when configurations moved to the registry, so only these two invocations are exempt from the
+# removed-option rule.
 _CONFIGS_LIST = r"configs\s+list(?![\w-])"
+_SCHEDULES_CREATE = r"schedules\s+create(?![\w-])"
 # `diff` is a hidden, deprecated alias of `plan`; live docs teach `plan`.
 REMOVED_COMMAND = re.compile(
     rf"{_CLI_INVOCATION}(?:generate|list|diff)(?![\w-])"
@@ -36,11 +38,11 @@ REMOVED_COMMAND = re.compile(
 # `login --name` names the account to sign in as (spec 022) and is a current option too.
 _LOGIN = r"(?<![\w.-])infrahub-sync\s+login(?![\w-])"
 _VALID_NAME_OPTION = re.compile(
-    # A `configs list ... --name` or `login ... --name` invocation on one line, or the
-    # `configs list` or `login` section of the generated CLI reference, which lists `--name`
-    # as an option bullet.
-    rf"(?:{_CONFIGS_LIST}|{_LOGIN})[^\n]*?(?<![\w-])--name(?![\w-])"
-    r"|^#+ `infrahub-sync (?:configs list|login)`\n(?:(?!#)[^\n]*\n)*",
+    # A `configs list ... --name` or `schedules create ... --name` invocation on one line, or the
+    # section of either command in the generated CLI reference, which lists `--name` as an
+    # option bullet.
+    rf"(?:{_CONFIGS_LIST}|{_SCHEDULES_CREATE})[^\n]*?(?<![\w-])--name(?![\w-])"
+    r"|^#+ `infrahub-sync (?:configs list|schedules create)`\n(?:(?!#)[^\n]*\n)*",
     re.MULTILINE,
 )
 # `events --run-id` filters events by run (spec 012) and is a current option. The retired
@@ -268,11 +270,9 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         ("infrahub-sync configs show --name from-netbox", True, True),
         ("### `infrahub-sync configs show`\n\n* `--name <str>`: Removed.\n", False, True),
         ("infrahub-sync diff --config from-netbox --version 1", True, False),
-        ("infrahub-sync login --name admin", False, False),
-        ("uv run infrahub-sync login --name admin", False, False),
-        ("docker login registry.example.net --name builder", False, True),
-        ("### `infrahub-sync login`\n\n* `--name <str>`: Account name.\n", False, False),
-        ("### `infrahub-sync logout`\n\n* `--name <str>`: Not an option.\n", False, True),
+        ("infrahub-sync schedules create --name nightly --config from-netbox --version 3", False, False),
+        ("### `infrahub-sync schedules create`\n\n* `--name <str>`: Schedule name.\n", False, False),
+        ("### `infrahub-sync schedules show`\n\n* `--name <str>`: Removed.\n", False, True),
     ],
 )
 def test_removed_command_rule_exempts_only_configs_list_and_login_name(
