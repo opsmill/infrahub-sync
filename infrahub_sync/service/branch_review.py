@@ -27,7 +27,7 @@ its class.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, get_args
 
 import httpx
 import structlog
@@ -208,6 +208,18 @@ def check_default_branch_is_main(client: InfrahubClientSync) -> None:
         raise DestinationDefaultBranchNotMainError
 
 
+def _mutation_ok(data: object, mutation: str) -> bool:
+    """Whether the answer to a mutation reports `ok: true`.
+
+    Infrahub can answer a mutation it did not carry out with HTTP success and `ok: false`, so
+    only a payload whose `ok` is `true` counts as done.
+    """
+    if not isinstance(data, dict):
+        return False
+    payload = cast("dict[str, Any]", data).get(mutation)
+    return isinstance(payload, dict) and payload.get("ok") is True
+
+
 def _branch_exists(client: InfrahubClientSync, name: str) -> bool | None:
     """Whether the branch exists, or `None` when Infrahub cannot tell."""
     try:
@@ -223,16 +235,21 @@ def create_branch(client: InfrahubClientSync, name: str) -> None:
     create, the branch list decides, so no message of Infrahub is read.
     """
     variables = {"name": name}
+    failure: Exception | None = None
     try:
-        client.execute_graphql(
+        data = client.execute_graphql(
             query=_BRANCH_CREATE, variables=variables, branch_name=DEFAULT_BRANCH, tracker="sync-branch-create"
         )
     except _REQUEST_ERRORS as exc:
-        if _branch_exists(client, name):
-            logger.info("branch_review.branch_exists", branch=name)
+        failure = exc
+    else:
+        if _mutation_ok(data, "BranchCreate"):
+            logger.info("branch_review.branch_created", branch=name)
             return
-        raise BranchCreateFailedError from exc
-    logger.info("branch_review.branch_created", branch=name)
+    if _branch_exists(client, name):
+        logger.info("branch_review.branch_exists", branch=name)
+        return
+    raise BranchCreateFailedError from failure
 
 
 def delete_branch(client: InfrahubClientSync, name: str) -> None:
@@ -242,16 +259,21 @@ def delete_branch(client: InfrahubClientSync, name: str) -> None:
     change before it deletes the branch (rule 7).
     """
     variables = {"name": name}
+    failure: Exception | None = None
     try:
-        client.execute_graphql(
+        data = client.execute_graphql(
             query=_BRANCH_DELETE, variables=variables, branch_name=DEFAULT_BRANCH, tracker="sync-branch-delete"
         )
     except _REQUEST_ERRORS as exc:
-        if _branch_exists(client, name) is False:
-            logger.info("branch_review.branch_missing", branch=name)
+        failure = exc
+    else:
+        if _mutation_ok(data, "BranchDelete"):
+            logger.info("branch_review.branch_deleted", branch=name)
             return
-        raise BranchDeleteFailedError from exc
-    logger.info("branch_review.branch_deleted", branch=name)
+    if _branch_exists(client, name) is False:
+        logger.info("branch_review.branch_missing", branch=name)
+        return
+    raise BranchDeleteFailedError from failure
 
 
 def open_proposed_change(client: InfrahubClientSync, *, branch: str, title: str, description: str) -> str:
@@ -268,8 +290,10 @@ def open_proposed_change(client: InfrahubClientSync, *, branch: str, title: str,
         )
     except InfrahubSDKError as exc:
         raise ProposedChangeOpenFailedError from exc
-    created = (data.get("CoreProposedChangeCreate") or {}).get("object") or {}
-    identifier = created.get("id")
+    if not _mutation_ok(data, "CoreProposedChangeCreate"):
+        raise ProposedChangeOpenFailedError
+    created = data["CoreProposedChangeCreate"].get("object")
+    identifier = created.get("id") if isinstance(created, dict) else None
     if not isinstance(identifier, str) or not identifier:
         raise ProposedChangeOpenFailedError
     logger.info("branch_review.proposed_change_opened", branch=branch, proposed_change_id=identifier)
@@ -283,7 +307,8 @@ def read_proposed_change(
 
     The request goes to `branch`, else to the client's default branch. A proposed change that
     does not exist reads as `missing`: a person deleted it, and the schedule leaves its branch
-    alone. A failed request, or a state that Infrahub does not define, raises
+    alone. Only an answer whose `edges` is an empty list means that; a failed request, an answer
+    that does not have the shape of the query, or a state that Infrahub does not define, raises
     `ProposedChangeReadFailedError`.
     """
     try:
@@ -296,14 +321,22 @@ def read_proposed_change(
         )
     except InfrahubSDKError as exc:
         raise ProposedChangeReadFailedError from exc
-    edges = (data.get("CoreProposedChange") or {}).get("edges") or []
-    if not edges:
-        return "missing"
-    node = edges[0].get("node") or {}
-    state = (node.get("state") or {}).get("value")
+    try:
+        edges = data["CoreProposedChange"]["edges"]
+        if not isinstance(edges, list):
+            raise ProposedChangeReadFailedError
+        if not edges:
+            return "missing"
+        node = edges[0]["node"]
+        state = node["state"]["value"]
+        approvers = node["approved_by"]["edges"]
+    except (KeyError, TypeError, AttributeError):
+        raise ProposedChangeReadFailedError from None
+    if not isinstance(approvers, list):
+        # An unreadable list of approvers must not read as none: the change would then be closed.
+        raise ProposedChangeReadFailedError
     if state not in _INFRAHUB_STATES:
         raise ProposedChangeReadFailedError
-    approvers = (node.get("approved_by") or {}).get("edges") or []
     if state == "open" and approvers:
         return "approved"
     return state
@@ -325,15 +358,19 @@ def close_proposed_change(client: InfrahubClientSync, proposed_change_id: str, c
         logger.info("branch_review.proposed_change_not_closed", proposed_change_id=proposed_change_id, state=state)
         return CloseResult(state=state, closed_now=False)
     try:
-        client.execute_graphql(
+        commented = client.execute_graphql(
             query=_CHANGE_COMMENT_CREATE,
             variables={"text": comment, "change": proposed_change_id},
             tracker="sync-change-comment-create",
         )
-        client.execute_graphql(
+        if not _mutation_ok(commented, "CoreChangeCommentCreate"):
+            raise ProposedChangeCloseFailedError
+        closed = client.execute_graphql(
             query=_PROPOSED_CHANGE_CLOSE, variables={"id": proposed_change_id}, tracker="sync-proposed-change-close"
         )
     except InfrahubSDKError as exc:
         raise ProposedChangeCloseFailedError from exc
+    if not _mutation_ok(closed, "CoreProposedChangeUpdate"):
+        raise ProposedChangeCloseFailedError
     logger.info("branch_review.proposed_change_closed", proposed_change_id=proposed_change_id)
     return CloseResult(state=state, closed_now=True)

@@ -272,6 +272,29 @@ def test_create_branch_refused_maps_to_its_class() -> None:
     _assert_no_infrahub_text(caught.value)
 
 
+@pytest.mark.parametrize("answer", [{"BranchCreate": {"ok": False}}, {"BranchCreate": None}, {}], ids=str)
+def test_create_branch_answered_without_ok_and_no_branch_maps_to_its_class(answer: dict[str, Any]) -> None:
+    client = FakeInfrahub(handlers={"SyncBranchCreate": lambda _v: answer, "SyncBranchList": _branches("main")})
+
+    with pytest.raises(BranchCreateFailedError):
+        create_branch(_sdk(client), RUN_BRANCH)
+
+    assert client.operations() == ["SyncBranchCreate", "SyncBranchList"]
+
+
+def test_create_branch_answered_without_ok_counts_as_created_when_the_branch_exists() -> None:
+    client = FakeInfrahub(
+        handlers={
+            "SyncBranchCreate": lambda _v: {"BranchCreate": {"ok": False}},
+            "SyncBranchList": _branches("main", RUN_BRANCH),
+        }
+    )
+
+    create_branch(_sdk(client), RUN_BRANCH)
+
+    assert client.operations() == ["SyncBranchCreate", "SyncBranchList"]
+
+
 # --- Delete a branch -------------------------------------------------------------------------
 
 
@@ -303,6 +326,18 @@ def test_delete_branch_refused_maps_to_its_class() -> None:
 
     assert failure_class(caught.value) == "branch_delete_failed"
     _assert_no_infrahub_text(caught.value)
+
+
+def test_delete_branch_answered_without_ok_and_the_branch_still_there_maps_to_its_class() -> None:
+    client = FakeInfrahub(
+        handlers={
+            "SyncBranchDelete": lambda _v: {"BranchDelete": {"ok": False}},
+            "SyncBranchList": _branches("main", RUN_BRANCH),
+        }
+    )
+
+    with pytest.raises(BranchDeleteFailedError):
+        delete_branch(_sdk(client), RUN_BRANCH)
 
 
 # --- Open a proposed change ------------------------------------------------------------------
@@ -339,10 +374,17 @@ def test_open_proposed_change_refused_maps_to_its_class() -> None:
     _assert_no_infrahub_text(caught.value)
 
 
-def test_open_proposed_change_without_an_identifier_fails() -> None:
-    client = FakeInfrahub(
-        handlers={"SyncProposedChangeCreate": lambda _v: {"CoreProposedChangeCreate": {"ok": True, "object": None}}}
-    )
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"CoreProposedChangeCreate": {"ok": True, "object": None}},
+        {"CoreProposedChangeCreate": {"ok": False, "object": {"id": PROPOSED_CHANGE_ID}}},
+        {"CoreProposedChangeCreate": None},
+    ],
+    ids=["no-identifier", "not-ok", "no-payload"],
+)
+def test_open_proposed_change_without_an_identifier_fails(answer: dict[str, Any]) -> None:
+    client = FakeInfrahub(handlers={"SyncProposedChangeCreate": lambda _v: answer})
 
     with pytest.raises(ProposedChangeOpenFailedError):
         open_proposed_change(_sdk(client), branch=RUN_BRANCH, title="t", description="d")
@@ -385,8 +427,31 @@ def test_read_proposed_change_on_a_named_branch() -> None:
     [
         _raise(_graphql_error()),
         _proposed_change(INFRAHUB_TEXT),
+        lambda _v: {},
+        lambda _v: {"CoreProposedChange": None},
+        lambda _v: {"CoreProposedChange": {"edges": None}},
+        lambda _v: {"CoreProposedChange": {}},
+        lambda _v: {"CoreProposedChange": {"edges": [None]}},
+        lambda _v: {"CoreProposedChange": {"edges": [{"node": {"id": PROPOSED_CHANGE_ID}}]}},
+        lambda _v: {"CoreProposedChange": {"edges": [{"node": {"state": {"value": "open"}}}]}},
+        lambda _v: {"CoreProposedChange": {"edges": [{"node": {"state": {"value": "open"}, "approved_by": None}}]}},
+        lambda _v: {
+            "CoreProposedChange": {"edges": [{"node": {"state": {"value": "open"}, "approved_by": {"edges": None}}}]}
+        },
     ],
-    ids=["refused", "unknown-state"],
+    ids=[
+        "refused",
+        "unknown-state",
+        "no-connection",
+        "null-connection",
+        "null-edges",
+        "no-edges",
+        "null-edge",
+        "no-state",
+        "no-approvers",
+        "null-approvers",
+        "null-approver-edges",
+    ],
 )
 def test_read_proposed_change_failure_maps_to_its_class(handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
     client = FakeInfrahub(handlers={"SyncProposedChangeRead": handler})
@@ -495,6 +560,23 @@ def test_close_failure_maps_to_its_class(failing: str) -> None:
 
     assert failure_class(caught.value) == "proposed_change_close_failed"
     _assert_no_infrahub_text(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("operation", "key"),
+    [("SyncChangeCommentCreate", "CoreChangeCommentCreate"), ("SyncProposedChangeClose", "CoreProposedChangeUpdate")],
+)
+def test_close_answered_without_ok_maps_to_its_class(operation: str, key: str) -> None:
+    handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+        "SyncProposedChangeRead": _proposed_change("open"),
+        "SyncChangeCommentCreate": _ok("CoreChangeCommentCreate"),
+        "SyncProposedChangeClose": _ok("CoreProposedChangeUpdate"),
+    }
+    handlers[operation] = lambda _v: {key: {"ok": False}}
+    client = FakeInfrahub(handlers=handlers)
+
+    with pytest.raises(ProposedChangeCloseFailedError):
+        close_proposed_change(_sdk(client), PROPOSED_CHANGE_ID, "Replaced by pc-2 (run r-2)")
 
 
 # --- Transport failures win over the operation's class ---------------------------------------

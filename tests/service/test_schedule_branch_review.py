@@ -898,6 +898,29 @@ def test_infrahub_out_of_reach_before_the_admission_records_a_failed_start(
     assert _row_state(api, first.run_id) == "open"
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [{"CoreProposedChange": None}, {"CoreProposedChange": {"edges": [{"node": {"state": None}}]}}],
+    ids=["null-connection", "null-state"],
+)
+def test_a_malformed_answer_about_an_earlier_proposed_change_records_a_failed_start(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, infrahub: FakeInfrahub, answer: dict[str, Any]
+) -> None:
+    """R11: an answer that does not have the shape of the query fails the start; it is not read as deleted."""
+    _schedule(api)
+    _start(monkeypatch, api, T0)
+    first = _only_run(api)
+    monkeypatch.setattr(infrahub, "_SyncProposedChangeRead", lambda _variables: answer)
+
+    _start(monkeypatch, api, T0 + timedelta(days=1))
+
+    assert [run.run_id for run in _runs(api)] == [first.run_id]
+    (failed,) = _events(api, "start_failed")
+    assert failed.details is not None
+    assert failed.details.cause == "proposed_change_read_failed"
+    assert _row_state(api, first.run_id) == "open"
+
+
 def test_a_destination_whose_default_branch_is_not_main_fails_before_the_branch_is_created(
     monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, infrahub: FakeInfrahub
 ) -> None:
