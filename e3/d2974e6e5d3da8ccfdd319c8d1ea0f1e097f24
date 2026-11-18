@@ -1,0 +1,56 @@
+tests/product_store/test_schedules.py
+  s_29b17f91da9f30::t_0994ed9bc1dc57 769-786,789-790
+  s_29b17f91da9f30::t_a4d66cb52df852 504-506,509-510,515
+  s_29b17f91da9f30::t_858b668e7c727d 487-503,507-508,511-514,516-530
+  s_29b17f91da9f30::t_c167857d9b4cc9 451-455
+  s_29b17f91da9f30::t_c1ab2abc5d1973 787-788
+  s_29b17f91da9f30::t_c0eec9a2386243 531-532
+infrahub_sync/product_store/store.py
+  s_29b17f91da9f30::t_076fc717270a02 604-605,608
+  s_29b17f91da9f30::t_86198bedb84dbd 3915
+  s_29b17f91da9f30::t_0c464bbf7c873b 5644-5649
+  s_29b17f91da9f30::t_61aad6fe8b44c0 3567-3568
+  s_29b17f91da9f30::t_1d36ccda04dbd2 3594-3596
+  s_29b17f91da9f30::t_df959c1a6f3eff 3814-3816
+  s_29b17f91da9f30::t_374012dafa3c14 3914
+  s_29b17f91da9f30::t_28b012fcf984d3 3927-3942
+infrahub_sync/product_store/models.py
+  s_29b17f91da9f30::t_28259aa878ae46 1089-1091
+docker-compose.yml
+  s_29b17f91da9f30::t_4fae4263643293 310-312
+infrahub_sync/service/schedule_admission.py
+  s_29b17f91da9f30::t_0842466ca6c1b7 39,44
+  s_29b17f91da9f30::t_cbc3c5e8e0d97a 240-256
+  s_29b17f91da9f30::t_f2f1d2a3e4d1ea 207-209
+tests/service/test_schedule_admission.py
+  s_29b17f91da9f30::t_711afaef8bf4fb 31,33
+  s_e88c4e5969117b::t_f6ae88bee12af4 486-543
+infrahub_sync/testcontainers/docker-compose.yml
+  s_29b17f91da9f30::t_68dbedd9b676bb 310-312
+tests/dev_stack/test_compose_valid.py
+  s_e88c4e5969117b::t_e9756225afaa86 116-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e3d2974e6e5d3da8ccfdd319c8d1ea0f1e097f24",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e88c4e5969117b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a21e58ad49a466157",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
