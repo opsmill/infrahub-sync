@@ -55,7 +55,7 @@ Plans do not need approval in the demo: approval is off, because how approval wo
      Infrahub and registers the NetBox configuration with the addresses that the Sync worker uses.
 
    The first run takes several minutes, because Docker downloads the images and the task
-   downloads the NetBox dataset. The task never plans, applies or approves anything.
+   downloads the NetBox dataset. The task never plans or applies anything.
 
 3. Read the end of the output. It names the configuration ID and version, the address of the web
    interface, the token to enter there, and the commands for a first plan:
@@ -92,8 +92,9 @@ Run the `export` lines from the output of `dev.demo`, then create the branch:
 uv run infrahubctl branch create netbox-demo-1
 ```
 
-Create the branch before you plan, from the command line or from the web interface. A plan on a
-branch that does not exist in Infrahub fails.
+Create the branch with `infrahubctl` before you plan, also when you plan from the Sync web
+interface, which does not create branches. A plan on a branch that does not exist in Infrahub
+fails.
 
 Plan and apply from the web interface or from the command line. To try both, create a second
 branch, such as `netbox-demo-2`, for the second import.
@@ -187,14 +188,17 @@ uv run infrahub-sync --api-url <Sync API address> demo prepare \
   --infrahub-address <Infrahub address this machine uses>
 ```
 
-| Option | Value |
-| --- | --- |
-| `--netbox-url` | Required. The NetBox address written into the configuration: the address the worker uses. |
-| `--infrahub-url` | Required. The Infrahub address written into the configuration: the address the worker uses. |
-| `--infrahub-address` | The Infrahub address the command uses to load the schema. Defaults to `--infrahub-url`. |
-| `--schema-timeout` | Seconds to wait for Infrahub to apply the schema. Defaults to 120. |
-| `--reason` | A reason recorded with the registration. |
-| `--json` | Print the result as one JSON object. |
+The options:
+
+- `--netbox-url`: required. The NetBox address written into the configuration, as the worker
+  reaches it.
+- `--infrahub-url`: required. The Infrahub address written into the configuration, as the
+  worker reaches it.
+- `--infrahub-address`: the Infrahub address the command uses to load the schema. Defaults to
+  `--infrahub-url`.
+- `--schema-timeout`: seconds to wait for Infrahub to apply the schema. Defaults to 120.
+- `--reason`: a reason recorded with the registration.
+- `--json`: print the result as one JSON object.
 
 The command prints what it did, and never a token:
 
@@ -207,7 +211,7 @@ infrahub: <Infrahub address the worker uses>
 
 A second run with the same addresses changes nothing and prints `unchanged`. A run with another
 address registers a new version of the same configuration and prints `versioned`. The command
-never plans, applies or approves.
+never plans or applies.
 
 The worker still needs the NetBox and Infrahub tokens as credentials.
 [Create the credentials Secret](../kubernetes-deployment.mdx#create-the-credentials-secret)
