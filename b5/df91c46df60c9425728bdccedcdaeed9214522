@@ -1,0 +1,19 @@
+dev/specs/021-scheduled-runs/tasks.md
+  s_1a9d42b5aabd99::t_fdc7342e9690d7 181-185,188-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b5df91c46df60c9425728bdccedcdaeed9214522",
+  "prompts": {},
+  "sessions": {
+    "s_1a9d42b5aabd99": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac6a228b2fb9b3016",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
