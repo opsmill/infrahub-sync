@@ -1,0 +1,49 @@
+tests/cli/test_account_commands.py
+  s_cf9ada8f865389::t_add5a2aeeebaa6 232,248,324,350,399,433,522
+  s_cf9ada8f865389::t_cea5611ee78df2 1-231,233-247,249-323,325-349,351-398,400-432,434-521,523-633
+tests/cli/test_cli_session.py
+  s_cf9ada8f865389::t_215aeea99e6fc3 1-279
+infrahub_sync/cli_session.py
+  s_cf9ada8f865389::t_4b72e4adf704f8 1-170
+tests/cli/test_parity_and_closure.py
+  s_cf9ada8f865389::t_ccae301601d651 79-90,127-138,151-152
+tests/cli/test_client_commands.py
+  s_cf9ada8f865389::t_ccae301601d651 2463
+infrahub_sync/cli_accounts.py
+  s_cf9ada8f865389::t_2203fbf815e3df 354-360
+  s_cf9ada8f865389::t_add5a2aeeebaa6 22,112-113,115,124,131,137,248
+  s_cf9ada8f865389::t_8891ea59de2503 135-136,249
+  s_cf9ada8f865389::t_ebcb62d0e497bc 27
+  s_cf9ada8f865389::t_fb0b07bca15c64 293
+  s_cf9ada8f865389::t_a1476d3a7134b0 1-21,23-26,28-111,114,116-123,125-130,132-134,138-247,250-292,294-353,361-503
+tests/cli/conftest.py
+  s_cf9ada8f865389::t_add5a2aeeebaa6 6,61
+  s_cf9ada8f865389::t_01b84b253e27e1 1-4,7,9-10,13-15,17,19-24
+  s_cf9ada8f865389::t_50a1bb45e20e0d 5,8,11-12,16,18,25-60,62-83
+tests/cli/test_login_commands.py
+  s_cf9ada8f865389::t_add5a2aeeebaa6 34,36-38,97,124,160,165,174,179,186,199,212,240,250,270-271,283,332-333,344,349,358,362,369,375,379,385,392-393,403,417,424,432,459,466,484,521,560,564
+  s_cf9ada8f865389::t_321e374c2b5fa0 91-93,495
+  s_cf9ada8f865389::t_1a9210130b44a5 1-33,35,39-90,94-96,98-123,125-159,161-164,166-173,175-178,180-185,187-198,200-211,213-239,241-249,251-269,272-282,284-331,334-343,345-348,350-357,359-361,363-368,370-374,376-378,380-384,386-391,394-402,404-416,418-423,425-431,433-458,460-465,467-483,485-494,496-520,522-559,561-563,565-575
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_59574e55aacc84 187,217,221,224,228
+infrahub_sync/cli.py
+  s_cf9ada8f865389::t_ebcb62d0e497bc 15,28,174,179-195,197-201,206-230,275,277-278,362-388,400,440-450,452-453
+  s_cf9ada8f865389::t_add5a2aeeebaa6 451
+  s_cf9ada8f865389::t_f84603129d50df 454-455
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f7e1b7b78c2f12f1f462c2847d3f2aa6d98d189",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
