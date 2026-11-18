@@ -11,7 +11,7 @@ The result of validating a package that is not registered (User Story 1).
 | `declared_content` | object | The package as the store would keep it, defaults filled. |
 | `findings`, `offset`, `limit`, `total_findings`, `next_offset` | as the existing validation report | The findings page, in the order of the existing report. |
 | `destination_schema_fingerprint` | string or null | Set when the destination schema was read. |
-| `destination_read` | `not_requested`, `read`, `timeout`, `unreachable`, `unauthorized`, `forbidden`, `nobranch` | Whether the destination was read, and why not. |
+| `destination_read` | `not_requested`, `read`, `timeout`, `unreachable`, `unauthorized`, `forbidden`, `nobranch`, `unconfigured`, `credentials` | Whether the destination was read, and why not. |
 
 Rules:
 

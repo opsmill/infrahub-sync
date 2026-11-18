@@ -55,14 +55,15 @@ Constitution: [`docs/docs/development/constitution.md`](../../../docs/docs/devel
 | III. Adapter symmetry | Not affected. No adapter changes. |
 | IV. Type safety and explicit contracts | Pass. New request and response models are typed Pydantic models; the HTTP contract is in [contracts/sync-api.md](contracts/sync-api.md); `types.generated.ts` is regenerated from the OpenAPI document. |
 | V. Test discipline | Pass. Unit tests for the shared validation function, the new route (parsing, v2 refusal, reachability, parity with the registered route), the CLI command and the mark in both store dialects. |
-| VI. Security, secrets, input boundaries | Pass. The new route applies the same secret redaction as the existing validate route. `document` is parsed with `yaml.safe_load` only. The route is authenticated like the existing validate route. |
+| VI. Security, secrets, input boundaries | Pass. The new route applies the same secret redaction as the existing validate route. `document` is parsed with `yaml.safe_load` only. The route requires an administrator, because with a branch it sends the service's destination credential to the address the package declares (critique E1); refusals are audited. YAML alias expansion is reachable only by administrators, who can already register any package (accepted, critique E2). |
 | VII. Simplicity | Pass. One shared validation function instead of two copies; a new table instead of the first column migration; server-side parsing instead of a second YAML parser in the browser. |
 | Command-line sanity and docs | Pass. `configs check` gets `--help` text; CLI reference regenerated; user docs updated for the web interface and the CLI; a changelog fragment and an ADR are added. |
 
 No violation; Complexity Tracking is empty.
 
-Post-design re-check: pass. The design adds one route, one CLI command, one store table, one request
-field and one resource field, and changes no permission.
+Post-design re-check: pass. The design adds one route (administrator only), one CLI command, one
+store table, one request field and one resource field, and changes no existing permission.
+Critique: [critiques/critique-20261118.md](critiques/critique-20261118.md).
 
 ## Project Structure
 

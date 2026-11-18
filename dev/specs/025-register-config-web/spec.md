@@ -124,8 +124,8 @@ compare the two sets of findings.
    registering against a branch, **Then** the response states that the destination could not be
    reached, distinctly from a list of findings.
 6. **Given** a token that is not an administrator token, **When** it validates a package without
-   registering, **Then** the Sync API answers as it does for validating a registered version with
-   that token.
+   registering, **Then** the Sync API refuses the request, connects to no destination, and records
+   the refusal in the audit log.
 
 ---
 
@@ -260,15 +260,20 @@ registered without validation.
   would refuse.
 - **FR-004**: FR-001 MUST report an unreachable destination as a distinct result, not as a finding
   and not as a refusal of the package.
-- **FR-005**: FR-001 MUST apply the same access rule and the same secret redaction as validating a
-  registered version.
+- **FR-005**: FR-001 MUST be refused for a token that is not an administrator token, and the refusal
+  MUST be recorded in the audit log as a refused registration is. FR-001 MUST apply the same secret
+  redaction as validating a registered version. Reason: validating against a branch connects to the
+  destination address the package declares, with the destination credential the service holds. For
+  a registered version, an administrator chose that address; for a package sent by the caller, the
+  caller chooses it.
 - **FR-006**: The `infrahub-sync` CLI MUST offer the check of FR-001 for a package file.
 
 #### Registering from the web interface (User Stories 2 and 3)
 
 - **FR-007**: Operators MUST be able to drop one package file on a configuration's page to add the
   next version of that configuration, and on the Configurations page to register a new
-  configuration.
+  configuration. Each place MUST also offer a way to choose the file without dragging it, usable
+  with a keyboard.
 - **FR-008**: The web interface MUST show a review step before any registration, containing:
   - the configuration name, the source and the destination;
   - for a new version, the mappings added, changed and removed compared with the newest version;
@@ -277,7 +282,10 @@ registered without validation.
   - an optional reason;
   - Register and Cancel.
 - **FR-009**: The review step MUST validate the package through FR-001 as soon as it opens, against
-  the branch the package declares for its destination, or `main` when it declares none.
+  the branch the package declares for its destination, or `main` when it declares none. While
+  validation runs, the review step MUST show that it is validating, and Cancel MUST stay available.
+  When the report has more findings than one page holds, the review step MUST state how many more
+  exist and name `infrahub-sync configs check` as the way to list them all.
 - **FR-010**: Operators MUST be able to change the validation branch, which validates again.
 - **FR-011**: The review step MUST show "Valid" only when validation returns no findings, and MUST
   list every finding otherwise. Registering MUST NOT be possible while findings are listed.

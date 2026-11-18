@@ -42,14 +42,16 @@ repository at commit `87d5a47f`.
 - **Finding**: `_infrahub_call` in
   [`configuration/capabilities.py`](../../../infrahub_sync/configuration/capabilities.py) (line 253)
   raises `DestinationSchemaReadError` with `reason` set to `timeout`, `unreachable`,
-  `unauthorized`, `forbidden` or `nobranch`.
+  `unauthorized`, `forbidden` or `nobranch`; `_resolved_client_settings` (line 194) adds
+  `unconfigured` (no destination URL) and `credentials` (the token reference does not resolve).
   [`schema_validation.py`](../../../infrahub_sync/configuration/schema_validation.py) (lines 282 and
   374) turns it into a finding with code `destination_schema_read_failed`. The reason is only in the
   message text.
 - **Decision**: keep the finding (FR-002), and also return a structured `destination_read` value on
   the new route: `not_requested` (no branch), `read`, or the failure reason. The web interface
   treats `timeout` and `unreachable` as "the destination cannot be reached" (FR-004, FR-020). It
-  treats `unauthorized`, `forbidden` and `nobranch` as ordinary findings that block registration,
+  treats `unauthorized`, `forbidden`, `nobranch`, `unconfigured` and `credentials` as ordinary
+  findings that block registration,
   because they describe a problem the operator must fix, not an outage.
 - **Alternative rejected**: parse the reason from the finding message. Message text is not a
   contract.
@@ -111,8 +113,16 @@ repository at commit `87d5a47f`.
 
 - **Finding**: the existing validate route accepts any authenticated token; registration requires an
   administrator (`config_routes.py`, lines 458 to 551).
-- **Decision**: the new route accepts any authenticated token, like the existing validate route
-  (FR-005). It stores nothing and records no audit event, like the existing validate route.
+- **Second finding (critique E1)**: with a branch, validation builds a client from the package's
+  `destination.settings.url` and resolves the package's `token` credential reference from the
+  service environment (`_resolved_client_settings` in `configuration/capabilities.py`, line 194).
+  For a caller-supplied package, the caller would choose the address that receives the service's
+  destination token.
+- **Decision**: the new route requires an administrator, like registration, and records a refused
+  attempt with `audit_refusal`, as registration does (FR-005). A permitted check stores nothing and
+  records no audit event, like the existing validate route.
+- **Alternative rejected**: the access rule of the existing validate route (any authenticated
+  token). It is safe only because an administrator registered the package being validated.
 
 ## R11. A version registered meanwhile
 
