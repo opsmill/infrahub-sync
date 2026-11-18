@@ -553,3 +553,58 @@ The second half of scenario 6 ("My account", "Accounts") belongs to User Story 4
 `uv run invoke tests.tests-unit`: 9922 passed, 4 skipped, 2 xfailed, 0 failed. The baseline was
 9923 passed: the two cases of the `dev.frontend` test that printed which token to enter became
 one test of the sign-in reminder.
+
+## T066: User Story 4 checks (2026-11-18)
+
+### Frontend gates
+
+`pnpm check` (Biome, 78 files, no finding), `pnpm typecheck` (`tsc --noEmit`, no error) and
+`pnpm build` (Vite) pass in `frontend/`. `frontend/src/api/types.generated.ts`, regenerated from
+the OpenAPI document of this branch written to a file, did not change.
+
+### Second half of quickstart scenario 6: pass
+
+The check served this branch on `127.0.0.1:18761` as the User Story 2 check did (SQLite product
+store in a scratch directory, the fake orchestration, no liveness reconciler, `admin` from a test
+password and token). The seed created, through the API, the administrator `alice` and the account
+`bob`, which is not an administrator. A headless Chromium (`chromium_headless_shell-1243`,
+Playwright 1.65.2 for Python through `uv run --no-project --with playwright`, no dependency added
+to the repository) ran these steps. The final run, on the last build, passed all 44 steps:
+
+| Step | Result |
+|---|---|
+| `bob`: the header links to **My account** and the main navigation has no **Accounts** | pass |
+| `bob`: `/accounts` shows "Only an administrator can manage accounts" and no table | pass |
+| `bob`: two different new passwords, then a 9-character password, are refused with no `PUT /api/me/password` request | pass |
+| `bob`: the password change says that other sessions ended and API tokens still work; the three fields are empty; one request was sent | pass |
+| `bob`: the old password is refused and the new one accepted through the API; the tab stays signed in | pass |
+| `bob`: an expiry date two days ago is refused with no `POST /api/me/tokens` request | pass |
+| `bob`: a token with an expiry date in 30 days shows its value once, read-only, with "This value is not shown again." and **Copy** | pass |
+| `bob`: `GET /api/me` with the value answers `200` for `bob` | pass |
+| `bob`: the value is in neither `sessionStorage`, `localStorage` nor the address, and is gone after a reload | pass |
+| `bob`: the list shows the token with an expiry date and without its value | pass |
+| `bob`: the token is deleted after its confirmation; the list is empty; the value answers `401` | pass |
+| `alice`: **Accounts** lists `admin`, `alice` and `bob`; `admin` shows "Defined by the deployment's environment" and no action | pass |
+| `alice`: the menu of her own row offers only **Disable**, **View API tokens** and **Delete** | pass |
+| `alice`: two different initial passwords are refused; `carol` is created and signs in through the API | pass |
+| `alice`: `carol` made an administrator, then not; focus returns to the **Actions** button of `carol` | pass |
+| `alice`: a password set for `carol` signs in; the first password is refused | pass |
+| `alice`: `carol` disabled, and her sign-in through the API is refused; the **Active** filter hides her, **Disabled** shows only her | pass |
+| `alice`: `carol` enabled, and her sign-in is accepted | pass |
+| `alice`: after five wrong sign-ins through the API, the row of `carol` shows "Sign-in refused until"; **Allow sign-in again** ends the refusal and she signs in | pass |
+| `alice`: after five wrong sign-ins for `admin`, its only action is **Allow sign-in again**; after it, `admin` has no action | pass |
+| `alice`: **View API tokens** of `carol` lists her token without its value; deleting it makes the value answer `401`; focus returns after **Close** | pass |
+| `alice`: the delete dialog says the deletion cannot be reversed and that disabling can be; its button is refused until `carol` is typed | pass |
+| `alice`: the deletion shows `Deleted account <short identifier>`; `carol` cannot sign in | pass |
+| `admin`: **My account** shows that the environment defines the account, and offers no password or token action | pass |
+
+At a width of 390 pixels the pages have no horizontal scroll; the main navigation scrolls instead.
+
+Not exercised in the browser: the `503 sign-in-busy` message; disabling or deleting one's own
+account (the page then shows the sign-in form; checked only by reading the code); the Clipboard
+API refusal (the run granted the clipboard permission, so **Copy** took the Clipboard API path).
+
+### Unit tier
+
+`uv run invoke tests.tests-unit`: 9922 passed, 4 skipped, 2 xfailed, 0 failed, as before. No
+Python file changed.

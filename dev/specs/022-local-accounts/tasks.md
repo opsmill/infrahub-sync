@@ -345,7 +345,7 @@ tokens.
   the environment defines it, and offer none of its actions.
 - [X] T065 [US4] In `frontend/src/routes/__root.tsx`, link to "My account" for every account and
   to "Accounts" for administrators only.
-- [ ] T066 [US4] Run `pnpm check`, `pnpm typecheck` and `pnpm build` in `frontend/`, then the
+- [X] T066 [US4] Run `pnpm check`, `pnpm typecheck` and `pnpm build` in `frontend/`, then the
   second half of quickstart scenario 6; record the result in
   `dev/specs/022-local-accounts/notes.md`.
 
