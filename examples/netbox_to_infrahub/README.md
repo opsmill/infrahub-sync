@@ -12,6 +12,8 @@ incompatible schema can fail when existing kinds define different relationships.
 To run it against a local NetBox with the official demo data, follow
 [Run from source](../../docs/docs/development-stack.mdx#run-from-source) instead. That
 path writes a copy of this package with the addresses the local worker container uses.
+[Try the NetBox demo](../../docs/docs/tutorials/try-the-netbox-demo.mdx) prepares the same
+local path with one command, `uv run invoke dev.demo`.
 
 The worker uses the two URLs in this package, `https://demo.netbox.dev` and
 `http://localhost:8000`. Environment variables such as `NETBOX_URL` and

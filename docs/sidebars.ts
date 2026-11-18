@@ -22,6 +22,7 @@ const sidebars: SidebarsConfig = {
         'tutorials/netbox-to-existing-infrahub',
         'tutorials/nautobot-to-existing-infrahub',
         'tutorials/netbox-demo-to-infrahub',
+        'tutorials/try-the-netbox-demo',
       ],
     },
     {

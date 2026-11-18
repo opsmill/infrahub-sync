@@ -72,15 +72,15 @@ uv run invoke tests.tests-unit
 
 **Goal**: maintainers know how to publish a pre-release image; no code (research R-6).
 
-- [ ] T023 [US3] Check that `docs/docs/development/guides/publishing-an-image.md` covers a dispatch from `feature/v3-develop` with a tag such as `3.0.0-rc.1`, both platforms, signature, SBOM, and `latest` unchanged; add only what is missing. Do not dispatch the workflow
+- [X] T023 [US3] Check that `docs/docs/development/guides/publishing-an-image.md` covers a dispatch from `feature/v3-develop` with a tag such as `3.0.0-rc.1`, both platforms, signature, SBOM, and `latest` unchanged; add only what is missing. Do not dispatch the workflow
 
 ## Phase 6: User Story 4 - Read how to try the demo and where to send feedback (P3)
 
 **Goal**: one page for colleagues.
 
-- [ ] T024 [US4] Write `docs/docs/tutorials/try-the-netbox-demo.mdx` in the house style of the other tutorials (frontmatter `title`, `description`; plain English; no marketing): who it is for; prerequisites; `uv run invoke dev.demo`; a first plan on a new branch from the web interface and from the CLI; review and apply; that approval is off in the demo and why the demo does not show it (it is changing); preparing a Kubernetes deployment with `infrahub-sync demo prepare` and its options; that the Styrmin drivers are not available yet; pre-release images, linking the publishing guide; "When a run fails" pointing to the existing section; "Send feedback" per research R-8 (the channel named in the invitation, what to include, no public tracker); clean-up with `dev.destroy` and `netbox.destroy`
-- [ ] T025 [US4] Add the page to the docs sidebar next to the other tutorials (find the sidebar file with `grep -rn "netbox-demo-to-infrahub" docs/sidebars*`), and add one line pointing to it in `docs/docs/development-stack.mdx` ("Run a first sync"), `docs/docs/tutorials/netbox-demo-to-infrahub.mdx` (the "Other routes" tip) and `examples/netbox_to_infrahub/README.md`
-- [ ] T026 [US4] Regenerate the CLI reference with `uv run invoke docs.generate` and run `uv run invoke docs.lint` (rumdl and Vale); fix findings
+- [X] T024 [US4] Write `docs/docs/tutorials/try-the-netbox-demo.mdx` in the house style of the other tutorials (frontmatter `title`, `description`; plain English; no marketing): who it is for; prerequisites; `uv run invoke dev.demo`; a first plan on a new branch from the web interface and from the CLI; review and apply; that approval is off in the demo and why the demo does not show it (it is changing); preparing a Kubernetes deployment with `infrahub-sync demo prepare` and its options; that the Styrmin drivers are not available yet; pre-release images, linking the publishing guide; "When a run fails" pointing to the existing section; "Send feedback" per research R-8 (the channel named in the invitation, what to include, no public tracker); clean-up with `dev.destroy` and `netbox.destroy`
+- [X] T025 [US4] Add the page to the docs sidebar next to the other tutorials (find the sidebar file with `grep -rn "netbox-demo-to-infrahub" docs/sidebars*`), and add one line pointing to it in `docs/docs/development-stack.mdx` ("Run a first sync"), `docs/docs/tutorials/netbox-demo-to-infrahub.mdx` (the "Other routes" tip) and `examples/netbox_to_infrahub/README.md`
+- [X] T026 [US4] Regenerate the CLI reference with `uv run invoke docs.generate` and run `uv run invoke docs.lint` (rumdl and Vale); fix findings
 
 ## Phase 7: Polish
 
