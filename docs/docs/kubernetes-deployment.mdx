@@ -344,11 +344,13 @@ A change to a setting replaces the pods that read it when you run `helm upgrade`
 refuses to render a `settings.sessionIdleSeconds` that is not a whole number of at least 60. The
 Sync API also refuses, at start, a value above 999999999999.
 
-The chart sets `INFRAHUB_SYNC_REQUIRE_APPROVAL` on the Sync API only. A schedule that writes to the
-default branch also needs it on the worker: with Compose, the worker reads it and stops such a
-schedule while approval is required ([Schedule sync runs](./orchestration.mdx)). Until the chart
-sets it on the worker, do not create a schedule that writes to the default branch on a Kubernetes
-deployment where `settings.requireApproval` is `true`; use branch review.
+The chart sets `INFRAHUB_SYNC_REQUIRE_APPROVAL` on the Sync API only. While approval is required,
+the Sync API refuses a schedule that writes to the default branch and stops an existing one when it
+starts ([Schedule sync runs](./orchestration.mdx)). With Compose, the worker reads the same setting
+and also refuses to start a run of such a schedule, in case the Sync API could not stop it. The
+chart does not pass the setting to the worker yet, so on Kubernetes that second check does not run.
+After you set `settings.requireApproval` to `true`, check with `infrahub-sync schedules list` that
+no schedule that writes to the default branch is still active.
 
 Source credentials go to the worker only:
 
