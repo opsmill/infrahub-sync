@@ -97,8 +97,9 @@ run is the name of the account.
 
 ### Sign-in, sign-out and account routes
 
-These routes take no `Idempotency-Key`. Each mutation accepts an optional `reason` in its body,
-at most 512 characters, and records it in the audit history.
+These routes take no `Idempotency-Key`. Each mutation accepts an optional `reason` of at most
+512 characters, and records it in the audit history. `DELETE /me/tokens/{token_id}` takes it as a
+query parameter; the other routes take it in the JSON body.
 
 | Route | Who | Behavior |
 | --- | --- | --- |
@@ -111,7 +112,7 @@ at most 512 characters, and records it in the audit history.
 | `GET /accounts` | administrator | Lists accounts. Query `state=active`, `disabled` or `all` (the default). |
 | `POST /accounts` | administrator | Takes `{"name", "password", "administrator"?}` and creates an account. |
 | `GET /accounts/{name}` | administrator | Returns one account. |
-| `PATCH /accounts/{name}` | administrator | Takes `{"administrator"?, "disabled"?}`. Disabling deletes the API tokens of the account and ends its sessions. |
+| `PATCH /accounts/{name}` | administrator | Takes `{"disabled"}`: `true` disables the account, `false` enables it. Disabling deletes the API tokens of the account and ends its sessions. |
 | `PUT /accounts/{name}/password` | administrator | Takes `{"new_password"}`. Every session of the account ends. |
 | `POST /accounts/{name}/unlock` | administrator | Ends a refusal after repeated failed sign-ins. |
 

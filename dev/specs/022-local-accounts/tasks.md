@@ -240,6 +240,8 @@ lines of scenario 5.
   `uv run invoke docs.generate`; run `uv run invoke docs.rumdl`.
 - [X] T046 [US1] Run quickstart scenarios 1 to 4 on the development stack
   (`uv run invoke dev.start`) and record the result in `dev/specs/022-local-accounts/notes.md`.
+  Done on a separate Compose project of `development/docker-compose.yml`, without the worker or
+  Infrahub, because another checkout's stack held the project name of `dev.start`; see notes.md.
 
 **Checkpoint**: User Story 1 is releasable. The web interface works with an account token in its
 existing token field.

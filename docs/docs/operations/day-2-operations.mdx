@@ -126,14 +126,21 @@ and object store credentials.
 The `admin` account of the Sync API takes its password and its API token from
 `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` in `.env`.
 To replace a lost `admin` password, or to rotate the `admin` token, edit the variable and
-recreate `sync-api` alone with `docker compose up -d --wait sync-api`. When you change the
+recreate `sync-api` alone with `docker compose up -d --wait --no-deps sync-api`. When you change the
 token, give `INFRAHUB_SYNC_API_TOKEN` the same value, because the `cli` service presents
 `INFRAHUB_SYNC_API_TOKEN` from `.env`. See
 [Recover or rotate the `admin` account](../compose-deployment#recover-or-rotate-the-admin-account).
 
 Every other account changes through the CLI or the Sync API, with no change to `.env` and
-no restart: a new account, a new password, a new API token, the end of a refusal after
-repeated failed sign-ins, or a disabled account. See [Manage accounts](../guides/accounts).
+no restart. This covers:
+
+- a new account;
+- a new password;
+- a new API token;
+- the end of a refusal after repeated failed sign-ins;
+- a disabled account.
+
+See [Manage accounts](../guides/accounts).
 
 Never `source` `.env` or put a credential on a command line. Keep values out of logs,
 shell history, and configuration packages.

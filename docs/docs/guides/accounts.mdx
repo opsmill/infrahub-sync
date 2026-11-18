@@ -120,15 +120,22 @@ with the name of that account.
 Add `--expires 2027-01-31` to make the token stop working after that day, in UTC. Without
 `--expires`, the token does not expire.
 
-To view your tokens, with the name, the token ID, the creation date, the expiry date and the
-date of last use, and to delete one:
+To view your tokens, and to delete one:
 
 ```bash
 infrahub-sync tokens list
 infrahub-sync tokens delete TOKEN_ID
 ```
 
-`tokens list` never shows a token value. After `tokens delete`, the Sync API refuses the value.
+`tokens list` shows these columns, and never a token value:
+
+- the token name;
+- the token ID, which `tokens delete` takes;
+- the creation date;
+- the expiry date;
+- the date of last use.
+
+After `tokens delete`, the Sync API refuses the value.
 
 When an administrator disables an account, the Sync API deletes every token of that account. A
 script that should keep working when a person leaves needs an account of its own: create an
@@ -195,7 +202,7 @@ refused: the person creates new tokens.
 
 ## What someone who knows an account name can do
 
-Account names are not secret: they appear in run records and in the web interface. A person who
+Account names are not secret: they appear in run records. A person who
 knows a name, but not its password, can fail 5 sign-ins with that name. The Sync API then
 refuses sign-ins with that name for 15 minutes, and the same person can start a new refusal in
 each 15-minute period. What limits the effect:
@@ -220,9 +227,14 @@ that contains a token value or the prefix `ifs_pat_` or `ifs_ses_`.
 
 ## Read the output from a script
 
-`tokens list`, `tokens create`, `accounts list`, `accounts create`, `accounts disable` and
-`accounts enable` take `--json` to print the answer of the Sync API as JSON. With
-`tokens create --json`, the token value is in that JSON.
+These commands take `--json` to print the answer of the Sync API as JSON:
+
+- `tokens list`;
+- `tokens create`, whose JSON contains the token value;
+- `accounts list`;
+- `accounts create`;
+- `accounts disable`;
+- `accounts enable`.
 
 ## Related pages
 

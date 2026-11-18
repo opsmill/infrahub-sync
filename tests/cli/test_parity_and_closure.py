@@ -34,7 +34,7 @@ REMOVED_COMMAND = re.compile(
     rf"|{_CLI_INVOCATION}(?!{_CONFIGS_LIST})(?:(?!infrahub-sync|```|\n\s*\n)[\s\S])*?(?<![\w-])--(?:name|diff)(?![\w-])"
 )
 # `login --name` names the account to sign in as (spec 022) and is a current option too.
-_LOGIN = r"(?<![\w-])login(?![\w-])"
+_LOGIN = r"(?<![\w.-])infrahub-sync\s+login(?![\w-])"
 _VALID_NAME_OPTION = re.compile(
     # A `configs list ... --name` or `login ... --name` invocation on one line, or the
     # `configs list` or `login` section of the generated CLI reference, which lists `--name`
@@ -270,6 +270,8 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         ("### `infrahub-sync configs show`\n\n* `--name <str>`: Removed.\n", False, True),
         ("infrahub-sync diff --config from-netbox --version 1", True, False),
         ("infrahub-sync login --name admin", False, False),
+        ("uv run infrahub-sync login --name admin", False, False),
+        ("docker login registry.example.net --name builder", False, True),
         ("### `infrahub-sync login`\n\n* `--name <str>`: Account name.\n", False, False),
         ("### `infrahub-sync logout`\n\n* `--name <str>`: Not an option.\n", False, True),
     ],

@@ -209,8 +209,7 @@ service a token of another account, see
 [Give a script an API token](./guides/accounts.mdx#give-a-script-an-api-token).
 
 The `admin` password is the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` in
-`.env`. You need it to sign in to the web interface or with `infrahub-sync login`
-as `admin`.
+`.env`. You need it to sign in as `admin` with `infrahub-sync login`.
 
 Handle `.env` as the secret it is:
 
@@ -230,7 +229,8 @@ start, or unset it.
 Earlier releases defined the Sync API callers in
 `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. `sync-api` no longer reads that variable.
 A deployment that still sets it starts, ignores it, and refuses the tokens it
-defines. To upgrade:
+defines. Until `.env` sets `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, Compose refuses
+to start with `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required`. To upgrade:
 
 1. In `.env`, add `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and
    `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, each with a new random value.
@@ -240,8 +240,8 @@ defines. To upgrade:
 4. Run `docker compose up -d --wait`, which recreates `sync-api` and gives it the
    new environment.
 5. Create an account for each person and each script that had a token of its
-   own, as [Manage accounts](./guides/accounts.mdx) describes. The old tokens do
-   not carry over.
+   own, as [Manage accounts](./guides/accounts.mdx) describes. The tokens of the
+   old variable stay refused.
 
 Records of earlier runs keep the caller names that the old variable defined.
 
@@ -258,7 +258,7 @@ the `admin` token:
 2. Recreate `sync-api` alone, so it reads the new environment:
 
    ```bash
-   docker compose up -d --wait sync-api
+   docker compose up -d --wait --no-deps sync-api
    ```
 
    `docker compose restart` keeps the environment the container already had, so
@@ -270,11 +270,14 @@ when the variable is empty. The start also ends a refusal after repeated failed
 sign-ins for `admin`. No other service needs a restart, and no other account
 changes.
 
-When `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is shorter than 12 characters, when
-the token is shorter than 16 characters or starts with `ifs_pat_` or `ifs_ses_`,
-or when `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number of at least
-60, `sync-api` does not start. Its log names the variable and never shows the
-value:
+`sync-api` does not start in each of these cases:
+
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is shorter than 12 characters.
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is shorter than 16 characters, or starts
+  with `ifs_pat_` or `ifs_ses_`.
+- `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number of at least 60.
+
+Its log names the variable and never shows the value:
 
 ```bash
 docker compose logs sync-api --tail 20
