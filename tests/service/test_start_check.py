@@ -217,7 +217,7 @@ def test_the_api_checks_the_work_pool_it_reconciles(monkeypatch: pytest.MonkeyPa
         resolver_factory=_Resolver,
         run_service_factory=lambda *_args, **_kwargs: object(),
         configuration_routes_factory=lambda **_kwargs: object(),
-        app_factory=lambda *_args: object(),
+        app_factory=lambda *_args, **_kwargs: object(),
         start_check=checked.append,
     )
 

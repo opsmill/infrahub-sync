@@ -324,6 +324,24 @@ def _s3_client(arguments: dict[str, Any]) -> Any:
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
 
 
+def _restore_schedules(projection: ProductProjection) -> None:
+    """Create the Prefect schedule of every stored schedule again, or fail the bootstrap.
+
+    Applying the deployment removes its Prefect schedules: the definition holds none, and the
+    update sends that empty list. This step creates them again, so a schedule keeps starting runs
+    after a bootstrap (spec 021, research R13).
+
+    Raises:
+        BootstrapError: ``schedules-not-matched`` when the store or the task manager fails.
+    """
+    try:
+        asyncio.run(_match_schedules(projection))
+    except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        # Only the class name: the text of a provider error can hold an address or a credential.
+        logger.error("%s: %s", SCHEDULES_NOT_MATCHED, type(error).__name__)  # noqa: TRY400 - the class only.
+        raise BootstrapError(SCHEDULES_NOT_MATCHED) from None
+
+
 def _converge() -> None:
     """Run every convergence step in the order a deployment depends on.
 
@@ -375,15 +393,7 @@ def _converge() -> None:
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(PRODUCT_STORE_UNAVAILABLE) from None
 
-    # Applying the deployment removes its Prefect schedules: the definition holds none, and the
-    # update sends that empty list. This step creates the Prefect schedule of every stored
-    # schedule again, so a schedule keeps starting runs after a bootstrap (spec 021, research R13).
-    try:
-        asyncio.run(_match_schedules(projection))
-    except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        # Only the class name: the text of a provider error can hold an address or a credential.
-        logger.error("%s: %s", SCHEDULES_NOT_MATCHED, type(error).__name__)  # noqa: TRY400 - the class only.
-        raise BootstrapError(SCHEDULES_NOT_MATCHED) from None
+    _restore_schedules(projection)
 
     # Last, so a record exists only once every step above has completed. The Sync API and the
     # worker refuse to start until it names their own version and work pool (spec 018 FR-007b).

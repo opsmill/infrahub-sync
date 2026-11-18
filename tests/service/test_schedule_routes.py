@@ -120,6 +120,7 @@ def test_the_served_api_delivers_no_write_target_yet(monkeypatch: pytest.MonkeyP
         run_service_factory=lambda *_arguments, **_settings: object(),
         configuration_routes_factory=lambda **_settings: object(),
         app_factory=lambda *_arguments, **settings: settings,
+        start_check=lambda _pool: None,
         schedule_service_factory=schedule_service,
     )
 
