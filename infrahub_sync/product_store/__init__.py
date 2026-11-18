@@ -3,8 +3,10 @@
 from infrahub_sync.product_store.accounts import (
     AccountIdentifierAllocationError,
     AccountNameTakenError,
+    AccountNotActiveError,
     AccountTokenNameTakenError,
     DuplicateCredentialError,
+    SignInAttemptsFullError,
 )
 from infrahub_sync.product_store.models import (
     Account,
@@ -68,6 +70,7 @@ __all__ = (
     "Account",
     "AccountIdentifierAllocationError",
     "AccountNameTakenError",
+    "AccountNotActiveError",
     "AccountSession",
     "AccountToken",
     "AccountTokenNameTakenError",
@@ -111,6 +114,7 @@ __all__ = (
     "RunReference",
     "S3Client",
     "SignInAttempt",
+    "SignInAttemptsFullError",
     "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",

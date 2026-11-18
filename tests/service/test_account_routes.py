@@ -891,3 +891,27 @@ def test_an_administrator_can_delete_its_own_account_and_its_next_request_is_ref
 
     _error(api.call("GET", "/accounts", root), 401, "unauthenticated")
     assert api.call("GET", "/accounts", bearer(ADMIN_TOKEN)).status_code == 200
+
+
+def test_a_sign_in_during_which_an_administrator_sets_the_password_opens_no_session(
+    api: AccountApi, root: dict[str, str]
+) -> None:
+    answers: list[int] = []
+
+    def set_password() -> None:
+        answers.append(
+            api.call("PUT", "/accounts/alice/password", root, json={"new_password": NEW_PASSWORD}).status_code
+        )
+
+    api.gate.while_checking = set_password
+
+    response = api.sign_in("alice", PASSWORD)
+    api.gate.while_checking = None
+
+    assert answers == [204]
+    _error(response, 401, "sign-in-refused")
+    alice = api.store.lookup_account_by_name("alice")
+    assert alice is not None
+    assert api.store.list_account_sessions(alice.account_id) == ()
+    assert api.sign_in("alice", PASSWORD).status_code == 401
+    assert api.sign_in("alice", NEW_PASSWORD).status_code == 200

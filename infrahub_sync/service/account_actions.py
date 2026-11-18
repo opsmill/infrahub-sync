@@ -10,10 +10,9 @@ reads the product store, the clock and the free-text check through the ``RunServ
 - ``change_own_password``, ``list_own_tokens``, ``create_own_token`` and ``delete_own_token`` are the
   actions of an account on itself.
 
-Each accepted action writes one audit event that names the account acted on by its identifier. The
-event is written right after the store call of the action, not in its transaction: a failure
-between the two leaves the action done and its event missing. The deletion of an account is the
-exception: the store writes its event in the transaction of the deletion (research R7).
+Each accepted action writes one audit event that names the account acted on by its identifier.
+The store writes the event in the transaction of the action, so a failure of either writes
+neither. The events of refusals, which change nothing else, are written on their own.
 
 No function of this module puts a password, a token value, a session token, a digest or a hash in
 a log line, an exception or an audit record. A session token is in one place, the answer of a
@@ -36,6 +35,7 @@ from infrahub_sync.product_store.accounts import (
     ACCOUNT_ID_PREFIX,
     SIGN_IN_NAME_MAX_LENGTH,
     AccountNameTakenError,
+    AccountNotActiveError,
     AccountTokenNameTakenError,
     SignInAttemptsFullError,
     name_key,
@@ -65,7 +65,7 @@ from .settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV, PASSW
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from infrahub_sync.product_store import Account, AccountToken
+    from infrahub_sync.product_store import Account, AccountToken, AuditEvent
 
     from .auth import Principal
 
@@ -287,6 +287,26 @@ def sign_in_refused() -> ServiceAPIError:
     return ServiceAPIError(401, "sign-in-refused", SIGN_IN_REFUSED_MESSAGE)
 
 
+def _event(
+    service: RunService,
+    event_type: str,
+    *,
+    actor: str,
+    account_id: str,
+    operation: str,
+    reason: str | None = None,
+) -> AuditEvent:
+    """Return the event of an accepted account action, which the store writes with the action."""
+    return account_event(
+        event_type,
+        actor=actor,
+        account_id=account_id,
+        operation=operation,
+        reason=reason,
+        created_at=service.accounts.now(),
+    )
+
+
 def is_countable_name(name: str) -> bool:
     """Return whether failed sign-ins are counted for this name: 1 to 64 characters, none of them NUL."""
     # The lower-case form of a name can be longer than the name, and it is the stored key.
@@ -440,14 +460,25 @@ def sign_in(service: RunService, body: SignInRequest, path: str) -> SessionResou
         # The record holds one reason for every cause, and no name.
         service.record_authentication_refusal(path, "sign-in-refused")
         raise sign_in_refused()
-    clear_failed_sign_ins(service, name)
     token = credentials.new_session_token()
-    service.accounts.projection.create_account_session(
-        account.account_id, digest=credentials.digest(token), now=service.accounts.now()
-    )
-    service.record_account_event(
-        ACCOUNT_SIGNED_IN, actor=account.account_id, account_id=account.account_id, operation="sign-in"
-    )
+    try:
+        # One transaction: the session is inserted only while the account is active and has the
+        # password that was checked; the failed sign-ins of the name are deleted and the event
+        # is written with it.
+        service.accounts.projection.create_account_session(
+            account.account_id,
+            digest=credentials.digest(token),
+            now=service.accounts.now(),
+            signed_in=account,
+            event=_event(
+                service, ACCOUNT_SIGNED_IN, actor=account.account_id, account_id=account.account_id, operation="sign-in"
+            ),
+            secrets=service.accounts.secrets,
+        )
+    except AccountNotActiveError:
+        # The account was disabled, deleted or given a new password during the check.
+        service.record_authentication_refusal(path, "sign-in-refused")
+        raise sign_in_refused() from None
     return SessionResource(token=token, account=account_resource(account), idle_seconds=session_idle_seconds())
 
 
@@ -455,9 +486,12 @@ def sign_out(service: RunService, principal: Principal) -> None:
     """End the session that the request presented."""
     if principal.kind != "session" or principal.session_id is None:
         raise ServiceAPIError(422, "not-a-session", NOT_A_SESSION_MESSAGE)
-    service.accounts.projection.delete_account_session(principal.session_id)
-    service.record_account_event(
-        ACCOUNT_SIGNED_OUT, actor=principal.actor, account_id=principal.actor, operation="sign-out"
+    service.accounts.projection.delete_account_session(
+        principal.session_id,
+        event=_event(
+            service, ACCOUNT_SIGNED_OUT, actor=principal.actor, account_id=principal.actor, operation="sign-out"
+        ),
+        secrets=service.accounts.secrets,
     )
 
 
@@ -564,8 +598,13 @@ def _own_account(service: RunService, principal: Principal) -> Account:
     """
     account = service.accounts.projection.lookup_account(principal.actor)
     if account is None or account.name is None or account.deleted_at is not None:
-        raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+        raise _unauthenticated()
     return account
+
+
+def _unauthenticated() -> ServiceAPIError:
+    """Return the refusal of a request whose account is no longer active."""
+    return ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
 
 
 def _resource(service: RunService, account: Account) -> AccountResource:
@@ -597,12 +636,18 @@ def create_account(service: RunService, principal: Principal, body: CreateAccoun
             password_hash=password_hash,
             administrator=body.administrator,
             now=service.accounts.now(),
+            event_for=lambda account_id: _event(
+                service,
+                ACCOUNT_CREATED,
+                actor=principal.actor,
+                account_id=account_id,
+                operation=operation,
+                reason=body.reason,
+            ),
+            secrets=service.accounts.secrets,
         )
     except AccountNameTakenError:
         raise ServiceAPIError(409, "account-name-taken", ACCOUNT_NAME_TAKEN_MESSAGE) from None
-    service.record_account_event(
-        ACCOUNT_CREATED, actor=principal.actor, account_id=account.account_id, operation=operation, reason=body.reason
-    )
     return account_resource(account)
 
 
@@ -646,27 +691,33 @@ def update_account(service: RunService, principal: Principal, name: str, body: U
         raise ServiceAPIError(422, "request-invalid", NO_CHANGE_MESSAGE)
     if account.environment_managed:
         raise _environment_managed(ADMIN_ACCOUNT_PASSWORD_ENV)
-    projection, now = service.accounts.projection, service.accounts.now()
+    projection, now, secrets = service.accounts.projection, service.accounts.now(), service.accounts.secrets
     if body.disabled is not None and body.disabled != account.disabled:
-        if body.disabled:
-            projection.disable_account(account.account_id, now=now)
-        else:
-            projection.enable_account(account.account_id, now=now)
-        service.record_account_event(
+        # The store writes each event in the transaction of its change.
+        event = _event(
+            service,
             ACCOUNT_DISABLED if body.disabled else ACCOUNT_ENABLED,
             actor=principal.actor,
             account_id=account.account_id,
             operation="disable-account" if body.disabled else "enable-account",
             reason=body.reason,
         )
+        change = projection.disable_account if body.disabled else projection.enable_account
+        change(account.account_id, now=now, event=event, secrets=secrets)
     if body.administrator is not None and body.administrator != account.administrator:
-        projection.set_account_level(account.account_id, administrator=body.administrator, now=now)
-        service.record_account_event(
-            ACCOUNT_LEVEL_SET,
-            actor=principal.actor,
-            account_id=account.account_id,
-            operation="set-account-level",
-            reason=body.reason,
+        projection.set_account_level(
+            account.account_id,
+            administrator=body.administrator,
+            now=now,
+            event=_event(
+                service,
+                ACCOUNT_LEVEL_SET,
+                actor=principal.actor,
+                account_id=account.account_id,
+                operation="set-account-level",
+                reason=body.reason,
+            ),
+            secrets=secrets,
         )
     return read_account(service, name)
 
@@ -733,12 +784,30 @@ def delete_account_token(
     account = _find_account(service, name)
     if account.environment_managed:
         raise _environment_managed(ADMIN_ACCOUNT_TOKEN_ENV)
-    # PostgreSQL stores no NUL character in a text, so an identifier that holds one names no token.
-    if "\x00" in token_id or not service.accounts.projection.delete_account_token(account.account_id, token_id):
-        raise ServiceAPIError(404, "token-not-found", TOKEN_NOT_FOUND_MESSAGE)
-    service.record_account_event(
-        ACCOUNT_TOKEN_DELETED, actor=principal.actor, account_id=account.account_id, operation=operation, reason=reason
+    _delete_token(service, principal, account, token_id, operation=operation, reason=reason)
+
+
+def _delete_token(
+    service: RunService, principal: Principal, account: Account, token_id: str, *, operation: str, reason: str | None
+) -> None:
+    """Delete one API token of an account and write its event, in one transaction.
+
+    Raises:
+        ServiceAPIError: ``404 token-not-found`` for a token that the account does not have.
+    """
+    event = _event(
+        service,
+        ACCOUNT_TOKEN_DELETED,
+        actor=principal.actor,
+        account_id=account.account_id,
+        operation=operation,
+        reason=reason,
     )
+    # PostgreSQL stores no NUL character in a text, so an identifier that holds one names no token.
+    if "\x00" in token_id or not service.accounts.projection.delete_account_token(
+        account.account_id, token_id, event=event, secrets=service.accounts.secrets
+    ):
+        raise ServiceAPIError(404, "token-not-found", TOKEN_NOT_FOUND_MESSAGE)
 
 
 def set_account_password(service: RunService, principal: Principal, name: str, body: SetPasswordRequest) -> None:
@@ -755,17 +824,25 @@ def set_account_password(service: RunService, principal: Principal, name: str, b
         raise _environment_managed(ADMIN_ACCOUNT_PASSWORD_ENV)
     _require_new_password(body.new_password)
     password_hash = _hash_new_password(body.new_password)
-    projection = service.accounts.projection
-    projection.set_account_password_hash(account.account_id, password_hash=password_hash, now=service.accounts.now())
-    projection.delete_account_sessions(account.account_id)
-    clear_failed_sign_ins(service, name)
-    service.record_account_event(
-        ACCOUNT_PASSWORD_SET,
-        actor=principal.actor,
-        account_id=account.account_id,
-        operation=operation,
-        reason=body.reason,
+    # One transaction: the hash, the end of every session, the end of the refusal and the event.
+    replaced = service.accounts.projection.replace_account_password(
+        account.account_id,
+        password_hash=password_hash,
+        event=_event(
+            service,
+            ACCOUNT_PASSWORD_SET,
+            actor=principal.actor,
+            account_id=account.account_id,
+            operation=operation,
+            reason=body.reason,
+        ),
+        clear_sign_in_name=account.name,
+        now=service.accounts.now(),
+        secrets=service.accounts.secrets,
     )
+    if not replaced:
+        # Another request deleted the account after it was read.
+        raise ServiceAPIError(404, "account-not-found", ACCOUNT_NOT_FOUND_MESSAGE)
 
 
 def unlock_account(service: RunService, principal: Principal, name: str, reason: str | None) -> None:
@@ -777,9 +854,17 @@ def unlock_account(service: RunService, principal: Principal, name: str, reason:
     operation = "unlock-account"
     _require_safe_reason(service, principal, operation, reason)
     account = _find_account(service, name)
-    clear_failed_sign_ins(service, name)
-    service.record_account_event(
-        ACCOUNT_UNLOCKED, actor=principal.actor, account_id=account.account_id, operation=operation, reason=reason
+    service.accounts.projection.clear_sign_in_attempts(
+        name,
+        event=_event(
+            service,
+            ACCOUNT_UNLOCKED,
+            actor=principal.actor,
+            account_id=account.account_id,
+            operation=operation,
+            reason=reason,
+        ),
+        secrets=service.accounts.secrets,
     )
 
 
@@ -793,17 +878,6 @@ def _refuse_current_password(service: RunService, principal: Principal) -> Servi
         outcome="refused-current-password",
     )
     return ServiceAPIError(403, "current-password-refused", CURRENT_PASSWORD_REFUSED_MESSAGE)
-
-
-def _end_other_sessions(service: RunService, principal: Principal) -> None:
-    """End every session of the caller's account, except the session that made the request."""
-    projection = service.accounts.projection
-    if principal.kind != "session" or principal.session_id is None:
-        projection.delete_account_sessions(principal.actor)
-        return
-    for session in projection.list_account_sessions(principal.actor):
-        if session.session_id != principal.session_id:
-            projection.delete_account_session(session.session_id)
 
 
 def change_own_password(service: RunService, principal: Principal, body: ChangePasswordRequest) -> None:
@@ -833,18 +907,27 @@ def change_own_password(service: RunService, principal: Principal, body: ChangeP
     if not _check_password_of_name(service, name, account, body.current_password):
         raise _refuse_current_password(service, principal)
     password_hash = _hash_new_password(body.new_password)
-    service.accounts.projection.set_account_password_hash(
-        account.account_id, password_hash=password_hash, now=service.accounts.now()
+    # One transaction: the hash, the end of every other session, the end of the refusal and the
+    # event. A request made with an API token keeps no session.
+    replaced = service.accounts.projection.replace_account_password(
+        account.account_id,
+        password_hash=password_hash,
+        event=_event(
+            service,
+            ACCOUNT_PASSWORD_CHANGED,
+            actor=principal.actor,
+            account_id=account.account_id,
+            operation=operation,
+            reason=body.reason,
+        ),
+        keep_session_id=principal.session_id if principal.kind == "session" else None,
+        clear_sign_in_name=name,
+        now=service.accounts.now(),
+        secrets=service.accounts.secrets,
     )
-    _end_other_sessions(service, principal)
-    clear_failed_sign_ins(service, name)
-    service.record_account_event(
-        ACCOUNT_PASSWORD_CHANGED,
-        actor=principal.actor,
-        account_id=account.account_id,
-        operation=operation,
-        reason=body.reason,
-    )
+    if not replaced:
+        # The account was deleted after the request was resolved.
+        raise _unauthenticated()
 
 
 def list_own_tokens(service: RunService, principal: Principal) -> list[TokenResource]:
@@ -872,22 +955,28 @@ def create_own_token(service: RunService, principal: Principal, body: CreateToke
         raise ServiceAPIError(422, "expiry-in-the-past", EXPIRY_IN_THE_PAST_MESSAGE)
     value = credentials.new_api_token()
     try:
+        # One transaction: the token is inserted only while the account is active, with its event.
         token = service.accounts.projection.create_account_token(
             account.account_id,
             name=body.name,
             digest=credentials.digest(value),
             expires_at=body.expires_at,
             now=now,
+            event=_event(
+                service,
+                ACCOUNT_TOKEN_CREATED,
+                actor=principal.actor,
+                account_id=account.account_id,
+                operation=operation,
+                reason=body.reason,
+            ),
+            secrets=service.accounts.secrets,
         )
     except AccountTokenNameTakenError:
         raise ServiceAPIError(409, "token-name-taken", TOKEN_NAME_TAKEN_MESSAGE) from None
-    service.record_account_event(
-        ACCOUNT_TOKEN_CREATED,
-        actor=principal.actor,
-        account_id=account.account_id,
-        operation=operation,
-        reason=body.reason,
-    )
+    except AccountNotActiveError:
+        # The account was disabled or deleted after the request was resolved.
+        raise _unauthenticated() from None
     return CreatedTokenResource(**token_resource(token).model_dump(), token=value)
 
 
@@ -903,9 +992,4 @@ def delete_own_token(service: RunService, principal: Principal, token_id: str, r
     account = _own_account(service, principal)
     if account.environment_managed:
         raise _environment_managed(ADMIN_ACCOUNT_TOKEN_ENV)
-    # PostgreSQL stores no NUL character in a text, so an identifier that holds one names no token.
-    if "\x00" in token_id or not service.accounts.projection.delete_account_token(account.account_id, token_id):
-        raise ServiceAPIError(404, "token-not-found", TOKEN_NOT_FOUND_MESSAGE)
-    service.record_account_event(
-        ACCOUNT_TOKEN_DELETED, actor=principal.actor, account_id=account.account_id, operation=operation, reason=reason
-    )
+    _delete_token(service, principal, account, token_id, operation=operation, reason=reason)

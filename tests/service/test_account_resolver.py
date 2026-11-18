@@ -152,10 +152,15 @@ def test_a_disabled_account_whose_rows_remain_is_refused_as_unauthenticated(
 ) -> None:
     """The store applies no policy: a row of a disabled account resolves, and the resolver refuses it."""
     account = _account(projection)
-    projection.disable_account(account.account_id, now=_T0)
-    # Rows written after the disable stand for rows that a disable did not delete.
     token = _token(projection, account, expires_at=_T0 - timedelta(days=1))
     session, _session_id = _session(projection, account)
+    # The flag is set without the disable, which would delete the rows: they stand for rows that
+    # a disable did not delete. The store refuses to create a row for a disabled account.
+    records = cast("Any", projection._records)
+    with records._transaction() as cursor:
+        cursor.execute(
+            records._sql("UPDATE accounts SET disabled = ? WHERE account_id = ?"), (True, account.account_id)
+        )
 
     # The token is also expired: a disabled account is not told so.
     assert resolver.resolve(token) == Resolution.refused("unauthenticated")

@@ -778,3 +778,21 @@ def test_a_burst_of_parallel_sign_ins_for_one_name_runs_no_more_checks_than_the_
     assert answers == [401] * requests
     assert len(api.gate.checked) == SIGN_IN_FAILURE_LIMIT
     assert api.rows("SELECT failed_count FROM sign_in_attempts") == [(SIGN_IN_FAILURE_LIMIT,)]
+
+
+def test_a_sign_in_during_which_the_account_is_disabled_and_enabled_again_opens_no_session(api: _Api) -> None:
+    alice = api.accounts["Alice"]
+
+    def disable() -> None:
+        # An administrator disables the account while its password is checked.
+        api.store.disable_account(alice.account_id, now=_T0)
+
+    api.gate.while_checking = disable
+
+    response = api.sign_in("Alice")
+    api.store.enable_account(alice.account_id, now=_T0)
+
+    assert (response.status_code, response.json()) == (401, _REFUSAL)
+    assert api.rows("SELECT COUNT(*) FROM account_sessions") == [(0,)]
+    assert api.rows("SELECT COUNT(*) FROM sign_in_attempts") == [(0,)]
+    assert [event.event_type for event in api.store.audit_events() if event.outcome == "accepted"] == []

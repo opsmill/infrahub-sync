@@ -849,6 +849,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         administrator: bool = False,
         environment_managed: bool = False,
         now: datetime | None = None,
+        event_for: Callable[[str], AuditEvent] | None = None,
     ) -> Account: ...
 
     def lookup_account(self, account_id: str) -> Account | None: ...
@@ -859,15 +860,32 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def list_accounts(self, *, disabled: bool | None = None) -> tuple[Account, ...]: ...
 
-    def set_account_level(self, account_id: str, *, administrator: bool, now: datetime | None = None) -> bool: ...
+    def set_account_level(
+        self, account_id: str, *, administrator: bool, now: datetime | None = None, event: AuditEvent | None = None
+    ) -> bool: ...
 
     def set_account_password_hash(
         self, account_id: str, *, password_hash: str, now: datetime | None = None
     ) -> bool: ...
 
-    def disable_account(self, account_id: str, *, now: datetime | None = None) -> bool: ...
+    def replace_account_password(
+        self,
+        account_id: str,
+        *,
+        password_hash: str,
+        event: AuditEvent,
+        keep_session_id: str | None = None,
+        clear_sign_in_name: str | None = None,
+        now: datetime | None = None,
+    ) -> bool: ...
 
-    def enable_account(self, account_id: str, *, now: datetime | None = None) -> bool: ...
+    def disable_account(
+        self, account_id: str, *, now: datetime | None = None, event: AuditEvent | None = None
+    ) -> bool: ...
+
+    def enable_account(
+        self, account_id: str, *, now: datetime | None = None, event: AuditEvent | None = None
+    ) -> bool: ...
 
     def delete_account(self, account_id: str, *, event: AuditEvent, now: datetime | None = None) -> Account | None: ...
 
@@ -880,21 +898,28 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         expires_at: datetime | None = None,
         environment_managed: bool = False,
         now: datetime | None = None,
+        event: AuditEvent | None = None,
     ) -> AccountToken: ...
 
     def list_account_tokens(self, account_id: str) -> tuple[AccountToken, ...]: ...
 
-    def delete_account_token(self, account_id: str, token_id: str) -> bool: ...
+    def delete_account_token(self, account_id: str, token_id: str, *, event: AuditEvent | None = None) -> bool: ...
 
     def delete_account_tokens(self, account_id: str) -> int: ...
 
     def create_account_session(
-        self, account_id: str, *, digest: str, now: datetime | None = None
+        self,
+        account_id: str,
+        *,
+        digest: str,
+        now: datetime | None = None,
+        signed_in: Account | None = None,
+        event: AuditEvent | None = None,
     ) -> AccountSession: ...
 
     def list_account_sessions(self, account_id: str) -> tuple[AccountSession, ...]: ...
 
-    def delete_account_session(self, session_id: str) -> bool: ...
+    def delete_account_session(self, session_id: str, *, event: AuditEvent | None = None) -> bool: ...
 
     def delete_account_sessions(self, account_id: str) -> int: ...
 
@@ -916,7 +941,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         self, name: str, *, now: datetime | None = None, bound: int = SIGN_IN_ATTEMPTS_BOUND
     ) -> SignInAttempt: ...
 
-    def clear_sign_in_attempts(self, name: str) -> bool: ...
+    def clear_sign_in_attempts(self, name: str, *, event: AuditEvent | None = None) -> bool: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
@@ -3190,8 +3215,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         administrator: bool = False,
         environment_managed: bool = False,
         now: datetime | None = None,
+        event_for: Callable[[str], AuditEvent] | None = None,
     ) -> Account:
         """Create an active account with a new identifier and a new short identifier.
+
+        ``event_for`` builds the event of the creation from the new identifier; the event is
+        written in the transaction of the account, so a failure of either writes neither.
 
         Raises:
             AccountNameTakenError: an account that is not deleted has this name, in any letter case.
@@ -3201,7 +3230,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         for _attempt in range(_ACCOUNT_IDENTIFIER_ATTEMPTS):
             try:
                 with self._transaction() as cursor:
-                    return account_statements.create_account(
+                    account = account_statements.create_account(
                         cursor,
                         self._sql,
                         name=name,
@@ -3210,6 +3239,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         environment_managed=environment_managed,
                         now=created_at,
                     )
+                    if event_for is not None:
+                        self._insert_event(cursor, event_for(account.account_id))
+                    return account
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 # DB-API drivers do not share an integrity-error base class;
                 # inspect only documented SQLite/PostgreSQL uniqueness markers.
@@ -3245,12 +3277,20 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         with self._reading() as cursor:
             return account_statements.list_accounts(cursor, self._sql, disabled=disabled)
 
-    def set_account_level(self, account_id: str, *, administrator: bool, now: datetime | None = None) -> bool:
-        """Set whether the account is an administrator. Return whether an account changed."""
+    def set_account_level(
+        self, account_id: str, *, administrator: bool, now: datetime | None = None, event: AuditEvent | None = None
+    ) -> bool:
+        """Set whether the account is an administrator, and write ``event`` in the same transaction.
+
+        Return whether an account changed; the event is written only then.
+        """
         with self._transaction() as cursor:
-            return account_statements.set_account_level(
+            changed = account_statements.set_account_level(
                 cursor, self._sql, account_id, administrator=administrator, now=_now(now)
             )
+            if changed and event is not None:
+                self._insert_event(cursor, event)
+            return changed
 
     def set_account_password_hash(self, account_id: str, *, password_hash: str, now: datetime | None = None) -> bool:
         """Replace the password hash of the account. Return whether an account changed."""
@@ -3259,15 +3299,54 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor, self._sql, account_id, password_hash=password_hash, now=_now(now)
             )
 
-    def disable_account(self, account_id: str, *, now: datetime | None = None) -> bool:
-        """Disable the account and delete its tokens and its sessions, in one transaction."""
-        with self._transaction() as cursor:
-            return account_statements.disable_account(cursor, self._sql, account_id, now=_now(now))
+    def replace_account_password(
+        self,
+        account_id: str,
+        *,
+        password_hash: str,
+        event: AuditEvent,
+        keep_session_id: str | None = None,
+        clear_sign_in_name: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Store a new password hash, end the sessions and write the event, in one transaction.
 
-    def enable_account(self, account_id: str, *, now: datetime | None = None) -> bool:
-        """Enable the account. Return whether an account changed."""
+        Every session of the account ends, except ``keep_session_id`` when it is given. The failed
+        sign-ins counted for ``clear_sign_in_name`` are deleted. Return whether an account
+        changed; nothing is written when no account that is not deleted has the identifier.
+        """
         with self._transaction() as cursor:
-            return account_statements.enable_account(cursor, self._sql, account_id, now=_now(now))
+            if not account_statements.set_account_password_hash(
+                cursor, self._sql, account_id, password_hash=password_hash, now=_now(now)
+            ):
+                return False
+            if keep_session_id is None:
+                account_statements.delete_sessions(cursor, self._sql, account_id)
+            else:
+                account_statements.delete_other_sessions(cursor, self._sql, account_id, keep_session_id)
+            if clear_sign_in_name is not None:
+                account_statements.clear_sign_in_attempts(cursor, self._sql, clear_sign_in_name)
+            self._insert_event(cursor, event)
+            return True
+
+    def disable_account(self, account_id: str, *, now: datetime | None = None, event: AuditEvent | None = None) -> bool:
+        """Disable the account, delete its tokens and its sessions, and write ``event``, in one transaction.
+
+        Return whether an account changed; the event is written only then.
+        """
+        with self._transaction() as cursor:
+            changed = account_statements.disable_account(cursor, self._sql, account_id, now=_now(now))
+            if changed and event is not None:
+                self._insert_event(cursor, event)
+            return changed
+
+    def enable_account(self, account_id: str, *, now: datetime | None = None, event: AuditEvent | None = None) -> bool:
+        """Enable the account and write ``event``, in one transaction. Return whether an account changed."""
+        with self._transaction() as cursor:
+            changed = account_statements.enable_account(cursor, self._sql, account_id, now=_now(now))
+            if changed and event is not None:
+                self._insert_event(cursor, event)
+            return changed
 
     def delete_account(self, account_id: str, *, event: AuditEvent, now: datetime | None = None) -> Account | None:
         """Delete the account and write the event of the deletion, in one transaction.
@@ -3291,16 +3370,22 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         expires_at: datetime | None = None,
         environment_managed: bool = False,
         now: datetime | None = None,
+        event: AuditEvent | None = None,
     ) -> AccountToken:
-        """Create an API token row from the digest of its value.
+        """Create an API token row from the digest of its value, and write ``event``, in one transaction.
+
+        The row of the account is locked first, so a disable or a deletion of the account that
+        runs at the same time either is seen here or deletes the new token.
 
         Raises:
+            AccountNotActiveError: the account is missing, disabled or deleted; nothing is written.
             AccountTokenNameTakenError: the account already has a token with this name.
             DuplicateCredentialError: the store already holds this digest.
         """
         try:
             with self._transaction() as cursor:
-                return account_statements.create_token(
+                account_statements.lock_active_account(cursor, self._sql, account_id)
+                token = account_statements.create_token(
                     cursor,
                     self._sql,
                     account_id,
@@ -3310,6 +3395,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     environment_managed=environment_managed,
                     now=_now(now),
                 )
+                if event is not None:
+                    self._insert_event(cursor, event)
+                return token
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # DB-API drivers do not share an integrity-error base class;
             # inspect only documented SQLite/PostgreSQL uniqueness markers.
@@ -3329,25 +3417,53 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         with self._reading() as cursor:
             return account_statements.list_tokens(cursor, self._sql, account_id)
 
-    def delete_account_token(self, account_id: str, token_id: str) -> bool:
-        """Delete one API token of the account. Return whether a token was deleted."""
+    def delete_account_token(self, account_id: str, token_id: str, *, event: AuditEvent | None = None) -> bool:
+        """Delete one API token of the account and write ``event``, in one transaction.
+
+        Return whether a token was deleted; the event is written only then.
+        """
         with self._transaction() as cursor:
-            return account_statements.delete_token(cursor, self._sql, account_id, token_id)
+            deleted = account_statements.delete_token(cursor, self._sql, account_id, token_id)
+            if deleted and event is not None:
+                self._insert_event(cursor, event)
+            return deleted
 
     def delete_account_tokens(self, account_id: str) -> int:
         """Delete every API token of the account. Return the number deleted."""
         with self._transaction() as cursor:
             return account_statements.delete_tokens(cursor, self._sql, account_id)
 
-    def create_account_session(self, account_id: str, *, digest: str, now: datetime | None = None) -> AccountSession:
-        """Create a session row from the digest of its session token.
+    def create_account_session(
+        self,
+        account_id: str,
+        *,
+        digest: str,
+        now: datetime | None = None,
+        signed_in: Account | None = None,
+        event: AuditEvent | None = None,
+    ) -> AccountSession:
+        """Create a session row from the digest of its session token, and write ``event``, in one transaction.
+
+        The row of the account is locked first, so a disable, a deletion or a password change of
+        the account that runs at the same time either is seen here or deletes the new session.
+        ``signed_in`` is the account as the sign-in read it before it checked the password: the
+        session is created only when the password hash and its time of change are still the same.
+        The failed sign-ins counted for its name are deleted in the same transaction.
 
         Raises:
+            AccountNotActiveError: the account is missing, disabled or deleted, or its password
+                changed after ``signed_in`` was read; nothing is written.
             DuplicateCredentialError: the store already holds this digest.
         """
         try:
             with self._transaction() as cursor:
-                return account_statements.create_session(cursor, self._sql, account_id, digest=digest, now=_now(now))
+                account = account_statements.lock_active_account(cursor, self._sql, account_id, signed_in=signed_in)
+                if signed_in is not None and account.name is not None:
+                    account_statements.clear_sign_in_attempts(cursor, self._sql, account.name)
+                session = account_statements.create_session(cursor, self._sql, account_id, digest=digest, now=_now(now))
+                if event is not None:
+                    self._insert_event(cursor, event)
+                return session
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # DB-API drivers do not share an integrity-error base class;
             # inspect only documented SQLite/PostgreSQL uniqueness markers.
@@ -3361,10 +3477,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         with self._reading() as cursor:
             return account_statements.list_sessions(cursor, self._sql, account_id)
 
-    def delete_account_session(self, session_id: str) -> bool:
-        """Delete one session. Return whether a session was deleted."""
+    def delete_account_session(self, session_id: str, *, event: AuditEvent | None = None) -> bool:
+        """Delete one session and write ``event``, in one transaction.
+
+        Return whether a session was deleted; the event is written only then.
+        """
         with self._transaction() as cursor:
-            return account_statements.delete_session(cursor, self._sql, session_id)
+            deleted = account_statements.delete_session(cursor, self._sql, session_id)
+            if deleted and event is not None:
+                self._insert_event(cursor, event)
+            return deleted
 
     def delete_account_sessions(self, account_id: str) -> int:
         """Delete every session of the account. Return the number deleted."""
@@ -3443,10 +3565,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(_SQLITE_BEGIN_IMMEDIATE)
             return account_statements.record_sign_in_failure(cursor, self._sql, name, now=_now(now), bound=bound)
 
-    def clear_sign_in_attempts(self, name: str) -> bool:
-        """Delete the failed sign-ins counted for this name. Return whether a row was deleted."""
+    def clear_sign_in_attempts(self, name: str, *, event: AuditEvent | None = None) -> bool:
+        """Delete the failed sign-ins counted for this name and write ``event``, in one transaction.
+
+        Return whether a row was deleted. The event is written either way.
+        """
         with self._transaction() as cursor:
-            return account_statements.clear_sign_in_attempts(cursor, self._sql, name)
+            cleared = account_statements.clear_sign_in_attempts(cursor, self._sql, name)
+            if event is not None:
+                self._insert_event(cursor, event)
+            return cleared
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         with self._transaction() as cursor:
@@ -4262,8 +4390,13 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         administrator: bool = False,
         environment_managed: bool = False,
         now: datetime | None = None,
+        event_for: Callable[[str], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
     ) -> Account:
         """Create an active account. ``password_hash`` is stored as given; the store reads no password.
+
+        ``event_for`` builds the secret-safe event of the creation from the new identifier, and
+        the event is written in the transaction of the account.
 
         Raises:
             AccountNameTakenError: an account that is not deleted has this name, in any letter case.
@@ -4274,6 +4407,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             administrator=administrator,
             environment_managed=environment_managed,
             now=now,
+            event_for=None if event_for is None else lambda account_id: _redact_event(event_for(account_id), secrets),
         )
 
     def lookup_account(self, account_id: str) -> Account | None:
@@ -4292,21 +4426,77 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return the accounts that are not deleted, by name; only one state when ``disabled`` is given."""
         return self._records.list_accounts(disabled=disabled)
 
-    def set_account_level(self, account_id: str, *, administrator: bool, now: datetime | None = None) -> bool:
-        """Set whether the account is an administrator. Return whether an account changed."""
-        return self._records.set_account_level(account_id, administrator=administrator, now=now)
+    def set_account_level(
+        self,
+        account_id: str,
+        *,
+        administrator: bool,
+        now: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Set whether the account is an administrator, and write the secret-safe event, in one transaction.
+
+        Return whether an account changed; the event is written only then.
+        """
+        return self._records.set_account_level(
+            account_id, administrator=administrator, now=now, event=_redacted_event(event, secrets)
+        )
 
     def set_account_password_hash(self, account_id: str, *, password_hash: str, now: datetime | None = None) -> bool:
         """Replace the password hash of the account. Return whether an account changed."""
         return self._records.set_account_password_hash(account_id, password_hash=password_hash, now=now)
 
-    def disable_account(self, account_id: str, *, now: datetime | None = None) -> bool:
-        """Disable the account and delete its tokens and its sessions. Return whether an account changed."""
-        return self._records.disable_account(account_id, now=now)
+    def replace_account_password(
+        self,
+        account_id: str,
+        *,
+        password_hash: str,
+        event: AuditEvent,
+        keep_session_id: str | None = None,
+        clear_sign_in_name: str | None = None,
+        now: datetime | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Store a new password hash, end the sessions and write the secret-safe event, in one transaction.
 
-    def enable_account(self, account_id: str, *, now: datetime | None = None) -> bool:
-        """Enable the account. Return whether an account changed."""
-        return self._records.enable_account(account_id, now=now)
+        Every session of the account ends, except ``keep_session_id`` when it is given; the tokens
+        stay. The failed sign-ins counted for ``clear_sign_in_name`` are deleted. Return whether an
+        account changed; nothing is written when no account that is not deleted has the identifier.
+        """
+        return self._records.replace_account_password(
+            account_id,
+            password_hash=password_hash,
+            event=_redact_event(event, secrets),
+            keep_session_id=keep_session_id,
+            clear_sign_in_name=clear_sign_in_name,
+            now=now,
+        )
+
+    def disable_account(
+        self,
+        account_id: str,
+        *,
+        now: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Disable the account, delete its tokens and its sessions, and write the secret-safe event.
+
+        One transaction. Return whether an account changed; the event is written only then.
+        """
+        return self._records.disable_account(account_id, now=now, event=_redacted_event(event, secrets))
+
+    def enable_account(
+        self,
+        account_id: str,
+        *,
+        now: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Enable the account and write the secret-safe event, in one transaction. Return whether it changed."""
+        return self._records.enable_account(account_id, now=now, event=_redacted_event(event, secrets))
 
     def delete_account(
         self, account_id: str, *, event: AuditEvent, now: datetime | None = None, secrets: Sequence[str] = ()
@@ -4330,10 +4520,15 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         expires_at: datetime | None = None,
         environment_managed: bool = False,
         now: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
     ) -> AccountToken:
-        """Create an API token row from the SHA-256 digest of its value.
+        """Create an API token row from the SHA-256 digest of its value, with its secret-safe event.
+
+        One transaction, which inserts the row only while the account is active and not deleted.
 
         Raises:
+            AccountNotActiveError: the account is missing, disabled or deleted; nothing is written.
             AccountTokenNameTakenError: the account already has a token with this name.
             DuplicateCredentialError: the store already holds this digest.
         """
@@ -4344,35 +4539,63 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             expires_at=expires_at,
             environment_managed=environment_managed,
             now=now,
+            event=_redacted_event(event, secrets),
         )
 
     def list_account_tokens(self, account_id: str) -> tuple[AccountToken, ...]:
         """Return the API tokens of the account, oldest first."""
         return self._records.list_account_tokens(account_id)
 
-    def delete_account_token(self, account_id: str, token_id: str) -> bool:
-        """Delete one API token of the account. Return whether a token was deleted."""
-        return self._records.delete_account_token(account_id, token_id)
+    def delete_account_token(
+        self, account_id: str, token_id: str, *, event: AuditEvent | None = None, secrets: Sequence[str] = ()
+    ) -> bool:
+        """Delete one API token of the account and write the secret-safe event, in one transaction.
+
+        Return whether a token was deleted; the event is written only then.
+        """
+        return self._records.delete_account_token(account_id, token_id, event=_redacted_event(event, secrets))
 
     def delete_account_tokens(self, account_id: str) -> int:
         """Delete every API token of the account. Return the number deleted."""
         return self._records.delete_account_tokens(account_id)
 
-    def create_account_session(self, account_id: str, *, digest: str, now: datetime | None = None) -> AccountSession:
-        """Create a session row from the SHA-256 digest of its session token.
+    def create_account_session(
+        self,
+        account_id: str,
+        *,
+        digest: str,
+        now: datetime | None = None,
+        signed_in: Account | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> AccountSession:
+        """Create a session row from the SHA-256 digest of its session token, with its secret-safe event.
+
+        One transaction, which inserts the row only while the account is active and not deleted
+        and, when ``signed_in`` is given, while its password is the one the sign-in checked. The
+        failed sign-ins of the name of ``signed_in`` are deleted in the same transaction.
 
         Raises:
+            AccountNotActiveError: the account is missing, disabled or deleted, or its password
+                changed after ``signed_in`` was read; nothing is written.
             DuplicateCredentialError: the store already holds this digest.
         """
-        return self._records.create_account_session(account_id, digest=digest, now=now)
+        return self._records.create_account_session(
+            account_id, digest=digest, now=now, signed_in=signed_in, event=_redacted_event(event, secrets)
+        )
 
     def list_account_sessions(self, account_id: str) -> tuple[AccountSession, ...]:
         """Return the sessions of the account, oldest first."""
         return self._records.list_account_sessions(account_id)
 
-    def delete_account_session(self, session_id: str) -> bool:
-        """Delete one session. Return whether a session was deleted."""
-        return self._records.delete_account_session(session_id)
+    def delete_account_session(
+        self, session_id: str, *, event: AuditEvent | None = None, secrets: Sequence[str] = ()
+    ) -> bool:
+        """Delete one session and write the secret-safe event, in one transaction.
+
+        Return whether a session was deleted; the event is written only then.
+        """
+        return self._records.delete_account_session(session_id, event=_redacted_event(event, secrets))
 
     def delete_account_sessions(self, account_id: str) -> int:
         """Delete every session of the account. Return the number deleted."""
@@ -4443,9 +4666,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """
         return self._records.record_sign_in_failure(name, now=now, bound=bound)
 
-    def clear_sign_in_attempts(self, name: str) -> bool:
-        """Delete the failed sign-ins counted for this name. Return whether a row was deleted."""
-        return self._records.clear_sign_in_attempts(name)
+    def clear_sign_in_attempts(
+        self, name: str, *, event: AuditEvent | None = None, secrets: Sequence[str] = ()
+    ) -> bool:
+        """Delete the failed sign-ins counted for this name and write the secret-safe event, in one transaction.
+
+        Return whether a row was deleted. The event is written either way.
+        """
+        return self._records.clear_sign_in_attempts(name, event=_redacted_event(event, secrets))
 
     def record_results(
         self,

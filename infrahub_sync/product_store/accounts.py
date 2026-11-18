@@ -119,6 +119,11 @@ _SELECT_SESSIONS = (
 )
 _DELETE_SESSION = "DELETE FROM account_sessions WHERE session_id = ?"
 _DELETE_SESSIONS = "DELETE FROM account_sessions WHERE account_id = ?"
+_DELETE_OTHER_SESSIONS = "DELETE FROM account_sessions WHERE account_id = ? AND session_id <> ?"
+# Changes no value and takes the lock of the account row until the transaction ends: on
+# PostgreSQL a row lock that a concurrent disable, deletion or password change also takes with its
+# first statement, an UPDATE of the row; on SQLite the write lock of the database.
+_LOCK_ACCOUNT = "UPDATE accounts SET updated_at = updated_at WHERE account_id = ?"
 _UPDATE_SESSION_LAST_USED = "UPDATE account_sessions SET last_used_at = ? WHERE session_id = ?"
 
 # The statements that apply the account the environment defines. The token digest is compared in
@@ -143,6 +148,7 @@ _UPDATE_SIGN_IN_ATTEMPT = (
     "UPDATE sign_in_attempts SET failed_count = ?, window_started_at = ?, refused_until = ? WHERE name_key = ?"
 )
 _COUNT_SIGN_IN_ATTEMPTS = "SELECT COUNT(*) FROM sign_in_attempts"
+_ACCOUNT_NOT_ACTIVE_MESSAGE = "the account is not active, or its password changed; nothing was written"
 _SIGN_IN_ATTEMPTS_FULL_MESSAGE = "the failed sign-in table is full of refusals in force; the name is not recorded"
 # Every time of the table is written by ``_utc_iso``, so the order of the text is the order of
 # the times. A row whose refusal is in force is never deleted to make room. Among the others, the
@@ -190,6 +196,13 @@ class AccountIdentifierAllocationError(RuntimeError):
 
 class DuplicateCredentialError(ValueError):
     """The store already holds this token or session digest, or the generated row identifier."""
+
+
+class AccountNotActiveError(ValueError):
+    """The account is missing, disabled or deleted, or its password changed after the caller read it.
+
+    Nothing was written: no session, no token and no event.
+    """
 
 
 class SignInAttemptsFullError(RuntimeError):
@@ -436,6 +449,37 @@ def create_session(cursor: _Cursor, sql: Sql, account_id: str, *, digest: str, n
     created_at = _utc_iso(now)
     cursor.execute(sql(_INSERT_SESSION), (session.session_id, account_id, digest, created_at, created_at))
     return session
+
+
+def lock_active_account(cursor: _Cursor, sql: Sql, account_id: str, *, signed_in: Account | None = None) -> Account:
+    """Lock the row of the account until the transaction ends, and return it when it is active.
+
+    A disable, a deletion or a password change of the account that runs at the same time either
+    commits before this read, which then sees it, or waits for the end of this transaction, and
+    then deletes what this transaction inserted. ``signed_in`` is the account as a sign-in read
+    it before it checked the password: its password hash and the time of its change must be the
+    ones stored now.
+
+    Raises:
+        AccountNotActiveError: no account has the identifier, it is disabled or deleted, or its
+            password changed after ``signed_in`` was read.
+    """
+    cursor.execute(sql(_LOCK_ACCOUNT), (account_id,))
+    account = read_account(cursor, sql, account_id)
+    if account is None or account.disabled or account.deleted_at is not None:
+        raise AccountNotActiveError(_ACCOUNT_NOT_ACTIVE_MESSAGE)
+    if signed_in is not None and (account.password_hash, account.password_changed_at) != (
+        signed_in.password_hash,
+        signed_in.password_changed_at,
+    ):
+        raise AccountNotActiveError(_ACCOUNT_NOT_ACTIVE_MESSAGE)
+    return account
+
+
+def delete_other_sessions(cursor: _Cursor, sql: Sql, account_id: str, keep_session_id: str) -> int:
+    """Delete every session of the account except one. Return the number deleted."""
+    cursor.execute(sql(_DELETE_OTHER_SESSIONS), (account_id, keep_session_id))
+    return cursor.rowcount
 
 
 def list_sessions(cursor: _Cursor, sql: Sql, account_id: str) -> tuple[AccountSession, ...]:

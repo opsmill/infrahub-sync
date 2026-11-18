@@ -14,12 +14,20 @@ pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
 
 from infrahub_sync.product_store.accounts import SIGN_IN_FAILURE_LIMIT, SIGN_IN_REFUSAL_PERIOD
-from infrahub_sync.service import credentials
-from infrahub_sync.service.account_actions import PASSWORD_MAX_LENGTH, CreatedTokenResource, record_failed_sign_in
+from infrahub_sync.service import account_actions, credentials
+from infrahub_sync.service.account_actions import (
+    PASSWORD_MAX_LENGTH,
+    CreatedTokenResource,
+    CreateTokenRequest,
+    record_failed_sign_in,
+)
+from infrahub_sync.service.auth import StoreAccountResolver
+from infrahub_sync.service.service import ServiceAPIError
 from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV
 from tests.service.account_api import (
     ADMIN_PASSWORD,
     ADMIN_TOKEN,
+    IDLE_SECONDS,
     NEW_PASSWORD,
     PASSWORD,
     SECOND,
@@ -445,3 +453,23 @@ def test_a_password_change_whose_name_is_refused_while_it_waits_gets_the_refusal
     assert attempt is not None
     assert attempt.failed_count == SIGN_IN_FAILURE_LIMIT
     assert attempt.refused_until == T0 + SIGN_IN_REFUSAL_PERIOD
+
+
+def test_a_token_created_while_the_account_is_disabled_does_not_exist_when_it_is_enabled(
+    api: AccountApi, alice: dict[str, str]
+) -> None:
+    session = alice["Authorization"].removeprefix("Bearer ")
+    resolved = StoreAccountResolver(api.store, idle_seconds=IDLE_SECONDS, clock=api.clock).resolve(session)
+    assert resolved.principal is not None
+    account = api.store.lookup_account_by_name("alice")
+    assert account is not None
+    # The request was resolved; the account is disabled before its token is created.
+    api.store.disable_account(account.account_id, now=T0)
+
+    with pytest.raises(ServiceAPIError) as refused:
+        account_actions.create_own_token(api.service, resolved.principal, CreateTokenRequest(name="ci"))
+    api.store.enable_account(account.account_id, now=T0)
+
+    assert (refused.value.status, refused.value.code) == (401, "unauthenticated")
+    assert api.store.list_account_tokens(account.account_id) == ()
+    assert [event for event in api.events() if event.operation == "create-token"] == []

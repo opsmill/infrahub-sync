@@ -12,6 +12,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 import pytest
 
@@ -19,16 +20,19 @@ from infrahub_sync.product_store import (
     Account,
     AccountIdentifierAllocationError,
     AccountNameTakenError,
+    AccountNotActiveError,
     AccountTokenNameTakenError,
+    AuditEvent,
     DuplicateCredentialError,
     ProductProjection,
+    RelatedResource,
 )
 from infrahub_sync.product_store import accounts as account_statements
 from infrahub_sync.product_store import store as product_store_store
 from tests.product_store.test_contract import _PROFILES_WITH_POSTGRESQL, _projection_profile
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
 
 _T0 = datetime(2026, 11, 17, 9, 0, tzinfo=timezone.utc)
@@ -488,8 +492,10 @@ def test_a_row_of_a_disabled_account_resolves_with_the_state_for_the_caller_to_r
     projection: ProductProjection,
 ) -> None:
     account = _account(projection)
-    projection.disable_account(account.account_id, now=_T0)
     projection.create_account_session(account.account_id, digest=_digest("late"), now=_T0)
+    # The flag is set without the disable, which would delete the session: it stands for a row
+    # that a disable did not delete.
+    _execute(projection, "UPDATE accounts SET disabled = ? WHERE account_id = ?", (True, account.account_id))
 
     resolved = projection.resolve_digest(_digest("late"), now=_T0)
 
@@ -540,3 +546,232 @@ def test_a_use_is_recorded_only_when_the_last_one_is_more_than_a_minute_old(  # 
     following = projection.resolve_digest(digest, now=now)
     assert following is not None
     assert following.last_used_at == (now if written else _T0)
+
+
+class _EventWriteError(RuntimeError):
+    """The failure of the event of an action, which a test forces."""
+
+
+def _event(account: Account, operation: str) -> AuditEvent:
+    # The type of the event does not matter to the store: one type stands for every action.
+    return AuditEvent(
+        event_id=f"a-{uuid4().hex}",
+        run_id=None,
+        actor=account.account_id,
+        operation=operation,
+        reason=None,
+        outcome="accepted",
+        created_at=_T0,
+        event_type="infrahub_sync.account.deleted",
+        related=(RelatedResource(kind="account", id=account.account_id),),
+    )
+
+
+def _deleted(projection: ProductProjection, account: Account) -> None:
+    projection.delete_account(account.account_id, event=_event(account, "delete-account"), now=_T0)
+
+
+def _disabled(projection: ProductProjection, account: Account) -> None:
+    projection.disable_account(account.account_id, now=_T0)
+
+
+@pytest.mark.parametrize("end", [_disabled, _deleted], ids=["disabled", "deleted"])
+def test_no_session_or_token_is_created_for_an_account_that_is_not_active(
+    projection: ProductProjection, end: Callable[[ProductProjection, Account], None]
+) -> None:
+    account = _account(projection)
+    end(projection, account)
+    events = projection.audit_events()
+
+    with pytest.raises(AccountNotActiveError):
+        projection.create_account_session(
+            account.account_id, digest=_digest("session"), now=_T0, event=_event(account, "sign-in")
+        )
+    with pytest.raises(AccountNotActiveError):
+        projection.create_account_token(
+            account.account_id, name="ci", digest=_digest("token"), now=_T0, event=_event(account, "create-token")
+        )
+
+    assert _stored(projection, "SELECT COUNT(*) FROM account_sessions") == 0
+    assert _stored(projection, "SELECT COUNT(*) FROM account_tokens") == 0
+    assert projection.audit_events() == events
+
+
+def test_no_session_or_token_is_created_for_an_identifier_that_names_no_account(projection: ProductProjection) -> None:
+    with pytest.raises(AccountNotActiveError):
+        projection.create_account_session("acct_" + "0" * 32, digest=_digest("session"), now=_T0)
+    with pytest.raises(AccountNotActiveError):
+        projection.create_account_token("acct_" + "0" * 32, name="ci", digest=_digest("token"), now=_T0)
+
+
+def test_a_session_is_not_created_when_the_password_changed_after_the_sign_in_read_it(
+    projection: ProductProjection,
+) -> None:
+    signed_in = _account(projection)
+    # The same time of change: only the hash tells the two passwords apart.
+    projection.set_account_password_hash(signed_in.account_id, password_hash=_OTHER_HASH, now=_T0)
+
+    with pytest.raises(AccountNotActiveError):
+        projection.create_account_session(signed_in.account_id, digest=_digest("session"), now=_T0, signed_in=signed_in)
+
+    assert _stored(projection, "SELECT COUNT(*) FROM account_sessions") == 0
+
+
+def test_a_session_of_a_sign_in_clears_the_failed_sign_ins_and_writes_its_event(projection: ProductProjection) -> None:
+    account = _account(projection)
+    projection.record_sign_in_failure("alice", now=_T0)
+    event = _event(account, "sign-in")
+
+    session = projection.create_account_session(
+        account.account_id, digest=_digest("session"), now=_T0, signed_in=account, event=event
+    )
+
+    assert [stored.session_id for stored in projection.list_account_sessions(account.account_id)] == [
+        session.session_id
+    ]
+    assert projection.read_sign_in_attempt("alice") is None
+    assert [stored.event_id for stored in projection.audit_events()] == [event.event_id]
+
+
+def test_a_password_replacement_keeps_one_session_and_clears_the_failed_sign_ins(projection: ProductProjection) -> None:
+    account = _account(projection)
+    kept = projection.create_account_session(account.account_id, digest=_digest("kept"), now=_T0)
+    projection.create_account_session(account.account_id, digest=_digest("ended"), now=_T0)
+    projection.create_account_token(account.account_id, name="ci", digest=_digest("token"), now=_T0)
+    projection.record_sign_in_failure("alice", now=_T0)
+
+    replaced = projection.replace_account_password(
+        account.account_id,
+        password_hash=_OTHER_HASH,
+        event=_event(account, "change-password"),
+        keep_session_id=kept.session_id,
+        clear_sign_in_name="Alice",
+        now=_T0,
+    )
+
+    assert replaced is True
+    assert [session.session_id for session in projection.list_account_sessions(account.account_id)] == [kept.session_id]
+    assert len(projection.list_account_tokens(account.account_id)) == 1
+    assert projection.read_sign_in_attempt("alice") is None
+    stored = projection.lookup_account(account.account_id)
+    assert stored is not None
+    assert stored.password_hash == _OTHER_HASH
+
+
+def test_a_password_replacement_of_a_deleted_account_writes_nothing(projection: ProductProjection) -> None:
+    account = _account(projection)
+    _deleted(projection, account)
+    events = projection.audit_events()
+
+    replaced = projection.replace_account_password(
+        account.account_id, password_hash=_OTHER_HASH, event=_event(account, "set-account-password"), now=_T0
+    )
+
+    assert replaced is False
+    assert projection.audit_events() == events
+
+
+def _fail_events(projection: ProductProjection, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(_cursor: object, _event: AuditEvent) -> None:
+        message = "the event could not be written"
+        raise _EventWriteError(message)
+
+    monkeypatch.setattr(cast("Any", projection._records), "_insert_event", fail)
+
+
+def _account_actions(
+    account: Account, session_id: str, token_id: str
+) -> dict[str, Callable[[ProductProjection], object]]:
+    """Return each store call of an account action that writes its event, by operation."""
+    return {
+        "create-account": lambda p: p.create_account(
+            name="Bob",
+            password_hash=_HASH,
+            now=_T0,
+            event_for=lambda _account_id: _event(account, "create-account"),
+        ),
+        "sign-in": lambda p: p.create_account_session(
+            account.account_id, digest=_digest("new"), now=_T0, signed_in=account, event=_event(account, "sign-in")
+        ),
+        "sign-out": lambda p: p.delete_account_session(session_id, event=_event(account, "sign-out")),
+        "create-token": lambda p: p.create_account_token(
+            account.account_id, name="new", digest=_digest("new-token"), now=_T0, event=_event(account, "create-token")
+        ),
+        "delete-token": lambda p: p.delete_account_token(
+            account.account_id, token_id, event=_event(account, "delete-token")
+        ),
+        "set-account-password": lambda p: p.replace_account_password(
+            account.account_id,
+            password_hash=_OTHER_HASH,
+            event=_event(account, "set-account-password"),
+            clear_sign_in_name="Alice",
+            now=_T0,
+        ),
+        "change-password": lambda p: p.replace_account_password(
+            account.account_id,
+            password_hash=_OTHER_HASH,
+            event=_event(account, "change-password"),
+            keep_session_id=session_id,
+            clear_sign_in_name="Alice",
+            now=_T0,
+        ),
+        "disable-account": lambda p: p.disable_account(
+            account.account_id, now=_T0, event=_event(account, "disable-account")
+        ),
+        "set-account-level": lambda p: p.set_account_level(
+            account.account_id, administrator=True, now=_T0, event=_event(account, "set-account-level")
+        ),
+        "unlock-account": lambda p: p.clear_sign_in_attempts("Alice", event=_event(account, "unlock-account")),
+    }
+
+
+_ACTIONS = (
+    "create-account",
+    "sign-in",
+    "sign-out",
+    "create-token",
+    "delete-token",
+    "set-account-password",
+    "change-password",
+    "disable-account",
+    "set-account-level",
+    "unlock-account",
+)
+
+
+@pytest.mark.parametrize("operation", _ACTIONS)
+def test_a_failed_event_rolls_the_action_back(
+    projection: ProductProjection, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    account = _account(projection)
+    session = projection.create_account_session(account.account_id, digest=_digest("session"), now=_T0)
+    token = projection.create_account_token(account.account_id, name="ci", digest=_digest("token"), now=_T0)
+    projection.record_sign_in_failure("alice", now=_T0)
+    action = _account_actions(account, session.session_id, token.token_id)[operation]
+    before = {
+        table: _stored(projection, f"SELECT COUNT(*) FROM {table}")  # noqa: S608 - fixed table names.
+        for table in ("accounts", "account_sessions", "account_tokens", "sign_in_attempts", "audit_events")
+    }
+    _fail_events(projection, monkeypatch)
+
+    with pytest.raises(_EventWriteError):
+        action(projection)
+
+    after = {
+        table: _stored(projection, f"SELECT COUNT(*) FROM {table}")  # noqa: S608 - fixed table names.
+        for table in before
+    }
+    assert after == before
+    assert projection.lookup_account(account.account_id) == account
+
+
+def test_a_failed_event_rolls_the_enable_back(projection: ProductProjection, monkeypatch: pytest.MonkeyPatch) -> None:
+    account = _account(projection)
+    projection.disable_account(account.account_id, now=_T0)
+    disabled = projection.lookup_account(account.account_id)
+    _fail_events(projection, monkeypatch)
+
+    with pytest.raises(_EventWriteError):
+        projection.enable_account(account.account_id, now=_T0, event=_event(account, "enable-account"))
+
+    assert projection.lookup_account(account.account_id) == disabled
