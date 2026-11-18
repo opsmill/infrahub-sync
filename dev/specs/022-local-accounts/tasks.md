@@ -310,7 +310,7 @@ tokens.
 - [X] T058 [US3] In `infrahub_sync/service/account_routes.py`, add `DELETE /accounts/{name}`,
   `administrator` in `PATCH /accounts/{name}`, `GET /accounts/{name}/tokens` and
   `DELETE /accounts/{name}/tokens/{token_id}`.
-- [ ] T059 [P] [US3] Add the matching methods to `infrahub_sync/client/client.py` and the
+- [X] T059 [P] [US3] Add the matching methods to `infrahub_sync/client/client.py` and the
   commands `accounts delete` (confirmation, `--yes`), `accounts set-level`, `accounts tokens`
   and `accounts delete-token` to `infrahub_sync/cli.py`; extend
   `tests/client/test_account_client.py` and `tests/cli/test_account_commands.py`.

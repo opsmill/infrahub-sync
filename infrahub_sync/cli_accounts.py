@@ -481,6 +481,88 @@ def accounts_enable(
     _set_disabled(ctx, name, disabled=False, reason=reason, as_json=as_json)
 
 
+@accounts_app.command("set-level")
+def accounts_set_level(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Account name."),
+    administrator: bool | None = typer.Option(
+        None,
+        "--administrator/--no-administrator",
+        help="Give the account the administrator level, or take it away. One of the two is required.",
+        show_default=False,
+    ),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the change."),
+    as_json: bool = typer.Option(False, "--json", help=_JSON_HELP),  # noqa: FBT003
+) -> None:
+    """Set the level of an account. It applies from the next request of the account, with no new sign-in."""
+    if administrator is None:
+        _fail("pass --administrator or --no-administrator")
+    support = _support()
+    with support.client_errors():
+        account = support.client(ctx).set_account_level(name, administrator, reason=reason)
+        _echo_account(account, as_json=as_json)
+
+
+@accounts_app.command("delete")
+def accounts_delete(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Account name."),
+    yes: bool = typer.Option(False, "--yes", help="Delete without asking for confirmation."),  # noqa: FBT003
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the deletion."),
+) -> None:
+    """Delete an account. This cannot be reversed; `accounts disable` can.
+
+    The name, the password, the API tokens and the sessions of the account are removed. Its runs,
+    approvals and audit events stay, and display `Deleted account` and a short identifier, which
+    this command prints. The name can be given to a new account, which has no right over the old
+    runs.
+    """
+    support = _support()
+    if not yes:
+        if not support.stdin_is_interactive():
+            _fail("standard input is not a terminal, so no confirmation can be asked; pass --yes to delete")
+        prompt = support.display(
+            f"Delete account {name}? This cannot be reversed; `infrahub-sync accounts disable` can be reversed"
+        )
+        if not typer.confirm(prompt, default=False, err=True):
+            typer.echo("account not deleted", err=True)
+            raise typer.Exit(1)
+    with support.client_errors():
+        placeholder = support.client(ctx).delete_account(name, reason=reason)
+        typer.echo(support.display(placeholder))
+
+
+@accounts_app.command("tokens")
+def accounts_tokens(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Account name."),
+    as_json: bool = typer.Option(False, "--json", help=_JSON_HELP),  # noqa: FBT003
+) -> None:
+    """List the API tokens of an account: name, token ID, creation, expiry and last use. No value is shown."""
+    support = _support()
+    with support.client_errors():
+        tokens = support.client(ctx).list_account_tokens(name)
+        if as_json:
+            _echo_json([token.model_dump(mode="json") for token in tokens])
+            return
+        for token in tokens:
+            typer.echo(_token_row(token))
+
+
+@accounts_app.command("delete-token")
+def accounts_delete_token(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Account name."),
+    token_id: str = typer.Argument(..., help="Token ID, as `accounts tokens` prints it."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the deletion."),
+) -> None:
+    """Delete one API token of an account. The Sync API refuses its value afterwards."""
+    support = _support()
+    with support.client_errors():
+        support.client(ctx).delete_account_token(name, token_id, reason=reason)
+        typer.echo(support.display(f"token {token_id} of account {name} deleted"))
+
+
 def register(app: typer.Typer, support: CommandSupport) -> None:
     """Add `login`, `logout`, `password`, `tokens` and `accounts` to the CLI."""
     _Registered.support = support

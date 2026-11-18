@@ -49,6 +49,7 @@ from .models import (
     ConfigurationVersionSummaryResource,
     CreatedTokenResource,
     CreateRunRequest,
+    DeletedAccountResource,
     ErrorEnvelope,
     EventPage,
     EventResource,
@@ -657,6 +658,56 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         name = self._account_name(name)
         body = self._with_reason({}, reason)
         self._request_empty("unlock_account", "POST", f"/accounts/{name}/unlock", body=body or None)
+
+    def set_account_level(self, name: str, administrator: bool, *, reason: str | None = None) -> AccountResource:
+        """Set whether an account is an administrator. Administrator only.
+
+        The account has the new level from its next request, with no new sign-in.
+        """
+
+        name = self._account_name(name)
+        if not isinstance(administrator, bool):
+            raise ClientInputError(_ADMINISTRATOR_ARG)
+        return self._request_model(
+            "set_account_level",
+            "PATCH",
+            f"/accounts/{name}",
+            model=AccountResource,
+            success={200},
+            body=self._with_reason({"administrator": administrator}, reason),
+        )
+
+    def delete_account(self, name: str, *, reason: str | None = None) -> str:
+        """Delete an account and return what its records display from now on. Administrator only.
+
+        The deletion cannot be reversed. The answer is ``Deleted account`` and a short identifier.
+        """
+
+        name = self._account_name(name)
+        params = cast("dict[str, str | int]", self._with_reason({}, reason))
+        deleted = self._request_model(
+            "delete_account",
+            "DELETE",
+            f"/accounts/{name}",
+            model=DeletedAccountResource,
+            success={200},
+            params=params or None,
+        )
+        return deleted.placeholder
+
+    def list_account_tokens(self, name: str) -> tuple[TokenResource, ...]:
+        """Return the API tokens of an account, without any value. Administrator only."""
+
+        name = self._account_name(name)
+        return self._request_list("list_account_tokens", f"/accounts/{name}/tokens", TokenResource)
+
+    def delete_account_token(self, name: str, token_id: str, *, reason: str | None = None) -> None:
+        """Delete one API token of an account. Administrator only."""
+
+        name = self._account_name(name)
+        token_id = self._identifier(token_id, _TOKEN_ID_ARG)
+        params = cast("dict[str, str | int]", self._with_reason({}, reason))
+        self._request_empty("delete_account_token", "DELETE", f"/accounts/{name}/tokens/{token_id}", params=params)
 
     def get_run(self, run_id: str) -> RunResource:
         """Return one run and its orchestration history."""

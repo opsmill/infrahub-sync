@@ -1098,6 +1098,12 @@ class AccountResource(_ResourceModel):
     sign_in_refused_until: datetime | None = None
 
 
+class DeletedAccountResource(_ResourceModel):
+    """The answer of a deletion: what every record of the deleted account displays from now on."""
+
+    placeholder: str
+
+
 class SessionResource(_ResourceModel):
     """The answer of a sign-in: the session token, the account and the idle period of a session.
 

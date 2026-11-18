@@ -516,6 +516,119 @@ def test_an_account_name_that_cannot_be_one_sends_no_request(sync_api: FakeSyncA
     assert sync_api.requests == []
 
 
+@pytest.mark.parametrize(("flag", "administrator"), [("--administrator", True), ("--no-administrator", False)])
+def test_accounts_set_level_sends_the_level_and_prints_the_account(
+    sync_api: FakeSyncAPI, flag: str, *, administrator: bool
+) -> None:
+    sync_api.answers["PATCH /accounts/carol"] = httpx.Response(200, json=_account("carol", administrator=administrator))
+
+    result = _invoke("accounts", "set-level", "carol", flag, "--reason", "team lead")
+
+    assert result.exit_code == 0, result.output
+    assert sync_api.body() == {"administrator": administrator, "reason": "team lead"}
+    assert f"account: carol\nadministrator: {str(administrator).lower()}\n" in result.stdout
+
+
+def test_accounts_set_level_without_a_level_sends_no_request(sync_api: FakeSyncAPI) -> None:
+    result = _invoke("accounts", "set-level", "carol")
+
+    assert result.exit_code == 2
+    assert "--administrator or --no-administrator" in result.stderr
+    assert sync_api.requests == []
+
+
+def test_accounts_delete_with_yes_prints_the_placeholder(sync_api: FakeSyncAPI) -> None:
+    sync_api.answers["DELETE /accounts/carol"] = httpx.Response(200, json={"placeholder": "Deleted account 0badc0de"})
+
+    result = _invoke("accounts", "delete", "carol", "--yes", "--reason", "left the company")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "Deleted account 0badc0de\n"
+    assert sync_api.routes == ["DELETE /accounts/carol"]
+    assert dict(sync_api.requests[0].url.params) == {"reason": "left the company"}
+
+
+@pytest.mark.usefixtures("terminal")
+def test_accounts_delete_asks_for_a_confirmation_that_names_disable(sync_api: FakeSyncAPI) -> None:
+    sync_api.answers["DELETE /accounts/carol"] = httpx.Response(200, json={"placeholder": "Deleted account 0badc0de"})
+
+    result = _invoke("accounts", "delete", "carol", stdin="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert "cannot be reversed" in result.stderr
+    assert "accounts disable" in result.stderr
+    # The test runner echoes the typed answer to standard output.
+    assert result.stdout.endswith("Deleted account 0badc0de\n")
+    assert sync_api.routes == ["DELETE /accounts/carol"]
+
+
+@pytest.mark.usefixtures("terminal")
+@pytest.mark.parametrize("answer", ["n\n", "\n"])
+def test_accounts_delete_that_is_not_confirmed_sends_no_request(sync_api: FakeSyncAPI, answer: str) -> None:
+    result = _invoke("accounts", "delete", "carol", stdin=answer)
+
+    assert result.exit_code == 1
+    assert "account not deleted" in result.stderr
+    assert sync_api.requests == []
+
+
+def test_accounts_delete_without_a_terminal_and_without_yes_names_yes(sync_api: FakeSyncAPI) -> None:
+    result = _invoke("accounts", "delete", "carol", stdin="y\n")
+
+    assert result.exit_code == 2
+    assert "--yes" in result.stderr
+    assert sync_api.requests == []
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "text"),
+    [
+        (404, "account-not-found", "no account has this name"),
+        (409, "environment-managed-account", "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"),
+    ],
+)
+def test_a_refused_deletion_prints_the_fixed_message(sync_api: FakeSyncAPI, status: int, code: str, text: str) -> None:
+    sync_api.answers["DELETE /accounts/carol"] = sync_api.error(status, code, "server text")
+
+    result = _invoke("accounts", "delete", "carol", "--yes")
+
+    assert result.exit_code == 1
+    assert not result.stdout
+    assert text in result.stderr
+    assert "server text" not in result.stderr
+
+
+def test_accounts_tokens_prints_one_row_for_each_token_without_any_value(sync_api: FakeSyncAPI) -> None:
+    sync_api.answers["GET /accounts/carol/tokens"] = httpx.Response(200, json=[_token()])
+
+    table = _invoke("accounts", "tokens", "carol")
+    as_json = _invoke("accounts", "tokens", "carol", "--json")
+
+    assert table.exit_code == 0, table.output
+    assert table.stdout == f"ci\t{TOKEN_ID}\t{NOW.isoformat()}\t-\t-\n"
+    assert json.loads(as_json.stdout)[0]["token_id"] == TOKEN_ID
+    _assert_no_secret(table)
+
+
+def test_accounts_delete_token_sends_the_identifier_and_the_reason(sync_api: FakeSyncAPI) -> None:
+    sync_api.answers[f"DELETE /accounts/carol/tokens/{TOKEN_ID}"] = NO_CONTENT
+
+    result = _invoke("accounts", "delete-token", "carol", TOKEN_ID, "--reason", "leaked")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"token {TOKEN_ID} of account carol deleted\n"
+    assert dict(sync_api.requests[0].url.params) == {"reason": "leaked"}
+
+
+def test_accounts_delete_token_of_admin_names_the_variable(sync_api: FakeSyncAPI) -> None:
+    sync_api.answers[f"DELETE /accounts/admin/tokens/{TOKEN_ID}"] = sync_api.error(409, "environment-managed-account")
+
+    result = _invoke("accounts", "delete-token", "admin", TOKEN_ID)
+
+    assert result.exit_code == 1
+    assert "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN" in result.stderr
+
+
 # --- the surface ---------------------------------------------------------------------------
 
 
@@ -584,9 +697,11 @@ def test_every_account_command_is_listed() -> None:
         "accounts unlock",
         "accounts disable",
         "accounts enable",
+        "accounts set-level",
+        "accounts delete",
+        "accounts tokens",
+        "accounts delete-token",
     } <= paths
-    # These belong to a later change of the same feature.
-    assert not {"accounts delete", "accounts set-level", "accounts tokens", "accounts delete-token"} & paths
 
 
 def _help(*args: str) -> str:
@@ -615,6 +730,10 @@ def test_the_root_help_lists_the_account_commands() -> None:
         (("accounts", "unlock"), ("--reason",)),
         (("accounts", "disable"), ("--reason", "--json")),
         (("accounts", "enable"), ("--reason", "--json")),
+        (("accounts", "set-level"), ("--administrator", "--no-administrator", "--reason", "--json")),
+        (("accounts", "delete"), ("--yes", "--reason")),
+        (("accounts", "tokens"), ("--json",)),
+        (("accounts", "delete-token"), ("--reason",)),
     ],
 )
 def test_each_command_documents_its_options(command: tuple[str, ...], options: tuple[str, ...]) -> None:

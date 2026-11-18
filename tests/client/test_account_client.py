@@ -61,6 +61,7 @@ def _token(**extra: object) -> dict[str, object]:
 
 SESSION = {"token": SESSION_TOKEN, "account": _account(), "idle_seconds": 28800}
 NO_CONTENT = httpx.Response(204)
+DELETED = {"placeholder": "Deleted account 0badc0de"}
 
 
 class _Recorder:
@@ -206,6 +207,60 @@ CALLS: list[tuple[str, Callable[[SyncClient], object], str, str, dict[str, str],
         None,
         NO_CONTENT,
     ),
+    (
+        "set_account_level",
+        lambda c: c.set_account_level("alice", True, reason="team lead"),  # noqa: FBT003
+        "PATCH",
+        "/api/accounts/alice",
+        {},
+        {"administrator": True, "reason": "team lead"},
+        httpx.Response(200, json=_account(administrator=True)),
+    ),
+    (
+        "set_account_level_lower",
+        lambda c: c.set_account_level("alice", False),  # noqa: FBT003
+        "PATCH",
+        "/api/accounts/alice",
+        {},
+        {"administrator": False},
+        httpx.Response(200, json=_account()),
+    ),
+    (
+        "delete_account",
+        lambda c: c.delete_account("alice", reason="left the company"),
+        "DELETE",
+        "/api/accounts/alice",
+        {"reason": "left the company"},
+        None,
+        httpx.Response(200, json=DELETED),
+    ),
+    (
+        "delete_account_without_reason",
+        lambda c: c.delete_account("alice"),
+        "DELETE",
+        "/api/accounts/alice",
+        {},
+        None,
+        httpx.Response(200, json=DELETED),
+    ),
+    (
+        "list_account_tokens",
+        lambda c: c.list_account_tokens("alice"),
+        "GET",
+        "/api/accounts/alice/tokens",
+        {},
+        None,
+        httpx.Response(200, json=[_token()]),
+    ),
+    (
+        "delete_account_token",
+        lambda c: c.delete_account_token("alice", TOKEN_ID, reason="leaked"),
+        "DELETE",
+        f"/api/accounts/alice/tokens/{TOKEN_ID}",
+        {"reason": "leaked"},
+        None,
+        NO_CONTENT,
+    ),
 ]
 
 
@@ -345,6 +400,13 @@ def test_the_printed_form_of_a_session_and_of_a_created_token_holds_no_value() -
         pytest.param(lambda c: c.sign_out(), 422, "not-a-session", id="422-no-content"),
         pytest.param(lambda c: c.sign_in("alice", PASSWORD), 503, "sign-in-busy", id="503-sign-in"),
         pytest.param(lambda c: c.set_account_disabled("alice", True), 503, "sign-in-busy", id="503-model"),  # noqa: FBT003
+        pytest.param(lambda c: c.delete_account("admin"), 409, "environment-managed-account", id="409-delete"),
+        pytest.param(lambda c: c.delete_account("ghost"), 404, "account-not-found", id="404-delete"),
+        pytest.param(lambda c: c.list_account_tokens("ghost"), 404, "account-not-found", id="404-account-tokens"),
+        pytest.param(
+            lambda c: c.delete_account_token("alice", TOKEN_ID), 404, "token-not-found", id="404-account-token"
+        ),
+        pytest.param(lambda c: c.set_account_level("alice", True), 403, "forbidden", id="403-level"),  # noqa: FBT003
     ],
 )
 def test_a_refusal_is_a_typed_api_error_without_the_answer_text(
@@ -380,6 +442,12 @@ def test_a_refusal_is_a_typed_api_error_without_the_answer_text(
         pytest.param(lambda c: c.change_password(None, NEW_PASSWORD), "current_password", id="current-not-text"),
         pytest.param(lambda c: c.change_password(PASSWORD, 1), "new_password", id="new-not-text"),
         pytest.param(lambda c: c.unlock_account("alice", reason=""), "reason", id="empty-reason"),
+        pytest.param(lambda c: c.set_account_level("alice", "yes"), "administrator", id="level-not-bool"),
+        pytest.param(lambda c: c.delete_account("a/b"), "name", id="delete-account-name-path"),
+        pytest.param(lambda c: c.delete_account("alice", reason=""), "reason", id="delete-empty-reason"),
+        pytest.param(lambda c: c.list_account_tokens("../x"), "name", id="account-tokens-name-path"),
+        pytest.param(lambda c: c.delete_account_token("alice", "a/b"), "token_id", id="account-token-id"),
+        pytest.param(lambda c: c.delete_account_token("a b", TOKEN_ID), "name", id="account-token-name"),
     ],
 )
 def test_an_argument_the_client_refuses_sends_no_request(call: Callable[[Any], object], argument: str) -> None:
@@ -401,6 +469,7 @@ def test_an_argument_the_client_refuses_sends_no_request(call: Callable[[Any], o
         pytest.param(lambda c: c.sign_out(), httpx.Response(200, json={}), id="no-content-answers-200"),
         pytest.param(lambda c: c.get_account("alice"), httpx.Response(200, json={"name": 1}), id="model-shape"),
         pytest.param(lambda c: c.create_token("ci"), httpx.Response(201, json=_token()), id="created-token-no-value"),
+        pytest.param(lambda c: c.delete_account("alice"), httpx.Response(200, json={}), id="deletion-no-placeholder"),
     ],
 )
 def test_an_answer_of_another_shape_is_a_protocol_error(
@@ -467,3 +536,17 @@ def test_the_client_package_imports_no_service_and_no_session_module() -> None:
     result = subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)  # noqa: S603
 
     assert result.stdout.strip() == "[]"
+
+
+def test_the_account_methods_of_an_administrator_return_typed_values() -> None:
+    placeholder = _client(_Recorder(httpx.Response(200, json=DELETED))).delete_account("alice")
+    tokens = _client(_Recorder(httpx.Response(200, json=[_token()]))).list_account_tokens("alice")
+    account = _client(_Recorder(httpx.Response(200, json=_account(administrator=True)))).set_account_level(
+        "alice",
+        True,  # noqa: FBT003
+    )
+
+    assert placeholder == "Deleted account 0badc0de"
+    assert tokens == (TokenResource.model_validate(_token()),)
+    assert isinstance(account, AccountResource)
+    assert account.administrator is True

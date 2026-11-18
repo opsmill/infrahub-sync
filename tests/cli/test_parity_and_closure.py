@@ -91,6 +91,10 @@ CLI_CLIENT_PARITY = (
     ("accounts unlock NAME", "unlock_account", "POST /accounts/{name}/unlock"),
     ("accounts disable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
     ("accounts enable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
+    ("accounts set-level NAME", "set_account_level", "PATCH /accounts/{name}"),
+    ("accounts delete NAME", "delete_account", "DELETE /accounts/{name}"),
+    ("accounts tokens NAME", "list_account_tokens", "GET /accounts/{name}/tokens"),
+    ("accounts delete-token NAME TOKEN_ID", "delete_account_token", "DELETE /accounts/{name}/tokens/{token_id}"),
 )
 
 
@@ -139,6 +143,10 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "unlock_account",
         "set_account_disabled",
         "set_account_disabled",
+        "set_account_level",
+        "delete_account",
+        "list_account_tokens",
+        "delete_account_token",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 
