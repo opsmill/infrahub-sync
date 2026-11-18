@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import signal
 import sqlite3
 import sys
 import threading
@@ -29,12 +30,13 @@ from pydantic import PrivateAttr
 from infrahub_sync.configuration.worker_credentials import held_credential_names
 
 from .orchestration import SERVICE_DEFINITION
+from .start_check import StartRefusedError, check_bootstrap_record
 from .storage import service_product_projection
 from .trust_store import TrustStoreError, install_custom_ca_bundle
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Awaitable, Callable, Iterator, Sequence
 
     from anyio.abc import TaskStatus
     from prefect.client.schemas.objects import Flow as APIFlow
@@ -551,14 +553,67 @@ def neutral_working_directory() -> Iterator[Path]:
         rmtree(root, ignore_errors=True)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Start one fail-closed service process worker."""
+async def run_until_terminated(start: Callable[[], Awaitable[object]]) -> None:
+    """Run `start()` and stop it when the process receives SIGTERM.
+
+    Kubernetes and Docker stop a container with SIGTERM, and tini, the image's entrypoint,
+    passes it on to the worker. Python installs no SIGTERM handler, and neither does
+    Prefect's worker, so without this handler the signal ends the worker at once, before
+    its exit steps run; a worker started as the container's first process (PID 1), without
+    tini, does not receive the signal at all and is killed when the grace period ends. The
+    handler cancels the worker task, so the worker's own exit steps run, and the process
+    exits 0.
+    """
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    if task is None:  # pragma: no cover -- a coroutine run by asyncio always has a task
+        msg = "run_until_terminated must run inside an asyncio task"
+        raise RuntimeError(msg)
+    terminated = False
+
+    def terminate() -> None:
+        nonlocal terminated
+        terminated = True
+        task.cancel()
+
+    loop.add_signal_handler(signal.SIGTERM, terminate)
+    try:
+        await start()
+    except asyncio.CancelledError:
+        if not terminated:
+            raise
+        # The cancellation this handler requested ends here. asyncio asks a task that
+        # suppresses one to withdraw it, so a later `TaskGroup` or `timeout` in this task
+        # does not count it as a cancellation still pending.
+        if sys.version_info >= (3, 11):
+            task.uncancel()
+    finally:
+        loop.remove_signal_handler(signal.SIGTERM)
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    start_check: Callable[[str], None] | None = None,
+) -> int:
+    """Start one fail-closed service process worker.
+
+    The bootstrap record is checked before the worker is built: a worker whose version or
+    work pool the bootstrap has not set up exits 1 (spec 018 FR-007b). `start_check`
+    replaces that check, for tests; unset, `check_bootstrap_record` is looked up when
+    `main` runs.
+    """
     try:
         install_custom_ca_bundle()
     except TrustStoreError as error:
         sys.stderr.write(f"{error}\n")
         return 1
     pool = _pool_argument(argv)
+    try:
+        (start_check or check_bootstrap_record)(pool)
+    except StartRefusedError as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
     # Entered before the worker exists, so nothing this parent imports later -- the
     # runner, its crash hooks, or an adapter -- can resolve out of a source tree.
     with neutral_working_directory():
@@ -567,7 +622,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             name=service_worker_name(),
             create_pool_if_not_found=False,
         )
-        asyncio.run(worker.start())
+        asyncio.run(run_until_terminated(worker.start))
     return 0
 
 

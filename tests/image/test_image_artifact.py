@@ -148,6 +148,23 @@ def test_only_the_declared_roots_are_writable_under_a_read_only_root(image_ref: 
     assert {path: writable[path] for path in READ_ONLY_ROOTS} == dict.fromkeys(READ_ONLY_ROOTS, False)
 
 
+def test_tini_is_the_entrypoint_of_every_command(image_ref: str) -> None:
+    """A Compose `command:` keeps the entrypoint; the Helm chart repeats it in its `command:`."""
+    assert image_config(image_ref)["Entrypoint"] == ["/usr/bin/tini", "-g", "--"]
+
+
+def test_the_command_does_not_run_as_pid_1(image_ref: str) -> None:
+    """tini is PID 1, so the command gets SIGTERM and orphaned processes are collected."""
+    result = run_in_image(
+        image_ref, ["python", "-c", "import os; print(os.getpid(), open('/proc/1/comm').read().strip())"]
+    )
+
+    assert result.returncode == 0, result.stderr
+    pid, first = result.stdout.split()
+    assert pid != "1"
+    assert first == "tini"
+
+
 def test_the_default_command_serves_the_sync_api(started_container: str) -> None:
     """The image needs no argument to be the API; every other form is an override."""
     served = wait_for_api(started_container)

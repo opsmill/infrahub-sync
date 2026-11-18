@@ -364,12 +364,15 @@ services:
   # destination credential -- and no Docker socket, so no command run through it
   # can change the deployment it belongs to.
   #
-  # The image's own non-root user runs it; nothing here overrides that.
+  # The image's own non-root user runs it; nothing here overrides that. Its
+  # entrypoint replaces the image's tini, so `init` puts Docker's own init
+  # process in front of the command; that works with images built before tini.
   cli:
     image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
     profiles: ["cli"]
     restart: "no"
     entrypoint: ["infrahub-sync"]
+    init: true
     environment:
       # The API on the deployment's own network, and the token of a principal in
       # INFRAHUB_SYNC_SERVICE_BEARER_TOKENS. Empty when unset, so a call against

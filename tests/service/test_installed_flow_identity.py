@@ -268,7 +268,7 @@ class _Probe:
 
 service_worker.ServiceProcessWorker = _Probe
 try:
-    report["exit"] = service_worker.main(["--pool", "qualification-pool"])
+    report["exit"] = service_worker.main(["--pool", "qualification-pool"], start_check=lambda _pool: None)
 finally:
     Path({report_path!r}).write_text(json.dumps(report), encoding="utf-8")
 '''

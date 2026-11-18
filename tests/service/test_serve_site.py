@@ -50,7 +50,7 @@ def test_build_service_serves_the_api_under_api_and_runs_the_liveness_loop(
     monkeypatch.setattr(serve, "RunLivenessReconciler", _reconciler)
     projection = local_product_projection(tmp_path.resolve())
 
-    service = serve.build_service(projection_factory=lambda: projection)
+    service = serve.build_service(projection_factory=lambda: projection, start_check=lambda _pool: None)
 
     with TestClient(service) as client:
         assert client.get("/api/version").status_code == 200
@@ -72,7 +72,7 @@ def test_build_service_serves_the_web_interface_named_by_the_environment(
     monkeypatch.setattr(serve, "RunLivenessReconciler", _RecordingReconciler)
     projection = local_product_projection((tmp_path / "store").resolve())
 
-    service = serve.build_service(projection_factory=lambda: projection)
+    service = serve.build_service(projection_factory=lambda: projection, start_check=lambda _pool: None)
 
     with TestClient(service) as client:
         response = client.get("/", headers={"Accept": "text/html"})

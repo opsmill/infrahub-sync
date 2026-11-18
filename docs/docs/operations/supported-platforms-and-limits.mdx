@@ -39,7 +39,12 @@ measured, and they are not excluded.
 
 ## Product limits
 
-- The deployment runs on one host, with no clustering, no public ingress, and no TLS.
+- The [Compose deployment](../compose-deployment.mdx) runs on one host, with no clustering, no
+  public ingress, and no TLS.
+- The [Kubernetes deployment](../kubernetes-deployment.mdx) runs one Sync API and one worker.
+  More than one replica of either is not tested. The chart can route traffic to the Sync API
+  through an Ingress or a Gateway API `HTTPRoute`, with TLS ending there; neither route was
+  tested on a cluster.
 - Deletes are recorded in plans but are not executed.
 - A sync cannot remove an optional single-object relationship from a destination
   object, for example the rack of a device. When the source value is empty, apply
@@ -51,4 +56,5 @@ measured, and they are not excluded.
   example from cron or a CI job.
 
 For the operating procedure of a release, including replacement with a fresh
-deployment, use the [Compose deployment guide](../compose-deployment).
+deployment, use the [Compose deployment guide](../compose-deployment) or the
+[Kubernetes deployment guide](../kubernetes-deployment.mdx).

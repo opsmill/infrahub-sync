@@ -1067,13 +1067,15 @@ def test_the_cli_service_reaches_no_host_and_keeps_nothing(cli_model: dict[str, 
 
 
 def test_the_cli_service_runs_the_cli_in_the_image_the_deployment_runs(cli_model: dict[str, Any]) -> None:
-    """Same image reference, the CLI as its entrypoint, and the image's own user."""
+    """Same image reference, the CLI as its entrypoint behind Docker's init, and the image's own user."""
     definition = service(cli_model, CLI_SERVICE)
     api = service(cli_model, "sync-api")
     expected = [f"{root}:{SCRATCH_OPTIONS}" for root in SYNC_SCRATCH_ROOTS]
 
     assert definition["image"] == api["image"]
     assert definition["entrypoint"] == ["infrahub-sync"]
+    # The entrypoint replaces the image's tini; Docker's init works with images built before tini.
+    assert definition.get("init") is True
     assert definition.get("read_only") is True
     assert definition.get("tmpfs") == expected
     # Nothing overrides the user, so the container runs as the image's non-root one.

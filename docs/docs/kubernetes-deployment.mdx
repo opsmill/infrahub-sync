@@ -1,0 +1,572 @@
+---
+title: Kubernetes deployment
+---
+
+The `infrahub-sync` Helm chart deploys Infrahub Sync into one namespace of a Kubernetes
+cluster. It runs the same services as the [Compose deployment](./compose-deployment.mdx): the
+Sync API, one Sync worker, a Prefect server, PostgreSQL and an S3-compatible object store. The
+Sync API, the worker, the Prefect server and the bootstrap Job run from the Sync image, so the
+release pulls no Prefect image. You install it with `helm install`, call the Sync API with the
+`infrahub-sync` CLI, and follow each Sync release with `helm upgrade`.
+
+The chart is in the [opsmill/infrahub-helm](https://github.com/opsmill/infrahub-helm)
+repository, at `charts/infrahub-sync`. Its `values.yaml` describes every value; this page
+describes the values an operator sets most often.
+
+## What the release contains
+
+Every resource name starts with the release's full name. For a release named `infrahub-sync`,
+the full name is `infrahub-sync`, so the Sync API Service is `infrahub-sync-api`. The examples on
+this page use that release name, in the namespace `infrahub-sync`.
+
+| Resource | Kind | What it does |
+| --- | --- | --- |
+| `infrahub-sync-api` | Deployment, Service | The Sync API. The CLI sends its requests here. |
+| `infrahub-sync-worker` | Deployment | The Sync worker, which runs plans and applies. |
+| `infrahub-sync-prefect-server` | Deployment, Service | The Prefect API, from the Sync image. It hands runs to the worker and serves no UI. |
+| `infrahub-sync-bootstrap-<hash>` | Job | Creates the bucket, the Prefect work pool, the Prefect deployment and the product schema, then writes the bootstrap record: the Sync version and the work pool name it set up. |
+| `infrahub-sync-postgresql` | StatefulSet, Service | PostgreSQL, with the product database and the Prefect database. |
+| `infrahub-sync-postgresql-init` | ConfigMap | The script that creates both PostgreSQL databases and their roles when they are missing. PostgreSQL runs it on an empty volume, and the bootstrap Job runs it each time. |
+| `infrahub-sync-object-store` | StatefulSet, Service | The object store for plans and run files, on the Silo image. |
+| `infrahub-sync` | Secret | The credentials, when you set them as values instead of naming your own Secret. |
+| `infrahub-sync-worker-credentials` | Secret | Source credentials set in `worker.credentials`. Only the worker reads it. |
+| `infrahub-sync-ca` | ConfigMap | CA certificates set in `caCertificates.certificates`. |
+
+PostgreSQL and the object store each keep their data on a volume claim of 10Gi, with access mode
+`ReadWriteOnce`, from the cluster's default storage class unless you set
+`postgresql.persistence.storageClass` or `objectStore.persistence.storageClass`. The object store
+runs the same Silo image as the Compose deployment, pinned by digest; its licence and source are
+described in [The object store image and its licence](./compose-deployment.mdx#the-object-store-image-and-its-licence).
+
+### Start order and the bootstrap record
+
+The services start in this order. The waits of the Prefect server and the bootstrap Job are init
+containers, which fail after `waitTimeoutSeconds` (600 seconds by default):
+
+1. PostgreSQL runs its database script when it creates its data directory on an empty volume.
+2. The Prefect server waits until PostgreSQL accepts connections. It restarts until its role
+   exists.
+3. The bootstrap Job waits until PostgreSQL accepts connections and runs the database script
+   again, which creates any role or database that is missing, as the Compose `db-bootstrap`
+   service does. A renamed role or database is created new and empty: the script moves no data
+   and changes no ownership. It then waits until the object store and the Prefect server answer, and runs.
+   It retries on failure, up to `bootstrap.backoffLimit` times (6 by default). Its last step
+   writes the bootstrap record to the product database: the Sync version and the work pool name
+   it set up.
+4. The Sync API and the worker read the bootstrap record when they start. When the record is
+   missing, or names another Sync version or work pool, they log what they found and what they
+   expected, and exit. Kubernetes restarts them, with a longer delay after each failure, until the
+   Job has written the record.
+
+The Sync API and the worker have no init container, so they also exit when the product database
+cannot be reached yet. When a pod restarts, it only reads the record again. A restart does not
+run the bootstrap.
+
+A refused start logs a line such as:
+
+```text
+refusing to start: the bootstrap record names Sync version <previous version> and work pool infrahub-sync; expected Sync version <new version> and work pool infrahub-sync. Run the bootstrap for this version.
+```
+
+Read it in the log of the previous attempt:
+
+```bash
+kubectl -n infrahub-sync logs <pod name> --previous
+```
+
+The record covers the Sync version and the work pool name only. It does not cover the other
+settings the bootstrap reads, such as the bucket. A change to one of those still runs the
+bootstrap Job again, as [Run the upgrade](#run-the-upgrade) describes.
+
+### Minimum Sync version
+
+The chart needs a Sync release whose image contains the bootstrap record, its start check and
+`tini`. The chart starts every Sync container with `/usr/bin/tini -g --`, because a Kubernetes
+`command` replaces the image's entrypoint. `tini` passes `SIGTERM` to the Sync process and to the
+process of each run, so a stopped pod ends within seconds instead of at the end of its grace
+period. A container from an earlier image fails to start, because the image has no
+`/usr/bin/tini`. No release contains these yet, so the minimum Sync version is not known yet. The
+release that the chart's current `appVersion` names does not contain them.
+
+## Prerequisites
+
+- A Kubernetes cluster where you can create a namespace, and a default storage class or a storage
+  class you name in the values. The chart was checked on Kubernetes 1.36 and 1.37.
+- Helm 4. OpsMill installed and upgraded the chart with Helm 4.2.4, from a checkout of the chart;
+  no other Helm version was tested.
+- `kubectl` with access to the namespace.
+- The `infrahub-sync` CLI on your workstation, to call the Sync API through a port forward. Read
+  [Install the CLI](./installation.mdx#install-the-cli). You can also run the CLI in the cluster
+  from the Sync image, as [Call the Sync API](#call-the-sync-api) describes.
+- Until the 3.0.0 release, a registry login. The registry serves the Sync image only to invited
+  testers until then; read [Run the container image](./installation.mdx#run-the-container-image).
+  Kubernetes pulls the image with an image pull Secret that holds that login:
+
+  ```bash
+  kubectl create namespace infrahub-sync
+  kubectl -n infrahub-sync create secret docker-registry opsmill-registry \
+    --docker-server=registry.opsmill.io \
+    --docker-username=<username> \
+    --docker-password=<password>
+  ```
+
+  Name the Secret in `imagePullSecrets`. The chart applies it to every pod of the release.
+
+:::note
+The chart is not in the registry until an Infrahub Sync release whose image holds the Prefect
+server and the start check is published. Until then, install the chart from a checkout of
+[opsmill/infrahub-helm](https://github.com/opsmill/infrahub-helm) that holds it: replace
+`oci://registry.opsmill.io/opsmill/chart/infrahub-sync` with the path of `charts/infrahub-sync`
+in that checkout, and leave out `--version`.
+:::
+
+## Create the credentials Secret
+
+The chart refuses to render without credentials, and no value has a default credential. Create
+one Secret that holds them and name it in `credentials.existingSecret`. Each key of the Secret
+is the variable name of the Compose `.env` file, so a Compose `.env` file creates the Secret as it
+is:
+
+```bash
+kubectl -n infrahub-sync create secret generic infrahub-sync --from-env-file=.env
+```
+
+Each container reads only the keys it needs, so other lines of the file, such as
+`INFRAHUB_SYNC_API_TOKEN` or `VERSION`, are stored in the Secret and not read. This includes source
+credentials such as `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`: the worker reads them only from the
+Secrets described in [Settings](#settings), so put them there. To write a new
+`.env` file with random values, follow [The `.env` file](./compose-deployment.mdx#configuration-prerequisites)
+of the Compose deployment page, and keep the file at mode 0600, out of version control.
+
+| Key | Required | Read by |
+| --- | --- | --- |
+| `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` | always | Sync API |
+| `INFRAHUB_SYNC_PREFECT_AUTH_STRING` | always | Prefect server, Sync API, worker, bootstrap |
+| `INFRAHUB_SYNC_S3_ACCESS_KEY` | always | Sync API, worker, bootstrap, bundled object store |
+| `INFRAHUB_SYNC_S3_SECRET_KEY` | always | Sync API, worker, bootstrap, bundled object store |
+| `INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD` | with the bundled PostgreSQL | PostgreSQL |
+| `INFRAHUB_SYNC_PRODUCT_PASSWORD` | with the bundled PostgreSQL | PostgreSQL, Sync API, worker, bootstrap |
+| `INFRAHUB_SYNC_PREFECT_PASSWORD` | with the bundled PostgreSQL | PostgreSQL, Prefect server |
+| `INFRAHUB_SYNC_DATABASE_URL` | with your own PostgreSQL | Sync API, worker, bootstrap |
+| `INFRAHUB_SYNC_PREFECT_DATABASE_URL` | with your own PostgreSQL | Prefect server |
+| `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | never | Sync API, worker |
+
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` maps each principal name to its token, for example
+`{"operator": {"token": "<random>", "administrator": true}}`. The token of a principal is the
+value you give the CLI as `INFRAHUB_SYNC_API_TOKEN`.
+
+With the bundled PostgreSQL, the chart builds both connection strings in the pod environment from
+the role, the database and the password, so `INFRAHUB_SYNC_PRODUCT_PASSWORD` and
+`INFRAHUB_SYNC_PREFECT_PASSWORD` must be URL-safe. Hexadecimal output is. The chart does not read
+the two connection string keys while it runs the bundled PostgreSQL.
+
+The chart cannot read an existing Secret when it renders. A key that is missing from it stops the
+pod that needs the key, with the status `CreateContainerConfigError` and the key's name in the
+pod's events.
+
+You can instead set each credential as a value (`credentials.bearerTokens`,
+`credentials.prefectAuthString` and the others in `values.yaml`), and the chart creates the
+Secret. The values are then stored in your values file and in the Helm release record in the cluster,
+so a Secret you create yourself keeps them in fewer places.
+
+## Install
+
+Write the values that stay the same for every upgrade into a file, for example `values.yaml`:
+
+```yaml
+credentials:
+  existingSecret: infrahub-sync
+imagePullSecrets:
+  - name: opsmill-registry
+```
+
+Then install:
+
+```bash
+helm install infrahub-sync oci://registry.opsmill.io/opsmill/chart/infrahub-sync \
+  --version <chart version> \
+  -n infrahub-sync \
+  -f values.yaml \
+  --wait --wait-for-jobs --timeout 10m
+```
+
+Pass both `--wait` and `--wait-for-jobs`. With Helm 4.2.4, `--wait` alone waits for the pods to be
+ready and not for the bootstrap Job to complete. With `--wait-for-jobs`, `helm install` returns
+after the Job is complete.
+
+During a first install, the Sync API and the worker exit and restart until the bootstrap Job has
+written the bootstrap record, and while PostgreSQL starts. Their pods can show
+`CrashLoopBackOff` for a short time, and a restart count above 0 afterwards. On a test cluster,
+`helm install` returned after 52 seconds; the Sync API restarted 3 times and was ready 23 seconds
+after the Job completed, and the worker restarted 2 times. These numbers come from one install.
+
+Check the release:
+
+```bash
+kubectl -n infrahub-sync get pods,jobs
+```
+
+The bootstrap Job shows `Complete` and `1/1`, its pod shows `Completed`, and the five other pods
+show `Running` and `1/1`. The `RESTARTS` column of the Sync API and the worker can be above 0.
+
+## Call the Sync API
+
+The Sync API Service is of type `ClusterIP` by default, on port 8000. The CLI reaches it in one of
+two ways.
+
+From your workstation, forward a local port to the Service, and keep the command running:
+
+```bash
+kubectl -n infrahub-sync port-forward service/infrahub-sync-api 8000:8000
+```
+
+Then, in another terminal, give the CLI the address and a principal's token. `read -rs` reads the
+token without printing it or writing it to the shell history:
+
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+read -rs INFRAHUB_SYNC_API_TOKEN && export INFRAHUB_SYNC_API_TOKEN
+infrahub-sync whoami
+```
+
+`whoami` prints the principal, whether it is an administrator, and `approval_required`. A
+port forward ends when the Sync API pod is replaced, for example by an upgrade; start it again.
+
+From inside the cluster, run the CLI from the Sync image in a pod that is deleted when the command
+ends. The command takes the token from the variable that `read -rs` set:
+
+```bash
+read -rs INFRAHUB_SYNC_API_TOKEN && export INFRAHUB_SYNC_API_TOKEN
+kubectl -n infrahub-sync run infrahub-sync-cli --rm -it --restart=Never \
+  --image=registry.opsmill.io/opsmill/infrahub-sync:<version> \
+  --overrides='{"apiVersion":"v1","spec":{"enableServiceLinks":false,"imagePullSecrets":[{"name":"opsmill-registry"}]}}' \
+  --env=INFRAHUB_SYNC_API_URL=http://infrahub-sync-api:8000 \
+  --env=INFRAHUB_SYNC_API_TOKEN="$INFRAHUB_SYNC_API_TOKEN" \
+  --command -- infrahub-sync whoami
+```
+
+The notes that `helm install` prints hold both forms for your release, with its names and
+image, and a `kubectl wait` command for the bootstrap Job with a timeout of 10 minutes. In the
+second form the token is part of the pod definition, so prefer the port forward for a shared
+cluster.
+
+The `infrahub-sync` commands in
+[Prepare the destination schema](./compose-deployment.mdx#prepare-the-destination-schema) and
+[Prepare a configuration](./compose-deployment.mdx#prepare-a-configuration) read the same two
+variables. Their `docker compose run` forms do not apply to this deployment. On a test cluster,
+OpsMill ran `whoami`, `configs register` and `configs list` through a port forward.
+
+## Settings
+
+The settings of the Sync processes are values. Each one sets the Compose variable of the same
+meaning; the [optional settings](./compose-deployment.mdx#optional-settings) of the Compose
+deployment page describe each variable.
+
+| Value | Default | Variable |
+| --- | --- | --- |
+| `settings.requireApproval` | `false` | `INFRAHUB_SYNC_REQUIRE_APPROVAL` |
+| `settings.runAdmissionTtlSeconds` | `300` | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` |
+| `settings.workPool` | `infrahub-sync` | `INFRAHUB_SYNC_SERVICE_WORK_POOL` and the worker's `--pool` |
+| `settings.workerQuerySeconds` | `10` | `PREFECT_WORKER_QUERY_SECONDS` |
+| `settings.workerHeartbeatSeconds` | `10` | `PREFECT_WORKER_HEARTBEAT_SECONDS` |
+| `settings.prefectUiUrl` | empty | `INFRAHUB_SYNC_PREFECT_UI_URL` |
+| `image.tag` | the chart's `appVersion` | The tag of the Sync image, for every Sync pod |
+
+A change to a setting replaces the pods that read it when you run `helm upgrade`.
+
+Source credentials go to the worker only:
+
+- `worker.credentials` maps a variable name to its value, for example
+  `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`. The chart creates a Secret from the map. It refuses a
+  name that does not match `^INFRAHUB_SYNC_CREDENTIAL_[A-Za-z0-9_]+$`.
+- `worker.credentialsExistingSecrets` lists Secrets you create. Each key of each Secret becomes a
+  variable of the worker, so name the keys `INFRAHUB_SYNC_CREDENTIAL_<NAME>`. Do not list the
+  credentials Secret here: the worker would then receive every key of it, including the
+  PostgreSQL passwords.
+
+A package references these variables by name, as
+[Credentials in a package](./compose-deployment.mdx#credentials-in-a-package) describes. The destination
+token `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` is a key of the credentials Secret, and the
+Sync API and the worker both read it. To give the worker another token, set that key in
+`worker.credentials`: the worker then reads it from there and not from the credentials Secret.
+Do not put that key in a Secret of `worker.credentialsExistingSecrets` while the credentials
+Secret also holds it, because the credentials Secret's value wins.
+
+The init containers of the Prefect server and the bootstrap Job set the resource requests and
+limits of `initContainers.resources`: 10m CPU and 64Mi memory requested, and a 128Mi memory limit,
+by default. A namespace with a ResourceQuota on CPU or memory, such as `requests.cpu` or
+`limits.memory`, refuses a pod whose containers do not set the values that the quota tracks.
+
+:::warning
+The chart restarts the pods that read a Secret or ConfigMap only when the chart creates that
+Secret or ConfigMap. When you change a key of a Secret you created yourself, such as the one in
+`credentials.existingSecret`, no pod restarts and no bootstrap Job runs. A container reads its
+variables when it starts, so restart the pods that read the key, for example:
+
+```bash
+kubectl -n infrahub-sync rollout restart deployment/infrahub-sync-api deployment/infrahub-sync-worker
+```
+
+:::
+
+The Prefect server runs with its UI off. `prefectServer.uiEnabled` turns the UI on, but the
+chart creates no route to it.
+
+## Use your own PostgreSQL
+
+To use a PostgreSQL server you already run, set `postgresql.enabled: false`. The chart then
+creates no PostgreSQL StatefulSet, Service, ConfigMap or volume claim, and the Prefect server
+does not wait for PostgreSQL.
+
+Create the two roles and the two databases yourself first. They are the ones the Compose
+database script creates, each database owned by its role:
+
+```sql
+CREATE ROLE infrahub_sync LOGIN PASSWORD '<product password>';
+CREATE DATABASE infrahub_sync OWNER infrahub_sync;
+CREATE ROLE prefect LOGIN PASSWORD '<prefect password>';
+CREATE DATABASE prefect OWNER prefect;
+```
+
+Then add the two connection strings to the credentials Secret:
+
+```dotenv
+INFRAHUB_SYNC_DATABASE_URL=postgresql://infrahub_sync:<product password>@<host>:5432/infrahub_sync
+INFRAHUB_SYNC_PREFECT_DATABASE_URL=postgresql+asyncpg://prefect:<prefect password>@<host>:5432/prefect
+```
+
+The Sync processes read the first string, and the Prefect server reads the second. The Prefect
+string uses the `postgresql+asyncpg` scheme, as the chart's own string for the bundled
+PostgreSQL does. A password in a connection string must be URL-safe, so use hexadecimal
+passwords when you build the strings. `INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD`,
+`INFRAHUB_SYNC_PRODUCT_PASSWORD` and `INFRAHUB_SYNC_PREFECT_PASSWORD` are not read.
+
+With `credentials.existingSecret` empty, the chart refuses to render when
+`credentials.databaseUrl` or `credentials.prefectDatabaseUrl` is empty. With an existing Secret,
+a missing key stops the pod that needs it.
+
+OpsMill checked this setup against the PostgreSQL server of a second release of this chart. No
+other PostgreSQL service is named as tested.
+
+### Passwords of the bundled PostgreSQL
+
+The bundled PostgreSQL runs its database script only when its volume is empty, on the first
+install. The script sets each role's password when it creates the role. If you change
+`INFRAHUB_SYNC_PRODUCT_PASSWORD` or `INFRAHUB_SYNC_PREFECT_PASSWORD` later, the role keeps its
+earlier password and the services that use the new value cannot connect. Change the password in
+the database too, with `ALTER ROLE <role> PASSWORD '<new password>'` run as the administrator role,
+then change it in the Secret and restart the pods that read it.
+
+## Use your own S3-compatible store
+
+To keep plans and run files in an S3-compatible store you already run, turn the bundled store off
+and name the endpoint of yours:
+
+```yaml
+objectStore:
+  enabled: false
+s3:
+  endpointUrl: https://s3.example.com
+  bucket: <bucket>
+  prefix: infrahub-sync
+  region: <region>
+  addressingStyle: path
+```
+
+Put the access key and the secret key for that bucket in the credentials Secret, as
+`INFRAHUB_SYNC_S3_ACCESS_KEY` and `INFRAHUB_SYNC_S3_SECRET_KEY`. `s3.addressingStyle` is `path`
+or `virtual`; empty means `path`.
+
+The chart refuses to render when the two values disagree:
+
+- `s3.endpointUrl` set while `objectStore.enabled` is true: the bundled store is then the
+  endpoint, and it would receive your store's keys as its own root credential.
+- `s3.endpointUrl` empty while `objectStore.enabled` is false: the Sync processes would have no
+  store.
+
+With the bundled store off, the chart creates no object store StatefulSet, Service or volume
+claim. The bootstrap checks the bucket and the store's behavior before the Sync API starts, as
+[What Sync needs from the store](./compose-deployment.mdx#what-sync-needs-from-the-store)
+describes, and stops with a `refused:` message when the store does not meet it. Use `https` for
+your store; over `http`, object content crosses the network in plain text.
+
+OpsMill checked this setup against the bundled object store of a second release of this chart.
+Moving from the bundled store to your own does not copy earlier plans and run files.
+
+## Trust a private certificate authority
+
+When a source, Infrahub or your own object store presents a certificate that a private
+certificate authority signed, give the Sync API, the worker and the bootstrap the certificate of
+that authority, in one of two ways:
+
+- Set the PEM text in your values file. The chart creates a ConfigMap from it:
+
+  ```yaml
+  caCertificates:
+    certificates:
+      corporate-ca.pem: |
+        -----BEGIN CERTIFICATE-----
+        <certificate>
+        -----END CERTIFICATE-----
+  ```
+
+- Create a ConfigMap of `*.pem` or `*.crt` files yourself, and name it in
+  `caCertificates.existingConfigMap`:
+
+  ```bash
+  kubectl -n infrahub-sync create configmap corporate-ca --from-file=corporate-ca.pem
+  ```
+
+The chart refuses to render when both are set. It mounts the files read-only at
+`/etc/infrahub-sync/ca` in the three pods, and each one trusts them next to the public roots of
+the image.
+
+- The files hold public certificates only. A Sync process stops at start when a file in the
+  directory holds a private key.
+- A change to `caCertificates.certificates` replaces the Sync API and worker pods and runs a new
+  bootstrap Job on the next `helm upgrade`. A change to a ConfigMap you created does not; restart
+  the pods as in [Settings](#settings).
+
+The other requirements on the certificates, and what each service logs, are the same as for the
+Compose deployment, and
+[Trust a private certificate authority](./compose-deployment.mdx#trust-a-private-certificate-authority)
+describes them.
+
+## Reach the Sync API from outside the cluster
+
+The chart can route external HTTP traffic to the Sync API, and to nothing else, in one of two
+ways. Both are off by default, and the chart refuses to render with both on.
+
+- An Ingress: set `ingress.enabled: true`, `ingress.ingressClassName` and `ingress.hostname`.
+  `ingress.tls: true` adds TLS for that host name with the Secret `<full name>-tls`, which you
+  create.
+- A Gateway API `HTTPRoute`: set `gatewayApi.enabled: true`, `gatewayApi.httpRoute.hostnames` and
+  `gatewayApi.httpRoute.parentRefs`, which name an existing Gateway. To have the chart create a
+  Gateway instead, set `gatewayApi.gateway.enabled: true` and `gatewayApi.gateway.className`. The
+  chart refuses `gatewayApi.enabled` with neither a parent reference nor its own Gateway.
+
+The Sync API serves plain HTTP; TLS ends at the Ingress or Gateway. Every request still needs a
+principal's token. Neither route was tested on a cluster for this chart version.
+
+## Upgrade
+
+### Pick the chart version for a Sync release
+
+A chart version and a Sync release are two version numbers. The chart's `appVersion` is the Sync
+release that the chart deploys by default. Read it before you upgrade:
+
+```bash
+helm show chart oci://registry.opsmill.io/opsmill/chart/infrahub-sync --version <chart version>
+```
+
+To run another Sync release with the same chart, set `image.tag`. Every Sync pod then runs that
+tag. The release must contain the start check; read [Minimum Sync version](#minimum-sync-version).
+
+### Before you upgrade
+
+An upgrade that changes the image or a setting of the worker replaces the worker pod, and
+replacing the worker pod ends the run it is executing. Ask everyone who submits runs to stop
+submitting new runs, then list the runs:
+
+```bash
+infrahub-sync runs list
+```
+
+Check each run that has not finished with `infrahub-sync runs show RUN_ID`, and wait until its
+`execution_state` is `completed`, `failed`, `cancelled`, `abandoned` or `interrupted`. If a write
+ends without a record of what reached the destination, follow
+[When the outcome of a write is uncertain](./compose-deployment.mdx#when-the-outcome-of-a-write-is-uncertain).
+
+### Run the upgrade
+
+```bash
+helm upgrade infrahub-sync oci://registry.opsmill.io/opsmill/chart/infrahub-sync \
+  --version <chart version> \
+  -n infrahub-sync \
+  -f values.yaml \
+  --wait --wait-for-jobs --timeout 10m
+```
+
+Pass the same values file as for the install. The volume claims of PostgreSQL and the object
+store are kept, and the new pods use the same volumes.
+
+The bootstrap Job is named after a hash of what enters it: the image, the settings and
+credentials it reads, the `bootstrap` values and the other values of its pod, and the chart
+version. The credentials count only when the chart creates the Secret.
+
+- When one of them changes, the upgrade creates a Job with a new name, and Helm deletes the Job
+  of the previous release. The new Job runs the bootstrap again. On a deployment that already has
+  its bucket, work pool and deployment, it finds them present and applies the Prefect deployment
+  again.
+- When none of them changes, the completed Job stays and the bootstrap does not run again. The
+  bootstrap would change nothing on such a deployment.
+
+With `--wait-for-jobs`, `helm upgrade` returns after the new Job completes. On a test cluster, an
+upgrade that changed only the Job returned in the second the new Job completed.
+
+On an upgrade to another Sync version, the new Sync API pod refuses to start until the new Job
+has written the bootstrap record, and Kubernetes restarts it. The previous Sync API pod keeps
+answering requests until the new pod is ready. On a test cluster, the new Sync API pod restarted
+2 times and was ready 5 seconds after the new Job completed, and the previous pod answered
+version requests throughout. These numbers come from one upgrade. The worker uses the `Recreate`
+strategy, so its previous pod stops before the new one starts.
+
+:::warning
+The bootstrap record covers the Sync version and the work pool name only. On an upgrade that
+keeps the Sync version and changes another setting the bootstrap reads, such as the bucket, the
+new Sync API and worker pods can start before the new bootstrap Job completes. Do not send
+requests to the Sync API until `helm upgrade` returns.
+:::
+
+### Stored records across Sync releases
+
+An upgrade keeps the volume claims of PostgreSQL and the object store. On a test cluster, a
+registered package was still listed after upgrades that kept the same Sync release.
+
+The chart does not convert stored records. Whether a new Sync release reads the records of an
+earlier one depends on that release. During the alpha, Infrahub Sync promises no in-place state
+migration, and each release's notes say whether it needs a fresh deployment. For a fresh
+deployment, uninstall the release, delete its volume claims as described in
+[Uninstall](#uninstall), and install again. As on the Compose deployment, nothing in the old
+volumes survives that; read
+[Resetting this alpha to a fresh deployment](./compose-deployment.mdx#resetting-this-alpha-to-a-fresh-deployment).
+
+## Uninstall
+
+```bash
+helm uninstall infrahub-sync -n infrahub-sync
+```
+
+`helm uninstall` deletes every resource of the release except the two volume claims, which
+Kubernetes creates for the StatefulSets and Helm does not manage. The data of PostgreSQL and of
+the object store stays on them. List them:
+
+```bash
+kubectl -n infrahub-sync get pvc -l app.kubernetes.io/instance=infrahub-sync
+```
+
+For the release `infrahub-sync`, the claims are `data-infrahub-sync-postgresql-0` and
+`data-infrahub-sync-object-store-0`. A new install with the same release name in the same
+namespace uses them again. PostgreSQL then does not run its database script, so the role
+passwords in the Secret must be the ones the roles already have.
+
+:::danger
+Deleting the claims deletes every registered configuration, run, plan and run file of the
+deployment. Nothing asks for confirmation, and you cannot undo it. Whether the volumes behind the
+claims are deleted too depends on the reclaim policy of the storage class.
+
+```bash
+kubectl -n infrahub-sync delete pvc -l app.kubernetes.io/instance=infrahub-sync
+```
+
+:::
+
+## What this deployment does not do
+
+- It has no web interface. The interface is tracked in
+  [issue #421](https://github.com/opsmill/infrahub-sync/issues/421).
+- More than one replica of the Sync API or of the worker is not tested. `api.replicaCount` and
+  `worker.replicaCount` default to 1, which is the only tested value.
+- OpenShift is not tested. The pods run as fixed user IDs: 10001 for the Sync pods, 70 for
+  PostgreSQL and 65532 for the object store.
+- It has no backup or restore, and no in-place state migration between Sync releases.

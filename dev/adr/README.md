@@ -133,6 +133,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0044 — The base install declares no Redis client, and no code imports the Redis store](0044-the-base-install-declares-no-redis-client.md)
   — why the `redis` dependency and the `RedisStore` import were removed, and the refusal a
   configured store gets. Supersedes 0008.
+- [0045 — The Kubernetes deployment orders its start with a hashed Job and a bootstrap record](0045-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md)
+  — why the Helm chart runs the bootstrap as a plain Job named after a hash of its inputs, why the
+  Sync API and the worker check a bootstrap record when they start instead of waiting in an init
+  container, and why an upgrade can start them before the new Job completes.
 - [0046 — Saved plan format 5 records an emptied one-peer relationship](0046-saved-plan-format-5-records-an-emptied-one-peer-relationship.md)
   — why an update records an emptied one-peer relationship as a reference with no peer, why every
   plan is saved in format 5, and why apply writes it as `null` in the one Upsert.

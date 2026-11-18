@@ -17,10 +17,11 @@ if TYPE_CHECKING:
 
 # Each entry point, and the first step that would build a client after the bundle is in place.
 # For the Sync API, `build_app` installs the bundle itself, so the first step after it is the
-# Prefect UI address check that precedes the first provider.
+# Prefect UI address check that precedes the first provider. For the worker, it is the
+# bootstrap record check, which opens the first database connection.
 _ENTRY_POINTS = [
     (serve, "prefect_ui_url_from_environment"),
-    (worker, "ServiceProcessWorker"),
+    (worker, "check_bootstrap_record"),
     (bootstrap, "_converge"),
 ]
 _IDS = ["serve", "worker", "bootstrap"]

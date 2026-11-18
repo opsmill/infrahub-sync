@@ -108,6 +108,14 @@ release's Sync API. The deployment records the parameters the service flow accep
 newer Sync API can send a parameter that is missing from an older deployment's list, such as
 `confirm_left_out`.
 
+The Sync API and the worker also read a bootstrap record when they start, and refuse to start
+until it names their Sync version and work pool. `python -m infrahub_sync.service.deploy` does
+not write that record. To write it, run `python -m infrahub_sync.service.bootstrap` with the
+same database, object store and Prefect settings as the Sync API. It creates the bucket and the
+work pool when they are missing, applies this deployment, initializes the product schema, and
+writes the record as its last step. Run it again each time you install a new release or change
+the work pool.
+
 The deployment's entrypoint is the installed module path
 `infrahub_sync.service.flow.service_sync_run`. A worker resolves it by importing the
 installed `infrahub-sync` distribution, so it needs no repository checkout, no declared
@@ -118,7 +126,8 @@ worker.
 
 ## Start service workers
 
-Start each worker through the service entry point. The work pool must already exist:
+Start each worker through the service entry point. The work pool must already exist, and the
+bootstrap of this release must have written its record for this work pool:
 
 ```bash
 python -m infrahub_sync.service.worker \
@@ -197,6 +206,7 @@ export INFRAHUB_SYNC_DATABASE_URL="postgresql://sync:replace-me@postgres/infrahu
 export INFRAHUB_SYNC_S3_BUCKET="infrahub-sync-artifacts"
 export INFRAHUB_SYNC_S3_PREFIX="infrahub-sync"
 export INFRAHUB_SYNC_SERVICE_HOST="127.0.0.1"
+export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
 python -m infrahub_sync.service.serve
 ```
 
