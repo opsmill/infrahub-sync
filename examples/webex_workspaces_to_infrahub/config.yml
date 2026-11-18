@@ -1,0 +1,63 @@
+---
+name: webex-workspaces-to-infrahub
+source:
+  name: webex
+  settings:
+    auth_method: token
+    token_env: WEBEX_TOKEN
+    resources:
+      WebexLocation:
+        page_size: 100
+      WebexWorkspace:
+        page_size: 1000
+      WebexDevice:
+        page_size: 100
+destination:
+  name: infrahub
+  settings:
+    url: http://localhost:8000
+order:
+  - WebexLocation
+  - WebexWorkspace
+  - WebexDevice
+schema_mapping:
+  - name: WebexLocation
+    mapping: /v1/locations
+    identifiers: [webex_id]
+    fields:
+      - name: webex_id
+        mapping: id
+      - name: name
+        mapping: name
+  - name: WebexWorkspace
+    mapping: /v1/workspaces
+    identifiers: [webex_id]
+    fields:
+      - name: webex_id
+        mapping: id
+      - name: name
+        mapping: displayName
+      - name: location
+        mapping: locationId
+        reference: WebexLocation
+  - name: WebexDevice
+    mapping: /v1/devices
+    identifiers: [webex_id]
+    fields:
+      - name: webex_id
+        mapping: id
+      - name: name
+        mapping: displayName
+      - name: serial_number
+        mapping: serial
+      - name: model
+        mapping: product
+      - name: software
+        mapping: software
+      - name: ip_address
+        mapping: ip
+      - name: connection_status
+        mapping: connectionStatus
+      - name: workspace
+        mapping: workspaceId
+        reference: WebexWorkspace
