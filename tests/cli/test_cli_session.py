@@ -7,6 +7,7 @@ import os
 import stat
 import subprocess  # noqa: S404 - a fresh interpreter shows what an import alone loads.
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -63,7 +64,9 @@ def test_the_file_is_created_with_mode_0600_in_a_directory_with_mode_0700(tmp_pa
 
     assert _mode(directory / SESSION_FILE_NAME) == 0o600
     assert _mode(directory) == 0o700
-    assert sorted(entry.name for entry in directory.iterdir()) == [SESSION_FILE_NAME]
+    # The lock file that serializes writes stays, and holds nothing.
+    assert sorted(entry.name for entry in directory.iterdir()) == [SESSION_FILE_NAME, f"{SESSION_FILE_NAME}.lock"]
+    assert (directory / f"{SESSION_FILE_NAME}.lock").read_bytes() == b""
 
 
 @POSIX_ONLY
@@ -129,6 +132,24 @@ def test_remove_deletes_one_entry_and_reports_whether_it_existed(tmp_path: Path)
     assert read_session(OTHER_ADDRESS, directory=tmp_path) == _session(OTHER_TOKEN, "bob")
 
 
+def test_remove_with_a_token_keeps_a_session_that_replaced_it(tmp_path: Path) -> None:
+    write_session(ADDRESS, _session(OTHER_TOKEN, "bob"), directory=tmp_path)
+
+    assert remove_session(ADDRESS, token=TOKEN, directory=tmp_path) is False
+    assert read_session(ADDRESS, directory=tmp_path) == _session(OTHER_TOKEN, "bob")
+    assert remove_session(ADDRESS, token=OTHER_TOKEN, directory=tmp_path) is True
+    assert read_session(ADDRESS, directory=tmp_path) is None
+
+
+def test_writes_for_many_addresses_at_the_same_time_keep_every_session(tmp_path: Path) -> None:
+    addresses = [f"http://127.0.0.1:{8000 + index}" for index in range(16)]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda address: write_session(address, _session(), directory=tmp_path), addresses))
+
+    assert all(read_session(address, directory=tmp_path) == _session() for address in addresses)
+
+
 def test_remove_on_a_missing_file_creates_nothing(tmp_path: Path) -> None:
     directory = tmp_path / "missing"
 
@@ -151,6 +172,7 @@ def test_remove_on_a_missing_file_creates_nothing(tmp_path: Path) -> None:
         ("https://sync.example.test:8443", "https://sync.example.test:8443"),
         ("https://sync.example.test?x=1#y", "https://sync.example.test"),
         ("http://[::1]:8001/", "http://[::1]:8001"),
+        ("http://127.0.0.1:08001", "http://127.0.0.1:8001"),
         ("", None),
         ("sync.example.test", None),
         ("ftp://sync.example.test", None),
@@ -237,7 +259,7 @@ def test_a_write_that_fails_leaves_the_previous_file_whole_and_no_partial_file(
         write_session(OTHER_ADDRESS, _session(OTHER_TOKEN, "bob"), directory=tmp_path)
 
     assert (tmp_path / SESSION_FILE_NAME).read_bytes() == before
-    assert sorted(entry.name for entry in tmp_path.iterdir()) == [SESSION_FILE_NAME]
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == [SESSION_FILE_NAME, f"{SESSION_FILE_NAME}.lock"]
 
 
 def test_a_replace_that_fails_leaves_the_previous_file_whole_and_no_partial_file(
@@ -255,7 +277,7 @@ def test_a_replace_that_fails_leaves_the_previous_file_whole_and_no_partial_file
         write_session(ADDRESS, _session(OTHER_TOKEN, "bob"), directory=tmp_path)
 
     assert (tmp_path / SESSION_FILE_NAME).read_bytes() == before
-    assert sorted(entry.name for entry in tmp_path.iterdir()) == [SESSION_FILE_NAME]
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == [SESSION_FILE_NAME, f"{SESSION_FILE_NAME}.lock"]
 
 
 def test_the_printed_form_of_a_saved_session_holds_no_token() -> None:

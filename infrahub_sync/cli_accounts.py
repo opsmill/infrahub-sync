@@ -285,7 +285,7 @@ def logout_cmd(ctx: typer.Context) -> None:
             if error.status != _UNAUTHENTICATED:
                 raise
         try:
-            remove_session(address)
+            remove_session(address, token=saved.token)
         except OSError:
             # The same plain error line as `login` when the file cannot be written.
             typer.echo(

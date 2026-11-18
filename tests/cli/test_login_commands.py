@@ -345,6 +345,27 @@ def test_a_refused_saved_session_is_removed_and_the_login_hint_is_printed(sync_a
     _assert_no_secret(result)
 
 
+class _LoginWhileWaiting(dict):
+    """The answers of the fake Sync API; a `login` saves another session before the refusal arrives."""
+
+    def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
+        write_session(URL, BOB_SESSION)
+        return super().get(key, default)
+
+
+def test_a_session_saved_while_the_refused_one_was_in_use_is_kept(sync_api: FakeSyncAPI) -> None:
+    write_session(URL, ALICE_SESSION)
+    sync_api.answers = _LoginWhileWaiting({"GET /me": sync_api.error(401, "unauthenticated")})
+
+    result = _invoke("whoami")
+
+    assert result.exit_code == 1
+    assert "so it was removed" not in result.stderr
+    assert result.stderr.endswith("hint: the Sync API no longer accepts the saved session; run infrahub-sync login\n")
+    assert read_session(URL) == BOB_SESSION
+    _assert_no_secret(result)
+
+
 def test_a_refused_variable_token_removes_nothing(sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch) -> None:
     write_session(URL, ALICE_SESSION)
     monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", VARIABLE_TOKEN)

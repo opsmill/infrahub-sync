@@ -175,15 +175,15 @@ def main(
     _setup_logging(level=level)
     ctx.ensure_object(dict)
     ctx.obj["api_url"] = api_url or ""
-    _SAVED_SESSION_ADDRESS.set(None)
+    _SAVED_SESSION.set(None)
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 
 
-# The Sync API address of the saved session that this command presents, or nothing when the
-# command presents INFRAHUB_SYNC_API_TOKEN or an injected client. `_client_errors` reads it
-# to remove a saved session that the Sync API refuses.
-_SAVED_SESSION_ADDRESS: ContextVar[str | None] = ContextVar("_SAVED_SESSION_ADDRESS", default=None)
+# The Sync API address and the token of the saved session that this command presents, or nothing
+# when the command presents INFRAHUB_SYNC_API_TOKEN or an injected client. `_client_errors` reads
+# it to remove a saved session that the Sync API refuses.
+_SAVED_SESSION: ContextVar[tuple[str, str] | None] = ContextVar("_SAVED_SESSION", default=None)
 
 
 def _api_url(ctx: typer.Context) -> str:
@@ -212,7 +212,7 @@ def _client(ctx: typer.Context) -> SyncClient:
     saved = None if token else cli_session.read_session(api_url)
     client = SyncClient(api_url, token if saved is None else saved.token)
     if saved is not None:
-        _SAVED_SESSION_ADDRESS.set(api_url)
+        _SAVED_SESSION.set((api_url, saved.token))
     return _keep_client(ctx, client)
 
 
@@ -377,16 +377,20 @@ def _account_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
 def _forget_refused_session(error: SyncClientError) -> None:
     """Remove the saved session that the Sync API refused, and print the `login` hint.
 
-    Nothing is removed when the command presented INFRAHUB_SYNC_API_TOKEN.
+    Nothing is removed when the command presented INFRAHUB_SYNC_API_TOKEN, or when the file no
+    longer holds the refused token, for example after a `login` that ran meanwhile.
     """
-    address = _SAVED_SESSION_ADDRESS.get()
-    if address is None or not isinstance(error, APIError):
+    saved = _SAVED_SESSION.get()
+    if saved is None or not isinstance(error, APIError):
         return
     if error.status != 401 or error.code != _UNAUTHENTICATED:
         return
+    address, token = saved
     try:
-        cli_session.remove_session(address)
+        removed = cli_session.remove_session(address, token=token)
     except OSError:
+        removed = False
+    if not removed:
         typer.echo("hint: the Sync API no longer accepts the saved session; run infrahub-sync login", err=True)
         return
     typer.echo(f"hint: {_SESSION_REFUSED_HINT}", err=True)

@@ -8,7 +8,9 @@ It holds one JSON object. Each key is the normalized address of a Sync API (see
 
 The directory is created with mode ``0700`` and the file with mode ``0600``. A write goes to a
 temporary file in the same directory, created with mode ``0600``, which then replaces the session
-file, so an interrupted write leaves the previous file whole.
+file, so an interrupted write leaves the previous file whole. A write holds the lock file
+``sessions.json.lock`` from its read to its replacement, so two commands that write at the same
+time, for example two `login` commands for two addresses, do not lose each other's session.
 
 A file that is missing, empty, not JSON or of another shape reads as "no saved session". No
 function of this module prints or logs the content of the file.
@@ -21,11 +23,17 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import typer
+from filelock import FileLock
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 APP_NAME = "infrahub-sync"
 SESSION_FILE_NAME = "sessions.json"
@@ -34,6 +42,8 @@ _FILE_MODE = 0o600
 _TOKEN_KEY = "token"
 _ACCOUNT_KEY = "account"
 _API_SUFFIX = "/api"
+# A write that waits longer for another one raises ``filelock.Timeout``, an ``OSError``.
+_LOCK_WAIT_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -62,7 +72,8 @@ def normalize_address(address: str) -> str | None:
     - trailing slashes are removed, then one trailing ``/api`` path segment, which the client adds itself;
     - a query string and a fragment are dropped.
 
-    The port is kept as written: ``http://host`` and ``http://host:80`` are two keys. An address
+    A default port is not removed: ``http://host`` and ``http://host:80`` are two keys. The port is
+    written as a number, so ``http://host:08001`` and ``http://host:8001`` are one key. An address
     without an ``http`` or ``https`` scheme, without a host, or with a user name or a password
     has no key.
     """
@@ -88,6 +99,14 @@ def _session_file(directory: Path | None) -> Path:
     return (default_directory() if directory is None else directory) / SESSION_FILE_NAME
 
 
+@contextmanager
+def _locked(path: Path) -> Iterator[None]:
+    """Hold the lock file of the session file, so that one write at a time reads and replaces it."""
+    path.parent.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
+    with FileLock(path.with_name(f"{path.name}.lock"), timeout=_LOCK_WAIT_SECONDS):
+        yield
+
+
 def _read_all(path: Path) -> dict[str, dict[str, str]]:
     """Return every well-formed entry of the session file; a file that cannot be read holds none."""
     try:
@@ -109,7 +128,6 @@ def _read_all(path: Path) -> dict[str, dict[str, str]]:
 
 def _write_all(path: Path, entries: dict[str, dict[str, str]]) -> None:
     """Replace the session file with ``entries`` through a temporary file created with mode ``0600``."""
-    path.parent.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
     # `mkstemp` creates the file with mode 0600, whatever the umask, so no other user can read
     # the token at any time. `os.replace` then gives the session file that mode too, which also
     # tightens a session file that had wider permissions.
@@ -142,29 +160,40 @@ def write_session(address: str, session: SavedSession, *, directory: Path | None
 
     Raises:
         ValueError: when the address is not the address of a Sync API.
-        OSError: when the directory or the file cannot be written.
+        OSError: when the directory or the file cannot be written, or another write held the lock
+            for too long.
     """
     key = normalize_address(address)
     if key is None:
         message = "the address is not the address of a Sync API"
         raise ValueError(message)
     path = _session_file(directory)
-    entries = _read_all(path)
-    entries[key] = {_TOKEN_KEY: session.token, _ACCOUNT_KEY: session.account}
-    _write_all(path, entries)
+    with _locked(path):
+        entries = _read_all(path)
+        entries[key] = {_TOKEN_KEY: session.token, _ACCOUNT_KEY: session.account}
+        _write_all(path, entries)
 
 
-def remove_session(address: str, *, directory: Path | None = None) -> bool:
+def remove_session(address: str, *, token: str | None = None, directory: Path | None = None) -> bool:
     """Remove the session saved for a Sync API address. Return whether the file held one.
 
+    With ``token``, the session is removed only while the file still holds that token for the
+    address, so a command that a `login` overtook does not remove the new session.
+
     Raises:
-        OSError: when the file cannot be written.
+        OSError: when the file cannot be written, or another write held the lock for too long.
     """
     key = normalize_address(address)
-    path = _session_file(directory)
-    entries = _read_all(path)
-    if key is None or key not in entries:
+    if key is None:
         return False
-    del entries[key]
-    _write_all(path, entries)
+    path = _session_file(directory)
+    if key not in _read_all(path):
+        return False
+    with _locked(path):
+        entries = _read_all(path)
+        entry = entries.get(key)
+        if entry is None or (token is not None and entry[_TOKEN_KEY] != token):
+            return False
+        del entries[key]
+        _write_all(path, entries)
     return True
