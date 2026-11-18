@@ -178,6 +178,41 @@ def test_a_failed_call_answers_503_and_the_schedule_is_stored_and_not_synced(api
     assert api.event_types() == ["infrahub_sync.schedule.created"]
 
 
+def test_a_store_error_of_the_match_answers_503_with_a_message_that_names_the_product_database(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail(*_args: object) -> None:  # noqa: RUF029
+        raise ProductStoreProviderError
+
+    monkeypatch.setattr(schedules, "match_prefect_schedules", fail)
+
+    response = api.client.post("/schedules", json=api.body(), headers=headers())
+
+    assert response.status_code == 503, response.text
+    error = response.json()["error"]
+    assert error["code"] == "orchestration-unavailable"
+    assert "product database failed" in error["message"]
+    assert "task manager could not be reached" not in error["message"]
+
+
+def test_the_accepted_event_carries_the_time_of_the_change_it_records(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The match with Prefect takes time; the event and the record keep the time of the decision."""
+    start = api.schedules._clock()
+    ticks = iter(range(1000))
+    monkeypatch.setattr(api.schedules, "_clock", lambda: start + timedelta(seconds=next(ticks)))
+
+    response = api.client.post("/schedules", json=api.body(), headers=headers())
+
+    assert response.status_code == 201, response.text
+    stored = api.stored(response.json()["schedule_id"])
+    (created,) = [
+        event for event in api.projection.audit_events() if event.event_type == "infrahub_sync.schedule.created"
+    ]
+    assert created.created_at == stored.created_at
+
+
 def test_the_next_schedule_request_repairs_the_schedule(api: ScheduleApi) -> None:
     api.orchestration.unavailable = True
     request_headers = headers(key="create-once")

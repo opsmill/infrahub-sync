@@ -83,6 +83,14 @@ _UNAVAILABLE_MESSAGE: Final = (
     "the schedule is stored, and the task manager could not be reached; the schedule is handed to the "
     "task manager by a later schedule request or by a restart of the Sync API"
 )
+# The same answer when the product database failed while the schedules were handed to the task
+# manager: the task manager was not the dependency that failed.
+_STORE_UNAVAILABLE_MESSAGE: Final = (
+    "the schedule is stored, and the product database failed while the schedule was handed to the task "
+    "manager; the schedule is handed to the task manager by a later schedule request or by a restart of "
+    "the Sync API"
+)
+_MatchFailure = Literal["orchestration", "product-store"]
 # What a stopped schedule needs before a resume is accepted, by the reason it stopped for.
 _RESUME_ACTIONS: Final = {
     "owner-not-found": (
@@ -448,7 +456,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 f"the configuration {request.config_id!r} already has the schedule {error.name!r} "
                 f"({error.schedule_id}); a configuration has one schedule",
             ) from None
-        return await self._answer(reserved, 201, context.of(schedule))
+        return await self._answer(reserved, 201, context.of(schedule), now)
 
     async def change(
         self, schedule_id: str, request: ChangeScheduleRequest, principal: Principal, idempotency_key: str
@@ -736,7 +744,11 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             logger.warning("schedules.stopped", schedule_id=schedule.schedule_id, state_reason=reason)
 
     async def _matched(self, *, step: str = "request") -> bool:
-        """Make Prefect match the store, and return whether it did.
+        """Make Prefect match the store, and return whether it did."""
+        return await self._match(step=step) is None
+
+    async def _match(self, *, step: str = "request") -> _MatchFailure | None:
+        """Make Prefect match the store; return ``None``, or which dependency failed.
 
         The schedule is stored before this step, so the request must still save its answer and
         its event, and the API process must still start, whatever the step raises. A task
@@ -749,16 +761,21 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             await match_prefect_schedules(self._projection, self._orchestration)
         except OrchestrationUnavailableError as error:
             logger.warning("schedules.match_failed", step=step, error_class=error.error_class)
-            return False
+            return "orchestration"
         except ProductStoreProviderError:
             logger.error("schedules.match_store_failed", step=step, error_class="ProductStoreProviderError")  # noqa: TRY400 - the class only.
-            return False
+            return "product-store"
         except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             # The last boundary of the step: a driver error of the local store or a fault of
             # this code must not stop the answer of a stored request or the start of the API.
             logger.error("schedules.match_failed", step=step, error_class=type(error).__name__)  # noqa: TRY400 - the class only.
-            return False
-        return True
+            return "orchestration"
+        return None
+
+    def _unavailable(self, failure: _MatchFailure, mutation_id: str) -> ServiceAPIError:
+        """The ``503 orchestration-unavailable`` answer, with a message that names the dependency that failed."""
+        message = _STORE_UNAVAILABLE_MESSAGE if failure == "product-store" else _UNAVAILABLE_MESSAGE
+        return self._error(503, "orchestration-unavailable", message, mutation_id=mutation_id)
 
     # ------------------------------------------------------------------
     # One request
@@ -810,7 +827,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             if reserved is None:
                 reserved = self._reserve(receipt, context)
             if wanted is schedule:
-                return await self._answer(reserved, 200, context)
+                return await self._answer(reserved, 200, context, now)
             wanted = wanted.model_copy(update={"prefect_synced": False, "updated_at": now})
             try:
                 self._projection.update_schedule(wanted, expected_updated_at=schedule.updated_at, secrets=self._secrets)
@@ -820,7 +837,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 assert reread is not None
                 schedule, now = reread, self._clock()
                 continue
-            return await self._answer(reserved, 200, context.of(wanted))
+            return await self._answer(reserved, 200, context.of(wanted), now)
         raise self._released(
             reserved,
             self._refusal(
@@ -961,8 +978,9 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         assert existing.response_body is not None
         schedule = self._projection.lookup_schedule(existing.resource_id).value
         self._audit(context if schedule is None else context.of(schedule), "replayed")
-        if not await self._matched():
-            raise self._error(503, "orchestration-unavailable", _UNAVAILABLE_MESSAGE, mutation_id=existing.receipt_id)
+        failure = await self._match()
+        if failure is not None:
+            raise self._unavailable(failure, existing.receipt_id)
         return existing.response_status, existing.response_body
 
     def _reserve(self, receipt: MutationReceipt, context: _Request) -> MutationReceipt:
@@ -983,15 +1001,21 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             )
         return stored
 
-    async def _answer(self, receipt: MutationReceipt, status: int, context: _Request) -> tuple[int, dict[str, Any]]:
+    async def _answer(
+        self, receipt: MutationReceipt, status: int, context: _Request, now: datetime
+    ) -> tuple[int, dict[str, Any]]:
         """Match Prefect to the store, then save the answer of an accepted request with its event.
+
+        The event carries ``now``, the time of the request's decision that the schedule record
+        also carries, not the time the match with Prefect ended.
 
         Raises:
             ServiceAPIError: ``503 orchestration-unavailable`` when Prefect could not be reached.
                 The schedule and the answer are stored, and a repeated request returns the answer.
         """
         assert context.schedule_id is not None
-        synced = await self._matched()
+        failure = await self._match()
+        synced = failure is None
         schedule = self._projection.lookup_schedule(context.schedule_id).value
         assert schedule is not None
         if synced and schedule.state == "deleted" and not schedule.prefect_synced:
@@ -1003,11 +1027,11 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             response_status=status,
             response_body=self._resource(schedule),
             flow_run_id=None,
-            events=(self._event(context, "accepted"),),
+            events=(self._event(context, "accepted", created_at=now),),
             secrets=self._secrets,
         )
-        if not synced:
-            raise self._error(503, "orchestration-unavailable", _UNAVAILABLE_MESSAGE, mutation_id=receipt.receipt_id)
+        if failure is not None:
+            raise self._unavailable(failure, receipt.receipt_id)
         assert completed.response_status is not None
         assert completed.response_body is not None
         return completed.response_status, completed.response_body
@@ -1163,7 +1187,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         """Return the schedule resource as the API answers it."""
         return self._emitted(schedule).model_dump(mode="json")
 
-    def _event(self, context: _Request, outcome: str) -> AuditEvent:
+    def _event(self, context: _Request, outcome: str, *, created_at: datetime | None = None) -> AuditEvent:
         return schedule_event(
             event_type=schedule_decision_type(context.operation, outcome),
             actor=context.actor,
@@ -1173,7 +1197,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             schedule_id=context.schedule_id,
             config_id=context.config_id,
             registry_version=context.registry_version,
-            created_at=self._clock(),
+            created_at=self._clock() if created_at is None else created_at,
         )
 
     def _audit(self, context: _Request, outcome: str) -> None:
