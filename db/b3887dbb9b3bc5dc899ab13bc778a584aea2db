@@ -1,0 +1,56 @@
+dev/specs/archive/022-local-accounts/plan.md
+  s_cf9ada8f865389::t_dc1bf577bb873d 1-275
+docs/docs/development/knowledge/repository-tour.md
+  s_cf9ada8f865389::t_2442576f71bb4b 142-144
+dev/specs/archive/022-local-accounts/spec.md
+  s_cf9ada8f865389::t_dc1bf577bb873d 1-523
+docs/docs/development/guidelines/secret-redaction.md
+  s_cf9ada8f865389::t_3ff6291071797b 245-265
+dev/specs/archive/022-local-accounts/EXTRACTED.md
+  s_cf9ada8f865389::t_2408cdd7261a77 1-133
+docs/docs/development/knowledge/index.md
+  s_cf9ada8f865389::t_7b97a19c3a9eaa 52-58
+docs/docs/development/guidelines/accounts.md
+  s_cf9ada8f865389::t_b904e3f716dde5 1-20,22-25,27-35,37-60
+  s_cf9ada8f865389::t_c7eb39b63683ad 26,36
+  s_cf9ada8f865389::t_0c43e63755856d 21
+docs/docs/development/guidelines/index.md
+  s_cf9ada8f865389::t_ecf5ecabe73ec0 30-31
+  s_cf9ada8f865389::t_b718bba8d924b2 29
+docs/sidebars.ts
+  s_cf9ada8f865389::t_1780d294a06b9a 105,141
+dev/specs/archive/README.md
+  s_cf9ada8f865389::t_769b970d6ad906 43-50
+dev/specs/archive/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_dc1bf577bb873d 1-411
+docs/docs/development/knowledge/local-accounts.md
+  s_cf9ada8f865389::t_f8925c31dc0201 1-93,97-103,105-178,181-226,230-234
+  s_cf9ada8f865389::t_aadb9700424e2c 94-96
+  s_cf9ada8f865389::t_c7eb39b63683ad 104
+  s_cf9ada8f865389::t_42130bd5fd1dd6 179-180
+  s_cf9ada8f865389::t_642078bf0003f5 227-229
+dev/specs/archive/022-local-accounts/research.md
+  s_cf9ada8f865389::t_dc1bf577bb873d 1-473
+dev/adr/0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md
+  s_cf9ada8f865389::t_5c93e42f5d4649 5-7
+dev/adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md
+  s_cf9ada8f865389::t_f32cc2a22f54f3 77-79,81-84,88-91
+  s_cf9ada8f865389::t_b91fbd5ba71d0f 85-87
+  s_cf9ada8f865389::t_699639a07ef01c 5-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbb3887dbb9b3bc5dc899ab13bc778a584aea2db",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
