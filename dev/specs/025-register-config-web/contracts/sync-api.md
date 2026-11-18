@@ -8,7 +8,11 @@ existing Sync API error format.
 Validates a configuration package without registering it. Stores nothing, records no audit event,
 takes no `Idempotency-Key`.
 
-**Access**: any authenticated token, as `POST /configs/{config_id}/versions/{registry_version}/validate`.
+**Access**: an administrator token, as `POST /configs`. Any other token gets 403 `forbidden`
+("administrator access is required"), no destination is contacted, and the refusal is recorded with
+the operation `check-config-package`, as registration records `register-config`. Reason: with a
+branch, the service connects to the address the package declares, with the destination credential
+it holds (research R10).
 
 **Query parameters**: `branch`, `offset`, `limit`, with the same parsing and bounds as the existing
 validate route.
@@ -43,7 +47,7 @@ validate route.
 ```
 
 `destination_read` is `not_requested` without `branch`; otherwise `read`, `timeout`,
-`unreachable`, `unauthorized`, `forbidden` or `nobranch`. When it is not `read` or
+`unreachable`, `unauthorized`, `forbidden`, `nobranch`, `unconfigured` or `credentials`. When it is not `read` or
 `not_requested`, the findings include the existing `destination_schema_read_failed` finding.
 
 **Refusals**:

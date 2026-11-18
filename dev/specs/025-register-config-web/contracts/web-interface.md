@@ -35,7 +35,10 @@ without a mouse.
    - "Valid against branch B" when there are no findings;
    - the list of findings, otherwise;
    - "Could not validate: the destination cannot be reached" when `destination_read` is `timeout`
-     or `unreachable`.
+     or `unreachable`;
+   - "Validating against branch B…" while the request runs, with Cancel available.
+   The review step requests the largest findings page (256). When `total_findings` is larger, it
+   adds "N more findings. Run `infrahub-sync configs check` to list them all."
 8. Reason, optional, at most 512 characters (the existing limit).
 9. Register and Cancel. Register is enabled only when the result is "Valid", or (User Story 4)
    when the destination cannot be reached; in that case its label is "Register without
