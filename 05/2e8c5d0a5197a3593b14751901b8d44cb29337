@@ -1,0 +1,54 @@
+AGENTS.md
+  s_cf9ada8f865389::t_b81f7268fef2e0 111
+docs/docs/compose-deployment.mdx
+  s_cf9ada8f865389::t_b81f7268fef2e0 111-112,250-254,277-278
+docs/docs/reference/sync-http-api.mdx
+  s_cf9ada8f865389::t_b81f7268fef2e0 77,83-87,103-104,120,134-144,151-160
+tests/cli/test_account_commands.py
+  s_cf9ada8f865389::t_ca976651daa991 260-273,438-439
+infrahub_sync/service/serve.py
+  s_cf9ada8f865389::t_c814001c3d3613 108
+infrahub_sync/cli_accounts.py
+  s_cf9ada8f865389::t_13a4d2ab7cc65b 55,61-64
+tests/service/test_account_routes.py
+  s_cf9ada8f865389::t_ca976651daa991 452-465,467,469-471,476-477,484,873,875-877,882-883,892
+infrahub_sync/service/credentials.py
+  s_cf9ada8f865389::t_c814001c3d3613 40
+infrahub_sync/cli.py
+  s_cf9ada8f865389::t_c814001c3d3613 1874
+tests/service/test_credentials.py
+  s_cf9ada8f865389::t_c814001c3d3613 65
+docs/docs/guides/accounts.mdx
+  s_cf9ada8f865389::t_b81f7268fef2e0 23-24,29-34
+infrahub_sync/service/account_actions.py
+  s_cf9ada8f865389::t_13a4d2ab7cc65b 113-116,583,585-586,702,750
+  s_cf9ada8f865389::t_1e2139ca224c12 584,802
+dev/adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md
+  s_cf9ada8f865389::t_5fe312b341dec8 36-39,66-68
+docs/docs/reference/cli.mdx
+  s_6ea02f95b5651a::t_cc89afe6c63219 47,228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "052e8c5d0a5197a3593b14751901b8d44cb29337",
+  "prompts": {},
+  "sessions": {
+    "s_6ea02f95b5651a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a4488ac551125bbdf",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
