@@ -1,0 +1,23 @@
+changelog/+local-accounts.added.md
+  s_cf9ada8f865389::t_ed445c0f91e05c 1
+changelog/+bearer-tokens-variable.removed.md
+  s_cf9ada8f865389::t_108d706e4b107a 1
+changelog/421.added.md
+  s_cf9ada8f865389::t_108d706e4b107a 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "06f97d8d3ff5b18e32ee9a15bf65ef20e8b05db3",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
