@@ -105,6 +105,37 @@ def test_a_write_target_that_is_not_delivered_is_refused(
     assert api.orchestration.calls == []
 
 
+@pytest.mark.parametrize(
+    ("delivered", "write_target", "status", "code"),
+    [
+        (frozenset(), "branch-review", 422, "schedule-setting-not-available"),
+        (frozenset({"branch-review"}), "branch-review", 404, "configuration-version-not-found"),
+    ],
+)
+def test_the_write_target_is_checked_before_the_configuration_is_read(  # noqa: PLR0913, PLR0917 - parametrized
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    delivered: frozenset[str],
+    write_target: str,
+    status: int,
+    code: str,
+) -> None:
+    """A caller can ask whether a write target is delivered before it registers a configuration.
+
+    The smoke test of spec 021 sends a create request that names a configuration that does not
+    exist: `422 schedule-setting-not-available` means the write target is not delivered, and
+    `404` means it is.
+    """
+    api = schedule_api(monkeypatch, tmp_path, delivered=delivered)
+
+    response = api.client.post(
+        "/schedules", json=api.body(config_id="not-registered", write_target=write_target), headers=headers()
+    )
+
+    assert response.status_code == status, response.text
+    assert _error(response)["code"] == code
+
+
 def test_the_served_api_delivers_no_write_target_yet(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every create request is refused on a deployment until the worker side of user story 1 is delivered."""
     received: dict[str, object] = {}

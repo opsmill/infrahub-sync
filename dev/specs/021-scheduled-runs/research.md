@@ -639,3 +639,28 @@ starts (`tests/service/test_schedule_missed_starts.py`):
   runs with `run_count == 0` (`server/models/deployments.py`, `_delete_scheduled_runs`;
   `server/api/deployments.py`). The waiting flow run has run once, so a change of any Sync
   schedule leaves it in place. Read from the source code only.
+
+Checked since, for R11 and R15, against a running Infrahub 1.11.9 on 2026-11-18: the Infrahub of
+an isolated development stack of this branch (`development/docker-compose.yml`, preset
+`infrahub`), with the development admin token. The test
+`tests/integration/test_branch_review_operations_integration.py` passed on its first run, with no
+change to `infrahub_sync/service/branch_review.py`.
+
+- The branch list, `BranchCreate` and `BranchDelete`, sent to `main` with
+  `wait_until_completion: true`, work while the run's branch does not exist yet, and after it is
+  deleted.
+- A second `BranchCreate` with the name of an existing branch is refused; the module then reads the
+  branch list and counts the branch as created. A `BranchDelete` of a branch that no longer exists
+  is refused too; the module counts it as deleted. Both match the source code read earlier.
+- `CoreProposedChangeCreate` with only `name`, `description`, `source_branch` and
+  `destination_branch` opens a proposed change in the state `open`. `CoreChangeCommentCreate` with
+  only `text` and `change` is accepted.
+- `CoreProposedChange` reads the same state on the run's branch and on `main`. After the run's
+  branch is deleted, a request sent to that branch is answered 404 (`URLNotFoundError`), and a
+  read sent to `main` still works.
+- Deleting the branch of an open proposed change does not change its state at once: a read just
+  after the delete returned `open`, and a read about 20 seconds later returned `canceled`.
+  Infrahub sets the state in a background task. A proposed change closed before the delete stays
+  `closed`.
+- Not observed: an account with only the permissions of the group "Infrahub Users"; every request
+  used the admin account.

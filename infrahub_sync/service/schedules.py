@@ -352,6 +352,10 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         replayed = await self._replayed(receipt, context)
         if replayed is not None:
             return replayed
+        # Checked before the configuration is read, so a caller can ask whether a write target is
+        # delivered without registering a configuration first. The approval refusal comes first.
+        self._require_approval_allows(context, write_target=request.write_target)
+        self._require_delivered(context, write_target=request.write_target)
         declared_branch = self._declared_branch(context, request.config_id, request.registry_version)
         self._require_cadence(context, request.cron, request.timezone)
         self._require_write_settings(
@@ -360,7 +364,6 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             write_when_left_out=request.write_when_left_out,
             declared_branch=declared_branch,
         )
-        self._require_delivered(context, write_target=request.write_target)
         reserved = self._reserve(receipt, context)
         schedule = ScheduleRecord(
             schedule_id=reserved.resource_id,
@@ -1003,10 +1006,8 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             code = "schedule-cron-invalid" if error.field == "cron" else "schedule-timezone-invalid"
             raise self._refusal(context, 422, code, error.reason) from None
 
-    def _require_write_settings(
-        self, context: _Request, *, write_target: str, write_when_left_out: bool, declared_branch: str | None
-    ) -> None:
-        """Refuse a write target that the approval setting or the configuration version does not allow."""
+    def _require_approval_allows(self, context: _Request, *, write_target: str) -> None:
+        """Refuse the write target `default-branch` while the Sync API requires an approved plan."""
         if write_target == "default-branch" and approval_required():
             raise self._refusal(
                 context,
@@ -1015,6 +1016,12 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 f"this Sync API requires an approved plan before any write ({REQUIRE_APPROVAL_ENV}), so a "
                 "schedule cannot write to the default branch; use the write target branch-review",
             )
+
+    def _require_write_settings(
+        self, context: _Request, *, write_target: str, write_when_left_out: bool, declared_branch: str | None
+    ) -> None:
+        """Refuse a write target that the approval setting or the configuration version does not allow."""
+        self._require_approval_allows(context, write_target=write_target)
         if write_target == "branch-review" and declared_branch is not None:
             raise self._refusal(
                 context,
