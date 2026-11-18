@@ -463,7 +463,9 @@ Other facts from the source code that the operations follow:
 
 - Infrahub accepts a proposed change only to the branch `main`, and refuses a second open
   proposed change for the same source branch. The default branch of the destination must be
-  `main` for branch review; the request for a schedule with branch review is refused otherwise.
+  `main` for branch review. The Sync API cannot read the destination, so the worker checks it: a
+  run with branch review on a destination whose default branch is not `main` fails before it
+  creates its branch, with a failure class that says so.
 - Deleting a branch sets its proposed changes to `canceled`. The close comes before the delete,
   so the comment of a replaced proposed change is kept.
 - Two runs of one configuration can overlap during steps 5 and 6. `update_schedule_branch` locks

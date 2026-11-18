@@ -28,8 +28,9 @@ run.
 4. **Repeating is safe.** Creating a branch that already exists, closing a proposed change that is
    already closed, canceled or merged, and deleting a branch that no longer exists succeed. Infrahub
    refuses an update of a proposed change that is not open, so the close reads the state first.
-6. **The destination is `main`.** Infrahub accepts a proposed change only to `main`. A request for
-   a schedule with branch review is refused when the destination's default branch is another one.
+6. **The destination is `main`.** Infrahub accepts a proposed change only to `main`. A run with
+   branch review on a destination whose default branch is another one fails before it creates its
+   branch, with a failure class that says so.
 7. **The close comes before the delete.** Deleting a branch sets its proposed changes to
    `canceled`.
 5. **Only what a schedule created.** The delete and close operations are called only with a branch
