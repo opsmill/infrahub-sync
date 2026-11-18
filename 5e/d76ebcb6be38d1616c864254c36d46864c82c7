@@ -1,0 +1,22 @@
+tests/cli/test_parity_and_closure.py
+  s_cf9ada8f865389::t_9177bf2087769c 277
+  s_cf9ada8f865389::t_4def41723e62fa 36-37,39-43,55,231,272-274
+docs/docs/compose-deployment.mdx
+  s_cf9ada8f865389::t_2adf02b3a1e02d 1092
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ed76ebcb6be38d1616c864254c36d46864c82c7",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
