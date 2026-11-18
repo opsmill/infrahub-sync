@@ -166,6 +166,30 @@ Six service modules carry what a run tells the operator:
   left_out_review_required`, and the store releases the run's write admission in the same
   commit (`release_write_admission` in `product_store/models.py`).
 
+Five service modules carry the schedules of spec 021. There is no scheduling loop: Prefect's
+scheduler creates the flow runs, and [A scheduled run](sync-architecture.md#a-scheduled-run)
+describes the path of one start.
+
+- `schedules.py` holds `ScheduleService`, the application service of the schedule routes, and
+  `match_prefect_schedules`, the step that makes the Prefect schedules of the deployment
+  `infrahub-sync-service/run` match the stored schedules. The API process runs that step after
+  each schedule request and at start-up, and `bootstrap.py` runs it too. `ScheduleService` takes
+  the set of write targets that the build can run; `serve.py` passes
+  `DELIVERED_SCHEDULE_WRITE_TARGETS`, which is empty in this build, so every create is refused
+  with `schedule-setting-not-available`.
+- `schedule_routes.py` holds the FastAPI routes under `/schedules`.
+- `schedule_cadence.py` validates a cron expression and a time zone, and computes start times,
+  with the server-side `CronSchedule` of the installed Prefect, the class that Prefect's
+  scheduler uses.
+- `schedule_admission.py` decides whether one start of a schedule runs: missed and late starts,
+  a version that can no longer be run, the overlap policy, and the earlier proposed changes of
+  branch review. It derives the branch name of a run with branch review
+  (`branch_review_branch`). The worker calls it from `flow.py` for a flow run that carries
+  `schedule_id`.
+- `branch_review.py` creates and deletes the branch of a scheduled run, and opens, reads and
+  closes its proposed change, with the Infrahub SDK. Each failure is a `BranchReviewError`
+  subclass that `failure_cause.py` maps to a failure type.
+
 `paging.py` holds the cursor that the three lists share: `GET /runs`, `GET /configs` and
 `GET /configs/{config_id}/versions`. A cursor is URL-safe base64 of a JSON object with two keys:
 `k`, the sort key of the last row returned, and `f`, the first 16 hexadecimal characters of the
@@ -281,6 +305,15 @@ Start-up creates the list indexes, each with `CREATE INDEX IF NOT EXISTS`
 | `product_runs_binding_applied (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'` | Each version's most recently applied run |
 | `configurations_name (name)` | The `name` filter of the configuration list |
 | `configurations_created (created_at, config_id)` | The order of the configuration list |
+| `product_runs_schedule_started (schedule_id, started_at, run_id)` | The run list of one schedule |
+
+The schedule records live in the tables `schedules` and `schedule_branches`. Three unique
+indexes hold their rules: `product_runs_schedule_start (schedule_id, scheduled_start_at)` allows
+one run for each start of a schedule, and `schedules_name_not_deleted` and
+`schedules_config_not_deleted` allow one schedule that is not deleted for each name and each
+configuration. `admit_scheduled_start` in `store.py` saves the decision on one start, with the run
+when the start runs, in one transaction. [Durable product records](../../reference/durable-product-records.mdx#schedule-records)
+documents the records.
 
 ### Adapters
 

@@ -132,7 +132,9 @@ No. Map one model at a time and run each configuration when you choose. The exis
 system keeps running.
 
 **Does Infrahub Sync schedule runs?**
-Not in V3 today: there is no built-in schedule. Start each `plan` or `sync` run with the
+Not in this build. The `infrahub-sync schedules` commands exist, but the Sync API refuses to
+create a schedule until a write target of schedules is turned on; see
+[Schedule sync runs](./orchestration.mdx). Until then, start each `plan` or `sync` run with the
 client, for example from cron, a CI job, or another scheduler you already use.
 
 **What happens if a sync run fails partway through?**

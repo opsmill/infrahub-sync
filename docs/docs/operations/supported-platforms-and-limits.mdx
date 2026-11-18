@@ -52,8 +52,9 @@ measured, and they are not excluded.
   relationship in Infrahub directly.
 - There is no verified in-place upgrade, migration, rollback, backup, or restore
   procedure.
-- There is no built-in schedule. Start each run with the CLI or the Sync API, for
-  example from cron or a CI job.
+- In this build, the Sync API refuses to create a schedule, because no write target of a
+  schedule is turned on yet. Start each run with the CLI or the Sync API, for example from
+  cron or a CI job. See [Schedule sync runs](../orchestration.mdx).
 
 For the operating procedure of a release, including replacement with a fresh
 deployment, use the [Compose deployment guide](../compose-deployment) or the

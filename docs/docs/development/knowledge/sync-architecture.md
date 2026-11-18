@@ -145,6 +145,62 @@ checksum, and refuses a `sync` before the run record is created. The worker does
 approval. A value that is not accepted stops the service at start-up. The request order and the
 error codes are in the [Sync HTTP API reference](../../reference/sync-http-api.mdx#approve-the-reviewed-plan).
 
+### A scheduled run
+
+Infrahub Sync has no loop of its own that starts scheduled runs. Prefect holds the cadence: each
+Sync schedule has one Prefect schedule on the deployment `infrahub-sync-service/run`, with a
+`CronSchedule(cron, timezone)` and the flow parameters `schedule_id` and `stage = "sync"`.
+Prefect's scheduler creates the flow runs ahead of time, and a Sync worker runs them like any
+other flow run of that deployment. Research R1 of spec 021 records why.
+
+- **The Sync API stores, then matches Prefect.** `ScheduleService` (`service/schedules.py`)
+  validates a request, writes the schedule to the product store, then calls
+  `match_prefect_schedules`. That step creates, updates, deactivates or deletes Prefect schedules
+  until Prefect holds one schedule for each stored schedule, active only while the stored
+  schedule is `active`. A schedule that Prefect does not hold as stored keeps `prefect_synced`
+  false, and the request answers `503 orchestration-unavailable`. The step runs again on each
+  schedule request, at the start of the API process (`ScheduleService.start`) and in the
+  bootstrap job.
+- **The API process checks what the worker cannot.** At start-up, `ScheduleService.start` stops
+  each active schedule whose owner's actor no longer exists, or that writes to the default
+  branch while `INFRAHUB_SYNC_REQUIRE_APPROVAL` is on, and writes the `schedule.stopped` event.
+  The worker has no API token and does not read either setting.
+- **The worker admits the start.** A flow run that carries `schedule_id` and no `run_id` takes
+  the second way into `service_sync_run` (`service/flow.py`). The flow refuses it unless Prefect's
+  scheduler created it (`auto_scheduled`). `admit_scheduled_start`
+  (`service/schedule_admission.py`) then decides on the start from the stored schedule and the
+  flow run's `expected_start_time`: it records the starts missed since the last one, skips a
+  start that is late or not the most recent, fails a start whose version can no longer be run,
+  applies the overlap policy with `run_in_progress`, and, for branch review, reads the state of
+  the schedule's earlier proposed changes. The product store saves the decision in one
+  transaction (`ProductProjection.admit_scheduled_start`): either the events of a start that
+  creates no run, or the run with the owner as actor, its accepted receipt, its write admission,
+  its execution claimed by this worker and, for branch review, a `pending` row in
+  `schedule_branches`. A unique index on `(schedule_id, scheduled_start_at)` allows one run for
+  each start, so a retried or second flow run of the same start creates none.
+- **The flow runs the `sync` stage.** The admission passes `confirm_left_out` (always true for
+  branch review, else the schedule's left-out setting), `branch_review` and the schedule's
+  earlier branches to the stage. The stage then runs as a `sync` that a person starts.
+
+With branch review, the stage does more under the write guard, then after the commit
+(research R11 and R15):
+
+1. Create the run's branch from `main` (`service/branch_review.py`, `create_branch`), after
+   checking that the destination's default branch is `main`.
+2. Plan, verify and apply against that branch. When the plan has no operation, delete the branch
+   and end with `no-change`; the row moves to `removed`.
+3. After the stage result is committed, outside the scope whose failures make a write ambiguous,
+   open the proposed change and record the row as `open`. Then close the proposed change of each
+   earlier `pending` or `open` row with a comment that names the new one, delete its branch, and
+   move the row to `replaced`. A proposed change that a person merged or closed moves to `kept`,
+   and one that a person approved while the run was writing is left in place.
+
+A failure in step 3 is recorded as `branch_review.failure` in the stage result and as the event
+`proposed_change_failed`; it does not change the verdict of the write. The store saves the end of
+a scheduled run and the schedule's count of failed runs in one transaction, and stops the
+schedule at the fifth failed run in a row. The records are described in
+[Durable product records](../../reference/durable-product-records.mdx#schedule-records).
+
 ### Persistence and deployment limits
 
 Sync retains configuration versions, product runs and execution links in PostgreSQL.

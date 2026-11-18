@@ -222,6 +222,13 @@ request, and never changes it. Withdrawing the plan sets the run's phase to `can
 the approval. The run resource returns it as `approval`; see
 [Approve the reviewed plan](./sync-http-api.mdx#approve-the-reviewed-plan).
 
+A run also records what started it, in three columns of `product_runs`: `trigger_type`
+(`manual` or `scheduled`), `schedule_id` and `scheduled_start_at`, the start time of the
+cadence. A unique index on `(schedule_id, scheduled_start_at)` allows one run for each start of a
+schedule. The worker writes a scheduled run, its accepted mutation receipt, its write admission
+and its execution in the one transaction that decides the start. The receipt names the schedule's
+owner as its actor and a key derived from the schedule and the start time.
+
 Each `PrefectExecutionLink` records:
 
 - a distinct `flow_run_id`;
@@ -294,6 +301,45 @@ saves the event of a refusal, a replay or a request that could not be confirmed.
 `record_results` updates retained result evidence without changing product phase, outcome,
 or finish time. Service verification uses this operation because verification is read-only
 for both the destination and product lifecycle.
+
+## Schedule records
+
+The table `schedules` holds one row for each schedule, kept after the schedule is deleted. A row
+holds the schedule's name, configuration and version, cron expression and time zone, write
+target, left-out setting with the actor and time that last turned it on, overlap policy,
+late-start duration, state and the reason of a stopped schedule, owner, count of failed runs in
+a row, most recent start, waiting start, the identifier of its Prefect schedule and
+`prefect_synced`. It stores no token: the owner is an actor name. `next_start_at` is not stored;
+the Sync API computes it each time it returns the schedule. Two partial unique indexes allow one
+schedule that is not deleted for each name and for each configuration.
+
+The store saves the end of a scheduled run and the schedule's count of failed runs in one
+transaction. At the fifth failed run in a row, the same transaction stops the schedule and saves
+its `infrahub_sync.schedule.stopped` event.
+
+The table `schedule_branches` holds one row for each run with branch review: the schedule, the
+run, the branch, the proposed change once the run opened one, the state and, for a replaced row,
+the run that replaced it. The states are:
+
+| State | Meaning |
+| --- | --- |
+| `pending` | Written with the run, before the worker creates the branch. The branch may or may not exist in Infrahub. |
+| `open` | The run wrote to the branch and opened its proposed change. |
+| `removed` | The run deleted its own branch, because its plan had no change. |
+| `replaced` | A later run of the schedule closed the proposed change, if any, and deleted the branch. |
+| `kept` | A person merged or closed the proposed change. The schedule never touches it again. |
+
+Because the `pending` row is written before the branch exists, a run that fails, is interrupted
+or is cancelled never leaves a branch that no record names. The next successful run of the
+schedule handles every `pending` and `open` row other than its own.
+
+`AuditEvent` has a nullable `details` column with a closed set of keys, described in
+[List events](./sync-http-api.mdx#list-events). A mutation receipt accepts the resource kind
+`schedule` for the requests on a schedule.
+
+The schedule tables and the new columns exist only in a product database that this build
+created. The service refuses to start on a product database that an earlier build created,
+because there is no in-place upgrade.
 
 ## Artifact publication and lookup
 
