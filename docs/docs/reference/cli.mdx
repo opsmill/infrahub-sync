@@ -782,6 +782,10 @@ $ infrahub-sync accounts [OPTIONS] COMMAND [ARGS]...
 * `unlock`: End the refusal of an account&#x27;s sign-ins...
 * `disable`: Disable an account.
 * `enable`: Enable a disabled account.
+* `set-level`: Set the level of an account.
+* `delete`: Delete an account.
+* `tokens`: List the API tokens of an account: name,...
+* `delete-token`: Delete one API token of an account.
 
 ### `infrahub-sync accounts list`
 
@@ -898,4 +902,89 @@ $ infrahub-sync accounts enable [OPTIONS] {name}
 
 * `--reason <str>`: Optional audit reason for the change.
 * `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts set-level`
+
+Set the level of an account. It applies from the next request of the account, with no new sign-in.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts set-level [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--administrator / --no-administrator`: Give the account the administrator level, or take it away. One of the two is required.
+* `--reason <str>`: Optional audit reason for the change.
+* `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts delete`
+
+Delete an account. This cannot be reversed; `accounts disable` can.
+
+The name, the password, the API tokens and the sessions of the account are removed. Its runs,
+approvals and audit events stay, and display `Deleted account` and a short identifier, which
+this command prints. The name can be given to a new account, which has no right over the old
+runs.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts delete [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--yes`: Delete without asking for confirmation.
+* `--reason <str>`: Optional audit reason for the deletion.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts tokens`
+
+List the API tokens of an account: name, token ID, creation, expiry and last use. No value is shown.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts tokens [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts delete-token`
+
+Delete one API token of an account. The Sync API refuses its value afterwards.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts delete-token [OPTIONS] {name} {token_id}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+* `token_id`: Token ID, as `accounts tokens` prints it.  [required]
+
+**Options**:
+
+* `--reason <str>`: Optional audit reason for the deletion.
 * `--help`: Show this message and exit.

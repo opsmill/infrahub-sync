@@ -24,8 +24,9 @@ from two variables of the `sync-api` service:
 - `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`: optional, at least 16 characters, and it must not start
   with `ifs_pat_` or `ifs_ses_`. Empty or unset, `admin` has no API token.
 
-`sync-api` applies both at each start. The CLI and the Sync API refuse to change the password or
-the tokens of `admin`, and refuse to disable it. The refusal names the variable to edit. To
+`sync-api` applies both at each start. The CLI and the Sync API refuse to change the password,
+the tokens or the level of `admin`, and refuse to disable or delete it. The refusal names the
+variable to edit. To
 replace a lost `admin` password, or to rotate its token, edit the variable and recreate
 `sync-api` alone; see
 [Recover or rotate the `admin` account](../compose-deployment.mdx#recover-or-rotate-the-admin-account).
@@ -141,6 +142,20 @@ When an administrator disables an account, the Sync API deletes every token of t
 script that should keep working when a person leaves needs an account of its own: create an
 account such as `ci-nightly`, sign in as it once, and create its token.
 
+## View and delete the tokens of another account
+
+When a token of another account may be known to someone else, an administrator views the tokens
+of that account and deletes the one concerned, without signing in as the account:
+
+```bash
+infrahub-sync accounts tokens alice
+infrahub-sync accounts delete-token alice TOKEN_ID
+```
+
+`accounts tokens` shows the same columns as `tokens list`, and never a token value. After
+`accounts delete-token`, the Sync API refuses the value at the next request. The other tokens
+and the sessions of the account keep working.
+
 ## Replace a lost password
 
 A person who forgot their password cannot sign in, and cannot change it themselves. An
@@ -200,6 +215,66 @@ infrahub-sync accounts enable alice
 The person signs in with the password. The tokens and sessions deleted at the disable stay
 refused: the person creates new tokens.
 
+## Change the level of an account
+
+An administrator gives an account the administrator level, or takes it away:
+
+```bash
+infrahub-sync accounts set-level alice --administrator
+infrahub-sync accounts set-level alice --no-administrator
+```
+
+The new level applies from the next request of the account, with a session or with an API
+token, and the person does not sign in again. An administrator can take the level away from
+their own account, and then cannot give it back: another administrator must. An account that is
+not an administrator cannot change any level, its own included.
+
+## Delete an account
+
+Disabling and deleting both refuse every later request of the account. Choose by what must
+happen to the name:
+
+- Disable an account when a person leaves or a token may be known to someone else. The name
+  stays in every record and stays taken, and an administrator can enable the account again.
+- Delete an account when the name itself must be removed, for example when the person asks for
+  it. A deletion cannot be reversed.
+
+An administrator deletes an account with:
+
+```bash
+infrahub-sync accounts delete alice
+```
+
+The command asks for a confirmation, which says that the deletion cannot be reversed and that
+`accounts disable` can. Add `--yes` to delete without the question, for example from a script;
+without a terminal and without `--yes`, the command refuses. The command prints the text that
+the records of the account display from now on, such as `Deleted account 3f9a1c07`.
+
+What a deletion removes:
+
+- the name of the account;
+- its password;
+- its API tokens and its sessions, so its next request is refused;
+- the record of its failed sign-ins.
+
+What a deletion does not change:
+
+- The past runs, approvals, audit events and configuration versions of the account stay. Each
+  displays `Deleted account` followed by a short identifier, the same on every record of that
+  account and different for each deleted account.
+- An approval that the account recorded stays valid, and an administrator can apply the plan.
+- A run of the account that is in progress continues, and an administrator can cancel it.
+- Text that a person typed keeps the name if it holds it, such as the reason of a run, of an
+  approval or of an account action.
+- Log lines are not rewritten.
+
+After the deletion, the name is free: an administrator can create a new account with it. The new
+account has no right over the runs of the deleted account, and no record of the deleted account
+displays the new account.
+
+An administrator can delete their own account. Their next request is refused. The `admin`
+account always exists, so a deployment keeps one administrator.
+
 ## What someone who knows an account name can do
 
 Account names are not secret: they appear in run records. A person who
@@ -234,7 +309,9 @@ These commands take `--json` to print the answer of the Sync API as JSON:
 - `accounts list`;
 - `accounts create`;
 - `accounts disable`;
-- `accounts enable`.
+- `accounts enable`;
+- `accounts set-level`;
+- `accounts tokens`.
 
 ## Related pages
 

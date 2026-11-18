@@ -98,8 +98,8 @@ run is the name of the account.
 ### Sign-in, sign-out and account routes
 
 These routes take no `Idempotency-Key`. Each mutation accepts an optional `reason` of at most
-512 characters, and records it in the audit history. `DELETE /me/tokens/{token_id}` takes it as a
-query parameter; the other routes take it in the JSON body.
+512 characters, and records it in the audit history. The `DELETE` routes take it as a query
+parameter; the other routes take it in the JSON body.
 
 | Route | Who | Behavior |
 | --- | --- | --- |
@@ -112,9 +112,12 @@ query parameter; the other routes take it in the JSON body.
 | `GET /accounts` | administrator | Lists accounts. Query `state=active`, `disabled` or `all` (the default). |
 | `POST /accounts` | administrator | Takes `{"name", "password", "administrator"?}` and creates an account. |
 | `GET /accounts/{name}` | administrator | Returns one account. |
-| `PATCH /accounts/{name}` | administrator | Takes `{"disabled"}`: `true` disables the account, `false` enables it. Disabling deletes the API tokens of the account and ends its sessions. |
+| `PATCH /accounts/{name}` | administrator | Takes `{"disabled"?, "administrator"?}`, at least one of the two. `disabled`: `true` disables the account, `false` enables it; disabling deletes the API tokens of the account and ends its sessions. `administrator` sets the level, which applies from the next request of the account. A value the account already has changes nothing and writes no audit event. |
 | `PUT /accounts/{name}/password` | administrator | Takes `{"new_password"}`. Every session of the account ends. |
 | `POST /accounts/{name}/unlock` | administrator | Ends a refusal after repeated failed sign-ins. |
+| `DELETE /accounts/{name}` | administrator | Deletes the account and returns `{"placeholder": "Deleted account <short identifier>"}`. Cannot be reversed. See [Deleting an account](#deleting-an-account). |
+| `GET /accounts/{name}/tokens` | administrator | Lists the API tokens of the account, without their values. |
+| `DELETE /accounts/{name}/tokens/{token_id}` | administrator | Deletes one API token of the account. |
 
 The refusals of these routes:
 
@@ -127,16 +130,41 @@ The refusals of these routes:
   failed sign-in.
 - A password shorter than 12 characters answers `422`, code `password-too-short`.
 - A caller that is not an administrator receives `403`, code `forbidden`, on the `/accounts`
-  routes.
-- A change to `admin`, including `PUT /me/password` and the `/me/tokens` mutations called by
-  `admin`, answers `409`, code `environment-managed-account`. The message names the variable to
-  change instead.
+  routes. So an account cannot raise its own level.
+- An unknown or deleted account name answers `404`, code `account-not-found`.
+- A `PATCH /accounts/{name}` body with neither `disabled` nor `administrator` answers `422`,
+  code `request-invalid`.
+- A token ID that the account does not have answers `404`, code `token-not-found`.
+- A change to `admin`, including a change of its level, its deletion, the deletion of its token,
+  `PUT /me/password` and the `/me/tokens` mutations called by `admin`, answers `409`, code
+  `environment-managed-account`. The message names the variable to change instead:
+  `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, or `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` for its token.
 - A `reason` that contains a token value, or the prefix `ifs_pat_` or `ifs_ses_`, answers `422`.
 
 A request with no token, an unknown or deleted token, or a token of a disabled account answers
 `401`, code `unauthenticated`. An API token used after its expiry date answers `401`, code
 `token-expired`. A session idle for longer than `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` answers
 `401`, code `unauthenticated`.
+
+### Deleting an account
+
+`DELETE /accounts/{name}` empties the name, the password and the lower-case name of the account
+row, deletes its API tokens, its sessions and its record of failed sign-ins, and writes the
+audit event `infrahub_sync.account.deleted`, in one database transaction. The row keeps the
+account identifier and an 8-character short identifier. No run, approval, mutation receipt,
+audit event or configuration version changes:
+
+- Every answer shows `Deleted account <short identifier>` in the `actor`, `approved_by` and
+  `registered_by` fields, and in each related resource of kind `account`, that refer to the
+  deleted account. Answers replayed from a mutation receipt show it too.
+- An approval of the deleted account stays valid. A run of the account that is in progress
+  continues. An administrator can act on both.
+- A `reason` that a person typed keeps the name if it holds it. Log lines are not rewritten.
+- The name is free again. A new account with that name has a new identifier and no right over
+  the runs of the deleted account.
+
+An administrator can delete their own account; the next request of that account is refused.
+Deleting an account that is already deleted answers `404`, code `account-not-found`.
 
 For the CLI commands that call these routes, see [Manage accounts](../guides/accounts.mdx).
 

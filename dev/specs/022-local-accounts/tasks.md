@@ -314,7 +314,7 @@ tokens.
   commands `accounts delete` (confirmation, `--yes`), `accounts set-level`, `accounts tokens`
   and `accounts delete-token` to `infrahub_sync/cli.py`; extend
   `tests/client/test_account_client.py` and `tests/cli/test_account_commands.py`.
-- [ ] T060 [P] [US3] Extend `docs/docs/guides/accounts.mdx`: the difference between disabling and
+- [X] T060 [P] [US3] Extend `docs/docs/guides/accounts.mdx`: the difference between disabling and
   deleting, what a deletion removes and what it does not (reasons, log lines), and that it
   cannot be reversed. Regenerate the references with `uv run invoke docs.generate`.
 - [ ] T061 [US3] Run quickstart scenarios 5 and 5a on the development stack and record the
