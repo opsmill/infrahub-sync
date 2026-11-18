@@ -74,8 +74,8 @@ The maintainer made these decisions in the interview of 2026-11-17.
   account name.
 - **D-9, four sign-in rules**, listed in FR-020 to FR-023.
 
-The agent made this decision during the critique of 2026-11-17. The maintainer has not confirmed
-it yet.
+The agent proposed this decision during the critique of 2026-11-17. The maintainer confirmed it
+on 2026-11-18.
 
 - **D-10, a record refers to an account, not to its name.** Each run, approval and audit event
   refers to the account that acted. Sync turns the reference into a name when it displays the
@@ -473,7 +473,8 @@ signs in, changes their password and creates a token, and the administrator disa
 - **A person who knows an account name can delay that account's sign-in with a password.** By
   failing 5 times in each 15-minute window, they keep the name refused. FR-021 limits the effect
   and gives ways to end a refusal, but does not remove it. The alternative, a delay that grows
-  with each failure and never refuses outright, was not chosen in the interview.
+  with each failure and never refuses outright, was not chosen in the interview. The maintainer
+  confirmed the 15-minute refusal on 2026-11-18.
 - **Records made before this feature keep the name of their principal.** Because no production
   deployment exists, only development databases hold such records.
 - **A person receives their initial password from the administrator outside Sync.** Sync sends no
