@@ -1,0 +1,22 @@
+tests/service/test_token_routes.py
+  s_cf9ada8f865389::t_6786df3dffc9a5 478-492
+infrahub_sync/service/account_actions.py
+  s_cf9ada8f865389::t_d5a5adbbccad7f 13-16
+  s_cf9ada8f865389::t_11414bf3c2464f 937-939
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e064751f3de4b7171fd23cc7a94d93843d32d829",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
