@@ -11,6 +11,8 @@ from types import ModuleType
 
 import pytest
 
+from tasks import dev
+
 SCRIPT = Path(__file__).resolve().parents[1] / ".github" / "scripts" / "nightly_e2e.py"
 
 
@@ -42,6 +44,22 @@ def test_suite_writes_failure_report_from_clean_checkout(runner: ModuleType, mon
     assert failure is not None
     assert failure.get("message") == "setup failed"
     assert json.loads((runner.REPORTS / "integration.json").read_text())["failure"] == "setup failed"
+
+
+def test_environment_reads_the_preset_the_stack_starts(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suites' Infrahub address and token come from the preset `start_stack` starts, not the default."""
+    presets: list[str] = []
+
+    def record_preset(*_args: object, preset: str = "", **_kwargs: object) -> None:
+        presets.append(preset)
+        msg = "stop after the preset is read"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(dev, "dev_settings", record_preset)
+    with pytest.raises(RuntimeError, match="stop after the preset is read"):
+        runner.environment()
+
+    assert presets == [runner.STACK_PRESET] == ["infrahub"]
 
 
 def test_logs_writes_timeout_report_without_a_report_directory(

@@ -133,6 +133,11 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeDocker:
     monkeypatch.delenv(dev.INFRAHUB_NETWORK_VARIABLE, raising=False)
     monkeypatch.delenv(dev.INFRAHUB_URL_VARIABLE, raising=False)
     monkeypatch.delenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, raising=False)
+    monkeypatch.delenv(dev.PRESET_VARIABLE, raising=False)
+    # These tests cover the host processes against the stack's own Infrahub: the
+    # `infrahub` preset, which a running `infrahub-server` selects. The presets
+    # themselves are covered in test_dev_tasks.py.
+    monkeypatch.setattr(dev, "running_preset", lambda _context: dev.PRESETS["infrahub"])
     return FakeDocker()
 
 
@@ -472,3 +477,25 @@ def test_dev_smoke_with_the_sync_containers_skips_the_host_process_check(
 
 def test_the_dev_namespace_holds_the_dependencies_mode_tasks() -> None:
     assert {"deps", "api", "worker"} <= set(dev.ns.task_names)
+
+
+def test_dev_deps_with_the_sync_preset_starts_the_core_services_only(context: Context, fake: FakeDocker) -> None:
+    _body(dev.dev_deps)(context, preset="sync")
+
+    up, bootstrap = fake.compose_commands()
+    assert up.startswith("docker compose --project-name infrahub-sync-dev ")
+    assert "--profile" not in up
+    assert bootstrap.endswith(" run --rm --no-deps sync-bootstrap")
+
+
+def test_dev_deps_with_the_preview_preset_starts_netbox_and_seeds_infrahub(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: events.append("netbox"))
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda *_args: events.append("seed"))
+
+    _body(dev.dev_deps)(context, preset="preview")
+
+    assert events == ["netbox", "seed"]
+    assert fake.compose_commands()[0].startswith("docker compose --profile infrahub ")
