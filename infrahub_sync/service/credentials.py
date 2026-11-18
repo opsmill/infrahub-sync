@@ -50,6 +50,11 @@ SCRYPT_MAXMEM = 64 * 1024 * 1024
 # `p` costs processor time, not memory, so it has its own ceiling.
 _SCRYPT_MAX_P = 16
 _SCRYPT_MAX_KEY_BYTES = 128
+_SCRYPT_MAX_SALT_BYTES = 64
+# The longest stored text that is decoded: the algorithm, three parameters of at most 20 digits,
+# and the salt and the key at their ceilings in unpadded Base64. A longer text is refused before
+# any field is decoded, so a hostile row cannot make the process allocate for it.
+_MAX_HASH_TEXT_LENGTH = 512
 _HASH_FIELDS = 6
 
 VERIFICATION_LIMIT = 2
@@ -117,6 +122,8 @@ def hash_password(password: str, *, n: int = SCRYPT_N, r: int = SCRYPT_R, p: int
 
 def _parse(stored_hash: str) -> tuple[int, int, int, bytes, bytes] | None:
     """Return the parameters, the salt and the key of a stored hash that is safe to verify."""
+    if len(stored_hash) > _MAX_HASH_TEXT_LENGTH:
+        return None
     fields = stored_hash.split("$")
     if len(fields) != _HASH_FIELDS or fields[0] != SCRYPT_ALGORITHM:
         return None
@@ -127,7 +134,7 @@ def _parse(stored_hash: str) -> tuple[int, int, int, bytes, bytes] | None:
         return None
     if n < 2 or n & (n - 1) or r < 1 or not 1 <= p <= _SCRYPT_MAX_P:
         return None
-    if not salt or not 1 <= len(key) <= _SCRYPT_MAX_KEY_BYTES:
+    if not SALT_BYTES <= len(salt) <= _SCRYPT_MAX_SALT_BYTES or not 1 <= len(key) <= _SCRYPT_MAX_KEY_BYTES:
         return None
     if scrypt_memory_bytes(n, r, p) > SCRYPT_MAXMEM:
         return None

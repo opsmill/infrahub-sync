@@ -89,6 +89,10 @@ def test_a_text_that_is_not_a_stored_hash_verifies_no_password(stored: str) -> N
     assert not verify_password(_PASSWORD, stored)
 
 
+# 16 bytes in unpadded Base64, the size of the salt that ``hash_password`` makes.
+_SALT_16 = "A" * 22
+
+
 @pytest.mark.parametrize(
     "parameters",
     [
@@ -102,7 +106,25 @@ def test_a_stored_hash_above_a_ceiling_is_refused_without_being_computed(
     computed: list[object] = []
     monkeypatch.setattr(credentials.hashlib, "scrypt", lambda *args, **kwargs: computed.append((args, kwargs)))
 
-    assert not verify_password(_PASSWORD, f"scrypt${parameters}$c2FsdA$a2V5")
+    assert not verify_password(_PASSWORD, f"scrypt${parameters}${_SALT_16}$a2V5")
+    assert computed == []
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        pytest.param("scrypt$16$1$1$c2FsdA$a2V5", id="a-salt-shorter-than-16-bytes"),
+        pytest.param(f"scrypt$16$1$1${'A' * 88}$a2V5", id="a-salt-longer-than-64-bytes"),
+        pytest.param(f"scrypt$16$1$1${_SALT_16}${'A' * 600}", id="a-text-longer-than-the-ceiling"),
+    ],
+)
+def test_a_stored_hash_with_a_field_outside_its_size_is_refused_without_being_computed(
+    monkeypatch: pytest.MonkeyPatch, stored: str
+) -> None:
+    computed: list[object] = []
+    monkeypatch.setattr(credentials.hashlib, "scrypt", lambda *args, **kwargs: computed.append((args, kwargs)))
+
+    assert not verify_password(_PASSWORD, stored)
     assert computed == []
 
 
