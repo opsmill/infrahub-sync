@@ -1,0 +1,56 @@
+docs/docs/operations/compose-troubleshooting.mdx
+  s_cf9ada8f865389::t_dfb386cecd1370 55-61,64-73
+  s_cf9ada8f865389::t_dfad0756a9fd4c 48-51
+docs/docs/running-a-sync.mdx
+  s_cf9ada8f865389::t_e2cd061b395be7 33-40
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_cf9ada8f865389::t_481dfa773b068a 54
+tests/compose/test_documentation.py
+  s_cf9ada8f865389::t_34ceebd1548213 315,348,358,439-443,448,450
+docs/docs/development/guidelines/testing-tiers.md
+  s_cf9ada8f865389::t_481dfa773b068a 692
+docs/docs/development-stack.mdx
+  s_cf9ada8f865389::t_6bbee8f53c6b52 76,111-123,225-227,286-287
+docs/docs/compose-deployment.mdx
+  s_cf9ada8f865389::t_655fb0571cb8bd 186,196-198,203,207-213
+  s_cf9ada8f865389::t_bb76afe2e117fb 228-281
+  s_cf9ada8f865389::t_864a96687ba363 108,110-113
+  s_cf9ada8f865389::t_f82153048b0c2a 124-126
+  s_cf9ada8f865389::t_8e6aa5c9154c11 634-637,639-641
+  s_cf9ada8f865389::t_c8fef31a101f16 903-906
+  s_cf9ada8f865389::t_ee3402e32c7489 616,623
+  s_cf9ada8f865389::t_2f58e6503680b0 204-206
+  s_cf9ada8f865389::t_552c79a4bdae86 165,167-169
+  s_cf9ada8f865389::t_4129891a2aa23a 879-890
+  s_cf9ada8f865389::t_ad49f4f8e724f3 282
+docs/docs/quickstart-compose.mdx
+  s_cf9ada8f865389::t_29d48dfab42526 114
+  s_cf9ada8f865389::t_6edbdbc549a89c 58-59,63,73-75,106-113,115-118,135-136
+docs/sidebars.ts
+  s_cf9ada8f865389::t_ec258d618d615f 37
+docs/docs/operations/day-2-operations.mdx
+  s_cf9ada8f865389::t_dfb386cecd1370 123-136
+docs/docs/guides/accounts.mdx
+  s_cf9ada8f865389::t_3b9d9463b3504a 210-213
+  s_cf9ada8f865389::t_1d5fe74a8e66a5 1-209,214-220,222-233
+  s_cf9ada8f865389::t_bd2fc823ad8b7b 221
+docs/docs/reference/sync-http-api.mdx
+  s_cf9ada8f865389::t_0bccf719c97240 65,67-70,72-87,89-91,93-140
+  s_cf9ada8f865389::t_e5c7f8bc23f45b 268-271,273-274,276-277
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b6b6c61bf9e26035164d47befb1f798555de70f",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
