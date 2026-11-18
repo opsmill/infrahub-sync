@@ -49,64 +49,7 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 * `events`: List typed events, oldest first: time,...
 * `configs`: Register and inspect configuration packages.
 * `runs`: Inspect service-owned runs.
-* `tokens`: List, create and delete the API tokens of...
-* `accounts`: Manage local accounts.
-
-## `infrahub-sync login`
-
-Sign in with an account name and its password, and save the session for this Sync API address.
-
-The password is asked for without echo. With --password-stdin it is read from standard input,
-and --name is required. The session is saved in sessions.json in the application directory of
-infrahub-sync, with mode 0600 so that only you can read it; on Windows, access to the file
-follows the permissions of that directory. While INFRAHUB_SYNC_API_TOKEN is set and not empty,
-every command other than login and logout uses that variable and not the saved session.
-
-**Usage**:
-
-```console
-$ infrahub-sync login [OPTIONS]
-```
-
-**Options**:
-
-* `--name <str>`: Account name. Asked for when not given.
-* `--password-stdin`: Read the password from standard input instead of a prompt.
-* `--help`: Show this message and exit.
-
-## `infrahub-sync logout`
-
-Sign out: end the session saved for this Sync API address and remove it from the session file.
-
-While INFRAHUB_SYNC_API_TOKEN is set, this command still acts on the saved session.
-
-**Usage**:
-
-```console
-$ infrahub-sync logout [OPTIONS]
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-## `infrahub-sync password`
-
-Change the password of your account. Your other sessions end; your API tokens stay.
-
-The current password is asked for once and the new one twice, without echo.
-
-**Usage**:
-
-```console
-$ infrahub-sync password [OPTIONS]
-```
-
-**Options**:
-
-* `--password-stdin`: Read two lines from standard input instead of prompts: the current password, then the new one.
-* `--reason <str>`: Optional audit reason for the change.
-* `--help`: Show this message and exit.
+* `schedules`: Start `sync` runs of a configuration...
 
 ## `infrahub-sync plan`
 
@@ -241,7 +184,7 @@ $ infrahub-sync whoami [OPTIONS]
 
 ## `infrahub-sync events`
 
-List typed events, oldest first: time, type, resource, actor, outcome.
+List typed events, oldest first: time, type, resource, actor, outcome, and the facts the event records.
 
 **Usage**:
 
@@ -254,6 +197,7 @@ $ infrahub-sync events [OPTIONS]
 * `--run-id <str>`: Only events about this run.
 * `--config-id, --config <str>`: Configuration ID or name. The ID is tried first, then the name.
 * `--type <str>`: Only events of this type, such as infrahub_sync.run.planned. Repeat for several.
+* `--schedule <str>`: Only events that name this schedule. Schedule ID or name. The ID is tried first, then the name.
 * `--follow`: Read new events every 2 seconds until interrupted.
 * `--help`: Show this message and exit.
 
@@ -495,7 +439,7 @@ $ infrahub-sync runs [OPTIONS] COMMAND [ARGS]...
 
 ### `infrahub-sync runs list`
 
-List runs, newest first: run, configuration@version, branch, phase, outcome, actor, start time.
+List runs, newest first: run, configuration@version, branch, trigger type, phase, outcome, actor, start time.
 
 **Usage**:
 
@@ -507,6 +451,8 @@ $ infrahub-sync runs list [OPTIONS]
 
 * `--config, --config-id <str>`: Configuration ID or name. The ID is tried first, then the name.
 * `--version <int range>`: Only runs of this version; requires a configuration ID or name.  [x&gt;=1]
+* `--trigger-type <manual|scheduled>`: Only runs that a person started (manual) or that a schedule started (scheduled).
+* `--schedule <str>`: Only runs this schedule started. Schedule ID or name. The ID is tried first, then the name.
 * `--limit <int range>`: Items per page, 1-200. The server default applies when omitted.  [1&lt;=x&lt;=200]
 * `--all`: Read every page instead of only the first.
 * `--help`: Show this message and exit.
@@ -604,6 +550,8 @@ last save is not known to have succeeded. While a resume runs, they are the next
 and the recorded deletes between them; while a first apply or `sync` runs, none are uncertain. A `resume`
 line counts the creates and updates that resume wrote; the `written:` line of a failed write counts those of
 every execution of the run.
+Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
+scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
 
 **Usage**:
 
@@ -684,14 +632,14 @@ $ infrahub-sync runs logs [OPTIONS] {run_id}
 * `--follow`: Read new lines every 2 seconds until the run ends.
 * `--help`: Show this message and exit.
 
-## `infrahub-sync tokens`
+## `infrahub-sync schedules`
 
-List, create and delete the API tokens of your account.
+Start `sync` runs of a configuration version on a cron cadence.
 
 **Usage**:
 
 ```console
-$ infrahub-sync tokens [OPTIONS] COMMAND [ARGS]...
+$ infrahub-sync schedules [OPTIONS] COMMAND [ARGS]...
 ```
 
 **Options**:
@@ -700,293 +648,189 @@ $ infrahub-sync tokens [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `list`: List the API tokens of your account: name,...
-* `create`: Create an API token for your account and...
-* `delete`: Delete one API token of your account.
+* `create`: Create a schedule that starts a `sync` run...
+* `list`: List schedules, newest first: schedule,...
+* `show`: Show every field of a schedule: its state,...
+* `change`: Change one or more settings of a schedule.
+* `pause`: Pause a schedule: it starts no run until...
+* `resume`: Make a paused schedule active, or a...
+* `delete`: Delete a schedule.
+* `take-over`: Become the owner of a schedule; only an...
 
-### `infrahub-sync tokens list`
+### `infrahub-sync schedules create`
 
-List the API tokens of your account: name, token ID, creation, expiry and last use. No value is shown.
+Create a schedule that starts a `sync` run of one configuration version on a cron cadence.
+
+Each run writes to a new branch and opens a proposed change for review in Infrahub. The Sync API
+validates the cron expression and the time zone. The output shows the schedule with `next_start_at`.
 
 **Usage**:
 
 ```console
-$ infrahub-sync tokens list [OPTIONS]
+$ infrahub-sync schedules create [OPTIONS]
 ```
 
 **Options**:
 
-* `--json`: Print the answer of the Sync API as JSON.
+* `--name <str>`: Schedule name, unique among the schedules that are not deleted.  [required]
+* `--config <str>`: Configuration ID or name. The ID is tried first, then the name.  [required]
+* `--version <int range>`: The configuration version each run synchronizes.  [x&gt;=1; required]
+* `--cron <str>`: Cron expression with five fields, such as &quot;0 2 * * *&quot;.  [required]
+* `--timezone <str>`: Time zone of the cron expression, such as Europe/Paris.  [default: UTC]
+* `--write-when-left-out / --no-write-when-left-out`: Turn on or off the left-out setting: when on, a run whose plan leaves out records writes the other records instead of stopping after the plan. Applies only to a schedule that writes to the default branch; the Sync API refuses it for branch review.
+* `--overlap-policy <reject|queue>`: What a start does while a run of the configuration is in progress: reject skips the start, queue makes one start wait and run when the run in progress ends.
+* `--start-late-by-at-most <str>`: How late the most recent start may begin after a time when the Sync service was not running, such as 30m or 2h (from 1m to 7d). The Sync API uses 1h when the option is not given.
+* `--reason <str>`: Optional audit reason.
+* `--idempotency-key <str>`: Retry key.
 * `--help`: Show this message and exit.
 
-### `infrahub-sync tokens create`
+### `infrahub-sync schedules list`
 
-Create an API token for your account and print its value once.
+List schedules, newest first: schedule, name, configuration@version, state, cron, time zone, next start.
 
-The value is the only line on standard output, so `TOKEN=$(infrahub-sync tokens create ci)`
-captures it. The Sync API does not show the value again.
+Deleted schedules are left out unless `--state deleted` is given. A schedule that is stopped, or not yet
+handed to the task manager, adds warning lines on standard error.
 
 **Usage**:
 
 ```console
-$ infrahub-sync tokens create [OPTIONS] {name}
+$ infrahub-sync schedules list [OPTIONS]
+```
+
+**Options**:
+
+* `--config <str>`: Only schedules of this configuration. Configuration ID or name. The ID is tried first, then the name.
+* `--state <str>`: Only schedules in this state: active, paused, stopped or deleted.
+* `--limit <int range>`: Items per page, 1-200. The server default applies when omitted.  [1&lt;=x&lt;=200]
+* `--all`: Read every page instead of only the first.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync schedules show`
+
+Show every field of a schedule: its state, the reason of a stopped schedule, its last run and the count of
+consecutive failed runs. A stopped schedule adds a warning with the action its reason needs.
+
+**Usage**:
+
+```console
+$ infrahub-sync schedules show [OPTIONS] {SCHEDULE}
 ```
 
 **Arguments**:
 
-* `name`: Name of the new token, unique in your account.  [required]
+* `SCHEDULE`: Schedule ID or name. The ID is tried first, then the name.  [required]
 
 **Options**:
 
-* `--expires <str>`: Expiry as an ISO 8601 date or date-time. A date alone, such as 2027-01-31, means the last second of that day in UTC. A date-time must carry a time zone, such as 2027-01-31T12:00:00+00:00. Without this option the token does not expire.
-* `--reason <str>`: Optional audit reason for the creation.
-* `--json`: Print the answer of the Sync API as JSON, with the token value in it.
 * `--help`: Show this message and exit.
 
-### `infrahub-sync tokens delete`
+### `infrahub-sync schedules change`
 
-Delete one API token of your account. The Sync API refuses its value afterwards.
+Change one or more settings of a schedule. The output shows the schedule with its new `next_start_at`.
 
 **Usage**:
 
 ```console
-$ infrahub-sync tokens delete [OPTIONS] {token_id}
+$ infrahub-sync schedules change [OPTIONS] {SCHEDULE}
 ```
 
 **Arguments**:
 
-* `token_id`: Token ID, as `tokens list` prints it.  [required]
+* `SCHEDULE`: Schedule ID or name. The ID is tried first, then the name.  [required]
 
 **Options**:
 
-* `--reason <str>`: Optional audit reason for the deletion.
+* `--version <int range>`: The configuration version each run uses.  [x&gt;=1]
+* `--cron <str>`: New cron expression with five fields.
+* `--timezone <str>`: New time zone of the cron expression.
+* `--write-when-left-out / --no-write-when-left-out`: Turn on or off the left-out setting: when on, a run whose plan leaves out records writes the other records instead of stopping after the plan. Applies only to a schedule that writes to the default branch; the Sync API refuses it for branch review.
+* `--overlap-policy <reject|queue>`: What a start does while a run of the configuration is in progress: reject skips the start, queue makes one start wait and run when the run in progress ends.
+* `--start-late-by-at-most <str>`: How late the most recent start may begin after a time when the Sync service was not running, such as 30m or 2h (from 1m to 7d). The Sync API uses 1h when the option is not given.
+* `--reason <str>`: Optional audit reason.
+* `--idempotency-key <str>`: Retry key.
 * `--help`: Show this message and exit.
 
-## `infrahub-sync accounts`
+### `infrahub-sync schedules pause`
 
-Manage local accounts. Every command needs an administrator.
+Pause a schedule: it starts no run until it is resumed.
 
 **Usage**:
 
 ```console
-$ infrahub-sync accounts [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `list`: List accounts by name: name, level, state,...
-* `create`: Create an account.
-* `set-password`: Replace the password of an account.
-* `unlock`: End the refusal of an account&#x27;s sign-ins...
-* `disable`: Disable an account.
-* `enable`: Enable a disabled account.
-* `set-level`: Set the level of an account.
-* `delete`: Delete an account.
-* `tokens`: List the API tokens of an account: name,...
-* `delete-token`: Delete one API token of an account.
-
-### `infrahub-sync accounts list`
-
-List accounts by name: name, level, state, and the time until which sign-ins are refused.
-
-**Usage**:
-
-```console
-$ infrahub-sync accounts list [OPTIONS]
-```
-
-**Options**:
-
-* `--state <active|disabled|all>`: Only accounts in this state.  [default: all]
-* `--json`: Print the answer of the Sync API as JSON.
-* `--help`: Show this message and exit.
-
-### `infrahub-sync accounts create`
-
-Create an account. The initial password is asked for twice, without echo.
-
-**Usage**:
-
-```console
-$ infrahub-sync accounts create [OPTIONS] {name}
+$ infrahub-sync schedules pause [OPTIONS] {SCHEDULE}
 ```
 
 **Arguments**:
 
-* `name`: Name of the new account.  [required]
+* `SCHEDULE`: Schedule ID or name. The ID is tried first, then the name.  [required]
 
 **Options**:
 
-* `--administrator`: Give the account the administrator level.
-* `--password-stdin`: Read the password from standard input instead of a prompt.
-* `--reason <str>`: Optional audit reason for the creation.
-* `--json`: Print the answer of the Sync API as JSON.
+* `--reason <str>`: Optional audit reason.
+* `--idempotency-key <str>`: Retry key.
 * `--help`: Show this message and exit.
 
-### `infrahub-sync accounts set-password`
+### `infrahub-sync schedules resume`
 
-Replace the password of an account. The new password is asked for twice; every session of the account ends.
+Make a paused schedule active, or a stopped schedule whose reason no longer holds.
 
 **Usage**:
 
 ```console
-$ infrahub-sync accounts set-password [OPTIONS] {name}
+$ infrahub-sync schedules resume [OPTIONS] {SCHEDULE}
 ```
 
 **Arguments**:
 
-* `name`: Account name.  [required]
+* `SCHEDULE`: Schedule ID or name. The ID is tried first, then the name.  [required]
 
 **Options**:
 
-* `--password-stdin`: Read the password from standard input instead of a prompt.
-* `--reason <str>`: Optional audit reason for the change.
+* `--reason <str>`: Optional audit reason.
+* `--idempotency-key <str>`: Retry key.
 * `--help`: Show this message and exit.
 
-### `infrahub-sync accounts unlock`
+### `infrahub-sync schedules delete`
 
-End the refusal of an account&#x27;s sign-ins that follows repeated failed sign-ins.
+Delete a schedule. Its record and its runs are kept, and a run in progress is not cancelled.
+
+The open branch and proposed change of the schedule stay in Infrahub; the output names them.
 
 **Usage**:
 
 ```console
-$ infrahub-sync accounts unlock [OPTIONS] {name}
+$ infrahub-sync schedules delete [OPTIONS] {SCHEDULE}
 ```
 
 **Arguments**:
 
-* `name`: Account name.  [required]
+* `SCHEDULE`: Schedule ID or name. The ID is tried first, then the name.  [required]
 
 **Options**:
 
-* `--reason <str>`: Optional audit reason for the unlock.
-* `--help`: Show this message and exit.
-
-### `infrahub-sync accounts disable`
-
-Disable an account. The Sync API deletes its API tokens and ends its sessions.
-
-**Usage**:
-
-```console
-$ infrahub-sync accounts disable [OPTIONS] {name}
-```
-
-**Arguments**:
-
-* `name`: Account name.  [required]
-
-**Options**:
-
-* `--reason <str>`: Optional audit reason for the change.
-* `--json`: Print the answer of the Sync API as JSON.
-* `--help`: Show this message and exit.
-
-### `infrahub-sync accounts enable`
-
-Enable a disabled account. Its earlier API tokens and sessions are not restored.
-
-**Usage**:
-
-```console
-$ infrahub-sync accounts enable [OPTIONS] {name}
-```
-
-**Arguments**:
-
-* `name`: Account name.  [required]
-
-**Options**:
-
-* `--reason <str>`: Optional audit reason for the change.
-* `--json`: Print the answer of the Sync API as JSON.
-* `--help`: Show this message and exit.
-
-### `infrahub-sync accounts set-level`
-
-Set the level of an account. It applies from the next request of the account, with no new sign-in.
-
-**Usage**:
-
-```console
-$ infrahub-sync accounts set-level [OPTIONS] {name}
-```
-
-**Arguments**:
-
-* `name`: Account name.  [required]
-
-**Options**:
-
-* `--administrator / --no-administrator`: Give the account the administrator level, or take it away. One of the two is required.
-* `--reason <str>`: Optional audit reason for the change.
-* `--json`: Print the answer of the Sync API as JSON.
-* `--help`: Show this message and exit.
-
-### `infrahub-sync accounts delete`
-
-Delete an account. This cannot be reversed; `accounts disable` can.
-
-The name, the password, the API tokens and the sessions of the account are removed. Its runs,
-approvals and audit events stay, and display `Deleted account` and a short identifier, which
-this command prints. The name can be given to a new account, which has no right over the old
-runs.
-
-**Usage**:
-
-```console
-$ infrahub-sync accounts delete [OPTIONS] {name}
-```
-
-**Arguments**:
-
-* `name`: Account name.  [required]
-
-**Options**:
-
+* `--reason <str>`: Optional audit reason.
+* `--idempotency-key <str>`: Retry key.
 * `--yes`: Delete without asking for confirmation.
-* `--reason <str>`: Optional audit reason for the deletion.
 * `--help`: Show this message and exit.
 
-### `infrahub-sync accounts tokens`
+### `infrahub-sync schedules take-over`
 
-List the API tokens of an account: name, token ID, creation, expiry and last use. No value is shown.
+Become the owner of a schedule; only an administrator may. Its runs then record you as their actor.
+
+A schedule that stopped because its owner&#x27;s actor no longer exists becomes active again.
 
 **Usage**:
 
 ```console
-$ infrahub-sync accounts tokens [OPTIONS] {name}
+$ infrahub-sync schedules take-over [OPTIONS] {SCHEDULE}
 ```
 
 **Arguments**:
 
-* `name`: Account name.  [required]
+* `SCHEDULE`: Schedule ID or name. The ID is tried first, then the name.  [required]
 
 **Options**:
 
-* `--json`: Print the answer of the Sync API as JSON.
-* `--help`: Show this message and exit.
-
-### `infrahub-sync accounts delete-token`
-
-Delete one API token of an account. The Sync API refuses its value afterwards.
-
-**Usage**:
-
-```console
-$ infrahub-sync accounts delete-token [OPTIONS] {name} {token_id}
-```
-
-**Arguments**:
-
-* `name`: Account name.  [required]
-* `token_id`: Token ID, as `accounts tokens` prints it.  [required]
-
-**Options**:
-
-* `--reason <str>`: Optional audit reason for the deletion.
+* `--reason <str>`: Optional audit reason.
+* `--idempotency-key <str>`: Retry key.
 * `--help`: Show this message and exit.
