@@ -344,6 +344,12 @@ A change to a setting replaces the pods that read it when you run `helm upgrade`
 refuses to render a `settings.sessionIdleSeconds` that is not a whole number of at least 60. The
 Sync API also refuses, at start, a value above 999999999999.
 
+The chart sets `INFRAHUB_SYNC_REQUIRE_APPROVAL` on the Sync API only. A schedule that writes to the
+default branch also needs it on the worker: with Compose, the worker reads it and stops such a
+schedule while approval is required ([Schedule sync runs](./orchestration.mdx)). Until the chart
+sets it on the worker, do not create a schedule that writes to the default branch on a Kubernetes
+deployment where `settings.requireApproval` is `true`; use branch review.
+
 Source credentials go to the worker only:
 
 - `worker.credentials` maps a variable name to its value, for example
