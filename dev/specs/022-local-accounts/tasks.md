@@ -258,7 +258,7 @@ on this phase.
 
 **Independent Test**: [quickstart.md](quickstart.md), scenario 6, first half.
 
-- [ ] T047 [US2] Regenerate `frontend/src/api/types.generated.ts` from the OpenAPI document of
+- [X] T047 [US2] Regenerate `frontend/src/api/types.generated.ts` from the OpenAPI document of
   the Sync API.
 - [ ] T048 [US2] In `frontend/src/api/token.ts` and `frontend/src/api/client.ts`, keep the
   session token where the token is kept today, and add the calls to sign in and sign out.
