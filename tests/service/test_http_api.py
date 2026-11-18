@@ -3066,6 +3066,12 @@ def test_the_run_list_filters_on_the_trigger_and_the_schedule_and_returns_the_ru
         schedule_id,
         "2027-01-05T01:00:00Z",
     )
+    scheduled_resource = api.client.get(f"/runs/{scheduled}", headers=read).json()["run"]
+    assert (
+        scheduled_resource["trigger_type"],
+        scheduled_resource["schedule_id"],
+        scheduled_resource["scheduled_start_at"],
+    ) == ("scheduled", schedule_id, "2027-01-05T01:00:00Z")
     resource = api.client.get(f"/runs/{manual_id}", headers=read).json()["run"]
     assert (resource["trigger_type"], resource["schedule_id"], resource["scheduled_start_at"]) == (
         "manual",
