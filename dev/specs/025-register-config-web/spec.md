@@ -352,7 +352,10 @@ registered without validation.
   have meant keeping or dropping it. This specification keeps it in User Story 4 so it can be left
   out without changing the other stories.
 - The person using the web interface has entered their own token (spec 017). The Sync API's existing
-  administrator rule decides who can register.
+  administrator rule decides who can register. Spec 022 (local accounts, in progress on branch
+  `022-local-accounts`) keeps the distinction between administrators and other accounts, so
+  "administrator token" in this specification means "a token or session of an administrator" once
+  spec 022 is merged.
 - Out of scope: converting a v2 configuration in the web interface; editing a package in the web
   interface; dropping several files at once; deleting or withdrawing a version; starting a plan from
   the review step (the existing start-run dialog stays the way to start one).

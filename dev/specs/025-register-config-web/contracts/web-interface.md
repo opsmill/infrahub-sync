@@ -1,0 +1,54 @@
+# Contract: Web interface behavior
+
+## Where the drop areas are
+
+| Page | Drop area label | Effect |
+|---|---|---|
+| Configurations | "Register a configuration: drop a package file here, or choose a file" | Opens the review step for a new configuration. |
+| One configuration | "Add a version: drop a package file here, or choose a file" | Opens the review step for the next version of this configuration. |
+
+With a token that is not an administrator token, both are shown disabled with
+"Registering needs an administrator token". The "choose a file" button makes the action usable
+without a mouse.
+
+## Messages before the review step
+
+| Case | Message |
+|---|---|
+| More than one file | "Drop one package file." |
+| Empty, or not YAML or JSON (reason `invalid_package`) | "This file is not a YAML or JSON configuration package." |
+| v2 configuration (reason `v2_configuration`) | "This is a v2 configuration. Convert it with `infrahub-sync configs convert`, then drop the package here. Converting a v2 configuration in the web interface is planned for a later release." |
+| 413 | "The file is larger than the Sync API accepts." |
+| Any other refusal | The Sync API's message. |
+
+## Review step content
+
+1. Title: "Register a new configuration" or "Add version N+1 to <name>".
+2. Configuration name, source adapter, destination adapter.
+3. When the name differs from the current name (new version): "This version renames the
+   configuration from A to B."
+4. When a configuration with the same name exists (new configuration): "A configuration named A
+   already exists." with a link "Add a version to it instead".
+5. Comparison with version N (new version only), with the existing mapping comparison view.
+6. Credential references: the variable names only.
+7. Validation: branch field (default from the package, else `main`) and the result:
+   - "Valid against branch B" when there are no findings;
+   - the list of findings, otherwise;
+   - "Could not validate: the destination cannot be reached" when `destination_read` is `timeout`
+     or `unreachable`.
+8. Reason, optional, at most 512 characters (the existing limit).
+9. Register and Cancel. Register is enabled only when the result is "Valid", or (User Story 4)
+   when the destination cannot be reached; in that case its label is "Register without
+   validation".
+
+## After Register
+
+| Result | Behavior |
+|---|---|
+| Version created | Open the new version's page. |
+| `created: false` | "This package is the same as version N. No new version was registered." |
+| Newer version found before sending | "Version M was registered meanwhile." The comparison reloads. |
+| Network failure | "The request did not complete. Retry." Retrying reuses the idempotency key. |
+| 403 | The existing "administrator access is required" handling. |
+
+No text names a user or an actor.
