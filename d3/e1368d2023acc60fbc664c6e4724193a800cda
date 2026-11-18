@@ -1,0 +1,34 @@
+docs/docs/compose-deployment.mdx
+  s_cf9ada8f865389::t_b78bb69d7a9db8 628-656
+docs/docs/quickstart-compose.mdx
+  s_cf9ada8f865389::t_b78bb69d7a9db8 103-104
+docs/docs/development-stack.mdx
+  s_cf9ada8f865389::t_b78bb69d7a9db8 282-284,286-287
+AGENTS.md
+  s_cf9ada8f865389::t_0256f2d58f0a2e 151
+docs/docs/guides/accounts.mdx
+  s_cf9ada8f865389::t_f8bd1a90a605bd 70-79,83-86
+  s_cf9ada8f865389::t_1bc5b37b7d5772 80-82
+frontend/README.md
+  s_cf9ada8f865389::t_b78bb69d7a9db8 47-56,59-60
+changelog/+web-sign-in.added.md
+  s_cf9ada8f865389::t_0256f2d58f0a2e 1
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_ecdca6cbca0253 274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d3e1368d2023acc60fbc664c6e4724193a800cda",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
