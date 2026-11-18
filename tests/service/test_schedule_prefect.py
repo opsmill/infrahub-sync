@@ -18,6 +18,7 @@ import httpx
 from prefect.client.schemas.schedules import CronSchedule, IntervalSchedule
 from prefect.exceptions import ObjectNotFound
 
+from infrahub_sync.service import schedules
 from infrahub_sync.service.orchestration import (
     DeploymentSchedule,
     ObservedDeploymentSchedule,
@@ -31,6 +32,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from prefect.client.schemas.actions import DeploymentScheduleCreate
+
+
+PROVIDER_CANARY = "provider-endpoint-and-secret-canary"
 
 
 @pytest.fixture(name="api")
@@ -198,6 +202,49 @@ def test_the_api_starts_when_the_task_manager_cannot_be_reached(api: ScheduleApi
     assert api.orchestration.by_slug(schedule_id).active is False
 
 
+def _break_the_task_manager(api: ScheduleApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the task manager fail with an error that is not the one of a failed request."""
+
+    async def fail() -> tuple[()]:  # noqa: RUF029 - replaces a coroutine function.
+        raise RuntimeError(PROVIDER_CANARY)
+
+    monkeypatch.setattr(api.orchestration, "read_schedules", fail)
+
+
+def test_another_failure_of_the_task_manager_answers_503_and_saves_the_answer_and_the_event(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request_headers = headers(key="create-once")
+    with monkeypatch.context() as broken:
+        _break_the_task_manager(api, broken)
+        response = api.client.post("/schedules", json=api.body(), headers=request_headers)
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "orchestration-unavailable"
+    assert PROVIDER_CANARY not in response.text
+    assert api.event_types() == ["infrahub_sync.schedule.created"]
+
+    again = api.client.post("/schedules", json=api.body(), headers=request_headers)
+
+    assert again.status_code == 201, again.text
+    assert api.orchestration.by_slug(again.json()["schedule_id"]).active is True
+    assert api.event_types() == ["infrahub_sync.schedule.created", "infrahub_sync.schedule.replayed"]
+
+
+def test_the_api_starts_when_the_task_manager_fails_in_another_way(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schedule_id = api.create()["schedule_id"]
+    _break_the_task_manager(api, monkeypatch)
+    again = restarted(api)
+
+    with again.client as client:
+        response = client.get("/version")
+
+    assert response.status_code == 200
+    assert again.stored(schedule_id).state == "active"
+
+
 # ---------------------------------------------------------------------------
 # The match step
 # ---------------------------------------------------------------------------
@@ -258,6 +305,38 @@ def test_a_schedule_of_the_task_manager_that_no_stored_schedule_has_is_deleted(a
 
     assert api.orchestration.slugs() == {schedule_id}
     assert api.orchestration.foreign == []
+
+
+def test_a_schedule_that_was_stored_after_the_match_read_the_store_keeps_its_prefect_schedule(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schedule_id = api.create()["schedule_id"]
+    api.orchestration.calls.clear()
+    # The match reads the store before another request stores the schedule and hands it to the task manager.
+    monkeypatch.setattr(schedules, "_all_schedules", lambda *_arguments: ())
+
+    _match(api)
+
+    assert api.orchestration.slugs() == {schedule_id}
+    assert api.orchestration.calls == []
+    assert api.stored(schedule_id).prefect_schedule_id is not None
+
+
+def test_the_match_reads_every_page_of_the_stored_schedules(api: ScheduleApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    created = [api.create()["schedule_id"]]
+    for index in range(2):
+        config_id = api.projection.create_configuration(package(f"source-{index}")).config_id
+        created.append(api.create(name=f"schedule-{index}", config_id=config_id)["schedule_id"])
+    api.orchestration.calls.clear()
+    monkeypatch.setattr(schedules, "_MATCH_PAGE_SIZE", 1)
+
+    _match(api)
+
+    assert api.orchestration.slugs() == set(created)
+    assert api.orchestration.calls == []
+    api.orchestration.schedules.clear()
+    _match(api)
+    assert api.orchestration.slugs() == set(created)
 
 
 def test_a_schedule_of_the_task_manager_with_another_slug_is_left_as_it_is(api: ScheduleApi) -> None:

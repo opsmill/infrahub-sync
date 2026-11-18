@@ -693,14 +693,17 @@ def test_a_credential_in_a_reason_reaches_no_record_no_event_and_no_answer(api: 
     assert len(api.projection.audit_events()) == 4
 
 
-@pytest.mark.parametrize("field", ["cron", "timezone"])
-def test_a_credential_in_a_cadence_is_refused_and_not_stored(api: ScheduleApi, field: str) -> None:
+@pytest.mark.parametrize("field", ["cron", "timezone", "name", "config_id"])
+def test_a_credential_in_a_setting_is_refused_and_not_stored(api: ScheduleApi, field: str) -> None:
     response = api.client.post("/schedules", json=api.body(**{field: OTHER_TOKEN}), headers=headers())
 
     assert response.status_code == 422, response.text
     assert _error(response)["code"] == "secret-parameter-refused"
     assert OTHER_TOKEN not in response.text
     assert OTHER_TOKEN not in api.stored_text()
+    refused = api.projection.audit_events()[-1]
+    assert (refused.event_type, refused.outcome) == ("infrahub_sync.schedule.refused", "refused-secret-parameter")
+    assert refused.config_id is None
 
 
 # ---------------------------------------------------------------------------

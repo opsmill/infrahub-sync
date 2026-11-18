@@ -41,13 +41,18 @@ from infrahub_sync.product_store.models import DEFAULT_START_LATE_SECONDS, SCHED
 from . import schedule_cadence
 from .events import SCHEDULE_START, SCHEDULE_STOPPED, schedule_decision_type, schedule_event
 from .models import EmittedSchedulePage, EmittedScheduleResource
-from .orchestration import DeploymentSchedule, OrchestrationUnavailableError, ServiceOrchestration
+from .orchestration import (
+    DeploymentSchedule,
+    ObservedDeploymentSchedule,
+    OrchestrationUnavailableError,
+    ServiceOrchestration,
+)
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key
 from .service import ServiceAPIError, page_size_or_refuse
 from .settings import REQUIRE_APPROVAL_ENV, approval_required
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection
+    from collections.abc import Callable, Collection, Sequence
 
     from .auth import Principal, PrincipalResolver
     from .models import ChangeScheduleRequest, CreateScheduleRequest, ScheduleActionRequest
@@ -121,45 +126,58 @@ async def match_prefect_schedules(projection: ProductProjection, orchestration: 
             written is recorded with ``prefect_synced`` false.
     """
     stored = _all_schedules(projection, ScheduleFilters())
-    held: dict[str, str] = {}
-    surplus: list[tuple[str, str]] = []
     current: ScheduleRecord | None = None
     try:
-        observed = await orchestration.read_schedules()
-        matching: dict[str, DeploymentSchedule | None] = {}
-        for item in observed:
-            if item.slug is None or _SCHEDULE_ID.fullmatch(item.slug) is None:
-                continue
-            if item.slug in held:
-                surplus.append((item.slug, item.orchestrator_id))
-                continue
-            held[item.slug] = item.orchestrator_id
-            matching[item.slug] = item.schedule
+        held, surplus = _held_by_slug(await orchestration.read_schedules())
         for current in stored:
             desired = _desired(current)
-            orchestrator_id = held.pop(current.schedule_id, None)
-            if orchestrator_id is None:
+            existing = held.pop(current.schedule_id, None)
+            if existing is None:
                 orchestrator_id = await orchestration.create_schedule(desired)
             else:
-                existing = matching[current.schedule_id]
-                if existing is None or not existing.matches(desired):
+                orchestrator_id = existing.orchestrator_id
+                if existing.schedule is None or not existing.schedule.matches(desired):
                     await orchestration.update_schedule(orchestrator_id, desired)
             if not current.prefect_synced or current.prefect_schedule_id != orchestrator_id:
                 projection.record_schedule_prefect_sync(
                     current.schedule_id, prefect_schedule_id=orchestrator_id, synced=True
                 )
         current = None
-        for slug, orchestrator_id in (*held.items(), *surplus):
-            await orchestration.delete_schedule(orchestrator_id)
-            if slug in held:
-                # The schedule is deleted, or it was never stored: Prefect holds nothing for it now.
-                projection.record_schedule_prefect_sync(slug, prefect_schedule_id=None, synced=True)
+        for slug, leftover in held.items():
+            # A schedule that was stored after the list above was read keeps its Prefect schedule.
+            latest = projection.lookup_schedule(slug).value
+            if latest is not None and latest.state != "deleted":
+                continue
+            await orchestration.delete_schedule(leftover.orchestrator_id)
+            # The schedule is deleted, or it was never stored: Prefect holds nothing for it now.
+            projection.record_schedule_prefect_sync(slug, prefect_schedule_id=None, synced=True)
+        for duplicate in surplus:
+            await orchestration.delete_schedule(duplicate.orchestrator_id)
     except OrchestrationUnavailableError:
         if current is not None and current.prefect_synced:
             projection.record_schedule_prefect_sync(
                 current.schedule_id, prefect_schedule_id=current.prefect_schedule_id, synced=False
             )
         raise
+
+
+def _held_by_slug(
+    observed: Sequence[ObservedDeploymentSchedule],
+) -> tuple[dict[str, ObservedDeploymentSchedule], tuple[ObservedDeploymentSchedule, ...]]:
+    """Return the Prefect schedules of Infrahub Sync by slug, and the further ones that repeat a slug.
+
+    A Prefect schedule whose slug is not a schedule identifier of Infrahub Sync is in neither.
+    """
+    held: dict[str, ObservedDeploymentSchedule] = {}
+    surplus: list[ObservedDeploymentSchedule] = []
+    for item in observed:
+        if item.slug is None or _SCHEDULE_ID.fullmatch(item.slug) is None:
+            continue
+        if item.slug in held:
+            surplus.append(item)
+        else:
+            held[item.slug] = item
+    return held, tuple(surplus)
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +291,15 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 could not be reached.
         """
         now = self._clock()
+        # Checked first, with a context that names no configuration: an identifier that holds a
+        # credential must not reach an event as the configuration it names.
+        self._refuse_secret_values(
+            _Request(principal.actor, CREATE, request.reason),
+            name=request.name,
+            config_id=request.config_id,
+            cron=request.cron,
+            timezone=request.timezone,
+        )
         context = _Request(principal.actor, CREATE, request.reason, None, request.config_id, request.registry_version)
         receipt = self._receipt(
             context, idempotency_key, None, f"s-{uuid4().hex}", request.model_dump(mode="json"), now
@@ -280,7 +307,6 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         replayed = await self._replayed(receipt, context)
         if replayed is not None:
             return replayed
-        self._refuse_secret_values(context, name=request.name, cron=request.cron, timezone=request.timezone)
         declared_branch = self._declared_branch(context, request.config_id, request.registry_version)
         self._require_cadence(context, request.cron, request.timezone)
         self._require_write_settings(
@@ -404,9 +430,6 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     ) -> tuple[int, dict[str, Any]]:
         """Make a paused schedule active, or a stopped schedule whose reason no longer holds.
 
-        A paused schedule whose owner's actor no longer exists, or that writes to the default
-        branch while the Sync API requires approval, is refused as a stopped schedule is.
-
         A schedule that stopped for ``repeated-failures`` always becomes active, and the store
         sets its count of failed runs to zero. A resume of an active schedule changes nothing.
 
@@ -420,15 +443,13 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             del now
             if schedule.state == "active":
                 return schedule
-            # The checks of the start of the API process, made again: a schedule that would be
-            # stopped at the next start does not become active now.
-            reason = None if schedule.state_reason == "repeated-failures" else self._stop_reason(schedule)
-            if reason is not None:
+            reason = schedule.state_reason
+            if reason is not None and reason != "repeated-failures" and self._reason_holds(schedule, reason):
                 raise self._refusal(
                     context.of(schedule),
                     409,
                     "schedule-stopped",
-                    f"the schedule cannot be resumed, for the reason {reason}: {_RESUME_ACTIONS[reason]}",
+                    f"the schedule is stopped with the reason {reason}: {_RESUME_ACTIONS[reason]}",
                 )
             return schedule.model_copy(update={"state": "active", "state_reason": None})
 
@@ -463,22 +484,27 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         The step stops each active schedule whose owner's actor no longer exists on the Sync
         API, or that writes to the default branch while the Sync API requires approval, and
         writes the event of each stop. It then makes the Prefect schedules match the stored
-        schedules. When Prefect or the product store cannot be reached, the failure is logged
-        and the schedules that Prefect does not hold keep ``prefect_synced`` false.
+        schedules. When Prefect or the product store fails, the failure is logged and the
+        schedules that Prefect does not hold keep ``prefect_synced`` false.
         """
         try:
             self._stop_schedules_that_cannot_run()
-            await match_prefect_schedules(self._projection, self._orchestration)
-        except OrchestrationUnavailableError as error:
-            logger.warning("schedules.match_failed", step="start", error_class=error.error_class)
         except ProductStoreProviderError:
             logger.warning("schedules.start_failed", step="start", error_class="ProductStoreProviderError")
+            return
+        await self._matched(step="start")
+
+    def _reason_holds(self, schedule: ScheduleRecord, reason: Literal["owner-not-found", "approval-required"]) -> bool:
+        """Return whether one reason to stop the schedule holds now."""
+        if reason == "owner-not-found":
+            return self._resolver.principal_of(schedule.owner) is None
+        return schedule.write_target == "default-branch" and approval_required()
 
     def _stop_reason(self, schedule: ScheduleRecord) -> Literal["owner-not-found", "approval-required"] | None:
-        """Return the reason for which the Sync API stops the schedule now, or ``None``."""
-        if self._resolver.principal_of(schedule.owner) is None:
+        """Return the reason for which the Sync API stops the schedule when it starts, or ``None``."""
+        if self._reason_holds(schedule, "owner-not-found"):
             return "owner-not-found"
-        if schedule.write_target == "default-branch" and approval_required():
+        if self._reason_holds(schedule, "approval-required"):
             return "approval-required"
         return None
 
@@ -518,12 +544,21 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 continue
             logger.warning("schedules.stopped", schedule_id=schedule.schedule_id, state_reason=reason)
 
-    async def _matched(self) -> bool:
-        """Make Prefect match the store, and return whether Prefect could be reached."""
+    async def _matched(self, *, step: str = "request") -> bool:
+        """Make Prefect match the store, and return whether it did.
+
+        Every failure of the task manager counts as "could not be reached", whatever its class,
+        as for the submission of a run: the schedule is stored, so the request must still save
+        its answer and its event, and the API process must still start. Only the class name of
+        the failure is logged, because the text of a provider error can hold an address.
+        """
         try:
             await match_prefect_schedules(self._projection, self._orchestration)
         except OrchestrationUnavailableError as error:
-            logger.warning("schedules.match_failed", step="request", error_class=error.error_class)
+            logger.warning("schedules.match_failed", step=step, error_class=error.error_class)
+            return False
+        except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # the remote boundary
+            logger.warning("schedules.match_failed", step=step, error_class=type(error).__name__)
             return False
         return True
 

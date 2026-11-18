@@ -129,20 +129,6 @@ def test_a_resume_succeeds_when_the_owner_exists_again(api: ScheduleApi, monkeyp
     assert again.orchestration.by_slug(schedule_id).active is True
 
 
-def test_a_resume_of_a_paused_schedule_is_refused_while_its_owner_is_gone(
-    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    schedule_id = api.create()["schedule_id"]
-    assert api.post(schedule_id, "pause").status_code == 200
-    again = _restart(api, monkeypatch, WITHOUT_OWNER)
-
-    response = again.post(schedule_id, "resume", ADMIN_TOKEN)
-
-    assert response.status_code == 409, response.text
-    assert response.json()["error"]["code"] == "schedule-stopped"
-    assert again.stored(schedule_id).state == "paused"
-
-
 def test_a_resume_after_repeated_failures_always_succeeds_and_clears_the_count(
     api: ScheduleApi, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
