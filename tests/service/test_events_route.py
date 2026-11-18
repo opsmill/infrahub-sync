@@ -427,7 +427,7 @@ def test_related_schedule_returns_the_schedule_events_and_the_events_of_its_runs
         scheduled_start_at=late_start,
         flow_run_id=str(uuid5(NAMESPACE_URL, "late")),
         worker_id=SCHEDULE_WORKER_ID,
-        now=late_start + timedelta(hours=1),
+        now=late_start + timedelta(hours=1, seconds=1),
         receipt_age_limit=timedelta(seconds=300),
     )
     _finish_open_execution(api.projection, other.json()["run"]["run_id"], "plan")

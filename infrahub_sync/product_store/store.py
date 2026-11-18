@@ -675,6 +675,19 @@ _SCHEDULE_TRANSITIONS: dict[str, frozenset[str]] = {
     "stopped": frozenset({"stopped", "active", "deleted"}),
 }
 _SCHEDULE_FIXED_FIELDS = ("name", "config_id", "created_at")
+# The settings whose change ends the start that waits under the `queue` policy.
+_SCHEDULE_WAIT_FIELDS = ("cron", "timezone", "overlap_policy")
+
+
+def _ends_waiting_start(stored: ScheduleRecord, changed: ScheduleRecord) -> bool:
+    """Whether a change of a schedule ends its waiting start: it is no longer active, or its cadence or policy changed."""
+    if stored.waiting_start_at is None:
+        return False
+    return changed.state != "active" or any(
+        getattr(changed, field) != getattr(stored, field) for field in _SCHEDULE_WAIT_FIELDS
+    )
+
+
 _SCHEDULE_BRANCH_COLUMNS = "run_id, schedule_id, branch, proposed_change_id, state, replaced_by_run_id, created_at"
 _INSERT_SCHEDULE_BRANCH = (
     "INSERT INTO schedule_branches (" + _SCHEDULE_BRANCH_COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?)"  # noqa: S608 - module constants only.
@@ -2527,7 +2540,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         cursor.execute(
             self._sql(
                 "UPDATE schedules SET state = 'stopped', state_reason = 'repeated-failures', "
-                "prefect_synced = FALSE, updated_at = ? WHERE schedule_id = ? AND state = 'active' "
+                "prefect_synced = FALSE, waiting_start_at = NULL, updated_at = ? WHERE schedule_id = ? AND state = 'active' "
                 "AND consecutive_failures >= ?"
             ),
             (_utc_iso(ended_at), schedule_id, MAX_CONSECUTIVE_FAILURES),
@@ -3637,9 +3650,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         The row is locked first, so the checks and the update see one state. The change
         writes the version, the cadence, the write settings, the state and its reason, the
         owner, the Prefect schedule fields and ``updated_at``. It does not write
-        ``last_start_at``, ``waiting_start_at`` or the count of failed runs, which the admission
-        of a start and the end of a run own; a resume of a schedule stopped for
-        ``repeated-failures`` sets the count to zero (FR-032).
+        ``last_start_at`` or the count of failed runs, which the admission of a start and the
+        end of a run own; a resume of a schedule stopped for ``repeated-failures`` sets the
+        count to zero (FR-032). It clears ``waiting_start_at`` when the schedule leaves the
+        state ``active`` or its cadence or overlap policy changes: the waiting flow run then
+        creates no run, and the wait must not block the later starts.
 
         Raises:
             ScheduleNotFoundError: No schedule has the identifier.
@@ -3686,6 +3701,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     schedule.schedule_id,
                 ),
             )
+            if _ends_waiting_start(stored, schedule):
+                cursor.execute(
+                    self._sql("UPDATE schedules SET waiting_start_at = NULL WHERE schedule_id = ?"),
+                    (schedule.schedule_id,),
+                )
             for event in events:
                 self._insert_event(cursor, event)
             updated = self._read_schedule(cursor, schedule.schedule_id)
@@ -3874,16 +3894,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         other. A schedule that is not ``active`` writes nothing and answers
         ``schedule-not-active``. Otherwise the transaction moves the rows of
         ``decision.kept_run_ids`` to the state ``kept``, writes the events of the decision, and
-        sets ``last_start_at`` to the start. For a start that runs it also writes the run, its
+        sets ``last_start_at`` to the start when it is later. A start queued under the ``queue``
+        policy becomes ``waiting_start_at``; any other decision on the waiting start clears it,
+        and that start is exempt from the check against ``last_start_at``. For a start that runs it also writes the run, its
         receipt already accepted, its ``sync`` write admission, its one execution already
         claimed by ``worker_id``, and a ``pending`` branch row for a run with branch review.
 
         Raises:
             ScheduleNotFoundError: No schedule has the identifier.
             DuplicateRunError: The start already has a run; nothing is written.
-            ScheduledStartAlreadyRecordedError: The start is not later than ``last_start_at``
-                and has no run, so it was already recorded.
-            ScheduleChangedError: The decision was made from another ``last_start_at``, its
+            ScheduledStartAlreadyRecordedError: The start is not later than ``last_start_at``,
+                is not the waiting start and has no run, so it was already recorded.
+            ScheduleChangedError: The decision was made from another ``last_start_at`` or
+                ``waiting_start_at``, its
                 run does not match the stored schedule, or a kept run has no branch row in
                 the states ``pending`` and ``open``.
             ConfigurationNotFoundError: The schedule's configuration version is not registered.
@@ -3920,13 +3943,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         existing = self._run_of_start(cursor, schedule_id, scheduled_start_at)
         if existing is not None:
             raise DuplicateRunError(_start_has_run_message(schedule_id, scheduled_start_at, existing))
-        if schedule.last_start_at is not None and scheduled_start_at <= schedule.last_start_at:
+        # The start that waits under the `queue` policy was recorded when it was queued; its
+        # later admissions are the same start (research R7).
+        waiting = schedule.waiting_start_at is not None and scheduled_start_at == schedule.waiting_start_at
+        if not waiting and schedule.last_start_at is not None and scheduled_start_at <= schedule.last_start_at:
             msg = (
                 f"the start {_utc_iso(scheduled_start_at)} of schedule {schedule_id!r} is not later than "
                 "its last recorded start"
             )
             raise ScheduledStartAlreadyRecordedError(msg)
-        if decision.last_start_at != schedule.last_start_at:
+        if (decision.last_start_at, decision.waiting_start_at) != (schedule.last_start_at, schedule.waiting_start_at):
             msg = f"schedule {schedule_id!r} recorded another start after the decision was made"
             raise ScheduleChangedError(msg)
         for kept_run_id in decision.kept_run_ids:
@@ -3949,9 +3975,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cause = decision.cause
         for event in decision.events:
             self._insert_event(cursor, event)
+        # A queued start waits; the waiting start's own admission ends the wait unless it is
+        # queued again. `last_start_at` never moves back to the waiting start.
+        if cause == "queued":
+            waiting_start_at: datetime | None = scheduled_start_at
+        elif waiting:
+            waiting_start_at = None
+        else:
+            waiting_start_at = schedule.waiting_start_at
+        last_start_at = (
+            scheduled_start_at if schedule.last_start_at is None else max(schedule.last_start_at, scheduled_start_at)
+        )
         cursor.execute(
-            self._sql("UPDATE schedules SET last_start_at = ? WHERE schedule_id = ?"),
-            (_utc_iso(scheduled_start_at), schedule_id),
+            self._sql("UPDATE schedules SET last_start_at = ?, waiting_start_at = ? WHERE schedule_id = ?"),
+            (
+                _utc_iso(last_start_at),
+                None if waiting_start_at is None else _utc_iso(waiting_start_at),
+                schedule_id,
+            ),
         )
         stored = self._read_schedule(cursor, schedule_id)
         assert stored is not None

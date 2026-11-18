@@ -3011,6 +3011,7 @@ _SCHEDULE_OPERATIONS = {
     ("/schedules/{schedule_id}/pause", "post"),
     ("/schedules/{schedule_id}/resume", "post"),
     ("/schedules/{schedule_id}/delete", "post"),
+    ("/schedules/{schedule_id}/take-over", "post"),
 }
 
 

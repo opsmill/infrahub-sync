@@ -39,6 +39,7 @@ RESOURCE_FIELDS = {
     "name",
     "config_id",
     "registry_version",
+    "newer_version",
     "cron",
     "timezone",
     "write_target",
@@ -46,10 +47,12 @@ RESOURCE_FIELDS = {
     "left_out_set_by",
     "left_out_set_at",
     "overlap_policy",
+    "start_late_by_at_most_seconds",
     "state",
     "state_reason",
     "owner",
     "next_start_at",
+    "waiting_start_at",
     "last_run_id",
     "prefect_synced",
     "consecutive_failures",
@@ -154,6 +157,9 @@ def test_create_applies_the_defaults_and_returns_the_next_start(api: ScheduleApi
         "left_out_set_by": None,
         "left_out_set_at": None,
         "overlap_policy": "reject",
+        "start_late_by_at_most_seconds": 3600,
+        "newer_version": None,
+        "waiting_start_at": None,
         "state": "active",
         "state_reason": None,
         "owner": "owner",
@@ -206,8 +212,9 @@ def test_the_stored_schedule_holds_the_request_and_no_token(api: ScheduleApi) ->
         ({"cron": "0 2 30 2 *"}, 422, "schedule-cron-invalid"),
         ({"timezone": "Europe/Atlantis"}, 422, "schedule-timezone-invalid"),
         ({"timezone": ""}, 422, "schedule-timezone-invalid"),
-        ({"overlap_policy": "queue"}, 422, "schedule-setting-not-available"),
-        ({"start_late_by_at_most_seconds": 600}, 422, "schedule-setting-not-available"),
+        ({"start_late_by_at_most_seconds": 59}, 422, "request-invalid"),
+        ({"start_late_by_at_most_seconds": 604801}, 422, "request-invalid"),
+        ({"overlap_policy": "wait"}, 422, "request-invalid"),
         ({"owner": "other"}, 422, "request-invalid"),
         ({"name": "not a name"}, 422, "request-invalid"),
     ],
@@ -306,9 +313,28 @@ def test_view_holds_the_fields_that_schedules_show_prints(api: ScheduleApi) -> N
     assert body["state_reason"] is None
     assert body["prefect_synced"] is True
     assert body["consecutive_failures"] == 0
-    assert "newer_version" not in body
-    assert "start_late_by_at_most_seconds" not in body
-    assert "waiting_start_at" not in body
+    # The fields of user story 3: no newer version, the default duration, no waiting start.
+    assert (body["newer_version"], body["start_late_by_at_most_seconds"], body["waiting_start_at"]) == (
+        None,
+        3600,
+        None,
+    )
+
+
+def test_queue_and_the_late_start_duration_are_accepted_by_create_and_change(api: ScheduleApi) -> None:
+    """User story 3: `schedule-setting-not-available` no longer applies to these two settings."""
+    created = api.create(overlap_policy="queue", start_late_by_at_most_seconds=600)
+
+    assert (created["overlap_policy"], created["start_late_by_at_most_seconds"]) == ("queue", 600)
+    stored = api.stored(created["schedule_id"])
+    assert (stored.overlap_policy, stored.start_late_by_at_most_seconds) == ("queue", 600)
+
+    response = api.post(created["schedule_id"], "change", overlap_policy="reject", start_late_by_at_most_seconds=7200)
+
+    assert response.status_code == 200, response.text
+    assert (response.json()["overlap_policy"], response.json()["start_late_by_at_most_seconds"]) == ("reject", 7200)
+    stored = api.stored(created["schedule_id"])
+    assert (stored.overlap_policy, stored.start_late_by_at_most_seconds) == ("reject", 7200)
 
 
 def test_the_list_is_newest_first_and_filters_and_pages(api: ScheduleApi) -> None:
@@ -371,8 +397,9 @@ def test_the_owner_changes_the_version_and_the_cadence(api: ScheduleApi) -> None
         ({"registry_version": 9}, 404, "configuration-version-not-found"),
         ({"cron": "0 2 * *"}, 422, "schedule-cron-invalid"),
         ({"timezone": "Europe/Atlantis"}, 422, "schedule-timezone-invalid"),
-        ({"overlap_policy": "queue"}, 422, "schedule-setting-not-available"),
-        ({"start_late_by_at_most_seconds": 600}, 422, "schedule-setting-not-available"),
+        ({"start_late_by_at_most_seconds": 59}, 422, "request-invalid"),
+        ({"start_late_by_at_most_seconds": 604801}, 422, "request-invalid"),
+        ({"overlap_policy": "wait"}, 422, "request-invalid"),
         ({"name": "another-name"}, 422, "request-invalid"),
         ({"config_id": "c-other"}, 422, "request-invalid"),
         ({"owner": "other"}, 422, "request-invalid"),

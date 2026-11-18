@@ -1,5 +1,5 @@
 # pylint: disable=too-many-lines  # one application service: the schedule requests, their checks and the match
-"""Schedules of the Sync API: create, change, pause, resume and delete, and the match with Prefect.
+"""Schedules of the Sync API: create, change, pause, resume, delete and take over, and the match with Prefect.
 
 A schedule is stored in the product store. Prefect holds its cadence as one schedule of the
 service deployment, with the identifier of the Sync schedule as its slug (spec 021, research R1).
@@ -67,11 +67,10 @@ CHANGE: Final = "schedule-change"
 PAUSE: Final = "schedule-pause"
 RESUME: Final = "schedule-resume"
 DELETE: Final = "schedule-delete"
+TAKE_OVER: Final = "schedule-take-over"
 
 _SCHEDULE_ID = re.compile(SCHEDULE_ID_PATTERN)
 _SCHEDULE_STATES: Final = frozenset({"active", "paused", "stopped", "deleted"})
-# The fields of the schedule resource that the API returns from user story 3 (contracts/http-api.md).
-_FIELDS_NOT_DELIVERED: Final = frozenset({"newer_version", "start_late_by_at_most_seconds", "waiting_start_at"})
 # How many times a request reads the schedule again when another writer changed it in between.
 _SAVE_ATTEMPTS: Final = 3
 _MATCH_PAGE_SIZE: Final = 200
@@ -286,7 +285,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 "next_cursor": next_cursor,
             }
         )
-        return emitted.model_dump(mode="json", exclude={"items": {"__all__": set(_FIELDS_NOT_DELIVERED)}})
+        return emitted.model_dump(mode="json")
 
     # ------------------------------------------------------------------
     # Requests
@@ -327,12 +326,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             write_when_left_out=request.write_when_left_out,
             declared_branch=declared_branch,
         )
-        self._require_delivered(
-            context,
-            write_target=request.write_target,
-            overlap_policy=request.overlap_policy,
-            start_late_by_at_most_seconds=request.start_late_by_at_most_seconds,
-        )
+        self._require_delivered(context, write_target=request.write_target)
         reserved = self._reserve(receipt, context)
         schedule = ScheduleRecord(
             schedule_id=reserved.resource_id,
@@ -346,7 +340,11 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             left_out_set_by=principal.actor if request.write_when_left_out else None,
             left_out_set_at=now if request.write_when_left_out else None,
             overlap_policy=request.overlap_policy,
-            start_late_by_at_most_seconds=DEFAULT_START_LATE_SECONDS,
+            start_late_by_at_most_seconds=(
+                DEFAULT_START_LATE_SECONDS
+                if request.start_late_by_at_most_seconds is None
+                else request.start_late_by_at_most_seconds
+            ),
             state="active",
             owner=principal.actor,
             created_at=now,
@@ -391,9 +389,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         def changed(schedule: ScheduleRecord, now: datetime) -> ScheduleRecord:
             target = context.of(schedule)
             values = {
-                name: value
-                for name, value in request.model_dump(exclude={"reason"}).items()
-                if value is not None and name != "start_late_by_at_most_seconds"
+                name: value for name, value in request.model_dump(exclude={"reason"}).items() if value is not None
             }
             merged = {**schedule.model_dump(), **values}
             if merged["write_target"] == "branch-review" and request.write_when_left_out is None:
@@ -409,12 +405,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 write_when_left_out=merged["write_when_left_out"],
                 declared_branch=declared_branch,
             )
-            self._require_delivered(
-                target,
-                write_target=request.write_target,
-                overlap_policy=request.overlap_policy,
-                start_late_by_at_most_seconds=request.start_late_by_at_most_seconds,
-            )
+            self._require_delivered(target, write_target=request.write_target)
             if merged["write_when_left_out"] and not schedule.write_when_left_out:
                 merged.update(left_out_set_by=principal.actor, left_out_set_at=now)
             elif not merged["write_when_left_out"]:
@@ -495,6 +486,43 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             return schedule.model_copy(update={"state": "deleted", "state_reason": None})
 
         return await self._act(schedule_id, context, request.model_dump(mode="json"), idempotency_key, deleted)
+
+    async def take_over(
+        self, schedule_id: str, request: ScheduleActionRequest, principal: Principal, idempotency_key: str
+    ) -> tuple[int, dict[str, Any]]:
+        """Make the calling administrator the owner of a schedule (FR-026).
+
+        A schedule stopped because its owner's actor does not exist becomes active. A schedule
+        stopped for another reason keeps its state, and a paused schedule stays paused. A take-over
+        by the owner changes nothing.
+
+        Raises:
+            ServiceAPIError: ``403 forbidden`` for a caller who is not an administrator,
+                ``404 schedule-not-found`` or ``409 schedule-deleted``.
+        """
+        context = _Request(principal.actor, TAKE_OVER, request.reason, administrator=principal.administrator)
+        if not principal.administrator:
+            schedule = self._projection.lookup_schedule(schedule_id).value
+            if schedule is None:
+                raise self._refusal(context, 404, "schedule-not-found", "the requested schedule does not exist")
+            raise self._refusal(
+                context.of(schedule),
+                403,
+                "forbidden",
+                "only an administrator may take over a schedule",
+                outcome="refused-authorization",
+            )
+
+        def taken_over(schedule: ScheduleRecord, now: datetime) -> ScheduleRecord:
+            del now
+            changes: dict[str, Any] = {}
+            if schedule.owner != principal.actor:
+                changes["owner"] = principal.actor
+            if schedule.state_reason == "owner-not-found":
+                changes.update(state="active", state_reason=None)
+            return schedule.model_copy(update=changes) if changes else schedule
+
+        return await self._act(schedule_id, context, request.model_dump(mode="json"), idempotency_key, taken_over)
 
     # ------------------------------------------------------------------
     # The match with Prefect, and the start of the API process
@@ -917,23 +945,11 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 "always writes the remaining records, and its proposed change states the count left out",
             )
 
-    def _require_delivered(
-        self,
-        context: _Request,
-        *,
-        write_target: str | None,
-        overlap_policy: str | None,
-        start_late_by_at_most_seconds: int | None,
-    ) -> None:
-        """Refuse a setting that this build does not run yet; ``None`` is a setting that a change leaves out."""
-        if write_target is not None and write_target not in self._delivered_write_targets:
-            message = f"the write target {write_target} is not available on this Sync API"
-        elif overlap_policy == "queue":
-            message = "the overlap policy queue is not available on this Sync API"
-        elif start_late_by_at_most_seconds is not None:
-            message = "start_late_by_at_most_seconds is not available on this Sync API"
-        else:
+    def _require_delivered(self, context: _Request, *, write_target: str | None) -> None:
+        """Refuse a write target that this build does not run; ``None`` is a write target that a change leaves out."""
+        if write_target is None or write_target in self._delivered_write_targets:
             return
+        message = f"the write target {write_target} is not available on this Sync API"
         raise self._refusal(context, 422, "schedule-setting-not-available", message)
 
     # ------------------------------------------------------------------
@@ -973,6 +989,8 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                         "left_out_set_by",
                         "left_out_set_at",
                         "overlap_policy",
+                        "start_late_by_at_most_seconds",
+                        "waiting_start_at",
                         "state",
                         "state_reason",
                         "owner",
@@ -983,14 +1001,21 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                     }
                 ),
                 "next_start_at": next_start_at,
+                "newer_version": self._newer_version(schedule),
                 "last_run_id": runs[0].run_id if runs else None,
                 "open_branch": open_branch,
             }
         )
 
+    def _newer_version(self, schedule: ScheduleRecord) -> int | None:
+        """Return the highest registered version of the configuration when it is higher than the schedule's (FR-007)."""
+        summary = self._projection.lookup_configuration(schedule.config_id).value
+        latest = None if summary is None else summary.latest_version
+        return latest if latest is not None and latest > schedule.registry_version else None
+
     def _resource(self, schedule: ScheduleRecord) -> dict[str, Any]:
-        """Return the schedule resource as the API answers it, without the fields of user story 3."""
-        return self._emitted(schedule).model_dump(mode="json", exclude=set(_FIELDS_NOT_DELIVERED))
+        """Return the schedule resource as the API answers it."""
+        return self._emitted(schedule).model_dump(mode="json")
 
     def _event(self, context: _Request, outcome: str) -> AuditEvent:
         return schedule_event(

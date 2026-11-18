@@ -34,6 +34,7 @@ from .events import (
     SCHEDULE_START,
     SCHEDULE_START_FAILED,
     SCHEDULE_START_MISSED,
+    SCHEDULE_START_QUEUED,
     SCHEDULE_START_SKIPPED,
     run_decision_type,
     run_event,
@@ -51,9 +52,10 @@ if TYPE_CHECKING:
         ScheduleRecord,
     )
 
-# How late the most recent start may begin and still run. User story 3 replaces it with the
-# schedule's own ``start_late_by_at_most_seconds``.
-MOST_RECENT_START_LATE_LIMIT_SECONDS = 300
+# How late a start may begin and still count as on time: it writes no schedule event. A start
+# later than this that runs is recorded as ``missed-started-late``. How late the most recent
+# start may begin and still run is the schedule's own ``start_late_by_at_most_seconds`` (R10).
+ON_TIME_SECONDS = 300
 # The newest missed starts are recorded one event each; the older ones share one event.
 MISSED_STARTS_RECORDED_ONE_BY_ONE = 500
 # How many times a decision is made again when the schedule changed while it was being made.
@@ -188,7 +190,7 @@ def admit_scheduled_start(  # pylint: disable=too-many-arguments
     raise ScheduleChangedError(msg)
 
 
-def decide_start(  # pylint: disable=too-many-arguments,too-many-locals
+def decide_start(  # noqa: PLR0911  # pylint: disable=too-many-arguments,too-many-locals,too-many-return-statements
     projection: ProductProjection,
     schedule: ScheduleRecord,
     start: datetime,
@@ -200,28 +202,40 @@ def decide_start(  # pylint: disable=too-many-arguments,too-many-locals
     """Decide whether the start of an active schedule runs, with the events of the decision.
 
     In order: the starts of the cadence that passed with no flow run are recorded as missed; a
-    start later than ``MOST_RECENT_START_LATE_LIMIT_SECONDS`` is missed; a configuration version
-    that cannot be run fails the start; a run of the configuration in progress skips it (the
-    ``reject`` policy). For a schedule with branch review, ``read_proposed_changes`` then reads
-    the earlier proposed changes of its ``pending`` and ``open`` branch rows (research R11,
-    FR-031): one that cannot be read fails the start; one that is approved and open skips it;
-    one that a person merged or closed moves to the state ``kept``. Otherwise the start runs as
-    a new ``sync`` run of the owner.
+    start that is not the most recent start of the cadence, or that is later than the
+    schedule's ``start_late_by_at_most_seconds``, is missed (research R10); a configuration
+    version that cannot be run fails the start; a further start while another start waits is
+    skipped; a run of the configuration in progress skips the start under the ``reject``
+    policy and makes it wait under the ``queue`` policy (research R7). For a schedule with
+    branch review, ``read_proposed_changes`` then reads the earlier proposed changes of its
+    ``pending`` and ``open`` branch rows (research R11, FR-031): one that cannot be read fails
+    the start; one that is approved and open skips it; one that a person merged or closed moves
+    to the state ``kept``. Otherwise the start runs as a new ``sync`` run of the owner; a run
+    later than ``ON_TIME_SECONDS`` is recorded as ``missed-started-late``.
+
+    The waiting start (``waiting_start_at``) was recorded when it was queued: it is not late,
+    writes no second ``start_queued`` event while the run in progress goes on, and runs when it
+    ends.
     """
-    events = list(_missed_start_events(schedule, start, now))
+    waiting = schedule.waiting_start_at is not None and start == schedule.waiting_start_at
+    events = [] if waiting else list(_missed_start_events(schedule, start, now))
     kept_run_ids: list[str] = []
 
-    def not_run(cause: str, event: AuditEvent) -> ScheduledStartNotRun:
+    def not_run(cause: str, event: AuditEvent | None) -> ScheduledStartNotRun:
         return ScheduledStartNotRun.model_validate(
             {
                 "cause": cause,
                 "last_start_at": schedule.last_start_at,
-                "events": (*events, event),
+                "waiting_start_at": schedule.waiting_start_at,
+                "events": (*events, *(() if event is None else (event,))),
                 "kept_run_ids": tuple(kept_run_ids),
             }
         )
 
-    if now - start > timedelta(seconds=MOST_RECENT_START_LATE_LIMIT_SECONDS):
+    late = now - start
+    if not waiting and (
+        _later_start_passed(schedule, start, now) or late > timedelta(seconds=schedule.start_late_by_at_most_seconds)
+    ):
         return not_run("missed", _start_event(schedule, SCHEDULE_START_MISSED, "missed-skipped", start, now))
     version = _runnable_version(projection, schedule)
     if isinstance(version, str):
@@ -229,7 +243,17 @@ def decide_start(  # pylint: disable=too-many-arguments,too-many-locals
         return not_run("failed", event)
     package_checksum, sync_name, settings = version
     in_progress = projection.run_in_progress(schedule.config_id, now, receipt_age_limit)
+    if schedule.waiting_start_at is not None and not waiting:
+        event = _start_event(schedule, SCHEDULE_START_SKIPPED, "skipped-start-waiting", start, now, run_id=in_progress)
+        return not_run("skipped-start-waiting", event)
     if in_progress is not None:
+        if schedule.overlap_policy == "queue":
+            queued = (
+                None
+                if waiting
+                else _start_event(schedule, SCHEDULE_START_QUEUED, "queued", start, now, run_id=in_progress)
+            )
+            return not_run("queued", queued)
         event = _start_event(
             schedule, SCHEDULE_START_SKIPPED, "skipped-run-in-progress", start, now, run_id=in_progress
         )
@@ -289,11 +313,17 @@ def decide_start(  # pylint: disable=too-many-arguments,too-many-locals
         created_at=now,
     )
     kept_events = tuple(_kept_event(schedule, row, _KEPT_OUTCOMES[states[row.run_id]], run.run_id, now) for row in kept)
+    started_late = (
+        ()
+        if waiting or late <= timedelta(seconds=ON_TIME_SECONDS)
+        else (_start_event(schedule, SCHEDULE_START_MISSED, "missed-started-late", start, now, run_id=run.run_id),)
+    )
     return ScheduledStartRun(
         run=run,
         branch_review=branch_review,
         last_start_at=schedule.last_start_at,
-        events=(*events, *kept_events, accepted),
+        waiting_start_at=schedule.waiting_start_at,
+        events=(*events, *started_late, *kept_events, accepted),
         kept_run_ids=tuple(kept_run_ids),
     )
 
@@ -315,6 +345,16 @@ def _kept_event(
         details=EventDetails(branch=branch.branch, proposed_change_id=branch.proposed_change_id),
         created_at=now,
     )
+
+
+def _later_start_passed(schedule: ScheduleRecord, start: datetime, now: datetime) -> bool:
+    """Return whether the cadence has a start later than ``start`` and not later than ``now``.
+
+    Then ``start`` is not the most recent start, and an earlier late start never runs (R10).
+    """
+    if now <= start:
+        return False
+    return bool(schedule_cadence.starts_between(schedule.cron, schedule.timezone, start, now, 1))
 
 
 def _in_cadence(schedule: ScheduleRecord, start: datetime) -> bool:

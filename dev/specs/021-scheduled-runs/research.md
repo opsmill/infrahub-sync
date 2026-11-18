@@ -594,3 +594,28 @@ Checked since, for R3, in the installed Prefect 3.8.6 on 2026-11-17 while writin
   gives 01:30 local time (00:30 UTC), as R3 records, and Python 3.13 gives 03:30 local time
   (01:30 UTC). Both give one start. The night that has 02:30 twice gives the first one on both.
   Python 3.12 was not checked.
+
+Checked since, for R7 (the `queue` policy), in the installed Prefect 3.8.6 on 2026-11-18 while
+writing task T046, from the source code and with the test server that `prefect_test_harness`
+starts (`tests/service/test_schedule_missed_starts.py`):
+
+- The flow returns `prefect.states.AwaitingRetry(scheduled_time=...)`, a state of the type
+  `SCHEDULED`. Prefect's flow engine uses a state that the flow returns as given when no run
+  identifier is set on it (`states.py`, `return_value_to_state`), and only an exception leads the
+  engine to run the flow again in the same process (`flow_engine.py`, `handle_exception`). The test
+  server accepts the move from `RUNNING` to this state, keeps the scheduled time, and leaves the
+  flow run's `expected_start_time` as it was: Prefect sets that time only when it is empty
+  (`server/orchestration/global_policy.py`, `SetExpectedStartTime`). The test server answers
+  `WAIT` to a move to `PENDING` before the scheduled time and accepts the moves to `PENDING` and
+  `RUNNING` after it. Prefect itself proposes `AwaitingRetry` to hand a flow run back to its
+  worker (`runner/_state_proposer.py`, and the comment in `server/orchestration/core_policy.py`
+  on an `AwaitingRetry` state "proposed directly").
+- `auto_scheduled` is a field that Prefect sets when its scheduler creates the flow run; a change
+  of state does not write it. This was read from the source code only: a flow run created by the
+  test does not come from a schedule.
+- The service worker's admission (`infrahub_sync/service/worker.py`, `_admission_refusal`) and the
+  identity check of the flow (`_require_current_worker_identity`) read neither the state nor the
+  run count of a flow run, so a flow run that runs a second time is not refused for that reason.
+- Not observed: a process worker taking the flow run again after the scheduled time, and how the
+  worker treats a child process that ends with a state that is not final. These need a running
+  Prefect server, worker and deployment.

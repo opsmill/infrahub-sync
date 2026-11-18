@@ -200,6 +200,7 @@ def _admit(  # noqa: PLR0913 - the facts of one admission.
             events=events,
             kept_run_ids=kept_run_ids,
             last_start_at=getattr(projection.lookup_schedule(schedule.schedule_id).value, "last_start_at", None),
+            waiting_start_at=getattr(projection.lookup_schedule(schedule.schedule_id).value, "waiting_start_at", None),
         ),
     )
 
@@ -223,6 +224,7 @@ def _skip(  # noqa: PLR0913 - the facts of one admission.
             {
                 "cause": cause,
                 "last_start_at": _stored(projection, schedule.schedule_id).last_start_at,
+                "waiting_start_at": _stored(projection, schedule.schedule_id).waiting_start_at,
                 "events": events,
                 "kept_run_ids": kept_run_ids,
             }
@@ -679,6 +681,85 @@ def test_a_decision_made_from_an_earlier_last_start_is_refused(projection: Produ
 
     assert _schedule_events(projection, schedule) == ()
     assert _stored(projection, schedule.schedule_id).last_start_at == _FIRST_START
+
+
+# --- the start that waits under the `queue` policy (research R7, FR-016) -----------------
+
+
+def test_a_queued_start_waits_and_its_later_admission_runs_it(projection: ProductProjection) -> None:
+    schedule = _created(projection, overlap_policy="queue")
+    later = _FIRST_START + _DAY
+
+    queued = _skip(projection, schedule, _FIRST_START, cause="queued")
+    again = _skip(projection, schedule, _FIRST_START, cause="queued")
+    further = _skip(projection, schedule, later, cause="skipped-start-waiting")
+    ran = _admit(projection, schedule, _FIRST_START)
+
+    assert queued.schedule.waiting_start_at == _FIRST_START
+    assert again.schedule.waiting_start_at == _FIRST_START
+    assert (further.schedule.waiting_start_at, further.schedule.last_start_at) == (_FIRST_START, later)
+    assert ran.started
+    # The waiting start ran: the wait ends, and the last recorded start does not move back.
+    assert (ran.schedule.waiting_start_at, ran.schedule.last_start_at) == (None, later)
+    (run,) = projection.list_runs(RunFilters(schedule_id=schedule.schedule_id)).items
+    assert run.scheduled_start_at == _FIRST_START
+
+
+def test_any_other_decision_on_the_waiting_start_ends_the_wait(projection: ProductProjection) -> None:
+    schedule = _created(projection, overlap_policy="queue")
+    _skip(projection, schedule, _FIRST_START, cause="queued")
+
+    result = _skip(projection, schedule, _FIRST_START, cause="failed")
+
+    assert (result.cause, result.schedule.waiting_start_at) == ("failed", None)
+    with pytest.raises(ScheduledStartAlreadyRecordedError):
+        _skip(projection, schedule, _FIRST_START, cause="queued")
+
+
+def test_a_decision_made_from_another_waiting_start_is_refused(projection: ProductProjection) -> None:
+    schedule = _created(projection, overlap_policy="queue")
+    _skip(projection, schedule, _FIRST_START, cause="queued")
+    start = _FIRST_START + _DAY
+
+    with pytest.raises(ScheduleChangedError):
+        projection.admit_scheduled_start(
+            schedule.schedule_id,
+            start,
+            "flow-stale",
+            _WORKER_ID,
+            start,
+            ScheduledStartNotRun(cause="queued", last_start_at=_FIRST_START, waiting_start_at=None),
+        )
+
+    assert _stored(projection, schedule.schedule_id).waiting_start_at == _FIRST_START
+
+
+@pytest.mark.parametrize(
+    ("changes", "ends"),
+    [
+        pytest.param({"state": "paused"}, True, id="paused"),
+        pytest.param({"state": "stopped", "state_reason": "owner-not-found"}, True, id="stopped"),
+        pytest.param({"state": "deleted"}, True, id="deleted"),
+        pytest.param({"cron": "0 3 * * *"}, True, id="cadence"),
+        pytest.param({"timezone": "Europe/Paris"}, True, id="time-zone"),
+        pytest.param({"overlap_policy": "reject"}, True, id="overlap-policy"),
+        pytest.param({"owner": "administrator"}, False, id="owner"),
+        pytest.param({"start_late_by_at_most_seconds": 600}, False, id="late-start-duration"),
+    ],
+)
+def test_a_change_that_stops_the_waiting_start_from_running_ends_the_wait(
+    projection: ProductProjection,
+    changes: dict[str, object],
+    ends: bool,  # noqa: FBT001
+) -> None:
+    """The waiting flow run creates no run after these changes, so the wait must not block later starts."""
+    schedule = _created(projection, overlap_policy="queue")
+    _skip(projection, schedule, _FIRST_START, cause="queued")
+    stored = _stored(projection, schedule.schedule_id)
+
+    updated = projection.update_schedule(_changed(stored, **changes))
+
+    assert updated.waiting_start_at == (None if ends else _FIRST_START)
 
 
 @pytest.mark.parametrize(

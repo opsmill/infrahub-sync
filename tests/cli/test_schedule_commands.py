@@ -78,7 +78,14 @@ def client() -> MagicMock:
     )
     injected.iter_schedules.side_effect = lambda **_: iter((_schedule(),))
     injected.list_schedules.return_value = SchedulePage(items=(_schedule(),))
-    for method in ("create_schedule", "change_schedule", "pause_schedule", "resume_schedule", "delete_schedule"):
+    for method in (
+        "create_schedule",
+        "change_schedule",
+        "pause_schedule",
+        "resume_schedule",
+        "delete_schedule",
+        "take_over_schedule",
+    ):
         getattr(injected, method).return_value = _schedule()
     injected.list_runs.return_value = RunPage(items=())
     injected.iter_events.return_value = iter(())
@@ -172,12 +179,13 @@ def test_create_offers_only_the_settings_the_sync_api_accepts() -> None:
         "--cron",
         "--timezone",
         "--write-when-left-out",
+        "--overlap-policy",
+        "--start-late-by-at-most",
         "--reason",
         "--idempotency-key",
     ):
         assert option in help_text
-    for later in ("--write-to-default-branch", "--overlap-policy", "--start-late-by-at-most"):
-        assert later not in help_text
+    assert "--write-to-default-branch" not in help_text
 
 
 def test_create_refusal_exits_1_with_the_code(client: MagicMock) -> None:
@@ -269,8 +277,121 @@ def test_show_prints_the_state_the_last_run_and_the_consecutive_failures(client:
     for line in ("state: active", "state_reason: <none>", "last_run_id: run-9", "consecutive_failures: 2"):
         assert line in result.stdout
     assert not result.stderr
-    # A field the Sync API does not return yet is not printed as a value.
+    # A field that a Sync API without user story 3 does not return is not printed as a value.
     assert "newer_version" not in result.stdout
+
+
+def test_show_prints_the_fields_of_user_story_3_when_the_sync_api_returns_them(client: MagicMock) -> None:
+    client.get_schedule.side_effect = None
+    client.get_schedule.return_value = _schedule(
+        overlap_policy="queue", start_late_by_at_most_seconds=1800, waiting_start_at=NOW
+    )
+
+    result = _invoke(client, "schedules", "show", SCHEDULE_ID)
+
+    assert result.exit_code == 0, result.output
+    for line in (
+        "overlap_policy: queue",
+        "start_late_by_at_most_seconds: 1800",
+        f"waiting_start_at: {NOW.isoformat()}",
+    ):
+        assert line in result.stdout
+
+
+@pytest.mark.parametrize("command", ["show", "list"])
+def test_a_newer_version_is_a_warning_on_standard_error(client: MagicMock, command: str) -> None:
+    """Scenario 6: the warning does not change the exit code and is not part of the output."""
+    newer = _schedule(newer_version=4)
+    client.get_schedule.side_effect = None
+    client.get_schedule.return_value = newer
+    client.list_schedules.return_value = SchedulePage(items=(newer,))
+
+    result = _invoke(client, "schedules", command, *((SCHEDULE_ID,) if command == "show" else ()))
+
+    assert result.exit_code == 0, result.output
+    assert "warning: a newer version of this configuration exists: from-netbox version 4" in result.stderr
+    assert "warning" not in result.stdout
+
+
+_CREATE = ("schedules", "create", "--name", NAME, "--config", "from-netbox", "--version", "3", "--cron", "0 2 * * *")
+
+
+@pytest.mark.parametrize(
+    ("duration", "seconds"),
+    [("30m", 1800), ("2h", 7200), ("90s", 90), ("7d", 604800), ("1m", 60)],
+)
+def test_create_sends_queue_and_the_late_start_duration_in_seconds(
+    client: MagicMock, duration: str, seconds: int
+) -> None:
+    result = _invoke(client, *_CREATE, "--overlap-policy", "queue", "--start-late-by-at-most", duration)
+
+    assert result.exit_code == 0, result.output
+    (request, _key) = client.create_schedule.call_args.args
+    assert (request.overlap_policy, request.start_late_by_at_most_seconds) == ("queue", seconds)
+
+
+def test_create_sends_neither_setting_when_neither_option_is_given(client: MagicMock) -> None:
+    result = _invoke(client, *_CREATE)
+
+    assert result.exit_code == 0, result.output
+    (request, _key) = client.create_schedule.call_args.args
+    assert {"overlap_policy", "start_late_by_at_most_seconds"}.isdisjoint(request.model_fields_set)
+
+
+@pytest.mark.parametrize("duration", ["30", "59s", "8d", "2 hours", "1.5h", "-1h", "h"])
+def test_a_duration_that_cannot_be_read_or_is_out_of_range_exits_2_before_any_request(
+    client: MagicMock, duration: str
+) -> None:
+    result = _invoke(client, *_CREATE, "--start-late-by-at-most", duration)
+
+    assert result.exit_code == 2
+    assert "--start-late-by-at-most" in _ANSI.sub("", result.output)
+    client.create_schedule.assert_not_called()
+
+
+def test_an_unknown_overlap_policy_exits_2_before_any_request(client: MagicMock) -> None:
+    result = _invoke(client, *_CREATE, "--overlap-policy", "wait")
+
+    assert result.exit_code == 2
+    client.create_schedule.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        (("--overlap-policy", "queue"), ChangeScheduleRequest(overlap_policy="queue")),
+        (("--start-late-by-at-most", "2h"), ChangeScheduleRequest(start_late_by_at_most_seconds=7200)),
+    ],
+)
+def test_change_sends_the_overlap_policy_or_the_late_start_duration_alone(
+    client: MagicMock, options: tuple[str, str], expected: ChangeScheduleRequest
+) -> None:
+    result = _invoke(client, "schedules", "change", SCHEDULE_ID, *options, "--idempotency-key", "key-4")
+
+    assert result.exit_code == 0, result.output
+    client.change_schedule.assert_called_once_with(SCHEDULE_ID, expected, "key-4")
+
+
+def test_take_over_sends_the_reason_and_prints_the_schedule(client: MagicMock) -> None:
+    client.take_over_schedule.return_value = _schedule(owner="admin")
+
+    result = _invoke(client, "schedules", "take-over", NAME, "--reason", "the owner left", "--idempotency-key", "k-5")
+
+    assert result.exit_code == 0, result.output
+    client.take_over_schedule.assert_called_once_with(
+        SCHEDULE_ID, ScheduleActionRequest(reason="the owner left"), "k-5"
+    )
+    assert "idempotency_key: k-5" in result.stdout
+    assert "owner: admin" in result.stdout
+
+
+def test_take_over_refused_for_a_caller_who_is_not_an_administrator_exits_1(client: MagicMock) -> None:
+    client.take_over_schedule.side_effect = APIError(403, "forbidden")
+
+    result = _invoke(client, "schedules", "take-over", SCHEDULE_ID)
+
+    assert result.exit_code == 1
+    assert "code: forbidden" in result.stderr
 
 
 def test_show_resolves_a_name_when_no_schedule_has_that_identifier(client: MagicMock) -> None:

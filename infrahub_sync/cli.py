@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import unicodedata
@@ -60,6 +61,8 @@ from infrahub_sync.client.models import (
     MAX_FAILURE_CAUSE_TEXT,
     MAX_LIMIT,
     MAX_REPORT_LIMIT,
+    MAX_START_LATE_SECONDS,
+    MIN_START_LATE_SECONDS,
     RECOVERY_NEXT_ACTIONS,
     SCHEMA_CHANGED_NEXT_ACTION,
     ListPage,
@@ -2372,14 +2375,51 @@ def events_cmd(
 # The action each reason of a stopped schedule needs (data-model.md, state transitions).
 _STOPPED_ACTIONS = {
     "owner-not-found": (
-        "an administrator takes the schedule over, or the owner's actor is restored on the Sync API; "
-        "then resume the schedule"
+        "an administrator takes the schedule over with `schedules take-over`, or the owner's actor is restored "
+        "on the Sync API and the schedule is resumed"
     ),
     "approval-required": "change the write target to branch review",
     "repeated-failures": "check the last runs of the schedule, then resume it",
 }
 _REASON_HELP = "Optional audit reason."
 _IDEMPOTENCY_KEY_HELP = "Retry key."
+_OVERLAP_POLICY_HELP = (
+    "What a start does while a run of the configuration is in progress: reject skips the start, queue makes "
+    "one start wait and run when the run in progress ends."
+)
+_START_LATE_HELP = (
+    "How late the most recent start may begin after a time when the Sync service was not running, such as "
+    "30m or 2h (from 1m to 7d). The Sync API uses 1h when the option is not given."
+)
+_DURATION = re.compile(r"(\d+)([smhd])")
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+class OverlapPolicyOption(str, Enum):
+    """The overlap policies of a schedule."""
+
+    REJECT = "reject"
+    QUEUE = "queue"
+
+
+def _start_late_seconds(value: str | None) -> int | None:
+    """Parse a duration such as `30m` or `2h` into seconds; the client sends seconds.
+
+    Raises:
+        typer.BadParameter: The value is not a whole number with one unit of `s`, `m`, `h` or `d`,
+            or it is outside one minute to seven days.
+    """
+    if value is None:
+        return None
+    match = _DURATION.fullmatch(value.strip())
+    if match is None:
+        msg = "give a whole number with one unit: s, m, h or d, such as 30m or 2h"
+        raise typer.BadParameter(msg)
+    seconds = int(match.group(1)) * _DURATION_UNITS[match.group(2)]
+    if not MIN_START_LATE_SECONDS <= seconds <= MAX_START_LATE_SECONDS:
+        msg = "the duration must be from 1m to 7d"
+        raise typer.BadParameter(msg)
+    return seconds
 
 
 def _resolve_schedule(client: SyncClient, value: str) -> ScheduleResource:
@@ -2451,6 +2491,11 @@ def _echo_schedule(schedule: ScheduleResource) -> None:
 def _echo_schedule_warnings(schedule: ScheduleResource, *, name_it: bool = False) -> None:
     """Write the warnings that apply to a schedule to standard error; they do not change the exit code."""
     warnings: list[str] = []
+    if schedule.newer_version is not None:
+        warnings.append(
+            f"warning: a newer version of this configuration exists: {schedule.config_id} version "
+            f"{schedule.newer_version}"
+        )
     if schedule.state == "stopped":
         warnings.append(f"warning: this schedule is stopped: {schedule.state_reason or 'unknown'}")
         action = _STOPPED_ACTIONS.get(schedule.state_reason or "")
@@ -2495,6 +2540,10 @@ def schedules_create(  # pylint: disable=too-many-arguments
     write_when_left_out: bool | None = typer.Option(
         None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
     ),
+    overlap_policy: OverlapPolicyOption | None = typer.Option(None, "--overlap-policy", help=_OVERLAP_POLICY_HELP),
+    start_late_by_at_most: str | None = typer.Option(
+        None, "--start-late-by-at-most", callback=_start_late_seconds, help=_START_LATE_HELP
+    ),
     reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
 ) -> None:
@@ -2507,7 +2556,16 @@ def schedules_create(  # pylint: disable=too-many-arguments
         client = _client(ctx)
         config_id = _config_id(ctx, config)
         # Sent only when given, so a request without the option keeps its body.
-        left_out = {} if write_when_left_out is None else {"write_when_left_out": write_when_left_out}
+        given: dict[str, object] = {
+            name: value
+            for name, value in (
+                ("write_when_left_out", write_when_left_out),
+                ("overlap_policy", None if overlap_policy is None else overlap_policy.value),
+                # The callback has already turned the duration into seconds.
+                ("start_late_by_at_most_seconds", start_late_by_at_most),
+            )
+            if value is not None
+        }
         request = cast(
             "CreateScheduleRequest",
             _request(
@@ -2518,7 +2576,7 @@ def schedules_create(  # pylint: disable=too-many-arguments
                 cron=cron,
                 timezone=timezone,
                 reason=reason,
-                **left_out,
+                **given,
             ),
         )
         key = _idempotency_key(idempotency_key)
@@ -2578,6 +2636,10 @@ def schedules_change(  # pylint: disable=too-many-arguments
     write_when_left_out: bool | None = typer.Option(
         None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
     ),
+    overlap_policy: OverlapPolicyOption | None = typer.Option(None, "--overlap-policy", help=_OVERLAP_POLICY_HELP),
+    start_late_by_at_most: str | None = typer.Option(
+        None, "--start-late-by-at-most", callback=_start_late_seconds, help=_START_LATE_HELP
+    ),
     reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
 ) -> None:
@@ -2587,11 +2649,14 @@ def schedules_change(  # pylint: disable=too-many-arguments
         "cron": cron,
         "timezone": timezone,
         "write_when_left_out": write_when_left_out,
+        "overlap_policy": None if overlap_policy is None else overlap_policy.value,
+        # The callback has already turned the duration into seconds.
+        "start_late_by_at_most_seconds": start_late_by_at_most,
     }
     if all(value is None for value in changes.values()):
         typer.echo(
-            "error: schedules change needs at least one of --version, --cron, --timezone and "
-            "--write-when-left-out or --no-write-when-left-out",
+            "error: schedules change needs at least one of --version, --cron, --timezone, "
+            "--write-when-left-out or --no-write-when-left-out, --overlap-policy and --start-late-by-at-most",
             err=True,
         )
         raise typer.Exit(2)
@@ -2619,7 +2684,7 @@ def _schedule_action(
     reason: str | None,
     idempotency_key: str | None,
 ) -> ScheduleResource:
-    """Resolve the schedule, print the idempotency key, and send one pause, resume or delete."""
+    """Resolve the schedule, print the idempotency key, and send one pause, resume, delete or take-over."""
     client = _client(ctx)
     schedule_id = _resolve_schedule(client, schedule).schedule_id
     request = cast("ScheduleActionRequest", _request(ScheduleActionRequest, reason=reason))
@@ -2685,3 +2750,18 @@ def schedules_delete(
             "stay in Infrahub"
         )
         typer.echo(_display(kept))
+
+
+@schedules_app.command("take-over")
+def schedules_take_over(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Become the owner of a schedule; only an administrator may. Its runs then record you as their actor.
+
+    A schedule that stopped because its owner's actor no longer exists becomes active again.
+    """
+    with _client_errors():
+        _schedule_action(ctx, schedule, "take_over_schedule", reason=reason, idempotency_key=idempotency_key)

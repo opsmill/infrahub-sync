@@ -283,13 +283,15 @@ def test_reject_skips_the_start_and_names_the_run_in_progress(
     assert skipped.details.start_at == T0
 
 
-def test_a_start_more_than_five_minutes_late_is_recorded_as_missed_with_no_run(
+def test_a_start_later_than_its_duration_is_recorded_as_missed_with_no_run(
     monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
 ) -> None:
-    schedule_id = _schedule(api)
+    """User story 3 replaced the 5 minutes of user story 1 with the duration, 3600 seconds by default."""
+    schedule_id = _schedule(api, cron="0 2 * * *")
+    tomorrow = T0 + 24 * HOUR
 
-    state = _start(monkeypatch, api, schedule_id, T0, late=timedelta(seconds=301))
-    on_time = _start(monkeypatch, api, schedule_id, T0 + HOUR, late=timedelta(seconds=300))
+    state = _start(monkeypatch, api, schedule_id, T0, late=timedelta(seconds=3601))
+    on_time = _start(monkeypatch, api, schedule_id, tomorrow, late=timedelta(seconds=300))
 
     assert _completed(state)
     (missed,) = _events(api, "infrahub_sync.schedule.start_missed")
@@ -297,7 +299,7 @@ def test_a_start_more_than_five_minutes_late_is_recorded_as_missed_with_no_run(
     assert missed.details is not None
     assert missed.details.start_at == T0
     assert isinstance(on_time, dict)
-    assert [run.scheduled_start_at for run in _runs(api, schedule_id)] == [T0 + HOUR]
+    assert [run.scheduled_start_at for run in _runs(api, schedule_id)] == [tomorrow]
 
 
 def test_starts_with_no_flow_run_since_the_last_start_are_recorded_as_missed(
@@ -386,7 +388,7 @@ def test_30_starts_give_30_runs_or_recorded_starts(monkeypatch: pytest.MonkeyPat
     starts = [T0 + n * HOUR for n in range(30)]
 
     for number, start in enumerate(starts):
-        _start(monkeypatch, api, schedule_id, start, late=timedelta(minutes=10) if number % 5 == 4 else ON_TIME)
+        _start(monkeypatch, api, schedule_id, start, late=timedelta(minutes=61) if number % 5 == 4 else ON_TIME)
 
     ran = [run.scheduled_start_at for run in _runs(api, schedule_id)]
     missed = [event.details.start_at for event in _events(api, "infrahub_sync.schedule.start_missed") if event.details]

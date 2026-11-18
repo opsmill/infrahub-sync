@@ -1223,6 +1223,9 @@ class _ScheduledStartFacts(BaseModel):
     # The schedule's ``last_start_at`` that the decision was made from. The store refuses the
     # decision when the stored value differs, so no missed start is recorded twice.
     last_start_at: datetime | None = None
+    # The schedule's ``waiting_start_at`` that the decision was made from; the store refuses
+    # the decision when the stored value differs, as for ``last_start_at``.
+    waiting_start_at: datetime | None = None
     # The events of the start, in the order they are written: one for each missed start, and
     # the event of this start.
     events: tuple[AuditEvent, ...] = ()
@@ -1230,7 +1233,7 @@ class _ScheduledStartFacts(BaseModel):
     # ``schedule_branches`` rows move to the state ``kept``.
     kept_run_ids: tuple[Annotated[str, Field(pattern=_IDENTIFIER_PATTERN)], ...] = ()
 
-    @field_validator("last_start_at")
+    @field_validator("last_start_at", "waiting_start_at")
     @classmethod
     def _require_timezone(cls, value: datetime | None) -> datetime | None:
         if value is not None and value.utcoffset() is None:

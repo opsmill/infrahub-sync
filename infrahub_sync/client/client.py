@@ -556,6 +556,17 @@ class SyncClient:  # pylint: disable=too-many-public-methods
 
         return self._schedule_action("delete_schedule", schedule_id, "delete", request, idempotency_key)
 
+    def take_over_schedule(
+        self, schedule_id: str, request: ScheduleActionRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Make the calling administrator the owner of a schedule.
+
+        A schedule stopped because its owner's actor no longer exists becomes active. The Sync API
+        refuses a caller who is not an administrator with ``403 forbidden``.
+        """
+
+        return self._schedule_action("take_over_schedule", schedule_id, "take-over", request, idempotency_key)
+
     def _schedule_action(
         self, operation: str, schedule_id: str, suffix: str, request: BaseModel, idempotency_key: str
     ) -> ScheduleResource:

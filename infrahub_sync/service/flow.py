@@ -26,7 +26,7 @@ from prefect.client.orchestration import get_client
 from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
 from prefect.runtime import flow_run as current_flow_run
-from prefect.states import Completed, Failed, State
+from prefect.states import AwaitingRetry, Completed, Failed, State
 from pydantic_core import to_json
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
@@ -143,6 +143,9 @@ _REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not matc
 _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
 # The outcome of a `sync` that stopped after a plan that leaves out records (spec 007 FR-012).
 LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
+# How long a start that waits under the `queue` policy waits before its flow run checks again
+# whether a run of the configuration is in progress (spec 021, research R7).
+QUEUED_START_RECHECK_SECONDS = 60
 _REGISTERED_PLAN_CHECKSUM_MISMATCH = "registered saved plan checksum does not match the approved expected_checksum"
 _WORKER_BINDING_PARAMETERS_INVALID = "service worker configuration binding parameters must all be present"
 # The one refusal of a run that names no registered configuration, whichever stage it asks for
@@ -672,7 +675,9 @@ def _admit_scheduled_flow_run(
 
     A flow run that no Prefect schedule created is refused. A start that creates no run ends
     the flow run as completed, with one line that says why, and no run record. A start that
-    already has a run is refused, as a second claim of a run is.
+    waits under the `queue` policy ends it as `AwaitingRetry`, a scheduled state that Prefect
+    runs again `QUEUED_START_RECHECK_SECONDS` later. A start that already has a run is
+    refused, as a second claim of a run is.
     """
     worker_id = _canonical_uuid(os.environ.get("PREFECT__WORKER_ID"))
     flow_run_id = _prefect_flow_run_id()
@@ -686,6 +691,7 @@ def _admit_scheduled_flow_run(
             "a scheduled run starts only from its schedule",
         )
     start = facts.expected_start_time.astimezone(timezone.utc)
+    now = _now()
     try:
         admission = admit_scheduled_start(
             projection,
@@ -693,7 +699,7 @@ def _admit_scheduled_flow_run(
             scheduled_start_at=start,
             flow_run_id=flow_run_id,
             worker_id=worker_id,
-            now=_now(),
+            now=now,
             receipt_age_limit=timedelta(seconds=LivenessPolicy.from_environment().admission_ttl_seconds),
             read_proposed_changes=_earlier_proposed_changes_reader(projection),
         )
@@ -704,6 +710,16 @@ def _admit_scheduled_flow_run(
             "this flow run creates no second run",
         )
     run = admission.run
+    if run is None and admission.cause == "queued":
+        # The start waits under the `queue` policy: Prefect runs this flow run again one minute
+        # later, until no run of the configuration is in progress (research R7).
+        recheck_at = now + timedelta(seconds=QUEUED_START_RECHECK_SECONDS)
+        message = (
+            f"the start {start.isoformat()} of schedule {schedule_id} waits for the run in progress to end; "
+            f"this flow run starts again at {recheck_at.isoformat()}"
+        )
+        lines.info(message)
+        return AwaitingRetry(scheduled_time=recheck_at, message=message)
     if run is None:
         message = f"the start {start.isoformat()} of schedule {schedule_id} created no run ({admission.cause})"
         lines.info(message)

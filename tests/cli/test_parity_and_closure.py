@@ -87,6 +87,7 @@ CLI_CLIENT_PARITY = (
     ("schedules pause SCHEDULE", "pause_schedule", "POST /schedules/{schedule_id}/pause"),
     ("schedules resume SCHEDULE", "resume_schedule", "POST /schedules/{schedule_id}/resume"),
     ("schedules delete SCHEDULE", "delete_schedule", "POST /schedules/{schedule_id}/delete"),
+    ("schedules take-over SCHEDULE", "take_over_schedule", "POST /schedules/{schedule_id}/take-over"),
     ("events --schedule SCHEDULE", "iter_events", "GET /events"),
 )
 
@@ -132,6 +133,7 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "pause_schedule",
         "resume_schedule",
         "delete_schedule",
+        "take_over_schedule",
         "iter_events",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
@@ -189,9 +191,8 @@ def test_all_retired_local_execution_options_are_absent_from_live_command_help()
     assert "--kind" in _help("runs", "plan")
     for command in ("show", "results", "list", "artifacts", "cancel"):
         assert command in _help("runs"), f"`runs {command}` is absent from the group's help"
-    for command in ("create", "list", "show", "change", "pause", "resume", "delete"):
+    for command in ("create", "list", "show", "change", "pause", "resume", "delete", "take-over"):
         assert command in _help("schedules"), f"`schedules {command}` is absent from the group's help"
-    assert "take-over" not in _help("schedules")
 
 
 def test_cli_imports_only_the_shared_client_boundary() -> None:

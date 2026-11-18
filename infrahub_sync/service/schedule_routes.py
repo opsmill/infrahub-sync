@@ -23,10 +23,9 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 
 def schedule_router(service: ScheduleService, authenticate: Any, idempotency_key: Any) -> APIRouter:
-    """Create the authenticated schedule routes: create, list, view, change, pause, resume and delete.
+    """Create the authenticated schedule routes: create, list, view, change, pause, resume, delete and take over.
 
-    Every answer is built by the service and returned as it is, so a field that the API does
-    not deliver yet is absent from the answer instead of null.
+    Every answer is built by the service and returned as it is.
     """
     router = APIRouter()
 
@@ -102,6 +101,17 @@ def schedule_router(service: ScheduleService, authenticate: Any, idempotency_key
     ) -> JSONResponse:
         """Delete a schedule; its record, its runs and its open proposed change are kept."""
         status, content = await service.delete(schedule_id, body, principal, key)
+        return JSONResponse(status_code=status, content=content)
+
+    @router.post("/schedules/{schedule_id}/take-over", response_model=ScheduleResource, responses=_ERROR_RESPONSES)
+    async def take_over_schedule(
+        schedule_id: str,
+        body: ScheduleActionRequest,
+        principal: Annotated[Principal, Depends(authenticate)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> JSONResponse:
+        """Make the calling administrator the owner of a schedule; a schedule stopped because its owner is gone becomes active."""
+        status, content = await service.take_over(schedule_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
     return router

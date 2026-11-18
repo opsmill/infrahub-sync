@@ -205,6 +205,7 @@ def test_change_schedule_posts_the_changed_setting_and_leaves_the_others_null() 
         ("pause_schedule", "pause", "paused"),
         ("resume_schedule", "resume", "active"),
         ("delete_schedule", "delete", "deleted"),
+        ("take_over_schedule", "take-over", "active"),
     ],
 )
 def test_schedule_actions_post_their_route_with_the_reason(method: str, suffix: str, state: str) -> None:
@@ -218,6 +219,40 @@ def test_schedule_actions_post_their_route_with_the_reason(method: str, suffix: 
     assert (sent.method, sent.url.path) == ("POST", f"/api/schedules/{SCHEDULE_ID}/{suffix}")
     assert sent.headers["Idempotency-Key"] == "key-3"
     assert json.loads(sent.content) == {"reason": "maintenance"}
+
+
+def test_take_over_by_a_caller_who_is_not_an_administrator_is_a_typed_api_error() -> None:
+    requests: list[httpx.Request] = []
+    refusal = {"error": {"status": 403, "code": "forbidden", "message": "only an administrator"}}
+    client = _client(requests, _fixed(403, refusal))
+
+    with pytest.raises(APIError) as raised:
+        client.take_over_schedule(SCHEDULE_ID, ScheduleActionRequest(), "key-5")
+    assert (raised.value.status, raised.value.code) == (403, "forbidden")
+
+
+def test_create_schedule_sends_queue_and_the_late_start_duration_and_reads_the_user_story_3_fields() -> None:
+    requests: list[httpx.Request] = []
+    answer = _schedule(
+        overlap_policy="queue", start_late_by_at_most_seconds=1800, newer_version=4, waiting_start_at=NOW
+    )
+    client = _client(requests, _fixed(201, answer))
+    request = CreateScheduleRequest(
+        name="from-netbox-nightly",
+        config_id="from-netbox",
+        registry_version=3,
+        cron="0 2 * * *",
+        overlap_policy="queue",
+        start_late_by_at_most_seconds=1800,
+    )
+
+    schedule = client.create_schedule(request, "key-6")
+
+    body = json.loads(requests[0].content)
+    assert (body["overlap_policy"], body["start_late_by_at_most_seconds"]) == ("queue", 1800)
+    assert (schedule.overlap_policy, schedule.start_late_by_at_most_seconds) == ("queue", 1800)
+    assert schedule.newer_version == 4
+    assert schedule.waiting_start_at == datetime(2026, 11, 18, 9, tzinfo=timezone.utc)
 
 
 def test_resume_of_a_stopped_schedule_whose_reason_holds_is_a_typed_api_error() -> None:

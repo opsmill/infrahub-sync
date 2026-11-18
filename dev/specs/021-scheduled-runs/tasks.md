@@ -161,16 +161,16 @@ a take-over by an administrator.
 
 ### Tests for User Story 3
 
-- [ ] T042 [P] [US3] Write `tests/service/test_schedule_missed_starts.py`: one late run inside the duration (scenario 1); none outside it, with `missed-skipped` (scenario 2); four missed starts give one run and four events (scenario 3); `queue` makes one run wait and start when the run in progress ends (scenario 4); a further start while one waits is skipped (scenario 5); a late run follows the overlap policy (scenario 8, FR-019)
-- [ ] T043 [P] [US3] Write `tests/service/test_schedule_takeover.py`: an administrator takes over a stopped schedule and the next start produces a run (scenario 7); a caller who is not an administrator is refused; `newer_version` is set when a higher version is registered and the schedule still runs its own (scenario 6)
-- [ ] T044 [P] [US3] Extend `tests/cli/test_schedule_commands.py`, `tests/client/test_schedules.py` and `tests/cli/test_parity_and_closure.py`: `schedules take-over`, `--overlap-policy queue`, `--start-late-by-at-most`, and the newer-version warning on the standard error stream
+- [X] T042 [P] [US3] Write `tests/service/test_schedule_missed_starts.py`: one late run inside the duration (scenario 1); none outside it, with `missed-skipped` (scenario 2); four missed starts give one run and four events (scenario 3); `queue` makes one run wait and start when the run in progress ends (scenario 4); a further start while one waits is skipped (scenario 5); a late run follows the overlap policy (scenario 8, FR-019)
+- [X] T043 [P] [US3] Write `tests/service/test_schedule_takeover.py`: an administrator takes over a stopped schedule and the next start produces a run (scenario 7); a caller who is not an administrator is refused; `newer_version` is set when a higher version is registered and the schedule still runs its own (scenario 6)
+- [X] T044 [P] [US3] Extend `tests/cli/test_schedule_commands.py`, `tests/client/test_schedules.py` and `tests/cli/test_parity_and_closure.py`: `schedules take-over`, `--overlap-policy queue`, `--start-late-by-at-most`, and the newer-version warning on the standard error stream
 
 ### Implementation for User Story 3
 
-- [ ] T045 [US3] In the admission in `infrahub_sync/service/flow.py`: replace the 5 minutes with `start_late_by_at_most_seconds` for the most recent start, never run an earlier late start, and write `missed-started-late` with the run (R10, FR-017, FR-018)
-- [ ] T046 [US3] In the admission in `infrahub_sync/service/flow.py` and in `infrahub_sync/product_store/store.py`: the `queue` policy with `waiting_start_at`, the events `start_queued` and `skipped-start-waiting`, and a flow run that is scheduled again one minute later until no run is in progress (R7, FR-016)
-- [ ] T047 [US3] In `infrahub_sync/service/schedules.py` and `infrahub_sync/service/schedule_routes.py`: accept `queue` and the late-start duration, return `start_late_by_at_most_seconds`, `waiting_start_at` and `newer_version`, and add `POST /schedules/{schedule_id}/take-over` with its event (FR-007, FR-026)
-- [ ] T048 [P] [US3] Add `take_over_schedule` to `infrahub_sync/client/client.py`, and to `infrahub_sync/cli.py` the `schedules take-over` command, `--overlap-policy`, `--start-late-by-at-most` with its duration parser, and the newer-version warning
+- [X] T045 [US3] In the admission in `infrahub_sync/service/flow.py`: replace the 5 minutes with `start_late_by_at_most_seconds` for the most recent start, never run an earlier late start, and write `missed-started-late` with the run (R10, FR-017, FR-018)
+- [X] T046 [US3] In the admission in `infrahub_sync/service/flow.py` and in `infrahub_sync/product_store/store.py`: the `queue` policy with `waiting_start_at`, the events `start_queued` and `skipped-start-waiting`, and a flow run that is scheduled again one minute later until no run is in progress (R7, FR-016)
+- [X] T047 [US3] In `infrahub_sync/service/schedules.py` and `infrahub_sync/service/schedule_routes.py`: accept `queue` and the late-start duration, return `start_late_by_at_most_seconds`, `waiting_start_at` and `newer_version`, and add `POST /schedules/{schedule_id}/take-over` with its event (FR-007, FR-026)
+- [X] T048 [P] [US3] Add `take_over_schedule` to `infrahub_sync/client/client.py`, and to `infrahub_sync/cli.py` the `schedules take-over` command, `--overlap-policy`, `--start-late-by-at-most` with its duration parser, and the newer-version warning
 
 **Checkpoint**: all three user stories work.
 
