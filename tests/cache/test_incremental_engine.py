@@ -1,7 +1,10 @@
+import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar
 
+import pytest
 from diffsync import Adapter, DiffSyncModel
 
 from infrahub_sync.cache.cursors import CursorState, CursorTier
@@ -27,7 +30,7 @@ class _StubAdapter(Adapter):
         self.calls: list[tuple[str, object]] = []
         self.deltas = deltas or []
 
-    def model_loader(self, model_name: str, _model: Any) -> None:  # noqa: ANN401
+    def model_loader(self, model_name: str, model: Any) -> None:  # noqa: ANN401, ARG002
         self.calls.append(("model_loader", model_name))
 
     def load(self) -> None:
@@ -42,7 +45,7 @@ class _StubAdapter(Adapter):
         return list(self.deltas)
 
 
-def _make_potenda(tmp_path: Path):
+def _make_potenda(tmp_path: Path, run_id: str = "run-current") -> tuple[Potenda, _StubAdapter, _StubAdapter]:
     src = _StubAdapter(name="src")
     dst = _StubAdapter(name="dst")
     from types import SimpleNamespace
@@ -56,7 +59,7 @@ def _make_potenda(tmp_path: Path):
         show_progress=False,
         concurrent_load=False,
     )
-    pot.run_dir = tmp_path / "run-current"
+    pot.run_dir = tmp_path / run_id
     pot.run_dir.mkdir(parents=True)
     pot.cache_root = tmp_path
     return pot, src, dst
@@ -73,8 +76,6 @@ def test_falls_back_to_full_load_when_no_prior_run(tmp_path: Path) -> None:
 
 
 def test_uses_incremental_when_prior_run_matches(tmp_path: Path) -> None:
-    import json
-
     from infrahub_sync.cache.parquet_io import write_resource_side
 
     prev_run = tmp_path / "2026-05-17T10-00-00Z"
@@ -100,7 +101,7 @@ def test_uses_incremental_when_prior_run_matches(tmp_path: Path) -> None:
 
     assert all(call[0] != "full_load" for call in src.calls)
     assert any(call[0] == "delta" for call in src.calls)
-    names = {d.name for d in src.get_all("InfraDevice")}
+    names = {d.get_identifiers()["name"] for d in src.get_all("InfraDevice")}
     assert names == {"leaf-existing", "leaf-new"}
 
 
@@ -115,6 +116,7 @@ def test_cursor_persisted_after_load(tmp_path: Path) -> None:
     # cursor persisted. We simulate the snapshot directly because the
     # stub adapter doesn't actually populate the store.
     pot.load_one_side(side="A", adapter=src)
+    assert pot.run_dir is not None
     write_resource_side(
         run_dir=pot.run_dir,
         side="A",
@@ -131,3 +133,88 @@ def test_cursor_persisted_after_load(tmp_path: Path) -> None:
     loaded = load_cursors(cursors_path, side="A")
     assert loaded["InfraDevice"].tier is CursorTier.TIMESTAMP
     assert loaded["InfraDevice"].value == "2026-05-18T11:00:00+00:00"
+
+
+def test_sync_diff_sync_preserves_incremental_baseline(tmp_path: Path) -> None:
+    from infrahub_sync.cache.sidecars import RunFile
+
+    baseline, src, dst = _make_potenda(tmp_path, "2026-05-17T10-00-00Z")
+    baseline._schema_subhash = "MATCH"
+    for adapter in (src, dst):
+        adapter.add(_Device(name="leaf-existing", description="baseline"))
+    baseline.load()
+    baseline.sync(baseline.diff())
+    for side in ("A", "B"):
+        baseline.persist_cursors_for_run(side=side)
+    assert baseline.run_dir is not None
+    (baseline.run_dir / "schema-sub-hash.txt").write_text("MATCH")
+    RunFile(path=baseline.run_dir / "run.json", status="applied", mode="sync").save()
+
+    preview, preview_src, preview_dst = _make_potenda(tmp_path, "2026-05-18T10-00-00Z")
+    preview.force_full_extract = True
+    preview._schema_subhash = "MATCH"
+    for adapter in (preview_src, preview_dst):
+        adapter.add(_Device(name="preview-only", description="preview"))
+    preview.load()
+    preview.diff()
+    assert preview.run_dir is not None
+    (preview.run_dir / "schema-sub-hash.txt").write_text("MATCH")
+    RunFile(path=preview.run_dir / "run.json", status="dry-run", mode="diff").save()
+    assert not (preview.run_dir / "cursors.json").exists()
+
+    warm, warm_src, warm_dst = _make_potenda(tmp_path, "2026-05-19T10-00-00Z")
+    warm._schema_subhash = "MATCH"
+    warm.force_full_extract = False
+    warm_dst.deltas = [{"name": "leaf-new", "description": "changed"}]
+    warm.load()
+
+    for adapter in (warm_src, warm_dst):
+        assert any(call[0] == "delta" for call in adapter.calls)
+        assert all(call[0] not in {"full_load", "model_loader"} for call in adapter.calls)
+        assert adapter.get("InfraDevice", "leaf-existing").get_attrs()["description"] == "baseline"
+    assert {record.get_identifiers()["name"] for record in warm_dst.get_all("InfraDevice")} == {
+        "leaf-existing",
+        "leaf-new",
+    }
+    warm.sync(warm.diff())
+
+
+@pytest.mark.parametrize("side", ["A", "B"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        (CursorTier.TIMESTAMP, False, "no cursor"),
+        (CursorTier.NONE, True, "cursor tier NONE"),
+        (CursorTier.NONE, False, "cursor tier NONE"),
+    ],
+)
+def test_kind_fallback_logs_reason(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    side: str,
+    case: tuple[CursorTier, bool, str],
+) -> None:
+    tier, has_cursor, reason = case
+    prev = tmp_path / "2026-05-17T10-00-00Z"
+    prev.mkdir()
+    (prev / "run.json").write_text(json.dumps({"status": "applied"}))
+    (prev / "schema-sub-hash.txt").write_text("MATCH")
+    cursors = {"InfraDevice": "TIMESTAMP:2026-05-17T10:00:00Z"} if has_cursor else {}
+    (prev / "cursors.json").write_text(json.dumps({side: cursors}))
+    pot, src, dst = _make_potenda(tmp_path)
+    pot._schema_subhash = "MATCH"
+    adapter = src if side == "A" else dst
+    monkeypatch.setattr(adapter, "cursor_tier_for", lambda _resource: tier)
+
+    with caplog.at_level(logging.INFO, logger="infrahub_sync.potenda"):
+        pot.load_one_side(side=side, adapter=adapter)
+
+    assert adapter.calls == [("model_loader", "InfraDevice")]
+    assert any(
+        "Incremental disabled:" in record.message
+        and reason in record.message
+        and f"side={side}" in record.message
+        and "resource=InfraDevice" in record.message
+        for record in caplog.records
+    )

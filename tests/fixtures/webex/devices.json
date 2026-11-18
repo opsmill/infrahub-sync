@@ -1,0 +1,254 @@
+{
+  "items": [
+    {
+      "id": "device-00",
+      "displayName": "Example device 00",
+      "serial": "INVENTED0000",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.1",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-01",
+      "displayName": "Example device 01",
+      "serial": "INVENTED0001",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.2",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-02",
+      "displayName": "Example device 02",
+      "serial": "INVENTED0002",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.3",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-03",
+      "displayName": "Example device 03",
+      "serial": "INVENTED0003",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.4",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-04",
+      "displayName": "Example device 04",
+      "serial": "INVENTED0004",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.5",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-05",
+      "displayName": "Example device 05",
+      "serial": "INVENTED0005",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.6",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-06",
+      "displayName": "Example device 06",
+      "serial": "INVENTED0006",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.7",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-07",
+      "displayName": "Example device 07",
+      "serial": "INVENTED0007",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.8",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-08",
+      "displayName": "Example device 08",
+      "serial": "INVENTED0008",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.9",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-09",
+      "displayName": "Example device 09",
+      "serial": "INVENTED0009",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.10",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-10",
+      "displayName": "Example device 10",
+      "serial": "INVENTED0010",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.11",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-11",
+      "displayName": "Example device 11",
+      "serial": "INVENTED0011",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.12",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-12",
+      "displayName": "Example device 12",
+      "serial": "INVENTED0012",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.13",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-13",
+      "displayName": "Example device 13",
+      "serial": "INVENTED0013",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.14",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-14",
+      "displayName": "Example device 14",
+      "serial": "INVENTED0014",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.15",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-15",
+      "displayName": "Example device 15",
+      "serial": "INVENTED0015",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.16",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-16",
+      "displayName": "Example device 16",
+      "serial": "INVENTED0016",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.17",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-17",
+      "displayName": "Example device 17",
+      "serial": "INVENTED0017",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.18",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-18",
+      "displayName": "Example device 18",
+      "serial": "INVENTED0018",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.19",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-19",
+      "displayName": "Example device 19",
+      "serial": "INVENTED0019",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.20",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-20",
+      "displayName": "Example device 20",
+      "serial": "INVENTED0020",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.21",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-21",
+      "displayName": "Example device 21",
+      "serial": "INVENTED0021",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.22",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-22",
+      "displayName": "Example device 22",
+      "serial": "INVENTED0022",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.23",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    },
+    {
+      "id": "device-23",
+      "displayName": "Example device 23",
+      "serial": "INVENTED0023",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.24",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-2"
+    },
+    {
+      "id": "device-24",
+      "displayName": "Example device 24",
+      "serial": "INVENTED0024",
+      "product": "Example Room Device",
+      "software": "ExampleOS 1.0",
+      "ip": "192.0.2.25",
+      "connectionStatus": "connected",
+      "workspaceId": "workspace-1"
+    }
+  ]
+}
