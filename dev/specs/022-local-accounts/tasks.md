@@ -228,17 +228,17 @@ lines of scenario 5.
 - [X] T042 [US1] In `infrahub_sync/cli.py`, add the `tokens` group (`list`, `create`, `delete`)
   and the `accounts` group with `list`, `create`, `set-password`, `unlock`, `disable` and
   `enable`. Passwords come from a prompt or `--password-stdin`.
-- [ ] T043 [P] [US1] Update `docs/docs/compose-deployment.mdx`, `docs/docs/quickstart-compose.mdx`,
+- [X] T043 [P] [US1] Update `docs/docs/compose-deployment.mdx`, `docs/docs/quickstart-compose.mdx`,
   `docs/docs/development-stack.mdx`, `docs/docs/operations/day-2-operations.mdx` and
   `docs/docs/operations/compose-troubleshooting.mdx`: the `admin` variables, the first sign-in
   on a workstation and on Compose, the upgrade note that says to remove the old variable, and
   how to recover `admin`.
-- [ ] T044 [P] [US1] Write `docs/docs/guides/accounts.mdx`: add a person, give a script a
+- [X] T044 [P] [US1] Write `docs/docs/guides/accounts.mdx`: add a person, give a script a
   token, replace a lost password, end a refusal after repeated failures, disable an account, and
   what a person who knows a name can and cannot do to that account's sign-in.
-- [ ] T045 [US1] Regenerate `docs/docs/reference/sync-http-api.mdx` and the CLI reference with
+- [X] T045 [US1] Regenerate `docs/docs/reference/sync-http-api.mdx` and the CLI reference with
   `uv run invoke docs.generate`; run `uv run invoke docs.rumdl`.
-- [ ] T046 [US1] Run quickstart scenarios 1 to 4 on the development stack
+- [X] T046 [US1] Run quickstart scenarios 1 to 4 on the development stack
   (`uv run invoke dev.start`) and record the result in `dev/specs/022-local-accounts/notes.md`.
 
 **Checkpoint**: User Story 1 is releasable. The web interface works with an account token in its

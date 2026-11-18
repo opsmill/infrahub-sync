@@ -226,3 +226,129 @@ All name the variable only.
 
 A search for `PRINCIPALS_ENV` returns 21 files. 20 of them are in the list of 46. Search for
 `PRINCIPALS_ENV` again when T021 to T025 remove the constant.
+
+## T046: Quickstart scenarios 1 to 4 on the development stack
+
+Run on 2026-11-18, from the worktree of the branch `022-local-accounts`, on macOS with Docker
+Engine 29.8.2, with the image `infrahub-sync:dev`. The checkout's `infrahub_sync/` is mounted
+into the containers, so the code under test is this worktree's. All four scenarios passed.
+
+### How the stack was started, and why not with `dev.start`
+
+The development stack of another checkout was running under the fixed project name
+`infrahub-sync-dev` on the default ports. `dev.start` and `dev.destroy` would have acted on
+that stack. So the scenarios ran on a separate Compose project with other ports, started from
+this worktree's `development/docker-compose.yml`:
+
+```bash
+export SYNC_API_PORT=18001 PREFECT_PORT=14230 STORAGE_POSTGRES_PORT=15440 MINIO_PORT=19010 INFRAHUB_PORT=18000
+docker compose -p infrahub-sync-022 -f development/docker-compose.yml up -d --wait --wait-timeout 420 --no-build sync-api
+```
+
+This starts PostgreSQL, the object store, the Prefect server, `sync-bootstrap` and `sync-api`,
+and not Infrahub or the worker, which the four scenarios do not use. The image was not rebuilt:
+its build inputs (`Dockerfile`, `pyproject.toml`, `uv.lock`) are the same as in the checkout
+that built it. At the end, the project was removed with `docker compose -p infrahub-sync-022
+... down --volumes --remove-orphans`; `sync-api` and `sync-bootstrap` stayed after that
+command and were removed with `docker rm -f`, then the project's network and volume.
+
+### Adaptations to quickstart.md
+
+- `INFRAHUB_SYNC_API_URL=http://127.0.0.1:18001`, for the port above.
+- Every password was given with `--password-stdin`, because the run had no terminal for the
+  prompts. `password --password-stdin` reads two lines: the current password, then the new one.
+- The CLI ran as `.venv/bin/infrahub-sync` with `HOME` set to a scratch directory, so the
+  session file was written there and not in the user's own application directory.
+- `tokens create` was run as `TOKEN=$(infrahub-sync tokens create ci-nightly)`, which the
+  command supports: the value is its only line on standard output.
+- Scenario 2 and the "without the password" step of scenario 3 need environment that
+  `development/docker-compose.yml` does not pass through. Each used a scratch override file
+  given with a second `-f`, and `up -d --wait --no-build --no-deps sync-api`. The password
+  variable was set to an empty value, because Compose cannot unset a variable that the file
+  defines; the empty value takes the same path in the code.
+- The password change of scenario 3 used `ADMIN_ACCOUNT_PASSWORD=<new value> docker compose
+  ... up -d --wait --no-build --no-deps sync-api`, which recreates `sync-api` only.
+
+### Scenario 1: add a person and give a script a token: pass
+
+```text
+$ infrahub-sync login --name admin --password-stdin        -> account: admin / administrator: true
+$ infrahub-sync accounts create alice --password-stdin     -> account: alice / administrator: false / disabled: false
+$ infrahub-sync logout                                     -> signed out
+$ infrahub-sync login --name alice --password-stdin        -> account: alice / administrator: false
+$ infrahub-sync whoami                                     -> actor: alice / administrator: false / approval_required: false
+$ infrahub-sync password --password-stdin                  -> password changed
+$ infrahub-sync runs list                                  -> exit 0, no run
+$ TOKEN=$(infrahub-sync tokens create ci-nightly)          -> standard output: <token> (prefix ifs_pat_, 51 characters);
+                                                              standard error: note: the token value is not shown again; store it now
+$ INFRAHUB_SYNC_API_TOKEN=<token> infrahub-sync whoami     -> actor: alice
+$ infrahub-sync tokens list                                -> ci-nightly, token ID, creation, expiry "-", last use
+```
+
+`sync-api` started at 09:40:06 UTC, before the first command at 09:40:28 UTC, and had not
+restarted when the scenario ended. No file of the deployment changed.
+
+### Scenario 2: the removed variable is ignored: pass
+
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` was set on `sync-api` to one entry with a token that no
+account has, and `sync-api` was recreated. It started and reported healthy, with the variable
+present in its environment.
+
+```text
+$ INFRAHUB_SYNC_API_TOKEN=<token of the old variable> infrahub-sync whoami -> status: 401 / code: unauthenticated
+GET /api/me with that token                                                -> HTTP 401
+GET /api/me with the admin token                                           -> HTTP 200
+```
+
+### Scenario 3: the `admin` account: pass
+
+```text
+$ infrahub-sync login --name admin --password-stdin        -> account: admin
+$ infrahub-sync password                                   -> status: 409 / code: environment-managed-account
+$ infrahub-sync accounts disable admin                     -> status: 409 / code: environment-managed-account
+$ infrahub-sync accounts set-password admin                -> status: 409 / code: environment-managed-account
+$ infrahub-sync tokens create x   (as admin)               -> status: 409 / code: environment-managed-account
+```
+
+Each refusal printed: "the environment of the Sync API manages the admin account; change
+INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD for its password or INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN for its
+token, and restart the Sync API".
+
+Then the password variable was changed and `sync-api` alone was recreated. PostgreSQL, the object
+store and the Prefect server kept their start times.
+
+```text
+$ infrahub-sync whoami   (session saved before the change)  -> status: 401 / code: unauthenticated
+                                                               hint: the Sync API no longer accepts the saved session, so it was removed; run infrahub-sync login
+$ infrahub-sync login --name admin   (old password)         -> status: 401 / code: sign-in-refused
+$ infrahub-sync login --name admin   (new password)         -> account: admin / administrator: true
+```
+
+`sync-api` with an empty password variable exited with code 1, and its log said
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD must be set: it is the password of the admin account`. An
+additional check with a password of 8 characters exited the same way, with
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD must have at least 12 characters`; the log did not contain
+the value.
+
+### Scenario 4: repeated failures: pass
+
+`sync-api` was first recreated with the development password again.
+
+```text
+attempts 1 to 5, wrong password for alice                  -> status: 401 / code: sign-in-refused / message: the account name or the password was not accepted
+attempt 6, right password for alice                        -> the same three lines
+$ INFRAHUB_SYNC_API_TOKEN=<token ci-nightly> infrahub-sync whoami -> actor: alice
+$ infrahub-sync accounts list   (as admin)                 -> alice  not-administrator  active  <time 15 minutes after the 5th failure>
+$ infrahub-sync accounts unlock alice   (as admin)         -> account alice unlocked
+$ infrahub-sync login --name alice                         -> account: alice / administrator: false
+```
+
+### Checks beyond the four scenarios, for the documentation
+
+- `accounts disable alice`, then `whoami` with her token: `401 unauthenticated`.
+  `accounts enable alice`, then the same token: still `401`, and her password signs in.
+- The session file was created with mode `0600` (`-rw-------`).
+- On this machine, `typer.get_app_dir("infrahub-sync")` returns
+  `~/Library/Application Support/infrahub-sync`.
+
+No defect was found.
