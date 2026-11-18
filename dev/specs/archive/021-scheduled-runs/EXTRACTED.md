@@ -17,8 +17,8 @@ The next free number on this branch was 0048. Other branches already use 0048
 - `dev/adr/0052-a-scheduled-write-to-a-branch-that-sync-creates-needs-no-approval.md`: a run with
   branch review needs no Sync approval; a schedule that writes to the default branch is refused
   while approval is required; the Sync API, the API process at start and the worker all check the
-  setting for the default branch (from R6, R11, R15, FR-002, FR-003, FR-020, FR-021, FR-031,
-  FR-032). It amends ADR 0037.
+  setting for the default branch (from R6, R11, R15, FR-002, FR-003, FR-020, FR-021, FR-031).
+  It amends ADR 0037.
 - `dev/adr/0053-a-waiting-scheduled-start-ends-its-flow-run-with-the-pause-signal.md`: a start
   that waits, under the `queue` policy or for its destination, sets `AwaitingRetry` through the
   Prefect client and raises `Pause` (from R7, FR-035, and the sections "Checked since" for R7 and

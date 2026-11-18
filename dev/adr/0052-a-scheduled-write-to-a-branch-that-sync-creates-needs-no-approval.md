@@ -3,7 +3,7 @@
 **Status**: Accepted
 **Date**: 2026-11-18
 **Source**: `dev/specs/archive/021-scheduled-runs/research.md` (R6, R11, R15),
-`dev/specs/archive/021-scheduled-runs/spec.md` (FR-002, FR-003, FR-020, FR-021, FR-031, FR-032)
+`dev/specs/archive/021-scheduled-runs/spec.md` (FR-002, FR-003, FR-020, FR-021, FR-031)
 
 Amends [ADR 0037](0037-an-approval-is-a-record-on-the-run.md).
 
@@ -76,7 +76,9 @@ from a request that the Sync API admits.
   check does not run; the Kubernetes deployment page states this gap.
 - The worker's token needs the object permissions of other branches in Infrahub, to create the
   branch, write to it, open and close proposed changes, and add a comment. It does not need
-  `edit_default_branch` for branch review.
+  `edit_default_branch` for branch review. These permissions were read from the Infrahub source
+  code. Not known: whether an account with only the permissions of the group "Infrahub Users"
+  can run branch review; every check against a running Infrahub used the admin account.
 - Branch review requires a destination whose default branch is `main`, because Infrahub accepts a
   proposed change only to `main`. The worker checks it before it creates the branch.
 - One branch exists for the time of a plan when nothing changed, because the plan must be made on

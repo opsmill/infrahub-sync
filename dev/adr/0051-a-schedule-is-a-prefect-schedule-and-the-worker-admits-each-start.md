@@ -9,9 +9,8 @@
 
 A team wants a `sync` run to start at set times with no person present: at a given time, on given
 days, or every few hours. Before this decision, every run started from a request to the Sync API,
-and the worker refused a flow run that had no run record
-([ADR 0024](0024-prefect-surfaces-follow-the-stored-run-record.md) requires the run record to exist
-before any work).
+and the worker refused a flow run that had no run record. The run record must exist before any
+work of a stage.
 
 The Sync service already runs a Prefect server with its default services, the scheduler among
 them ([ADR 0019](0019-prefect-is-an-internal-component-of-sync.md)). Prefect's scheduler handles
@@ -53,15 +52,15 @@ The worker has no API token. It cannot ask the Sync API to create a run.
   run for the same start, creates no second run.
 - **Missed and late starts are decided by the worker.** When the next start is admitted, the
   admission records the starts of the cadence since the last admitted start that have no run. A
-  start more than 5 minutes late (`ON_TIME_SECONDS`), or later than the schedule's late-start
-  duration, does not run.
+  start up to 5 minutes late (`ON_TIME_SECONDS`) is on time. The most recent start that is later
+  than that but within the schedule's late-start duration runs, with a `missed-started-late`
+  event. Every other late start is recorded as missed and does not run.
 
 ## Consequences
 
 - No periodic task runs in the API process, and two API processes need no rule between them. A
   restart of the Sync API does not lose a start, because the API process takes no part in a start.
-- The run record still exists before any work, as ADR 0024 requires. The worker writes it, not
-  the Sync API.
+- The run record still exists before any work. The worker writes it, not the Sync API.
 - What the worker cannot check, the API process checks when it starts: whether the owner's actor
   still exists. A schedule whose owner's actor no longer exists is stopped then.
 - The bootstrap job keeps the Prefect schedules. It applies the deployment with an empty list of
