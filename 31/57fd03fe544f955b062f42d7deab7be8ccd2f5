@@ -1,0 +1,22 @@
+dev/specs/021-scheduled-runs/tasks.md
+  s_29b17f91da9f30::t_113d251b8c5384 108
+dev/specs/021-scheduled-runs/research.md
+  s_29b17f91da9f30::t_c6a9b3b727fc4f 488-505,522-532
+  s_29b17f91da9f30::t_0a81db2a71a9ba 474-487,506-521
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3157fd03fe544f955b062f42d7deab7be8ccd2f5",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
