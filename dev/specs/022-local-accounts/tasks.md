@@ -317,7 +317,7 @@ tokens.
 - [X] T060 [P] [US3] Extend `docs/docs/guides/accounts.mdx`: the difference between disabling and
   deleting, what a deletion removes and what it does not (reasons, log lines), and that it
   cannot be reversed. Regenerate the references with `uv run invoke docs.generate`.
-- [ ] T061 [US3] Run quickstart scenarios 5 and 5a on the development stack and record the
+- [X] T061 [US3] Run quickstart scenarios 5 and 5a on the development stack and record the
   result in `dev/specs/022-local-accounts/notes.md`.
 
 **Checkpoint**: every account action exists in the API and the CLI.

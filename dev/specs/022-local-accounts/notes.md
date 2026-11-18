@@ -352,3 +352,80 @@ $ infrahub-sync login --name alice                         -> account: alice / a
   `~/Library/Application Support/infrahub-sync`.
 
 No defect was found.
+
+## T061: Quickstart scenarios 5 and 5a on the development stack
+
+Run on 2026-11-18 from 10:31 to 10:36 UTC, from the worktree of the branch `022-local-accounts`
+at commit `612e46b5`, on macOS with Docker Engine 29.8.2 and the image `infrahub-sync:dev`. The
+checkout's `infrahub_sync/` is mounted into the containers, so the code under test is this
+worktree's. Both scenarios passed. No defect of this chunk was found.
+
+### How the stack was started
+
+As for T046: the development stack of another checkout runs under `infrahub-sync-dev` on the
+default ports, so the scenarios ran on the separate Compose project `infrahub-sync-022`, with
+the same ports and the same command (`up -d --wait --no-build sync-api`). At the end, `down
+--volumes --remove-orphans` removed the volumes; the containers that stayed and the project's
+network and certificate volume were removed with `docker rm -f`, `docker network rm` and
+`docker volume rm`. No container, network or volume of the project remains.
+
+### Adaptations to quickstart.md
+
+- The adaptations of T046: port `18001`, `--password-stdin`, the CLI as `.venv/bin/infrahub-sync`
+  with `HOME` set to a scratch directory.
+- Scenario 5 needs runs of `alice`. As `admin`, a configuration was registered from the valid
+  package of `tests/configuration/validation_packages.py`; as `alice`, `plan --no-wait` created
+  two runs. The project runs no worker, so the runs stay `accepted`.
+- `accounts delete alice` ran without a terminal: without `--yes` it refused and named `--yes`
+  (exit 2), then ran with `--yes`.
+- "The new `alice` cannot apply or cancel": `runs cancel RUN --yes` and `apply RUN
+  --expected-checksum <64 characters> --no-wait`, as the new account.
+- "A search of the product database": `pg_dump --data-only infrahub_sync` in the project's
+  PostgreSQL container, searched for `alice` in any letter case, column by column.
+
+### Scenario 5a: the `admin` password cannot be tested through a reason: pass
+
+```text
+$ plan --config <id> --version 1 --no-wait --reason <admin development password>   (as alice)
+    -> exit 0, run accepted
+$ plan --config <id> --version 1 --no-wait --reason "pasted ifs_pat_abcdef"        (as alice)
+    -> exit 1, status: 422 / code: secret-parameter-refused
+```
+
+### Scenario 5: disable, enable, delete: pass
+
+```text
+$ accounts disable alice                              -> disabled: true
+$ INFRAHUB_SYNC_API_TOKEN=<ci-nightly> whoami         -> status: 401 / code: unauthenticated
+$ accounts enable alice                               -> disabled: false
+$ accounts delete alice      (no terminal, no --yes)  -> exit 2: "standard input is not a terminal, so no
+                                                         confirmation can be asked; pass --yes to delete"
+$ accounts delete alice --yes                         -> Deleted account 11c3aeb2
+$ runs list                                           -> both runs of alice: actor "Deleted account 11c3aeb2"
+$ accounts delete alice --yes   (again)               -> status: 404 / code: account-not-found
+$ accounts create alice                               -> a new account alice
+$ runs cancel RUN --yes         (as the new alice)    -> status: 403 / code: forbidden
+$ apply RUN ... --no-wait       (as the new alice)    -> status: 403 / code: forbidden
+$ runs list                     (as admin, after)     -> both runs still show "Deleted account 11c3aeb2"
+```
+
+The database after the scenario:
+
+- The deleted row has short identifier `11c3aeb2`, no name, no lower-case name, no password hash
+  and a deletion time. No token and no session of it remains.
+- The new `alice` has another short identifier (`2621f81d`).
+- The event `infrahub_sync.account.deleted` is recorded, between `enabled` and the `created` of
+  the new account.
+- The search of the dump finds `alice` in two columns only: `accounts.name` and
+  `accounts.name_key` of the new account. No reason held the name, so no free-text column holds
+  it either.
+
+### An observation outside this chunk
+
+`runs cancel RUN --yes` as `admin` passed the rights check (the Sync API reserved a mutation
+receipt for it) and answered `503`, code `orchestration-unavailable`, which the service returns
+when the Prefect step of a cancellation fails. The flow run had not been picked up, because the
+project ran no worker; the cause was not investigated further. This is the cancellation path of
+spec 012, not an account behavior, and the rights of an
+administrator over the run of the deleted account are covered by
+`test_a_run_in_progress_is_not_stopped_by_the_deletion_and_an_administrator_cancels_it`.
