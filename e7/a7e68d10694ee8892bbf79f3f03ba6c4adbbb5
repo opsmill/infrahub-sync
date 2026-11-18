@@ -1,0 +1,19 @@
+docs/docs/orchestration.mdx
+  s_e88c4e5969117b::t_1181f187a9c8e4 217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7a7e68d10694ee8892bbf79f3f03ba6c4adbbb5",
+  "prompts": {},
+  "sessions": {
+    "s_e88c4e5969117b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a21e58ad49a466157",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
