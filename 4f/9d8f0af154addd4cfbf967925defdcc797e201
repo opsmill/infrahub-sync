@@ -1,0 +1,46 @@
+dev/adr/0051-a-schedule-is-a-prefect-schedule-and-the-worker-admits-each-start.md
+  s_29b17f91da9f30::t_963ba0266ed62f 1-11,15-97
+  s_29b17f91da9f30::t_29f40da18d9a87 12-14
+dev/adr/0037-an-approval-is-a-record-on-the-run.md
+  s_29b17f91da9f30::t_6a3594d4c7b737 3-7
+dev/adr/README.md
+  s_29b17f91da9f30::t_3c93ddcf978a3b 147-156
+  s_29b17f91da9f30::t_e5bc4452e64bef 113-114
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_29b17f91da9f30::t_8aa02747f1898d 371-402
+dev/adr/0053-a-waiting-scheduled-start-ends-its-flow-run-with-the-pause-signal.md
+  s_29b17f91da9f30::t_dd28409dbdf963 1-76
+dev/specs/archive/021-scheduled-runs/spec.md
+  s_29b17f91da9f30::t_1f235c00b20470 23,25,27,29
+  s_29b17f91da9f30::t_f40c6ba0164418 7
+dev/specs/archive/README.md
+  s_29b17f91da9f30::t_fc5d8c68cf56d2 43-50
+dev/adr/0052-a-scheduled-write-to-a-branch-that-sync-creates-needs-no-approval.md
+  s_29b17f91da9f30::t_b70be22bba43ca 1-74,77-99
+  s_29b17f91da9f30::t_f6904796a2d7b4 75-76
+docs/docs/development/knowledge/index.md
+  s_29b17f91da9f30::t_4734778eef1b59 63-64
+  s_29b17f91da9f30::t_76cd7d2e31488e 19-20
+docs/docs/development/knowledge/sync-architecture.md
+  s_29b17f91da9f30::t_f9c132a0629b64 212-234,238-262
+  s_29b17f91da9f30::t_45dec188a719c5 235-237
+  s_29b17f91da9f30::t_8e9c425858258b 154-158
+dev/specs/archive/021-scheduled-runs/EXTRACTED.md
+  s_29b17f91da9f30::t_7c4d1dfc0e22bf 1-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f9d8f0af154addd4cfbf967925defdcc797e201",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
