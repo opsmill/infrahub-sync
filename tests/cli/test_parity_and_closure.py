@@ -76,6 +76,18 @@ CLI_CLIENT_PARITY = (
     ("whoami", "me", "GET /me"),
     ("apply RUN_ID", "apply", "POST /runs/{run_id}/apply"),
     ("apply RUN_ID failure evidence", "get_results", "GET /runs/{run_id}/results"),
+    ("login", "sign_in", "POST /auth/sign-in"),
+    ("logout", "sign_out", "POST /auth/sign-out"),
+    ("password", "change_password", "PUT /me/password"),
+    ("tokens list", "list_tokens", "GET /me/tokens"),
+    ("tokens create NAME", "create_token", "POST /me/tokens"),
+    ("tokens delete TOKEN_ID", "delete_token", "DELETE /me/tokens/{token_id}"),
+    ("accounts list", "list_accounts", "GET /accounts"),
+    ("accounts create NAME", "create_account", "POST /accounts"),
+    ("accounts set-password NAME", "set_account_password", "PUT /accounts/{name}/password"),
+    ("accounts unlock NAME", "unlock_account", "POST /accounts/{name}/unlock"),
+    ("accounts disable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
+    ("accounts enable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
 )
 
 
@@ -112,6 +124,18 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "me",
         "apply",
         "get_results",
+        "sign_in",
+        "sign_out",
+        "change_password",
+        "list_tokens",
+        "create_token",
+        "delete_token",
+        "list_accounts",
+        "create_account",
+        "set_account_password",
+        "unlock_account",
+        "set_account_disabled",
+        "set_account_disabled",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 
@@ -124,6 +148,8 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
     assert "plan" in help_text
     assert "verify" in help_text
     assert "whoami" in help_text
+    for command in ("login", "logout", "password", "tokens", "accounts"):
+        assert command in help_text
     # `diff` is a hidden, deprecated alias of `plan`.
     assert "diff" not in help_text
     assert "sync" in help_text

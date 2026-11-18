@@ -184,7 +184,7 @@ lines of scenario 5.
   one audit event with the type `infrahub_sync.account.<action>`, the identifier of the account
   acted on as a related resource, and no password or token value; a refused sign-in writes no
   name.
-- [ ] T032 [P] [US1] Write `tests/client/test_account_client.py` and
+- [X] T032 [P] [US1] Write `tests/client/test_account_client.py` and
   `tests/cli/test_login_commands.py`, `tests/cli/test_account_commands.py`,
   `tests/cli/test_cli_session.py`: each client method calls its route; the session file is
   created with mode `0600` and keyed by address; `INFRAHUB_SYNC_API_TOKEN` takes precedence and
@@ -214,18 +214,18 @@ lines of scenario 5.
   `infrahub_sync/service/config_routes.py`, make the free-text check refuse a value for which
   `contains_token_prefix` is true; give every `reason` field in `infrahub_sync/client/models.py`
   and `infrahub_sync/service/models.py` a maximum length of 512.
-- [ ] T039 [P] [US1] Add `AccountResource`, `TokenResource`, `CreatedTokenResource` and
+- [X] T039 [P] [US1] Add `AccountResource`, `TokenResource`, `CreatedTokenResource` and
   `SessionResource` to `infrahub_sync/client/models.py`, and the client methods for every route
   of T034 to T036 to `infrahub_sync/client/client.py`. `SyncClient.from_environment` keeps
   reading the variable only.
-- [ ] T040 [P] [US1] Create `infrahub_sync/cli_session.py`: read, write and remove a saved
+- [X] T040 [P] [US1] Create `infrahub_sync/cli_session.py`: read, write and remove a saved
   session in `typer.get_app_dir("infrahub-sync")/sessions.json`, mode `0600`, with only base
   dependencies.
-- [ ] T041 [US1] In `infrahub_sync/cli.py`, make the client factory use
+- [X] T041 [US1] In `infrahub_sync/cli.py`, make the client factory use
   `INFRAHUB_SYNC_API_TOKEN` when set and the saved session otherwise, update the "no token"
   hint, and add `login`, `logout` and `password` as [contracts/cli.md](contracts/cli.md)
   defines them.
-- [ ] T042 [US1] In `infrahub_sync/cli.py`, add the `tokens` group (`list`, `create`, `delete`)
+- [X] T042 [US1] In `infrahub_sync/cli.py`, add the `tokens` group (`list`, `create`, `delete`)
   and the `accounts` group with `list`, `create`, `set-password`, `unlock`, `disable` and
   `enable`. Passwords come from a prompt or `--password-stdin`.
 - [ ] T043 [P] [US1] Update `docs/docs/compose-deployment.mdx`, `docs/docs/quickstart-compose.mdx`,
