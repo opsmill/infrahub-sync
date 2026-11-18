@@ -75,6 +75,48 @@ Extra points from the same answer, for User Stories 2 and 4:
 - `infrahub_sync/service/account_actions.py` is at Pylint's 1,000-line limit: split it first if
   an API change is needed.
 
+### A2. Two Compose end-to-end failures that this branch did not cause (2026-11-18 evening)
+
+Context: the first Compose and image run (image built from the worktree at 16:12 UTC, while the
+alignment subagent was still editing documents; 104 passed, 5 failed) failed two Compose tests:
+
+- `test_the_cli_container_holds_no_credential_beyond_its_own_api_token`: the `cli` container
+  also holds `INFRAHUB_SYNC_WEB_DIRECTORY`, an `ENV` of the Dockerfile since spec 017
+  (`b3416b38`, 2026-11-16);
+- `test_the_deployed_worker_container_mounts_nothing`: the worker mounts the CA certificate
+  volume read-only, added by spec 015 (`8080e42b`, 2026-11-14) as ADR 0026 decided.
+
+Options: leave them failing and report; fix the assertions on this branch. Recommended: fix the
+assertions, keeping equality checks.
+
+Answer: fix them as stale assertions in a commit of their own, after checking that the base has
+not run them green and that no other branch already fixed them; for the CLI test, check what the
+test guards first. The three image failures (version and revision labels, source provenance)
+come from the local build command, not from the code: rebuild from a clean, committed tree with
+the build arguments before the final run.
+
+What I did next:
+
+- The nightly end-to-end workflow last ran on `feature/v3-develop` on 2026-10-02, before both
+  changes, so these tests have not run since. Branches 021 and 024 have no change to either
+  test.
+- The CLI test guards the operator inputs that reach the `cli` container, by name. The image's
+  own `ENV` is not an operator input and is not a credential, so the expected set now names it
+  as an image default; the equality stays.
+- The worker test now asserts exactly one mount: a volume named `..._sync-ca-certificates`,
+  read-only, at `/etc/infrahub-sync/ca`; the test is renamed
+  `test_the_deployed_worker_container_mounts_only_the_ca_directory`.
+- Both tests rerun against the existing image; result in the events below.
+- For the final image: `docker build --build-arg VERSION=<package version> --build-arg
+  REVISION=$(git rev-parse HEAD) --build-arg CREATED=<UTC time>` from a clean tree (the Dockerfile
+  declares the three arguments; the publishing workflow passes them as labels).
+
 ## Events
 
 - Frontend submodule `frontend/vendor/infrahub` cloned (depth 1) in the worktree.
+- First Compose and image run (`docker build -t infrahub-sync:compose-022 .`, then
+  `pytest -m "compose or docker" tests/compose tests/image`, prefix `infrahub-sync-022`):
+  16:12 to 16:28 UTC, 104 passed, 5 failed (see A2). All its containers are removed.
+- The two corrected Compose tests passed against the same image:
+  `test_the_deployed_worker_container_mounts_only_the_ca_directory` (16:33:46 UTC, 103 s) and
+  `test_the_cli_container_holds_no_credential_beyond_its_own_api_token` (16:33:59 UTC).
