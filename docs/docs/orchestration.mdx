@@ -214,8 +214,7 @@ out do not change the count. A resume of a schedule stopped for another reason i
 owner's actor no longer exists, or the schedule writes to the default branch while approval is
 required, the resume of a paused schedule or of a schedule stopped for `repeated-failures` is
 refused with `schedule-stopped`, and the schedule stops with that reason. Otherwise a resume of a
-schedule stopped for `repeated-failures` succeeds. A stopped schedule that becomes active has its
-count set to zero.
+schedule stopped for `repeated-failures` succeeds and sets the count to zero.
 
 ## Change, pause, resume, delete and take over a schedule
 
