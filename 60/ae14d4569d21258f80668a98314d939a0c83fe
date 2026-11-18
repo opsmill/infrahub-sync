@@ -1,0 +1,36 @@
+pyproject.toml
+  s_29b17f91da9f30::t_e9f4a56eee8726 71-74
+  s_29b17f91da9f30::t_2bc31f12364495 107-108
+tests/service/test_prefect_scheduler_creates_flow_runs.py
+  s_29b17f91da9f30::t_77c9ac00c2fb22 1-12,14-37,39-45
+  s_29b17f91da9f30::t_5a10e4f810b959 13
+  s_29b17f91da9f30::t_99e6550fcad130 38
+  s_29b17f91da9f30::t_d2400718dad3e3 46-48
+  s_c8f61e9962d88a::t_cdadb71e1767d0 49
+uv.lock
+  s_c8f61e9962d88a::t_cd8f1bcfec687d 33,1379,1391,1442-1443,2352,3732-3733,3770
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60ae14d4569d21258f80668a98314d939a0c83fe",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_c8f61e9962d88a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5b67f5942e6db047",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
