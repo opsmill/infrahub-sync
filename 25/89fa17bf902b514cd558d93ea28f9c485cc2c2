@@ -1,0 +1,21 @@
+tests/service/test_serve_site.py
+  s_29b17f91da9f30::t_103c423937f096 84-109
+infrahub_sync/service/serve.py
+  s_29b17f91da9f30::t_5425d77eeabb1b 159,177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2589fa17bf902b514cd558d93ea28f9c485cc2c2",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
