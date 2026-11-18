@@ -1,0 +1,48 @@
+tests/dev_stack/smoke/test_scheduled_run.py
+  s_29b17f91da9f30::t_559c2b52c315f6 1-25,27-63,65-153,155
+  s_29b17f91da9f30::t_75d5d1ecb59794 26
+  s_29b17f91da9f30::t_05c38784c19118 64
+  s_29b17f91da9f30::t_710d816d9aec8d 154
+infrahub_sync/product_store/models.py
+  s_29b17f91da9f30::t_4b3614a38d02bd 1016-1057
+infrahub_sync/product_store/__init__.py
+  s_4ed41b94c40a0f::t_d70638d8346f62 12-13,88-89
+infrahub_sync/product_store/store.py
+  s_4ed41b94c40a0f::t_2219a0a86fd81f 44,1012-1019,1791,1852-1870,3680-3767,4847-4873,5651-5660
+infrahub_sync/service/schedule_admission.py
+  s_4ed41b94c40a0f::t_c3c99abd63b6a2 15,33,66-94,134,141-142,156-163,183,189-190,197-201,204,208-213,230-252,283,285-308
+tests/product_store/test_contract.py
+  s_4ed41b94c40a0f::t_bf034759ba8298 82-83
+tests/product_store/test_schedules.py
+  s_4ed41b94c40a0f::t_8cafb38217bf90 30-31,838-974
+tests/service/test_schedule_branch_review.py
+  s_4ed41b94c40a0f::t_c7984842d69b16 1-8,14-15,24-36,39,41,44,81,149-150,155,161,164-165,168,171,173-176,218-784
+dev/specs/021-scheduled-runs/tasks.md
+  s_4ed41b94c40a0f::t_381e8f9f317c3f 114,120-123
+infrahub_sync/service/flow.py
+  s_4ed41b94c40a0f::t_fcfe8b65ad79c8 13,34,78-79,81,87-88,91,100,109-117,121,133,590-600,603-605,607-611,613-625,644,683,697-713,725,729-766,978,995-1001,1008-1010,1175-1176,1206-1212,1239-1240,1254-1257,1269-1317,1870-1872,1881-2037
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c625fc93e1d1a15ada69303ef991a05d006ddaa6",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_4ed41b94c40a0f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a0c51d305ccf0e1d2",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
