@@ -1,0 +1,21 @@
+tests/service/test_account_presentation.py
+  s_cf9ada8f865389::t_142711a267038c 119-130,132
+infrahub_sync/service/presentation.py
+  s_cf9ada8f865389::t_142711a267038c 30-31,65-66,89-90,97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "472f9b51774d6d2cc4585ca61906d0cd9e94b45c",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
