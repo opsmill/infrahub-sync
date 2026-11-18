@@ -43,24 +43,23 @@ implementation report is [opsmill-implement-report.md](opsmill-implement-report.
 
 ## 2. Blocked: questions that need your answer
 
-1. **A late run after a full restart fails when the destination is not ready yet.** After the stack
-   was stopped and started again, the late run started but failed, because Infrahub was not
-   answering yet, and a schedule does not run a failed start again. Recommended: let a scheduled
-   run that is late, and fails because the destination cannot be reached, be retried a few times
-   within its late-start duration. This is a product change; it is not implemented.
-2. **The Helm chart does not pass `INFRAHUB_SYNC_REQUIRE_APPROVAL` to the worker** (repository
-   `infrahub-helm-sync-chart`, branch `feat/infrahub-sync-chart`, `templates/api.yaml` only). On
-   Kubernetes, the worker's second approval check does not run, so a default-branch schedule that
-   the Sync API could not stop at startup would keep writing. Recommended: add the variable to the
-   worker template in the chart before the chart is released. Not edited: it is another repository.
-   The Kubernetes page states the gap.
-3. **Where the SQLAlchemy pin lands.** The pin is on this branch. Other branches in flight will
-   conflict on `uv.lock`. Recommended: land the pin on `feature/v3-develop` as its own small change
-   first, then rebase this branch on it.
-4. **Approval of the constitution amendment** (principle I, version 1.1.0, on this branch). The
-   constitution asks a maintainer to approve an amendment. Recommended: approve it in the pull
-   request of this branch.
-5. **Push and pull request.** Not done, as instructed. Recommended: open the pull request into
+Answered on 2026-11-18:
+
+1. **A late run after a full restart failed when the destination was not ready yet.** Answer:
+   retry within the late-start limit. Done: a start whose Infrahub destination cannot be reached,
+   answers with a server error or does not answer in time waits and reads the schema again every
+   minute, within its late-start duration, with no run and no failure (FR-035). Observed on the
+   stack, see section 6.
+2. **The Helm chart does not pass `INFRAHUB_SYNC_REQUIRE_APPROVAL` to the worker.** Answer: the
+   approval design will change, so no action. The Kubernetes page still states the gap.
+3. **Where the SQLAlchemy limit lands.** Answer: no preference. It stays on this branch.
+4. **Approval of the constitution amendment.** Answer: approved. Recorded in `plan.md`: "A
+   maintainer approved the amendment on 2026-11-18, as the constitution's amendment rule
+   requires."
+
+Still open:
+
+5. **Push and pull request.** Not done. Recommended: open the pull request into
    `feature/v3-develop` after you review this report.
 
 ## 3. Advisor decisions
@@ -117,6 +116,40 @@ From [overnight-log.md](overnight-log.md), section "Advisor questions":
 - **The documentation says the bootstrap job keeps the Prefect schedules.** It does, because each
   has a slug. The earlier statement that it removes them was wrong and is corrected; the match step
   stays as a repair.
+- **A waiting start relies on Prefect's `Pause` signal** to end its process in a scheduled state
+  (section 6). A Prefect upgrade must keep that behaviour; the test
+  `test_prefect_keeps_the_state_that_runs_a_waiting_start_again` checks it against a Prefect
+  test server.
 - **Commit trailers changed with the model.** Commits made before the model change carry
   `Co-Authored-By: Claude Fable 5.2`, later ones `Claude Opus 5.5`. None carries a `Claude-Session`
   line.
+
+## 6. After the morning review, 2026-11-18
+
+- **The SQLAlchemy limit stays, with its removal condition.** Prefect tracked the defect as
+  [PrefectHQ/prefect#23199](https://github.com/PrefectHQ/prefect/issues/23199). The fix,
+  [PrefectHQ/prefect#23201](https://github.com/PrefectHQ/prefect/pull/23201), is first released
+  in Prefect 3.9.1; the latest release is 3.9.3. Infrahub `develop` pins `prefect==3.8.6` and
+  locks SQLAlchemy 2.0.50 with no limit in its `pyproject.toml`; the Infrahub 1.11.9 image runs
+  SQLAlchemy 2.0.50. Upgrading Prefect here is not possible on its own: `infrahub-testcontainers`
+  pins `prefect-client==3.8.6` (1.11.9 and the latest, 1.12.1), and `tests/test_release_pin.py`
+  requires the two pins to match. The comment in `pyproject.toml` now names the issue and says to
+  remove the limit when the `prefect` pin moves to 3.9.1 or later (`2f230225`).
+- **A start waits while its destination does not answer (FR-035)** (`fd3e098b`, and the fix
+  below).
+- **The `queue` policy did not work under a real worker, and neither did the first version of
+  the wait.** A flow that returns `AwaitingRetry` makes the worker's process end with status 1,
+  because Prefect then asks for a result the scheduled state has not, and the runner marks the
+  flow run `Crashed`. It never runs again. The unit test had called the flow in a way that skips
+  that step. Fixed: the flow stores `AwaitingRetry` through the Prefect client and raises
+  Prefect's `Pause` signal, which ends the process with status 0 and leaves the state as stored.
+  The test now calls the flow as the worker's process does. Research R7 records the details.
+- **Observed on the stack** (Infrahub server stopped at 19:48:44, started at 20:04:34): the flow
+  run of the 19:59 start was submitted again every minute, ended each time in `AwaitingRetry`,
+  kept `expected_start_time` 19:59 and `auto_scheduled`. At 20:05:01, once Infrahub answered, it
+  created one run that succeeded, with one `missed-started-late` event and
+  `consecutive_failures` at 0. The `queue` policy uses the same code path but was not observed
+  itself on the stack.
+- **Checks on the final tree:** lint and `ruff` pass; unit tier `9638 passed, 4 skipped`; both
+  smoke tests `2 passed in 224.00s` on the stack at 2026-11-18T20:16Z, so every scheduled start
+  still starts within one minute with the extra schema read (SC-007).
