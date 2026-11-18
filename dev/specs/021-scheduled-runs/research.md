@@ -664,3 +664,18 @@ change to `infrahub_sync/service/branch_review.py`.
   `closed`.
 - Not observed: an account with only the permissions of the group "Infrahub Users"; every request
   used the admin account.
+
+Checked since, for R1, R2 and R10, on the same development stack on 2026-11-18, with the smoke
+tests of `tests/dev_stack/smoke/test_scheduled_run.py`:
+
+- With SQLAlchemy 2.1.6 in the image, the Prefect 3.8.6 scheduler service failed at every loop
+  in `_insert_scheduled_flow_runs` with `InvalidRequestError: Can't evaluate bulk DML statement`,
+  so no schedule created a flow run. With SQLAlchemy 2.0.55 it creates them;
+  `tests/service/test_prefect_scheduler_creates_flow_runs.py` fails on 2.1.6 and passes on 2.0.55.
+- Five scheduled runs started between 0.3 seconds before and 7.1 seconds after their start time
+  (`started_at` minus `scheduled_start_at`). A run can start slightly before its start time.
+- The first start after a schedule is created can be missed. Of two schedules created 30
+  seconds before a minute, one ran at that minute; the other got no flow run for it, and the
+  worker recorded `start_missed` with `missed-skipped` for that start at the following start,
+  which ran. A schedule created 42 seconds before a minute ran at that minute. Why the flow run
+  was missing was not checked; Prefect's scheduler loop runs about once a minute.
