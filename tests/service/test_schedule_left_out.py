@@ -116,6 +116,12 @@ def test_with_the_setting_on_the_run_writes_the_remaining_records_and_records_th
     assert event.event_type == "infrahub_sync.run.synced"
     assert event.details is not None
     assert event.details.left_out == 2
+    listed = api.client.get(
+        "/events", params={"related": f"schedule:{SCHEDULE_ID}"}, headers={"Authorization": headers()["Authorization"]}
+    )
+    assert listed.status_code == 200, listed.text
+    (synced,) = [item for item in listed.json()["items"] if item["event_type"] == "infrahub_sync.run.synced"]
+    assert synced["details"]["left_out"] == 2
 
 
 def test_with_the_setting_off_the_run_stops_after_the_plan(
