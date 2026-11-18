@@ -234,6 +234,11 @@ PostgreSQL, the object store and the Prefect server moved to their loopback port
 starts a background process or writes a process ID file. After a code change, stop the process
 with Ctrl-C and run the task again.
 
+`sync-bootstrap` records the Sync version and the work pool it set up. `dev.api` and
+`dev.worker` read that record when they start, and refuse to start when it names another Sync
+version or work pool. If the version in `pyproject.toml` changes after `dev.deps` has run, run
+`dev.deps` again before you start them.
+
 In the first terminal, run the smoke suite:
 
 ```bash
