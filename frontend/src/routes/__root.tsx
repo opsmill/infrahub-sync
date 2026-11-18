@@ -280,10 +280,10 @@ function StatusMenu() {
 }
 
 /**
- * The signed-in account, from `GET /me`, and the action that signs out. Signing out removes the
+ * The signed-in account, from `GET /me`, the link to its page, and the action that signs out. Signing out removes the
  * session token, which also empties the query cache and the downloaded plans.
  */
-function AccountControls() {
+function AccountControls({ current }: { current: boolean }) {
   const me = useQuery(meQuery());
   const [pending, setPending] = useState(false);
   const name = me.data?.actor;
@@ -304,6 +304,14 @@ function AccountControls() {
           {name}
         </span>
       )}
+      <Link
+        to="/account"
+        className={NAV}
+        data-current={current ? "" : undefined}
+        aria-current={current ? "page" : undefined}
+      >
+        My account
+      </Link>
       <Button
         variant="ghost"
         size="sm"
@@ -355,9 +363,11 @@ function PlainAnchor({
 
 const PlainLink = createLink(PlainAnchor);
 
-function sectionOf(pathname: string): "configs" | "runs" | undefined {
+function sectionOf(pathname: string): "configs" | "runs" | "accounts" | "account" | undefined {
   if (pathname === "/" || pathname.startsWith("/configs/")) return "configs";
   if (pathname === "/runs" || pathname.startsWith("/runs/")) return "runs";
+  if (pathname === "/accounts") return "accounts";
+  if (pathname === "/account") return "account";
   return undefined;
 }
 
@@ -369,6 +379,8 @@ const TITLE_WATCH_MS = 3_000;
 function RootComponent() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const section = sectionOf(pathname);
+  // Only an administrator is offered the Accounts page; the Sync API refuses it to the others.
+  const administrator = useQuery(meQuery()).data?.administrator === true;
 
   const mainRef = useRef<HTMLElement>(null);
   const lastPath = useRef(pathname);
@@ -446,10 +458,21 @@ function RootComponent() {
             >
               Runs
             </Link>
+            {administrator && (
+              <Link
+                to="/accounts"
+                activeOptions={{ exact: true, includeSearch: false }}
+                className={NAV}
+                data-current={section === "accounts" ? "" : undefined}
+                aria-current={section === "accounts" ? "true" : undefined}
+              >
+                Accounts
+              </Link>
+            )}
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-2">
             <StatusMenu />
-            <AccountControls />
+            <AccountControls current={section === "account"} />
             <ThemeMenu />
           </div>
         </div>

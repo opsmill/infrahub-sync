@@ -343,7 +343,7 @@ tokens.
   with level and state, the filter on active accounts, and create, set level, set password,
   unlock, disable, enable and delete with its confirmation. Display `admin` with the note that
   the environment defines it, and offer none of its actions.
-- [ ] T065 [US4] In `frontend/src/routes/__root.tsx`, link to "My account" for every account and
+- [X] T065 [US4] In `frontend/src/routes/__root.tsx`, link to "My account" for every account and
   to "Accounts" for administrators only.
 - [ ] T066 [US4] Run `pnpm check`, `pnpm typecheck` and `pnpm build` in `frontend/`, then the
   second half of quickstart scenario 6; record the result in
