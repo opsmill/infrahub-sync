@@ -1,0 +1,109 @@
+---
+title: Release 2.1.0
+description: Read Webex inventory and Microsoft Entra ID users and groups into Infrahub, and keep relationships with several peers aligned with the source.
+---
+
+<table>
+  <tbody>
+    <tr>
+      <th>Release Number</th>
+      <td>2.1.0</td>
+    </tr>
+    <tr>
+      <th>Release Type</th>
+      <td>Feature</td>
+    </tr>
+    <tr>
+      <th>Release Date</th>
+      <td>November 18th, 2026</td>
+    </tr>
+    <tr>
+      <th>Tag</th>
+      <td>[2.1.0](https://github.com/opsmill/infrahub-sync/releases/tag/2.1.0)</td>
+    </tr>
+  </tbody>
+</table>
+
+After upgrading, you can load two more systems into Infrahub with a sync project: Webex locations, workspaces and devices, and Microsoft Entra ID users and groups. Relationships that hold several peers now match the source after a sync, so a peer removed in the source is also removed in Infrahub. A `diff` run between scheduled syncs no longer forces the next incremental sync to read every resource in full.
+
+:::note What to expect after upgrading
+
+Sync now removes peers that were added outside sync from a mapped relationship that holds several peers.
+
+- If you add peers by hand to a relationship that a sync project maps, review those relationships before the next sync.
+
+See [Upgrade notes](#upgrade-notes) for details.
+
+:::
+
+## Keep your Webex inventory in Infrahub
+
+Compare the locations, workspaces and devices registered in Webex with your source of truth, and load them into Infrahub with their peer relationships. The `webex` adapter is a source only: every data request uses GET, and the adapter never changes data in Webex.
+
+- Start from the [inventory example](https://github.com/opsmill/infrahub-sync/tree/main/examples/webex_workspaces_to_infrahub), which maps `/v1/locations`, `/v1/workspaces` and `/v1/devices` to `WebexLocation`, `WebexWorkspace` and `WebexDevice`. Each workspace references its location and each device references its workspace.
+- Use a fixed access token (`auth_method: token`) for short runs, or an authorized Service App (`auth_method: service_app`) for scheduled runs. The adapter renews Service App tokens in memory for the current process.
+- Set credentials through environment variables only. The `token_env`, `client_id_env`, `client_secret_env` and `refresh_token_env` settings take the names of the variables; `{env: ...}` references are accepted only in `org_id` and in query parameter values.
+- Read any other Webex JSON API resource by adding it to the configuration. The adapter follows Webex pagination until no next page remains.
+- Set `max_retry_delay` (default 300 seconds) to cap the wait between retries. When Webex returns a `Retry-After` longer than `max_retry_delay`, the run stops instead of waiting.
+
+See the [Webex adapter](../../adapters/webex.mdx) page for the required scopes and every setting. ([#401](https://github.com/opsmill/infrahub-sync/pull/401))
+
+## Load directory users and groups into Infrahub
+
+Read the users, groups and group membership of a Microsoft Entra ID tenant through Microsoft Graph, and load them as nodes of the kinds defined in your Infrahub schema. The `msgraphsync` adapter is a source only and sends GET requests only.
+
+- Install the optional packages first: `pip install msgraph-sdk azure-identity`.
+- Authenticate as a registered application with `auth: client_secret` in CI pipelines and on servers. Set the secret in `MSGRAPH_CLIENT_SECRET`; the adapter refuses a `client_secret` key in the configuration file.
+- Use `auth: default` on a laptop after `az login`, or on an Azure host with a managed identity.
+- Choose `membership: direct` (default) or `membership: transitive` to decide which group members are read.
+- Start from the [example project](https://github.com/opsmill/infrahub-sync/tree/main/examples/msgraphsync_to_infrahub).
+
+See the [Microsoft Graph adapter](../../adapters/msgraphsync.mdx) page for the application permissions and settings. ([#396](https://github.com/opsmill/infrahub-sync/pull/396))
+
+## Bug fixes
+
+### Remove stale peers from relationships that hold several peers
+
+Change a relationship in the source from `A, B` to `A, C` and the next sync leaves `A, C` in Infrahub. Previously the result was `A, B, C`, and repeating the sync never removed `B`. Sync now loads the existing peers before it compares them with the source, and removing every peer in the source also clears the relationship in Infrahub. When a desired peer cannot be found, sync logs it, adds the peers it can resolve and keeps the existing peers of that relationship. ([#168](https://github.com/opsmill/infrahub-sync/issues/168))
+
+### Preview with diff without losing incremental syncs
+
+Run `diff` between two syncs and the next `sync --no-full-extract` still reads only the changed records. Previously the `diff` run became the baseline, and the next sync read every destination kind in full. Only applied runs are used as the baseline now, and the log names the reason for each per-resource full extract. ([#403](https://github.com/opsmill/infrahub-sync/issues/403))
+
+### Load hierarchies of the same kind from Infrahub
+
+Load an Infrahub kind whose nodes reference other nodes of the same kind, such as a parent location, without an `ObjectNotFound` error. Peers excluded by your filters stay out of the sync. ([#384](https://github.com/opsmill/infrahub-sync/pull/384))
+
+## Upgrade notes
+
+### Peers added outside sync
+
+If: you add peers by hand in Infrahub to a relationship that holds several peers and that a sync project maps.
+
+Then: review those relationships before the next sync, and add the peers to the source if they must stay. Sync now removes peers that are not in the source.
+
+Notes: when a desired peer cannot be found in the store, sync keeps the existing peers of that relationship.
+
+## Full changelog
+
+### Added
+
+- Added a Webex source adapter with configurable read-only resources, token renewal, pagination and an example mapping locations, workspaces and devices with peer relationships. Default retry delays are capped by the `max_retry_delay` setting, a `Retry-After` longer than `max_retry_delay` stops the run, and `{env: ...}` references are accepted in `org_id` and `params` only; the `*_env` credential settings take environment variable names. ([#401](https://github.com/opsmill/infrahub-sync/pull/401))
+- Added the `msgraphsync` source adapter, which reads users, groups and group membership from Microsoft Entra ID through Microsoft Graph and loads them into Infrahub. The adapter needs the optional packages `msgraph-sdk` and `azure-identity`: `pip install msgraph-sdk azure-identity`. ([#396](https://github.com/opsmill/infrahub-sync/pull/396))
+
+### Changed
+
+- Sync now removes peers added outside sync from a mapped relationship that holds several peers, except when a desired peer cannot be found in the store. ([#168](https://github.com/opsmill/infrahub-sync/issues/168))
+
+### Fixed
+
+- During an Infrahub update, a relationship that holds several peers is now fetched before its peers are compared, so stale peers are removed. ([#168](https://github.com/opsmill/infrahub-sync/issues/168))
+- Running `diff` no longer forces a full extract on the next `sync --no-full-extract`. Only applied runs are used as the incremental baseline, and the reason for each per-resource full extract is logged. ([#403](https://github.com/opsmill/infrahub-sync/issues/403))
+- Loading the Infrahub side of a sync now resolves relationships to nodes of the same kind before they are loaded, without including nodes excluded by filters. ([#384](https://github.com/opsmill/infrahub-sync/pull/384))
+- Updating an Infrahub node no longer fetches the schema from Infrahub, and the release pull request exemption from the bump-label check now requires the title to name the same version as its `release/<version>` branch. ([#366](https://github.com/opsmill/infrahub-sync/pull/366))
+
+### Housekeeping
+
+- Releases are now prepared as a reviewable pull request instead of being committed straight to `main`. Dispatching `trigger-push-stable.yml` bumps the version, assembles `CHANGELOG.md` from the news fragments under `changelog/` and opens a `chore(release)` pull request; merging it creates the tag and publishes a GitHub Release whose body is the changelog section contributors wrote. Release Drafter, which generated release notes from pull request titles, has been removed. ([#218](https://github.com/opsmill/infrahub-sync/pull/218))
+- Standardized release bump labels and now reject pull requests with missing or conflicting release intent. ([#348](https://github.com/opsmill/infrahub-sync/pull/348))
+- The changelog check now counts only newly added news fragments, so editing an existing fragment no longer satisfies it. The check's `pull_request` trigger is disabled, so it does not run on pull requests yet. ([#233](https://github.com/opsmill/infrahub-sync/pull/233))
