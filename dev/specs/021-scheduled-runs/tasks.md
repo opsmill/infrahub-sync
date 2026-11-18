@@ -146,7 +146,7 @@ and the team chooses whether it writes when records are left out.
 - [X] T038 [US2] In the `sync` branch of `_execute_stage` in `infrahub_sync/service/flow.py`: when the admission returns `confirm_left_out` true, skip `_left_out_stop` and pass `confirm_left_out=True` to the apply step; carry the plan's `left_out` count into the stage result and into `details.left_out` of the result event (R5, FR-005)
 - [X] T039 [US2] Record `left_out_set_by` and `left_out_set_at` in `ScheduleService` in `infrahub_sync/service/schedules.py`, and add `--write-when-left-out` and `--no-write-when-left-out` to `schedules create` and `schedules change` in `infrahub_sync/cli.py`
 - [X] T040 [US2] In `ScheduleService` in `infrahub_sync/service/schedules.py`: refuse `write_when_left_out` true for the write target `branch-review` with `422 schedule-left-out-not-applicable`, and set it to false when the write target changes to `branch-review` (FR-004)
-- [ ] T041 [US2] Add `default-branch` to the set of delivered write targets in `infrahub_sync/service/serve.py` and add `--write-to-default-branch` and `--write-to-branch-review` to `infrahub_sync/cli.py`. This is the last task of the phase
+- [X] T041 [US2] Add `default-branch` to the set of delivered write targets in `infrahub_sync/service/serve.py` and add `--write-to-default-branch` and `--write-to-branch-review` to `infrahub_sync/cli.py`. This is the last task of the phase
 
 **Checkpoint**: user story 2 works on the development stack.
 
@@ -184,7 +184,7 @@ a take-over by an administrator.
 - [X] T052 [P] Add the schedule loop, the start of a scheduled run and the branch records to `docs/docs/development/knowledge/sync-architecture.md` and `docs/docs/development/knowledge/repository-tour.md`
 - [X] T053 Run `uv run invoke docs.generate` and commit `docs/docs/reference/cli.mdx`
 - [ ] T054 Regenerate `frontend/src/api/types.generated.ts` with `pnpm codegen:openapi` against a running Sync service. Change no interface file
-- [ ] T055 Add the smoke test of section 3 of quickstart.md to `tests/dev_stack/smoke/test_scheduled_run.py` (after T041), and state the permissions of the worker's token in Infrahub in `docs/docs/compose-deployment.mdx` (from T059); check on the development stack that a run starts within 1 minute of its start time (SC-007)
+- [X] T055 Add the smoke test of section 3 of quickstart.md to `tests/dev_stack/smoke/test_scheduled_run.py` (after T041), and state the permissions of the worker's token in Infrahub in `docs/docs/compose-deployment.mdx` (from T059); check on the development stack that a run starts within 1 minute of its start time (SC-007)
 - [X] T056 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, `uv run invoke tests.tests-product-store-postgresql`, the three `--help` checks of `AGENTS.md`, and `uv run invoke docs.docusaurus`
 - [X] T057 Run every section of [quickstart.md](quickstart.md) and record the results in the implementation report
 

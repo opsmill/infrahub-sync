@@ -411,6 +411,23 @@ It is not a statement that any particular NetBox or Nautobot server version has
 been qualified against it.
 :::
 
+### Permissions of the destination Infrahub token for scheduled runs
+
+A schedule with branch review makes its runs create a branch, open a proposed change, add a
+comment to an earlier proposed change, close it, and delete its branch, with the account of the
+destination token in `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. In Infrahub, that account
+needs:
+
+- the object permission `create` on `CoreProposedChange` and on `CoreChangeComment`, and `update`
+  on `CoreProposedChange`, for branches other than the default branch;
+- the global permission `delete_branch`, only when another account created the branch.
+
+Creating a branch needs no permission. The default group "Infrahub Users" holds all of these.
+These permissions come from the Infrahub source code. Scheduled runs were observed against
+Infrahub 1.11.9 with an administrator account only; an account limited to these permissions has
+not been tried. A schedule that writes to the default branch needs the same permissions as a
+`sync` that a person starts. See [Schedule sync runs](./orchestration.mdx#branch-review).
+
 ## Use your own S3-compatible store
 
 A team that already runs an S3-compatible store can keep plans and run files there. Create a

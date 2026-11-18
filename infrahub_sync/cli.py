@@ -125,6 +125,16 @@ _WRITE_WHEN_LEFT_OUT_HELP = (
     "instead of stopping after the plan. Applies only to a schedule that writes to the default branch; the Sync "
     "API refuses it for branch review."
 )
+_WRITE_TO_DEFAULT_BRANCH_HELP = (
+    "Write each run to the branch that a sync run of the configuration writes to, with no proposed change. "
+    "Without this option each run writes to a new branch and opens a proposed change for review. A Sync API "
+    "that requires an approved plan refuses it."
+)
+_WRITE_TARGET_CHANGE_HELP = (
+    "Change where each run writes: to the branch that a sync run of the configuration writes to, or to a new "
+    "branch with a proposed change for review. A Sync API that requires an approved plan refuses the default "
+    "branch."
+)
 # Characters a terminal acts on or a reader cannot see: every code point in the Unicode
 # categories Cc (C0 and C1 controls, DEL), Cf (bidirectional overrides and isolates,
 # zero-width characters, direction marks, soft hyphen, tag characters), Zl and Zp (line
@@ -2378,7 +2388,10 @@ _STOPPED_ACTIONS = {
         "an administrator takes the schedule over with `schedules take-over`, or the owner's actor is restored "
         "on the Sync API and the schedule is resumed"
     ),
-    "approval-required": "change the write target to branch review",
+    "approval-required": (
+        "change the write target to branch review with `schedules change SCHEDULE --write-to-branch-review`; "
+        "the schedule is then active again"
+    ),
     "repeated-failures": "check the last runs of the schedule, then resume it",
 }
 _REASON_HELP = "Optional audit reason."
@@ -2537,6 +2550,11 @@ def schedules_create(  # pylint: disable=too-many-arguments
     version: int = typer.Option(..., "--version", min=1, help="The configuration version each run synchronizes."),
     cron: str = typer.Option(..., "--cron", help='Cron expression with five fields, such as "0 2 * * *".'),
     timezone: str = typer.Option("UTC", "--timezone", help="Time zone of the cron expression, such as Europe/Paris."),
+    write_to_default_branch: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--write-to-default-branch",
+        help=_WRITE_TO_DEFAULT_BRANCH_HELP,
+    ),
     write_when_left_out: bool | None = typer.Option(
         None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
     ),
@@ -2549,7 +2567,9 @@ def schedules_create(  # pylint: disable=too-many-arguments
 ) -> None:
     """Create a schedule that starts a `sync` run of one configuration version on a cron cadence.
 
-    Each run writes to a new branch and opens a proposed change for review in Infrahub. The Sync API
+    By default each run writes to a new branch and opens a proposed change for review in Infrahub.
+    With `--write-to-default-branch`, each run writes to the branch that a `sync` run of the
+    configuration writes to; a Sync API that requires an approved plan refuses it. The Sync API
     validates the cron expression and the time zone. The output shows the schedule with `next_start_at`.
     """
     with _client_errors():
@@ -2559,6 +2579,7 @@ def schedules_create(  # pylint: disable=too-many-arguments
         given: dict[str, object] = {
             name: value
             for name, value in (
+                ("write_target", "default-branch" if write_to_default_branch else None),
                 ("write_when_left_out", write_when_left_out),
                 ("overlap_policy", None if overlap_policy is None else overlap_policy.value),
                 # The callback has already turned the duration into seconds.
@@ -2633,6 +2654,9 @@ def schedules_change(  # pylint: disable=too-many-arguments
     version: int | None = typer.Option(None, "--version", min=1, help="The configuration version each run uses."),
     cron: str | None = typer.Option(None, "--cron", help="New cron expression with five fields."),
     timezone: str | None = typer.Option(None, "--timezone", help="New time zone of the cron expression."),
+    write_to_default_branch: bool | None = typer.Option(
+        None, "--write-to-default-branch/--write-to-branch-review", help=_WRITE_TARGET_CHANGE_HELP
+    ),
     write_when_left_out: bool | None = typer.Option(
         None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
     ),
@@ -2648,6 +2672,9 @@ def schedules_change(  # pylint: disable=too-many-arguments
         "registry_version": version,
         "cron": cron,
         "timezone": timezone,
+        "write_target": None
+        if write_to_default_branch is None
+        else ("default-branch" if write_to_default_branch else "branch-review"),
         "write_when_left_out": write_when_left_out,
         "overlap_policy": None if overlap_policy is None else overlap_policy.value,
         # The callback has already turned the duration into seconds.
@@ -2656,6 +2683,7 @@ def schedules_change(  # pylint: disable=too-many-arguments
     if all(value is None for value in changes.values()):
         typer.echo(
             "error: schedules change needs at least one of --version, --cron, --timezone, "
+            "--write-to-default-branch or --write-to-branch-review, "
             "--write-when-left-out or --no-write-when-left-out, --overlap-policy and --start-late-by-at-most",
             err=True,
         )

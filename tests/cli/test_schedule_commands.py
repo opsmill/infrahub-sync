@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -178,6 +178,7 @@ def test_create_offers_only_the_settings_the_sync_api_accepts() -> None:
         "--version",
         "--cron",
         "--timezone",
+        "--write-to-default-branch",
         "--write-when-left-out",
         "--overlap-policy",
         "--start-late-by-at-most",
@@ -185,7 +186,56 @@ def test_create_offers_only_the_settings_the_sync_api_accepts() -> None:
         "--idempotency-key",
     ):
         assert option in help_text
-    assert "--write-to-default-branch" not in help_text
+    # Without `--write-to-default-branch` the write target is branch review (contracts/cli.md).
+    assert "--write-to-branch-review" not in help_text
+
+
+def test_create_sends_the_default_branch_only_when_the_option_is_given(client: MagicMock) -> None:
+    args = ("schedules", "create", "--name", NAME, "--config", "from-netbox", "--version", "3", "--cron", "* * * * *")
+
+    to_default = _invoke(client, *args, "--write-to-default-branch")
+    left_out = _invoke(client, *args)
+
+    assert (to_default.exit_code, left_out.exit_code) == (0, 0), to_default.output
+    sent = [call.args[0] for call in client.create_schedule.call_args_list]
+    assert [request.write_target for request in sent] == ["default-branch", "branch-review"]
+    assert "write_target" in sent[0].model_fields_set
+    assert "write_target" not in sent[1].model_fields_set
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [("--write-to-default-branch", "default-branch"), ("--write-to-branch-review", "branch-review")],
+)
+def test_change_sends_the_write_target(
+    client: MagicMock, option: str, value: Literal["default-branch", "branch-review"]
+) -> None:
+    result = _invoke(client, "schedules", "change", SCHEDULE_ID, option, "--idempotency-key", "key-4")
+
+    assert result.exit_code == 0, result.output
+    client.change_schedule.assert_called_once_with(SCHEDULE_ID, ChangeScheduleRequest(write_target=value), "key-4")
+
+
+def test_a_default_branch_refused_while_approval_is_required_exits_1_with_the_code(client: MagicMock) -> None:
+    client.create_schedule.side_effect = APIError(409, "approval-required-for-schedule")
+
+    result = _invoke(
+        client,
+        "schedules",
+        "create",
+        "--name",
+        NAME,
+        "--config",
+        "from-netbox",
+        "--version",
+        "3",
+        "--cron",
+        "* * * * *",
+        "--write-to-default-branch",
+    )
+
+    assert result.exit_code == 1
+    assert "code: approval-required-for-schedule" in result.stderr
 
 
 def test_create_refusal_exits_1_with_the_code(client: MagicMock) -> None:
@@ -239,7 +289,7 @@ def test_list_says_when_more_schedules_follow(client: MagicMock) -> None:
     ("reason", "action"),
     [
         ("owner-not-found", "an administrator takes the schedule over"),
-        ("approval-required", "change the write target to branch review"),
+        ("approval-required", "schedules change SCHEDULE --write-to-branch-review"),
         ("repeated-failures", "check the last runs"),
     ],
 )

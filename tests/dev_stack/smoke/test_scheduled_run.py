@@ -1,6 +1,6 @@
-"""A schedule with branch review on the development stack (spec 021, quickstart.md section 4).
+"""Scheduled runs on the development stack (spec 021, quickstart.md sections 3 and 4).
 
-The Prefect schedule of the Sync schedule starts the runs; the test waits for them. The cron
+Section 4, a schedule with branch review. The Prefect schedule of the Sync schedule starts the runs; the test waits for them. The cron
 expression is one start a minute, so the test takes a few minutes. Infrahub is read back through
 the Infrahub SDK: the branch of each run, its proposed change, and the close of the earlier one.
 
@@ -16,20 +16,36 @@ The configuration stays registered, because the Sync API has no request that rem
 
 The test does not cover the parts of section 4 that need a person in Infrahub (an approval, a
 merge) or a stopped worker.
+
+Section 3, a schedule that writes to the default branch, on a Sync API that does not require an
+approved plan. The test checks that a scheduled run starts within one minute of its start time
+(SC-007), from the run's `scheduled_start_at` and `started_at`. It then recreates the worker
+alone with `REQUIRE_APPROVAL=true` and checks that the worker stops the schedule at its next start
+(the `schedule.stopped` event has the operation `schedule-start`), and then recreates the Sync API
+with the same setting and checks that a create is refused with `approval-required-for-schedule`.
+In `finally` it deletes the schedule and recreates both services with `REQUIRE_APPROVAL=false`.
+The Compose commands name the stack's project, which `tasks.dev` reads from the development file
+and `COMPOSE_PROJECT_NAME`.
 """
 
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess  # noqa: S404 -- fixed argv: Docker Compose, to recreate the Sync API and the worker
 import time
 import uuid
 from contextlib import suppress
+from datetime import datetime, timedelta
 from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from infrahub_sdk.exceptions import Error as InfrahubSdkError
 
+from tasks import dev
 from tasks.smoke_dataset import SMOKE_BRANCH
+from tasks.utils import REPO_BASE as REPO_ROOT
 from tests.dev_stack.smoke.test_service_api import (
     authenticated_client,
     idempotency_headers,
@@ -243,3 +259,184 @@ def test_a_schedule_with_branch_review_opens_and_replaces_its_proposed_changes(
                 assert second["destination_branch"] not in _branch_names(infrahub)
         finally:
             _delete_schedule_and_branches(client, infrahub, schedule_id, name)
+
+
+# ---------------------------------------------------------------------------
+# Section 3: a schedule that writes to the default branch
+# ---------------------------------------------------------------------------
+
+DEFAULT_BRANCH_REASON = "smoke: a schedule that writes to the default branch"
+# SC-007: a scheduled run starts within one minute of its start time.
+START_DELAY_LIMIT = timedelta(minutes=1)
+# A start a minute, plus the time the worker takes to start again after it is recreated.
+STOP_TIMEOUT_SECONDS = 240.0
+RECREATE_TIMEOUT_SECONDS = 600
+# The seconds of a minute in which the worker is recreated: after the start of the minute's run,
+# and early enough that the worker runs again before the next start.
+QUIET_SECONDS = (15, 30)
+
+
+def _time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _recreate(services: tuple[str, ...], *, require_approval: bool) -> None:
+    """Recreate Sync services of the stack's own project with `REQUIRE_APPROVAL` set.
+
+    The worker keeps its Infrahub credential: the values `dev.restart` passes are passed too.
+    """
+    settings = dev.dev_settings()
+    command = [
+        *shlex.split(dev._compose_command(settings.project, settings.profiles)),
+        "up",
+        "--detach",
+        "--wait",
+        "--wait-timeout",
+        str(dev.WAIT_TIMEOUT_SECONDS),
+        "--force-recreate",
+        "--no-deps",
+        *services,
+    ]
+    environment = {
+        **os.environ,
+        **dev._stack_env(settings),
+        "REQUIRE_APPROVAL": "true" if require_approval else "false",
+    }
+    subprocess.run(  # noqa: S603 -- fixed argv against the development stack
+        command, cwd=REPO_ROOT, env=environment, check=True, timeout=RECREATE_TIMEOUT_SECONDS
+    )
+
+
+def _approval_required(client: httpx.Client) -> bool:
+    response = client.get("/me")
+    assert response.status_code == 200, response.text
+    return bool(response.json()["approval_required"])
+
+
+def _wait_for_first_run(client: httpx.Client, schedule_id: str) -> dict[str, Any]:
+    deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        finished = _finished(_scheduled_runs(client, schedule_id))
+        if finished:
+            return finished[0]
+        time.sleep(POLL_INTERVAL_SECONDS)
+    return pytest.fail(f"schedule {schedule_id} finished no run in {RUN_TIMEOUT_SECONDS}s")
+
+
+def _wait_for_a_quiet_moment(client: httpx.Client, schedule_id: str) -> None:
+    """Wait until no run of the schedule is in progress, early in a minute, far from the next start."""
+    deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        runs = _scheduled_runs(client, schedule_id)
+        if len(_finished(runs)) == len(runs) and QUIET_SECONDS[0] <= datetime.now().second <= QUIET_SECONDS[1]:  # noqa: DTZ005 -- only the second of the minute is read
+            return
+        time.sleep(1)
+    pytest.fail(f"a run of schedule {schedule_id} stayed in progress for {RUN_TIMEOUT_SECONDS}s")
+
+
+def _wait_for_stop(client: httpx.Client, schedule_id: str) -> dict[str, Any]:
+    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+    shown: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        response = client.get(f"/schedules/{schedule_id}")
+        assert response.status_code == 200, response.text
+        shown = response.json()
+        if shown["state"] == "stopped":
+            return shown
+        time.sleep(POLL_INTERVAL_SECONDS)
+    return pytest.fail(f"schedule {schedule_id} is not stopped after {STOP_TIMEOUT_SECONDS}s: {shown}")
+
+
+def _schedule_events(client: httpx.Client, schedule_id: str, event_type: str) -> list[dict[str, Any]]:
+    response = client.get(
+        "/events", params={"related": f"schedule:{schedule_id}", "event_type": event_type, "limit": 100}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["items"]
+
+
+def test_a_schedule_on_the_default_branch_starts_on_time_and_stops_when_approval_is_required(
+    smoke_env: dict[str, Any], tmp_path: Path
+) -> None:
+    """Section 3: a run starts within one minute; the worker and the Sync API refuse it under approval."""
+    if os.environ.get(dev.SMOKE_STACK_VARIABLE) == dev.DEPS_SMOKE_STACK:
+        pytest.skip("the worker runs on the host in dependencies mode; run this test with `invoke dev.start`")
+    with authenticated_client(smoke_env, transcript=tmp_path / "default-branch-http.jsonl") as client:
+        if _approval_required(client):
+            pytest.skip("the Sync API requires an approved plan; section 3 starts on one that does not")
+        if not write_target_delivered(client, "default-branch"):
+            pytest.skip("the default branch is not offered by this Sync API yet (task T041)")
+        seed_source_branch(smoke_env)
+        package = smoke_package(smoke_env["urls"]["infrahub"])
+        package["configuration"]["name"] = f"smoke-default-{uuid.uuid4().hex[:8]}"
+        registered = client.post(
+            "/configs", headers=idempotency_headers(), json={"package": package, "reason": DEFAULT_BRANCH_REASON}
+        )
+        assert registered.status_code == 201, registered.text
+        version = registered.json()["version"]
+        created = client.post(
+            "/schedules",
+            headers=idempotency_headers(),
+            json={
+                "name": f"smoke-default-{uuid.uuid4().hex[:8]}",
+                "config_id": version["config_id"],
+                "registry_version": version["registry_version"],
+                "cron": "* * * * *",
+                "timezone": "UTC",
+                "write_target": "default-branch",
+                "reason": DEFAULT_BRANCH_REASON,
+            },
+        )
+        assert created.status_code == 201, created.text
+        schedule = created.json()
+        schedule_id = schedule["schedule_id"]
+        recreated = False
+        try:
+            assert _time(schedule["next_start_at"]) - _time(schedule["created_at"]) <= START_DELAY_LIMIT, schedule
+
+            run = _wait_for_first_run(client, schedule_id)
+            assert run["trigger_type"] == "scheduled", run
+            delay = _time(run["started_at"]) - _time(run["scheduled_start_at"])
+            assert delay <= START_DELAY_LIMIT, f"run {run['run_id']} started {delay} after its start time"
+            assert run["destination_branch"] in {None, SMOKE_BRANCH}, run
+
+            # The worker alone requires approval: its next start stops the schedule and creates no run.
+            # It is recreated while no run is in progress, so no run is interrupted.
+            _wait_for_a_quiet_moment(client, schedule_id)
+            recreated = True
+            _recreate(("sync-worker",), require_approval=True)
+            runs_before = {item["run_id"] for item in _scheduled_runs(client, schedule_id)}
+            stopped = _wait_for_stop(client, schedule_id)
+            assert stopped["state_reason"] == "approval-required", stopped
+            events = _schedule_events(client, schedule_id, "infrahub_sync.schedule.stopped")
+            assert [event["operation"] for event in events] == ["schedule-start"], events
+            assert {item["run_id"] for item in _scheduled_runs(client, schedule_id)} == runs_before
+
+            # The Sync API requires approval too: it refuses a schedule that writes to the default branch.
+            _recreate(("sync-api",), require_approval=True)
+            assert _approval_required(client)
+            refused = client.post(
+                "/schedules",
+                headers=idempotency_headers(),
+                json={
+                    "name": f"smoke-default-{uuid.uuid4().hex[:8]}",
+                    "config_id": version["config_id"],
+                    "registry_version": version["registry_version"],
+                    "cron": "* * * * *",
+                    "timezone": "UTC",
+                    "write_target": "default-branch",
+                    "reason": DEFAULT_BRANCH_REASON,
+                },
+            )
+            assert refused.status_code == 409, refused.text
+            assert refused.json()["error"]["code"] == "approval-required-for-schedule"
+        finally:
+            with suppress(AssertionError):
+                _pause(client, schedule_id)
+            client.post(
+                f"/schedules/{schedule_id}/delete",
+                headers=idempotency_headers(),
+                json={"reason": DEFAULT_BRANCH_REASON},
+            )
+            if recreated:
+                _recreate(("sync-api", "sync-worker"), require_approval=False)
