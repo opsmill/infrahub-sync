@@ -165,7 +165,16 @@ def test_create_offers_only_the_settings_the_sync_api_accepts() -> None:
     help_text = _ANSI.sub("", result.output)
 
     assert result.exit_code == 0, result.output
-    for option in ("--name", "--config", "--version", "--cron", "--timezone", "--reason", "--idempotency-key"):
+    for option in (
+        "--name",
+        "--config",
+        "--version",
+        "--cron",
+        "--timezone",
+        "--write-when-left-out",
+        "--reason",
+        "--idempotency-key",
+    ):
         assert option in help_text
     for later in ("--write-to-default-branch", "--overlap-policy", "--start-late-by-at-most"):
         assert later not in help_text
@@ -289,6 +298,40 @@ def test_change_sends_only_the_given_settings(client: MagicMock) -> None:
         SCHEDULE_ID, ChangeScheduleRequest(cron="0 3 * * *", registry_version=4), "key-2"
     )
     assert "next_start_at:" in result.stdout
+
+
+def test_create_sends_the_left_out_setting_only_when_it_is_given(client: MagicMock) -> None:
+    args = ("schedules", "create", "--name", NAME, "--config", "from-netbox", "--version", "3", "--cron", "* * * * *")
+
+    turned_on = _invoke(client, *args, "--write-when-left-out")
+    turned_off = _invoke(client, *args, "--no-write-when-left-out")
+    left_out = _invoke(client, *args)
+
+    assert (turned_on.exit_code, turned_off.exit_code, left_out.exit_code) == (0, 0, 0), turned_on.output
+    sent = [call.args[0] for call in client.create_schedule.call_args_list]
+    assert [request.write_when_left_out for request in sent] == [True, False, False]
+    assert "write_when_left_out" in sent[0].model_fields_set
+    assert "write_when_left_out" not in sent[2].model_fields_set
+
+
+@pytest.mark.parametrize(("option", "value"), [("--write-when-left-out", True), ("--no-write-when-left-out", False)])
+def test_change_sends_the_left_out_setting(client: MagicMock, option: str, value: bool) -> None:  # noqa: FBT001
+    result = _invoke(client, "schedules", "change", SCHEDULE_ID, option, "--idempotency-key", "key-3")
+
+    assert result.exit_code == 0, result.output
+    client.change_schedule.assert_called_once_with(
+        SCHEDULE_ID, ChangeScheduleRequest(write_when_left_out=value), "key-3"
+    )
+
+
+def test_a_left_out_setting_refused_for_branch_review_exits_1_with_the_code(client: MagicMock) -> None:
+    """The Sync API decides: the setting applies only to a schedule that writes to the default branch."""
+    client.change_schedule.side_effect = APIError(422, "schedule-left-out-not-applicable")
+
+    result = _invoke(client, "schedules", "change", SCHEDULE_ID, "--write-when-left-out")
+
+    assert result.exit_code == 1
+    assert "code: schedule-left-out-not-applicable" in result.stderr
 
 
 def test_change_without_a_setting_exits_2_before_any_request(client: MagicMock) -> None:

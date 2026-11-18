@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # one application service: the schedule requests, their checks and the match
 """Schedules of the Sync API: create, change, pause, resume and delete, and the match with Prefect.
 
 A schedule is stored in the product store. Prefect holds its cadence as one schedule of the
@@ -88,6 +89,17 @@ _RESUME_ACTIONS: Final = {
         "branch; change the write target of the schedule to branch-review"
     ),
 }
+
+# The reasons for which the Sync API stops a schedule that cannot run.
+_StopReason = Literal["owner-not-found", "approval-required"]
+
+
+class _StopRequiredError(Exception):
+    """A resume found a reason that stops the schedule instead; the request stores the stop, then refuses."""
+
+    def __init__(self, reason: _StopReason) -> None:
+        super().__init__(reason)
+        self.reason: _StopReason = reason
 
 
 def _all_schedules(projection: ProductProjection, filters: ScheduleFilters) -> tuple[ScheduleRecord, ...]:
@@ -367,7 +379,9 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         """Change one or more settings of a schedule; a setting that the request leaves out keeps its value.
 
         A change of the write target to ``branch-review`` makes a schedule active again that was
-        stopped because the Sync API requires approval.
+        stopped because the Sync API requires approval, and sets ``write_when_left_out`` to
+        false. ``left_out_set_by`` and ``left_out_set_at`` are set when the setting changes from
+        false to true, and cleared when it changes to false.
 
         Raises:
             ServiceAPIError: one of the refusals of ``POST /schedules/{schedule_id}/change``.
@@ -382,6 +396,10 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 if value is not None and name != "start_late_by_at_most_seconds"
             }
             merged = {**schedule.model_dump(), **values}
+            if merged["write_target"] == "branch-review" and request.write_when_left_out is None:
+                # The setting applies only to the default branch, so a change to branch review
+                # turns it off (FR-004); a request that turns it on as well is refused below.
+                merged["write_when_left_out"] = False
             self._refuse_secret_values(target, cron=request.cron, timezone=request.timezone)
             declared_branch = self._declared_branch(target, schedule.config_id, merged["registry_version"])
             self._require_cadence(target, merged["cron"], merged["timezone"])
@@ -432,10 +450,14 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
 
         A schedule that stopped for ``repeated-failures`` always becomes active, and the store
         sets its count of failed runs to zero. A resume of an active schedule changes nothing.
+        A paused schedule whose owner's actor no longer exists, or that writes to the default
+        branch while the Sync API requires approval, cannot run: the resume moves it to the
+        state ``stopped`` with that reason and its ``schedule.stopped`` event, and is refused.
 
         Raises:
             ServiceAPIError: ``403 forbidden``, ``404 schedule-not-found``, ``409 schedule-deleted``,
-                or ``409 schedule-stopped`` when the reason of a stopped schedule still holds.
+                or ``409 schedule-stopped`` when the reason of a stopped schedule still holds, or
+                when a paused schedule is stopped.
         """
         context = _Request(principal.actor, RESUME, request.reason, administrator=principal.administrator)
 
@@ -445,12 +467,12 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 return schedule
             reason = schedule.state_reason
             if reason is not None and reason != "repeated-failures" and self._reason_holds(schedule, reason):
-                raise self._refusal(
-                    context.of(schedule),
-                    409,
-                    "schedule-stopped",
-                    f"the schedule is stopped with the reason {reason}: {_RESUME_ACTIONS[reason]}",
-                )
+                raise self._stopped_refusal(context.of(schedule), reason)
+            if schedule.state == "paused":
+                # A paused schedule that cannot run is stopped instead (FR-002, FR-013).
+                stop_reason = self._stop_reason(schedule)
+                if stop_reason is not None:
+                    raise _StopRequiredError(stop_reason)
             return schedule.model_copy(update={"state": "active", "state_reason": None})
 
         return await self._act(schedule_id, context, request.model_dump(mode="json"), idempotency_key, resumed)
@@ -494,13 +516,13 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             return
         await self._matched(step="start")
 
-    def _reason_holds(self, schedule: ScheduleRecord, reason: Literal["owner-not-found", "approval-required"]) -> bool:
+    def _reason_holds(self, schedule: ScheduleRecord, reason: _StopReason) -> bool:
         """Return whether one reason to stop the schedule holds now."""
         if reason == "owner-not-found":
             return self._resolver.principal_of(schedule.owner) is None
         return schedule.write_target == "default-branch" and approval_required()
 
-    def _stop_reason(self, schedule: ScheduleRecord) -> Literal["owner-not-found", "approval-required"] | None:
+    def _stop_reason(self, schedule: ScheduleRecord) -> _StopReason | None:
         """Return the reason for which the Sync API stops the schedule when it starts, or ``None``."""
         if self._reason_holds(schedule, "owner-not-found"):
             return "owner-not-found"
@@ -596,6 +618,17 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 wanted = schedule if schedule.state == "deleted" else decide(schedule, now)
             except ServiceAPIError as error:
                 raise self._released(reserved, error) from None
+            except _StopRequiredError as required:
+                try:
+                    self._save_stop(schedule, required.reason, context, now)
+                except (ScheduleChangedError, ScheduleDeletedError):
+                    reread = self._projection.lookup_schedule(schedule_id).value
+                    assert reread is not None
+                    schedule, now = reread, self._clock()
+                    continue
+                except ServiceAPIError as error:
+                    raise self._released(reserved, error) from None
+                raise self._released(reserved, self._stopped_refusal(context, required.reason)) from None
             if reserved is None:
                 reserved = self._reserve(receipt, context)
             if wanted is schedule:
@@ -618,6 +651,58 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 "schedule-changed",
                 "the schedule changed while the request was processed; send the request again",
             ),
+        )
+
+    def _save_stop(self, schedule: ScheduleRecord, reason: _StopReason, context: _Request, now: datetime) -> None:
+        """Store a paused schedule as resumed, then as stopped with ``reason`` and its event.
+
+        The states of a schedule move from ``paused`` only to ``active`` or ``deleted``
+        (data-model.md), so the resume makes the schedule active, and the reason then stops it,
+        as the start of the API process stops an active schedule. Prefect is not matched in
+        between: the Prefect schedule of the paused schedule stays inactive, as a stopped
+        schedule needs, so ``prefect_synced`` keeps its value. The event names the caller of the
+        request that found the reason.
+
+        Raises:
+            ScheduleChangedError: Another writer saved a change of the schedule after it was read,
+                before the first write.
+            ScheduleDeletedError: The schedule was deleted after it was read, before the first write.
+            ServiceAPIError: ``409 schedule-changed`` when another writer changed the schedule
+                between the two writes; the next start of the API process then stops it.
+        """
+        resumed = schedule.model_copy(update={"state": "active", "state_reason": None, "updated_at": now})
+        self._projection.update_schedule(resumed, expected_updated_at=schedule.updated_at, secrets=self._secrets)
+        stopped = resumed.model_copy(update={"state": "stopped", "state_reason": reason})
+        event = schedule_event(
+            event_type=SCHEDULE_STOPPED,
+            actor=context.actor,
+            operation=context.operation,
+            reason=None,
+            outcome=reason,
+            schedule_id=schedule.schedule_id,
+            config_id=schedule.config_id,
+            registry_version=schedule.registry_version,
+            created_at=now,
+        )
+        try:
+            self._projection.update_schedule(stopped, expected_updated_at=now, events=(event,), secrets=self._secrets)
+        except (ScheduleChangedError, ScheduleDeletedError):
+            logger.warning("schedules.stop_skipped", schedule_id=schedule.schedule_id, state_reason=reason)
+            raise self._refusal(
+                context,
+                409,
+                "schedule-changed",
+                "the schedule changed while the request was processed; send the request again",
+            ) from None
+        logger.warning("schedules.stopped", schedule_id=schedule.schedule_id, state_reason=reason, step="resume")
+
+    def _stopped_refusal(self, context: _Request, reason: _StopReason) -> ServiceAPIError:
+        """Return the refusal of a resume of a schedule that is stopped for ``reason``, with its event."""
+        return self._refusal(
+            context,
+            409,
+            "schedule-stopped",
+            f"the schedule is stopped with the reason {reason}: {_RESUME_ACTIONS[reason]}",
         )
 
     def _released(self, receipt: MutationReceipt | None, error: ServiceAPIError) -> ServiceAPIError:
@@ -824,12 +909,12 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 "would write to that branch with no review; use the write target default-branch",
             )
         if write_target == "branch-review" and write_when_left_out:
-            # TODO: user story 2 (T040) gives this pair its own refusal, schedule-left-out-not-applicable.
             raise self._refusal(
                 context,
                 422,
-                "schedule-setting-not-available",
-                "write_when_left_out is not available with the write target branch-review",
+                "schedule-left-out-not-applicable",
+                "write_when_left_out applies only to the write target default-branch; a run with branch review "
+                "always writes the remaining records, and its proposed change states the count left out",
             )
 
     def _require_delivered(

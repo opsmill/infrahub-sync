@@ -350,6 +350,11 @@ class FakeInfrahub:  # pylint: disable=too-many-instance-attributes
 @pytest.fixture
 def infrahub(monkeypatch: pytest.MonkeyPatch, api: ScheduleApi) -> FakeInfrahub:
     """Bind the fake Infrahub client and the plan and write doubles to the service flow."""
+    return bind_fake_infrahub(monkeypatch, api)
+
+
+def bind_fake_infrahub(monkeypatch: pytest.MonkeyPatch, api: ScheduleApi) -> FakeInfrahub:
+    """Bind the fake Infrahub client and the plan and write doubles to the service flow, and return it."""
     fake = FakeInfrahub(api.projection)
 
     def build_models(**_kwargs: object) -> RuntimeModelPlan:

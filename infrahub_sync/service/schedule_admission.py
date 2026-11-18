@@ -102,11 +102,16 @@ class StartAdmission:
     then says why. Besides the causes of the store, the cause is ``schedule-not-found``,
     ``start-not-in-cadence`` (the cadence of the stored schedule no longer holds the start
     time) or ``start-already-recorded`` (a missed start that a later start already recorded).
+
+    ``confirm_left_out`` is true when the run writes the records that its plan keeps when it
+    leaves some out: always for branch review, and for the default branch when the schedule's
+    left-out setting is on (research R5, R11).
     """
 
     run: ProductRun | None
     cause: str | None = None
     branch_review: bool = False
+    confirm_left_out: bool = False
     earlier_branches: tuple[ScheduleBranch, ...] = ()
 
 
@@ -174,7 +179,10 @@ def admit_scheduled_start(  # pylint: disable=too-many-arguments
             return StartAdmission(run=None, cause=result.cause)
         assert isinstance(decision, ScheduledStartRun)
         return StartAdmission(
-            run=decision.run, branch_review=decision.branch_review, earlier_branches=result.earlier_branches
+            run=decision.run,
+            branch_review=decision.branch_review,
+            confirm_left_out=decision.branch_review or schedule.write_when_left_out,
+            earlier_branches=result.earlier_branches,
         )
     msg = f"schedule {schedule_id!r} changed during each of {ADMISSION_ATTEMPTS} admissions of one start"
     raise ScheduleChangedError(msg)

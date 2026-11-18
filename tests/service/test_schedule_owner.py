@@ -114,6 +114,65 @@ def test_a_resume_is_refused_while_the_owner_is_gone(api: ScheduleApi, monkeypat
     assert (refused.event_type, refused.outcome) == ("infrahub_sync.schedule.refused", "refused-schedule-stopped")
 
 
+def test_a_resume_of_a_paused_schedule_whose_owner_is_gone_stops_it(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-013: a resume succeeds only when no reason to stop holds, also for a paused schedule."""
+    schedule_id = api.create()["schedule_id"]
+    assert api.post(schedule_id, "pause").status_code == 200
+    again = _restart(api, monkeypatch, WITHOUT_OWNER)
+    assert again.stored(schedule_id).state == "paused"
+
+    response = again.post(schedule_id, "resume", ADMIN_TOKEN)
+
+    assert response.status_code == 409, response.text
+    error = response.json()["error"]
+    assert error["code"] == "schedule-stopped"
+    assert "owner-not-found" in error["message"]
+    assert "add the actor to the Sync API again" in error["message"]
+    stored = again.stored(schedule_id)
+    assert (stored.state, stored.state_reason, stored.owner) == ("stopped", "owner-not-found", "owner")
+    assert again.orchestration.by_slug(schedule_id).active is False
+    stopped = [
+        event for event in again.projection.audit_events() if event.event_type == "infrahub_sync.schedule.stopped"
+    ]
+    assert [(event.actor, event.operation, event.outcome, event.reason) for event in stopped] == [
+        ("admin", "schedule-resume", "owner-not-found", None)
+    ]
+    assert ("schedule", schedule_id) in {(resource.kind, resource.id) for resource in stopped[0].related}
+    refused = again.projection.audit_events()[-1]
+    assert (refused.event_type, refused.outcome) == ("infrahub_sync.schedule.refused", "refused-schedule-stopped")
+
+
+def test_a_second_resume_of_the_stopped_schedule_writes_no_second_stop(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schedule_id = api.create()["schedule_id"]
+    assert api.post(schedule_id, "pause").status_code == 200
+    again = _restart(api, monkeypatch, WITHOUT_OWNER)
+    assert again.post(schedule_id, "resume", ADMIN_TOKEN).status_code == 409
+
+    response = again.post(schedule_id, "resume", ADMIN_TOKEN)
+
+    assert response.status_code == 409, response.text
+    assert again.event_types().count("infrahub_sync.schedule.stopped") == 1
+    assert again.stored(schedule_id).state == "stopped"
+
+
+def test_a_resume_of_a_paused_schedule_whose_owner_exists_makes_it_active(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schedule_id = api.create()["schedule_id"]
+    assert api.post(schedule_id, "pause").status_code == 200
+    again = _restart(api, monkeypatch, PRINCIPALS)
+
+    response = again.post(schedule_id, "resume")
+
+    assert response.status_code == 200, response.text
+    assert (response.json()["state"], response.json()["state_reason"]) == ("active", None)
+    assert "infrahub_sync.schedule.stopped" not in again.event_types()
+
+
 def test_a_resume_succeeds_when_the_owner_exists_again(api: ScheduleApi, monkeypatch: pytest.MonkeyPatch) -> None:
     schedule_id = api.create()["schedule_id"]
     again = _restart(api, monkeypatch, WITHOUT_OWNER)

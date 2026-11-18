@@ -117,6 +117,11 @@ _LIMIT_HELP = f"Items per page, 1-{MAX_LIMIT}. The server default applies when o
 _ALL_HELP = "Read every page instead of only the first."
 _CONFIG_HELP = "Configuration ID or name. The ID is tried first, then the name."
 _SCHEDULE_HELP = "Schedule ID or name. The ID is tried first, then the name."
+_WRITE_WHEN_LEFT_OUT_HELP = (
+    "Turn on or off the left-out setting: when on, a run whose plan leaves out records writes the other records "
+    "instead of stopping after the plan. Applies only to a schedule that writes to the default branch; the Sync "
+    "API refuses it for branch review."
+)
 # Characters a terminal acts on or a reader cannot see: every code point in the Unicode
 # categories Cc (C0 and C1 controls, DEL), Cf (bidirectional overrides and isolates,
 # zero-width characters, direction marks, soft hyphen, tag characters), Zl and Zp (line
@@ -2487,6 +2492,9 @@ def schedules_create(  # pylint: disable=too-many-arguments
     version: int = typer.Option(..., "--version", min=1, help="The configuration version each run synchronizes."),
     cron: str = typer.Option(..., "--cron", help='Cron expression with five fields, such as "0 2 * * *".'),
     timezone: str = typer.Option("UTC", "--timezone", help="Time zone of the cron expression, such as Europe/Paris."),
+    write_when_left_out: bool | None = typer.Option(
+        None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
+    ),
     reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
 ) -> None:
@@ -2498,6 +2506,8 @@ def schedules_create(  # pylint: disable=too-many-arguments
     with _client_errors():
         client = _client(ctx)
         config_id = _config_id(ctx, config)
+        # Sent only when given, so a request without the option keeps its body.
+        left_out = {} if write_when_left_out is None else {"write_when_left_out": write_when_left_out}
         request = cast(
             "CreateScheduleRequest",
             _request(
@@ -2508,6 +2518,7 @@ def schedules_create(  # pylint: disable=too-many-arguments
                 cron=cron,
                 timezone=timezone,
                 reason=reason,
+                **left_out,
             ),
         )
         key = _idempotency_key(idempotency_key)
@@ -2564,17 +2575,29 @@ def schedules_change(  # pylint: disable=too-many-arguments
     version: int | None = typer.Option(None, "--version", min=1, help="The configuration version each run uses."),
     cron: str | None = typer.Option(None, "--cron", help="New cron expression with five fields."),
     timezone: str | None = typer.Option(None, "--timezone", help="New time zone of the cron expression."),
+    write_when_left_out: bool | None = typer.Option(
+        None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
+    ),
     reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
 ) -> None:
     """Change one or more settings of a schedule. The output shows the schedule with its new `next_start_at`."""
-    if version is None and cron is None and timezone is None:
-        typer.echo("error: schedules change needs at least one of --version, --cron and --timezone", err=True)
+    changes = {
+        "registry_version": version,
+        "cron": cron,
+        "timezone": timezone,
+        "write_when_left_out": write_when_left_out,
+    }
+    if all(value is None for value in changes.values()):
+        typer.echo(
+            "error: schedules change needs at least one of --version, --cron, --timezone and "
+            "--write-when-left-out or --no-write-when-left-out",
+            err=True,
+        )
         raise typer.Exit(2)
     with _client_errors():
         client = _client(ctx)
         schedule_id = _resolve_schedule(client, schedule).schedule_id
-        changes = {"registry_version": version, "cron": cron, "timezone": timezone}
         request = cast(
             "ChangeScheduleRequest",
             _request(

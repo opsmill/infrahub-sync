@@ -172,11 +172,13 @@ def run_event(  # pylint: disable=too-many-arguments
     registry_version: int | None = None,
     branch: str | None = None,
     created_at: datetime | None = None,
+    details: EventDetails | None = None,
 ) -> AuditEvent:
     """Build one run event; the configuration, version and branch come from ``run`` when it is given.
 
     An event of a run that a schedule started also names the schedule as a related resource, so
-    the events of a schedule include the events of its runs (spec 021, research R9).
+    the events of a schedule include the events of its runs (spec 021, research R9). ``details``
+    holds the facts of the event, such as the left-out count of a scheduled run's result.
     ``created_at`` defaults to the current UTC time; a caller with an injected clock passes its value.
     """
     schedule_id = None
@@ -198,6 +200,7 @@ def run_event(  # pylint: disable=too-many-arguments
         related=related_resources(
             actor, config_id=config_id, registry_version=registry_version, branch=branch, schedule_id=schedule_id
         ),
+        details=details,
     )
 
 

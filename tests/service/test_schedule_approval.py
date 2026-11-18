@@ -149,6 +149,50 @@ def test_a_stopped_default_branch_schedule_is_resumed_only_when_the_reason_no_lo
     assert resumed.json()["state"] == "active"
 
 
+def test_a_resume_of_a_paused_default_branch_schedule_while_approval_is_required_stops_it(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-002 and FR-013: the schedule cannot run, so the resume stops it and names the action it needs."""
+    schedule_id = api.create(write_target="default-branch")["schedule_id"]
+    assert api.post(schedule_id, "pause").status_code == 200
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+    again = _restart(api)
+    assert again.stored(schedule_id).state == "paused"
+
+    response = again.post(schedule_id, "resume")
+
+    assert response.status_code == 409, response.text
+    error = response.json()["error"]
+    assert error["code"] == "schedule-stopped"
+    assert "approval-required" in error["message"]
+    assert "change the write target of the schedule to branch-review" in error["message"]
+    stored = again.stored(schedule_id)
+    assert (stored.state, stored.state_reason) == ("stopped", "approval-required")
+    assert again.orchestration.by_slug(schedule_id).active is False
+    stopped = [
+        event for event in again.projection.audit_events() if event.event_type == "infrahub_sync.schedule.stopped"
+    ]
+    assert [(event.actor, event.operation, event.outcome) for event in stopped] == [
+        ("owner", "schedule-resume", "approval-required")
+    ]
+    changed = again.post(schedule_id, "change", write_target="branch-review")
+    assert changed.status_code == 200, changed.text
+    assert (changed.json()["state"], changed.json()["state_reason"]) == ("active", None)
+
+
+def test_a_resume_of_a_paused_branch_review_schedule_while_approval_is_required_makes_it_active(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schedule_id = api.create(write_target="branch-review")["schedule_id"]
+    assert api.post(schedule_id, "pause").status_code == 200
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+
+    response = api.post(schedule_id, "resume")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "active"
+
+
 def test_a_change_to_branch_review_makes_a_schedule_stopped_for_approval_active(
     api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:

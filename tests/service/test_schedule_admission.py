@@ -29,7 +29,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.schedule_admission import MISSED_STARTS_RECORDED_ONE_BY_ONE
-from tests.service.schedule_fixtures import OWNER_TOKEN, WORKER_ID, ScheduleApi, headers, schedule_api
+from tests.service.schedule_fixtures import OWNER_TOKEN, WORKER_ID, ScheduleApi, headers, package, schedule_api
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,7 +47,12 @@ def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ScheduleApi:
 
 
 def _schedule(
-    api: ScheduleApi, *, cron: str = "0 * * * *", write_target: str = "default-branch", created: datetime = CREATED
+    api: ScheduleApi,
+    *,
+    cron: str = "0 * * * *",
+    write_target: str = "default-branch",
+    created: datetime = CREATED,
+    config_id: str | None = None,
 ) -> str:
     """Store an active schedule created at ``created``, owned by ``owner``, and return its identifier."""
     schedule_id = f"s-{uuid4().hex}"
@@ -56,7 +61,7 @@ def _schedule(
             {
                 "schedule_id": schedule_id,
                 "name": f"nightly-{schedule_id[2:10]}",
-                "config_id": api.config_id,
+                "config_id": config_id or api.config_id,
                 "registry_version": 1,
                 "cron": cron,
                 "timezone": "UTC",
@@ -155,6 +160,62 @@ def test_a_scheduled_flow_run_creates_one_run_of_the_owner_for_the_version(
     (accepted,) = [event for event in _events(api, "infrahub_sync.run.accepted") if event.run_id == run.run_id]
     assert ("schedule", schedule_id) in {(item.kind, item.id) for item in accepted.related}
     assert api.stored(schedule_id).last_start_at == T0
+
+
+@pytest.mark.parametrize("declared_branch", [None, "staging"])
+def test_a_run_to_the_default_branch_writes_to_the_branch_of_a_run_of_a_person(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, declared_branch: str | None
+) -> None:
+    """FR-027: the branch of the run is the one a `sync` of a person gets for that version; no branch row."""
+    config_id = (
+        api.config_id
+        if declared_branch is None
+        else api.projection.create_configuration(package("declares-a-branch", branch=declared_branch)).config_id
+    )
+    schedule_id = _schedule(api, config_id=config_id)
+    stage_arguments: list[dict[str, Any]] = []
+
+    def execute(run_id: str, stage: str, *args: object, **kwargs: object) -> tuple[dict[str, Any], Any]:
+        stage_arguments.append({"branch": args[3], "branch_review": kwargs.get("branch_review")})
+        return _succeeded()(run_id, stage)
+
+    _start(monkeypatch, api, schedule_id, T0, execute=execute)
+    (scheduled,) = _runs(api, schedule_id)
+    person = api.client.post(
+        "/runs",
+        json={"operation": "sync", "config_id": config_id, "registry_version": 1, "confirm_writes": True},
+        headers=headers(OWNER_TOKEN),
+    )
+
+    assert person.status_code == 202, person.text
+    by_person = api.projection.lookup_run(person.json()["run"]["run_id"]).value
+    assert by_person is not None
+    assert scheduled.destination_branch == by_person.destination_branch
+    assert stage_arguments == [{"branch": None, "branch_review": None}]
+    assert api.projection.lookup_schedule_branch(scheduled.run_id).value is None
+    assert api.projection.schedule_branches(schedule_id) == ()
+
+
+def test_the_admission_returns_the_left_out_setting_of_a_default_branch_schedule(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
+) -> None:
+    """Research R5: the stage gets the setting from the admission, not from a flow parameter."""
+    schedule_id = _schedule(api)
+    stored = api.stored(schedule_id)
+    api.projection.update_schedule(
+        stored.model_copy(update={"write_when_left_out": True, "left_out_set_by": "owner", "left_out_set_at": CREATED}),
+        expected_updated_at=stored.updated_at,
+    )
+    received: list[object] = []
+
+    def execute(run_id: str, stage: str, *_args: object, **kwargs: object) -> tuple[dict[str, Any], Any]:
+        received.append(kwargs.get("scheduled"))
+        return _succeeded()(run_id, stage)
+
+    _start(monkeypatch, api, schedule_id, T0, execute=execute)
+
+    (scheduled,) = received
+    assert getattr(scheduled, "confirm_left_out", None) is True
 
 
 def test_a_second_flow_run_of_one_start_and_a_retried_flow_run_create_no_second_run(

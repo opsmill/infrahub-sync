@@ -14,6 +14,7 @@ pytest.importorskip("fastapi")
 
 from infrahub_sync.service import serve
 from infrahub_sync.service.schedule_cadence import next_start
+from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.service.schedule_fixtures import (
     ADMIN_TOKEN,
     OTHER_TOKEN,
@@ -741,3 +742,23 @@ def test_a_change_to_the_default_branch_answers_with_the_open_branch(api: Schedu
     assert changed.status_code == 200, changed.text
     assert changed.json()["write_target"] == "default-branch"
     assert changed.json()["open_branch"] == expected
+
+
+def test_a_schedule_that_writes_to_the_default_branch_is_created_when_approval_is_not_required(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """User story 2, scenario 1: the write target is an explicit choice, and its runs have no branch row."""
+    monkeypatch.delenv(REQUIRE_APPROVAL_ENV, raising=False)
+
+    created = api.create(write_target="default-branch")
+
+    assert (created["state"], created["write_target"], created["write_when_left_out"]) == (
+        "active",
+        "default-branch",
+        False,
+    )
+    assert created["open_branch"] is None
+    assert api.orchestration.by_slug(created["schedule_id"]).active is True
+    run_id = api.scheduled_run(created["schedule_id"], datetime(2027, 1, 1, 1, tzinfo=timezone.utc))
+    assert api.projection.lookup_schedule_branch(run_id).value is None
+    assert api.get(created["schedule_id"])["open_branch"] is None

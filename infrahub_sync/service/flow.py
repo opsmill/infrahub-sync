@@ -625,6 +625,20 @@ class _BranchReview:  # pylint: disable=too-many-instance-attributes
     left_out: int = 0
 
 
+@dataclass
+class _ScheduledRun:
+    """What the `sync` stage of a scheduled run takes from its admission, and the count it records.
+
+    `confirm_left_out` is the admission's value: the run writes the remaining records when its
+    plan leaves some out (research R5, R11). The stage sets `left_out`, the plan's count of
+    records left out, once the plan is saved; the stage result and the result event carry it,
+    also when the stage fails after the plan (FR-005).
+    """
+
+    confirm_left_out: bool
+    left_out: int | None = None
+
+
 @dataclass(frozen=True)
 class _Execution:  # pylint: disable=too-many-instance-attributes
     """The execution this flow run holds, and the run values that its stage takes.
@@ -642,6 +656,7 @@ class _Execution:  # pylint: disable=too-many-instance-attributes
     branch: str | None
     confirm_writes: bool
     branch_review: _BranchReview | None = None
+    scheduled: _ScheduledRun | None = None
 
 
 def _refused_flow_run(lines: SyncFlowLines, message: str) -> State[Any]:
@@ -723,6 +738,7 @@ def _admit_scheduled_flow_run(
         branch=run.destination_branch if admission.branch_review else None,
         confirm_writes=True,
         branch_review=review,
+        scheduled=_ScheduledRun(confirm_left_out=admission.confirm_left_out),
     )
 
 
@@ -976,6 +992,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     confirm_left_out: bool = False,
     plan_step: StorePlanStepObserver | None = None,
     branch_review: _BranchReview | None = None,
+    scheduled: _ScheduledRun | None = None,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary.
 
@@ -999,14 +1016,21 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     verifies and applies on the branch, and writes the remaining records when the plan leaves
     some out: the proposed change that follows is the review, so the left-out stop applies
     only to a write to the default branch.
+
+    A scheduled run (`scheduled`, a `sync` only) that writes to the default branch skips the
+    left-out stop and writes the remaining records when its admission returned
+    `confirm_left_out` true, which follows the schedule's left-out setting (research R5). Its
+    stage result holds `left_out`, the plan's count of records left out (FR-005). The flow
+    parameter `confirm_left_out` is the confirmation of an `apply` or a `resume`: a `sync` that
+    a person starts keeps the left-out stop.
     """
     if stage in ("plan", "sync"):
         record_waiting(projection, run_id, flow_run_id)
         plan_step = plan_step or StorePlanStepObserver(projection, run_id, flow_run_id)
         plan_step.begin()
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
-    if branch_review is not None and stage != "sync":
-        msg = f"branch review applies only to the stage sync, not {stage}"
+    if (branch_review is not None or scheduled is not None) and stage != "sync":
+        msg = f"branch review and a scheduled run apply only to the stage sync, not {stage}"
         raise ValueError(msg)
     if stage in _WRITE_STAGES and not confirm_writes:
         msg = f"confirm_writes=true is required for service stage={stage}"
@@ -1204,12 +1228,10 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             _end_saving(plan_step)
             # After the plan is durable and reviewable, before the verification and the
             # write. On the default branch, the team reviews the records left out and applies
-            # this run itself; with branch review, only a plan with no operation stops here.
-            stop = (
-                _left_out_stop(run_id, saved, sync_name)
-                if branch_review is None
-                else _branch_review_stop(run_id, saved, sync_name, branch_review)
-            )
+            # this run itself; with branch review, only a plan with no operation stops here. A
+            # scheduled run whose left-out setting is on writes the remaining records (R5).
+            write_remaining = branch_review is not None or (scheduled is not None and scheduled.confirm_left_out)
+            stop = _sync_stop(run_id, saved, sync_name, branch_review, scheduled, write_remaining=write_remaining)
             if stop is not None:
                 return stop
             verified = execute_run(
@@ -1236,8 +1258,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 branch=branch,
                 expected_checksum=verified.manifest.plan_checksum,
                 confirm_writes=True,
-                # A run with branch review always writes the remaining records (R11 step 4).
-                confirm_left_out=branch_review is not None,
+                # A run with branch review always writes the remaining records (R11 step 4); a
+                # scheduled run to the default branch does when its left-out setting is on (R5).
+                confirm_left_out=write_remaining,
                 ownership=ownership,
                 record_applied=tracker.record_applied,
                 base_directory=scratch.root,
@@ -1250,7 +1273,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             assert isinstance(applied, RunResult)
         # Same order the apply stage publishes in, for the same reason.
         publish_final_checkpoint(projection, run_id, run_directory=run_directory, secrets=secrets)
-        result = {**_result_data(applied), "operation": "sync"}
+        result = {**_result_data(applied), "operation": "sync", **_left_out_entry(scheduled)}
         if branch_review is not None:
             # The part of `branch_review` known when the write is committed (data-model.md).
             result["branch_review"] = {"branch": branch_review.branch, "branch_state": "written"}
@@ -1264,6 +1287,39 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             baseline=_baseline_writeback(verified.manifest),
         )
     return result, writeback
+
+
+def _left_out_entry(scheduled: _ScheduledRun | None) -> dict[str, Any]:
+    """The `left_out` entry of the stage result of a scheduled run; nothing for a run of a person."""
+    return {} if scheduled is None else {"left_out": scheduled.left_out}
+
+
+def _sync_stop(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    run_id: str,
+    saved: SavedPlan,
+    sync_name: str,
+    branch_review: _BranchReview | None,
+    scheduled: _ScheduledRun | None,
+    *,
+    write_remaining: bool,
+) -> tuple[dict[str, Any], ExecutionFinishWriteback] | None:
+    """Return the end of a `sync` stage after its saved plan, or `None` when the stage goes on to write.
+
+    With branch review, only a plan with no operation ends the stage. On the default branch,
+    a plan that leaves out records ends it unless the run writes the remaining records. For a
+    scheduled run, the plan's left-out count is recorded first, and the result holds it.
+    """
+    if scheduled is not None:
+        scheduled.left_out = saved.summary().left_out
+    if branch_review is not None:
+        stop = _branch_review_stop(run_id, saved, sync_name, branch_review)
+    else:
+        stop = None if write_remaining else _left_out_stop(run_id, saved, sync_name)
+    if stop is None or scheduled is None:
+        return stop
+    result, writeback = stop
+    result = {**result, **_left_out_entry(scheduled)}
+    return result, writeback.model_copy(update={"results": result})
 
 
 def _create_run_branch(review: _BranchReview, settings: Mapping[str, Any]) -> None:
@@ -1515,10 +1571,14 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     *,
     dispatch_started: bool,
     record: ApplyRecord | None,
+    left_out: int | None = None,
 ) -> RecordedFailure | None:
     """Best-effort durable product evidence without masking the worker failure.
 
     Returns the stored outcome and next action, or `None` when nothing was stored.
+
+    `left_out` is the plan's count of records left out of a scheduled run that failed after
+    its plan; the results and the result event then hold it (spec 021 FR-005).
 
     `dispatch_started` is the one thing this boundary cannot re-derive: only the stage
     that ran knows whether it proved its hold and began a destination operation. Before
@@ -1557,6 +1617,8 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         # research R11). The progress view uses a record only when it names the latest write.
         evidence["flow_run_id"] = flow_run_id
         results: dict[str, Any] = {f"{stage}_failure": evidence}
+        if left_out is not None:
+            results["left_out"] = left_out
         if stage == "verify":
             writeback: ExecutionWriteback = ExecutionMergeWriteback(results=results)
         else:
@@ -1581,7 +1643,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             )
         # Built before the commit: a receipt lookup error falls back to the run's actor
         # rather than losing the failure evidence.
-        event = _stage_event(projection, stored, flow_run_id, stage, terminal_outcome, run_logger)
+        event = _stage_event(projection, stored, flow_run_id, stage, terminal_outcome, run_logger, left_out=left_out)
         committed = projection.commit_claimed_execution(
             run_id,
             flow_run_id,
@@ -1810,10 +1872,13 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many-
                 confirm_left_out=confirm_left_out,
                 plan_step=plan_step,
                 branch_review=execution.branch_review,
+                scheduled=execution.scheduled,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc
     record_terminal = True
+    # The plan's left-out count, for the result event of a scheduled run; `None` before the plan.
+    left_out = None if execution.scheduled is None else execution.scheduled.left_out
     if failure is None:
         try:
             _commit_success(
@@ -1825,6 +1890,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many-
                 writeback=writeback,
                 secrets=secrets,
                 run_logger=lines,
+                left_out=left_out,
             )
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             failure = exc
@@ -1855,6 +1921,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many-
                 worker_id,
                 dispatch_started=tracker.dispatch_started,
                 record=tracker.applied_record,
+                left_out=left_out,
             )
         return _failure_exit(
             run_id,
@@ -2041,8 +2108,13 @@ def _stage_event(  # pylint: disable=too-many-arguments,too-many-positional-argu
     stage: str,
     outcome: str,
     run_logger: RunLogger,
+    *,
+    left_out: int | None = None,
 ) -> AuditEvent:
     """Build the event of one stage result (spec 012 data model).
+
+    For a scheduled run whose plan is saved, `details.left_out` holds the plan's count of
+    records left out (spec 021 FR-005); the event of any other run has no details.
 
     The actor and reason are those of the request whose receipt holds this flow run ID, so an
     apply an administrator requested names the administrator; when no receipt holds it, the
@@ -2068,6 +2140,7 @@ def _stage_event(  # pylint: disable=too-many-arguments,too-many-positional-argu
         operation=stage,
         reason=None if request is None else request.reason,
         outcome=outcome,
+        details=EventDetails(left_out=left_out) if left_out is not None and run.schedule_id is not None else None,
     )
 
 
@@ -2081,6 +2154,7 @@ def _commit_success(  # pylint: disable=too-many-arguments
     writeback: ExecutionWriteback,
     secrets: Sequence[str],
     run_logger: RunLogger,
+    left_out: int | None = None,
 ) -> None:
     """Commit this stage's success, tolerating only a commit that actually landed.
 
@@ -2092,7 +2166,7 @@ def _commit_success(  # pylint: disable=too-many-arguments
         stored = projection.lookup_run(run_id).value
         if stored is None:
             _raise_writeback_refused()
-        event = _stage_event(projection, stored, flow_run_id, stage, "succeeded", run_logger)
+        event = _stage_event(projection, stored, flow_run_id, stage, "succeeded", run_logger, left_out=left_out)
         if not projection.commit_claimed_execution(
             run_id,
             flow_run_id,
