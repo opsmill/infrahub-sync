@@ -143,11 +143,16 @@ _UPDATE_SIGN_IN_ATTEMPT = (
     "UPDATE sign_in_attempts SET failed_count = ?, window_started_at = ?, refused_until = ? WHERE name_key = ?"
 )
 _COUNT_SIGN_IN_ATTEMPTS = "SELECT COUNT(*) FROM sign_in_attempts"
+_SIGN_IN_ATTEMPTS_FULL_MESSAGE = "the failed sign-in table is full of refusals in force; the name is not recorded"
 # Every time of the table is written by ``_utc_iso``, so the order of the text is the order of
-# the times.
+# the times. A row whose refusal is in force is never deleted to make room. Among the others, the
+# rows whose window started more than ``SIGN_IN_FAILURE_WINDOW`` ago go first: they count nothing
+# any more. Then the rows with the oldest window. The parameters are the time of the write, the
+# start of the oldest window that still counts, and the number of rows to delete.
 _DELETE_OLDEST_SIGN_IN_ATTEMPTS = (
     "DELETE FROM sign_in_attempts WHERE name_key IN ("
-    "SELECT name_key FROM sign_in_attempts ORDER BY window_started_at, name_key LIMIT ?)"
+    "SELECT name_key FROM sign_in_attempts WHERE refused_until IS NULL OR refused_until <= ? "
+    "ORDER BY CASE WHEN window_started_at < ? THEN 0 ELSE 1 END, window_started_at, name_key LIMIT ?)"
 )
 
 # The row of a digest with its account: the row identifier, the expiry date, the last recorded
@@ -185,6 +190,10 @@ class AccountIdentifierAllocationError(RuntimeError):
 
 class DuplicateCredentialError(ValueError):
     """The store already holds this token or session digest, or the generated row identifier."""
+
+
+class SignInAttemptsFullError(RuntimeError):
+    """The table of failed sign-ins is full of refusals in force, so a new name is not recorded."""
 
 
 def _utc_iso(value: datetime) -> str:
@@ -584,12 +593,16 @@ def record_sign_in_failure(
       ``SIGN_IN_FAILURE_WINDOW`` ago, starts a new window with a count of one.
     - Otherwise the count grows by one. When it reaches ``SIGN_IN_FAILURE_LIMIT``, the name is
       refused until ``now`` plus ``SIGN_IN_REFUSAL_PERIOD``.
-    - A new row is added only after the rows with the oldest window are deleted to make room, so
-      the table never holds more than ``bound`` rows.
+    - A new row is added only after rows are deleted to make room, so the table never holds more
+      than ``bound`` rows. The rows whose window has passed go first, then the rows with the
+      oldest window. A row whose refusal is in force is never deleted.
 
     Raises:
         ValueError: the lower-case name is empty, longer than ``SIGN_IN_NAME_MAX_LENGTH`` or
             holds a NUL character, or ``bound`` is below one. Nothing is written.
+        SignInAttemptsFullError: the name has no row, the table is full and too few of its rows
+            can be deleted, because the others hold a refusal in force. The caller rolls the
+            transaction back, so nothing is written.
     """
     key = name_key(name)
     if not key or len(key) > SIGN_IN_NAME_MAX_LENGTH or "\x00" in key:
@@ -619,7 +632,14 @@ def record_sign_in_failure(
         cursor.execute(sql(_COUNT_SIGN_IN_ATTEMPTS))
         excess = _count(cursor) - bound + 1
         if excess > 0:
-            cursor.execute(sql(_DELETE_OLDEST_SIGN_IN_ATTEMPTS), (excess,))
+            cursor.execute(
+                sql(_DELETE_OLDEST_SIGN_IN_ATTEMPTS),
+                (_utc_iso(now), _utc_iso(now - SIGN_IN_FAILURE_WINDOW), excess),
+            )
+            if cursor.rowcount < excess:
+                # Every row left holds a refusal in force. The new name is not recorded, so a
+                # flood of new names cannot end a refusal; what was deleted is rolled back.
+                raise SignInAttemptsFullError(_SIGN_IN_ATTEMPTS_FULL_MESSAGE)
         cursor.execute(sql(_INSERT_SIGN_IN_ATTEMPT), (key, *values))
     else:
         cursor.execute(sql(_UPDATE_SIGN_IN_ATTEMPT), (*values, key))

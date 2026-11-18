@@ -13,6 +13,7 @@ from infrahub_sync.service import credentials
 from infrahub_sync.service.credentials import (
     SignInBusyError,
     VerificationGate,
+    VerificationNotAdmittedError,
     contains_token_prefix,
     digest,
     hash_password,
@@ -231,3 +232,28 @@ def test_the_gate_of_the_process_lets_two_verifications_run_and_waits_five_secon
     assert credentials.VERIFICATION_LIMIT == 2
     assert credentials.VERIFICATION_WAIT_SECONDS == 5
     assert isinstance(credentials.PASSWORD_VERIFICATION_GATE, VerificationGate)
+
+
+def test_the_gate_asks_admit_while_it_holds_a_place_and_checks_nothing_when_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = VerificationGate(limit=1, wait_seconds=0.01)
+    checked: list[str] = []
+    monkeypatch.setattr(credentials, "verify_password", lambda _password, stored: checked.append(stored) or True)
+    places_free_during_admit: list[bool] = []
+
+    def admit() -> bool:
+        # The one place is held: a second verification would wait for it.
+        with pytest.raises(SignInBusyError):
+            gate.verify(_PASSWORD, "other")
+        places_free_during_admit.append(False)
+        return False
+
+    with pytest.raises(VerificationNotAdmittedError) as refused:
+        gate.verify(_PASSWORD, "stored", admit=admit)
+
+    assert places_free_during_admit == [False]
+    assert checked == []
+    assert _PASSWORD not in str(refused.value)
+    assert gate.verify(_PASSWORD, "stored", admit=lambda: True) is True
+    assert checked == ["stored"]

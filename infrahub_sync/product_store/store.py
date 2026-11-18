@@ -4431,12 +4431,15 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
 
         The count restarts when the window of 15 minutes or a refusal has passed. The fifth
         failure of a window refuses the name for 15 minutes. A name that is refused keeps its row
-        as it is. The table never holds more than ``bound`` rows: the rows with the oldest window
-        are deleted first. Two callers that fail at the same moment do not conflict.
+        as it is. The table never holds more than ``bound`` rows: the rows whose window has passed
+        are deleted first, then the rows with the oldest window, and a row whose refusal is in
+        force is never deleted. Two callers that fail at the same moment do not conflict.
 
         Raises:
             ValueError: the lower-case name is empty, longer than 64 characters or holds a NUL
                 character. Nothing is written.
+            SignInAttemptsFullError: the table is full and its rows hold refusals in force, so
+                the new name is not recorded. Nothing is written.
         """
         return self._records.record_sign_in_failure(name, now=now, bound=bound)
 

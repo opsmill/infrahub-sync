@@ -46,6 +46,7 @@ from infrahub_sync.service.service import RunService, ServiceAPIError
 from infrahub_sync.service.settings import SESSION_IDLE_SECONDS_ENV, AdminAccountSettings
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from httpx import Response
@@ -56,6 +57,7 @@ _ADMIN_PASSWORD = "first-admin-password"  # noqa: S105 - a test value, not a sec
 _T0 = datetime(2026, 11, 17, 9, 0, tzinfo=timezone.utc)
 _SECOND = timedelta(seconds=1)
 _IDLE_SECONDS = 600
+_NOT_ADMITTED = "the text gate did not check the password"
 _REFUSAL = {
     "error": {
         "code": "sign-in-refused",
@@ -73,16 +75,30 @@ def _text_hash(password: str) -> str:
 
 
 class _TextGate:
-    """A gate that compares texts and records the stored hash of every check, never a password."""
+    """A gate that compares texts and records the stored hash of every check, never a password.
+
+    ``while_waiting`` runs where a request waits for a place, before ``admit``; ``while_checking``
+    runs after the comparison, while the place is held. A test uses them to make another request
+    act at those moments.
+    """
 
     def __init__(self) -> None:
         self.checked: list[str] = []
+        self.while_waiting: Callable[[], object] | None = None
+        self.while_checking: Callable[[], object] | None = None
         self._lock = threading.Lock()
 
-    def verify(self, password: str, stored_hash: str) -> bool:
+    def verify(self, password: str, stored_hash: str, *, admit: Callable[[], bool] | None = None) -> bool:
+        if self.while_waiting is not None:
+            self.while_waiting()
+        if admit is not None and not admit():
+            raise credentials.VerificationNotAdmittedError(_NOT_ADMITTED)
         with self._lock:
             self.checked.append(stored_hash)
-        return stored_hash == _text_hash(password)
+        verified = stored_hash == _text_hash(password)
+        if self.while_checking is not None:
+            self.while_checking()
+        return verified
 
 
 class _Clock:
@@ -393,7 +409,7 @@ def test_an_account_with_no_password_runs_one_check_against_the_fixed_hash(api: 
 
 
 def test_the_fixed_hash_accepts_no_password_for_an_account_with_no_password(monkeypatch: pytest.MonkeyPatch) -> None:
-    accepting = SimpleNamespace(verify=lambda _password, _stored_hash: True)
+    accepting = SimpleNamespace(verify=lambda _password, _stored_hash, **_options: True)
     monkeypatch.setattr(credentials, "PASSWORD_VERIFICATION_GATE", accepting)
 
     assert verify_account_password(None, _PASSWORD) is False
@@ -702,3 +718,63 @@ def test_the_api_document_declares_the_two_routes_with_their_answers(api: _Api) 
     assert {"204", "401", "422"} <= set(sign_out["responses"])
     assert sign_out["security"] == [{"BearerAuth": []}]
     assert account_routes.account_router.__doc__ is not None
+
+
+def _refuse_by_failures(api: _Api, name: str) -> Callable[[], None]:
+    """Return an action that records enough failures for this name to refuse it, once."""
+    done: list[bool] = []
+
+    def refuse() -> None:
+        if not done:
+            done.append(True)
+            for _ in range(SIGN_IN_FAILURE_LIMIT):
+                record_failed_sign_in(api.service, name)
+
+    return refuse
+
+
+def test_a_sign_in_whose_name_is_refused_while_it_waits_gets_the_refusal_with_no_check(api: _Api) -> None:
+    # Other requests fail 5 times for the name while this one waits for a place of the gate.
+    api.gate.while_waiting = _refuse_by_failures(api, "Alice")
+
+    response = api.sign_in("Alice")
+
+    assert (response.status_code, response.json()) == (401, _REFUSAL)
+    assert api.gate.checked == []
+    assert api.rows("SELECT COUNT(*) FROM account_sessions") == [(0,)]
+    assert api.rows("SELECT failed_count FROM sign_in_attempts") == [(SIGN_IN_FAILURE_LIMIT,)]
+    refusal = api.store.read_sign_in_attempt("Alice")
+    assert refusal is not None
+    assert refusal.refused_until == _T0 + SIGN_IN_REFUSAL_PERIOD
+
+
+def test_a_sign_in_whose_name_is_refused_while_it_waits_answers_as_a_refused_name(api: _Api) -> None:
+    for _ in range(SIGN_IN_FAILURE_LIMIT):
+        record_failed_sign_in(api.service, "Alice")
+    refused_before = api.sign_in("Alice")
+    clear_failed_sign_ins(api.service, "Alice")
+    api.gate.while_waiting = _refuse_by_failures(api, "Alice")
+
+    refused_while_waiting = api.sign_in("Alice")
+
+    assert _answer(refused_while_waiting) == _answer(refused_before)
+
+
+def test_a_burst_of_parallel_sign_ins_for_one_name_runs_no_more_checks_than_the_limit(api: _Api) -> None:
+    requests = SIGN_IN_FAILURE_LIMIT + 5
+    barrier = threading.Barrier(requests)
+    answers: list[int] = []
+
+    def sign_in() -> None:
+        barrier.wait()
+        answers.append(api.sign_in("Alice", _WRONG_PASSWORD).status_code)
+
+    threads = [threading.Thread(target=sign_in) for _ in range(requests)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert answers == [401] * requests
+    assert len(api.gate.checked) == SIGN_IN_FAILURE_LIMIT
+    assert api.rows("SELECT failed_count FROM sign_in_attempts") == [(SIGN_IN_FAILURE_LIMIT,)]

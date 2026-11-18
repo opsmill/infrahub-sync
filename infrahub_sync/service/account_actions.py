@@ -23,8 +23,11 @@ sign-in, and the value of an API token is in one place, the answer of its creati
 from __future__ import annotations
 
 import re
+import threading
+from contextlib import contextmanager, suppress
 from datetime import datetime  # noqa: TC003 - Pydantic reads the annotation of a field when the class is built.
 from typing import TYPE_CHECKING, Annotated, Literal
+from weakref import WeakValueDictionary
 
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_validator
 
@@ -34,6 +37,7 @@ from infrahub_sync.product_store.accounts import (
     SIGN_IN_NAME_MAX_LENGTH,
     AccountNameTakenError,
     AccountTokenNameTakenError,
+    SignInAttemptsFullError,
     name_key,
 )
 
@@ -59,6 +63,8 @@ from .service import REASON_REFUSED_MESSAGE, RunService, ServiceAPIError
 from .settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV, PASSWORD_MIN_LENGTH, session_idle_seconds
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
     from infrahub_sync.product_store import Account, AccountToken
 
     from .auth import Principal
@@ -101,6 +107,10 @@ _ENVIRONMENT_MANAGED_MESSAGE = (
 )
 
 _ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
+# One lock for each lower-case name whose password is being checked in this process. A lock leaves
+# the map when no request holds it, so the map does not grow with the names that were tried.
+_NAME_LOCKS: WeakValueDictionary[str, threading.Lock] = WeakValueDictionary()
+_NAME_LOCKS_GUARD = threading.Lock()
 
 AccountState = Literal["active", "disabled", "all"]
 
@@ -300,9 +310,11 @@ def record_failed_sign_in(service: RunService, name: str) -> None:
     """Count one failed sign-in, or one wrong current password, for this name.
 
     The fifth failure in 15 minutes refuses the name for 15 minutes. A failure for a name that is
-    refused is not counted.
+    refused is not counted. A new name is not recorded when the table is full of refusals in
+    force: the caller answers the same refusal.
     """
-    service.accounts.projection.record_sign_in_failure(name, now=service.accounts.now())
+    with suppress(SignInAttemptsFullError):
+        service.accounts.projection.record_sign_in_failure(name, now=service.accounts.now())
 
 
 def clear_failed_sign_ins(service: RunService, name: str) -> bool:
@@ -310,24 +322,76 @@ def clear_failed_sign_ins(service: RunService, name: str) -> bool:
     return service.accounts.projection.clear_sign_in_attempts(name)
 
 
-def verify_account_password(account: Account | None, password: str) -> bool:
+@contextmanager
+def one_check_per_name(name: str) -> Iterator[None]:
+    """Let one password check for this name run at a time in this process, with its count.
+
+    A burst of sign-ins for one name then reads the refusal, checks the password and counts the
+    failure one after the other: a refusal that the fifth failure starts applies to the next check
+    of the process. The lock is per process; several processes each run one check at a time.
+
+    Raises:
+        ServiceAPIError: ``503 sign-in-busy`` when the lock did not become free in the wait of the
+            gate. Nothing is checked and nothing is counted.
+    """
+    key = name_key(name)
+    with _NAME_LOCKS_GUARD:
+        lock = _NAME_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _NAME_LOCKS[key] = lock
+    if not lock.acquire(timeout=credentials.VERIFICATION_WAIT_SECONDS):
+        raise ServiceAPIError(503, "sign-in-busy", SIGN_IN_BUSY_MESSAGE)
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def verify_account_password(account: Account | None, password: str, *, admit: Callable[[], bool] | None = None) -> bool:
     """Check a password against the hash of an account, with one hash computation in every case.
 
     A name with no account and an account with no password are checked against a fixed hash, so
     the duration of the check does not show whether the account exists. The check holds one place
-    of the gate of the process.
+    of the gate of the process. ``admit`` is called once the place is held, immediately before the
+    check: see ``VerificationGate.verify``.
 
     Raises:
         ServiceAPIError: ``503 sign-in-busy`` when no place of the gate became free in time.
+        credentials.VerificationNotAdmittedError: ``admit`` returned false; nothing was checked.
     """
     stored_hash = None if account is None else account.password_hash
+    gate = credentials.PASSWORD_VERIFICATION_GATE
+    checked_hash = credentials.no_account_hash() if stored_hash is None else stored_hash
     try:
-        verified = credentials.PASSWORD_VERIFICATION_GATE.verify(
-            password, credentials.no_account_hash() if stored_hash is None else stored_hash
-        )
+        verified = gate.verify(password, checked_hash, admit=admit)
     except credentials.SignInBusyError:
         raise ServiceAPIError(503, "sign-in-busy", SIGN_IN_BUSY_MESSAGE) from None
     return verified and stored_hash is not None
+
+
+def _check_password_of_name(service: RunService, name: str, account: Account | None, password: str) -> bool | None:
+    """Check a password for a name while no other check of the name runs in the process.
+
+    The refusal of the name is read again once a place of the gate is held, immediately before
+    the check, and a failure is counted before the next check of the name starts. Return nothing
+    when the name became refused while the request waited: no password was checked and nothing
+    was counted. Otherwise return whether the password verified, after counting a failure.
+
+    Raises:
+        ServiceAPIError: ``503 sign-in-busy``.
+    """
+    with one_check_per_name(name):
+        try:
+            verified = verify_account_password(
+                account, password, admit=lambda: sign_in_refused_until(service, name) is None
+            )
+        except credentials.VerificationNotAdmittedError:
+            return None
+        if not verified or account is None or account.disabled or account.deleted_at is not None:
+            record_failed_sign_in(service, name)
+            return False
+        return True
 
 
 def account_resource(account: Account, *, refused_until: datetime | None = None) -> AccountResource:
@@ -371,9 +435,8 @@ def sign_in(service: RunService, body: SignInRequest, path: str) -> SessionResou
         service.record_authentication_refusal(path, "sign-in-refused")
         raise sign_in_refused()
     account = service.accounts.projection.lookup_account_by_name(name)
-    verified = verify_account_password(account, body.password)
-    if account is None or not verified or account.disabled or account.deleted_at is not None:
-        record_failed_sign_in(service, name)
+    # The refusal is read again once the check can start, and is answered in the same way.
+    if not _check_password_of_name(service, name, account, body.password) or account is None:
         # The record holds one reason for every cause, and no name.
         service.record_authentication_refusal(path, "sign-in-refused")
         raise sign_in_refused()
@@ -765,8 +828,9 @@ def change_own_password(service: RunService, principal: Principal, body: ChangeP
     if not 0 < len(body.current_password) <= PASSWORD_MAX_LENGTH:
         # No account has this password: nothing is checked and nothing is counted, as at sign-in.
         raise _refuse_current_password(service, principal)
-    if not verify_account_password(account, body.current_password):
-        record_failed_sign_in(service, name)
+    # A wrong password is counted; a name that became refused while the request waited is
+    # answered in the same way, with no check and no count.
+    if not _check_password_of_name(service, name, account, body.current_password):
         raise _refuse_current_password(service, principal)
     password_hash = _hash_new_password(body.new_password)
     service.accounts.projection.set_account_password_hash(

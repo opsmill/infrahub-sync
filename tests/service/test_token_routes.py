@@ -13,9 +13,9 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
 
-from infrahub_sync.product_store.accounts import SIGN_IN_FAILURE_LIMIT
+from infrahub_sync.product_store.accounts import SIGN_IN_FAILURE_LIMIT, SIGN_IN_REFUSAL_PERIOD
 from infrahub_sync.service import credentials
-from infrahub_sync.service.account_actions import PASSWORD_MAX_LENGTH, CreatedTokenResource
+from infrahub_sync.service.account_actions import PASSWORD_MAX_LENGTH, CreatedTokenResource, record_failed_sign_in
 from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV
 from tests.service.account_api import (
     ADMIN_PASSWORD,
@@ -414,3 +414,34 @@ def test_a_current_password_that_no_account_has_is_refused_without_a_check(
     _error(response, 403, "current-password-refused")
     assert api.gate.checks == checks
     assert api.store.read_sign_in_attempt("alice") is None
+
+
+def test_a_password_change_whose_name_is_refused_while_it_waits_gets_the_refusal_with_no_check(
+    api: AccountApi, alice: dict[str, str]
+) -> None:
+    for _ in range(SIGN_IN_FAILURE_LIMIT):
+        record_failed_sign_in(api.service, "alice")
+    refused_before = api.call("PUT", "/me/password", alice, json=_CHANGE)
+    api.store.clear_sign_in_attempts("alice")
+    checks = api.gate.checks
+
+    def refuse() -> None:
+        # Other requests fail 5 times for the name while this one waits for a place of the gate.
+        for _ in range(SIGN_IN_FAILURE_LIMIT):
+            record_failed_sign_in(api.service, "alice")
+
+    api.gate.while_waiting = refuse
+
+    response = api.call("PUT", "/me/password", alice, json=_CHANGE)
+
+    _error(response, 403, "current-password-refused")
+    assert (response.status_code, response.content) == (refused_before.status_code, refused_before.content)
+    assert api.gate.checks == checks
+    assert api.gate.hashes == 0
+    account = api.store.lookup_account_by_name("alice")
+    assert account is not None
+    assert account.password_hash == text_hash(PASSWORD)
+    attempt = api.store.read_sign_in_attempt("alice")
+    assert attempt is not None
+    assert attempt.failed_count == SIGN_IN_FAILURE_LIMIT
+    assert attempt.refused_until == T0 + SIGN_IN_REFUSAL_PERIOD

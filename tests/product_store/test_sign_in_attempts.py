@@ -20,6 +20,7 @@ from infrahub_sync.product_store.accounts import (
     SIGN_IN_FAILURE_WINDOW,
     SIGN_IN_NAME_MAX_LENGTH,
     SIGN_IN_REFUSAL_PERIOD,
+    SignInAttemptsFullError,
 )
 from tests.product_store.test_contract import _PROFILES_WITH_POSTGRESQL, _projection_profile
 
@@ -275,3 +276,58 @@ def test_many_failures_at_the_same_moment_for_one_name_refuse_it_once(
     # The failures after the fifth found the name refused, and changed nothing.
     assert stored.failed_count == SIGN_IN_FAILURE_LIMIT
     assert stored.refused_until == _T0 + SIGN_IN_REFUSAL_PERIOD
+
+
+def test_a_new_name_at_the_bound_never_deletes_a_refusal_in_force(projection: ProductProjection) -> None:
+    refused = _fail(projection, "refused", SIGN_IN_FAILURE_LIMIT)
+    later = _T0 + timedelta(minutes=1)
+    projection.record_sign_in_failure("counting", now=later, bound=3)
+    projection.record_sign_in_failure("newer", now=later + _SECOND, bound=3)
+
+    # "refused" has the oldest window, but its refusal is in force: "counting" makes room.
+    projection.record_sign_in_failure("added", now=later + 2 * _SECOND, bound=3)
+
+    assert [row[0] for row in _rows(projection)] == ["added", "newer", "refused"]
+    assert projection.read_sign_in_attempt("refused") == refused
+
+
+def test_a_new_name_at_the_bound_deletes_a_passed_window_before_a_counting_one(projection: ProductProjection) -> None:
+    projection.record_sign_in_failure("passed", now=_T0 + _SECOND, bound=3)
+    after_window = _T0 + SIGN_IN_FAILURE_WINDOW + timedelta(minutes=1)
+    # "counting" started its window first among the windows that still count.
+    projection.record_sign_in_failure("counting", now=after_window - timedelta(minutes=10), bound=3)
+    _fail(projection, "refused", SIGN_IN_FAILURE_LIMIT, start=after_window - timedelta(minutes=5))
+
+    projection.record_sign_in_failure("added", now=after_window, bound=3)
+
+    assert [row[0] for row in _rows(projection)] == ["added", "counting", "refused"]
+
+
+def test_a_refusal_that_has_passed_is_deleted_to_make_room(projection: ProductProjection) -> None:
+    refused = _fail(projection, "refused", SIGN_IN_FAILURE_LIMIT)
+    assert refused.refused_until is not None
+    after_refusal = refused.refused_until + _SECOND
+    projection.record_sign_in_failure("counting", now=after_refusal - _SECOND, bound=2)
+
+    projection.record_sign_in_failure("added", now=after_refusal, bound=2)
+
+    assert [row[0] for row in _rows(projection)] == ["added", "counting"]
+
+
+def test_a_table_full_of_refusals_in_force_records_no_new_name(projection: ProductProjection) -> None:
+    first = _fail(projection, "first", SIGN_IN_FAILURE_LIMIT)
+    second = _fail(projection, "second", SIGN_IN_FAILURE_LIMIT, start=_T0 + timedelta(minutes=1))
+    rows = _rows(projection)
+
+    with pytest.raises(SignInAttemptsFullError) as full:
+        projection.record_sign_in_failure("added", now=_T0 + timedelta(minutes=2), bound=2)
+
+    assert "added" not in str(full.value)
+    assert _rows(projection) == rows
+    assert projection.read_sign_in_attempt("first") == first
+    assert projection.read_sign_in_attempt("second") == second
+    # A name that has a row is still counted when the table is full.
+    projection.record_sign_in_failure("first", now=first.refused_until or _T0, bound=2)
+    stored = projection.read_sign_in_attempt("first")
+    assert stored is not None
+    assert stored.failed_count == 1

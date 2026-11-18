@@ -32,7 +32,7 @@ from infrahub_sync.service.settings import SESSION_IDLE_SECONDS_ENV
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     import pytest
@@ -49,6 +49,7 @@ T0 = datetime(2026, 11, 18, 9, 0, tzinfo=timezone.utc)
 SECOND = timedelta(seconds=1)
 IDLE_SECONDS = 600
 TEXT_HASH_PREFIX = "text-hash-of:"
+TEXT_GATE_NOT_ADMITTED = "the text gate did not check the password"
 
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 
@@ -59,17 +60,31 @@ def text_hash(password: str) -> str:
 
 
 class TextGate:
-    """A gate that compares texts and counts the hashes it was asked for, never a password."""
+    """A gate that compares texts and counts the hashes it was asked for, never a password.
+
+    ``while_waiting`` runs where a request waits for a place, before ``admit``; ``while_checking``
+    runs after the comparison, while the place is held. A test uses them to make another request
+    act at those moments.
+    """
 
     def __init__(self) -> None:
         self.hashes = 0
         self.checks = 0
+        self.while_waiting: Callable[[], object] | None = None
+        self.while_checking: Callable[[], object] | None = None
         self._lock = threading.Lock()
 
-    def verify(self, password: str, stored_hash: str) -> bool:
+    def verify(self, password: str, stored_hash: str, *, admit: Callable[[], bool] | None = None) -> bool:
+        if self.while_waiting is not None:
+            self.while_waiting()
+        if admit is not None and not admit():
+            raise credentials.VerificationNotAdmittedError(TEXT_GATE_NOT_ADMITTED)
         with self._lock:
             self.checks += 1
-        return stored_hash == text_hash(password)
+        verified = stored_hash == text_hash(password)
+        if self.while_checking is not None:
+            self.while_checking()
+        return verified
 
     def hash(self, password: str) -> str:
         with self._lock:

@@ -27,7 +27,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 API_TOKEN_PREFIX = "ifs_pat_"
 SESSION_TOKEN_PREFIX = "ifs_ses_"
@@ -56,8 +56,15 @@ VERIFICATION_LIMIT = 2
 VERIFICATION_WAIT_SECONDS = 5.0
 
 
+_NOT_ADMITTED_MESSAGE = "the password was not checked: the caller withdrew the check once a place was held"
+
+
 class SignInBusyError(RuntimeError):
     """A password verification waited too long for one of the places of the gate."""
+
+
+class VerificationNotAdmittedError(RuntimeError):
+    """The caller's ``admit`` check refused a verification once a place of the gate was held."""
 
 
 def _encode(value: bytes) -> str:
@@ -177,13 +184,20 @@ class VerificationGate:
         finally:
             self._places.release()
 
-    def verify(self, password: str, stored_hash: str) -> bool:
+    def verify(self, password: str, stored_hash: str, *, admit: Callable[[], bool] | None = None) -> bool:
         """Verify a password while holding one place of the gate.
+
+        ``admit``, when given, is called once the place is held and immediately before the check.
+        When it returns false, the password is not checked. A sign-in uses it to read the refusal
+        of its name again after it waited for a place.
 
         Raises:
             SignInBusyError: no place became free within the wait.
+            VerificationNotAdmittedError: ``admit`` returned false; no password was checked.
         """
         with self.place():
+            if admit is not None and not admit():
+                raise VerificationNotAdmittedError(_NOT_ADMITTED_MESSAGE)
             return verify_password(password, stored_hash)
 
     def hash(self, password: str) -> str:
