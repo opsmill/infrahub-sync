@@ -655,7 +655,7 @@ def build_inputs_hash(root: Path = REPO_BASE) -> str:
     and its bytes. A checkout without the frontend submodule still yields a hash.
     """
     # The demo assets are not hashed on purpose: the dev stack mounts the source tree, and
-    # `dev.demo` runs `demo prepare` on the host, so the image never serves them.
+    # `dev.demo` runs `demo prepare` on the host.
     digest = hashlib.sha256()
     for name in BUILD_INPUT_FILES:
         digest.update((root / name).read_bytes())

@@ -6,7 +6,7 @@ through the Sync API. Running it again with the same addresses changes nothing. 
 plans, applies, approves or changes whether the Sync API requires approval: the first plan
 stays a step the person trying the demo takes.
 
-This `__init__` imports none of the submodules: importing `infrahub_sync.demo.package` loads
-it, `errors` and PyYAML, not the Sync client or the Infrahub SDK. Python still runs
-`infrahub_sync/__init__.py` first, as for any submodule of `infrahub_sync`.
+This `__init__` imports none of the submodules, so importing `infrahub_sync.demo.package`
+loads neither `prepare` nor the Infrahub SDK. Python still runs `infrahub_sync/__init__.py`
+first, which loads the Sync client.
 """

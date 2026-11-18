@@ -144,12 +144,15 @@ def test_a_sync_api_failure_after_the_schema_load_says_a_re_run_completes_the_re
 
 
 @pytest.mark.parametrize("option", ["--netbox-url", "--infrahub-url", "--infrahub-address"])
+@pytest.mark.parametrize(
+    "address", ["http://admin:userinfo-canary@host:8000", "admin:userinfo-canary@host:8000"], ids=["url", "no-scheme"]
+)
 def test_an_address_with_userinfo_exits_2_naming_the_option_and_not_the_value(
-    monkeypatch: pytest.MonkeyPatch, option: str
+    monkeypatch: pytest.MonkeyPatch, option: str, address: str
 ) -> None:
     loader = FakeSchemaLoader()
 
-    client, output = _invoke(loader, monkeypatch, option, "http://admin:userinfo-canary@host:8000")
+    client, output = _invoke(loader, monkeypatch, option, address)
 
     assert output.startswith("2\n")
     assert option in output

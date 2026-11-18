@@ -103,7 +103,9 @@ def _redact(text: str, token: str) -> str:
 
 
 def _has_userinfo(url: str) -> bool:
-    return _URL_USERINFO.search(url) is not None or "@" in url.partition("://")[2].partition("/")[0]
+    # Without a scheme, the authority starts at the beginning of the value.
+    authority = url.partition("://")[2] if "://" in url else url
+    return "@" in authority.partition("/")[0]
 
 
 def refused_address_option(netbox_url: str, infrahub_url: str, infrahub_address: str | None) -> str | None:
