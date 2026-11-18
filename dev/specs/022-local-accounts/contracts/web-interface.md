@@ -1,7 +1,8 @@
 # Contract: web interface
 
-This contract covers User Stories 2 and 4. It needs the agreement of the colleague who builds the
-web interface (spec "Assumptions").
+This contract covers User Stories 2 and 4. On 2026-11-18 the maintainer instructed that both are
+built now, to replace the token field from the start (spec "Assumptions"). They no longer wait for
+the agreement of the colleague who builds the web interface.
 
 ## Before User Story 2
 
@@ -31,15 +32,19 @@ the API accepts it as a bearer value (FR-015).
 ## User Story 4: accounts and tokens
 
 - **"Accounts" page**, for administrators: the list with level and state, a filter on active
-  accounts, and the actions create, set level, set password, disable, enable and delete. Delete
-  asks for confirmation and says it cannot be reversed.
+  accounts, and the actions create, set level, set password, disable, enable, unlock and delete.
+  Unlock (`POST /api/accounts/{name}/unlock`) is shown for an account whose
+  `sign_in_refused_until` is in the future. Delete asks for confirmation and says it cannot be
+  reversed.
 - **"My account" page**, for every account: change the password, list the tokens, create a token
   and delete a token. A created token value is displayed once, with a copy action.
 - **The `admin` account** is displayed with a note that the deployment's environment defines it.
-  Its actions are not offered. The API refuses each of them with `409`, code
-  `environment-managed-account`, except unlock (`POST /api/accounts/admin/unlock`), which it
-  accepts.
+  Its only action is unlock, shown when its `sign_in_refused_until` is in the future. The API
+  refuses every other action on `admin` with `409`, code `environment-managed-account`.
 - **An account that is not an administrator** is not offered the "Accounts" page.
+
+Updated 2026-11-18: unlock was missing from the action list, although task T064 lists it. The
+maintainer decided that the page offers it, and that it is the one action offered for `admin`.
 
 ## Checks
 

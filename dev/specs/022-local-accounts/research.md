@@ -246,10 +246,12 @@ line "Changed during implementation:" gives what the first text said and why it 
 - **A name that has no account** is counted in the same way, and its sign-in runs one password
   verification against a fixed hash. So the answer and its duration do not show whether the
   account exists (FR-003).
-- **A name or a password that no account can have** gets the same refusal with no check, no
-  count and no record: a name that is empty, longer than 64 characters (also in lower case),
-  holds a NUL character or a character UTF-8 cannot encode, and a password that is empty or
-  longer than 1,024 characters or holds a character UTF-8 cannot encode.
+- **A name or a password that no account can have** gets the same refusal with no check and no
+  count: a name that is empty, longer than 64 characters (also in lower case), holds a NUL
+  character or a character UTF-8 cannot encode, and a password that is empty or longer than
+  1,024 characters or holds a character UTF-8 cannot encode. Unlike every other refused
+  sign-in, it writes no authentication refusal record (R10). The maintainer kept this on
+  2026-11-18.
 - **One check at a time for each name in a process.** A sign-in or a password change holds a
   lock for the lower-case name, then a place of the gate (R2), then reads the refusal again
   immediately before the check, and counts a failure before it lets the lock go. A request that
@@ -276,6 +278,18 @@ line "Changed during implementation:" gives what the first text said and why it 
 
   When too few rows can be deleted, because the others hold a refusal in force, the new name is
   not recorded and its sign-in gets the same refusal.
+- **A known limit of the bound**: while every row holds a refusal in force, a failed sign-in for
+  a name that has no row is not counted, so that name is not refused while the table stays
+  full. The maintainer kept this
+  behavior on 2026-11-18.
+    - With one `sync-api` process, the state cannot be reached. Filling the table takes 10,000
+      names × 5 failures = 50,000 password checks within one 15-minute refusal. One check takes
+      about 0.12 s (`hashlib.scrypt` with the parameters of `credentials.py`, 8 runs measured on
+      2026-11-18 on a macOS workstation, 0.118 to 0.127 s), and a process runs 2 at a time, so
+      about 16 checks a second, or about 15,000 in 15 minutes.
+    - With about four processes or more, it can be reached.
+    - The alternative is to refuse every sign-in for a name that is not counted while the table
+      is full.
 - Changed during implementation: the first text deleted the rows with the oldest window, which
   could include a refusal in force. The review found that many failed sign-ins for unknown names
   could then delete the refusal of a real account, and so end it.
@@ -315,7 +329,9 @@ line "Changed during implementation:" gives what the first text said and why it 
     - log lines, if a later change logs a name; none does today;
     - the session file of a CLI that signed in as the account, on the workstation of that
       person. It holds the account name next to the session token, until `logout` removes the
-      entry, or until the CLI removes it because the Sync API refuses the session.
+      entry, or until the CLI removes it because the Sync API refuses the session. This is
+      outside FR-030, which covers the account data that Sync stores: the service cannot reach
+      a file on a workstation. The maintainer confirmed this on 2026-11-18.
 
   The documentation says so, and the search of SC-007 excludes the free-text columns.
 - Changed during implementation: the first text said the session file holds no name. The CLI
@@ -408,8 +424,9 @@ line "Changed during implementation:" gives what the first text said and why it 
       outcome that says why: `refused-authorization` (not an administrator),
       `refused-secret-parameter` (R4) or `refused-current-password`.
     - A refused sign-in writes the existing authentication refusal record, with one reason for
-      every cause and without the name that was tried. A sign-in with a name or a password that
-      no account can have (R6) writes no record.
+      every cause and without the name that was tried. The one exception: a sign-in with a name
+      or a password that no account can have (R6) writes no record, because it is refused
+      before any read of the store. The maintainer kept this on 2026-11-18.
 - Changed during implementation: the first text wrote the events through the existing
   `record_audit` path, after the action. The review found an action could be stored without its
   event, so the store now writes both in one transaction. The action part of an event type uses

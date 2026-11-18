@@ -27,8 +27,8 @@ acted:
 - **New routes and commands** let a person sign in and out, change a password, manage tokens
   and, as an administrator, manage accounts ([contracts](contracts/)).
 - **The web interface** gains a sign-in form, the names of accounts on records, and two pages
-  for accounts and tokens. This part needs the agreement of the colleague who builds it, and is
-  not implemented yet.
+  for accounts and tokens. The maintainer instructed on 2026-11-18 that this part is built now,
+  to replace the token field from the start. It is not implemented yet.
 
 This plan was brought in line with the implementation on 2026-11-18. Where a part changed, a line
 "Changed during implementation:" gives the reason.
@@ -41,21 +41,23 @@ Each step is releasable alone and matches one user story of the spec.
 | --- | --- | --- | --- |
 | 1 | US1 (P1) | Store tables, password and token primitives, resolver, account identifiers in records and names in answers, `admin` from the environment, removal of the old variable, sign-in and sign-out, the refusal after repeated failures and its unlock, account creation and listing, own password change, set password, disable and enable, own tokens, the matching CLI commands, deployment files, documentation | none |
 | 2 | US3 (P3) | Delete, set level, administrator actions on another account's tokens, the matching CLI commands | step 1 |
-| 3 | US2 (P2) | Sign-in form, signed-in account and sign-out, accounts on records, the `AGENTS.md` rule | step 1, and the colleague's agreement |
+| 3 | US2 (P2) | Sign-in form, signed-in account and sign-out, accounts on records, the `AGENTS.md` rule | step 1 |
 | 4 | US4 (P4) | "Accounts" and "My account" pages | steps 2 and 3 |
 
 The spec ranks the web sign-in (US2, P2) above the deletion (US3, P3), as the maintainer
-confirmed. The plan delivers US3 first because it is in the API and the CLI, which need no
-agreement, while US2 waits for one. If the agreement comes early, steps 2 and 3 can swap: neither
-depends on the other.
+confirmed. The plan delivered US3 first because, at the time, US2 waited for the agreement of the
+colleague who builds the web interface. Neither step depends on the other.
+
+Changed on 2026-11-18: the maintainer instructed that US2 and US4 are built now, to replace the
+token field from the start. Steps 3 and 4 no longer wait for the colleague's agreement.
 
 Step 1 holds everything a team needs to operate accounts safely: every sign-in rule, a way to
 replace a lost password, and a way to remove a person's access.
 
 Status on 2026-11-18: steps 1 and 2 are implemented
-([implementation report](opsmill-implement-report.md)). Steps 3 and 4 are not started: they wait
-for the agreement of the colleague who builds the web interface. Until then, the token field of
-the web interface accepts an API token of an account (FR-015).
+([implementation report](opsmill-implement-report.md)). Steps 3 and 4 are not started, and are
+to be built next, as the maintainer instructed. Until then, the token field of the web interface
+accepts an API token of an account (FR-015).
 
 ## Technical Context
 
@@ -252,9 +254,11 @@ Changed during implementation:
 - **Several `sync-api` processes** each run one password check for a name at a time, so with P
   processes up to 5 + (P − 1) passwords are checked for each refusal (R6).
 - **A table of failed sign-ins full of refusals in force** does not record a new name, so a
-  wrong password for that name is not counted until a row can be deleted (R6).
-- **The web interface steps need an agreement** that was not given. Steps 1 and 2 do not depend
-  on it, and the token field keeps working with an account token.
+  wrong password for that name is not counted until a row can be deleted (R6). The maintainer
+  kept this; with one process it cannot be reached (spec "Assumptions").
+- **The web interface steps are not built yet.** The maintainer instructed on 2026-11-18 that
+  they are built now; they no longer wait for an agreement. Until they are, the token field
+  keeps working with an account token.
 - **Spec 018 (Helm chart)** named the removed variable on another branch. It was merged into this
   branch, which updated the Kubernetes page for the chart values of the `admin` account; the
   chart itself is in `opsmill/infrahub-helm`.

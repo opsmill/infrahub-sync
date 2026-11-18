@@ -36,6 +36,9 @@ answer that is replayed for an `Idempotency-Key`.
   all answer `401`, code `sign-in-refused`, with one fixed message. So do a name and a password
   that no account can have (an empty value, a name longer than 64 characters, a password longer
   than 1,024 characters), with no password check and no count.
+- Every refused sign-in writes the authentication refusal record, without the name, except a
+  sign-in with a name or a password that no account can have, which writes no record
+  (research R6, R10).
 - A sign-in that waits more than 5 seconds answers `503`, code `sign-in-busy`, and is not
   counted. The wait is for one of the two places of the password checks of the process, or for
   the end of another check of the same name in the process (research R6).
@@ -89,7 +92,10 @@ checks. The lock of one check for each name, added after the review, answers the
 | `DELETE /accounts/{name}/tokens/{token_id}` | query `reason`? | `204` |
 
 - A caller that is not an administrator receives `403`, code `forbidden`, on every route of this
-  table, before any other check of the request.
+  table, before any other check of the request except one: a body that cannot be parsed as JSON
+  answers `422`, code `request-invalid`, before the administrator check and before
+  authentication, as it does on `POST /runs`. A body that is JSON but does not match the schema
+  answers `403` to a caller that is not an administrator.
 - `{name}` matches an account in any letter case. An unknown or deleted name answers `404`, code
   `account-not-found`.
 - A name that exists, without regard to case, answers `409`, code `account-name-taken`. This is

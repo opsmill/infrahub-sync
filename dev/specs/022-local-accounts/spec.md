@@ -482,8 +482,10 @@ signs in, changes their password and creates a token, and the administrator disa
   removal needs a transition period, which this specification does not describe.
 - **Access to the host or the cluster equals administrator access to Sync.** A person who can
   read or edit the deployment's environment can sign in as `admin`. This is already true today.
-- **The colleague who builds the web interface agrees to User Stories 2 and 4.** The agreement
-  was not given at the time of writing. User Stories 1 and 3 do not depend on it.
+- **User Stories 2 and 4 are built now.** On 2026-11-18 the maintainer instructed that the web
+  sign-in and the account pages are built in this feature, to replace the token field from the
+  start. This replaces the earlier assumption that they waited for the agreement of the
+  colleague who builds the web interface.
 - **The timing against other work is not known**: the recovery work, and the Helm chart of spec
   018, which also defines the deployment's variables and must name the `admin` variables instead
   of `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
@@ -494,6 +496,14 @@ signs in, changes their password and creates a token, and the administrator disa
   and gives ways to end a refusal, but does not remove it. The alternative, a delay that grows
   with each failure and never refuses outright, was not chosen in the interview. The maintainer
   confirmed the 15-minute refusal on 2026-11-18.
+- **A full table of failed sign-ins does not count a new name.** The table holds at most 10,000
+  names and never deletes a refusal in force. When every row holds one, a failed sign-in for a
+  name that has no row is not counted (research R6). The maintainer kept this on 2026-11-18.
+  With one Sync API process the state cannot be reached: filling the table takes 10,000 names ×
+  5 failures = 50,000 password checks within one 15-minute refusal, and one process runs about
+  16 checks a second (2 at a time, about 0.12 s each, measured on 2026-11-18), so about 15,000
+  in 15 minutes. With about four processes or more it can be reached. The alternative is to
+  refuse every sign-in for an uncounted name while the table is full.
 - **Records made before this feature keep the name of their principal.** Because no production
   deployment exists, only development databases hold such records.
 - **A person receives their initial password from the administrator outside Sync.** Sync sends no

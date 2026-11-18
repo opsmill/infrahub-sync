@@ -44,6 +44,8 @@ Each chunk ran in a subagent with a clean context, one at a time.
 
 T047–T054 (User Story 2) and T062–T066 (User Story 4), 13 tasks in all, cover the web interface. They were not dispatched. `tasks.md` requires the agreement of the colleague who builds the web interface before they start, and that agreement has not been given. Until then, the web interface's existing token field accepts an API token of an account (FR-015).
 
+Note added on 2026-11-18: the maintainer instructed that User Stories 2 and 4 are built now, to replace the token field from the start. They no longer wait for the colleague's agreement; `tasks.md` and `spec.md` (Assumptions) say so.
+
 All other tasks are ticked (61 of 74).
 
 ## 4. Local-pass evidence
@@ -114,6 +116,7 @@ Six reviewers ran in parallel, read-only: code, tests, error handling, comments,
 1. Confirm decision D-10 and the rule of FR-021.
 2. Run the compose E2E tier with a full image build, and the development-stack smoke test: `docker build -t infrahub-sync:compose-test . && INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose`, then `uv run invoke dev.smoke`.
 3. Ask the colleague who builds the web interface about User Stories 2 and 4, then run `speckit-opsmill-implement` for T047–T054 and T062–T066.
+   Note added on 2026-11-18: no question to the colleague is needed any more. The maintainer instructed that User Stories 2 and 4 are built now; run `speckit-opsmill-implement` for T047–T054 and T062–T066.
 4. Plan the merges. The Helm chart of spec 018 and the scheduled runs of spec 021 conflict with this branch: see `notes.md`, section "T074". Spec 021 adds `principal_of` to the resolver that this branch removes, and a schedule must hold an account identifier.
 5. Update `research.md`. It still says every `admin` refusal names a variable, and R6 says the rows with the oldest window are deleted.
 6. Consider the deferred review findings in section 5.

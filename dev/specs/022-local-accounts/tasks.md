@@ -251,8 +251,10 @@ existing token field.
 **Goal**: a person signs in to the web interface with a name and a password, and the pages name
 accounts.
 
-**Before starting**: confirm the agreement of the colleague who builds the web interface (spec
-"Assumptions"). Phase 5 does not depend on this phase and can be done first.
+**Before starting**: on 2026-11-18 the maintainer instructed that User Stories 2 and 4 are built
+now, to replace the token field from the start (spec "Assumptions"). This replaces the earlier
+condition of the agreement of the colleague who builds the web interface. Phase 5 does not depend
+on this phase.
 
 **Independent Test**: [quickstart.md](quickstart.md), scenario 6, first half.
 
@@ -328,6 +330,10 @@ tokens.
 
 **Independent Test**: [quickstart.md](quickstart.md), scenario 6, second half.
 
+**Updated 2026-11-18**: the "Accounts" page of T064 offers unlock for an account whose
+`sign_in_refused_until` is in the future, and offers unlock as the only action for `admin`
+([contracts/web-interface.md](contracts/web-interface.md)).
+
 - [ ] T062 [US4] Regenerate `frontend/src/api/types.generated.ts`, and add the queries and
   actions for accounts and tokens to `frontend/src/api/queries.ts` and
   `frontend/src/api/actions.ts`.
@@ -374,9 +380,9 @@ tokens.
 ## Dependencies
 
 - Phase 1 → Phase 2 → Phase 3.
-- Phase 4 (US2) needs Phase 3 and the colleague's agreement.
-- Phase 5 (US3) needs Phase 3 only. Phases 4 and 5 do not depend on each other; the plan
-  delivers Phase 5 first when the agreement is not given yet.
+- Phase 4 (US2) needs Phase 3. The maintainer instructed on 2026-11-18 that it is built now.
+- Phase 5 (US3) needs Phase 3 only. Phases 4 and 5 do not depend on each other; Phase 5 was
+  delivered first.
 - Phase 6 (US4) needs Phases 4 and 5.
 - Phase 7: T067 to T071 can start after Phase 3; T072 to T074 come last.
 
@@ -398,7 +404,8 @@ T036 after T034; T039 before T041; T040 before T041; T041 → T042; T045 after T
 1. **First release: Phases 1 to 3.** A team operates accounts with the API and the CLI: add a
    person, sign in, tokens for scripts, lost passwords, disable. The web interface keeps its
    token field.
-2. **Then Phase 5**, which needs no agreement: delete, levels, another account's tokens.
-3. **Then Phases 4 and 6**, when the colleague who builds the web interface agrees.
+2. **Then Phase 5**: delete, levels, another account's tokens.
+3. **Then Phases 4 and 6**, which the maintainer instructed on 2026-11-18 to build now, so that
+   the sign-in form replaces the token field from the start.
 4. **Phase 7** closes each release: the decision records, the constitution sentence and the
    changelog fragments go with the first release.
