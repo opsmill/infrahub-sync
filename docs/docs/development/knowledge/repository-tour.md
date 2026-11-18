@@ -139,6 +139,9 @@ The local accounts live in these service modules
   every JSON answer, replayed answers included, with the account name, or with
   `Deleted account <short identifier>`.
 
+[Local accounts and sign-in](local-accounts.md) describes how these modules work together, with
+the CLI session file and the sign-in pages of the web interface.
+
 Six service modules carry what a run tells the operator:
 
 - `failure_cause.py` builds the stage failure record: it classifies the error into a

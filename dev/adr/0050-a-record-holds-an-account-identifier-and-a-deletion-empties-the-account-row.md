@@ -2,9 +2,9 @@
 
 **Status**: Accepted
 **Date**: 2026-11-18
-**Source**: `dev/specs/022-local-accounts/spec.md` (decisions D-6, D-8 and D-10, FR-024,
-FR-030 to FR-033), `dev/specs/022-local-accounts/research.md` (R1, R7, R8),
-`dev/specs/022-local-accounts/critiques/critique-20261117.md` (Q1, E1, E2)
+**Source**: `dev/specs/archive/022-local-accounts/spec.md` (decisions D-6, D-8 and D-10,
+FR-024, FR-030 to FR-033), `dev/specs/archive/022-local-accounts/research.md` (R1, R7, R8),
+`dev/specs/archive/022-local-accounts/critiques/critique-20261117.md` (Q1, E1, E2)
 
 ## Context
 

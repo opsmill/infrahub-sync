@@ -2,9 +2,9 @@
 
 **Status**: Accepted
 **Date**: 2026-11-18
-**Source**: `dev/specs/022-local-accounts/spec.md` (decisions D-1 to D-5 and D-9, FR-020 to
-FR-023, Assumptions), `dev/specs/022-local-accounts/research.md` (R2 to R6, R9),
-`dev/specs/022-local-accounts/plan.md` (Risks, Complexity Tracking)
+**Source**: `dev/specs/archive/022-local-accounts/spec.md` (decisions D-1 to D-5 and D-9,
+FR-020 to FR-023, Assumptions), `dev/specs/archive/022-local-accounts/research.md` (R2 to R6,
+R9, R10), `dev/specs/archive/022-local-accounts/plan.md` (Risks, Complexity Tracking)
 
 ## Context
 
@@ -74,11 +74,21 @@ own token, and to recover access when every other administrator is locked out.
       the check of the same name gets `503 sign-in-busy`. The lock is held in the memory of the
       process, so with P processes at most 5 + (P − 1) passwords are checked for each refusal.
 - **No cookie.** The service sets no cookie. The CLI keeps its session token in `sessions.json`
-  in its application directory, with mode `0600`. The web interface keeps the bearer value it
-  uses in `sessionStorage`, for the browser tab only
+  in its application directory, with mode `0600`. The web interface asks for an account name and
+  a password, and keeps the session token that the sign-in returns in `sessionStorage`, under the
+  key `infrahub-sync.session-token`, for the browser tab only
   ([ADR 0043](0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md),
-  `dev/specs/017-serve-web-interface/`); its sign-in with a password (spec User Story 2, not
-  delivered yet) is to keep the session token in the same place.
+  `dev/specs/017-serve-web-interface/`). It has no field for an API token.
+- **Disabling an account deletes its tokens and its sessions**, so enabling it restores none of
+  them. The store writes a new session or a new API token only while the account is active and,
+  for a sign-in, still has the password that was checked: it locks the account row in the
+  transaction of the insert. A disable or a deletion that runs at the same time either comes
+  first, and the insert is refused, or comes after, and deletes what was inserted. A password
+  change does the same for a new session; it does not delete API tokens.
+- **An accepted account action and its audit event are written in one transaction**, as
+  [ADR 0033](0033-an-event-is-saved-in-the-transaction-of-its-decision.md) requires for the
+  events of runs. A failure of either writes neither. A refused account action writes its
+  refusal event (`infrahub_sync.account.refused`) on its own.
 - **`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` is removed in the same release, with no transition
   period.** The service no longer reads it. This rests on the assumption that V3 has no
   production deployment (`spec.md`, Assumptions).

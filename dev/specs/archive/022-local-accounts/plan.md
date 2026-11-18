@@ -107,7 +107,7 @@ test runner: `pnpm check`, `pnpm typecheck`, `pnpm build` and the manual scenari
 - The API stays `v3-unstable`. No existing route changes its path, request or response.
 - No password, token value or digest in an API response, a CLI output, a log line or an audit
   event, except a token value in the answer to its creation
-  ([`secret-redaction.md`](../../../docs/docs/development/guidelines/secret-redaction.md)).
+  ([`secret-redaction.md`](../../../../docs/docs/development/guidelines/secret-redaction.md)).
 - The base install stays free of the `service` extra: the store, the routes and the resolver are
   in the service profile; the client and the CLI use only the base dependencies.
 - The vendored `opsmill_prefect_extras` stays byte-identical.

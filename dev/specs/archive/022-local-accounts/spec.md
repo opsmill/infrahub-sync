@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-17
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: The idea brief "Local accounts and stored credentials for Sync", which the maintainer
 and an agent wrote in an interview on 2026-11-17. This specification covers the first of the
@@ -14,13 +14,13 @@ systems that Sync stores, gets its own specification later.
 Sources:
 
 - The decisions of the interview, listed under "Decisions".
-- [`infrahub_sync/service/auth.py`](../../../infrahub_sync/service/auth.py): how the Sync API
+- [`infrahub_sync/service/auth.py`](../../../../infrahub_sync/service/auth.py): how the Sync API
   resolves a token today.
-- [`docs/docs/compose-deployment.mdx`](../../../docs/docs/compose-deployment.mdx): how an operator
+- [`docs/docs/compose-deployment.mdx`](../../../../docs/docs/compose-deployment.mdx): how an operator
   defines the tokens today.
-- [Spec 017](../017-serve-web-interface/spec.md), decision D-2: how a person gives a token to the
+- [Spec 017](../../017-serve-web-interface/spec.md), decision D-2: how a person gives a token to the
   web interface today.
-- [ADR 0037](../../adr/0037-an-approval-is-a-record-on-the-run.md): an approval is a record on the
+- [ADR 0037](../../../adr/0037-an-approval-is-a-record-on-the-run.md): an approval is a record on the
   run.
 
 ## Background

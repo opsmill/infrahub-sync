@@ -67,7 +67,7 @@ line "Changed during implementation:" gives what the first text said and why it 
 - **Rationale**:
     - A name can then change state without any record changing: a deletion empties one row.
     - An approval is never rewritten, as
-      [ADR 0037](../../adr/0037-an-approval-is-a-record-on-the-run.md) requires.
+      [ADR 0037](../../../adr/0037-an-approval-is-a-record-on-the-run.md) requires.
     - Rights compare identifiers, so a new account that takes an old name has no right over old
       runs (FR-032), with no extra rule.
     - A write that lands after a deletion carries the identifier of the deleted account. It
@@ -165,7 +165,7 @@ line "Changed during implementation:" gives what the first text said and why it 
   A session found idle costs a second call, which deletes it. No result is cached, because a
   cache would accept a request after an account is disabled (FR-027).
 - **`GET /me`** keeps its fields: `actor` is the account name, taken from `Principal.name`.
-- **Free text** (FR-024, [`secret-redaction.md`](../../../docs/docs/development/guidelines/secret-redaction.md)):
+- **Free text** (FR-024, [`secret-redaction.md`](../../../../docs/docs/development/guidelines/secret-redaction.md)):
   the service cannot list tokens it stores as digests. So:
     - a free-text parameter that contains `ifs_pat_` or `ifs_ses_` is refused with the existing
       `422`, code `secret-parameter-refused`, whoever the token belongs to;
@@ -461,10 +461,10 @@ line "Changed during implementation:" gives what the first text said and why it 
 
 - A new decision record: sign-in uses local accounts in the product store, and the `admin`
   account is defined by the environment. Written as
-  [ADR 0049](../../adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md).
+  [ADR 0049](../../../adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md).
 - A new decision record: a record holds an account identifier, and a deletion empties the
   account row. Written as
-  [ADR 0050](../../adr/0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md).
+  [ADR 0050](../../../adr/0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md).
 - `AGENTS.md`: the CLI command list gains the new commands. The Sync frontend rule is replaced
   (FR-036) with User Story 2, which is not implemented yet.
 - **Constitution principle VI** says credentials are "never committed, printed, or logged". This

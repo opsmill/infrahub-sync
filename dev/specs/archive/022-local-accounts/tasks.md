@@ -14,7 +14,7 @@ from the other `[P]` tasks of its group and depends on no unfinished task of tha
 
 - No password, token value, session token or digest in a log line, an error message, an audit
   event or a test's printed output
-  ([`secret-redaction.md`](../../../docs/docs/development/guidelines/secret-redaction.md)).
+  ([`secret-redaction.md`](../../../../docs/docs/development/guidelines/secret-redaction.md)).
 - Store code runs on SQLite and PostgreSQL. Write SQL with `?` placeholders and pass it through
   `_sql`, as `infrahub_sync/product_store/store.py` does.
 - Before each commit: `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`.

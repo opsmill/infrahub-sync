@@ -242,6 +242,27 @@ credential, report only the position, as `configs convert` does: "error: config.
 valid YAML at line 12, column 3". Take the line and the column from the error's mark, and drop
 the message.
 
+### Check every free-text field of a request for token values
+
+<!-- Extracted from dev/specs/archive/022-local-accounts on 2026-11-18 -->
+
+The product store holds only the SHA-256 digest of each API token and session token, so no
+collector can list their values. A free-text field that a record keeps, such as `reason` or the
+name of an API token, can therefore hold a token that redaction would not find.
+
+When you add a free-text field to a request of the Sync API:
+
+- pass it through `is_free_text` in `infrahub_sync/service/service.py` before anything records
+  it. The function refuses a known secret value and the prefixes `ifs_pat_` and `ifs_ses_`;
+- refuse it with `422 secret-parameter-refused`, and write the refusal event without the
+  refused text;
+- give it a maximum length; every `reason` field has at most 512 characters
+  (`REASON_MAX_LENGTH` in `infrahub_sync/client/models.py`).
+
+Do not add the password of `admin` to a list of secret values. `serve.py` removes it from the
+process environment after it applies it, so that no free-text check can be used to test
+candidate passwords. See [Local accounts and sign-in](../knowledge/local-accounts.md).
+
 ### Anti-patterns
 
 | Anti-pattern | Do instead |
