@@ -1,0 +1,21 @@
+frontend/src/routes/__root.tsx
+  s_cf9ada8f865389::t_79beb069b71694 421-422,436
+frontend/src/features/configurations/ConfigurationPage.tsx
+  s_cf9ada8f865389::t_79beb069b71694 420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c75592c761d98c47c20209f8d5dee9aa3f43b8dd",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
