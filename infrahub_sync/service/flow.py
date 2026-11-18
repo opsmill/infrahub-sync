@@ -10,7 +10,7 @@
 import logging
 import os
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -31,6 +31,7 @@ from pydantic_core import to_json
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.configuration.storage import (
     UNSUPPORTED_STORE_MESSAGE,
@@ -74,14 +75,20 @@ from infrahub_sync.plan.verify import (
 from infrahub_sync.product_store import (
     AuditEvent,
     BaselineWriteback,
+    BranchReviewKept,
+    BranchReviewOutcome,
     DuplicateRunError,
+    EventDetails,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     ExecutionWriteback,
     ProductProjection,
     ProductRun,
+    ScheduleBranch,
+    ScheduleRecord,
     run_apply_progress,
 )
+from infrahub_sync.product_store.models import BranchReviewKeptCause
 from infrahub_sync.runtime_schema import (
     STAGE_RUNTIME_MODEL_SCOPE,
     RuntimeModelPlan,
@@ -90,6 +97,7 @@ from infrahub_sync.runtime_schema import (
 )
 from infrahub_sync.utils import PlanApplier
 
+from . import branch_review as review_ops
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .apply_progress import StoreApplyProgressObserver
 from .checkpoints import (
@@ -98,10 +106,19 @@ from .checkpoints import (
     publish_plan_checkpoint,
     rehydrate_plan_checkpoint,
 )
-from .events import run_event, stage_result_type
+from .events import (
+    SCHEDULE_PROPOSED_CHANGE_FAILED,
+    SCHEDULE_PROPOSED_CHANGE_KEPT,
+    SCHEDULE_PROPOSED_CHANGE_OPENED,
+    SCHEDULE_PROPOSED_CHANGE_REPLACED,
+    run_event,
+    schedule_event,
+    stage_result_type,
+)
 from .failure_cause import (
     FAILURE_RECORD_KEYS,
     apply_progress,
+    failure_class,
     failure_record,
     operator_cause,
     resumable_next_action,
@@ -113,7 +130,7 @@ from .plan_step import StorePlanStepObserver
 from .read_progress import StoreSideReadObserver, record_waiting
 from .resume_view import uncertain_positions
 from .run_artifact import publish_run_artifact
-from .schedule_admission import admit_scheduled_start
+from .schedule_admission import EarlierProposedChangesUnreadableError, admit_scheduled_start
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
@@ -570,23 +587,42 @@ def _scheduled_flow_run(flow_run_id: str, worker_id: str) -> ScheduledFlowRun:
     )
 
 
-class BranchReviewNotAvailableError(RuntimeError):
-    """A scheduled run with branch review cannot plan or write in this build (spec 021, phase 4).
+# The errors of a branch review operation that the steps of a scheduled run record as a failure
+# class (spec 021, research R15): the typed errors of `branch_review`, and an unreachable server,
+# a timeout, a refused token or a missing permission, which keep their own classes.
+_BRANCH_REVIEW_ERRORS: tuple[type[Exception], ...] = (
+    review_ops.BranchReviewError,
+    InfrahubSdkError,
+    httpx.HTTPError,
+    OSError,
+)
+# The outcome of the event of an earlier proposed change that a run left in place, by its cause.
+_KEPT_OUTCOMES: dict[str, str] = {"approved": "kept-approved", "merged": "kept-merged", "closed": "kept-closed"}
 
-    The admission creates the run and its `pending` branch row; the `sync` stage then refuses
-    to plan or write, and the run ends as failed with this failure class.
+
+@dataclass
+class _BranchReview:  # pylint: disable=too-many-instance-attributes
+    """The branch review of one scheduled run (spec 021, research R11).
+
+    The admission fills the schedule's values and the schedule's earlier branch rows in the
+    states `pending` and `open`. The `sync` stage builds the Infrahub client, before the
+    destination adapter, and records the plan's counts and whether it wrote to the branch. The
+    flow keeps it after the stage returns, for the steps that follow the commit of the write.
     """
 
-    def __init__(self, run_id: str) -> None:
-        super().__init__(
-            f"scheduled run {run_id} writes through branch review, which this build of Infrahub Sync cannot do yet; "
-            "change the schedule's write target to default-branch to write without review"
-        )
-
-
-def _refuse_branch_review_until_available(run_id: str) -> NoReturn:
-    """The one place that refuses a run with branch review, until the branch steps exist (research R11)."""
-    raise BranchReviewNotAvailableError(run_id)
+    schedule_id: str
+    schedule_name: str
+    owner: str
+    config_id: str
+    registry_version: int
+    scheduled_start_at: datetime
+    branch: str
+    earlier_branches: tuple[ScheduleBranch, ...] = ()
+    client: Any = None
+    written: bool = False
+    created: int = 0
+    updated: int = 0
+    left_out: int = 0
 
 
 @dataclass(frozen=True)
@@ -605,7 +641,7 @@ class _Execution:  # pylint: disable=too-many-instance-attributes
     package_checksum: str | None
     branch: str | None
     confirm_writes: bool
-    branch_review: bool = False
+    branch_review: _BranchReview | None = None
 
 
 def _refused_flow_run(lines: SyncFlowLines, message: str) -> State[Any]:
@@ -644,6 +680,7 @@ def _admit_scheduled_flow_run(
             worker_id=worker_id,
             now=_now(),
             receipt_age_limit=timedelta(seconds=LivenessPolicy.from_environment().admission_ttl_seconds),
+            read_proposed_changes=_earlier_proposed_changes_reader(projection),
         )
     except DuplicateRunError:
         return _refused_flow_run(
@@ -657,6 +694,23 @@ def _admit_scheduled_flow_run(
         lines.info(message)
         return Completed(message=message)
     lines.info(f"the start {start.isoformat()} of schedule {schedule_id} created run {run.run_id}")
+    review = None
+    if admission.branch_review:
+        schedule = projection.lookup_schedule(schedule_id).value
+        assert schedule is not None
+        assert run.destination_branch is not None
+        assert run.config_id is not None
+        assert run.registry_version is not None
+        review = _BranchReview(
+            schedule_id=schedule_id,
+            schedule_name=schedule.name,
+            owner=run.actor or schedule.owner,
+            config_id=run.config_id,
+            registry_version=run.registry_version,
+            scheduled_start_at=start,
+            branch=run.destination_branch,
+            earlier_branches=admission.earlier_branches,
+        )
     return _Execution(
         run_id=run.run_id,
         flow_run_id=flow_run_id,
@@ -668,8 +722,46 @@ def _admit_scheduled_flow_run(
         # that names none; a run with branch review writes to its derived branch.
         branch=run.destination_branch if admission.branch_review else None,
         confirm_writes=True,
-        branch_review=admission.branch_review,
+        branch_review=review,
     )
+
+
+def _destination_settings(projection: ProductProjection, schedule: ScheduleRecord) -> Mapping[str, Any]:
+    """The destination settings of the schedule's version, with its credentials resolved, and no source."""
+    stored = projection.lookup_configuration_version(schedule.config_id, schedule.registry_version).value
+    if stored is None:
+        cause = "configuration-version-not-found"
+        raise EarlierProposedChangesUnreadableError(cause)
+    package = parse_configuration_package(stored.declared_content)
+    instance = resolve_runtime_instance(
+        package, directory=_NO_CONFIGURATION_DIRECTORY, resolve_source_credentials=False
+    )
+    return instance.destination.settings or {}
+
+
+def _earlier_proposed_changes_reader(
+    projection: ProductProjection,
+) -> Callable[[ScheduleRecord, tuple[ScheduleBranch, ...]], dict[str, str]]:
+    """Read the states of a schedule's earlier proposed changes from Infrahub (research R11, FR-031).
+
+    The run's branch does not exist yet, so the reads go to `main`. A read that fails raises
+    `EarlierProposedChangesUnreadableError` with the failure class of the error, never its text.
+    """
+
+    def read(schedule: ScheduleRecord, branches: tuple[ScheduleBranch, ...]) -> dict[str, str]:
+        try:
+            client = review_ops.build_client(_destination_settings(projection, schedule), review_ops.DEFAULT_BRANCH)
+            return {
+                branch.run_id: review_ops.read_proposed_change(
+                    client, branch.proposed_change_id, branch=review_ops.DEFAULT_BRANCH
+                )
+                for branch in branches
+                if branch.proposed_change_id is not None
+            }
+        except (*_BRANCH_REVIEW_ERRORS, CredentialConfigurationError, ConfigurationPackageParseError) as exc:
+            raise EarlierProposedChangesUnreadableError(failure_class(exc)) from exc
+
+    return read
 
 
 def _worker_execution_context(
@@ -883,7 +975,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     flow_run_id: str,
     confirm_left_out: bool = False,
     plan_step: StorePlanStepObserver | None = None,
-    branch_review: bool = False,
+    branch_review: _BranchReview | None = None,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary.
 
@@ -900,16 +992,22 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     A `sync` whose plan leaves out records stops after the plan is saved, before any write,
     and gives back its write admission (spec 007 FR-012, research R11): see `_left_out_stop`.
 
-    A scheduled run with branch review (`branch_review`) is refused before it plans or writes:
-    see `_refuse_branch_review_until_available`.
+    A scheduled run with branch review (`branch_review`, a `sync` only) writes to its own
+    branch (spec 021, research R11 steps 1 to 4): under the write guard it checks that the
+    destination's default branch is `main`, creates the branch, and plans on it. A plan with no
+    operation deletes the branch and ends with the outcome `no-change`. Otherwise the run
+    verifies and applies on the branch, and writes the remaining records when the plan leaves
+    some out: the proposed change that follows is the review, so the left-out stop applies
+    only to a write to the default branch.
     """
     if stage in ("plan", "sync"):
         record_waiting(projection, run_id, flow_run_id)
         plan_step = plan_step or StorePlanStepObserver(projection, run_id, flow_run_id)
         plan_step.begin()
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
-    if branch_review:
-        _refuse_branch_review_until_available(run_id)
+    if branch_review is not None and stage != "sync":
+        msg = f"branch review applies only to the stage sync, not {stage}"
+        raise ValueError(msg)
     if stage in _WRITE_STAGES and not confirm_writes:
         msg = f"confirm_writes=true is required for service stage={stage}"
         raise ValueError(msg)
@@ -1074,6 +1172,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         # generated outside it could go stale behind another writer before being applied.
         with _configuration_write_guard(parameter_binding[0]) as guard:
             ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
+            if branch_review is not None:
+                _create_run_branch(branch_review, instance.destination.settings or {})
             _, instance, sync_name = _worker_execution_context(
                 run_id,
                 parameter_binding,
@@ -1103,8 +1203,13 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             _publish_plan(projection, run_id, saved, secrets)
             _end_saving(plan_step)
             # After the plan is durable and reviewable, before the verification and the
-            # write: the team reviews the records left out and applies this run itself.
-            stop = _left_out_stop(run_id, saved, sync_name)
+            # write. On the default branch, the team reviews the records left out and applies
+            # this run itself; with branch review, only a plan with no operation stops here.
+            stop = (
+                _left_out_stop(run_id, saved, sync_name)
+                if branch_review is None
+                else _branch_review_stop(run_id, saved, sync_name, branch_review)
+            )
             if stop is not None:
                 return stop
             verified = execute_run(
@@ -1131,6 +1236,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 branch=branch,
                 expected_checksum=verified.manifest.plan_checksum,
                 confirm_writes=True,
+                # A run with branch review always writes the remaining records (R11 step 4).
+                confirm_left_out=branch_review is not None,
                 ownership=ownership,
                 record_applied=tracker.record_applied,
                 base_directory=scratch.root,
@@ -1144,6 +1251,10 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         # Same order the apply stage publishes in, for the same reason.
         publish_final_checkpoint(projection, run_id, run_directory=run_directory, secrets=secrets)
         result = {**_result_data(applied), "operation": "sync"}
+        if branch_review is not None:
+            # The part of `branch_review` known when the write is committed (data-model.md).
+            result["branch_review"] = {"branch": branch_review.branch, "branch_state": "written"}
+            branch_review.written = True
         writeback = ExecutionFinishWriteback(
             phase="applied",
             outcome=applied.status,
@@ -1152,6 +1263,55 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             results=result,
             baseline=_baseline_writeback(verified.manifest),
         )
+    return result, writeback
+
+
+def _create_run_branch(review: _BranchReview, settings: Mapping[str, Any]) -> None:
+    """Build the run's Infrahub client and create its branch, before the destination adapter exists.
+
+    The client is built from the resolved destination settings; building it reads nothing, and
+    the destination adapter reads the schema of the run's branch, which must exist first. The
+    branch exists before the plan, because the plan is made on the branch it is applied to
+    (contracts/branch-review.md, rules 1 and 6).
+    """
+    review.client = review_ops.build_client(settings, review.branch)
+    review_ops.check_default_branch_is_main(review.client)
+    review_ops.create_branch(review.client, review.branch)
+
+
+def _branch_review_stop(
+    run_id: str, saved: SavedPlan, sync_name: str, review: _BranchReview
+) -> tuple[dict[str, Any], ExecutionFinishWriteback] | None:
+    """Record the plan's counts for the proposed change; end the stage when the plan has no operation.
+
+    The run then deletes its branch, writes nothing and opens no proposed change (FR-022); its
+    result says that the branch was removed, and the store moves its branch row to `removed` in
+    the same commit.
+    """
+    summary = saved.summary()
+    review.created = summary.by_action.get("create", 0)
+    review.updated = summary.by_action.get("update", 0)
+    review.left_out = summary.left_out
+    if summary.total > 0:
+        return None
+    review_ops.delete_branch(review.client, review.branch)
+    branch = review.branch
+    result = {
+        "run_id": run_id,
+        "operation": "sync",
+        "outcome": "no-change",
+        "changed": False,
+        "summary": dict.fromkeys(ACTION_KEYS, 0),
+        "branch_review": {"branch": branch, "branch_state": "removed"},
+    }
+    writeback = ExecutionFinishWriteback(
+        phase="applied",
+        outcome="no-change",
+        finished_at=datetime.now(timezone.utc),
+        summary={"sync_name": sync_name, **dict.fromkeys(ACTION_KEYS, 0)},
+        results=result,
+        baseline=_baseline_writeback(saved.manifest),
+    )
     return result, writeback
 
 
@@ -1707,12 +1867,172 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many-
             projection,
             prefect_context=prefect_context,
         )
+    # After the commit, outside the scope whose failures make the write ambiguous: a failure
+    # here changes nothing of the write's verdict (research R11 steps 5 and 6).
+    _finish_branch_review(projection, run_id, execution.branch_review, secrets, lines)
     outcome, next_action = str(result["outcome"]), result_next_action(result)
     lines.info(final_log_line(run_id, stage, outcome, next_action))
     _publish_run_summary(
         projection, run_id, stage, outcome, next_action, secrets, lines, prefect_context=prefect_context
     )
     return result
+
+
+def proposed_change_title(schedule_name: str, start: datetime) -> str:
+    """The title of the proposed change of a scheduled run (contracts/branch-review.md)."""
+    return f"Scheduled sync {schedule_name} {start.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC"
+
+
+def proposed_change_description(run_id: str, review: _BranchReview) -> str:
+    """The description of the proposed change: the run, the configuration and the plan's counts, no source data."""
+    description = (
+        f"Infrahub Sync scheduled run {run_id} of configuration {review.config_id}, "
+        f"version {review.registry_version}.\n\n"
+        f"Records to create: {review.created}. Records to update: {review.updated}. "
+        f"Records left out: {review.left_out}."
+    )
+    if review.left_out:
+        description += (
+            "\n\nThe records left out were not written to this branch. "
+            f"Review them with `infrahub-sync runs plan {run_id} --left-out`."
+        )
+    return description
+
+
+def _kept_cause(state: str) -> BranchReviewKeptCause:
+    """Why an earlier proposed change that the close left in place is kept."""
+    if state == "approved":
+        return "approved"
+    if state in ("merged", "merging"):
+        return "merged"
+    return "closed"
+
+
+def _replace_earlier(client: Any, earlier: ScheduleBranch, comment: str) -> BranchReviewKeptCause | None:
+    """Close the proposed change of an earlier run, if any, then delete its branch (rule 7).
+
+    Returns `None` when the earlier run was replaced, else why it is kept: a proposed change
+    that a person approved, merged or closed is left in place with its branch (FR-021).
+    """
+    if earlier.proposed_change_id is not None:
+        closed = review_ops.close_proposed_change(client, earlier.proposed_change_id, comment)
+        if not closed.closed_now:
+            return _kept_cause(closed.state)
+    review_ops.delete_branch(client, earlier.branch)
+    return None
+
+
+def _finish_branch_review(
+    projection: ProductProjection,
+    run_id: str,
+    review: _BranchReview | None,
+    secrets: Sequence[str],
+    lines: SyncFlowLines,
+) -> None:
+    """Run steps 5 and 6 for a run with branch review that wrote to its branch; nothing otherwise."""
+    if review is not None and review.written:
+        _open_and_replace(projection, run_id, review, secrets, lines)
+
+
+def _open_and_replace(  # pylint: disable=too-many-locals
+    projection: ProductProjection,
+    run_id: str,
+    review: _BranchReview,
+    secrets: Sequence[str],
+    lines: SyncFlowLines,
+) -> None:
+    """Open the run's proposed change, then replace the schedule's earlier branches (R11 steps 5 and 6).
+
+    A failure is recorded as `branch_review.failure` and as the event `proposed_change_failed`
+    with its failure class, never its text, and does not change the run's verdict. When the
+    proposed change cannot be opened, no earlier branch is replaced: the run's own branch stays
+    `pending`, and the next successful run of the schedule replaces it with the others. The
+    second part of `branch_review` and its events are saved with one store call.
+    """
+
+    def event(event_type: str, outcome: str, details: EventDetails) -> AuditEvent:
+        return schedule_event(
+            event_type=event_type,
+            actor=review.owner,
+            operation="sync",
+            reason=None,
+            outcome=outcome,
+            schedule_id=review.schedule_id,
+            config_id=review.config_id,
+            registry_version=review.registry_version,
+            run_id=run_id,
+            details=details,
+        )
+
+    events: list[AuditEvent] = []
+    earlier_events: dict[str, list[AuditEvent]] = {}
+    failure: str | None = None
+    replaced: list[str] = []
+    kept: list[BranchReviewKept] = []
+    try:
+        proposed_change_id: str | None = review_ops.open_proposed_change(
+            review.client,
+            branch=review.branch,
+            title=proposed_change_title(review.schedule_name, review.scheduled_start_at),
+            description=proposed_change_description(run_id, review),
+        )
+    except _BRANCH_REVIEW_ERRORS as exc:
+        proposed_change_id = None
+        failure = failure_class(exc)
+        events.append(
+            event(SCHEDULE_PROPOSED_CHANGE_FAILED, "failed", EventDetails(branch=review.branch, cause=failure))
+        )
+    else:
+        details = EventDetails(branch=review.branch, proposed_change_id=proposed_change_id)
+        events.append(event(SCHEDULE_PROPOSED_CHANGE_OPENED, "opened", details))
+        comment = f"Replaced by {proposed_change_id} (run {run_id})"
+        for earlier in review.earlier_branches:
+            about = EventDetails(
+                branch=earlier.branch, proposed_change_id=earlier.proposed_change_id, replaced_run_id=earlier.run_id
+            )
+            try:
+                cause = _replace_earlier(review.client, earlier, comment)
+            except _BRANCH_REVIEW_ERRORS as exc:
+                failed = failure_class(exc)
+                failure = failure or failed
+                failed_details = about.model_copy(update={"replaced_run_id": None, "cause": failed})
+                events.append(event(SCHEDULE_PROPOSED_CHANGE_FAILED, "failed", failed_details))
+                continue
+            if cause is None:
+                replaced.append(earlier.run_id)
+                earlier_events[earlier.run_id] = [event(SCHEDULE_PROPOSED_CHANGE_REPLACED, "replaced", about)]
+            else:
+                kept.append(BranchReviewKept(run_id=earlier.run_id, cause=cause))
+                kept_details = about.model_copy(update={"replaced_run_id": None})
+                earlier_events[earlier.run_id] = [
+                    event(SCHEDULE_PROPOSED_CHANGE_KEPT, _KEPT_OUTCOMES[cause], kept_details)
+                ]
+    saved = projection.record_branch_review_outcome(
+        BranchReviewOutcome(
+            run_id=run_id,
+            proposed_change_id=proposed_change_id,
+            replaced=tuple(replaced),
+            kept=tuple(kept),
+            failure=failure,
+        ),
+        events=events,
+        earlier_events=earlier_events,
+        secrets=secrets,
+    )
+    if saved.proposed_change_id is not None:
+        lines.info(
+            f"run {run_id} opened the proposed change {saved.proposed_change_id} from the branch {review.branch}"
+        )
+    if saved.replaced:
+        lines.info(f"run {run_id} replaced the branches of the runs {', '.join(saved.replaced)}")
+    if saved.failure is not None:
+        lines.log(
+            logging.WARNING,
+            "a branch review step of run %s failed (%s); the write is kept, and the next successful run "
+            "of the schedule replaces the earlier branches",
+            run_id,
+            saved.failure,
+        )
 
 
 def _stage_event(  # pylint: disable=too-many-arguments,too-many-positional-arguments

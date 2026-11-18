@@ -27,6 +27,8 @@ from infrahub_sync.product_store import (
     SCHEDULE_START_OPERATION,
     SCHEDULE_STOPPED_EVENT_TYPE,
     AuditEvent,
+    BranchReviewKept,
+    BranchReviewOutcome,
     ConfigurationNotFoundError,
     DuplicateRunError,
     EventDetails,
@@ -831,6 +833,143 @@ def test_a_branch_row_cannot_return_to_pending_or_change_its_branch(projection: 
         projection.update_schedule_branch(opened.model_copy(update={"branch": "sync/other"}))
     with pytest.raises(ScheduleNotFoundError):
         projection.update_schedule_branch(opened.model_copy(update={"run_id": "run-unknown"}))
+
+
+def _review_event(schedule: ScheduleRecord, run_id: str, outcome: str) -> AuditEvent:
+    """An event of a proposed change of a scheduled run."""
+    event_type = {"opened": "proposed_change_opened", "replaced": "proposed_change_replaced"}.get(
+        outcome, "proposed_change_kept"
+    )
+    return AuditEvent(
+        event_id=f"a-{uuid4().hex}",
+        run_id=run_id,
+        actor=schedule.owner,
+        operation="sync",
+        reason=None,
+        outcome=outcome,
+        created_at=_FIRST_START + timedelta(days=10),
+        event_type=f"infrahub_sync.schedule.{event_type}",
+        config_id=schedule.config_id,
+        registry_version=schedule.registry_version,
+        related=(
+            RelatedResource(kind="account", id=schedule.owner),
+            RelatedResource(kind="schedule", id=schedule.schedule_id),
+        ),
+        details=EventDetails(branch="sync/nightly-5"),
+    )
+
+
+def test_a_committed_result_that_removed_the_branch_moves_the_row_to_removed(projection: ProductProjection) -> None:
+    """The first part of ``branch_review`` is saved with the stage result (data-model.md)."""
+    schedule = _branch_schedule(projection)
+    result = _admit(projection, schedule, _FIRST_START, branch="sync/nightly-0")
+    assert result.run_id is not None
+    at = _FIRST_START + timedelta(minutes=5)
+
+    assert projection.commit_claimed_execution(
+        result.run_id,
+        f"flow-{result.run_id}",
+        worker_id=_WORKER_ID,
+        terminal_at=at,
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=ExecutionFinishWriteback(
+            phase="applied",
+            outcome="no-change",
+            finished_at=at,
+            summary={},
+            results={"branch_review": {"branch": "sync/nightly-0", "branch_state": "removed"}},
+        ),
+    )
+
+    row = projection.lookup_schedule_branch(result.run_id).value
+    assert row is not None
+    assert row.state == "removed"
+
+
+def test_the_outcome_of_a_branch_review_moves_the_rows_and_merges_the_result(projection: ProductProjection) -> None:
+    """The second part of ``branch_review`` and its events are saved with one call; a handled row is skipped."""
+    schedule = _branch_schedule(projection)
+
+    def opened(day: int) -> ScheduleBranch:
+        row = _branch_run(projection, schedule, day)
+        return projection.update_schedule_branch(
+            row.model_copy(update={"state": "open", "proposed_change_id": f"pc-{day}"})
+        )
+
+    replaced, pending, merged, approved = opened(0), _branch_run(projection, schedule, 1), opened(2), opened(3)
+    gone = projection.update_schedule_branch(
+        _branch_run(projection, schedule, 4).model_copy(update={"state": "removed"})
+    )
+    own = _branch_run(projection, schedule, 5)
+    projection.record_results(own.run_id, {"branch_review": {"branch": own.branch, "branch_state": "written"}})
+    opened_event = _review_event(schedule, own.run_id, "opened")
+    by_run = {
+        row.run_id: (_review_event(schedule, own.run_id, outcome),)
+        for row, outcome in (
+            (replaced, "replaced"),
+            (pending, "replaced"),
+            (gone, "replaced"),
+            (merged, "kept-merged"),
+            (approved, "kept-approved"),
+        )
+    }
+
+    saved = projection.record_branch_review_outcome(
+        BranchReviewOutcome(
+            run_id=own.run_id,
+            proposed_change_id="pc-5",
+            replaced=(replaced.run_id, pending.run_id, gone.run_id),
+            kept=(
+                BranchReviewKept(run_id=merged.run_id, cause="merged"),
+                BranchReviewKept(run_id=approved.run_id, cause="approved"),
+            ),
+        ),
+        events=(opened_event,),
+        earlier_events=by_run,
+    )
+
+    assert saved.replaced == (replaced.run_id, pending.run_id)
+    states = {
+        row.run_id: (row.state, row.replaced_by_run_id) for row in projection.schedule_branches(schedule.schedule_id)
+    }
+    assert states == {
+        replaced.run_id: ("replaced", own.run_id),
+        pending.run_id: ("replaced", own.run_id),
+        merged.run_id: ("kept", None),
+        approved.run_id: ("open", None),
+        gone.run_id: ("removed", None),
+        own.run_id: ("open", None),
+    }
+    assert projection.lookup_schedule_branch(own.run_id).value.proposed_change_id == "pc-5"  # ty: ignore[unresolved-attribute]
+    stored = projection.lookup_run(own.run_id).value
+    assert stored is not None
+    assert stored.results["branch_review"] == {
+        "branch": own.branch,
+        "branch_state": "written",
+        "proposed_change_id": "pc-5",
+        "replaced": [replaced.run_id, pending.run_id],
+        "kept": [{"run_id": merged.run_id, "cause": "merged"}, {"run_id": approved.run_id, "cause": "approved"}],
+        "failure": None,
+    }
+    written = {event.event_id for event in projection.audit_events()}
+    assert opened_event.event_id in written
+    assert by_run[gone.run_id][0].event_id not in written, "A row another run handled writes no event."
+    assert all(by_run[row.run_id][0].event_id in written for row in (replaced, pending, merged, approved))
+
+
+def test_a_failed_proposed_change_leaves_the_row_pending(projection: ProductProjection) -> None:
+    schedule = _branch_schedule(projection)
+    own = _branch_run(projection, schedule, 0)
+
+    saved = projection.record_branch_review_outcome(
+        BranchReviewOutcome(run_id=own.run_id, failure="proposed_change_open_failed")
+    )
+
+    assert saved.failure == "proposed_change_open_failed"
+    assert projection.lookup_schedule_branch(own.run_id).value == own
+    with pytest.raises(ScheduleNotFoundError):
+        projection.record_branch_review_outcome(BranchReviewOutcome(run_id="run-unknown"))
 
 
 def test_an_admission_returns_the_earlier_branches_and_keeps_those_a_person_closed(

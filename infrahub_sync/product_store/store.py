@@ -50,6 +50,7 @@ from infrahub_sync.product_store.models import (
     AuditEvent,
     BaselineWriteback,
     BootstrapRecord,
+    BranchReviewOutcome,
     ConfigurationBaseline,
     ConfigurationPage,
     ConfigurationSummary,
@@ -1077,6 +1078,14 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         self, branch: ScheduleBranch, *, events: Sequence[AuditEvent] = ()
     ) -> ScheduleBranch: ...
 
+    def record_branch_review_outcome(
+        self,
+        outcome: BranchReviewOutcome,
+        *,
+        events: Sequence[AuditEvent] = (),
+        earlier_events: Mapping[str, Sequence[AuditEvent]] | None = None,
+    ) -> BranchReviewOutcome: ...
+
     def admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         schedule_id: str,
@@ -1848,6 +1857,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     # the reviewed plan once (spec 007 FR-012, ADR 0020).
                     if _releases_write_admission(writeback, terminal_state, terminal_outcome):
                         cursor.execute(self._sql(_RELEASE_STOPPED_SYNC_ADMISSION), (run_id, run_id))
+                    self._settle_own_branch(cursor, run_id, writeback, terminal_state, terminal_outcome)
                 else:
                     cursor.execute(
                         self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
@@ -1907,6 +1917,25 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
+
+    def _settle_own_branch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        run_id: str,
+        writeback: ExecutionFinishWriteback,
+        terminal_state: str,
+        terminal_outcome: str,
+    ) -> None:
+        """Move the branch row of a run with branch review to ``removed`` when its committed result says so.
+
+        The first part of ``branch_review`` is saved with the stage result (spec 021,
+        data-model.md): a run whose plan held no operation deleted its own branch.
+        """
+        if _removed_own_branch(writeback, terminal_state, terminal_outcome):
+            cursor.execute(
+                self._sql("UPDATE schedule_branches SET state = 'removed' WHERE run_id = ? AND state = 'pending'"),
+                (run_id,),
+            )
 
     def _record_configuration_baseline(
         self,
@@ -3736,6 +3765,94 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 self._insert_event(cursor, event)
         return branch
 
+    def record_branch_review_outcome(
+        self,
+        outcome: BranchReviewOutcome,
+        *,
+        events: Sequence[AuditEvent] = (),
+        earlier_events: Mapping[str, Sequence[AuditEvent]] | None = None,
+    ) -> BranchReviewOutcome:
+        """Save the part of a run's ``branch_review`` that follows its write, in one transaction.
+
+        The run's own branch row moves from ``pending`` to ``open`` when the run opened its
+        proposed change. Each run of ``outcome.replaced`` moves to ``replaced`` and each run
+        of ``outcome.kept`` whose cause is ``merged`` or ``closed`` moves to ``kept``; a run
+        kept because it is ``approved`` stays ``open``. An earlier row that is no longer in
+        the state ``pending`` or ``open`` was handled by another run: it is left as it is,
+        left out of the saved outcome, and its events of ``earlier_events`` are not written.
+        The saved outcome is merged into ``branch_review`` of the run's results, and
+        ``events`` and the events of the handled earlier rows are written.
+
+        Raises:
+            ScheduleNotFoundError: The run has no branch row.
+            ScheduleTransitionError: The run opened a proposed change but its row is not ``pending``.
+        """
+        by_run = earlier_events or {}
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql("UPDATE schedule_branches SET run_id = run_id WHERE run_id = ?"), (outcome.run_id,)
+            )
+            cursor.execute(self._sql(_SELECT_SCHEDULE_BRANCH), (outcome.run_id,))
+            row = cursor.fetchone()
+            if row is None:
+                msg = f"run {outcome.run_id!r} has no schedule branch"
+                raise ScheduleNotFoundError(msg)
+            own = _schedule_branch_from_row(row)
+            if outcome.proposed_change_id is not None:
+                if own.state != "pending":
+                    msg = f"a schedule branch in the state {own.state!r} cannot move to the state 'open'"
+                    raise ScheduleTransitionError(msg)
+                cursor.execute(
+                    self._sql("UPDATE schedule_branches SET state = 'open', proposed_change_id = ? WHERE run_id = ?"),
+                    (outcome.proposed_change_id, outcome.run_id),
+                )
+            handled: list[str] = []
+            replaced = [
+                earlier
+                for earlier in outcome.replaced
+                if self._settle_earlier_branch(cursor, own.schedule_id, earlier, "replaced", outcome.run_id)
+            ]
+            handled.extend(replaced)
+            kept = [
+                item
+                for item in outcome.kept
+                if self._settle_earlier_branch(
+                    cursor, own.schedule_id, item.run_id, "open" if item.cause == "approved" else "kept", None
+                )
+            ]
+            handled.extend(item.run_id for item in kept)
+            saved = outcome.model_copy(update={"replaced": tuple(replaced), "kept": tuple(kept)})
+            cursor.execute(self._sql("SELECT results FROM product_runs WHERE run_id = ?"), (outcome.run_id,))
+            results_row = cursor.fetchone()
+            current = {} if results_row is None else dict(_JSON_MAPPING_ADAPTER.validate_json(str(results_row[0])))
+            previous = current.get("branch_review")
+            entry = dict(previous) if isinstance(previous, Mapping) else {}
+            current["branch_review"] = {**entry, **saved.results_entry()}
+            cursor.execute(
+                self._sql("UPDATE product_runs SET results = ? WHERE run_id = ?"), (_json(current), outcome.run_id)
+            )
+            for event in (*events, *(item for run_id in handled for item in by_run.get(run_id, ()))):
+                self._insert_event(cursor, event)
+        return saved
+
+    def _settle_earlier_branch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        schedule_id: str,
+        run_id: str,
+        state: ScheduleBranchState,
+        replaced_by_run_id: str | None,
+    ) -> bool:
+        """Move an earlier branch row of the schedule to ``state``; return whether it was still pending or open."""
+        cursor.execute(
+            self._sql(
+                "UPDATE schedule_branches SET state = ?, replaced_by_run_id = ? "
+                "WHERE run_id = ? AND schedule_id = ? AND state IN ('pending', 'open')"
+            ),
+            (state, replaced_by_run_id, run_id, schedule_id),
+        )
+        return cursor.rowcount == 1
+
     def _run_of_start(self, cursor: _Cursor, schedule_id: str, scheduled_start_at: datetime) -> str | None:
         cursor.execute(self._sql(_SELECT_RUN_OF_START), (schedule_id, _utc_iso(scheduled_start_at)))
         row = cursor.fetchone()
@@ -4815,6 +4932,33 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             checked, events=tuple(_redact_event(event, secrets) for event in events)
         )
 
+    def record_branch_review_outcome(
+        self,
+        outcome: BranchReviewOutcome,
+        *,
+        events: Sequence[AuditEvent] = (),
+        earlier_events: Mapping[str, Sequence[AuditEvent]] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> BranchReviewOutcome:
+        """Save the part of a run's ``branch_review`` that follows its write, with its events.
+
+        ``earlier_events`` holds, by earlier run, the events that are written only when that
+        run's branch row was still ``pending`` or ``open``. Returns the outcome as saved.
+
+        Raises:
+            ScheduleNotFoundError, ScheduleTransitionError: see
+            `_RelationalRunStore.record_branch_review_outcome`.
+        """
+        checked = BranchReviewOutcome.model_validate(outcome.model_dump())
+        return self._records.record_branch_review_outcome(
+            checked,
+            events=tuple(_redact_event(event, secrets) for event in events),
+            earlier_events={
+                run_id: tuple(_redact_event(event, secrets) for event in items)
+                for run_id, items in (earlier_events or {}).items()
+            },
+        )
+
     def admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         schedule_id: str,
@@ -5646,6 +5790,16 @@ def _releases_write_admission(writeback: ExecutionFinishWriteback, terminal_stat
         and writeback.phase == "planned"
         and not writeback.summary.get("applied_operations")
         and not writeback.results.get("applied_operations")
+    )
+
+
+def _removed_own_branch(writeback: ExecutionFinishWriteback, terminal_state: str, terminal_outcome: str) -> bool:
+    """Answer whether a succeeded finish writeback says that a run with branch review deleted its branch."""
+    entry = writeback.results.get("branch_review")
+    return (
+        (terminal_state, terminal_outcome) == ("completed", "succeeded")
+        and isinstance(entry, Mapping)
+        and entry.get("branch_state") == "removed"
     )
 
 

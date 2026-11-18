@@ -12,7 +12,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
@@ -30,6 +30,7 @@ from infrahub_sync.product_store import (
 
 from . import schedule_cadence
 from .events import (
+    SCHEDULE_PROPOSED_CHANGE_KEPT,
     SCHEDULE_START,
     SCHEDULE_START_FAILED,
     SCHEDULE_START_MISSED,
@@ -62,6 +63,35 @@ ADMISSION_ATTEMPTS = 5
 _VERSION_NOT_FOUND = "configuration-version-not-found"
 _VERSION_INVALID = "configuration-version-invalid"
 _BRANCH_DECLARED = "schedule-branch-declared"
+# The states of an earlier proposed change in which a person merged or closed it, and the
+# outcome of the event that records it as kept. ``merging`` counts as merged and ``canceled``
+# as closed (research R15).
+_KEPT_OUTCOMES = {"merged": "kept-merged", "merging": "kept-merged", "closed": "kept-closed", "canceled": "kept-closed"}
+
+
+class EarlierProposedChangesUnreadableError(Exception):
+    """The states of the schedule's earlier proposed changes could not be read from Infrahub.
+
+    ``cause`` is the failure class of the read, which the event of the failed start holds.
+    """
+
+    def __init__(self, cause: str) -> None:
+        super().__init__(f"the earlier proposed changes of the schedule could not be read ({cause})")
+        self.cause = cause
+
+
+class EarlierProposedChangesReader(Protocol):
+    """Reads the state of each earlier proposed change of a schedule from Infrahub (research R11)."""
+
+    def __call__(self, schedule: ScheduleRecord, branches: tuple[ScheduleBranch, ...], /) -> Mapping[str, str]:
+        """Return, by the run of each branch row, its state in Infrahub.
+
+        The state is ``open``, ``approved``, ``merging``, ``merged``, ``closed`` or ``canceled``.
+
+        Raises:
+            EarlierProposedChangesUnreadableError: Infrahub did not answer.
+        """
+        ...
 
 
 @dataclass(frozen=True)
@@ -101,12 +131,15 @@ def admit_scheduled_start(  # pylint: disable=too-many-arguments
     worker_id: str,
     now: datetime,
     receipt_age_limit: timedelta,
+    read_proposed_changes: EarlierProposedChangesReader | None = None,
 ) -> StartAdmission:
     """Decide on one start of a schedule and save the decision, with the run when it runs.
 
     A schedule that does not exist or is not active, and a start time that the stored cadence
     does not hold, write nothing. When the schedule changes while the decision is made, the
     schedule is read again and the decision made again, at most ``ADMISSION_ATTEMPTS`` times.
+    ``read_proposed_changes`` reads the earlier proposed changes of a schedule with branch
+    review: see `decide_start`.
 
     Raises:
         DuplicateRunError: The start already has a run.
@@ -120,7 +153,14 @@ def admit_scheduled_start(  # pylint: disable=too-many-arguments
             return StartAdmission(run=None, cause="schedule-not-active")
         if not _in_cadence(schedule, scheduled_start_at):
             return StartAdmission(run=None, cause="start-not-in-cadence")
-        decision = decide_start(projection, schedule, scheduled_start_at, now, receipt_age_limit)
+        decision = decide_start(
+            projection,
+            schedule,
+            scheduled_start_at,
+            now,
+            receipt_age_limit,
+            read_proposed_changes=read_proposed_changes,
+        )
         try:
             result = projection.admit_scheduled_start(
                 schedule_id, scheduled_start_at, flow_run_id, worker_id, now, decision
@@ -140,25 +180,37 @@ def admit_scheduled_start(  # pylint: disable=too-many-arguments
     raise ScheduleChangedError(msg)
 
 
-def decide_start(
+def decide_start(  # pylint: disable=too-many-arguments,too-many-locals
     projection: ProductProjection,
     schedule: ScheduleRecord,
     start: datetime,
     now: datetime,
     receipt_age_limit: timedelta,
+    *,
+    read_proposed_changes: EarlierProposedChangesReader | None = None,
 ) -> ScheduledStartDecision:
     """Decide whether the start of an active schedule runs, with the events of the decision.
 
     In order: the starts of the cadence that passed with no flow run are recorded as missed; a
     start later than ``MOST_RECENT_START_LATE_LIMIT_SECONDS`` is missed; a configuration version
     that cannot be run fails the start; a run of the configuration in progress skips it (the
-    ``reject`` policy). Otherwise the start runs as a new ``sync`` run of the owner.
+    ``reject`` policy). For a schedule with branch review, ``read_proposed_changes`` then reads
+    the earlier proposed changes of its ``pending`` and ``open`` branch rows (research R11,
+    FR-031): one that cannot be read fails the start; one that is approved and open skips it;
+    one that a person merged or closed moves to the state ``kept``. Otherwise the start runs as
+    a new ``sync`` run of the owner.
     """
     events = list(_missed_start_events(schedule, start, now))
+    kept_run_ids: list[str] = []
 
     def not_run(cause: str, event: AuditEvent) -> ScheduledStartNotRun:
         return ScheduledStartNotRun.model_validate(
-            {"cause": cause, "last_start_at": schedule.last_start_at, "events": (*events, event)}
+            {
+                "cause": cause,
+                "last_start_at": schedule.last_start_at,
+                "events": (*events, event),
+                "kept_run_ids": tuple(kept_run_ids),
+            }
         )
 
     if now - start > timedelta(seconds=MOST_RECENT_START_LATE_LIMIT_SECONDS):
@@ -175,6 +227,29 @@ def decide_start(
         )
         return not_run("skipped-run-in-progress", event)
     branch_review = schedule.write_target == "branch-review"
+    states: Mapping[str, str] = {}
+    earlier: tuple[ScheduleBranch, ...] = ()
+    if branch_review and read_proposed_changes is not None:
+        earlier = tuple(
+            row
+            for row in projection.schedule_branches(schedule.schedule_id, states=("pending", "open"))
+            if row.proposed_change_id is not None
+        )
+        if earlier:
+            try:
+                states = read_proposed_changes(schedule, earlier)
+            except EarlierProposedChangesUnreadableError as unreadable:
+                event = _start_event(schedule, SCHEDULE_START_FAILED, "failed", start, now, cause=unreadable.cause)
+                return not_run("failed", event)
+    kept = [row for row in earlier if states.get(row.run_id) in _KEPT_OUTCOMES]
+    kept_run_ids.extend(row.run_id for row in kept)
+    approved = next((row for row in earlier if states.get(row.run_id) == "approved"), None)
+    if approved is not None:
+        events.extend(_kept_event(schedule, row, _KEPT_OUTCOMES[states[row.run_id]], None, now) for row in kept)
+        event = _start_event(
+            schedule, SCHEDULE_START_SKIPPED, "skipped-approved-change-open", start, now, run_id=approved.run_id
+        )
+        return not_run("skipped-approved-change-open", event)
     run = ProductRun(
         run_id=generate_run_id(),
         operation="sync",
@@ -205,8 +280,32 @@ def decide_start(
         outcome="accepted",
         created_at=now,
     )
+    kept_events = tuple(_kept_event(schedule, row, _KEPT_OUTCOMES[states[row.run_id]], run.run_id, now) for row in kept)
     return ScheduledStartRun(
-        run=run, branch_review=branch_review, last_start_at=schedule.last_start_at, events=(*events, accepted)
+        run=run,
+        branch_review=branch_review,
+        last_start_at=schedule.last_start_at,
+        events=(*events, *kept_events, accepted),
+        kept_run_ids=tuple(kept_run_ids),
+    )
+
+
+def _kept_event(
+    schedule: ScheduleRecord, branch: ScheduleBranch, outcome: str, run_id: str | None, now: datetime
+) -> AuditEvent:
+    """Build the event of an earlier proposed change that a person merged or closed, found by a start."""
+    return schedule_event(
+        event_type=SCHEDULE_PROPOSED_CHANGE_KEPT,
+        actor=schedule.owner,
+        operation="sync",
+        reason=None,
+        outcome=outcome,
+        schedule_id=schedule.schedule_id,
+        config_id=schedule.config_id,
+        registry_version=schedule.registry_version,
+        run_id=run_id,
+        details=EventDetails(branch=branch.branch, proposed_change_id=branch.proposed_change_id),
+        created_at=now,
     )
 
 

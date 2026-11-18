@@ -1139,6 +1139,48 @@ class ScheduleBranch(BaseModel):
         return self
 
 
+# Why a later run left an earlier proposed change of its schedule in place: a person approved it
+# while the run was writing, or merged or closed it.
+BranchReviewKeptCause: TypeAlias = Literal["approved", "merged", "closed"]
+
+
+class BranchReviewKept(BaseModel):
+    """An earlier run of the schedule whose proposed change a run left in place, and why."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    cause: BranchReviewKeptCause
+
+
+class BranchReviewOutcome(BaseModel):
+    """The part of a run's ``branch_review`` result that follows its committed write (spec 021, R11).
+
+    ``proposed_change_id`` is the proposed change the run opened, or ``None`` when opening it
+    failed. ``replaced`` holds the earlier runs whose proposed change the run closed, if any, and
+    whose branch it deleted. ``kept`` holds the earlier runs whose proposed change it left in
+    place. ``failure`` is the failure class of the first step that failed; the write verdict of
+    the run does not change.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    proposed_change_id: str | None = Field(default=None, min_length=1)
+    replaced: tuple[Annotated[str, Field(pattern=_IDENTIFIER_PATTERN)], ...] = ()
+    kept: tuple[BranchReviewKept, ...] = ()
+    failure: str | None = Field(default=None, min_length=1)
+
+    def results_entry(self) -> dict[str, Any]:
+        """The fields this part adds to ``branch_review`` in the run's results."""
+        return {
+            "proposed_change_id": self.proposed_change_id,
+            "replaced": list(self.replaced),
+            "kept": [kept.model_dump(mode="json") for kept in self.kept],
+            "failure": self.failure,
+        }
+
+
 class ScheduleFilters(BaseModel):
     """What a schedule list is restricted to.
 

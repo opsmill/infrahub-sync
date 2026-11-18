@@ -87,6 +87,8 @@ EXPECTED_PUBLIC_NAMES = {
     "AuditEvent",
     "BaselineWriteback",
     "BootstrapRecord",
+    "BranchReviewKept",
+    "BranchReviewOutcome",
     "ConfigurationBaseline",
     "ConfigurationNotFoundError",
     "ConfigurationPage",
