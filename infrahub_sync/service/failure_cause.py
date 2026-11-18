@@ -52,6 +52,14 @@ from infrahub_sync.plan.errors import (
 )
 from infrahub_sync.potenda import SideLoadError
 from infrahub_sync.runtime_schema.errors import DestinationSchemaUnavailableError
+from infrahub_sync.service.branch_review import (
+    BranchCreateFailedError,
+    BranchDeleteFailedError,
+    DestinationDefaultBranchNotMainError,
+    ProposedChangeCloseFailedError,
+    ProposedChangeOpenFailedError,
+    ProposedChangeReadFailedError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -256,7 +264,38 @@ _TYPED_ERRORS: tuple[tuple[tuple[type[BaseException], ...], FailureType], ...] =
     ((PeerAmbiguousError,), "destination_peer_ambiguous"),
     ((RecordLoadError,), "record_load_failed"),
     ((TransformError,), "transform_failed"),
+    # The branch review operations of a scheduled run (spec 021, research R15). The close comes
+    # before the read, because a close that fails at its read is raised from the read's error.
+    ((DestinationDefaultBranchNotMainError,), "destination_default_branch_not_main"),
+    ((ProposedChangeCloseFailedError,), "proposed_change_close_failed"),
+    ((ProposedChangeOpenFailedError,), "proposed_change_open_failed"),
+    ((ProposedChangeReadFailedError,), "proposed_change_read_failed"),
+    ((BranchCreateFailedError,), "branch_create_failed"),
+    ((BranchDeleteFailedError,), "branch_delete_failed"),
 )
+
+# The failure types whose typed error wraps any failure of a request: when the cause is a
+# transport, token or permission failure, that classification wins, so a destination that cannot
+# be reached is recorded as such and not as a failed operation. The record is still named.
+_TRANSPORT_FIRST_TYPES: frozenset[str] = frozenset(
+    {
+        "record_load_failed",
+        "proposed_change_close_failed",
+        "proposed_change_open_failed",
+        "proposed_change_read_failed",
+        "branch_create_failed",
+        "branch_delete_failed",
+    }
+)
+
+
+def failure_class(exc: BaseException) -> FailureType:
+    """The failure type of an error, from the fixed table, else `internal_error`.
+
+    A scheduled run with branch review records it as `branch_review.failure` and as
+    `details.cause` of its events (spec 021 data-model.md): a name from a fixed list, never text.
+    """
+    return _classify(exc).failure_type
 
 
 def _classify(exc: BaseException) -> _Classified:
@@ -265,7 +304,7 @@ def _classify(exc: BaseException) -> _Classified:
     for errors, failure_type in _TYPED_ERRORS:
         link = next((link for link in explicit if isinstance(link, errors)), None)
         if link is not None:
-            if failure_type == "record_load_failed":
+            if failure_type in _TRANSPORT_FIRST_TYPES:
                 # The read loop raises every unrecorded failure of a record as `RecordLoadError`,
                 # including a source that stopped answering while the record was converted (a
                 # peer kind read, for example). That failure names the system, not the record
@@ -294,6 +333,12 @@ _DESTINATION_TYPES: frozenset[str] = frozenset(
         "destination_peer_ambiguous",
         "destination_schema_unavailable",
         "lineage_refused",
+        "destination_default_branch_not_main",
+        "branch_create_failed",
+        "branch_delete_failed",
+        "proposed_change_open_failed",
+        "proposed_change_read_failed",
+        "proposed_change_close_failed",
     }
 )
 
@@ -383,6 +428,8 @@ _RESUMABLE_TYPES = frozenset(
 # a run that keeps its saved plan, because the saved plan holds the values that failed.
 _SOURCE_FIX_TYPES = frozenset({"record_load_failed", "transform_failed"})
 _REACH = "Check that {adapter} answers at the address the configuration names, " + _PLAN_AGAIN
+# The closing step of a scheduled run's failure: the schedule starts again at its next start time.
+_NEXT_START = "then wait for the next start of the schedule."
 
 # One fixed template per failure type: the cause and the next action, filled with the recorded
 # fields, the system ("The source (netbox)") and the adapter name. `internal_error` has none: an
@@ -424,6 +471,30 @@ _TEMPLATES: dict[str, Callable[[dict[str, Any], str, str], _Template]] = {
     "destination_peer_ambiguous": lambda fields, _where, _adapter: (
         f"More than one {fields['node_kind']} node at the destination matches a peer that the operation refers to",
         None,
+    ),
+    "destination_default_branch_not_main": lambda _f, _where, _adapter: (
+        "The default branch of the destination is not main, and Infrahub accepts a proposed change only to main",
+        "Change the schedule's write target to default-branch, or use a destination whose default branch is main.",
+    ),
+    "branch_create_failed": lambda _f, _where, _adapter: (
+        "Infrahub did not create the branch of the scheduled run",
+        f"Check the Infrahub task log and the account's permissions, {_NEXT_START}",
+    ),
+    "branch_delete_failed": lambda _f, _where, _adapter: (
+        "Infrahub did not delete a branch of the schedule",
+        "Check the account's permission delete_branch; the next successful run of the schedule deletes it again.",
+    ),
+    "proposed_change_open_failed": lambda _f, _where, _adapter: (
+        "Infrahub did not open the proposed change of the scheduled run; the branch holds the written records",
+        "Open a proposed change from the run's branch in Infrahub, or wait for the next run of the schedule.",
+    ),
+    "proposed_change_read_failed": lambda _f, _where, _adapter: (
+        "The state of a proposed change of the schedule could not be read from Infrahub",
+        f"Check that the proposed change still exists and that the account can read it, {_NEXT_START}",
+    ),
+    "proposed_change_close_failed": lambda _f, _where, _adapter: (
+        "Infrahub did not close a proposed change of the schedule",
+        "Check the account's permissions on proposed changes; the next successful run of the schedule closes it again.",
     ),
 }
 

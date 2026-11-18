@@ -1019,9 +1019,19 @@ FailureType = Literal[
     "destination_peer_ambiguous",
     "lineage_refused",
     "destination_schema_unavailable",
+    "destination_default_branch_not_main",
+    "branch_create_failed",
+    "branch_delete_failed",
+    "proposed_change_open_failed",
+    "proposed_change_read_failed",
+    "proposed_change_close_failed",
     "internal_error",
 ]
-"""The failure type names a stage failure record holds (spec 007 data-model.md, FR-014)."""
+"""The failure type names a stage failure record holds (spec 007 data-model.md, FR-014).
+
+The six names from `destination_default_branch_not_main` to `proposed_change_close_failed` are
+the failures of the branch review operations of a scheduled run (spec 021, research R15).
+"""
 
 FAILURE_TYPES: tuple[FailureType, ...] = get_args(FailureType)
 

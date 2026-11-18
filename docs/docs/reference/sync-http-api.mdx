@@ -880,6 +880,10 @@ is `null` or absent:
     - the checks of a saved plan: `verification_failed`, `apply_refused`;
     - a `sync` that stopped after its plan for a review of the left-out records:
       `left_out_review_required`;
+    - the branch and the proposed change of a scheduled run that writes to a branch for review:
+      `destination_default_branch_not_main`, `branch_create_failed`, `branch_delete_failed`,
+      `proposed_change_open_failed`, `proposed_change_read_failed`,
+      `proposed_change_close_failed`;
     - any other error: `internal_error`.
 - `system`: `{"role": "source" or "destination", "adapter": <name>}`.
 - `error_code`, `node_kind`, `attribute` and `infrahub_message`: Infrahub's error code, node
