@@ -7,9 +7,9 @@ expression, with nobody present. This page describes how a team creates a schedu
 its runs write, and checks that the schedule still runs. The last part of the page describes how
 to start runs from cron, CI or another workflow tool instead.
 
-**Not available in this build.** The Sync API refuses every request to create a schedule with
-`422 schedule-setting-not-available`, because neither write target, branch review or the default
-branch, is turned on yet. A schedule cannot be created, so no schedule starts a run. The rest of
+**Not available in this build.** No request creates a schedule. A request that passes the other
+checks is refused with `422 schedule-setting-not-available`, because neither write target, branch
+review or the default branch, is turned on yet. No schedule exists, so no schedule starts a run. The rest of
 this page describes how schedules work once a write target is turned on. Until then, start runs
 on a cadence with one of the [other ways to start runs on a cadence](#other-ways-to-start-runs-on-a-cadence).
 
@@ -258,7 +258,7 @@ cron logging.
 
 - You already operate a cron host for scheduled jobs.
 - The sync is one project with one cadence and no dependencies on other jobs.
-- Failures can be handled after the fact, when someone reviews the logs.
+- Someone reviews the logs regularly, and a failure can wait until that review.
 
 **Trade-offs:** No retry on failure, no record beyond the logs, no alerting. Wrap the cron entry in
 a script that handles retries and alerts when a missed sync matters.
@@ -395,7 +395,7 @@ Match the cadence to the rate at which source data changes and to how old the da
 
 - **Every few minutes** — for sources that change often and must be current within minutes. Check that each run ends before the next start; otherwise the overlap policy skips or queues the start.
 - **Hourly** — a common default for active infrastructure data.
-- **Daily** — for data that changes slowly, or for syncs where the next run can make up for a missed one.
+- **Daily** — for data that changes slowly, or for syncs where the next run can write the changes of a missed one.
 - **On demand** — for migrations, audits, or one-off seeding rather than steady-state operation.
 
 Each run reads the source and the destination in full, then writes only the differences. A shorter cadence repeats that read more often, so check that each run finishes before the next one starts. A cadence that does not divide a day, such as every 5 hours written as `0 */5 * * *`, starts again at midnight and gives one shorter gap each day.
