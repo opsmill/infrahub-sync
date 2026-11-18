@@ -40,6 +40,8 @@ from typing import TYPE_CHECKING, Literal
 from invoke import Context, task
 
 from development.netbox.datasets.tier_data import validate_tier
+from infrahub_sync.demo import package as demo_package_rewrite
+from infrahub_sync.demo.errors import DemoPackageError
 
 from .utils import ESCAPED_REPO_PATH
 
@@ -104,11 +106,12 @@ print(f"Development API token created for {user.username!r}")
 """
 
 # The shipped `from-netbox` package names the public NetBox demo and a default Infrahub.
-# `netbox.demo-package` replaces exactly these two lines and leaves the rest byte for byte.
+# `netbox.demo-package` replaces exactly these two lines and leaves the rest byte for byte;
+# the rewrite lives in `infrahub_sync.demo.package`, shared with `infrahub-sync demo prepare`.
 SHIPPED_PACKAGE = REPO_ROOT / "examples" / "netbox_to_infrahub" / "package.yml"
 LOCAL_PACKAGE = STATE_DIR / "from-netbox.local.yml"
-SHIPPED_NETBOX_URL = "https://demo.netbox.dev"
-SHIPPED_INFRAHUB_URL = "http://localhost:8000"
+SHIPPED_NETBOX_URL = demo_package_rewrite.SHIPPED_NETBOX_URL
+SHIPPED_INFRAHUB_URL = demo_package_rewrite.SHIPPED_INFRAHUB_URL
 # The local development stack (`development/docker-compose.yml`) and its one service
 # that reads a source. Its project name is fixed by the file's top-level `name:`.
 DEV_STACK_PROJECT = "infrahub-sync-dev"
@@ -458,25 +461,10 @@ def local_package_text(shipped: str, netbox: str, infrahub: str) -> str:
     shipped package changed shape, and a guessed replacement could point the copy at the
     public demo.
     """
-    replacements = {
-        f"url: {json.dumps(SHIPPED_NETBOX_URL)}": f"url: {json.dumps(netbox)}",
-        f"url: {json.dumps(SHIPPED_INFRAHUB_URL)}": f"url: {json.dumps(infrahub)}",
-    }
-    # Count both lines in the shipped text before replacing either: a replacement URL can
-    # equal the other shipped URL (a local NetBox on port 8000), and counting after the first
-    # replacement would then blame the shipped package.
-    for line in replacements:
-        count = shipped.count(line)
-        if count != 1:
-            msg = f"{SHIPPED_PACKAGE} must contain {line!r} exactly once, found {count}"
-            raise NetboxError(msg)
-    lines = shipped.splitlines(keepends=True)
-    for index, line in enumerate(lines):
-        for current, replacement in replacements.items():
-            if current in line:
-                lines[index] = line.replace(current, replacement)
-                break
-    return "".join(lines)
+    try:
+        return demo_package_rewrite.local_package_text(shipped, netbox, infrahub, source=str(SHIPPED_PACKAGE))
+    except DemoPackageError as error:
+        raise NetboxError(str(error)) from error
 
 
 def _ready(context: Context, values: dict[str, str]) -> None:
