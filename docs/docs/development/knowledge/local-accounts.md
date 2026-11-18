@@ -189,8 +189,8 @@ these fields, and fails when a model has no route case in the test.
 The store holds only token digests, so the service cannot list token values to look for them in
 free text. `is_free_text` in `service.py` refuses a value that holds a secret value of the
 process, or the prefix `ifs_pat_` or `ifs_ses_`. The refusal is `422 secret-parameter-refused`.
-It applies to every `reason`, to the other free-text parameters of the run and configuration
-routes, and to the name of a new API token. An account name that holds a token prefix is
+It applies to every `reason`, to the other free-text parameters of the run routes, and to the
+name of a new API token. An account name that holds a token prefix is
 refused as `422 account-name-invalid`.
 
 ### Audit events
