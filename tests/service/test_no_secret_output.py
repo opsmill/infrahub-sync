@@ -196,9 +196,11 @@ class _Api:
         return self.answers[-1][0]
 
 
-@pytest.fixture
-def api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Api:
-    """Return the API with the ``admin`` account applied from a known password and token."""
+def _build_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Api:
+    """Return the API with the ``admin`` account applied from a known password and token.
+
+    The case of the flow calls it inside its captures, so the start-up is searched too.
+    """
     monkeypatch.setenv(SESSION_IDLE_SECONDS_ENV, str(_IDLE_SECONDS))
     root = tmp_path.resolve()
     store = local_product_projection(root)
@@ -207,6 +209,12 @@ def api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Api:
     service = RunService(store, cast("Any", Orchestration()), secrets=resolver.secret_values)
     routes = ConfigurationRoutes(product_projection=store, secrets=resolver.secret_values)
     return _Api(client=TestClient(create_app(service, resolver, routes)), root=root)
+
+
+@pytest.fixture
+def api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Api:
+    """Return the API for the negative controls, which plant their secret after the start-up."""
+    return _build_api(tmp_path, monkeypatch)
 
 
 def _run_the_flow(api: _Api, secrets: _Secrets) -> None:
@@ -337,12 +345,16 @@ def _collect(
 
 
 def test_the_flow_of_user_story_1_shows_no_password_token_digest_or_hash(
-    api: _Api, caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
-    """SC-005: every answer, log line and stored value of the flow is searched for every secret."""
+    """SC-005: every answer, log line and stored value of the start-up and the flow is searched."""
     secrets = _Secrets()
     caplog.set_level(logging.DEBUG)
     with capture_logs() as events:
+        api = _build_api(tmp_path, monkeypatch)
         _run_the_flow(api, secrets)
         structlog.get_logger("tests.sc005").info("the flow of SC-005 ended", answers=len(api.answers))
     corpus = _collect(api, caplog.records, events, capfd.readouterr())
@@ -354,6 +366,7 @@ def test_the_flow_of_user_story_1_shows_no_password_token_digest_or_hash(
     labels = {label for label, _ in corpus.texts}
     assert labels >= _HASH_COLUMNS
     assert labels >= _DIGEST_COLUMNS
+    assert ("store account_tokens.digest", _sha256(_ADMIN_TOKEN)) in corpus.texts
     assert any(label.startswith("store audit_events.") for label in labels)
     assert any(label.startswith("store audit_event_resources.") for label in labels)
     assert any(label.startswith("store mutation_receipts.") for label in labels)
