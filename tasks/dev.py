@@ -102,6 +102,7 @@ ALL_PROFILES = ("sync", "infrahub")
 SYNC_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
 # The API token of the dev stack's `admin` account, the value docker-compose.yml defaults to.
 API_TOKEN = "infrahub-sync-dev-token"  # noqa: S105 -- a local-only development credential
+ADMIN_PASSWORD = "infrahub-sync-dev-password"  # noqa: S105 -- the public default of development/docker-compose.yml
 WAIT_TIMEOUT_SECONDS = 420
 INFRAHUB_NETWORK_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK"
 INFRAHUB_URL_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_URL"
@@ -1224,8 +1225,9 @@ def dev_frontend(context: Context) -> None:
     Fetches the `frontend/vendor/infrahub` submodule when it is missing (a checkout it
     already holds is left as it is), installs the locked dependencies, then runs `pnpm dev`
     in the foreground. The server forwards `/api` to the Sync API unchanged and adds no
-    token: the person enters a token in the page. The task prints which token to enter,
-    with the label `dev.start` prints for the Sync API, never a token from ADMIN_ACCOUNT_TOKEN.
+    token: the person signs in on the page with an account name and a password. The task prints
+    how to sign in as `admin`: the variable that holds the password and its public default, never
+    a password or a token the developer set.
     """
     settings = dev_settings(context)
     environment = {FRONTEND_URL_VARIABLE: settings.sync_api_url}
@@ -1235,7 +1237,10 @@ def dev_frontend(context: Context) -> None:
     with context.cd(escape_path(REPO_BASE / FRONTEND_DIRECTORY)):
         context.run("pnpm install --frozen-lockfile", pty=True)
         print(f" - [{NAMESPACE}] Web interface on {FRONTEND_URL}, Sync API {settings.sync_api_url}; Ctrl-C stops it")
-        print(f" - [{NAMESPACE}] Token to enter in the page: {bearer_label(settings.admin_token)}")
+        print(
+            f" - [{NAMESPACE}] Sign in on the page as admin, with the password in ADMIN_ACCOUNT_PASSWORD"
+            f" (by default {ADMIN_PASSWORD})"
+        )
         context.run("pnpm dev", env=environment, pty=True)
 
 

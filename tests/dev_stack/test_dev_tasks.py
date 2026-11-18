@@ -464,29 +464,20 @@ def test_dev_frontend_fetches_a_missing_submodule_first(
     assert fake.commands[-3] == f"git submodule update --init {dev.FRONTEND_SUBMODULE}"
 
 
-@pytest.mark.parametrize(
-    ("admin_token", "label"),
-    [
-        (dev.API_TOKEN, dev.API_TOKEN),
-        (CUSTOM_TOKEN, "from ADMIN_ACCOUNT_TOKEN"),
-    ],
-    ids=["dev-token", "token-of-the-developer"],
-)
-def test_dev_frontend_prints_which_token_to_enter_never_a_configured_token(
+def test_dev_frontend_prints_how_to_sign_in_never_a_configured_token(
     context: Context,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    admin_token: str,
-    label: str,
 ) -> None:
     resolve = dev.dev_settings
-    monkeypatch.setattr(dev, "dev_settings", lambda ctx: dataclasses.replace(resolve(ctx), admin_token=admin_token))
+    monkeypatch.setattr(dev, "dev_settings", lambda ctx: dataclasses.replace(resolve(ctx), admin_token=CUSTOM_TOKEN))
     monkeypatch.setattr(dev, "_frontend_submodule_present", lambda: True)
 
     _body(dev.dev_frontend)(context)
 
     output = capsys.readouterr().out
-    assert f"Token to enter in the page: {label}" in output
+    assert "Sign in on the page as admin, with the password in ADMIN_ACCOUNT_PASSWORD" in output
+    assert f"(by default {dev.ADMIN_PASSWORD})" in output
     assert CUSTOM_TOKEN not in output
 
 
