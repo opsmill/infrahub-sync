@@ -10,6 +10,7 @@ the API process starts, and at the end of the bootstrap job (research R13).
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -73,6 +74,10 @@ _SCHEDULE_ID = re.compile(SCHEDULE_ID_PATTERN)
 _SCHEDULE_STATES: Final = frozenset({"active", "paused", "stopped", "deleted"})
 # How many times a request reads the schedule again when another writer changed it in between.
 _SAVE_ATTEMPTS: Final = 3
+# How many times the start of the API process runs its stop step when the store fails, and the
+# wait in seconds between two attempts.
+_STOP_ATTEMPTS: Final = 3
+_STOP_RETRY_SECONDS: float = 2.0
 _MATCH_PAGE_SIZE: Final = 200
 _UNAVAILABLE_MESSAGE: Final = (
     "the schedule is stored, and the task manager could not be reached; the schedule is handed to the "
@@ -130,31 +135,26 @@ async def match_prefect_schedules(projection: ProductProjection, orchestration: 
     whose slug is not a schedule identifier of Infrahub Sync is left as it is. The step reads what
     Prefect holds each time, so it also creates again a schedule that Prefect lost.
 
-    Each schedule that matches is recorded with ``prefect_synced`` true.
+    Each schedule that matches is recorded with ``prefect_synced`` true. A schedule whose
+    Prefect call or store write fails is recorded with ``prefect_synced`` false when the store
+    can be written, and the step goes on with the other schedules; the first failure is raised
+    at the end.
 
     Raises:
-        OrchestrationUnavailableError: Prefect could not be reached. The schedule that was being
-            written is recorded with ``prefect_synced`` false.
+        OrchestrationUnavailableError: Prefect could not be reached.
+        ProductStoreProviderError: The store failed to record the match of a schedule.
     """
     stored = _all_schedules(projection, ScheduleFilters())
-    current: ScheduleRecord | None = None
-    try:
-        held, surplus = _held_by_slug(await orchestration.read_schedules())
-        for current in stored:
-            desired = _desired(current)
-            existing = held.pop(current.schedule_id, None)
-            if existing is None:
-                orchestrator_id = await orchestration.create_schedule(desired)
-            else:
-                orchestrator_id = existing.orchestrator_id
-                if existing.schedule is None or not existing.schedule.matches(desired):
-                    await orchestration.update_schedule(orchestrator_id, desired)
-            if not current.prefect_synced or current.prefect_schedule_id != orchestrator_id:
-                projection.record_schedule_prefect_sync(
-                    current.schedule_id, prefect_schedule_id=orchestrator_id, synced=True
-                )
-        current = None
-        for slug, leftover in held.items():
+    held, surplus = _held_by_slug(await orchestration.read_schedules())
+    failures: list[OrchestrationUnavailableError | ProductStoreProviderError] = []
+    for current in stored:
+        try:
+            await _match_one(projection, orchestration, current, held.pop(current.schedule_id, None))
+        except (OrchestrationUnavailableError, ProductStoreProviderError) as error:
+            failures.append(error)
+            _record_not_synced(projection, current)
+    for slug, leftover in held.items():
+        try:
             # A schedule that was stored after the list above was read keeps its Prefect schedule.
             latest = projection.lookup_schedule(slug).value
             if latest is not None and latest.state != "deleted":
@@ -162,14 +162,48 @@ async def match_prefect_schedules(projection: ProductProjection, orchestration: 
             await orchestration.delete_schedule(leftover.orchestrator_id)
             # The schedule is deleted, or it was never stored: Prefect holds nothing for it now.
             projection.record_schedule_prefect_sync(slug, prefect_schedule_id=None, synced=True)
-        for duplicate in surplus:
+        except (OrchestrationUnavailableError, ProductStoreProviderError) as error:
+            failures.append(error)
+    for duplicate in surplus:
+        try:
             await orchestration.delete_schedule(duplicate.orchestrator_id)
-    except OrchestrationUnavailableError:
-        if current is not None and current.prefect_synced:
-            projection.record_schedule_prefect_sync(
-                current.schedule_id, prefect_schedule_id=current.prefect_schedule_id, synced=False
-            )
-        raise
+        except OrchestrationUnavailableError as error:
+            failures.append(error)
+    if failures:
+        raise failures[0]
+
+
+async def _match_one(
+    projection: ProductProjection,
+    orchestration: ServiceOrchestration,
+    current: ScheduleRecord,
+    existing: ObservedDeploymentSchedule | None,
+) -> None:
+    """Give one stored schedule the Prefect schedule it needs, and record that it matches."""
+    desired = _desired(current)
+    if existing is None:
+        orchestrator_id = await orchestration.create_schedule(desired)
+    else:
+        orchestrator_id = existing.orchestrator_id
+        if existing.schedule is None or not existing.schedule.matches(desired):
+            await orchestration.update_schedule(orchestrator_id, desired)
+    if not current.prefect_synced or current.prefect_schedule_id != orchestrator_id:
+        projection.record_schedule_prefect_sync(current.schedule_id, prefect_schedule_id=orchestrator_id, synced=True)
+
+
+def _record_not_synced(projection: ProductProjection, schedule: ScheduleRecord) -> None:
+    """Record that a schedule whose match failed may differ from its Prefect schedule."""
+    if not schedule.prefect_synced:
+        return
+    try:
+        projection.record_schedule_prefect_sync(
+            schedule.schedule_id, prefect_schedule_id=schedule.prefect_schedule_id, synced=False
+        )
+    except ProductStoreProviderError:
+        # The match of the next request or start reads Prefect again and repairs it.
+        logger.warning(
+            "schedules.not_synced_unrecorded", schedule_id=schedule.schedule_id, error_class="ProductStoreProviderError"
+        )
 
 
 def _held_by_slug(
@@ -439,16 +473,17 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     ) -> tuple[int, dict[str, Any]]:
         """Make a paused schedule active, or a stopped schedule whose reason no longer holds.
 
-        A schedule that stopped for ``repeated-failures`` always becomes active, and the store
-        sets its count of failed runs to zero. A resume of an active schedule changes nothing.
-        A paused schedule whose owner's actor no longer exists, or that writes to the default
-        branch while the Sync API requires approval, cannot run: the resume moves it to the
-        state ``stopped`` with that reason and its ``schedule.stopped`` event, and is refused.
+        A resume of an active schedule changes nothing. A stopped schedule whose stored reason
+        still holds stays as it is, and the resume is refused. Otherwise, a paused or stopped
+        schedule whose owner's actor no longer exists, or that writes to the default branch
+        while the Sync API requires approval, cannot run: the resume stores it in the state
+        ``stopped`` with that reason and its ``schedule.stopped`` event, in one write, and is
+        refused. A schedule that stopped for ``repeated-failures`` becomes active only when no
+        such reason holds, and the store then sets its count of failed runs to zero.
 
         Raises:
             ServiceAPIError: ``403 forbidden``, ``404 schedule-not-found``, ``409 schedule-deleted``,
-                or ``409 schedule-stopped`` when the reason of a stopped schedule still holds, or
-                when a paused schedule is stopped.
+                or ``409 schedule-stopped`` when a reason to stop the schedule holds.
         """
         context = _Request(principal.actor, RESUME, request.reason, administrator=principal.administrator)
 
@@ -459,11 +494,12 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             reason = schedule.state_reason
             if reason is not None and reason != "repeated-failures" and self._reason_holds(schedule, reason):
                 raise self._stopped_refusal(context.of(schedule), reason)
-            if schedule.state == "paused":
-                # A paused schedule that cannot run is stopped instead (FR-002, FR-013).
-                stop_reason = self._stop_reason(schedule)
-                if stop_reason is not None:
-                    raise _StopRequiredError(stop_reason)
+            # A paused schedule, or a stopped one whose stored reason no longer holds (also
+            # `repeated-failures`), that cannot run is stopped with the reason that holds now
+            # (FR-002, FR-013).
+            stop_reason = self._stop_reason(schedule)
+            if stop_reason is not None:
+                raise _StopRequiredError(stop_reason)
             return schedule.model_copy(update={"state": "active", "state_reason": None})
 
         return await self._act(schedule_id, context, request.model_dump(mode="json"), idempotency_key, resumed)
@@ -579,12 +615,27 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         writes the event of each stop. It then makes the Prefect schedules match the stored
         schedules. When Prefect or the product store fails, the failure is logged and the
         schedules that Prefect does not hold keep ``prefect_synced`` false.
+
+        A store error of the stop step is tried again ``_STOP_ATTEMPTS`` times in all, with a
+        wait between the attempts. When every attempt fails, the error is logged and the match
+        is skipped, so Prefect does not turn on a schedule that should be stopped. The worker
+        checks the approval setting before each scheduled run as well (research R6), so a
+        schedule that this step could not stop still writes nothing to the default branch.
         """
-        try:
-            self._stop_schedules_that_cannot_run()
-        except ProductStoreProviderError:
-            logger.warning("schedules.start_failed", step="start", error_class="ProductStoreProviderError")
-            return
+        for attempt in range(1, _STOP_ATTEMPTS + 1):
+            try:
+                self._stop_schedules_that_cannot_run()
+                break
+            except ProductStoreProviderError:
+                if attempt == _STOP_ATTEMPTS:
+                    logger.error(  # noqa: TRY400 - the class only: the text of a store error can hold an address.
+                        "schedules.stop_failed", step="start", attempts=attempt, error_class="ProductStoreProviderError"
+                    )
+                    return
+                logger.warning(
+                    "schedules.stop_retried", step="start", attempt=attempt, error_class="ProductStoreProviderError"
+                )
+                await asyncio.sleep(_STOP_RETRY_SECONDS)
         await self._matched(step="start")
 
     def _reason_holds(self, schedule: ScheduleRecord, reason: _StopReason) -> bool:
@@ -640,18 +691,25 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     async def _matched(self, *, step: str = "request") -> bool:
         """Make Prefect match the store, and return whether it did.
 
-        Every failure of the task manager counts as "could not be reached", whatever its class,
-        as for the submission of a run: the schedule is stored, so the request must still save
-        its answer and its event, and the API process must still start. Only the class name of
-        the failure is logged, because the text of a provider error can hold an address.
+        The schedule is stored before this step, so the request must still save its answer and
+        its event, and the API process must still start, whatever the step raises. A task
+        manager that could not be reached is logged as a warning. A store error, which is not a
+        failure of the task manager, is logged apart at error level. Any other error is
+        unexpected: it is logged at error level with its class. Only the class name of a
+        failure is logged, because the text of a provider error can hold an address.
         """
         try:
             await match_prefect_schedules(self._projection, self._orchestration)
         except OrchestrationUnavailableError as error:
             logger.warning("schedules.match_failed", step=step, error_class=error.error_class)
             return False
-        except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # the remote boundary
-            logger.warning("schedules.match_failed", step=step, error_class=type(error).__name__)
+        except ProductStoreProviderError:
+            logger.error("schedules.match_store_failed", step=step, error_class="ProductStoreProviderError")  # noqa: TRY400 - the class only.
+            return False
+        except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            # The last boundary of the step: a driver error of the local store or a fault of
+            # this code must not stop the answer of a stored request or the start of the API.
+            logger.error("schedules.match_failed", step=step, error_class=type(error).__name__)  # noqa: TRY400 - the class only.
             return False
         return True
 
@@ -697,8 +755,6 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                     assert reread is not None
                     schedule, now = reread, self._clock()
                     continue
-                except ServiceAPIError as error:
-                    raise self._released(reserved, error) from None
                 raise self._released(reserved, self._stopped_refusal(context, required.reason)) from None
             if reserved is None:
                 reserved = self._reserve(receipt, context)
@@ -725,25 +781,19 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         )
 
     def _save_stop(self, schedule: ScheduleRecord, reason: _StopReason, context: _Request, now: datetime) -> None:
-        """Store a paused schedule as resumed, then as stopped with ``reason`` and its event.
+        """Store a paused or stopped schedule as stopped with ``reason``, with its event, in one write.
 
-        The states of a schedule move from ``paused`` only to ``active`` or ``deleted``
-        (data-model.md), so the resume makes the schedule active, and the reason then stops it,
-        as the start of the API process stops an active schedule. Prefect is not matched in
-        between: the Prefect schedule of the paused schedule stays inactive, as a stopped
-        schedule needs, so ``prefect_synced`` keeps its value. The event names the caller of the
-        request that found the reason.
+        A paused schedule moves to ``stopped`` directly, and a stopped schedule gets the reason
+        that holds now in place of the one it stopped for (data-model.md). The Prefect schedule
+        of a paused or stopped schedule is already inactive, as a stopped schedule needs, so
+        ``prefect_synced`` keeps its value. The event names the caller of the request that
+        found the reason.
 
         Raises:
-            ScheduleChangedError: Another writer saved a change of the schedule after it was read,
-                before the first write.
-            ScheduleDeletedError: The schedule was deleted after it was read, before the first write.
-            ServiceAPIError: ``409 schedule-changed`` when another writer changed the schedule
-                between the two writes; the next start of the API process then stops it.
+            ScheduleChangedError: Another writer saved a change of the schedule after it was read.
+            ScheduleDeletedError: The schedule was deleted after it was read.
         """
-        resumed = schedule.model_copy(update={"state": "active", "state_reason": None, "updated_at": now})
-        self._projection.update_schedule(resumed, expected_updated_at=schedule.updated_at, secrets=self._secrets)
-        stopped = resumed.model_copy(update={"state": "stopped", "state_reason": reason})
+        stopped = schedule.model_copy(update={"state": "stopped", "state_reason": reason, "updated_at": now})
         event = schedule_event(
             event_type=SCHEDULE_STOPPED,
             actor=context.actor,
@@ -755,16 +805,9 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             registry_version=schedule.registry_version,
             created_at=now,
         )
-        try:
-            self._projection.update_schedule(stopped, expected_updated_at=now, events=(event,), secrets=self._secrets)
-        except (ScheduleChangedError, ScheduleDeletedError):
-            logger.warning("schedules.stop_skipped", schedule_id=schedule.schedule_id, state_reason=reason)
-            raise self._refusal(
-                context,
-                409,
-                "schedule-changed",
-                "the schedule changed while the request was processed; send the request again",
-            ) from None
+        self._projection.update_schedule(
+            stopped, expected_updated_at=schedule.updated_at, events=(event,), secrets=self._secrets
+        )
         logger.warning("schedules.stopped", schedule_id=schedule.schedule_id, state_reason=reason, step="resume")
 
     def _stopped_refusal(self, context: _Request, reason: _StopReason) -> ServiceAPIError:

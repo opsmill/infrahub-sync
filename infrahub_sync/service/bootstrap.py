@@ -380,7 +380,9 @@ def _converge() -> None:
     # schedule again, so a schedule keeps starting runs after a bootstrap (spec 021, research R13).
     try:
         asyncio.run(_match_schedules(projection))
-    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+    except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        # Only the class name: the text of a provider error can hold an address or a credential.
+        logger.error("%s: %s", SCHEDULES_NOT_MATCHED, type(error).__name__)  # noqa: TRY400 - the class only.
         raise BootstrapError(SCHEDULES_NOT_MATCHED) from None
 
     # Last, so a record exists only once every step above has completed. The Sync API and the

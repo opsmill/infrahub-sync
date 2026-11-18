@@ -26,7 +26,7 @@ from prefect.client.schemas.responses import (
 )
 from prefect.client.schemas.schedules import CronSchedule
 from prefect.client.schemas.sorting import LogSort
-from prefect.exceptions import ObjectNotFound
+from prefect.exceptions import ObjectNotFound, PrefectException
 from prefect.states import Cancelling
 
 if TYPE_CHECKING:
@@ -389,6 +389,11 @@ class _ScheduleClient(Protocol):
 
 
 _SCHEDULES_UNAVAILABLE: Final = "the orchestrator could not be reached"
+# What a call about the schedules of the deployment raises that counts as "unavailable": a
+# Prefect error (``ObjectNotFound`` among them), a failed or late request, and a value that
+# Prefect refuses when the request is built (a pydantic `ValidationError` is a `ValueError`, as
+# is the error of an orchestrator identifier that is not a UUID).
+_SCHEDULE_CALL_ERRORS: Final = (PrefectException, httpx.HTTPError, TimeoutError, ValueError)
 
 
 class PrefectOrchestration:
@@ -503,7 +508,7 @@ class PrefectOrchestration:
         client = cast("_ScheduleClient", self._client)
         try:
             schedules = await client.read_deployment_schedules(await self._deployment_id(client))
-        except (ObjectNotFound, httpx.HTTPError, TimeoutError) as exc:
+        except _SCHEDULE_CALL_ERRORS as exc:
             raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
         return tuple(_observed_schedule(schedule) for schedule in schedules)
 
@@ -514,15 +519,16 @@ class PrefectOrchestration:
             OrchestrationUnavailableError: a request failed or timed out, or the deployment does not exist.
         """
         client = cast("_ScheduleClient", self._client)
-        create = DeploymentScheduleCreate(
-            schedule=CronSchedule(cron=schedule.cron, timezone=schedule.timezone),
-            active=schedule.active,
-            parameters=schedule.parameters,
-            slug=schedule.slug,
-        )
         try:
+            # Built inside the boundary: Prefect refuses a cadence with a pydantic error.
+            create = DeploymentScheduleCreate(
+                schedule=CronSchedule(cron=schedule.cron, timezone=schedule.timezone),
+                active=schedule.active,
+                parameters=schedule.parameters,
+                slug=schedule.slug,
+            )
             created = await client.create_deployment_schedules(await self._deployment_id(client), [create])
-        except (ObjectNotFound, httpx.HTTPError, TimeoutError) as exc:
+        except _SCHEDULE_CALL_ERRORS as exc:
             raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
         if len(created) != 1:
             raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class="UnexpectedScheduleCount")
@@ -544,7 +550,7 @@ class PrefectOrchestration:
                 parameters=schedule.parameters,
                 slug=schedule.slug,
             )
-        except (ObjectNotFound, httpx.HTTPError, TimeoutError) as exc:
+        except _SCHEDULE_CALL_ERRORS as exc:
             raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
 
     async def delete_schedule(self, orchestrator_id: str) -> None:
@@ -556,13 +562,13 @@ class PrefectOrchestration:
         client = cast("_ScheduleClient", self._client)
         try:
             deployment_id = await self._deployment_id(client)
-        except (ObjectNotFound, httpx.HTTPError, TimeoutError) as exc:
+        except _SCHEDULE_CALL_ERRORS as exc:
             raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
         try:
             await client.delete_deployment_schedule(deployment_id, UUID(orchestrator_id))
         except ObjectNotFound:
             return
-        except (httpx.HTTPError, TimeoutError) as exc:
+        except _SCHEDULE_CALL_ERRORS as exc:
             raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
 
 

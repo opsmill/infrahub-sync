@@ -169,6 +169,24 @@ def test_a_provider_failure_of_the_match_stays_behind_its_failure_code(
     assert PROVIDER_CANARY not in caplog.text
 
 
+def test_a_failed_match_names_the_class_of_its_failure(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    api.create()
+    _bootstrap(api, monkeypatch)
+
+    async def refuse() -> tuple[()]:  # noqa: RUF029 - replaces a coroutine function.
+        raise OrchestrationUnavailableError(PROVIDER_CANARY, error_class="ConnectError")
+
+    monkeypatch.setattr(api.orchestration, "read_schedules", refuse)
+
+    with caplog.at_level("ERROR"):
+        assert bootstrap.main() == 1
+
+    assert "schedules-not-matched: OrchestrationUnavailableError" in caplog.text
+    assert PROVIDER_CANARY not in caplog.text
+
+
 def test_a_product_database_of_an_earlier_build_is_reported_with_its_own_failure_code(
     api: ScheduleApi, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

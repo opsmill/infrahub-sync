@@ -16,8 +16,10 @@ pytest.importorskip("fastapi")
 
 import httpx
 from prefect.client.schemas.schedules import CronSchedule, IntervalSchedule
-from prefect.exceptions import ObjectNotFound
+from prefect.exceptions import ObjectNotFound, PrefectException
+from structlog.testing import capture_logs
 
+from infrahub_sync.product_store import ProductStoreProviderError
 from infrahub_sync.service import schedules
 from infrahub_sync.service.orchestration import (
     DeploymentSchedule,
@@ -564,3 +566,94 @@ async def test_a_failed_prefect_call_is_reported_without_its_address(error: Exce
 async def test_an_update_of_a_schedule_that_prefect_no_longer_holds_is_reported() -> None:
     with pytest.raises(OrchestrationUnavailableError):
         await _orchestration(_PrefectClient()).update_schedule(str(uuid4()), _WANTED)
+
+
+async def test_another_prefect_error_is_reported_as_unavailable() -> None:
+    client = _PrefectClient()
+    client.error = PrefectException("refused http://prefect.internal:4200")
+
+    with pytest.raises(OrchestrationUnavailableError) as raised:
+        await _orchestration(client).read_schedules()
+
+    assert raised.value.error_class == "PrefectException"
+    assert "prefect.internal" not in str(raised.value)
+
+
+async def test_a_cadence_that_prefect_refuses_is_reported_as_unavailable() -> None:
+    """The Prefect objects are built inside the boundary, so a refused value is not an unexpected error."""
+    orchestration = _orchestration(_PrefectClient())
+    refused = replace(_WANTED, cron="not a cron")
+
+    with pytest.raises(OrchestrationUnavailableError) as created:
+        await orchestration.create_schedule(refused)
+    with pytest.raises(OrchestrationUnavailableError) as updated:
+        await orchestration.update_schedule(str(uuid4()), refused)
+
+    assert created.value.error_class == updated.value.error_class == "ValidationError"
+
+
+async def test_an_orchestrator_identifier_that_is_not_one_is_reported_as_unavailable() -> None:
+    orchestration = _orchestration(_PrefectClient())
+
+    for call in (orchestration.update_schedule("not-a-uuid", _WANTED), orchestration.delete_schedule("not-a-uuid")):
+        with pytest.raises(OrchestrationUnavailableError) as raised:
+            await call
+        assert raised.value.error_class == "ValueError"
+
+
+def test_a_failed_schedule_does_not_stop_the_match_of_the_others(api: ScheduleApi) -> None:
+    first = api.create()["schedule_id"]
+    other_config = api.projection.create_configuration(package("from-nautobot")).config_id
+    second = api.create(name="from-nautobot-nightly", config_id=other_config)["schedule_id"]
+    api.orchestration.schedules.clear()
+    create = api.orchestration.create_schedule
+
+    async def refuse_one(schedule: DeploymentSchedule) -> str:
+        # The newest schedule is matched first.
+        if schedule.slug == second:
+            message = "the orchestrator could not be reached"
+            raise OrchestrationUnavailableError(message, error_class="ConnectError")
+        return await create(schedule)
+
+    api.orchestration.create_schedule = refuse_one  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(OrchestrationUnavailableError):
+        _match(api)
+
+    assert api.orchestration.slugs() == {first}
+    assert (api.stored(first).prefect_synced, api.stored(second).prefect_synced) == (True, False)
+
+
+def test_a_store_error_of_the_match_is_logged_apart_from_an_unreachable_task_manager(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api.create()
+
+    def refuse(*_args: object, **_kwargs: object) -> bool:
+        raise ProductStoreProviderError
+
+    monkeypatch.setattr(api.projection, "record_schedule_prefect_sync", refuse)
+    api.orchestration.schedules.clear()
+
+    with capture_logs() as logs:
+        assert asyncio.run(api.schedules._matched()) is False
+
+    assert [(entry["event"], entry["log_level"], entry["error_class"]) for entry in logs] == [
+        # The schedule was synced, and the store cannot record that it no longer is.
+        ("schedules.not_synced_unrecorded", "warning", "ProductStoreProviderError"),
+        ("schedules.match_store_failed", "error", "ProductStoreProviderError"),
+    ]
+
+
+def test_an_unexpected_error_of_the_match_is_logged_at_error_level_with_its_class(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _break_the_task_manager(api, monkeypatch)
+
+    with capture_logs() as logs:
+        assert asyncio.run(api.schedules._matched()) is False
+
+    assert [(entry["event"], entry["log_level"], entry["error_class"]) for entry in logs] == [
+        ("schedules.match_failed", "error", "RuntimeError")
+    ]
+    assert PROVIDER_CANARY not in str(logs)
