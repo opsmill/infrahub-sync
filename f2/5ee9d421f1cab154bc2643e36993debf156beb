@@ -1,0 +1,47 @@
+dev/specs/024-demo-ready-netbox/tasks.md
+  s_531f0e8d1dd35e::t_3069647ea8c7b6 75,81-83
+docs/docs/tutorials/try-the-netbox-demo.mdx
+  s_531f0e8d1dd35e::t_4fbb7174a2c366 64-69
+  s_531f0e8d1dd35e::t_0554fbb4b8ec18 169
+  s_531f0e8d1dd35e::t_b64df9295517a9 1-63,70-168,170-250
+.vale/styles/Infrahub/sentence-case.yml
+  s_05630b00e74578::t_3e8494ca52c7af 53
+.vale/styles/spelling-exceptions.txt
+  s_05630b00e74578::t_50a14a7453a1d3 132
+docs/docs/development-stack.mdx
+  s_05630b00e74578::t_28a2e024901ac0 425-427
+docs/docs/development/guides/publishing-an-image.md
+  s_05630b00e74578::t_85c2788019f5b2 92-109
+docs/docs/reference/cli.mdx
+  s_05630b00e74578::t_82644748434a22 45,622-663
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_05630b00e74578::t_d5bae4922254d5 19-20
+docs/sidebars.ts
+  s_05630b00e74578::t_cd04070e51858b 25
+examples/netbox_to_infrahub/README.md
+  s_05630b00e74578::t_210dbed86237f2 15-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f25ee9d421f1cab154bc2643e36993debf156beb",
+  "prompts": {},
+  "sessions": {
+    "s_05630b00e74578": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a33a45b00dc4c1790",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
