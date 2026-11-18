@@ -102,6 +102,9 @@ def _start(  # noqa: PLR0913  # pylint: disable=too-many-arguments
     monkeypatch.setattr(service_flow, "_now", lambda: now)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(service_flow, "_execute_stage", _succeeded)
+    # No Prefect server: the scheduled state of a start that waits is returned, not stored.
+    # `test_prefect_keeps_the_state_that_runs_a_waiting_start_again` stores it.
+    monkeypatch.setattr(service_flow, "_run_again_later", lambda state, _lines: state)
     return service_flow.service_sync_run.fn(stage="sync", schedule_id=schedule_id)
 
 
@@ -375,20 +378,29 @@ def _prefect_server() -> Iterator[None]:
         yield
 
 
+# The functions that need a real flow run; `_start` replaces them.
+_RUN_AGAIN_LATER = service_flow._run_again_later
+_PREFECT_FLOW_RUN_ID = service_flow._prefect_flow_run_id
+
+
 @pytest.mark.usefixtures("_prefect_server")
-def test_prefect_accepts_the_state_that_runs_a_waiting_start_again(
+def test_prefect_keeps_the_state_that_runs_a_waiting_start_again(
     monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, in_progress: tuple[str, _RunInProgress]
 ) -> None:
-    """Research R7: the returned `AwaitingRetry` becomes the flow run's state, and the flow run can run again.
+    """Research R7, FR-035: a waiting start ends its process with `AwaitingRetry`, and the flow run can run again.
 
-    The flow run is created by a direct call of the flow, not by a schedule, so the test cannot
-    show that a worker picks it up again; it shows that Prefect stores the state with its time,
-    keeps the flow run's `expected_start_time`, and accepts the moves a worker makes to run it once
-    that time has passed. Before that time, Prefect answers `WAIT` to the move to `Pending`.
+    The flow is called as the worker's process calls it, for its result rather than its state.
+    Prefect 3.8.6 cannot end a flow run in a scheduled state from the state the flow returns, so
+    the flow stores the state itself and raises `Pause`, which the worker's process ends with
+    status 0. The test shows that no state follows `AwaitingRetry`, that Prefect keeps its time
+    and the flow run's `expected_start_time`, and that it accepts the moves a worker makes to
+    run the flow run again once that time has passed. The flow run is created by a direct call
+    of the flow, not by a schedule; the development stack showed a worker running it again.
     """
     from prefect.client.orchestration import get_client
     from prefect.client.schemas.objects import StateType
     from prefect.client.schemas.responses import SetStateStatus
+    from prefect.exceptions import Pause
     from prefect.states import Pending, Running
 
     _run_in_progress, _switch = in_progress
@@ -397,24 +409,26 @@ def test_prefect_accepts_the_state_that_runs_a_waiting_start_again(
     now = datetime.now(timezone.utc) - timedelta(minutes=2)
     start = now.replace(minute=0, second=0, microsecond=0)
     _start(monkeypatch, api, schedule_id, start, now)  # applies the replacements; the start waits
+    monkeypatch.setattr(service_flow, "_run_again_later", _RUN_AGAIN_LATER)
+    monkeypatch.setattr(service_flow, "_prefect_flow_run_id", _PREFECT_FLOW_RUN_ID)
 
-    state = service_flow.service_sync_run(stage="sync", schedule_id=schedule_id, return_state=True)  # ty: ignore[no-matching-overload] - TODO: ty cannot select prefect's ParamSpec return_state overload
+    with pytest.raises(Pause):
+        service_flow.service_sync_run(stage="sync", schedule_id=schedule_id)
 
-    assert isinstance(state, State)
-    flow_run_id = state.state_details.flow_run_id
-    assert flow_run_id is not None
     with get_client(sync_client=True) as client:
-        stored = client.read_flow_run(flow_run_id)
+        (stored,) = [run for run in client.read_flow_runs() if run.parameters.get("schedule_id") == schedule_id]
         assert stored.state is not None
         assert (stored.state.type, stored.state.name) == (StateType.SCHEDULED, "AwaitingRetry")
         recheck_at = now + timedelta(seconds=QUEUED_START_RECHECK_SECONDS)
         assert stored.state.state_details.scheduled_time == recheck_at
+        history = client.read_flow_run_states(stored.id)
+        assert [state.name for state in history][-2:] == ["Running", "AwaitingRetry"]
         expected = stored.expected_start_time
         assert expected is not None
         assert expected != recheck_at
         for move in (Pending(), Running()):
-            assert client.set_flow_run_state(flow_run_id, move).status == SetStateStatus.ACCEPT
-        assert client.read_flow_run(flow_run_id).expected_start_time == expected
+            assert client.set_flow_run_state(stored.id, move).status == SetStateStatus.ACCEPT
+        assert client.read_flow_run(stored.id).expected_start_time == expected
     assert api.stored(schedule_id).waiting_start_at == start
 
 

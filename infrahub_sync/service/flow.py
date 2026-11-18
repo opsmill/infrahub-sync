@@ -24,7 +24,8 @@ from prefect import flow, get_run_logger
 from prefect.artifacts import create_markdown_artifact
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.objects import WorkerStatus
-from prefect.exceptions import MissingContextError, ObjectNotFound
+from prefect.client.schemas.responses import SetStateStatus
+from prefect.exceptions import MissingContextError, ObjectNotFound, Pause
 from prefect.runtime import flow_run as current_flow_run
 from prefect.states import AwaitingRetry, Completed, Failed, State
 from pydantic_core import to_json
@@ -682,6 +683,27 @@ def _refused_flow_run(lines: SyncFlowLines, message: str) -> State[Any]:
     return Failed(message=message)
 
 
+def _run_again_later(state: State[Any], lines: SyncFlowLines) -> State[Any]:
+    """Store the scheduled state of a start that waits, and end this flow run's process with it.
+
+    Prefect 3.8.6 cannot end a flow run in a scheduled state from the state the flow returns:
+    the engine then asks for the flow's result, which a scheduled state has not, and the process
+    exits with an error, so the runner marks the flow run as crashed. The flow therefore sets the
+    state itself and raises `Pause` with it, Prefect's signal for a flow run that exits to be
+    submitted again: the engine keeps the state, proposes no other one, and the process exits
+    with status 0. The worker submits the flow run again at the state's time, with the same
+    start time (research R7, FR-035).
+
+    Returns a failed state only when Prefect refuses the scheduled state.
+    """
+    flow_run_id = _prefect_flow_run_id()
+    with get_client(sync_client=True) as client:
+        answer = client.set_flow_run_state(flow_run_id, state)
+    if answer.status != SetStateStatus.ACCEPT or answer.state is None:
+        return _refused_flow_run(lines, f"Prefect refused to schedule flow run {flow_run_id} again ({answer.status})")
+    raise Pause(state=answer.state)
+
+
 def _admit_scheduled_flow_run(
     projection: ProductProjection, schedule_id: str, lines: SyncFlowLines
 ) -> _Execution | State[Any]:
@@ -689,8 +711,9 @@ def _admit_scheduled_flow_run(
 
     A flow run that no Prefect schedule created is refused. A start that creates no run ends
     the flow run as completed, with one line that says why, and no run record. A start that
-    waits under the `queue` policy ends it as `AwaitingRetry`, a scheduled state that Prefect
-    runs again `QUEUED_START_RECHECK_SECONDS` later. A start that already has a run is
+    waits under the `queue` policy, or for its destination to answer (FR-035), returns
+    `AwaitingRetry`, a scheduled state that Prefect runs again one minute later;
+    `_run_again_later` stores it and ends the process. A start that already has a run is
     refused, as a second claim of a run is.
     """
     worker_id = _canonical_uuid(os.environ.get("PREFECT__WORKER_ID"))
@@ -1893,7 +1916,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many-
     if schedule_id is not None:
         admitted = _admit_scheduled_flow_run(projection, schedule_id, lines)
         if not isinstance(admitted, _Execution):
-            return admitted
+            return _run_again_later(admitted, lines) if admitted.is_scheduled() else admitted
         execution = admitted
     else:
         assert run_id is not None

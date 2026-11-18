@@ -642,6 +642,29 @@ starts (`tests/service/test_schedule_missed_starts.py`):
   `server/api/deployments.py`). The waiting flow run has run once, so a change of any Sync
   schedule leaves it in place. Read from the source code only.
 
+Checked since, for R7 and FR-035, on the development stack of this branch on 2026-11-18, with a
+process worker: the returned state above does not work under a worker.
+
+- The worker's child process calls the flow for its result (`engine.py`, `run_flow` with the
+  return type `result`). After the engine stores the returned `AwaitingRetry`, it asks for the
+  flow's result (`flow_engine.py`, `FlowRunEngine.result`), which raises `UnfinishedRun` for a
+  state that is not final. The process ends with status 1, and the runner marks the flow run
+  `Crashed`. The flow run never runs again. Observed at 19:50: the state history is `Running`,
+  `AwaitingRetry`, `Crashed`. The test above passed because it called the flow with
+  `return_state=True`, which skips that call. The `queue` policy had the same defect.
+- Decision: the flow stores the state itself through the Prefect client, then raises
+  `prefect.exceptions.Pause` with the stored state. Prefect documents `Pause` as raised "when a flow
+  run is PAUSED and needs to exit for resubmission". The engine keeps the state that the signal
+  carries and proposes no other state (`flow_engine.py`, `run_context`), and the child process ends
+  with status 0 (`engine.py`, `handle_engine_signals`), so the runner proposes no state either.
+- Observed from 19:58 to 20:05: the worker submitted the flow run again every minute. Each attempt
+  ended in `AwaitingRetry`, `run_count` grew (3 at 20:01), `expected_start_time` stayed 19:59 and
+  `auto_scheduled` stayed true. The Sync worker's identity checks accepted each attempt. Infrahub
+  answered again at 20:04:56, and at 20:05:01 the start created one run that succeeded, with one
+  `start_missed` event (`missed-started-late`) and `consecutive_failures` at 0.
+- Rejected: waiting inside the flow run. The process would hold a worker slot for up to the
+  late-start duration (at most seven days), and a restart of the worker would end the wait.
+
 Checked since, for R11 and R15, against a running Infrahub 1.11.9 on 2026-11-18: the Infrahub of
 an isolated development stack of this branch (`development/docker-compose.yml`, preset
 `infrahub`), with the development admin token. The test
