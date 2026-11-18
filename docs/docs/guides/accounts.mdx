@@ -272,6 +272,9 @@ What a deletion does not change:
 - Text that a person typed keeps the name if it holds it, such as the reason of a run, of an
   approval or of an account action.
 - Log lines are not rewritten.
+- The session file of a CLI that signed in as the account keeps the account name on that
+  workstation, until `infrahub-sync logout` removes the entry, or until the next command removes
+  it because the Sync API refuses the session. The Sync API cannot reach that file.
 
 After the deletion, the name is free: an administrator can create a new account with it. The new
 account has no right over the runs of the deleted account, and no record of the deleted account

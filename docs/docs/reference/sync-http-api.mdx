@@ -126,7 +126,10 @@ The refusals of these routes:
 
 - A wrong name, a wrong password, a disabled account and a name refused after repeated failures
   all answer `401`, code `sign-in-refused`, with one message that does not say whether the
-  account exists.
+  account exists. Each writes an authentication refusal record without the name, except a
+  sign-in whose name or password no account can have (empty, a name longer than 64 characters,
+  a password longer than 1,024 characters, or a character that UTF-8 cannot encode): it is
+  refused before any password check and writes no record.
 - After 5 failed sign-ins for one name in 15 minutes, the API refuses that name for 15 minutes.
   An attempt during the refusal does not extend it. API tokens of the account keep working.
 - A wrong `current_password` answers `403`, code `current-password-refused`, and counts as a
