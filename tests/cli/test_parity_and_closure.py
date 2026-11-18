@@ -79,22 +79,15 @@ CLI_CLIENT_PARITY = (
     ("whoami", "me", "GET /me"),
     ("apply RUN_ID", "apply", "POST /runs/{run_id}/apply"),
     ("apply RUN_ID failure evidence", "get_results", "GET /runs/{run_id}/results"),
-    ("login", "sign_in", "POST /auth/sign-in"),
-    ("logout", "sign_out", "POST /auth/sign-out"),
-    ("password", "change_password", "PUT /me/password"),
-    ("tokens list", "list_tokens", "GET /me/tokens"),
-    ("tokens create NAME", "create_token", "POST /me/tokens"),
-    ("tokens delete TOKEN_ID", "delete_token", "DELETE /me/tokens/{token_id}"),
-    ("accounts list", "list_accounts", "GET /accounts"),
-    ("accounts create NAME", "create_account", "POST /accounts"),
-    ("accounts set-password NAME", "set_account_password", "PUT /accounts/{name}/password"),
-    ("accounts unlock NAME", "unlock_account", "POST /accounts/{name}/unlock"),
-    ("accounts disable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
-    ("accounts enable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
-    ("accounts set-level NAME", "set_account_level", "PATCH /accounts/{name}"),
-    ("accounts delete NAME", "delete_account", "DELETE /accounts/{name}"),
-    ("accounts tokens NAME", "list_account_tokens", "GET /accounts/{name}/tokens"),
-    ("accounts delete-token NAME TOKEN_ID", "delete_account_token", "DELETE /accounts/{name}/tokens/{token_id}"),
+    ("schedules create", "create_schedule", "POST /schedules"),
+    ("schedules list", "list_schedules", "GET /schedules"),
+    ("schedules list --all", "iter_schedules", "GET /schedules"),
+    ("schedules show SCHEDULE", "get_schedule", "GET /schedules/{schedule_id}"),
+    ("schedules change SCHEDULE", "change_schedule", "POST /schedules/{schedule_id}/change"),
+    ("schedules pause SCHEDULE", "pause_schedule", "POST /schedules/{schedule_id}/pause"),
+    ("schedules resume SCHEDULE", "resume_schedule", "POST /schedules/{schedule_id}/resume"),
+    ("schedules delete SCHEDULE", "delete_schedule", "POST /schedules/{schedule_id}/delete"),
+    ("events --schedule SCHEDULE", "iter_events", "GET /events"),
 )
 
 
@@ -131,22 +124,15 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "me",
         "apply",
         "get_results",
-        "sign_in",
-        "sign_out",
-        "change_password",
-        "list_tokens",
-        "create_token",
-        "delete_token",
-        "list_accounts",
-        "create_account",
-        "set_account_password",
-        "unlock_account",
-        "set_account_disabled",
-        "set_account_disabled",
-        "set_account_level",
-        "delete_account",
-        "list_account_tokens",
-        "delete_account_token",
+        "create_schedule",
+        "list_schedules",
+        "iter_schedules",
+        "get_schedule",
+        "change_schedule",
+        "pause_schedule",
+        "resume_schedule",
+        "delete_schedule",
+        "iter_events",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 
@@ -156,6 +142,7 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
 
     assert "configs" in help_text
     assert "runs" in help_text
+    assert "schedules" in help_text
     assert "plan" in help_text
     assert "verify" in help_text
     assert "whoami" in help_text
@@ -202,6 +189,9 @@ def test_all_retired_local_execution_options_are_absent_from_live_command_help()
     assert "--kind" in _help("runs", "plan")
     for command in ("show", "results", "list", "artifacts", "cancel"):
         assert command in _help("runs"), f"`runs {command}` is absent from the group's help"
+    for command in ("create", "list", "show", "change", "pause", "resume", "delete"):
+        assert command in _help("schedules"), f"`schedules {command}` is absent from the group's help"
+    assert "take-over" not in _help("schedules")
 
 
 def test_cli_imports_only_the_shared_client_boundary() -> None:

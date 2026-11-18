@@ -1,0 +1,435 @@
+"""The `schedules` command group and the schedule options of `runs` and `events` (spec 021, contracts/cli.md)."""
+
+from __future__ import annotations
+
+import logging
+import re
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
+
+import pytest
+from typer.testing import CliRunner
+
+from infrahub_sync.cli import app
+from infrahub_sync.client import (
+    APIError,
+    ChangeScheduleRequest,
+    ConfigurationSummaryResource,
+    CreateScheduleRequest,
+    EventDetailsResource,
+    EventPrimaryResource,
+    EventResource,
+    PublicRunResource,
+    RunPage,
+    RunResource,
+    ScheduleActionRequest,
+    ScheduleOpenBranchResource,
+    SchedulePage,
+    ScheduleResource,
+    SyncClient,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+NOW = datetime(2026, 11, 18, 9, tzinfo=timezone.utc)
+SCHEDULE_ID = "s-0123456789abcdef"
+NAME = "from-netbox-nightly"
+RUNNER = CliRunner()
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _schedule(**extra: object) -> ScheduleResource:
+    values: dict[str, object] = {
+        "schedule_id": SCHEDULE_ID,
+        "name": NAME,
+        "config_id": "from-netbox",
+        "registry_version": 3,
+        "cron": "0 2 * * *",
+        "timezone": "Europe/Paris",
+        "write_target": "branch-review",
+        "write_when_left_out": False,
+        "overlap_policy": "reject",
+        "state": "active",
+        "owner": "operator",
+        "next_start_at": NOW,
+        "prefect_synced": True,
+        "consecutive_failures": 0,
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+    values.update(extra)
+    return ScheduleResource.model_validate(values)
+
+
+def _not_found() -> APIError:
+    return APIError(404, "schedule-not-found")
+
+
+@pytest.fixture
+def client() -> MagicMock:
+    injected = MagicMock(spec=SyncClient)
+    injected.get_config.side_effect = lambda config_id: ConfigurationSummaryResource(
+        config_id=config_id, created_at=NOW
+    )
+    injected.get_schedule.side_effect = lambda schedule_id: (
+        _schedule() if schedule_id == SCHEDULE_ID else (_ for _ in ()).throw(_not_found())
+    )
+    injected.iter_schedules.side_effect = lambda **_: iter((_schedule(),))
+    injected.list_schedules.return_value = SchedulePage(items=(_schedule(),))
+    for method in ("create_schedule", "change_schedule", "pause_schedule", "resume_schedule", "delete_schedule"):
+        getattr(injected, method).return_value = _schedule()
+    injected.list_runs.return_value = RunPage(items=())
+    injected.iter_events.return_value = iter(())
+    return injected
+
+
+@pytest.fixture(autouse=True)
+def _restore_package_logging() -> Iterator[None]:
+    """Undo the logger level and handler that `main` installs on every CLI invocation."""
+    package_logger = logging.getLogger("infrahub_sync")
+    level = package_logger.level
+    handlers = list(package_logger.handlers)
+    yield
+    package_logger.setLevel(level)
+    for handler in list(package_logger.handlers):
+        if handler not in handlers:
+            package_logger.removeHandler(handler)
+            handler.close()
+
+
+def _invoke(client: MagicMock, *args: str, stdin: str | None = None):  # type: ignore[no-untyped-def]
+    return RUNNER.invoke(app, list(args), obj={"client": client}, input=stdin)
+
+
+def test_create_sends_the_request_and_prints_the_schedule_with_its_next_start(client: MagicMock) -> None:
+    result = _invoke(
+        client,
+        "schedules",
+        "create",
+        "--name",
+        NAME,
+        "--config",
+        "from-netbox",
+        "--version",
+        "3",
+        "--cron",
+        "0 2 * * *",
+        "--timezone",
+        "Europe/Paris",
+        "--reason",
+        "nightly import",
+        "--idempotency-key",
+        "key-1",
+    )
+
+    assert result.exit_code == 0, result.output
+    client.create_schedule.assert_called_once_with(
+        CreateScheduleRequest(
+            name=NAME,
+            config_id="from-netbox",
+            registry_version=3,
+            cron="0 2 * * *",
+            timezone="Europe/Paris",
+            reason="nightly import",
+        ),
+        "key-1",
+    )
+    assert result.stdout.index("idempotency_key: key-1") < result.stdout.index(f"schedule_id: {SCHEDULE_ID}")
+    assert f"next_start_at: {NOW.isoformat()}" in result.stdout
+
+
+def test_create_defaults_the_time_zone_to_utc(client: MagicMock) -> None:
+    result = _invoke(
+        client,
+        "schedules",
+        "create",
+        "--name",
+        NAME,
+        "--config",
+        "from-netbox",
+        "--version",
+        "3",
+        "--cron",
+        "* * * * *",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert client.create_schedule.call_args.args[0].timezone == "UTC"
+
+
+def test_create_offers_only_the_settings_the_sync_api_accepts() -> None:
+    result = RUNNER.invoke(app, ["schedules", "create", "--help"], env={"NO_COLOR": "1", "COLUMNS": "200"})
+    # Rich can force ANSI on, which splits option strings, so the escape codes are removed first.
+    help_text = _ANSI.sub("", result.output)
+
+    assert result.exit_code == 0, result.output
+    for option in ("--name", "--config", "--version", "--cron", "--timezone", "--reason", "--idempotency-key"):
+        assert option in help_text
+    for later in ("--write-to-default-branch", "--overlap-policy", "--start-late-by-at-most"):
+        assert later not in help_text
+
+
+def test_create_refusal_exits_1_with_the_code(client: MagicMock) -> None:
+    client.create_schedule.side_effect = APIError(409, "schedule-name-in-use")
+
+    result = _invoke(
+        client,
+        "schedules",
+        "create",
+        "--name",
+        NAME,
+        "--config",
+        "from-netbox",
+        "--version",
+        "3",
+        "--cron",
+        "* * * * *",
+    )
+
+    assert result.exit_code == 1
+    assert "code: schedule-name-in-use" in result.stderr
+
+
+def test_list_prints_one_line_per_schedule(client: MagicMock) -> None:
+    result = _invoke(client, "schedules", "list", "--config", "from-netbox", "--state", "active", "--limit", "5")
+
+    assert result.exit_code == 0, result.output
+    client.list_schedules.assert_called_once_with(config_id="from-netbox", state="active", limit=5)
+    assert result.stdout.splitlines() == [
+        f"{SCHEDULE_ID}\t{NAME}\tfrom-netbox@3\tactive\t0 2 * * *\tEurope/Paris\t{NOW.isoformat()}"
+    ]
+
+
+def test_list_all_reads_every_page(client: MagicMock) -> None:
+    result = _invoke(client, "schedules", "list", "--all")
+
+    assert result.exit_code == 0, result.output
+    client.iter_schedules.assert_called_once_with(config_id=None, state=None, limit=None)
+    client.list_schedules.assert_not_called()
+
+
+def test_list_says_when_more_schedules_follow(client: MagicMock) -> None:
+    client.list_schedules.return_value = SchedulePage(items=(_schedule(),), next_cursor="c1")
+
+    result = _invoke(client, "schedules", "list")
+
+    assert "more schedules" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("reason", "action"),
+    [
+        ("owner-not-found", "an administrator takes the schedule over"),
+        ("approval-required", "change the write target to branch review"),
+        ("repeated-failures", "check the last runs"),
+    ],
+)
+def test_show_warns_about_a_stopped_schedule_with_the_action_its_reason_needs(
+    client: MagicMock, reason: str, action: str
+) -> None:
+    client.get_schedule.side_effect = None
+    client.get_schedule.return_value = _schedule(state="stopped", state_reason=reason, next_start_at=None)
+
+    result = _invoke(client, "schedules", "show", SCHEDULE_ID)
+
+    assert result.exit_code == 0, result.output
+    assert f"warning: this schedule is stopped: {reason}" in result.stderr
+    assert action in result.stderr
+    assert "warning" not in result.stdout
+
+
+def test_list_warns_about_a_schedule_not_yet_handed_to_the_task_manager(client: MagicMock) -> None:
+    client.list_schedules.return_value = SchedulePage(items=(_schedule(prefect_synced=False),))
+
+    result = _invoke(client, "schedules", "list")
+
+    assert result.exit_code == 0, result.output
+    assert "warning: this schedule is not yet handed to the task manager" in result.stderr
+    assert SCHEDULE_ID in result.stderr
+
+
+def test_show_prints_the_state_the_last_run_and_the_consecutive_failures(client: MagicMock) -> None:
+    client.get_schedule.side_effect = None
+    client.get_schedule.return_value = _schedule(last_run_id="run-9", consecutive_failures=2)
+
+    result = _invoke(client, "schedules", "show", SCHEDULE_ID)
+
+    assert result.exit_code == 0, result.output
+    for line in ("state: active", "state_reason: <none>", "last_run_id: run-9", "consecutive_failures: 2"):
+        assert line in result.stdout
+    assert not result.stderr
+    # A field the Sync API does not return yet is not printed as a value.
+    assert "newer_version" not in result.stdout
+
+
+def test_show_resolves_a_name_when_no_schedule_has_that_identifier(client: MagicMock) -> None:
+    result = _invoke(client, "schedules", "show", NAME)
+
+    assert result.exit_code == 0, result.output
+    assert f"schedule_id: {SCHEDULE_ID}" in result.stdout
+
+
+def test_a_schedule_that_cannot_be_resolved_exits_2(client: MagicMock) -> None:
+    result = _invoke(client, "schedules", "pause", "unknown-schedule")
+
+    assert result.exit_code == 2
+    assert "no schedule has the id or name 'unknown-schedule'" in result.stderr
+    client.pause_schedule.assert_not_called()
+
+
+def test_change_sends_only_the_given_settings(client: MagicMock) -> None:
+    result = _invoke(
+        client, "schedules", "change", NAME, "--cron", "0 3 * * *", "--version", "4", "--idempotency-key", "key-2"
+    )
+
+    assert result.exit_code == 0, result.output
+    client.change_schedule.assert_called_once_with(
+        SCHEDULE_ID, ChangeScheduleRequest(cron="0 3 * * *", registry_version=4), "key-2"
+    )
+    assert "next_start_at:" in result.stdout
+
+
+def test_change_without_a_setting_exits_2_before_any_request(client: MagicMock) -> None:
+    result = _invoke(client, "schedules", "change", SCHEDULE_ID)
+
+    assert result.exit_code == 2
+    client.change_schedule.assert_not_called()
+
+
+@pytest.mark.parametrize(("command", "method"), [("pause", "pause_schedule"), ("resume", "resume_schedule")])
+def test_pause_and_resume_send_the_reason_and_print_the_schedule(client: MagicMock, command: str, method: str) -> None:
+    result = _invoke(client, "schedules", command, NAME, "--reason", "maintenance", "--idempotency-key", "key-3")
+
+    assert result.exit_code == 0, result.output
+    getattr(client, method).assert_called_once_with(SCHEDULE_ID, ScheduleActionRequest(reason="maintenance"), "key-3")
+    assert "idempotency_key: key-3" in result.stdout
+    assert f"schedule_id: {SCHEDULE_ID}" in result.stdout
+
+
+def test_resume_refused_for_a_stopped_schedule_exits_1(client: MagicMock) -> None:
+    client.resume_schedule.side_effect = APIError(409, "schedule-stopped")
+
+    result = _invoke(client, "schedules", "resume", SCHEDULE_ID)
+
+    assert result.exit_code == 1
+    assert "code: schedule-stopped" in result.stderr
+
+
+def test_delete_without_yes_refuses_when_not_interactive(client: MagicMock) -> None:
+    result = _invoke(client, "schedules", "delete", SCHEDULE_ID)
+
+    assert result.exit_code == 2
+    assert "--yes" in result.stderr
+    client.delete_schedule.assert_not_called()
+
+
+@pytest.mark.parametrize(("answer", "deleted"), [("y\n", True), ("n\n", False)])
+def test_delete_prompts_when_interactive(
+    client: MagicMock, monkeypatch: pytest.MonkeyPatch, answer: str, *, deleted: bool
+) -> None:
+    monkeypatch.setattr("infrahub_sync.cli._stdin_is_interactive", lambda: True)
+
+    result = _invoke(client, "schedules", "delete", SCHEDULE_ID, stdin=answer)
+
+    assert client.delete_schedule.called is deleted
+    assert result.exit_code == (0 if deleted else 1), result.output
+
+
+def test_delete_names_the_open_branch_and_proposed_change_that_stay_in_infrahub(client: MagicMock) -> None:
+    client.delete_schedule.return_value = _schedule(
+        state="deleted",
+        next_start_at=None,
+        open_branch=ScheduleOpenBranchResource(run_id="run-7", branch="sync/nightly-1", proposed_change_id="pc-1"),
+    )
+
+    result = _invoke(client, "schedules", "delete", SCHEDULE_ID, "--yes", "--idempotency-key", "key-4")
+
+    assert result.exit_code == 0, result.output
+    client.delete_schedule.assert_called_once_with(SCHEDULE_ID, ScheduleActionRequest(), "key-4")
+    assert "state: deleted" in result.stdout
+    assert "open_branch: sync/nightly-1" in result.stdout
+    assert "open_proposed_change_id: pc-1" in result.stdout
+    assert "the branch sync/nightly-1 and the proposed change pc-1 stay in Infrahub" in result.stdout
+
+
+def _public_run(**extra: object) -> PublicRunResource:
+    values: dict[str, object] = {
+        "run_id": "run-1",
+        "operation": "sync",
+        "configuration_reference": "from-netbox@3",
+        "config_id": "from-netbox",
+        "registry_version": 3,
+        "package_checksum": "a" * 64,
+        "actor": "operator",
+        "started_at": NOW,
+        "phase": "applied",
+        "destination_branch": "main",
+    }
+    values.update(extra)
+    return PublicRunResource.model_validate(values)
+
+
+def test_runs_list_filters_on_the_trigger_type_and_a_schedule_name(client: MagicMock) -> None:
+    client.list_runs.return_value = RunPage(items=(_public_run(trigger_type="scheduled", schedule_id=SCHEDULE_ID),))
+
+    result = _invoke(client, "runs", "list", "--trigger-type", "scheduled", "--schedule", NAME)
+
+    assert result.exit_code == 0, result.output
+    client.list_runs.assert_called_once_with(
+        config_id=None, registry_version=None, limit=None, trigger_type="scheduled", schedule_id=SCHEDULE_ID
+    )
+    assert "  scheduled  " in result.stdout
+
+
+def test_runs_list_refuses_an_unknown_trigger_type(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "list", "--trigger-type", "daily")
+
+    assert result.exit_code == 2
+    client.list_runs.assert_not_called()
+
+
+def test_runs_show_prints_the_trigger_type_the_schedule_and_the_scheduled_start(client: MagicMock) -> None:
+    run = _public_run(trigger_type="scheduled", schedule_id=SCHEDULE_ID, scheduled_start_at=NOW)
+    client.get_run.return_value = RunResource(run=run, orchestration=())
+
+    result = _invoke(client, "runs", "show", "run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "trigger_type: scheduled" in result.stdout
+    assert f"schedule_id: {SCHEDULE_ID}" in result.stdout
+    assert f"scheduled_start_at: {NOW.isoformat()}" in result.stdout
+
+
+def test_events_filters_on_a_schedule_and_prints_the_details(client: MagicMock) -> None:
+    event = EventResource(
+        event_id="e-1",
+        event_type="infrahub_sync.schedule.start_skipped",
+        occurred_at=NOW,
+        actor="operator",
+        operation="schedule",
+        outcome="skipped",
+        primary_resource=EventPrimaryResource(kind="schedule", id=SCHEDULE_ID),
+        details=EventDetailsResource(start_at=NOW, cause="run-in-progress"),
+    )
+    client.iter_events.return_value = iter((event,))
+
+    result = _invoke(client, "events", "--schedule", NAME)
+
+    assert result.exit_code == 0, result.output
+    client.iter_events.assert_called_once_with(
+        run_id=None, config_id=None, event_types=(), related=(("schedule", SCHEDULE_ID),)
+    )
+    assert result.stdout.splitlines() == [
+        "\t".join(
+            (
+                NOW.isoformat(),
+                "infrahub_sync.schedule.start_skipped",
+                f"schedule:{SCHEDULE_ID}",
+                "operator",
+                "skipped",
+                f"start_at={NOW.isoformat()} cause=run-in-progress",
+            )
+        )
+    ]

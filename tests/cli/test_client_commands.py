@@ -930,6 +930,9 @@ def test_runs_show_prints_no_read_fields_for_a_run_without_read_state(client: Ma
         "execution_state: pending",
         "flow_run_id: flow-service-1",
         "prefect_flow_run_url: <none>",
+        "trigger_type: manual",
+        "schedule_id: <none>",
+        "scheduled_start_at: <none>",
     ]
 
 
@@ -1956,8 +1959,8 @@ def test_runs_list_without_filters_prints_one_row_per_run(client: MagicMock) -> 
     client.list_runs.assert_called_once_with(config_id=None, registry_version=None, limit=None)
     client.get_config.assert_not_called()
     assert result.stdout.splitlines() == [
-        f"run-2  edge-sync@1  review  planned  planned  operator  {NOW.isoformat()}",
-        f"run-1  -  -  planned  -  operator  {NOW.isoformat()}",
+        f"run-2  edge-sync@1  review  manual  planned  planned  operator  {NOW.isoformat()}",
+        f"run-1  -  -  manual  planned  -  operator  {NOW.isoformat()}",
     ]
     assert "more runs" not in result.output
 
