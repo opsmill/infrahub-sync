@@ -1,0 +1,27 @@
+tests/client/test_models.py
+  s_29b17f91da9f30::t_99faecb5be9a3f 359-374
+tests/client/test_schedules.py
+  s_29b17f91da9f30::t_7b5acedc07684f 321
+tests/cli/test_schedule_commands.py
+  s_29b17f91da9f30::t_60d8efb368f7fb 589-591
+infrahub_sync/client/client.py
+  s_29b17f91da9f30::t_11f2e1c78568de 423
+infrahub_sync/client/models.py
+  s_29b17f91da9f30::t_7fa9a481e2d865 106-107,422-426
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ed9cf89613a49535b1e9bc0fbce0fc8096ff1a2",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
