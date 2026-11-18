@@ -148,7 +148,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 
 ### Sync frontend
 
-- Never name a user in the interface (`frontend/`): no "by <actor>", "registered by" or "started by". There is one user, defined by the API token in use, so naming it tells the reader nothing.
+- Name the account where it explains who acted: the signed-in account, the account that started a run, approved a plan or registered a version. Show the name the Sync API returns, including `Deleted account <short identifier>`; never show an account identifier.
 
 ## Testing
 

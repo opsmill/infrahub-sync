@@ -271,7 +271,7 @@ on this phase.
   plan in `frontend/src/features/runs/` (`RunPage.tsx`, `RunsPage.tsx`, `run-sections.tsx`).
 - [X] T052 [P] [US2] Display the account that registered a version on the configuration page
   (`frontend/src/routes/configs.$configId.tsx` and its feature files).
-- [ ] T053 [US2] Replace the "Sync frontend" rule in `AGENTS.md` with the rule of
+- [X] T053 [US2] Replace the "Sync frontend" rule in `AGENTS.md` with the rule of
   [contracts/web-interface.md](contracts/web-interface.md), and update `frontend/README.md`,
   section "Calling the Sync API".
 - [ ] T054 [US2] Run `pnpm check`, `pnpm typecheck` and `pnpm build` in `frontend/`, then the

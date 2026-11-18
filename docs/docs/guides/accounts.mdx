@@ -67,6 +67,23 @@ The `cli` service of the Compose deployment keeps no file, so `login` does not k
 there. That service presents `INFRAHUB_SYNC_API_TOKEN` from `.env`, which is the `admin` token
 on a new deployment.
 
+## Sign in to the web interface
+
+Open the address of the Sync service in a browser, for example `http://127.0.0.1:8001`. The page
+asks for an account name and a password. After you sign in, the header of every page shows your
+account name and a **Sign out** action.
+
+A refused sign-in shows one message, whatever the cause: "The account name or the password is not
+accepted." Each refused sign-in counts toward the refusal after repeated failures, as with
+`infrahub-sync login`.
+
+The page keeps the session token for the browser tab only: closing the tab removes it. The
+session ends when you select **Sign out**, and in the same cases as a session of the CLI. The page
+then shows the sign-in form again. The web interface has no field for an API token.
+
+The pages name the account that started a run, the account that approved a plan and the account
+that registered a configuration version.
+
 ## Add a person
 
 As an administrator, create the account. The CLI asks for the initial password twice, without

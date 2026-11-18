@@ -625,27 +625,35 @@ configurations and runs and acts on them. Open the address of the Sync API port 
 a browser, by default `http://127.0.0.1:8001`. The web interface needs no other
 port, service or setting.
 
-Each person signs in to the web interface with an API token of their account:
+Each person signs in to the web interface with the name and the password of their account:
 
-1. The web interface asks for a Sync API token. Enter a token and select
-   **Continue**.
-2. The web interface checks the token with the Sync API before it accepts it. When
-   the Sync API refuses the token, the page says so, and you can enter another one.
-3. Every request the web interface sends to the Sync API carries that token, so the
-   person acts with the permissions of the account that owns it, as with the CLI.
+1. The web interface asks for an account name and a password. Enter them and select
+   **Sign in**.
+2. When the Sync API refuses the sign-in, the page shows one message, the same for a wrong
+   name, a wrong password, a disabled account and a name refused after repeated failures:
+   "The account name or the password is not accepted." When the Sync service is checking too
+   many sign-ins at once, the page asks you to try again in a moment.
+3. When the Sync API accepts the sign-in, it returns a session token. Every request the web
+   interface sends to the Sync API carries that session token, so the person acts with the
+   permissions of their account, as with the CLI.
 
-To remove the token from the browser tab, select the Sync service status at the top
-of the page, then select **Remove token**. The web interface also removes the token and asks
-for a new one when the Sync API refuses a request with it, for example after an
-operator changed or removed the token.
+The header of every page shows the signed-in account and a **Sign out** action. Sign out
+ends the session in the Sync service and removes the session token from the browser tab. The
+web interface also removes the session token and shows the sign-in form again when the Sync
+API refuses a request with it: after the session was unused for the idle period
+(`INFRAHUB_SYNC_SESSION_IDLE_SECONDS`), or after an administrator disabled or deleted the
+account.
 
-The web interface keeps the token for the browser tab only, in the tab's session
-storage. Closing the tab removes it, and the Sync service sets no cookie. The Sync
-service never sends a token to the browser: each person enters their own.
+The web interface keeps the session token for the browser tab only, in the tab's session
+storage. Closing the tab removes it, and the Sync service sets no cookie. The web interface
+never keeps the password.
 
-To give each person their own token, an administrator creates an account for the
-person, and the person signs in with `infrahub-sync login` and creates a token with
-`infrahub-sync tokens create`. Neither step changes `.env` or restarts a service.
+To give a person access, an administrator creates an account for the person with
+`infrahub-sync accounts create`. This step does not change `.env` or restart a service.
+
+The pages name the account that started a run, the account that approved a plan and the
+account that registered a configuration version. A deleted account is shown as
+`Deleted account` followed by a short identifier.
 See [Manage accounts](./guides/accounts.mdx).
 
 Any account can create and inspect a run. Only the account that created a run, or

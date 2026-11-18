@@ -1,0 +1,1 @@
+The web interface asks for an account name and a password, shows the signed-in account with a sign-out action, and names the account that started a run, approved a plan or registered a configuration version.

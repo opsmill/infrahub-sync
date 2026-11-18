@@ -44,11 +44,20 @@ import { Button } from "@infrahub/ui";
 ### Calling the Sync API
 
 The browser sends API requests to `/api` on the page's own origin, where the Sync service serves
-the Sync API. Each person enters their own Sync API token in the page. The page sends it as a
-bearer token with every request and keeps it for the browser tab only.
+the Sync API. While the tab holds no session, the page shows only the sign-in form
+(`src/components/sign-in.tsx`). The form sends the account name and the password to
+`POST /api/auth/sign-in` and keeps the session token of the answer in `sessionStorage`, for the
+browser tab only (`src/api/token.ts`); the password is not kept. The page sends the session token
+as a bearer token with every request. No cookie is used.
+
+A `401` for a request that carried the held session token, for example after the session was
+unused for the idle period, removes the token and shows the sign-in form again. **Sign out** in
+the header calls `POST /api/auth/sign-out` with the session token, then removes the token from the
+tab whatever the answer. The header names the signed-in account from `GET /api/me`.
 
 In development, the Vite server forwards every request under `/api` to the Sync service without
-changing the path and without adding a token, so you enter a token in the page as in a deployment.
+changing the path and without adding an `Authorization` header, so you sign in on the page as in a
+deployment.
 The server reads the Sync service's address from the same environment variable as the
 `infrahub-sync` CLI, from the shell only, not from a `.env` file: `INFRAHUB_SYNC_API_URL`, by
 default `http://127.0.0.1:8001`.
