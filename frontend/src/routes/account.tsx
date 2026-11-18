@@ -238,7 +238,7 @@ function TokensSection({ readOnly }: { readOnly: boolean }) {
           </p>
         </EmptyPanel>
       ) : (
-        <Card className="overflow-x-auto bg-content bg-none">
+        <Card className="relative overflow-x-auto bg-content bg-none">
           <table aria-labelledby="tokens-heading" className="w-full text-sm">
             <thead className="bg-content-muted">
               <tr>

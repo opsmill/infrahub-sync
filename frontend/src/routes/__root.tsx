@@ -280,10 +280,10 @@ function StatusMenu() {
 }
 
 /**
- * The signed-in account, from `GET /me`, the link to its page, and the action that signs out. Signing out removes the
+ * The signed-in account, from `GET /me`, and the action that signs out. Signing out removes the
  * session token, which also empties the query cache and the downloaded plans.
  */
-function AccountControls({ current }: { current: boolean }) {
+function AccountControls() {
   const me = useQuery(meQuery());
   const [pending, setPending] = useState(false);
   const name = me.data?.actor;
@@ -297,21 +297,13 @@ function AccountControls({ current }: { current: boolean }) {
     <div className="flex min-w-0 items-center gap-1">
       {name && (
         <span
-          className="min-w-0 max-w-24 truncate text-foreground-muted text-xs sm:max-w-48"
+          className="min-w-0 max-w-24 truncate max-sm:sr-only text-foreground-muted text-xs sm:max-w-48"
           title={`Signed in as ${name}`}
         >
           <span className="sr-only">Signed in as </span>
           {name}
         </span>
       )}
-      <Link
-        to="/account"
-        className={NAV}
-        data-current={current ? "" : undefined}
-        aria-current={current ? "page" : undefined}
-      >
-        My account
-      </Link>
       <Button
         variant="ghost"
         size="sm"
@@ -438,7 +430,10 @@ function RootComponent() {
             <Mark />
             <span className="max-sm:hidden">Infrahub Sync</span>
           </PlainLink>
-          <nav aria-label="Main" className="flex shrink-0 items-center gap-1">
+          <nav
+            aria-label="Main"
+            className="flex shrink-0 items-center gap-1 max-sm:min-w-0 max-sm:shrink max-sm:self-stretch max-sm:overflow-x-auto max-sm:[scrollbar-width:none]"
+          >
             {/* TanStack sets aria-current="page" on an exact match; a page inside the section gets "true". */}
             <Link
               to="/"
@@ -469,10 +464,19 @@ function RootComponent() {
                 Accounts
               </Link>
             )}
+            <Link
+              to="/account"
+              activeOptions={{ exact: true, includeSearch: false }}
+              className={NAV}
+              data-current={section === "account" ? "" : undefined}
+              aria-current={section === "account" ? "true" : undefined}
+            >
+              My account
+            </Link>
           </nav>
-          <div className="ml-auto flex min-w-0 items-center gap-2">
+          <div className="ml-auto flex min-w-0 items-center gap-2 max-sm:shrink-0">
             <StatusMenu />
-            <AccountControls current={section === "account"} />
+            <AccountControls />
             <ThemeMenu />
           </div>
         </div>

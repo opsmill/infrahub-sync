@@ -282,7 +282,7 @@ function AccountsTable({
   onAction: (action: Action, account: Account) => void;
 }) {
   return (
-    <Card className="overflow-x-auto bg-content bg-none">
+    <Card className="relative overflow-x-auto bg-content bg-none">
       <table aria-label="Accounts" className="w-full text-sm">
         <thead className="bg-content-muted">
           <tr>
