@@ -34,7 +34,7 @@ class _Bucket:
 
 
 def _bootstrap(api: ScheduleApi, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Replace every provider of the bootstrap job; applying the deployment removes its Prefect schedules."""
+    """Replace every provider of the bootstrap job; the fake deployment apply removes the Prefect schedules."""
     steps: list[str] = []
     client = object()
 

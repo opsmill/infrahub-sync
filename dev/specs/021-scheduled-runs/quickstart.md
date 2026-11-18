@@ -105,12 +105,15 @@ Expected, with a source that changes between two starts:
 
 ## 5. Missed starts (user story 3)
 
-On the development stack, with a schedule that starts every 5 minutes:
+On the development stack:
 
-1. Stop the `sync-worker` service before a start time and start it again 2 minutes after.
-   Expected: one run starts, and the events hold `start_missed` with `missed-started-late`.
-2. Set `--start-late-by-at-most 1m`, stop the worker before a start time and start it again
-   3 minutes after. Expected: no run, and `start_missed` with `missed-skipped`.
+1. Stop the `sync-worker` service before a start time and start it again 7 minutes after. A run
+   up to 5 minutes late counts as on time and records no missed start, so the delay must be
+   longer than that. Use a schedule that starts every 10 minutes, so that the next start does
+   not pass during the stop. Expected: one run starts, and the events hold `start_missed` with
+   `missed-started-late`.
+2. With a schedule that starts every 5 minutes, set `--start-late-by-at-most 1m`, stop the
+   worker before a start time and start it again 3 minutes after. Expected: no run, and `start_missed` with `missed-skipped`.
 3. Stop the `sync-api` service across a start time. Expected: the run starts on time.
 
 ## 6. Documentation

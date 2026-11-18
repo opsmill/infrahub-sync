@@ -647,9 +647,11 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
 
         A store error of the stop step is tried again ``_STOP_ATTEMPTS`` times in all, with a
         wait between the attempts. When every attempt fails, the error is logged and the match
-        is skipped, so Prefect does not turn on a schedule that should be stopped. The worker
-        checks the approval setting before each scheduled run as well (research R6), so a
-        schedule that this step could not stop still writes nothing to the default branch.
+        is skipped, so Prefect does not turn on a schedule that should be stopped. A worker that
+        reads the approval setting checks it before each scheduled run as well (research R6), so
+        a schedule that this step could not stop writes nothing to the default branch there. The
+        Compose files pass the setting to the worker; the Helm chart does not yet, so on
+        Kubernetes this step is the only stop.
         """
         for attempt in range(1, _STOP_ATTEMPTS + 1):
             try:

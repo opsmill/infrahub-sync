@@ -2,10 +2,10 @@
 
 This is the one-off job a Compose deployment runs before its API and its worker
 start: the product schema, the artifact bucket, the Prefect process work pool,
-the installed deployment, and the Prefect schedule of each stored schedule, which
-applying the deployment removes. Everything here is safe to repeat — a second run
-observes what the first created and, apart from those Prefect schedules, writes
-nothing.
+the installed deployment, and the Prefect schedule of each stored schedule, which the
+match step makes equal to the store. Everything here is safe to repeat — a second run
+observes what the first created and, apart from Prefect schedules that differ from the
+store, writes nothing.
 
 The bootstrap record is the last step: the Sync version and the work pool this run
 set up. The API and the worker read it when they start and refuse to start when it

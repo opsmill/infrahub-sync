@@ -422,7 +422,9 @@ fragment states it again.
 - `GET /schedules` pages with a cursor (ADR 0032), newest first by `(created_at, schedule_id)`.
 - Receipts gain the resource kind `schedule` (`product_store/models.py:522`).
 - Request and resource models go in `infrahub_sync/client/models.py`, which the service re-exports.
-- The bootstrap job removes the Prefect schedules of the deployment each time it runs. It applies
+- **Superseded on 2026-11-18** (see "Checked since": the bootstrap job does not remove the Prefect
+  schedules, because Prefect keeps schedules that have a slug; the match step stays as a repair).
+  The bootstrap job removes the Prefect schedules of the deployment each time it runs. It applies
   the deployment with `apply_deployments`, which treats `schedules` as a field it owns: the
   definition has none, so a deployment that holds schedules does not match, and the update sends
   an empty list (`opsmill_prefect_extras/deployments.py:325-346, 399-417`). The vendored package
