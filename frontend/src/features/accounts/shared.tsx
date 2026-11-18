@@ -79,6 +79,7 @@ export function NewPasswordFields({
           value={password}
           onChange={(e) => onPassword(e.target.value)}
           aria-describedby={[`${first}-hint`, problemId].filter(Boolean).join(" ")}
+          aria-invalid={problemId ? true : undefined}
           // biome-ignore lint/a11y/noAutofocus: only when the caller asks, inside a modal that just opened.
           autoFocus={autoFocus}
         />
@@ -92,6 +93,7 @@ export function NewPasswordFields({
           value={repeat}
           onChange={(e) => onRepeat(e.target.value)}
           aria-describedby={problemId}
+          aria-invalid={problemId ? true : undefined}
         />
       </Field>
     </>

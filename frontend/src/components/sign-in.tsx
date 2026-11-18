@@ -42,6 +42,9 @@ export function SignIn() {
     setError(MESSAGES[result]);
   }
 
+  // Only a refusal says the values are wrong; a busy or silent service does not.
+  const refused = error === MESSAGES.refused;
+
   // After a refusal the password field is empty and enabled again; focus returns to it.
   useEffect(() => {
     if (error) passwordRef.current?.focus();
@@ -73,6 +76,7 @@ export function SignIn() {
                 onChange={(event) => setName(event.target.value)}
                 disabled={pending}
                 aria-describedby={error ? errorId : undefined}
+                aria-invalid={refused ? true : undefined}
               />
             </Field>
             <Field id={passwordId} label="Password">
@@ -88,6 +92,7 @@ export function SignIn() {
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={pending}
                 aria-describedby={error ? errorId : undefined}
+                aria-invalid={refused ? true : undefined}
               />
             </Field>
             {error && (

@@ -13,7 +13,10 @@ export function useIdempotencyKey(): [string, () => void] {
   return [key, () => setKey(crypto.randomUUID())];
 }
 
-/** After any write, every list and the run itself are read again. */
+/**
+ * After any write, every list and the run itself are read again, whatever the answer: a refusal
+ * such as `account-not-found` or a conflict means the lists on the page are out of date too.
+ */
 function useInvalidate() {
   const client = useQueryClient();
   return () => client.invalidateQueries();
@@ -21,32 +24,32 @@ function useInvalidate() {
 
 export function useCreateRun() {
   const invalidate = useInvalidate();
-  return $api.useMutation("post", "/runs", { onSuccess: invalidate });
+  return $api.useMutation("post", "/runs", { onSettled: invalidate });
 }
 
 export function useVerifyRun() {
   const invalidate = useInvalidate();
-  return $api.useMutation("post", "/runs/{run_id}/verify", { onSuccess: invalidate });
+  return $api.useMutation("post", "/runs/{run_id}/verify", { onSettled: invalidate });
 }
 
 export function useApproveRun() {
   const invalidate = useInvalidate();
-  return $api.useMutation("post", "/runs/{run_id}/approve", { onSuccess: invalidate });
+  return $api.useMutation("post", "/runs/{run_id}/approve", { onSettled: invalidate });
 }
 
 export function useApplyRun() {
   const invalidate = useInvalidate();
-  return $api.useMutation("post", "/runs/{run_id}/apply", { onSuccess: invalidate });
+  return $api.useMutation("post", "/runs/{run_id}/apply", { onSettled: invalidate });
 }
 
 export function useResumeRun() {
   const invalidate = useInvalidate();
-  return $api.useMutation("post", "/runs/{run_id}/resume", { onSuccess: invalidate });
+  return $api.useMutation("post", "/runs/{run_id}/resume", { onSettled: invalidate });
 }
 
 export function useCancelRun() {
   const invalidate = useInvalidate();
-  return $api.useMutation("post", "/runs/{run_id}/cancel", { onSuccess: invalidate });
+  return $api.useMutation("post", "/runs/{run_id}/cancel", { onSettled: invalidate });
 }
 
 /* ---------- accounts and tokens ---------- */
@@ -58,28 +61,28 @@ export function useInvalidateAccounts() {
 
 export function useUpdateAccount() {
   const invalidate = useInvalidate();
-  return $api.useMutation("patch", "/accounts/{name}", { onSuccess: invalidate });
+  return $api.useMutation("patch", "/accounts/{name}", { onSettled: invalidate });
 }
 
 export function useUnlockAccount() {
   const invalidate = useInvalidate();
-  return $api.useMutation("post", "/accounts/{name}/unlock", { onSuccess: invalidate });
+  return $api.useMutation("post", "/accounts/{name}/unlock", { onSettled: invalidate });
 }
 
 export function useDeleteAccount() {
   const invalidate = useInvalidate();
-  return $api.useMutation("delete", "/accounts/{name}", { onSuccess: invalidate });
+  return $api.useMutation("delete", "/accounts/{name}", { onSettled: invalidate });
 }
 
 export function useDeleteMyToken() {
   const invalidate = useInvalidate();
-  return $api.useMutation("delete", "/me/tokens/{token_id}", { onSuccess: invalidate });
+  return $api.useMutation("delete", "/me/tokens/{token_id}", { onSettled: invalidate });
 }
 
 export function useDeleteAccountToken() {
   const invalidate = useInvalidate();
   return $api.useMutation("delete", "/accounts/{name}/tokens/{token_id}", {
-    onSuccess: invalidate,
+    onSettled: invalidate,
   });
 }
 
@@ -87,7 +90,7 @@ export function useDeleteAccountToken() {
  * The four requests below carry a password or answer with a token value. They call the fetch
  * client directly instead of `useMutation`, because a mutation keeps its body and its answer in
  * the query client, where the developer tools display them. The caller keeps nothing after the
- * answer, and invalidates the lists with `useInvalidateAccounts`.
+ * answer, and invalidates the lists with `useInvalidateAccounts` after any answer.
  */
 
 /** The answer to a request that carries a secret: its data, or the error to describe. */

@@ -1,7 +1,7 @@
 import { Button, Card, Checkbox, Menu, MenuItem, MenuTrigger, Modal, Popover } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
 import {
@@ -392,15 +392,17 @@ function CreateAccountDialog({ onClose }: { onClose: () => void }) {
   const [administrator, setAdministrator] = useState(false);
   const [reason, setReason] = useState("");
   const [problem, setProblem] = useState<string>();
+  /** The field the problem is about, linked to the message while it is shown. */
+  const [problemField, setProblemField] = useState<"name" | "password">();
   const [error, setError] = useState<unknown>();
   const [pending, setPending] = useState(false);
 
   async function submit() {
     setError(undefined);
-    const refused = !name.trim()
-      ? "Give the account a name."
-      : newPasswordProblem(password, repeat);
+    const nameMissing = !name.trim();
+    const refused = nameMissing ? "Give the account a name." : newPasswordProblem(password, repeat);
     setProblem(refused);
+    setProblemField(refused ? (nameMissing ? "name" : "password") : undefined);
     if (refused) return;
     setPending(true);
     const result = await createAccount(name, password, administrator, reason);
@@ -408,11 +410,12 @@ function CreateAccountDialog({ onClose }: { onClose: () => void }) {
     setPassword("");
     setRepeat("");
     setPending(false);
+    // The lists are read again whatever the answer: a refusal can mean they are out of date.
+    void invalidate();
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    void invalidate();
     announce(`Account ${result.data.name} created.`);
     onClose();
   }
@@ -452,7 +455,12 @@ function CreateAccountDialog({ onClose }: { onClose: () => void }) {
           autoComplete="off"
           autoCapitalize="none"
           spellCheck={false}
-          aria-describedby="account-name-hint"
+          aria-describedby={
+            problem && problemField === "name"
+              ? "account-name-hint account-problem"
+              : "account-name-hint"
+          }
+          aria-invalid={problem && problemField === "name" ? true : undefined}
           // biome-ignore lint/a11y/noAutofocus: only with a fine pointer, inside a modal that just opened.
           autoFocus={finePointer()}
         />
@@ -464,7 +472,7 @@ function CreateAccountDialog({ onClose }: { onClose: () => void }) {
         repeat={repeat}
         onPassword={edit(setPassword)}
         onRepeat={edit(setRepeat)}
-        problemId={problem ? "account-problem" : undefined}
+        problemId={problem && problemField === "password" ? "account-problem" : undefined}
       />
       <Checkbox
         isSelected={administrator}
@@ -558,11 +566,12 @@ function PasswordDialog({ account, onClose }: { account: Account; onClose: () =>
     setPassword("");
     setRepeat("");
     setPending(false);
+    // The lists are read again whatever the answer: a refusal can mean they are out of date.
+    void invalidate();
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    void invalidate();
     announce(`Password of ${account.name} set. Its sessions ended.`);
     onClose();
   }
@@ -851,7 +860,26 @@ function TokensDialog({ account, onClose }: { account: Account; onClose: () => v
   const remove = useDeleteAccountToken();
   const [confirming, setConfirming] = useState<Token>();
   const titleId = "account-tokens-title";
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
   const list = tokens.data ?? [];
+
+  // The confirmation replaces the row's Delete button, so focus moves to its "Delete token".
+  const confirmingId = confirming?.token_id;
+  useEffect(() => {
+    if (confirmingId) confirmRef.current?.focus();
+  }, [confirmingId]);
+
+  /** Ends the confirmation and moves focus to the row's Delete button, or to the heading. */
+  function endConfirmation(tokenId?: string) {
+    setConfirming(undefined);
+    requestAnimationFrame(() => {
+      const button = tokenId
+        ? document.querySelector<HTMLElement>(`[data-delete-token="${CSS.escape(tokenId)}"]`)
+        : null;
+      (button ?? headingRef.current)?.focus();
+    });
+  }
 
   return (
     <Modal
@@ -862,7 +890,12 @@ function TokensDialog({ account, onClose }: { account: Account; onClose: () => v
     >
       <div className="flex w-[min(560px,calc(90vw-10px))] flex-col gap-4 p-5">
         <div className="flex flex-col gap-1.5">
-          <h2 id={titleId} className="font-semibold text-base">
+          <h2
+            ref={headingRef}
+            id={titleId}
+            tabIndex={-1}
+            className="font-semibold text-base outline-none"
+          >
             API tokens of {account.name}
           </h2>
           <p className="text-pretty text-foreground-muted text-sm">
@@ -901,6 +934,7 @@ function TokensDialog({ account, onClose }: { account: Account; onClose: () => v
                       size="xs"
                       variant="outline"
                       aria-label={`Delete the token ${token.name}`}
+                      data-delete-token={token.token_id}
                       onPress={() => {
                         remove.reset();
                         setConfirming(token);
@@ -916,6 +950,7 @@ function TokensDialog({ account, onClose }: { account: Account; onClose: () => v
                       Delete {token.name}? You cannot undo this.
                     </p>
                     <Button
+                      ref={confirmRef}
                       size="xs"
                       variant="danger"
                       isPending={remove.isPending}
@@ -929,7 +964,15 @@ function TokensDialog({ account, onClose }: { account: Account; onClose: () => v
                           {
                             onSuccess: () => {
                               announce(`Token ${token.name} of ${account.name} deleted.`);
-                              setConfirming(undefined);
+                              endConfirmation();
+                            },
+                            onError: (error) => {
+                              // The token or the account is gone: the list read again drops the
+                              // row, so the confirmation ends and focus moves to the heading.
+                              const code = describeAccountError(error).code;
+                              if (code === "token-not-found" || code === "account-not-found") {
+                                endConfirmation();
+                              }
                             },
                           }
                         )
@@ -941,7 +984,10 @@ function TokensDialog({ account, onClose }: { account: Account; onClose: () => v
                       size="xs"
                       variant="ghost"
                       isDisabled={remove.isPending}
-                      onPress={() => setConfirming(undefined)}
+                      onPress={() => {
+                        remove.reset();
+                        endConfirmation(token.token_id);
+                      }}
                     >
                       Keep
                     </Button>

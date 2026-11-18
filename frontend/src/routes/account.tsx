@@ -9,7 +9,7 @@ import {
   useDeleteMyToken,
   useInvalidateAccounts,
 } from "#/api/actions";
-import { meQuery, myTokensQuery } from "#/api/queries";
+import { describeAccountError, meQuery, myTokensQuery } from "#/api/queries";
 import type { components } from "#/api/types.generated";
 import { announce } from "#/components/announcer";
 import { Bar, EmptyPanel, ErrorPanel, Notice, SectionHeading } from "#/components/page";
@@ -90,8 +90,13 @@ function PasswordSection({ name }: { name: string }) {
   const [password, setPassword] = useState("");
   const [repeat, setRepeat] = useState("");
   const [problem, setProblem] = useState<string>();
+  /** The field the problem is about, linked to the message while it is shown. */
+  const [problemField, setProblemField] = useState<"current" | "new">();
   const [error, setError] = useState<unknown>();
   const [done, setDone] = useState(false);
+  const currentRefused =
+    (problem && problemField === "current") ||
+    (!problem && describeAccountError(error).code === "current-password-refused");
   const [pending, setPending] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -101,6 +106,7 @@ function PasswordSection({ name }: { name: string }) {
     setError(undefined);
     const refused = current ? newPasswordProblem(password, repeat) : "Type your current password.";
     setProblem(refused);
+    setProblemField(refused ? (current ? "new" : "current") : undefined);
     if (refused) return;
     setPending(true);
     const result = await changeMyPassword(current, password);
@@ -143,7 +149,10 @@ function PasswordSection({ name }: { name: string }) {
                 className={INPUT}
                 value={current}
                 onChange={(e) => edit(setCurrent)(e.target.value)}
-                aria-describedby={problem ? problemId : error ? errorId : undefined}
+                aria-describedby={
+                  problem && problemField === "current" ? problemId : error ? errorId : undefined
+                }
+                aria-invalid={currentRefused ? true : undefined}
               />
             </Field>
             <NewPasswordFields
@@ -152,7 +161,7 @@ function PasswordSection({ name }: { name: string }) {
               repeat={repeat}
               onPassword={edit(setPassword)}
               onRepeat={edit(setRepeat)}
-              problemId={problem ? problemId : undefined}
+              problemId={problem && problemField === "new" ? problemId : undefined}
             />
           </fieldset>
           {problem && <FormProblem id={problemId}>{problem}</FormProblem>}
@@ -280,6 +289,7 @@ function TokensSection({ readOnly }: { readOnly: boolean }) {
                         size="xs"
                         variant="outline"
                         aria-label={`Delete the token ${token.name}`}
+                        data-delete-token={token.token_id}
                         onPress={() => setDeleting(token)}
                       >
                         Delete
@@ -304,7 +314,18 @@ function TokensSection({ readOnly }: { readOnly: boolean }) {
       {deleting && (
         <DeleteTokenDialog
           token={deleting}
-          onClose={() => setDeleting(undefined)}
+          onClose={() => {
+            // Focus returns to the row's Delete button, or to the heading when a refusal such
+            // as token-not-found removed the row from the list read again.
+            const tokenId = deleting.token_id;
+            setDeleting(undefined);
+            requestAnimationFrame(() => {
+              const button = document.querySelector<HTMLElement>(
+                `[data-delete-token="${CSS.escape(tokenId)}"]`
+              );
+              (button ?? headingRef.current)?.focus();
+            });
+          }}
           onDeleted={() => {
             setDeleting(undefined);
             headingRef.current?.focus();
@@ -342,27 +363,34 @@ function CreateTokenDialog({
   const [time, setTime] = useState("");
   const [reason, setReason] = useState("");
   const [problem, setProblem] = useState<string>();
+  /** The field the problem is about, linked to the message while it is shown. */
+  const [problemField, setProblemField] = useState<"name" | "expiry">();
   const [error, setError] = useState<unknown>();
   const [pending, setPending] = useState(false);
+  const nameProblem = problem && problemField === "name";
+  const expiryProblem = problem && problemField === "expiry";
 
   async function submit() {
     setError(undefined);
     const expiry = expiryOf(date, time);
-    const refused = !name.trim()
+    const nameMissing = !name.trim();
+    const refused = nameMissing
       ? "Give the token a name."
       : "problem" in expiry
         ? expiry.problem
         : undefined;
     setProblem(refused);
+    setProblemField(refused ? (nameMissing ? "name" : "expiry") : undefined);
     if (refused || "problem" in expiry) return;
     setPending(true);
     const result = await createMyToken(name, expiry.iso, reason);
     setPending(false);
+    // The lists are read again whatever the answer: a refusal can mean they are out of date.
+    void invalidate();
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    void invalidate();
     announce(`Token ${result.data.name} created. Its value is shown once.`);
     onCreated(result.data.name, result.data.token);
   }
@@ -401,7 +429,8 @@ function CreateTokenDialog({
           onChange={(e) => edit(setName)(e.target.value)}
           autoComplete="off"
           spellCheck={false}
-          aria-describedby="token-name-hint"
+          aria-describedby={nameProblem ? "token-name-hint token-problem" : "token-name-hint"}
+          aria-invalid={nameProblem ? true : undefined}
           // biome-ignore lint/a11y/noAutofocus: only with a fine pointer, inside a modal that just opened.
           autoFocus={finePointer()}
         />
@@ -418,7 +447,10 @@ function CreateTokenDialog({
             className={INPUT}
             value={date}
             onChange={(e) => edit(setDate)(e.target.value)}
-            aria-describedby="token-expiry-date-hint"
+            aria-describedby={
+              expiryProblem ? "token-expiry-date-hint token-problem" : "token-expiry-date-hint"
+            }
+            aria-invalid={expiryProblem ? true : undefined}
           />
         </Field>
         <Field
@@ -432,7 +464,10 @@ function CreateTokenDialog({
             className={INPUT}
             value={time}
             onChange={(e) => edit(setTime)(e.target.value)}
-            aria-describedby="token-expiry-time-hint"
+            aria-describedby={
+              expiryProblem ? "token-expiry-time-hint token-problem" : "token-expiry-time-hint"
+            }
+            aria-invalid={expiryProblem ? true : undefined}
           />
         </Field>
       </div>
