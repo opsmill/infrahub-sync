@@ -87,7 +87,10 @@ def _utc_now() -> datetime:
 
 
 class StoreAccountResolver:
-    """Resolve an API token or a session token to its account, with one store call for each request."""
+    """Resolve an API token or a session token to its account, with one store call for each request.
+
+    A session found idle costs one more call, which deletes it.
+    """
 
     def __init__(
         self,
