@@ -339,7 +339,7 @@ tokens.
   `frontend/src/api/actions.ts`.
 - [X] T063 [P] [US4] Create the "My account" page in `frontend/src/routes/account.tsx`: change
   the password, list tokens, create a token with its value displayed once, delete a token.
-- [ ] T064 [P] [US4] Create the "Accounts" page in `frontend/src/routes/accounts.tsx`: the list
+- [X] T064 [P] [US4] Create the "Accounts" page in `frontend/src/routes/accounts.tsx`: the list
   with level and state, the filter on active accounts, and create, set level, set password,
   unlock, disable, enable and delete with its confirmation. Display `admin` with the note that
   the environment defines it, and offer none of its actions.
