@@ -1,0 +1,21 @@
+docs/docs/development/knowledge/local-accounts.md
+  s_cf9ada8f865389::t_5c981cc9e26421 81-82,214-216,223-224
+docs/docs/kubernetes-deployment.mdx
+  s_cf9ada8f865389::t_e3e626969cc6f1 344-345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4554166193db9eaefd9d4f94521c63d804691fa8",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
