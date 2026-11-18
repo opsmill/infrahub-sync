@@ -102,7 +102,7 @@
   does not set the variable, and mounts only the Python packages, not the web directory. With the
   development source mount, `create_site(FastAPI(), web_directory())` in that image answers
   `GET /` with `Accept: text/html` with 200 and the entry page. A full stack was not started, because
-  another checkout's stack exists on this machine. So `dev.demo` prints the Sync API address as the
+  a stack that this session did not start exists on this machine under the same project names. So `dev.demo` prints the Sync API address as the
   web interface address.
 - **Build prerequisite found**: the image build needs the `frontend/vendor/infrahub` submodule, and
   the `Dockerfile` stops without it. A fresh clone does not fetch it, so `dev.demo` fetches it when

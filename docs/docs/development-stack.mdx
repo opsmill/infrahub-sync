@@ -329,7 +329,7 @@ uv run invoke dev.start
 infrahub_default` have the same effect for that one command. The other `dev` tasks, such as
 `dev.restart`, read only the variable, so export it when you will use them: without it,
 `dev.restart` recreates the worker without connecting it to that network. An Infrahub network
-selects the `sync` preset; `--preset infrahub` or `--preset preview` with a network is refused.
+selects the `sync` preset; `--preset infrahub`, `--preset preview` or `--preset demo` with a network is refused.
 In this mode:
 
 - The worker reaches Infrahub at `http://infrahub-server:8000`. If that Infrahub's server has

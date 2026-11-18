@@ -14,6 +14,7 @@ uv sync --extra dev --extra prefect --extra service
 uv run invoke dev.start      # preset `sync`, or `infrahub` when a local Infrahub container exists
 uv run invoke dev.infrahub   # preset `infrahub`: plus a local Infrahub
 uv run invoke dev.preview    # preset `preview`: plus the local NetBox and the smoke dataset
+uv run invoke dev.demo       # preset `demo`: plus the local NetBox, then the NetBox demo's schema and configuration
 ```
 
 `dev.start --preset NAME` and `INFRAHUB_SYNC_DEV_PRESET` select a preset too; without either, a

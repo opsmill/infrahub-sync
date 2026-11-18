@@ -16,8 +16,10 @@ Phase 3, User Story 1 (T011 to T016). Environment: macOS (Darwin 25.6.0), Python
 ### New and changed tests
 
 Command, run at 2026-11-18T16:06:37Z:
-`uv run pytest -v -p no:randomly tests/dev_stack/test_dev_tasks.py tests/dev_stack/test_deps_mode.py tests/dev_stack/test_netbox_presence.py tests/test_task_inventory.py -k "..."`.
-Result: `174 passed, 35 deselected in 0.69s`. The tests that this chunk adds or changes all passed:
+`uv run pytest -v -p no:randomly tests/dev_stack/test_dev_tasks.py tests/dev_stack/test_deps_mode.py tests/dev_stack/test_netbox_presence.py tests/test_task_inventory.py -k "demo or recorded_dataset or contract_tasks or unknown_preset or local_infrahub_preset_and or inventory or task"`.
+Result: `174 passed, 35 deselected in 0.69s`. A second run at 2026-11-18T16:06:46Z,
+`uv run pytest -q -rA -p no:randomly tests/dev_stack/test_dev_tasks.py tests/dev_stack/test_deps_mode.py -k "demo_preset or demo_dataset or refuses_a_preparation or seeds_nothing or writes_nothing"`,
+gave `8 passed, 138 deselected in 0.20s`. The tests that this chunk adds or changes all passed:
 
 - `tests/dev_stack/test_dev_tasks.py`
   - `test_the_demo_preset_runs_infrahub_and_netbox_without_the_smoke_dataset`
@@ -55,8 +57,10 @@ containers and volumes of both Compose projects already existed on this machine,
 - `infrahub-sync-dev` (the development stack)
 - `infrahub-sync-netbox` (the local NetBox)
 
-Another checkout created them; this session did not. Both project names are fixed, so
-`dev.demo` would have started and changed that stack, and the final `dev.destroy` and
-`netbox.destroy` would have removed its data. For the same reason, scenario 1's elapsed time and
+This session did not create them. Both project names are fixed, so `dev.demo` would have
+started and changed that stack, and the final `dev.destroy` and `netbox.destroy` would have
+removed its data. The NetBox name cannot be isolated with an override either: `netbox.local.env`
+can change the NetBox project name, but the task that reports NetBox ready attaches NetBox's
+network to the worker of `infrahub-sync-dev`, stopped containers included. For the same reason, scenario 1's elapsed time and
 the plan counts are not known. Run scenarios 1 and 2 on a machine with neither project, or after
 the owner of that stack removes it.
