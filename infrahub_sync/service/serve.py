@@ -189,6 +189,7 @@ def build_service(
     configuration_routes_factory: Any = ConfigurationRoutes,
     app_factory: Any = create_app,
     start_check: Any = check_bootstrap_record,
+    schedule_service_factory: Any = ScheduleService,
 ) -> Starlette:
     """Construct the served application: the Sync API under ``/api`` and the web interface elsewhere.
 
@@ -208,6 +209,7 @@ def build_service(
         configuration_routes_factory=configuration_routes_factory,
         app_factory=app_factory,
         start_check=start_check,
+        schedule_service_factory=schedule_service_factory,
     )
     return create_site(api, web_directory())
 

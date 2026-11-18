@@ -81,6 +81,32 @@ def test_build_service_serves_the_web_interface_named_by_the_environment(
         assert client.get("/api/version").status_code == 200
 
 
+def test_build_service_passes_the_schedule_service_factory_to_the_api(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": "serve-site-token-0003", "administrator": True}}))
+    monkeypatch.delenv(WEB_DIRECTORY_ENV, raising=False)
+    monkeypatch.delenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", raising=False)
+    monkeypatch.setattr(serve, "create_site", lambda api, _directory: api)
+    replacement = object()
+    captured: dict[str, object] = {}
+
+    def _app(*_args: object, schedules: object) -> object:
+        captured["schedules"] = schedules
+        return captured
+
+    projection = local_product_projection(tmp_path.resolve())
+
+    serve.build_service(
+        projection_factory=lambda: projection,
+        start_check=lambda _pool: None,
+        app_factory=_app,
+        schedule_service_factory=lambda *_args, **_kwargs: replacement,
+    )
+
+    assert captured["schedules"] is replacement
+
+
 def test_main_serves_the_outer_application(monkeypatch: pytest.MonkeyPatch) -> None:
     sentinel = object()
     monkeypatch.setattr(serve, "build_service", lambda: sentinel)
