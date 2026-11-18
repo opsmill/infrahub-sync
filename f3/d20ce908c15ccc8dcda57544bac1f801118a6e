@@ -1,0 +1,30 @@
+tests/service/test_schedule_routes.py
+  s_29b17f91da9f30::t_f4f498c2b3dee2 108-138
+tests/dev_stack/smoke/test_scheduled_run.py
+  s_29b17f91da9f30::t_4f12a4a0ef8ee5 10-18,50-51,67-94,97,100-104,107-123,126-127,130-148,165-175,181-184,192,197,209-212,215-217,226,245
+  s_29b17f91da9f30::t_194ee11ca0486e 218-219
+infrahub_sync/service/schedules.py
+  s_29b17f91da9f30::t_12143e8e9b4106 356-357
+  s_29b17f91da9f30::t_4c8e2778edc875 355,358
+  s_29b17f91da9f30::t_92afb2e749120d 1009-1010,1019
+  s_29b17f91da9f30::t_e52f5bbbad3214 1024
+  s_29b17f91da9f30::t_25f550b85ba7ee 1020-1023
+dev/specs/021-scheduled-runs/research.md
+  s_29b17f91da9f30::t_46b8290eb2bd22 642-666
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3d20ce908c15ccc8dcda57544bac1f801118a6e",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
