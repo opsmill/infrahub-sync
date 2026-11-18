@@ -92,6 +92,10 @@ class _ClientPerCallOrchestration:
         async with get_client() as client:
             await PrefectOrchestration(client).delete_schedule(orchestrator_id)
 
+    async def create_scheduled_runs(self) -> None:
+        async with get_client() as client:
+            await PrefectOrchestration(client).create_scheduled_runs()
+
 
 def build_app(
     *,

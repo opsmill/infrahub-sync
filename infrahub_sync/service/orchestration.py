@@ -259,6 +259,8 @@ class ServiceOrchestration(Protocol):
 
     async def delete_schedule(self, orchestrator_id: str) -> None: ...
 
+    async def create_scheduled_runs(self) -> None: ...
+
 
 def run_tags(parameters: dict[str, object]) -> frozenset[str]:
     """Return the Prefect tags that identify one run, its stage and its configuration version.
@@ -386,6 +388,15 @@ class _ScheduleClient(Protocol):
     ) -> None: ...
 
     async def delete_deployment_schedule(self, deployment_id: UUID, schedule_id: UUID) -> None: ...
+
+    async def request(
+        self,
+        method: Any,
+        path: Any,
+        params: dict[str, Any] | None = None,
+        path_params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response: ...
 
 
 _SCHEDULES_UNAVAILABLE: Final = "the orchestrator could not be reached"
@@ -568,6 +579,27 @@ class PrefectOrchestration:
             await client.delete_deployment_schedule(deployment_id, UUID(orchestrator_id))
         except ObjectNotFound:
             return
+        except _SCHEDULE_CALL_ERRORS as exc:
+            raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
+
+    async def create_scheduled_runs(self) -> None:
+        """Ask Prefect to create now the flow runs of the active schedules of the service deployment.
+
+        Prefect's scheduler creates the flow runs of a schedule only for the start times after the
+        moment its loop runs, about once a minute. A new or changed schedule therefore gets no flow
+        run for a start that comes before that loop, and a change of any schedule deletes the future
+        flow runs of every schedule of the deployment. This call runs the same creation at once
+        (``POST /deployments/{id}/schedule``, from the current time). Prefect creates the flow runs
+        exactly as its scheduler does, with the same idempotency key, so a flow run that exists is
+        not created twice.
+
+        Raises:
+            OrchestrationUnavailableError: a request failed or timed out, or the deployment does not exist.
+        """
+        client = cast("_ScheduleClient", self._client)
+        try:
+            deployment_id = await self._deployment_id(client)
+            await client.request("POST", "/deployments/{id}/schedule", path_params={"id": deployment_id}, json={})
         except _SCHEDULE_CALL_ERRORS as exc:
             raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
 

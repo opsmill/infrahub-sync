@@ -327,8 +327,9 @@ def _s3_client(arguments: dict[str, Any]) -> Any:
 def _restore_schedules(projection: ProductProjection) -> None:
     """Create the Prefect schedule of every stored schedule again, or fail the bootstrap.
 
-    Applying the deployment removes its Prefect schedules: the definition holds none, and the
-    update sends that empty list. This step creates them again, so a schedule keeps starting runs
+    Applying the deployment sends an empty list of schedules. Prefect keeps the schedules when each
+    of them has a slug, and removes them all when one has none, for example a schedule added in the
+    Prefect interface. This step creates again what is missing, so a schedule keeps starting runs
     after a bootstrap (spec 021, research R13).
 
     Raises:

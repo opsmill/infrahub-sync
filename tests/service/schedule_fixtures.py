@@ -69,11 +69,16 @@ class NoDeploymentSchedules:
     async def delete_schedule(self, orchestrator_id: str) -> None:  # noqa: PLR6301
         del orchestrator_id
 
+    async def create_scheduled_runs(self) -> None:  # noqa: PLR6301
+        return
+
 
 class FakeOrchestration:
     """Hold the schedules of the service deployment in memory, and record each call that changes one.
 
     ``unavailable`` makes every schedule call fail, as when the task manager cannot be reached.
+    ``run_creations`` counts the requests to create the flow runs of the schedules now, and
+    ``runs_unavailable`` makes only that request fail.
     """
 
     def __init__(self) -> None:
@@ -81,6 +86,8 @@ class FakeOrchestration:
         self.foreign: list[ObservedDeploymentSchedule] = []
         self.calls: list[tuple[str, str]] = []
         self.unavailable = False
+        self.run_creations = 0
+        self.runs_unavailable = False
 
     def _require_available(self) -> None:
         if self.unavailable:
@@ -121,6 +128,13 @@ class FakeOrchestration:
         removed = self.schedules.pop(orchestrator_id, None)
         self.foreign = [item for item in self.foreign if item.orchestrator_id != orchestrator_id]
         self.calls.append(("delete", orchestrator_id if removed is None else removed.slug))
+
+    async def create_scheduled_runs(self) -> None:
+        self._require_available()
+        if self.runs_unavailable:
+            message = "the orchestrator could not be reached"
+            raise OrchestrationUnavailableError(message, error_class="ReadTimeout")
+        self.run_creations += 1
 
     async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:  # noqa: PLR6301
         del parameters

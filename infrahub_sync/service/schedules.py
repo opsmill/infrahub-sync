@@ -140,6 +140,13 @@ async def match_prefect_schedules(projection: ProductProjection, orchestration: 
     can be written, and the step goes on with the other schedules; the first failure is raised
     at the end.
 
+    When the step created, changed or deleted a Prefect schedule, it then asks Prefect to create
+    the flow runs of the active schedules at once. Prefect's scheduler creates them only for the
+    start times after its next loop, about a minute later, and a change or a deletion of one
+    schedule deletes the waiting future flow runs of every schedule of the deployment; without
+    this call, a start within that minute gets no flow run. A failure of this call is logged and
+    not raised: the schedules match, and Prefect's scheduler creates the flow runs at its next loop.
+
     Raises:
         OrchestrationUnavailableError: Prefect could not be reached.
         ProductStoreProviderError: The store failed to record the match of a schedule.
@@ -147,9 +154,10 @@ async def match_prefect_schedules(projection: ProductProjection, orchestration: 
     stored = _all_schedules(projection, ScheduleFilters())
     held, surplus = _held_by_slug(await orchestration.read_schedules())
     failures: list[OrchestrationUnavailableError | ProductStoreProviderError] = []
+    changed = False
     for current in stored:
         try:
-            await _match_one(projection, orchestration, current, held.pop(current.schedule_id, None))
+            changed |= await _match_one(projection, orchestration, current, held.pop(current.schedule_id, None))
         except (OrchestrationUnavailableError, ProductStoreProviderError) as error:
             failures.append(error)
             _record_not_synced(projection, current)
@@ -160,6 +168,7 @@ async def match_prefect_schedules(projection: ProductProjection, orchestration: 
             if latest is not None and latest.state != "deleted":
                 continue
             await orchestration.delete_schedule(leftover.orchestrator_id)
+            changed = True
             # The schedule is deleted, or it was never stored: Prefect holds nothing for it now.
             projection.record_schedule_prefect_sync(slug, prefect_schedule_id=None, synced=True)
         except (OrchestrationUnavailableError, ProductStoreProviderError) as error:
@@ -167,10 +176,23 @@ async def match_prefect_schedules(projection: ProductProjection, orchestration: 
     for duplicate in surplus:
         try:
             await orchestration.delete_schedule(duplicate.orchestrator_id)
+            changed = True
         except OrchestrationUnavailableError as error:
             failures.append(error)
+    if changed:
+        await _create_scheduled_runs(orchestration)
     if failures:
         raise failures[0]
+
+
+async def _create_scheduled_runs(orchestration: ServiceOrchestration) -> None:
+    """Ask Prefect to create the flow runs of the active schedules now; log a failure and go on."""
+    try:
+        await orchestration.create_scheduled_runs()
+    except OrchestrationUnavailableError as error:
+        # Prefect's scheduler creates the flow runs at its next loop, about a minute later; a start
+        # before that loop gets no flow run, and the next admitted start records it as missed.
+        logger.warning("schedules.flow_runs_not_created", error_class=error.error_class)
 
 
 async def _match_one(
@@ -178,17 +200,21 @@ async def _match_one(
     orchestration: ServiceOrchestration,
     current: ScheduleRecord,
     existing: ObservedDeploymentSchedule | None,
-) -> None:
-    """Give one stored schedule the Prefect schedule it needs, and record that it matches."""
+) -> bool:
+    """Give one stored schedule the Prefect schedule it needs, record that it matches, and say if Prefect changed."""
     desired = _desired(current)
+    changed = False
     if existing is None:
         orchestrator_id = await orchestration.create_schedule(desired)
+        changed = True
     else:
         orchestrator_id = existing.orchestrator_id
         if existing.schedule is None or not existing.schedule.matches(desired):
             await orchestration.update_schedule(orchestrator_id, desired)
+            changed = True
     if not current.prefect_synced or current.prefect_schedule_id != orchestrator_id:
         projection.record_schedule_prefect_sync(current.schedule_id, prefect_schedule_id=orchestrator_id, synced=True)
+    return changed
 
 
 def _record_not_synced(projection: ProductProjection, schedule: ScheduleRecord) -> None:

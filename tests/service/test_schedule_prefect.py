@@ -106,6 +106,57 @@ def test_a_request_that_changes_nothing_writes_nothing_to_the_task_manager(api: 
 
 
 # ---------------------------------------------------------------------------
+# Prefect creates the flow runs at once after a change of the schedules
+# ---------------------------------------------------------------------------
+
+
+def test_each_request_that_changes_a_prefect_schedule_asks_prefect_to_create_the_flow_runs_now(
+    api: ScheduleApi,
+) -> None:
+    """Prefect's scheduler loop runs once a minute; a start within that minute needs its flow run now."""
+    schedule_id = api.create()["schedule_id"]
+    assert api.orchestration.run_creations == 1
+
+    for action in ("pause", "resume", "delete"):
+        assert api.post(schedule_id, action).status_code == 200
+
+    assert api.orchestration.run_creations == 4
+
+
+def test_a_request_or_a_match_that_changes_no_prefect_schedule_does_not_ask_for_flow_runs(api: ScheduleApi) -> None:
+    schedule_id = api.create()["schedule_id"]
+
+    assert api.post(schedule_id, "resume").status_code == 200
+    _match(api)
+
+    assert api.orchestration.run_creations == 1
+
+
+def test_a_match_that_deletes_a_prefect_schedule_of_no_stored_schedule_asks_for_flow_runs(api: ScheduleApi) -> None:
+    """Prefect deletes the waiting flow runs of every schedule when one schedule is deleted."""
+    api.create()
+    stray = DeploymentSchedule(slug="s-" + "b" * 32, cron="* * * * *", timezone="UTC", active=True)
+    api.orchestration.schedules["stray"] = replace(stray, orchestrator_id="stray")
+    api.orchestration.run_creations = 0
+
+    _match(api)
+
+    assert api.orchestration.run_creations == 1
+
+
+def test_a_failed_request_for_flow_runs_is_logged_and_the_schedule_is_created_and_synced(api: ScheduleApi) -> None:
+    """Prefect's scheduler still creates the flow runs at its next loop, so the request does not fail."""
+    api.orchestration.runs_unavailable = True
+
+    with capture_logs() as logs:
+        created = api.create()
+
+    assert created["prefect_synced"] is True
+    assert api.stored(created["schedule_id"]).prefect_synced is True
+    assert {"event": "schedules.flow_runs_not_created", "error_class": "ReadTimeout", "log_level": "warning"} in logs
+
+
+# ---------------------------------------------------------------------------
 # The task manager cannot be reached
 # ---------------------------------------------------------------------------
 
@@ -397,6 +448,7 @@ class _PrefectClient:
         self.names: list[str] = []
         self.schedules: dict[UUID, SimpleNamespace] = {}
         self.error: Exception | None = None
+        self.requests: list[tuple[str, str, dict[str, object]]] = []
 
     def _fail(self) -> None:
         if self.error is not None:
@@ -451,6 +503,19 @@ class _PrefectClient:
         if schedule_id not in self.schedules:
             raise ObjectNotFound(http_exc=RuntimeError("not found"))
         del self.schedules[schedule_id]
+
+    async def request(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, Any] | None = None,
+        path_params: dict[str, Any] | None = None,
+        **kwargs: object,
+    ) -> httpx.Response:
+        self._fail()
+        assert params is None
+        self.requests.append((method, path.format(**(path_params or {})), kwargs))
+        return httpx.Response(200)
 
 
 _SLUG = "s-" + "a" * 32
@@ -535,6 +600,15 @@ async def test_a_delete_removes_the_schedule_and_a_schedule_that_is_gone_counts_
     assert client.schedules == {}
 
 
+async def test_the_flow_runs_are_created_by_prefect_from_the_current_time() -> None:
+    """No start time is sent: Prefect creates the flow runs from now, as its scheduler loop does."""
+    client = _PrefectClient()
+
+    await _orchestration(client).create_scheduled_runs()
+
+    assert client.requests == [("POST", f"/deployments/{client.deployment_id}/schedule", {"json": {}})]
+
+
 @pytest.mark.parametrize(
     "error",
     [
@@ -553,6 +627,7 @@ async def test_a_failed_prefect_call_is_reported_without_its_address(error: Exce
         orchestration.create_schedule(_WANTED),
         orchestration.update_schedule(identifier, _WANTED),
         orchestration.delete_schedule(identifier),
+        orchestration.create_scheduled_runs(),
     )
 
     for call in calls:
