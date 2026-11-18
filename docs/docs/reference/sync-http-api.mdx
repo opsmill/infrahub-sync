@@ -600,7 +600,7 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `GET /runs/{run_id}/artifacts/{artifact_id}` | Return verified artifact bytes with their media type and `Digest` header. |
 | `GET /runs/{run_id}/logs` | Return the log lines that Sync wrote during the run's stages, oldest first, one page at a time. |
 | `GET /events` | List typed events about runs, configurations and schedules, oldest first, one page at a time. |
-| `POST /schedules` | Create a schedule that starts a `sync` run of one configuration version on a cron cadence. In this build no request creates a schedule: a request that passes the other checks is refused with `422 schedule-setting-not-available`; see [Schedules](#schedules). |
+| `POST /schedules` | Create a schedule that starts a `sync` run of one configuration version on a cron cadence; see [Schedules](#schedules). |
 | `GET /schedules` | List schedules, newest first, one page at a time. Filter by `config_id` and `state`. |
 | `GET /schedules/{schedule_id}` | Return one schedule, also a deleted one. |
 | `POST /schedules/{schedule_id}/change` | Change one or more settings of a schedule. Owner or administrator only. |
@@ -1362,10 +1362,8 @@ plan run to try again.
 
 A schedule starts a `sync` run of one configuration version on a cron cadence, with the
 schedule's owner as the run's actor. [Schedule sync runs](../orchestration.mdx) describes how a
-team uses it. In this build, no `POST /schedules` request creates a schedule. A request that
-passes the other checks is refused with `422 schedule-setting-not-available`, because neither
-write target is turned on: the default `branch-review` and `default-branch` are both refused. A request that names `write_target` in
-`POST /schedules/{schedule_id}/change` is refused the same way.
+team uses it. Both write targets are turned on in this build: the default `branch-review`, and
+`default-branch` on a Sync API that does not require approval.
 
 `POST /schedules` takes these fields:
 

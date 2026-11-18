@@ -7,12 +7,6 @@ expression, with nobody present. This page describes how a team creates a schedu
 its runs write, and checks that the schedule still runs. The last part of the page describes how
 to start runs from cron, CI or another workflow tool instead.
 
-**Not available in this build.** No request creates a schedule. A request that passes the other
-checks is refused with `422 schedule-setting-not-available`, because neither write target, branch
-review or the default branch, is turned on yet. No schedule exists, so no schedule starts a run. The rest of
-this page describes how schedules work once a write target is turned on. Until then, start runs
-on a cadence with one of the [other ways to start runs on a cadence](#other-ways-to-start-runs-on-a-cadence).
-
 ## How a schedule starts a run
 
 A schedule names one configuration and one registered version of it, a cron expression with five
@@ -63,14 +57,16 @@ The other settings of a schedule are:
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| Write target, the API field `write_target` | `branch-review` or `default-branch` | `branch-review` |
+| Write target, `--write-to-default-branch` | `branch-review` or `default-branch` | `branch-review` |
 | Left-out setting, `--write-when-left-out` | on or off | off |
 | Overlap policy, `--overlap-policy` | `reject` or `queue` | `reject` |
 | How late a missed start may begin, `--start-late-by-at-most` | from `1m` to `7d` | `1h` |
 
-The CLI has no option to choose the write target yet: `schedules create` sends no write target,
-so the Sync API uses `branch-review`. Send `write_target` in the body of `POST /schedules` to
-choose the other one.
+Without `--write-to-default-branch`, `schedules create` sends no write target and the Sync API
+uses `branch-review`. To change the write target of an existing schedule, run
+`infrahub-sync schedules change <schedule> --write-to-default-branch` or
+`infrahub-sync schedules change <schedule> --write-to-branch-review`. Through the HTTP API, send
+`write_target` in the body of `POST /schedules` or `POST /schedules/{schedule_id}/change`.
 
 ## The two write targets
 
@@ -129,8 +125,9 @@ What the destination needs for branch review:
 - The account of the worker's Infrahub token has the object permissions `create` on
   `CoreProposedChange` and `CoreChangeComment`, and `update` on `CoreProposedChange`, for branches
   other than the default branch. It needs the global permission `delete_branch` only for a branch
-  that another account created. These permissions were checked against the Infrahub source code,
-  not yet against a running Infrahub.
+  that another account created. These permissions come from the Infrahub source code. The branch
+  and proposed change requests were run against Infrahub 1.11.9 with an administrator account
+  only; an account limited to these permissions has not been tried.
 
 ### The default branch
 
@@ -204,7 +201,7 @@ and the action it needs:
 | Reason | When | What to do |
 | --- | --- | --- |
 | `owner-not-found` | The owner's actor no longer exists on the Sync API when the Sync API starts. | An administrator takes the schedule over with `infrahub-sync schedules take-over`, or the owner's actor is restored and the schedule is resumed. |
-| `approval-required` | The schedule writes to the default branch and the Sync API requires approval, when the Sync API starts, when a resume finds it, or when the worker handles a start. | Change the write target to `branch-review`. |
+| `approval-required` | The schedule writes to the default branch and the Sync API requires approval, when the Sync API starts, when a resume finds it, or when the worker handles a start. | Change the write target to `branch-review` with `infrahub-sync schedules change <schedule> --write-to-branch-review`. The schedule is then active again. |
 | `repeated-failures` | Five runs in a row failed, were interrupted or ended ambiguous. | Check the last runs of the schedule, then resume it. |
 
 A run that succeeds or ends with no change sets the count of failed runs back to zero. A skipped
@@ -451,8 +448,6 @@ package. `cli` receives only the Sync API URL and token.
 - **Notifications.** Infrahub Sync sends no notification for a scheduled run. Check schedules as
   [Check a schedule](#check-a-schedule) describes, or configure alerts in a monitoring tool or
   log aggregator.
-- **Write targets turned on.** In this build, the Sync API refuses to create a schedule, because
-  neither write target is turned on.
 - **Sync history dashboard.** Read run history with `infrahub-sync runs list`, or in the tool
   that starts the runs: CI run history, the Prefect UI, or aggregated logs.
 - **Retry of a failed scheduled run.** A schedule does not run a failed start again; its next

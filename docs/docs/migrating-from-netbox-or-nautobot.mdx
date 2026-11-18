@@ -212,7 +212,7 @@ For the first sync, enable only the most independent models (tags, locations). V
 
 After the initial seed, schedule the sync to run on a recurring cadence so Infrahub stays current with changes in the source system. The cadence depends on how often the source data changes — hourly, daily, or on-demand are all reasonable.
 
-In this build, the Sync API refuses to create a schedule, because no write target of a schedule is turned on yet. Use cron, CI, Prefect, or another workflow tool — see [Schedule sync runs](./orchestration.mdx).
+Create the cadence with `infrahub-sync schedules create`, or start runs from cron, CI, or another workflow tool. See [Schedule sync runs](./orchestration.mdx).
 
 ### Default behavior preserves Infrahub-only data
 
