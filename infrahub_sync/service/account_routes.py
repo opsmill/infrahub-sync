@@ -11,7 +11,9 @@ actions. A route reads the product store, the clock and the audit record through
 ``RunService`` it is given, when a request arrives and never when the router is built.
 
 An ``/accounts`` route checks that the caller is an administrator in a dependency, so the refusal
-comes before the request body is read.
+comes before the request body is checked against its schema. A body that cannot be parsed as JSON
+is refused with ``422 request-invalid`` before any dependency runs, authentication included, as it
+is on ``POST /runs``.
 """
 
 from collections.abc import Callable
@@ -104,7 +106,7 @@ def _administrator_router(service: RunService, authenticate: _Authenticate) -> A
     """Return the routes of an administrator on the accounts.
 
     Every route answers ``403 forbidden`` to a caller that is not an administrator, before any
-    other check of the request.
+    other check of the request except the parse of a JSON body (see the module docstring).
     """
     router = APIRouter()
 
