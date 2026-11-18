@@ -3999,8 +3999,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 schedule_id,
             ),
         )
-        if cause == "approval-required":
-            self._stop_for_approval(cursor, schedule_id, now)
+        self._stop_for_approval(cursor, schedule_id, cause, now)
         stored = self._read_schedule(cursor, schedule_id)
         assert stored is not None
         earlier = self._read_schedule_branches(cursor, schedule_id, _EARLIER_BRANCH_STATES)
@@ -4012,14 +4011,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             earlier_branches=tuple(branch for branch in earlier if branch.run_id != run_id),
         )
 
-    def _stop_for_approval(self, cursor: _Cursor, schedule_id: str, now: datetime) -> None:
-        """Stop a schedule that writes to the default branch while the Sync API requires approval.
+    def _stop_for_approval(self, cursor: _Cursor, schedule_id: str, cause: str | None, now: datetime) -> None:
+        """Stop the schedule when the cause of the decision is ``approval-required``; else do nothing.
 
-        The worker found it when it admitted a start (research R6); the stop is saved in the
+        The worker found that the schedule writes to the default branch while the Sync API
+        requires approval when it admitted a start (research R6); the stop is saved in the
         transaction of that admission, with the events of the decision. ``updated_at`` moves,
         so a request of the Sync API made from the schedule as it was read is refused and
         reads it again.
         """
+        if cause != "approval-required":
+            return
         cursor.execute(
             self._sql(
                 "UPDATE schedules SET state = 'stopped', state_reason = 'approval-required', "

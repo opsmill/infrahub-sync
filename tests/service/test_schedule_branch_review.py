@@ -32,7 +32,7 @@ from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import LeftOutRecord, PlannedOperation, PlanProblem, PlanReport, SourceRecordReference
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.writer import write_plan_artifact
-from infrahub_sync.product_store import AuditEvent, ProductRun, RunFilters, ScheduleRecord
+from infrahub_sync.product_store import AuditEvent, ProductRun, ProductStoreProviderError, RunFilters, ScheduleRecord
 from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.schedule_admission import branch_review_branch, decide_start
@@ -333,7 +333,10 @@ class FakeInfrahub:  # pylint: disable=too-many-instance-attributes
         return {"CoreProposedChangeCreate": {"ok": True, "object": {"id": identifier}}}
 
     def _SyncProposedChangeRead(self, variables: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
-        change = self.proposed_changes[variables["id"]]
+        change = self.proposed_changes.get(variables["id"])
+        if change is None:
+            # A person deleted the proposed change: Infrahub answers with no edge.
+            return {"CoreProposedChange": {"edges": []}}
         approvers = [{"node": {"id": f"account-{n}"}} for n in range(change.approvers)]
         node = {"id": variables["id"], "state": {"value": change.state}, "approved_by": {"edges": approvers}}
         return {"CoreProposedChange": {"edges": [{"node": node}]}}
@@ -681,6 +684,107 @@ def test_a_proposed_change_approved_while_the_run_was_writing_is_kept(
     assert first.destination_branch in infrahub.branches
     (kept,) = _events(api, "proposed_change_kept")
     assert kept.outcome == "kept-approved"
+
+
+def _delete_proposed_change(infrahub: FakeInfrahub, identifier: str) -> None:
+    """Delete a proposed change as a person does; the fake keeps counting, so no identifier is used twice."""
+    infrahub.proposed_changes[f"deleted-{identifier}"] = infrahub.proposed_changes.pop(identifier)
+
+
+def test_a_proposed_change_that_a_person_deleted_is_kept_and_the_start_runs(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, infrahub: FakeInfrahub
+) -> None:
+    """A missing proposed change must not fail every later start of the schedule."""
+    _schedule(api)
+    _start(monkeypatch, api, T0)
+    first = _only_run(api)
+    _delete_proposed_change(infrahub, "pc-1")
+    infrahub.events.clear()
+
+    _start(monkeypatch, api, T0 + timedelta(days=1))
+
+    _, second = _runs(api)
+    assert _row_state(api, first.run_id) == "kept"
+    assert _row_state(api, second.run_id) == "open"
+    assert first.destination_branch in infrahub.branches
+    assert "SyncBranchDelete" not in infrahub.events
+    assert _events(api, "start_failed") == []
+    (kept,) = _events(api, "proposed_change_kept")
+    assert (kept.outcome, kept.run_id) == ("kept-missing", second.run_id)
+
+
+def test_a_proposed_change_deleted_while_the_run_was_writing_is_kept(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, infrahub: FakeInfrahub
+) -> None:
+    _schedule(api)
+    _start(monkeypatch, api, T0)
+    first = _only_run(api)
+
+    def delete_then_create(variables: dict[str, Any]) -> dict[str, Any]:
+        _delete_proposed_change(infrahub, "pc-1")
+        return FakeInfrahub._SyncBranchCreate(infrahub, variables)
+
+    monkeypatch.setattr(infrahub, "_SyncBranchCreate", delete_then_create)
+
+    _start(monkeypatch, api, T0 + timedelta(days=1))
+
+    _, second = _runs(api)
+    stored = _stored(api, second.run_id)
+    assert stored.results["branch_review"]["kept"] == [{"run_id": first.run_id, "cause": "missing"}]
+    assert stored.results["branch_review"]["failure"] is None
+    assert _row_state(api, first.run_id) == "kept"
+    assert first.destination_branch in infrahub.branches
+    (kept,) = _events(api, "proposed_change_kept")
+    assert kept.outcome == "kept-missing"
+
+
+@pytest.mark.usefixtures("infrahub")
+def test_a_store_error_after_the_write_still_ends_the_run_and_publishes_its_summary(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Steps 5 and 6 follow the commit of the write: no failure there may fail the flow run."""
+    _schedule(api)
+    published: list[str] = []
+    publish = service_flow._publish_run_summary
+
+    def recorded(projection: Any, run_id: str, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        published.append(run_id)
+        publish(projection, run_id, *args, **kwargs)
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise ProductStoreProviderError
+
+    monkeypatch.setattr(service_flow, "_publish_run_summary", recorded)
+    monkeypatch.setattr(api.projection, "record_branch_review_outcome", refuse)
+
+    with caplog.at_level(logging.ERROR, logger=service_flow.__name__):
+        result = _start(monkeypatch, api, T0)
+
+    run = _only_run(api)
+    assert isinstance(result, dict)
+    assert (run.phase, run.outcome) == ("applied", "applied")
+    assert published == [run.run_id]
+    (logged,) = [record for record in caplog.records if "branch_review.outcome_not_recorded" in record.getMessage()]
+    assert logged.levelno == logging.ERROR
+    assert "proposed_change_id=pc-1" in logged.getMessage()
+    assert "error_class=ProductStoreProviderError" in logged.getMessage()
+
+
+def test_an_unexpected_error_of_the_proposed_change_step_is_recorded_and_ends_the_run(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, infrahub: FakeInfrahub
+) -> None:
+    _schedule(api)
+    infrahub.fail["SyncProposedChangeCreate"] = KeyError("Branch")
+
+    result = _start(monkeypatch, api, T0)
+
+    run = _only_run(api)
+    assert isinstance(result, dict)
+    assert (run.phase, run.outcome) == ("applied", "applied")
+    assert run.results["branch_review"]["failure"] == "internal_error"
+    (failed,) = _events(api, "proposed_change_failed")
+    assert failed.details is not None
+    assert failed.details.cause == "internal_error"
 
 
 def test_the_pending_branch_of_a_failed_run_is_deleted_by_the_next_successful_run(

@@ -29,6 +29,7 @@ from infrahub_sync.service import branch_review
 from infrahub_sync.service.branch_review import (
     BranchCreateFailedError,
     BranchDeleteFailedError,
+    BranchListFailedError,
     CloseResult,
     DestinationDefaultBranchNotMainError,
     ProposedChangeCloseFailedError,
@@ -383,10 +384,9 @@ def test_read_proposed_change_on_a_named_branch() -> None:
     "handler",
     [
         _raise(_graphql_error()),
-        lambda _v: {"CoreProposedChange": {"edges": []}},
         _proposed_change(INFRAHUB_TEXT),
     ],
-    ids=["refused", "not-found", "unknown-state"],
+    ids=["refused", "unknown-state"],
 )
 def test_read_proposed_change_failure_maps_to_its_class(handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
     client = FakeInfrahub(handlers={"SyncProposedChangeRead": handler})
@@ -396,6 +396,39 @@ def test_read_proposed_change_failure_maps_to_its_class(handler: Callable[[dict[
 
     assert failure_class(caught.value) == "proposed_change_read_failed"
     _assert_no_infrahub_text(caught.value)
+
+
+def test_a_proposed_change_that_does_not_exist_reads_as_missing() -> None:
+    """A person can delete a proposed change in Infrahub; the schedule must not fail every later start for it."""
+    client = FakeInfrahub(handlers={"SyncProposedChangeRead": lambda _v: {"CoreProposedChange": {"edges": []}}})
+
+    assert read_proposed_change(_sdk(client), PROPOSED_CHANGE_ID) == "missing"
+
+
+def test_close_of_a_proposed_change_that_does_not_exist_is_done_and_sends_no_update() -> None:
+    client = FakeInfrahub(handlers={"SyncProposedChangeRead": lambda _v: {"CoreProposedChange": {"edges": []}}})
+
+    result = close_proposed_change(_sdk(client), PROPOSED_CHANGE_ID, "replaced")
+
+    assert (result.state, result.closed_now, result.done) == ("missing", False, True)
+    assert [call.operation for call in client.calls] == ["SyncProposedChangeRead"]
+
+
+@pytest.mark.parametrize("answer", [{}, {"Branch": None}, {"Branch": [{"is_default": True}]}], ids=str)
+def test_a_branch_list_that_infrahub_answers_out_of_shape_maps_to_its_class(answer: dict[str, Any]) -> None:
+    client = FakeInfrahub(handlers={"SyncBranchList": lambda _v: answer})
+
+    with pytest.raises(BranchListFailedError) as caught:
+        check_default_branch_is_main(_sdk(client))
+
+    assert failure_class(caught.value) == "branch_list_failed"
+
+
+def test_a_create_whose_branch_list_is_out_of_shape_maps_to_the_create_class() -> None:
+    client = FakeInfrahub(handlers={"SyncBranchCreate": _raise(_graphql_error()), "SyncBranchList": lambda _v: {}})
+
+    with pytest.raises(BranchCreateFailedError):
+        create_branch(_sdk(client), RUN_BRANCH)
 
 
 # --- Close a proposed change -----------------------------------------------------------------
@@ -492,6 +525,7 @@ def test_transport_failure_of_an_operation_keeps_the_transport_class(error: Base
 def test_every_operation_class_is_a_failure_type() -> None:
     for name in (
         "destination_default_branch_not_main",
+        "branch_list_failed",
         "branch_create_failed",
         "branch_delete_failed",
         "proposed_change_open_failed",
@@ -518,6 +552,7 @@ def test_failure_record_of_an_operation_names_the_destination_and_a_template() -
 def test_module_exposes_no_infrahub_text_in_its_fixed_messages() -> None:
     for error_class in (
         DestinationDefaultBranchNotMainError,
+        BranchListFailedError,
         BranchCreateFailedError,
         BranchDeleteFailedError,
         ProposedChangeOpenFailedError,

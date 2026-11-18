@@ -1020,6 +1020,7 @@ FailureType = Literal[
     "lineage_refused",
     "destination_schema_unavailable",
     "destination_default_branch_not_main",
+    "branch_list_failed",
     "branch_create_failed",
     "branch_delete_failed",
     "proposed_change_open_failed",
@@ -1029,7 +1030,7 @@ FailureType = Literal[
 ]
 """The failure type names a stage failure record holds (spec 007 data-model.md, FR-014).
 
-The six names from `destination_default_branch_not_main` to `proposed_change_close_failed` are
+The seven names from `destination_default_branch_not_main` to `proposed_change_close_failed` are
 the failures of the branch review operations of a scheduled run (spec 021, research R15).
 """
 

@@ -1140,8 +1140,8 @@ class ScheduleBranch(BaseModel):
 
 
 # Why a later run left an earlier proposed change of its schedule in place: a person approved it
-# while the run was writing, or merged or closed it.
-BranchReviewKeptCause: TypeAlias = Literal["approved", "merged", "closed"]
+# while the run was writing, merged or closed it, or deleted it (`missing`).
+BranchReviewKeptCause: TypeAlias = Literal["approved", "merged", "closed", "missing"]
 
 
 class BranchReviewKept(BaseModel):

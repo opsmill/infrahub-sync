@@ -45,14 +45,16 @@ logger = structlog.get_logger(__name__)
 # Infrahub accepts a proposed change only to this branch (`graphql/mutations/proposed_change.py:89-129`).
 DEFAULT_BRANCH = "main"
 
-ProposedChangeState = Literal["open", "approved", "merging", "merged", "closed", "canceled"]
-"""What `read_proposed_change` returns: Infrahub's state, or `approved` for an open one with an approver."""
+ProposedChangeState = Literal["open", "approved", "merging", "merged", "closed", "canceled", "missing"]
+"""What `read_proposed_change` returns: Infrahub's state, `approved` for an open one with an
+approver, or `missing` when Infrahub holds no proposed change with the identifier (a person
+deleted it)."""
 
 PROPOSED_CHANGE_STATES: tuple[ProposedChangeState, ...] = get_args(ProposedChangeState)
-# The states Infrahub stores (`proposed_change/constants.py:14-19`); `approved` is derived.
+# The states Infrahub stores (`proposed_change/constants.py:14-19`); `approved` and `missing` are derived.
 _INFRAHUB_STATES = frozenset({"open", "merging", "merged", "closed", "canceled"})
 # A proposed change in one of these states needs no close (contracts/branch-review.md, rule 4).
-_DONE_STATES: frozenset[str] = frozenset({"closed", "canceled", "merged"})
+_DONE_STATES: frozenset[str] = frozenset({"closed", "canceled", "merged", "missing"})
 
 _BRANCH_LIST = "query SyncBranchList { Branch { name is_default } }"
 _BRANCH_CREATE = (
@@ -95,6 +97,12 @@ class DestinationDefaultBranchNotMainError(BranchReviewError):
     """The destination's default branch is not `main`, so it cannot receive a proposed change."""
 
     message = "The default branch of the destination is not main"
+
+
+class BranchListFailedError(BranchReviewError):
+    """Infrahub answered the branch list with data that does not have the shape of a branch list."""
+
+    message = "Infrahub answered the branch list in a form that cannot be read"
 
 
 class BranchCreateFailedError(BranchReviewError):
@@ -167,11 +175,17 @@ def build_client(settings: Mapping[str, Any], branch: str) -> InfrahubClientSync
 
 
 def _branches(client: InfrahubClientSync) -> dict[str, bool]:
-    """Each branch of the destination, by name, and whether it is the default branch."""
+    """Each branch of the destination, by name, and whether it is the default branch.
+
+    An answer that does not have the shape of a branch list raises `BranchListFailedError`.
+    """
     data = client.execute_graphql(
         query=_BRANCH_LIST, branch_name=DEFAULT_BRANCH, tracker="sync-branch-list", operation_name="SyncBranchList"
     )
-    return {str(branch["name"]): bool(branch.get("is_default")) for branch in data["Branch"]}
+    try:
+        return {str(branch["name"]): bool(branch.get("is_default")) for branch in data["Branch"]}
+    except (KeyError, TypeError, AttributeError):
+        raise BranchListFailedError from None
 
 
 def check_default_branch_is_main(client: InfrahubClientSync) -> None:
@@ -193,7 +207,7 @@ def _branch_exists(client: InfrahubClientSync, name: str) -> bool | None:
     """Whether the branch exists, or `None` when Infrahub cannot tell."""
     try:
         return name in _branches(client)
-    except InfrahubSDKError:
+    except (InfrahubSDKError, BranchListFailedError):
         return None
 
 
@@ -263,7 +277,8 @@ def read_proposed_change(
     """The state of a proposed change: `approved` when it is open and an account approved it.
 
     The request goes to `branch`, else to the client's default branch. A proposed change that
-    does not exist, or a state that Infrahub does not define, raises
+    does not exist reads as `missing`: a person deleted it, and the schedule leaves its branch
+    alone. A failed request, or a state that Infrahub does not define, raises
     `ProposedChangeReadFailedError`.
     """
     try:
@@ -278,7 +293,7 @@ def read_proposed_change(
         raise ProposedChangeReadFailedError from exc
     edges = (data.get("CoreProposedChange") or {}).get("edges") or []
     if not edges:
-        raise ProposedChangeReadFailedError
+        return "missing"
     node = edges[0].get("node") or {}
     state = (node.get("state") or {}).get("value")
     if state not in _INFRAHUB_STATES:

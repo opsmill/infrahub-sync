@@ -600,7 +600,12 @@ _BRANCH_REVIEW_ERRORS: tuple[type[Exception], ...] = (
     OSError,
 )
 # The outcome of the event of an earlier proposed change that a run left in place, by its cause.
-_KEPT_OUTCOMES: dict[str, str] = {"approved": "kept-approved", "merged": "kept-merged", "closed": "kept-closed"}
+_KEPT_OUTCOMES: dict[str, str] = {
+    "approved": "kept-approved",
+    "merged": "kept-merged",
+    "closed": "kept-closed",
+    "missing": "kept-missing",
+}
 
 
 @dataclass
@@ -1987,6 +1992,8 @@ def _kept_cause(state: str) -> BranchReviewKeptCause:
         return "approved"
     if state in ("merged", "merging"):
         return "merged"
+    if state == "missing":
+        return "missing"
     return "closed"
 
 
@@ -2002,6 +2009,48 @@ def _replace_earlier(client: Any, earlier: ScheduleBranch, comment: str) -> Bran
             return _kept_cause(closed.state)
     review_ops.delete_branch(client, earlier.branch)
     return None
+
+
+def _log_unexpected_branch_review_error(run_id: str, step: str, exc: Exception) -> None:
+    """Log an error of a branch review step that is not one of the typed errors, with its class only."""
+    logger.error("branch_review.unexpected_error run_id=%s step=%s error_class=%s", run_id, step, type(exc).__name__)
+
+
+def _record_branch_review_outcome(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    projection: ProductProjection,
+    outcome: BranchReviewOutcome,
+    events: Sequence[AuditEvent],
+    earlier_events: Mapping[str, Sequence[AuditEvent]],
+    secrets: Sequence[str],
+    lines: SyncFlowLines,
+) -> BranchReviewOutcome | None:
+    """Save the second part of `branch_review` and its events; return what was saved, or `None`.
+
+    The write is committed, so no failure of the save may fail the flow run or skip its summary:
+    a store error (`ProductStoreProviderError`), a driver error of the local store, or any other
+    error is logged with its class only, and the identifier of the proposed change goes to the
+    logs, so a person can find it in Infrahub.
+    """
+    try:
+        return projection.record_branch_review_outcome(
+            outcome, events=events, earlier_events=earlier_events, secrets=secrets
+        )
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        logger.error(  # noqa: TRY400 - the class only: the text of a store error can hold an address.
+            "branch_review.outcome_not_recorded run_id=%s proposed_change_id=%s failure=%s error_class=%s",
+            outcome.run_id,
+            outcome.proposed_change_id,
+            outcome.failure,
+            type(exc).__name__,
+        )
+        lines.log(
+            logging.ERROR,
+            "run %s could not record its branch review (%s); the write is kept, and the proposed change is %s",
+            outcome.run_id,
+            type(exc).__name__,
+            outcome.proposed_change_id or "not opened",
+        )
+        return None
 
 
 def _finish_branch_review(
@@ -2064,6 +2113,15 @@ def _open_and_replace(  # pylint: disable=too-many-locals
         events.append(
             event(SCHEDULE_PROPOSED_CHANGE_FAILED, "failed", EventDetails(branch=review.branch, cause=failure))
         )
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        # The write is committed: no failure of this step may fail the flow run, change the
+        # write's verdict or skip the run summary. The failure is recorded as `internal_error`.
+        _log_unexpected_branch_review_error(run_id, "open", exc)
+        proposed_change_id = None
+        failure = failure_class(exc)
+        events.append(
+            event(SCHEDULE_PROPOSED_CHANGE_FAILED, "failed", EventDetails(branch=review.branch, cause=failure))
+        )
     else:
         details = EventDetails(branch=review.branch, proposed_change_id=proposed_change_id)
         events.append(event(SCHEDULE_PROPOSED_CHANGE_OPENED, "opened", details))
@@ -2074,7 +2132,11 @@ def _open_and_replace(  # pylint: disable=too-many-locals
             )
             try:
                 cause = _replace_earlier(review.client, earlier, comment)
-            except _BRANCH_REVIEW_ERRORS as exc:
+            except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+                # The write is committed, as for the open above; an error outside the typed
+                # branch review errors is logged with its class and recorded as `internal_error`.
+                if not isinstance(exc, _BRANCH_REVIEW_ERRORS):
+                    _log_unexpected_branch_review_error(run_id, "replace", exc)
                 failed = failure_class(exc)
                 failure = failure or failed
                 failed_details = about.model_copy(update={"replaced_run_id": None, "cause": failed})
@@ -2089,7 +2151,8 @@ def _open_and_replace(  # pylint: disable=too-many-locals
                 earlier_events[earlier.run_id] = [
                     event(SCHEDULE_PROPOSED_CHANGE_KEPT, _KEPT_OUTCOMES[cause], kept_details)
                 ]
-    saved = projection.record_branch_review_outcome(
+    saved = _record_branch_review_outcome(
+        projection,
         BranchReviewOutcome(
             run_id=run_id,
             proposed_change_id=proposed_change_id,
@@ -2097,10 +2160,13 @@ def _open_and_replace(  # pylint: disable=too-many-locals
             kept=tuple(kept),
             failure=failure,
         ),
-        events=events,
-        earlier_events=earlier_events,
-        secrets=secrets,
+        events,
+        earlier_events,
+        secrets,
+        lines,
     )
+    if saved is None:
+        return
     if saved.proposed_change_id is not None:
         lines.info(
             f"run {run_id} opened the proposed change {saved.proposed_change_id} from the branch {review.branch}"

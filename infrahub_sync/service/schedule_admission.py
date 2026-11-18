@@ -67,10 +67,16 @@ ADMISSION_ATTEMPTS = 5
 _VERSION_NOT_FOUND = "configuration-version-not-found"
 _VERSION_INVALID = "configuration-version-invalid"
 _BRANCH_DECLARED = "schedule-branch-declared"
-# The states of an earlier proposed change in which a person merged or closed it, and the
-# outcome of the event that records it as kept. ``merging`` counts as merged and ``canceled``
-# as closed (research R15).
-_KEPT_OUTCOMES = {"merged": "kept-merged", "merging": "kept-merged", "closed": "kept-closed", "canceled": "kept-closed"}
+# The states of an earlier proposed change in which a person merged, closed or deleted it, and
+# the outcome of the event that records it as kept. ``merging`` counts as merged and ``canceled``
+# as closed (research R15); ``missing`` is a proposed change that Infrahub no longer holds.
+_KEPT_OUTCOMES = {
+    "merged": "kept-merged",
+    "merging": "kept-merged",
+    "closed": "kept-closed",
+    "canceled": "kept-closed",
+    "missing": "kept-missing",
+}
 
 
 class EarlierProposedChangesUnreadableError(Exception):
@@ -90,7 +96,8 @@ class EarlierProposedChangesReader(Protocol):
     def __call__(self, schedule: ScheduleRecord, branches: tuple[ScheduleBranch, ...], /) -> Mapping[str, str]:
         """Return, by the run of each branch row, its state in Infrahub.
 
-        The state is ``open``, ``approved``, ``merging``, ``merged``, ``closed`` or ``canceled``.
+        The state is ``open``, ``approved``, ``merging``, ``merged``, ``closed``, ``canceled``,
+        or ``missing`` for a proposed change that Infrahub no longer holds.
 
         Raises:
             EarlierProposedChangesUnreadableError: Infrahub did not answer.
@@ -214,8 +221,8 @@ def decide_start(  # noqa: PLR0911  # pylint: disable=too-many-arguments,too-man
     policy and makes it wait under the ``queue`` policy (research R7). For a schedule with
     branch review, ``read_proposed_changes`` then reads the earlier proposed changes of its
     ``pending`` and ``open`` branch rows (research R11, FR-031): one that cannot be read fails
-    the start; one that is approved and open skips it; one that a person merged or closed moves
-    to the state ``kept``. Otherwise the start runs as a new ``sync`` run of the owner; a run
+    the start; one that is approved and open skips it; one that a person merged, closed or
+    deleted moves to the state ``kept``. Otherwise the start runs as a new ``sync`` run of the owner; a run
     later than ``ON_TIME_SECONDS`` is recorded as ``missed-started-late``.
 
     The waiting start (``waiting_start_at``) was recorded when it was queued: it is not late,

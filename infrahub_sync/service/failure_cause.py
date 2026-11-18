@@ -55,6 +55,7 @@ from infrahub_sync.runtime_schema.errors import DestinationSchemaUnavailableErro
 from infrahub_sync.service.branch_review import (
     BranchCreateFailedError,
     BranchDeleteFailedError,
+    BranchListFailedError,
     DestinationDefaultBranchNotMainError,
     ProposedChangeCloseFailedError,
     ProposedChangeOpenFailedError,
@@ -267,6 +268,7 @@ _TYPED_ERRORS: tuple[tuple[tuple[type[BaseException], ...], FailureType], ...] =
     # The branch review operations of a scheduled run (spec 021, research R15). The close comes
     # before the read, because a close that fails at its read is raised from the read's error.
     ((DestinationDefaultBranchNotMainError,), "destination_default_branch_not_main"),
+    ((BranchListFailedError,), "branch_list_failed"),
     ((ProposedChangeCloseFailedError,), "proposed_change_close_failed"),
     ((ProposedChangeOpenFailedError,), "proposed_change_open_failed"),
     ((ProposedChangeReadFailedError,), "proposed_change_read_failed"),
@@ -334,6 +336,7 @@ _DESTINATION_TYPES: frozenset[str] = frozenset(
         "destination_schema_unavailable",
         "lineage_refused",
         "destination_default_branch_not_main",
+        "branch_list_failed",
         "branch_create_failed",
         "branch_delete_failed",
         "proposed_change_open_failed",
@@ -475,6 +478,10 @@ _TEMPLATES: dict[str, Callable[[dict[str, Any], str, str], _Template]] = {
     "destination_default_branch_not_main": lambda _f, _where, _adapter: (
         "The default branch of the destination is not main, and Infrahub accepts a proposed change only to main",
         "Change the schedule's write target to default-branch, or use a destination whose default branch is main.",
+    ),
+    "branch_list_failed": lambda _f, _where, _adapter: (
+        "Infrahub answered the branch list of the destination in a form that cannot be read",
+        f"Check the Infrahub version and the account's permissions, {_NEXT_START}",
     ),
     "branch_create_failed": lambda _f, _where, _adapter: (
         "Infrahub did not create the branch of the scheduled run",
