@@ -1,0 +1,46 @@
+dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md
+  s_cf9ada8f865389::t_fb9cf540f95c69 3-7
+docs/docs/kubernetes-deployment.mdx
+  s_cf9ada8f865389::t_0513a69739b15f 161-162
+docs/docs/reference/sync-http-api.mdx
+  s_cf9ada8f865389::t_fc37715fea82eb 93-94,104-105,149-151
+docs/docs/operations/compose-troubleshooting.mdx
+  s_cf9ada8f865389::t_0513a69739b15f 55-56
+dev/adr/README.md
+  s_cf9ada8f865389::t_fb9cf540f95c69 131-133
+docs/docs/development/guidelines/testing-tiers.md
+  s_cf9ada8f865389::t_e6ee93d72fdf6a 692-693
+docs/docs/development/knowledge/local-accounts.md
+  s_cf9ada8f865389::t_e6ee93d72fdf6a 9,203-208
+frontend/README.md
+  s_cf9ada8f865389::t_0513a69739b15f 23
+  s_cf9ada8f865389::t_64313878eab367 24-26
+changelog/+bearer-tokens-variable.removed.md
+  s_cf9ada8f865389::t_0513a69739b15f 1
+docs/docs/development-stack.mdx
+  s_cf9ada8f865389::t_0513a69739b15f 368
+docs/docs/development/guidelines/accounts.md
+  s_cf9ada8f865389::t_e6ee93d72fdf6a 56-58
+docs/docs/compose-deployment.mdx
+  s_cf9ada8f865389::t_0513a69739b15f 258-260
+infrahub_sync/testcontainers/docker-compose.yml
+  s_cf9ada8f865389::t_0513a69739b15f 258
+dev/adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md
+  s_cf9ada8f865389::t_fb9cf540f95c69 27-28,43-45,61-63,91,93-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ccddce26e49f480fa86ce09da7777cb20734b5c7",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
