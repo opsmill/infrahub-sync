@@ -1087,6 +1087,59 @@ class ValidationReportResource(_ResourceModel):
     next_offset: int | None
 
 
+class AccountResource(_ResourceModel):
+    """What the Sync API shows of a local account: its name, its level and its state."""
+
+    name: str
+    administrator: bool
+    disabled: bool
+    environment_managed: bool
+    created_at: datetime
+    sign_in_refused_until: datetime | None = None
+
+
+class SessionResource(_ResourceModel):
+    """The answer of a sign-in: the session token, the account and the idle period of a session.
+
+    The Sync API returns the token this once. Its printed form shows the account name only.
+    """
+
+    token: str
+    account: AccountResource
+    idle_seconds: int
+
+    def __repr__(self) -> str:
+        """Show the account name only, so that no log line or traceback holds the session token."""
+        return f"SessionResource(account={self.account.name!r})"
+
+    __str__ = __repr__
+
+
+class TokenResource(_ResourceModel):
+    """What the Sync API shows of an API token: never its value."""
+
+    token_id: str
+    name: str
+    created_at: datetime
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+
+
+class CreatedTokenResource(TokenResource):
+    """The answer of the creation of an API token: the token and its value, returned this once.
+
+    Its printed form shows the token name only.
+    """
+
+    token: str
+
+    def __repr__(self) -> str:
+        """Show the token name only, so that no log line or traceback holds the value."""
+        return f"CreatedTokenResource(name={self.name!r})"
+
+    __str__ = __repr__
+
+
 class ErrorDetail(_ResourceModel):
     """Parse the public fields in a general API error."""
 

@@ -33,6 +33,7 @@ from .models import (
     MAX_LOG_LIMIT,
     MAX_REPORT_LIMIT,
     MIN_LIMIT,
+    AccountResource,
     ApplyRunRequest,
     ApprovedRunResource,
     ApproveRunRequest,
@@ -46,6 +47,7 @@ from .models import (
     ConfigurationVersionPage,
     ConfigurationVersionResource,
     ConfigurationVersionSummaryResource,
+    CreatedTokenResource,
     CreateRunRequest,
     ErrorEnvelope,
     EventPage,
@@ -64,13 +66,15 @@ from .models import (
     RunPage,
     RunResource,
     ServiceStatusResource,
+    SessionResource,
+    TokenResource,
     ValidationReportResource,
     VerifyRunRequest,
     VersionResource,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from types import TracebackType
 
 _Model = TypeVar("_Model", bound=BaseModel)
@@ -106,6 +110,20 @@ _CLOSE = "close"
 _WAIT_FOR_RUN = "wait_for_run"
 _POLL_INTERVAL_ARG = "poll_interval"
 _STAGE_ARG = "stage"
+_PASSWORD_ARG = "password"
+_CURRENT_PASSWORD_ARG = "current_password"
+_NEW_PASSWORD_ARG = "new_password"
+_REASON_ARG = "reason"
+_STATE_ARG = "state"
+_ADMINISTRATOR_ARG = "administrator"
+_DISABLED_ARG = "disabled"
+_EXPIRES_AT_ARG = "expires_at"
+_TOKEN_ID_ARG = "token_id"
+_ACCOUNT_STATES = frozenset({"active", "disabled", "all"})
+# The rule of an account name, as the Sync API applies it. A name that matches is safe in a URL path.
+_ACCOUNT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$")
+# The value a client built by `SyncClient.without_token` holds in place of a token. It is never sent.
+_NO_TOKEN = "-"
 
 
 class SyncClient:  # pylint: disable=too-many-public-methods
@@ -131,8 +149,24 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             transport=transport,
             follow_redirects=False,
         )
-        self._authorization = f"Bearer {token}"
+        self._authorization: str | None = f"Bearer {token}"
         self._compatible = False
+
+    @classmethod
+    def without_token(
+        cls,
+        service_url: str,
+        *,
+        timeout: float = 30.0,
+        transport: httpx.BaseTransport | None = None,
+    ) -> SyncClient:
+        """Build a client that holds no token: it can call `sign_in` and the routes that need no token.
+
+        Every other call raises `ClientInputError("token")` before any request is sent.
+        """
+        client = cls(service_url, _NO_TOKEN, timeout=timeout, transport=transport)
+        client._authorization = None
+        return client
 
     @classmethod
     def from_environment(
@@ -487,6 +521,142 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         """Return the actor the token authenticates as and whether it is an administrator."""
 
         return self._request_model("me", "GET", "/me", model=PrincipalResource, success={200})
+
+    def sign_in(self, name: str, password: str) -> SessionResource:
+        """Open a session with an account name and its password. The request carries no token.
+
+        The answer holds the session token once. The password is sent in the request body only.
+        """
+
+        body = {"name": self._text(name, _NAME_ARG), "password": self._text(password, _PASSWORD_ARG)}
+        return self._request_model(
+            "sign_in",
+            "POST",
+            "/auth/sign-in",
+            model=SessionResource,
+            success={200},
+            body=body,
+            authenticated=False,
+        )
+
+    def sign_out(self) -> None:
+        """End the session whose token this client presents."""
+
+        self._request_empty("sign_out", "POST", "/auth/sign-out")
+
+    def change_password(self, current_password: str, new_password: str, *, reason: str | None = None) -> None:
+        """Replace the password of the caller's account. Both passwords are sent in the request body only."""
+
+        body = {
+            "current_password": self._text(current_password, _CURRENT_PASSWORD_ARG),
+            "new_password": self._text(new_password, _NEW_PASSWORD_ARG),
+        }
+        self._request_empty("change_password", "PUT", "/me/password", body=self._with_reason(body, reason))
+
+    def list_tokens(self) -> tuple[TokenResource, ...]:
+        """Return the API tokens of the caller's account, without any value."""
+
+        return self._request_list("list_tokens", "/me/tokens", TokenResource)
+
+    def create_token(
+        self, name: str, *, expires_at: datetime | None = None, reason: str | None = None
+    ) -> CreatedTokenResource:
+        """Create an API token for the caller's account. The answer holds its value this once.
+
+        ``expires_at`` must carry a time zone.
+        """
+
+        body: dict[str, object] = {"name": self._text(name, _NAME_ARG)}
+        if expires_at is not None:
+            body["expires_at"] = self._aware_time(expires_at, _EXPIRES_AT_ARG)
+        return self._request_model(
+            "create_token",
+            "POST",
+            "/me/tokens",
+            model=CreatedTokenResource,
+            success={201},
+            body=self._with_reason(body, reason),
+        )
+
+    def delete_token(self, token_id: str, *, reason: str | None = None) -> None:
+        """Delete one API token of the caller's account."""
+
+        token_id = self._identifier(token_id, _TOKEN_ID_ARG)
+        params = self._with_reason({}, reason)
+        self._request_empty(
+            "delete_token", "DELETE", f"/me/tokens/{token_id}", params=cast("dict[str, str | int]", params)
+        )
+
+    def list_accounts(self, state: str = "all") -> tuple[AccountResource, ...]:
+        """Return the accounts in one state: ``active``, ``disabled`` or ``all``. Administrator only."""
+
+        if not isinstance(state, str) or state not in _ACCOUNT_STATES:
+            raise ClientInputError(_STATE_ARG)
+        return self._request_list("list_accounts", "/accounts", AccountResource, params={"state": state})
+
+    def create_account(
+        self, name: str, password: str, *, administrator: bool = False, reason: str | None = None
+    ) -> AccountResource:
+        """Create an account with its first password. Administrator only.
+
+        The password is sent in the request body only.
+        """
+
+        if not isinstance(administrator, bool):
+            raise ClientInputError(_ADMINISTRATOR_ARG)
+        body: dict[str, object] = {
+            "name": self._text(name, _NAME_ARG),
+            "password": self._text(password, _PASSWORD_ARG),
+            "administrator": administrator,
+        }
+        return self._request_model(
+            "create_account",
+            "POST",
+            "/accounts",
+            model=AccountResource,
+            success={201},
+            body=self._with_reason(body, reason),
+        )
+
+    def get_account(self, name: str) -> AccountResource:
+        """Return one account by its name. Administrator only."""
+
+        name = self._account_name(name)
+        return self._request_model("get_account", "GET", f"/accounts/{name}", model=AccountResource, success={200})
+
+    def set_account_disabled(self, name: str, disabled: bool, *, reason: str | None = None) -> AccountResource:
+        """Disable an account, which deletes its tokens and its sessions, or enable it again. Administrator only."""
+
+        name = self._account_name(name)
+        if not isinstance(disabled, bool):
+            raise ClientInputError(_DISABLED_ARG)
+        return self._request_model(
+            "set_account_disabled",
+            "PATCH",
+            f"/accounts/{name}",
+            model=AccountResource,
+            success={200},
+            body=self._with_reason({"disabled": disabled}, reason),
+        )
+
+    def set_account_password(self, name: str, new_password: str, *, reason: str | None = None) -> None:
+        """Replace the password of an account. Administrator only.
+
+        The password is sent in the request body only.
+        """
+
+        name = self._account_name(name)
+        body = {"new_password": self._text(new_password, _NEW_PASSWORD_ARG)}
+        self._request_empty(
+            "set_account_password", "PUT", f"/accounts/{name}/password", body=self._with_reason(body, reason)
+        )
+
+    def unlock_account(self, name: str, *, reason: str | None = None) -> None:
+        """End the refusal of an account's sign-ins that follows repeated failures. Administrator only."""
+
+        name = self._account_name(name)
+        body = self._with_reason({}, reason)
+        self._request_empty("unlock_account", "POST", f"/accounts/{name}/unlock", body=body or None)
 
     def get_run(self, run_id: str) -> RunResource:
         """Return one run and its orchestration history."""
@@ -879,26 +1049,74 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         *,
         model: type[_Model],
         success: set[int],
-        body: BaseModel | None = None,
+        body: BaseModel | Mapping[str, object] | None = None,
         idempotency_key: str | None = None,
         params: dict[str, str | int] | tuple[tuple[str, str | int], ...] | None = None,
         config_route: bool = False,
         request_timeout: float | None = None,
+        authenticated: bool = True,
     ) -> _Model:
         if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key.strip()):
             raise ClientInputError(_IDEMPOTENCY_KEY_ARG)
+        if authenticated:
+            self._require_token()
         self._ensure_compatible()
         headers = {"Idempotency-Key": idempotency_key} if idempotency_key is not None else None
         response = self._send(
             operation,
             method,
             path,
+            authenticated=authenticated,
             headers=headers,
-            json=None if body is None else body.model_dump(mode="json"),
+            json=body.model_dump(mode="json") if isinstance(body, BaseModel) else body,
             params=params,
             request_timeout=request_timeout,
         )
         return self._success(response, operation, model, success, config_route=config_route)
+
+    def _request_empty(
+        self,
+        operation: str,
+        method: str,
+        path: str,
+        *,
+        body: Mapping[str, object] | None = None,
+        params: dict[str, str | int] | None = None,
+    ) -> None:
+        """Send a request whose success answer is ``204`` with no body."""
+        self._require_token()
+        self._ensure_compatible()
+        response = self._send(operation, method, path, json=body, params=params or None)
+        if response.status_code != 204:
+            self._raise_response_error(response, operation, config_route=False)
+
+    def _request_list(
+        self,
+        operation: str,
+        path: str,
+        model: type[_Model],
+        *,
+        params: dict[str, str | int] | None = None,
+    ) -> tuple[_Model, ...]:
+        """Read a route whose success answer is a JSON array of one resource."""
+        self._require_token()
+        self._ensure_compatible()
+        response = self._send(operation, "GET", path, params=params)
+        self._require_json(response, operation)
+        if response.status_code != 200:
+            self._raise_response_error(response, operation, config_route=False)
+        payload = self._json(response, operation)
+        if not isinstance(payload, list):
+            raise ProtocolError(operation, response.status_code)
+        try:
+            return tuple(model.model_validate(item) for item in payload)
+        except (ValidationError, TypeError, ValueError):
+            raise ProtocolError(operation, response.status_code) from None
+
+    def _require_token(self) -> None:
+        """Refuse, before any request, a call that needs a token on a client that holds none."""
+        if self._authorization is None:
+            raise ClientInputError(_TOKEN_ARG)
 
     def _success(
         self,
@@ -958,6 +1176,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     ) -> httpx.Response:
         request_headers = dict(headers or {})
         if authenticated:
+            if self._authorization is None:
+                raise ClientInputError(_TOKEN_ARG)
             request_headers["Authorization"] = self._authorization
         try:
             return self._http.request(
@@ -1047,6 +1267,29 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
             raise ClientInputError(argument)
         return value
+
+    @staticmethod
+    def _account_name(value: object) -> str:
+        """Refuse an account name that the Sync API cannot hold, so the name is safe in a URL path."""
+        if not isinstance(value, str) or _ACCOUNT_NAME.fullmatch(value) is None:
+            raise ClientInputError(_NAME_ARG)
+        return value
+
+    @staticmethod
+    def _text(value: object, argument: str) -> str:
+        """Refuse a value that is not text. The error names the argument and never the value."""
+        if not isinstance(value, str):
+            raise ClientInputError(argument)
+        return value
+
+    @staticmethod
+    def _with_reason(values: dict[str, Any], reason: object) -> dict[str, Any]:
+        """Add the optional audit reason to a request body or to query parameters."""
+        if reason is None:
+            return values
+        if not isinstance(reason, str) or not reason:
+            raise ClientInputError(_REASON_ARG)
+        return {**values, _REASON_ARG: reason}
 
     @staticmethod
     def _sequence(value: object, argument: str) -> tuple[object, ...]:
