@@ -523,10 +523,11 @@ Scenario 6 opens `http://127.0.0.1:8001/`. This check served this branch instead
 
 A headless Chromium (the cached `chromium_headless_shell-1243`, driven by Playwright 1.65.2 for
 Python through `uv run --no-project --with playwright`, no dependency added to the repository)
-ran these steps. Every step passed:
+ran these steps. The final run, after the last frontend change, passed every step:
 
 | Step | Result |
 |---|---|
+| Opening the root address shows the sign-in form and no page content | pass |
 | Opening the run's address shows the sign-in form and no page content | pass |
 | A wrong password shows "The account name or the password is not accepted." | pass |
 | The password field is empty after the refusal | pass |
@@ -540,9 +541,11 @@ ran these steps. Every step passed:
 | **Sign out** shows the sign-in form | pass |
 | Sign-out removes the token from `sessionStorage` | pass |
 | `GET /api/me` with the old session token answers `401` | pass |
+| After a second sign-in, a session ended through `POST /api/auth/sign-out` and a reload show the sign-in form and remove the token | pass |
 
 Not exercised in the browser: "approved by", because the fake orchestration produces no plan to
-approve; the `503 sign-in-busy` message; the return to the sign-in form after the idle period.
+approve; the `503 sign-in-busy` message; the end of a session after the idle period (the
+reload after a sign-out through the API checks the same `401` handling).
 The second half of scenario 6 ("My account", "Accounts") belongs to User Story 4.
 
 ### Unit tier
