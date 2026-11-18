@@ -674,6 +674,8 @@ def test_past_records_of_a_deleted_account_display_one_placeholder(api: AccountA
     run = answers[0].json()["run"]
     assert (run["actor"], run["approval"]["approved_by"]) == (placeholder, placeholder)
     assert {run["actor"] for run in answers[1].json()["items"]} == {placeholder}
+    assert placeholder in {event["actor"] for event in answers[2].json()["items"]}
+    assert {version["registered_by"] for version in answers[3].json()["items"]} == {placeholder}
     fields = frozenset({"actor", "approved_by", "registered_by"})
     shown = {value for answer in answers for value in _values(answer.json(), fields)}
     assert placeholder in shown

@@ -13,8 +13,7 @@ reads the product store, the clock and the free-text check through the ``RunServ
 Each accepted action writes one audit event that names the account acted on by its identifier. The
 event is written right after the store call of the action, not in its transaction: a failure
 between the two leaves the action done and its event missing. The deletion of an account is the
-exception: the store writes its event in the transaction of the deletion, because after it the
-account has no name that a later event could be checked against.
+exception: the store writes its event in the transaction of the deletion (research R7).
 
 No function of this module puts a password, a token value, a session token, a digest or a hash in
 a log line, an exception or an audit record. A session token is in one place, the answer of a
