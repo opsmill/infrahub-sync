@@ -1,0 +1,24 @@
+docs/docs/development/knowledge/repository-tour.md
+  s_cf9ada8f865389::t_808b1e396c6212 118-139
+  s_cf9ada8f865389::t_5704a6f94623eb 41-48,51-52
+  s_cf9ada8f865389::t_f30010407a6c2f 117
+  s_cf9ada8f865389::t_5d90b8d334dc35 247-252
+AGENTS.md
+  s_cf9ada8f865389::t_25012ba2db5c8a 107-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d33e73d46d71af526e283ac4ce530df7a31b38d",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
