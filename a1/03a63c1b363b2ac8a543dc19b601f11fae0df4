@@ -1,0 +1,19 @@
+tests/client/test_schedules.py
+  s_49f3bd0db401ba::t_84f7da463587bb 179,189-199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a103a63c1b363b2ac8a543dc19b601f11fae0df4",
+  "prompts": {},
+  "sessions": {
+    "s_49f3bd0db401ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a1f9a29cbf552ee84",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
