@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from infrahub_sync.cli import app
+from infrahub_sync.client import APIError, TransportError
 from infrahub_sync.demo import prepare
 from infrahub_sync.demo.errors import DemoSchemaError
 from tests.demo.fakes import FakeSchemaLoader, FakeSyncClient
@@ -33,8 +34,10 @@ def _tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", SYNC_TOKEN)
 
 
-def _invoke(loader: FakeSchemaLoader, monkeypatch: pytest.MonkeyPatch, *extra: str) -> tuple[FakeSyncClient, str]:
-    client = FakeSyncClient()
+def _invoke(
+    loader: FakeSchemaLoader, monkeypatch: pytest.MonkeyPatch, *extra: str, client: FakeSyncClient | None = None
+) -> tuple[FakeSyncClient, str]:
+    client = client if client is not None else FakeSyncClient()
     monkeypatch.setattr(prepare, "load_schema", loader)
     result = RUNNER.invoke(app, [*ARGUMENTS, *extra], obj={"client": client})
     return client, f"{result.exit_code}\n{result.output}"
@@ -84,6 +87,13 @@ def test_success_prints_the_text_summary(monkeypatch: pytest.MonkeyPatch) -> Non
     _assert_no_token(output)
 
 
+def test_the_registered_package_holds_neither_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = _invoke(FakeSchemaLoader(), monkeypatch)
+
+    assert len(client.requests) == 1
+    _assert_no_token(json.dumps(client.requests[0].package))
+
+
 def test_json_prints_one_object(monkeypatch: pytest.MonkeyPatch) -> None:
     _, output = _invoke(FakeSchemaLoader(), monkeypatch, "--json")
 
@@ -110,4 +120,38 @@ def test_a_timeout_that_is_not_positive_exits_2_before_any_call(monkeypatch: pyt
 
     assert output.startswith("2\n")
     assert "argument: schema_timeout" in output
+    assert (loader.calls, client.calls) == ([], [])
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(APIError(401, "unauthenticated"), id="unauthenticated"),
+        pytest.param(TransportError("list_configs"), id="connection-error"),
+    ],
+)
+def test_a_sync_api_failure_after_the_schema_load_says_a_re_run_completes_the_registration(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    loader = FakeSchemaLoader()
+
+    _, output = _invoke(loader, monkeypatch, client=FakeSyncClient(error=error))
+
+    assert output.startswith("1\n")
+    assert len(loader.calls) == 1
+    assert "the demo schema is already loaded; run the command again to complete the registration" in output
+    _assert_no_token(output)
+
+
+@pytest.mark.parametrize("option", ["--netbox-url", "--infrahub-url", "--infrahub-address"])
+def test_an_address_with_userinfo_exits_2_naming_the_option_and_not_the_value(
+    monkeypatch: pytest.MonkeyPatch, option: str
+) -> None:
+    loader = FakeSchemaLoader()
+
+    client, output = _invoke(loader, monkeypatch, option, "http://admin:userinfo-canary@host:8000")
+
+    assert output.startswith("2\n")
+    assert option in output
+    assert "userinfo-canary" not in output
     assert (loader.calls, client.calls) == ([], [])

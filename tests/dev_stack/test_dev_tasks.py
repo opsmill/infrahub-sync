@@ -940,3 +940,17 @@ def test_dev_demo_refuses_a_preparation_it_cannot_read(
 
     with pytest.raises(dev.DevStackError, match="demo prepare"):
         _body(dev.dev_demo)(context)
+
+
+@pytest.mark.usefixtures("demo")
+def test_dev_demo_shows_the_last_lines_of_a_preparation_that_printed_no_json_object(
+    context: Context, fake: FakeDocker
+) -> None:
+    fake.prepare_stdout = "line one\nline two\nline three\nline four\nwarning: printed instead"
+
+    with pytest.raises(dev.DevStackError) as raised:
+        _body(dev.dev_demo)(context)
+
+    assert "warning: printed instead" in str(raised.value)
+    assert "line two" in str(raised.value)
+    assert "line one" not in str(raised.value)

@@ -654,6 +654,8 @@ def build_inputs_hash(root: Path = REPO_BASE) -> str:
     order, then, for every file of the web interface's build inputs, its relative path
     and its bytes. A checkout without the frontend submodule still yields a hash.
     """
+    # The demo assets are not hashed on purpose: the dev stack mounts the source tree, and
+    # `dev.demo` runs `demo prepare` on the host, so the image never serves them.
     digest = hashlib.sha256()
     for name in BUILD_INPUT_FILES:
         digest.update((root / name).read_bytes())
@@ -1319,6 +1321,10 @@ def _report_demo_netbox(found: str) -> None:
     )
 
 
+# How many lines of `demo prepare` output a failure to read its result shows.
+DEMO_OUTPUT_LINES = 4
+
+
 def _prepare_demo(context: Context, settings: DevSettings, environment: Mapping[str, str]) -> dict[str, Any]:
     """Run `infrahub-sync demo prepare --json` on the host and return the object it prints.
 
@@ -1347,6 +1353,11 @@ def _prepare_demo(context: Context, settings: DevSettings, environment: Mapping[
         prepared = None
     if not isinstance(prepared, dict) or "config_id" not in prepared or "version" not in prepared:
         msg = "`infrahub-sync demo prepare --json` printed no configuration ID and version"
+        if lines:
+            # Standard output holds the result and any notes, never a token: tokens reach the
+            # command through the environment, and its errors go to standard error.
+            last_lines = "\n".join(f"   {line}" for line in lines[-DEMO_OUTPUT_LINES:])
+            msg = f"{msg}; its last lines:\n{last_lines}"
         raise DevStackError(msg)
     return prepared
 

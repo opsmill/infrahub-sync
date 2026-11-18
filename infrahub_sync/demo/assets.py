@@ -18,7 +18,11 @@ SOURCE_PACKAGE = REPO_ROOT / "examples" / "netbox_to_infrahub" / "package.yml"
 
 
 def bundled_root() -> Path | None:
-    """The `assets` directory the wheel bundles, or `None` when it is not on the file system."""
+    """The `assets` directory path next to this module, or `None` when it is not on the file system.
+
+    An editable install returns a path that does not exist, because the source tree has no
+    `assets` directory; `_bundled` then answers `None` and the callers read the source tree.
+    """
     root = files("infrahub_sync.demo") / "assets"
     # A wheel installed into site-packages gives a real directory; anything else (a zip
     # import) is not supported and falls back to the source tree.

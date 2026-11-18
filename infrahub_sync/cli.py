@@ -432,11 +432,17 @@ def _client_errors() -> Iterator[None]:
     try:
         yield
     except SyncClientError as error:
-        label, fields = _error_fields(error)
-        typer.echo(f"error: {label}", err=True)
-        _echo_fields(fields, err=True)
+        code = _echo_client_error(error)
         _forget_refused_session(error)
-        raise typer.Exit(2 if isinstance(error, ClientInputError) else 1) from None
+        raise typer.Exit(code) from None
+
+
+def _echo_client_error(error: SyncClientError) -> int:
+    """Print a client error's label and bounded fields; return the exit code for it."""
+    label, fields = _error_fields(error)
+    typer.echo(f"error: {label}", err=True)
+    _echo_fields(fields, err=True)
+    return 2 if isinstance(error, ClientInputError) else 1
 
 
 def _request(model: type[Any], **values: object) -> Any:
@@ -2803,6 +2809,7 @@ def schedules_take_over(
 
 
 INFRAHUB_TOKEN_VARIABLE = "INFRAHUB_API_TOKEN"
+_DEMO_RERUN_NOTE = "note: the demo schema is already loaded; run the command again to complete the registration"
 
 
 def _echo_preparation(result: demo_prepare.PreparationResult) -> None:
@@ -2858,6 +2865,11 @@ def demo_prepare_cmd(
         typer.echo(f"error: {INFRAHUB_TOKEN_VARIABLE} is not set", err=True)
         typer.echo(f"hint: set {INFRAHUB_TOKEN_VARIABLE} to an Infrahub API token that can load a schema", err=True)
         raise typer.Exit(2)
+    refused = demo_prepare.refused_address_option(netbox_url, infrahub_url, infrahub_address)
+    if refused is not None:
+        typer.echo(f"error: {refused} must not carry a user name or password (user:password@)", err=True)
+        typer.echo(f"hint: give {refused} as scheme://host[:port], without user:password@", err=True)
+        raise typer.Exit(2)
     with _client_errors():
         _positive_duration(schema_timeout, "schema_timeout")
         client = _client(ctx)
@@ -2875,6 +2887,14 @@ def demo_prepare_cmd(
             typer.echo("error: demo preparation stopped", err=True)
             typer.echo(_display(f"cause: {error}"), err=True)
             raise typer.Exit(1) from None
+        except SyncClientError as error:
+            # The schema load runs first and raises `DemoError`, so a Sync client error here
+            # comes from the registration, after the schema was loaded.
+            exit_code = _echo_client_error(error)
+            _forget_refused_session(error)
+            if not isinstance(error, ClientInputError):
+                typer.echo(_DEMO_RERUN_NOTE, err=True)
+            raise typer.Exit(exit_code) from None
     if as_json:
         typer.echo(json.dumps(result.as_dict(), sort_keys=True))
     else:

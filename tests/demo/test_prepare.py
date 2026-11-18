@@ -14,7 +14,7 @@ from infrahub_sdk.exceptions import ServerNotReachableError
 from infrahub_sdk.schema import SchemaLoadResponse
 
 from infrahub_sync.demo import assets, prepare
-from infrahub_sync.demo.errors import DemoSchemaError
+from infrahub_sync.demo.errors import DemoAddressError, DemoSchemaError
 from infrahub_sync.demo.package import local_package_text
 from tests.demo.fakes import FakeSchemaLoader, FakeSyncClient
 
@@ -24,13 +24,16 @@ INFRAHUB_TOKEN = "canary-infrahub-token-7f3a91"  # noqa: S105 -- test canary, no
 DEMO_MODULES = sorted((Path(prepare.__file__).parent).glob("*.py"))
 
 
-def _sha12(netbox_url: str = NETBOX_URL, infrahub_url: str = INFRAHUB_URL) -> str:
+def _sha12(netbox_url: str = NETBOX_URL, infrahub_url: str = INFRAHUB_URL, reason: str = "") -> str:
     text = local_package_text(assets.netbox_package_text(), netbox_url, infrahub_url)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256(f"{text}\0{reason}".encode()).hexdigest()[:12]
 
 
 def _prepare(
-    client: FakeSyncClient, loader: FakeSchemaLoader, netbox_url: str = NETBOX_URL
+    client: FakeSyncClient,
+    loader: FakeSchemaLoader,
+    netbox_url: str = NETBOX_URL,
+    reason: str | None = None,
 ) -> prepare.PreparationResult:
     return prepare.prepare(
         client,
@@ -39,6 +42,7 @@ def _prepare(
         infrahub_address=None,
         token=INFRAHUB_TOKEN,
         schema_loader=loader,
+        reason=reason,
     )
 
 
@@ -93,6 +97,73 @@ def test_two_configurations_with_the_package_name_version_the_newest_and_name_it
     assert client.calls[-1][:2] == ("create_config_version", "cfg-new")
 
 
+def test_a_different_reason_on_a_later_run_reports_unchanged_without_an_idempotency_conflict() -> None:
+    client, loader = FakeSyncClient(), FakeSchemaLoader()
+    _prepare(client, loader)
+    _prepare(client, loader, reason="first demo")
+
+    result = _prepare(client, loader, reason="second demo")
+
+    assert (result.configuration, result.config_id, result.version) == ("unchanged", "cfg-1", 1)
+    assert client.calls[-1] == (
+        "create_config_version",
+        "cfg-1",
+        f"demo-prepare-version-cfg-1-{_sha12(reason='second demo')}",
+    )
+
+
+def test_switching_between_two_netbox_addresses_reports_versioned_only_when_a_version_is_added() -> None:
+    client, loader = FakeSyncClient(), FakeSchemaLoader()
+    other = "http://netbox.example:8080"
+
+    results = [_prepare(client, loader, netbox_url=url) for url in (NETBOX_URL, other, NETBOX_URL, other)]
+
+    assert [(result.configuration, result.version) for result in results] == [
+        ("registered", 1),
+        ("versioned", 2),
+        ("unchanged", 1),
+        ("unchanged", 2),
+    ]
+
+
+def test_same_name_counts_the_configurations_on_every_page() -> None:
+    client, loader = FakeSyncClient(page_size=1), FakeSchemaLoader()
+    package: dict[str, Any] = {"format_version": 1, "configuration": {"name": "from-netbox"}}
+    for config_id in ("cfg-a", "cfg-b", "cfg-c"):
+        client.add(config_id, package)
+
+    result = _prepare(client, loader)
+
+    assert (result.config_id, result.same_name) == ("cfg-c", 3)
+
+
+@pytest.mark.parametrize(
+    "option", ["netbox_url", "infrahub_url", "infrahub_address"], ids=["netbox", "infrahub", "address"]
+)
+def test_an_address_with_userinfo_is_refused_before_any_call(option: str) -> None:
+    client, loader = FakeSyncClient(), FakeSchemaLoader()
+    addresses: dict[str, str | None] = {
+        "netbox_url": NETBOX_URL,
+        "infrahub_url": INFRAHUB_URL,
+        "infrahub_address": None,
+        option: "http://admin:userinfo-canary@host:8000",
+    }
+
+    with pytest.raises(DemoAddressError) as raised:
+        prepare.prepare(
+            client,
+            netbox_url=addresses["netbox_url"] or "",
+            infrahub_url=addresses["infrahub_url"] or "",
+            infrahub_address=addresses["infrahub_address"],
+            token=INFRAHUB_TOKEN,
+            schema_loader=loader,
+        )
+
+    assert f"--{option.replace('_', '-')}" in str(raised.value)
+    assert "userinfo-canary" not in str(raised.value)
+    assert (loader.calls, client.calls) == ([], [])
+
+
 def test_a_schema_load_error_stops_before_any_sync_client_call() -> None:
     client = FakeSyncClient()
     loader = FakeSchemaLoader(error=DemoSchemaError("Infrahub refused the demo schema"))
@@ -119,11 +190,17 @@ class _FakeInfrahub:
     """Stands in for `InfrahubClientSync`: records its settings, answers one schema load."""
 
     answer: SchemaLoadResponse | Exception = SchemaLoadResponse()
+    converged: bool | Exception = True
     seen: dict[str, Any] = {}  # noqa: RUF012 -- one test-scoped record, reset by the fixture
 
     def __init__(self, address: str, config: infrahub_sdk.Config) -> None:
         _FakeInfrahub.seen = {"address": address, "config": config}
-        self.schema = SimpleNamespace(load=self._load)
+        self.schema = SimpleNamespace(load=self._load, in_sync=self._in_sync)
+
+    def _in_sync(self) -> bool:
+        if isinstance(self.converged, Exception):
+            raise self.converged
+        return self.converged
 
     def _load(self, schemas: list[dict[str, Any]], wait_until_converged: bool) -> SchemaLoadResponse:  # noqa: FBT001 -- SDK keyword
         _FakeInfrahub.seen.update(schemas=schemas, wait=wait_until_converged)
@@ -180,3 +257,45 @@ def test_load_schema_errors_raise_without_the_token(
     assert "http://127.0.0.1:8000" in str(raised.value)
     assert INFRAHUB_TOKEN not in str(raised.value)
     assert "<redacted>" in str(raised.value)
+
+
+def test_load_schema_rounds_the_timeout_up(fake_infrahub: type[_FakeInfrahub]) -> None:
+    prepare.load_schema("http://127.0.0.1:8000", INFRAHUB_TOKEN, assets.schema_files(), 45.2)
+
+    assert fake_infrahub.seen["config"].schema_converge_timeout == 46
+
+
+def test_load_schema_raises_when_the_schema_has_not_converged(
+    monkeypatch: pytest.MonkeyPatch, fake_infrahub: type[_FakeInfrahub]
+) -> None:
+    monkeypatch.setattr(fake_infrahub, "converged", False)
+
+    with pytest.raises(DemoSchemaError) as raised:
+        prepare.load_schema("http://127.0.0.1:8000", INFRAHUB_TOKEN, assets.schema_files(), 45.2)
+
+    assert "loaded but not applied within 46 seconds" in str(raised.value)
+    assert "--schema-timeout" in str(raised.value)
+
+
+def test_load_schema_raises_without_the_token_when_the_convergence_check_fails(
+    monkeypatch: pytest.MonkeyPatch, fake_infrahub: type[_FakeInfrahub]
+) -> None:
+    monkeypatch.setattr(fake_infrahub, "converged", ServerNotReachableError(address=f"http://x?token={INFRAHUB_TOKEN}"))
+
+    with pytest.raises(DemoSchemaError) as raised:
+        prepare.load_schema("http://127.0.0.1:8000", INFRAHUB_TOKEN, assets.schema_files(), 5)
+
+    assert INFRAHUB_TOKEN not in str(raised.value)
+    assert "<redacted>" in str(raised.value)
+
+
+def test_load_schema_errors_never_show_url_userinfo(
+    monkeypatch: pytest.MonkeyPatch, fake_infrahub: type[_FakeInfrahub]
+) -> None:
+    monkeypatch.setattr(fake_infrahub, "answer", ServerNotReachableError(address="http://admin:userinfo-canary@x:8000"))
+
+    with pytest.raises(DemoSchemaError) as raised:
+        prepare.load_schema("http://admin:userinfo-canary@x:8000", INFRAHUB_TOKEN, assets.schema_files(), 5)
+
+    assert "userinfo-canary" not in str(raised.value)
+    assert "http://x:8000" in str(raised.value)

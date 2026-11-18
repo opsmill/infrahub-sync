@@ -17,3 +17,7 @@ class DemoPackageError(DemoError):
 
 class DemoSchemaError(DemoError):
     """Infrahub refused the demo schema or could not be reached to load it."""
+
+
+class DemoAddressError(DemoError):
+    """An address option carries `user:password@`; the message names the option, never the value."""
