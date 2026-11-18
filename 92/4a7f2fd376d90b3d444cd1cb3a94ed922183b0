@@ -1,0 +1,21 @@
+docs/docs/operations/compose-troubleshooting.mdx
+  s_cf9ada8f865389::t_44ac486912156e 70-71
+dev/adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md
+  s_cf9ada8f865389::t_619c8e070e5d9a 50-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "924a7f2fd376d90b3d444cd1cb3a94ed922183b0",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
