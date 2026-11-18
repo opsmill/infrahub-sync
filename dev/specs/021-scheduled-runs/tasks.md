@@ -105,7 +105,7 @@ schedule's earlier one. This phase also builds the five branch and proposed chan
 
 ### Facts to check first
 
-- [ ] T059 [US1] Check against a running Infrahub and the code, and record the answers in `dev/specs/021-scheduled-runs/research.md` under "Facts not known": the permissions that the worker's token needs to create and delete a branch and to create, update and comment on a `CoreProposedChange`; whether closing a proposed change is an update of its `state` or a mutation of its own; whether the worker can call Infrahub and the store after the stage result is committed and the write guard is released (`infrahub_sync/service/flow.py`, `infrahub_sync/service/apply_guard.py`)
+- [X] T059 [US1] Check against a running Infrahub and the code, and record the answers in `dev/specs/021-scheduled-runs/research.md` under "Facts not known": the permissions that the worker's token needs to create and delete a branch and to create, update and comment on a `CoreProposedChange`; whether closing a proposed change is an update of its `state` or a mutation of its own; whether the worker can call Infrahub and the store after the stage result is committed and the write guard is released (`infrahub_sync/service/flow.py`, `infrahub_sync/service/apply_guard.py`)
 
 ### Tests for User Story 1, worker side
 

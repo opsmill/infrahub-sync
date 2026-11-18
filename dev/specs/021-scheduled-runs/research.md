@@ -467,18 +467,69 @@ Infrahub in the record (ADR 0021).
 
 ## Facts not known at the time of writing
 
-- Whether the worker can open the proposed change and replace earlier ones after the stage result
-  is committed (R11, steps 5 and 6). At that point the execution is terminal and the write guard
-  is released. This was not checked against `service/flow.py`; phase 4 of the tasks checks it
-  first.
 - Whether Prefect deletes the flow runs it created ahead when a schedule is changed, paused or
   deleted. The admission of R2 does not depend on it: a flow run of a schedule that is not
   active, or of a cadence that no longer holds its start time, creates no run.
 - Which Prefect state a flow returns to be scheduled again later (the `queue` policy, R7).
-- Which permissions the token of the worker needs in Infrahub to create and delete a branch and
-  to create, update and comment on a proposed change, and whether closing a proposed change is
-  an update of its `state` or needs a mutation of its own. The first task of phase 4 checks
-  both against a running Infrahub.
+
+Checked since, for R11 and R15, from the source code only on 2026-11-18 (task T059). None of the
+three answers was checked against a running Infrahub. The Infrahub source read is the checkout at
+commit `0dcbe157dd` (`git describe`: `infrahub-v1.12.0b0-31-g0dcbe157dd`; its generated
+`backend/infrahub/_version.py` names an earlier build and is out of date). The SDK source is
+`infrahub-sdk-python` at commit `b31f5f42`. Infrahub paths below are relative to `backend/infrahub/`.
+
+- **Permissions of the worker's token.** Infrahub checks a permission against the branch that
+  the GraphQL request is sent to. A mutation sent to the default branch needs the global
+  permission `edit_default_branch` and object permissions that allow the default branch; a
+  mutation sent to another branch needs object permissions that allow other branches
+  (`graphql/auth/query_permission_checker/default_branch_checker.py:42-51`,
+  `object_permission_checker.py:32-37`). The client that the destination adapter builds sends to
+  the run's branch by default (`infrahub_sync/adapters/infrahub.py:995-1000`).
+    - Create a branch: no permission check in the mutation, and `BranchCreate` is exempt from
+      `edit_default_branch` (`graphql/mutations/branch.py:78-132`, `default_branch_checker.py:20-29`).
+      A branch name that exists is refused with a validation error (`branch.py:103-107`).
+    - Delete a branch: the global permission `delete_branch` only when another account created
+      the branch (`branch.py:202-208`). Deleting a branch sets every open and closed proposed
+      change of that branch to the state `canceled` (`core/branch/delete_coordinator.py:74-77`,
+      `proposed_change/tasks.py:365-395`).
+    - Create a `CoreProposedChange`: object permission `create` on it. Infrahub refuses a
+      destination other than `main` and a second open proposed change for the same source branch
+      (`graphql/mutations/proposed_change.py:89-129`).
+    - Update its `state` to `closed`: object permission `update` on it. Only a change to `merged`
+      checks a global permission, `merge_proposed_change` (`proposed_change.py:180-189`).
+    - Create a `CoreChangeComment`: object permission `create` on it, and `update` on the
+      `CoreProposedChange` it names, because a mutation needs `update` on every related kind that
+      is not its root (`graphql/analyzer.py:694-701`).
+    - The default group "Infrahub Users" holds all of these for other branches, and `update` on
+      `CoreProposedChange` with `edit_default_branch` for the default branch
+      (`core/initialization.py:427-492`).
+- **Closing a proposed change** is an update of its `state` with the generated update mutation,
+  as R15 states; there is no close mutation (`proposed_change.py:147-227`). An update of a
+  proposed change that is no longer open is refused, so closing one that is already closed fails
+  in Infrahub (`proposed_change/constants.py:32-36`, `proposed_change.py:168-169`). Rule 4 of
+  [contracts/branch-review.md](contracts/branch-review.md) therefore needs a read of the state
+  first. The states are `open`, `merged`, `merging`, `closed` and `canceled`
+  (`proposed_change/constants.py:14-19`); the contract's read result names only four of them.
+- **Work after the stage result is committed.** The `sync` stage leaves the write guard at the
+  end of its `with` block, before the commit (`infrahub_sync/service/flow.py:1075-1145`,
+  `apply_guard.py:310-315`). After `_commit_success` the flow run still writes a log line and
+  calls the store (`flow.py:1710-1714`). The liveness reconciler does nothing with a terminal
+  execution: it reads only executions with no `terminal_at`, and rule 0 ends at a terminal one
+  (`liveness.py:99, 151-156, 195-196`). The store refuses only the writes tied to a live
+  execution (`product_store/store.py:1612, 1625, 1647`); `update_schedule_branch`,
+  `record_audit` and `record_results` have no such condition (`store.py:3614-3649, 3041-3043,
+  3837-3842`). `record_results` replaces the whole `results` document.
+    - The flow run holds no reference to the destination adapter's Infrahub client after the
+      commit: `_execute_stage` returns only the result and the writeback (`flow.py:887, 1155`).
+      Steps 5 and 6 need a client that the flow keeps, or one built for them.
+    - The branch cannot be created with that client either: the adapter reads the schema of its
+      branch when it is built (`adapters/infrahub.py:1023`).
+    - No second write guard is needed. Steps 5 and 6 touch only the run's own branch and the
+      branches and proposed changes that earlier `schedule_branches` rows name, never the
+      destination data. Runs of the configuration can overlap at that point, because R7 counts
+      only executions with no `terminal_at`; `update_schedule_branch` locks the row and refuses a
+      row in a final state (`store.py:3626-3640`), so two runs that replace the same row cannot
+      both record it.
 
 Checked since, for R3, in the installed Prefect 3.8.6 on 2026-11-17 while writing
 `infrahub_sync/service/schedule_cadence.py`:
