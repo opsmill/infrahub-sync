@@ -1,0 +1,38 @@
+dev/specs/025-register-config-web/plan.md
+  s_eefe1fec4652ae::t_48e2144fc3183d 64-66
+  s_eefe1fec4652ae::t_07bc662c6d71ac 58
+dev/specs/025-register-config-web/critiques/critique-20261118.md
+  s_eefe1fec4652ae::t_7c490faa957a9c 1-107
+dev/specs/025-register-config-web/contracts/web-interface.md
+  s_eefe1fec4652ae::t_b16d37825266d8 38-41
+dev/specs/025-register-config-web/data-model.md
+  s_eefe1fec4652ae::t_a50b09bced1db5 14
+dev/specs/025-register-config-web/research.md
+  s_eefe1fec4652ae::t_fc473f203f99cf 45-46
+  s_eefe1fec4652ae::t_eb6c81882ef521 53-54
+  s_eefe1fec4652ae::t_67946fde5f765b 116-125
+dev/specs/025-register-config-web/spec.md
+  s_eefe1fec4652ae::t_cf2054d9c98e44 127-128
+  s_eefe1fec4652ae::t_6c0fba37b0a860 275-276
+  s_eefe1fec4652ae::t_590d44fead8172 285-288
+  s_eefe1fec4652ae::t_3670a3b7148742 263-268
+dev/specs/025-register-config-web/contracts/sync-api.md
+  s_eefe1fec4652ae::t_cb0193c199dc86 50
+  s_eefe1fec4652ae::t_d336db251c625a 11-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4994edd08897c24e943cde031107d7dd0e90783c",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
