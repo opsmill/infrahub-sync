@@ -1,0 +1,22 @@
+dev/specs/025-register-config-web/spec.md
+  s_eefe1fec4652ae::t_0224f73503d032 301
+  s_eefe1fec4652ae::t_6b835f638d2cf2 1-300,302-358
+dev/specs/025-register-config-web/checklists/requirements.md
+  s_eefe1fec4652ae::t_642bc8518befa7 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3eede8ff373b4c6d45a93b638e3f8a619b0d03a",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
