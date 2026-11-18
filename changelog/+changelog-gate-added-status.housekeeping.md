@@ -1,1 +1,1 @@
-The changelog gate now requires a newly added news fragment; editing an existing fragment no longer satisfies it.
+The changelog check now counts only newly added news fragments, so editing an existing fragment no longer satisfies it. The check's `pull_request` trigger is disabled, so it does not run on pull requests yet.
