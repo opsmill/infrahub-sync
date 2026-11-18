@@ -49,9 +49,9 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
 
 # The write targets of a schedule that this build can run. A request for another write target
-# is refused with ``schedule-setting-not-available``. A later task of spec 021 adds
-# ``branch-review``, and user story 2 adds ``default-branch``.
-DELIVERED_SCHEDULE_WRITE_TARGETS: frozenset[str] = frozenset()
+# is refused with ``schedule-setting-not-available``. User story 2 of spec 021 adds
+# ``default-branch``.
+DELIVERED_SCHEDULE_WRITE_TARGETS: frozenset[str] = frozenset({"branch-review"})
 
 
 class _ClientPerCallOrchestration:

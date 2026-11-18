@@ -175,8 +175,9 @@ describes the path of one start.
   `infrahub-sync-service/run` match the stored schedules. The API process runs that step after
   each schedule request and at start-up, and `bootstrap.py` runs it too. `ScheduleService` takes
   the set of write targets that the build can run; `serve.py` passes
-  `DELIVERED_SCHEDULE_WRITE_TARGETS`, which is empty in this build, so every create is refused
-  with `schedule-setting-not-available`.
+  `DELIVERED_SCHEDULE_WRITE_TARGETS`, which holds `branch-review` in this build, so a create with
+  the write target `default-branch` is refused with `schedule-setting-not-available`. The write
+  target is checked before the configuration is read.
 - `schedule_routes.py` holds the FastAPI routes under `/schedules`.
 - `schedule_cadence.py` validates a cron expression and a time zone, and computes start times,
   with the server-side `CronSchedule` of the installed Prefect, the class that Prefect's

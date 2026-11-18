@@ -136,8 +136,8 @@ def test_the_write_target_is_checked_before_the_configuration_is_read(  # noqa: 
     assert _error(response)["code"] == code
 
 
-def test_the_served_api_delivers_no_write_target_yet(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every create request is refused on a deployment until the worker side of user story 1 is delivered."""
+def test_the_served_api_delivers_branch_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A deployment runs schedules with branch review; the default branch waits for user story 2."""
     received: dict[str, object] = {}
 
     def schedule_service(*providers: object, **settings: object) -> str:
@@ -155,7 +155,11 @@ def test_the_served_api_delivers_no_write_target_yet(monkeypatch: pytest.MonkeyP
         schedule_service_factory=schedule_service,
     )
 
-    assert received == {"delivered_write_targets": frozenset(), "secrets": ("a-token",), "providers": 3}
+    assert received == {
+        "delivered_write_targets": frozenset({"branch-review"}),
+        "secrets": ("a-token",),
+        "providers": 3,
+    }
     assert built == {"schedules": "the schedule service"}
 
 

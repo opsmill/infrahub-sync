@@ -112,7 +112,7 @@ schedule's earlier one. This phase also builds the five branch and proposed chan
 - [X] T060 [P] [US1] Write `tests/service/test_branch_review_operations.py` with a fake Infrahub client, for contracts/branch-review.md: each of the five operations; a branch that exists counts as created, a branch that is missing counts as deleted, a proposed change that is closed counts as closed; `approved` only when the state is open and `approved_by` holds an account; each failure maps to a failure class with no text from Infrahub
 - [X] T061 [P] [US1] Write `tests/integration/test_branch_review_operations_integration.py` with the `integration` marker: the five operations against a running Infrahub, with a branch that the test deletes in `finally`
 - [X] T031 [US1] Extend `tests/service/test_schedule_branch_review.py` with the worker part, against the fake Infrahub client: an earlier proposed change that is approved and open stops the start with `skipped-approved-change-open` and no run (scenario 5); one that a person merged or closed moves to `kept` and the start runs (scenario 19); the branch is created before the plan; a plan with no operation deletes the branch and ends `no-change` (scenario 6); a plan that leaves out records still writes the remaining ones, and the description of the proposed change states the count (scenario 20); the proposed change is opened after the write is committed (scenario 3); an earlier unapproved one is closed with the comment and its branch deleted (scenario 4); a `pending` branch of a failed run is deleted by the next successful run; a failure to open or replace does not change the write verdict and records `proposed_change_failed`; Infrahub out of reach before the admission records `start_failed`
-- [ ] T032 [US1] Write `tests/dev_stack/smoke/test_scheduled_run.py` with the `smoke` marker for section 4 of quickstart.md
+- [X] T032 [US1] Write `tests/dev_stack/smoke/test_scheduled_run.py` with the `smoke` marker for section 4 of quickstart.md
 
 ### Implementation for User Story 1, worker side
 
@@ -121,7 +121,7 @@ schedule's earlier one. This phase also builds the five branch and proposed chan
 - [X] T033 [US1] In the `sync` branch of `_execute_stage` in `infrahub_sync/service/flow.py`, for a run with branch review: create the branch, plan on it, delete it and end when the plan has no operation, then verify and apply on it with `confirm_left_out` true; save `branch_review.branch` and `branch_state` with the stage result (R11 steps 1 to 4)
 - [X] T034 [US1] After the stage result is committed in `infrahub_sync/service/flow.py`, open the proposed change with the description of contracts/branch-review.md and replace the schedule's earlier branches (R11 steps 5 and 6); save the second part of `branch_review` and its events with one store call
 - [X] T035 [US1] Update `schedule_branches` from the two parts of `branch_review` in `infrahub_sync/product_store/store.py`, and return `open_branch` on the schedule resource
-- [ ] T058 [US1] Add `branch-review` to the set of delivered write targets in `infrahub_sync/service/serve.py` and remove the flow's refusal of a run with branch review in `infrahub_sync/service/flow.py`. This is the last task of the phase
+- [X] T058 [US1] Add `branch-review` to the set of delivered write targets in `infrahub_sync/service/serve.py` and remove the flow's refusal of a run with branch review in `infrahub_sync/service/flow.py`. This is the last task of the phase
 
 **Checkpoint**: user story 1 works end to end on the development stack. This is the first
 delivery.
