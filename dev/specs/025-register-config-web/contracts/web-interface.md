@@ -40,9 +40,11 @@ without a mouse.
    The review step requests the largest findings page (256). When `total_findings` is larger, it
    adds "N more findings. Run `infrahub-sync configs check` to list them all."
 8. Reason, optional, at most 512 characters (the existing limit).
-9. Register and Cancel. Register is enabled only when the result is "Valid", or (User Story 4)
-   when the destination cannot be reached; in that case its label is "Register without
-   validation".
+9. Register and Cancel. Register is enabled only when the result is "Valid", or when the
+   destination cannot be reached; in that case its label is "Register without validation"
+   (FR-020). With User Story 4, that registration also sends `registered_without_validation: true`.
+10. When the validation request fails (no answer, or an error that is not a refusal of the
+    package): "Validation did not complete." with "Validate again"; Register stays disabled.
 
 ## After Register
 
@@ -51,7 +53,7 @@ without a mouse.
 | Version created | Open the new version's page. |
 | `created: false` | "This package is the same as version N. No new version was registered." |
 | Newer version found before sending | "Version M was registered meanwhile." The comparison reloads. |
-| Network failure | "The request did not complete. Retry." Retrying reuses the idempotency key. |
+| Network failure | "The request did not complete. Retry." Retrying sends the same request with the same idempotency key; the reason field and the other inputs stay locked after the first attempt, because the Sync API refuses a key reused with a different request. |
 | 403 | The existing "administrator access is required" handling. |
 
 No text names a user or an actor.

@@ -164,6 +164,9 @@ next version number.
    one.
 7. **Given** the review step is open, **When** the operator cancels, **Then** nothing is registered
    and the configuration's page is shown as before.
+8. **Given** the destination cannot be reached, **When** the operator drops a package, **Then** the
+   review step states "Could not validate: the destination cannot be reached" and offers
+   "Register without validation". Registering then creates the version as in scenario 2.
 
 ---
 
@@ -192,30 +195,26 @@ Configurations page, register it, and confirm the new configuration's page opens
 
 ---
 
-### User Story 4 - Register when the destination cannot be reached (Priority: P3)
+### User Story 4 - Show that a version was registered without validation (Priority: P3)
 
-An operator drops a package while the destination Infrahub is unreachable. The review step states
-that validation could not reach the destination. The operator decides to register anyway, and the
-version shows afterwards that it was registered without validation.
+An operator registered a version while the destination could not be reached (User Story 2,
+scenario 8). Later, anyone who views that version learns that it was never validated against the
+destination, so they know to validate it before the first plan.
 
-**Why this priority**: It keeps an Infrahub outage from blocking configuration work. It requires a
-change to what the store keeps for a version, so it is separate and can be left out without
-changing Stories 1 to 3. Without it, the review step does not allow registration while the
-destination is unreachable.
+**Why this priority**: Registering during an outage is already possible without this story (D-6).
+This story only records it, and it is the only story that changes what the store keeps for a
+version, so it is separate and can be left out without changing Stories 1 to 3.
 
-**Independent Test**: Stop the destination, drop a package, register despite the warning, and
+**Independent Test**: Stop the destination, drop a package, register without validation, and
 confirm the version's page and the version returned by the Sync API both show that it was
 registered without validation.
 
 **Acceptance Scenarios**:
 
-1. **Given** the destination cannot be reached, **When** the operator drops a package, **Then** the
-   review step states "Could not validate: the destination cannot be reached" and offers
-   registration with that warning.
-2. **Given** the operator registers despite the warning, **When** anyone views the version in the
+1. **Given** the operator registered without validation, **When** anyone views the version in the
    web interface or reads it from the Sync API, **Then** the version shows that it was registered
    without validation.
-3. **Given** a version registered after a successful validation, or through the CLI, **When** it is
+2. **Given** a version registered after a successful validation, or through the CLI, **When** it is
    viewed, **Then** it does not show that mark.
 
 ---
@@ -257,7 +256,8 @@ registered without validation.
 - **FR-002**: For the same package, branch and destination state, FR-001 MUST return the same
   findings, in the same order, as validating the registered version.
 - **FR-003**: FR-001 MUST give the same refusal as the registration for a package the registration
-  would refuse.
+  would refuse, with one exception: a v2 configuration gets its own refusal that names
+  `infrahub-sync configs convert`.
 - **FR-004**: FR-001 MUST report an unreachable destination as a distinct result, not as a finding
   and not as a refusal of the package.
 - **FR-005**: FR-001 MUST be refused for a token that is not an administrator token, and the refusal
@@ -303,20 +303,27 @@ registered without validation.
   - a file that is not YAML or JSON, or is empty;
   - a file larger than the Sync API accepts;
   - a v2 `config.yml`, with the message given under Edge Cases.
-- **FR-017**: All registration attempts from one review step MUST use the same idempotency key.
+- **FR-017**: All registration attempts from one review step MUST use the same idempotency key and
+  the same request. After the first attempt, the reason and the other inputs of the review step
+  MUST stay locked; the operator can only retry or cancel. Reason: the Sync API refuses a key reused
+  with a different request.
+- **FR-017a**: When the validation request itself fails (no answer from the Sync API, or an error
+  that is not a refusal of the package), the review step MUST say so, keep Register disabled and
+  offer to validate again.
 - **FR-018**: Before registering a version, the web interface MUST check that the newest version is
   still the one the review step compared with, and reload the comparison when it is not.
 - **FR-019**: The review step and the messages that follow it MUST NOT name a user or an actor.
 
-#### Registering when the destination cannot be reached (User Story 4)
-
 - **FR-020**: When FR-001 reports an unreachable destination, the review step MUST allow
-  registration, with the warning shown next to Register.
+  registration, with the warning shown next to Register (D-6).
+
+#### Recording a registration without validation (User Story 4)
+
 - **FR-021**: A registration made after an unreachable-destination result MUST be recorded on the
   version as registered without validation, and the Sync API and the web interface MUST show it on
   that version.
-- **FR-022**: Without User Story 4, the review step MUST NOT allow registration after an
-  unreachable-destination result.
+- **FR-022**: Without User Story 4, a registration after an unreachable-destination result is still
+  allowed (FR-020), and no mark is recorded.
 
 ### Key Entities
 
@@ -329,7 +336,9 @@ registered without validation.
   finding has the severity `error`. User Story 1 makes it available for a package that is not
   registered.
 - **Registered without validation** (new, User Story 4): a mark on a configuration version, set only
-  when the operator registered after validation could not reach the destination.
+  when the operator registered after validation could not reach the destination. A version
+  registered with `configs register` carries no mark, because the CLI does not validate before
+  registering; the absence of the mark does not mean a version was validated.
 - **Review step** (new, web interface only): the screen between dropping a file and registering it.
   It stores nothing on the Sync API.
 
@@ -341,7 +350,8 @@ registered without validation.
   configuration, or a new version, from the web interface without opening a terminal, in under 2
   minutes from dropping the file to viewing the registered version.
 - **SC-002**: No version registered from the web interface has validation findings at the time of
-  registration, except versions marked as registered without validation.
+  registration, except versions registered after the destination could not be reached. With User
+  Story 4, every such version carries the mark.
 - **SC-003**: For every package in the acceptance test set, the comparison in the review step
   matches the comparison the configuration page shows after registration.
 - **SC-004**: Retrying after a network failure never creates two versions from one review step.
@@ -356,9 +366,11 @@ registered without validation.
   Infrahub later requires reviews to happen on a branch.
 - The Sync API stays the only authority on whether a package is valid. The web interface checks only
   that the file is one YAML or JSON document.
-- The maintainer accepted the "registered without validation" mark with a short "I accept" that could
-  have meant keeping or dropping it. This specification keeps it in User Story 4 so it can be left
-  out without changing the other stories.
+- The maintainer agreed that an unreachable destination does not block registration (D-6). They
+  accepted the "registered without validation" mark with a short "I accept", which could have meant
+  keeping or dropping the mark. This specification keeps the mark alone in User Story 4, so it can
+  be left out without changing the other stories, and registration during an outage stays possible
+  either way.
 - The person using the web interface has entered their own token (spec 017). The Sync API's existing
   administrator rule decides who can register. Spec 022 (local accounts, in progress on branch
   `022-local-accounts`) keeps the distinction between administrators and other accounts, so

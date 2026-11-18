@@ -61,8 +61,10 @@ State transitions:
 ```text
 dropped -> checking -> valid           -> registering -> registered | unchanged
                     -> findings        (Register disabled)
-                    -> unreachable     -> registering (with the mark, User Story 4 only)
+                    -> unreachable     -> registering (marked when User Story 4 is delivered)
+                    -> check failed    (Register disabled, "validate again")
                     -> refused         (message, no review)
+registering -> failed attempt -> registering   (same key, same request; inputs locked)
 valid | findings | unreachable -> checking   (branch changed)
 registering -> stale (newer version found) -> checking
 ```

@@ -130,9 +130,9 @@ stays inside `frontend/src/features/configurations/`, next to the pages it chang
 2. `POST /configs/validate`, client method, `configs check` (User Story 1, shippable alone).
 3. Regenerate `types.generated.ts`; web interface drop areas and review step for a new version
    (User Story 2), then for a new configuration (User Story 3).
-4. The mark: store table, request field, resource field, web interface button and display (User
-   Story 4). Without this step, the review step keeps Register disabled when the destination cannot
-   be reached (FR-022).
+4. The mark: store table, request field, resource field, and its display in the web interface (User
+   Story 4). Registering while the destination cannot be reached is part of step 3 (FR-020);
+   without step 4, such a version carries no mark (FR-022).
 5. Docs, ADR, changelog fragment.
 
 ## Risks

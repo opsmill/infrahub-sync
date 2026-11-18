@@ -50,13 +50,14 @@ cd frontend && pnpm check && pnpm typecheck
 2. Drop a package with a new name and register. Expected: the new configuration's page with
    version 1.
 
-## Scenario 4: destination unreachable (User Story 4)
+## Scenario 4: destination unreachable (User Story 2 scenario 8, then User Story 4)
 
 1. Stop Infrahub (`docker compose stop` on the Infrahub service of the development stack).
 2. Drop a package. Expected: "Could not validate: the destination cannot be reached" and a
    "Register without validation" button.
-3. Register. Expected: the version page and `infrahub-sync configs show <config> --version N` show
-   `registered_without_validation: true`.
+3. Register. Expected: the version is created.
+4. With User Story 4 delivered: the version page and
+   `infrahub-sync configs show <config> --version N` show `registered_without_validation: true`.
 
 ## Scenario 5: refusals and access
 
