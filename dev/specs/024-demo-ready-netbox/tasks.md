@@ -84,9 +84,9 @@ uv run invoke tests.tests-unit
 
 ## Phase 7: Polish
 
-- [ ] T027 Add the news fragment `changelog/+demo-prepare.added.md`: "Added `infrahub-sync demo prepare`, which loads the NetBox demo's destination schema into an Infrahub and registers the NetBox package for a Sync deployment, and the `dev.demo` task, which prepares a local demo with one command."
-- [ ] T028 Run the full verification: `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, and the CLI sanity commands (`uv run infrahub-sync --help`, `configs --help`, `runs --help`, `demo --help`)
-- [ ] T029 Search the diff for token values and for `Claude-Session` trailers; confirm no file outside this repository changed
+- [X] T027 Add the news fragment `changelog/+demo-prepare.added.md`: "Added `infrahub-sync demo prepare`, which loads the NetBox demo's destination schema into an Infrahub and registers the NetBox package for a Sync deployment, and the `dev.demo` task, which prepares a local demo with one command."
+- [X] T028 Run the full verification: `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, and the CLI sanity commands (`uv run infrahub-sync --help`, `configs --help`, `runs --help`, `demo --help`)
+- [X] T029 Search the diff for token values and for `Claude-Session` trailers; confirm no file outside this repository changed
 
 ## Dependencies
 

@@ -66,7 +66,7 @@ The `AGENTS.md` rules also apply:
   instead of a duplicate (R-3).
 - Secrets: tokens come from the environment and never reach output (R-5, FR-010).
 - Match existing patterns: the command uses the existing Sync client and the CLI's global
-  `--url`/token handling; the preset extends the existing `Preset` table.
+  `--api-url`/token handling; the preset extends the existing `Preset` table.
 - Specific exceptions, structured logs: the command raises its own error type and prints through
   the CLI's existing echo helpers.
 

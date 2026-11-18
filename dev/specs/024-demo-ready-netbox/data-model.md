@@ -19,7 +19,7 @@ Rule: the package must contain each shipped URL line (`https://demo.netbox.dev`,
 | `schema` | `loaded`, `unchanged` | From the schema load answer |
 | `config_id` | string | The NetBox configuration's ID |
 | `version` | integer | The registered version |
-| `configuration` | `registered`, `versioned`, `unchanged` | `registered` when no configuration with that name existed |
+| `configuration` | `registered`, `versioned`, `unchanged` | `registered` when no configuration with that name existed; `versioned` only when the returned version is above the latest version read before the call; otherwise `unchanged` (a version that already holds the same package is returned with its own number) |
 | `netbox_url`, `infrahub_url` | URLs | The addresses written into the package |
 
 No token appears in the result.
@@ -28,6 +28,6 @@ No token appears in the result.
 
 ```text
 (none) --prepare--> registered v1
-vN --prepare, same addresses--> vN (unchanged)
+vN --prepare, a package some version already holds--> that version (unchanged)
 vN --prepare, other addresses--> vN+1 (versioned)
 ```

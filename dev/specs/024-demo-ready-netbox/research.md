@@ -33,7 +33,8 @@
   `create_config_version` on the newest; the client documents it as "create or retrieve an identical
   configuration version", and the route answers 200 for an identical version and 201 for a new one.
   The idempotency key is per operation and target: `demo-prepare-register-<sha12>` or
-  `demo-prepare-version-<config_id>-<sha12>`, so that a retry after a lost answer replays instead
+  `demo-prepare-version-<config_id>-<sha12>`, where `<sha12>` hashes the package text and the
+  reason (revised after review: the service's request fingerprint includes the reason), so that a retry after a lost answer replays instead
   of creating a second configuration, and a key is never reused for another route or body (the
   service answers 409 `idempotency-conflict` to that).
 - **Rationale**: uses the API's own identity rules; no new endpoint.
