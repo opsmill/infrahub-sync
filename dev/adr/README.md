@@ -140,6 +140,12 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why a plan reads the creator `__system__` from node metadata, for the kinds listed in
   `INFRAHUB_BUILTIN_NODE_KINDS`, to leave out these deletes, and why no file accepts the delete of
   the `default` namespace by name.
+- [0049 — Sign-in uses local accounts in the product store, and the environment defines the `admin` account](0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md)
+  — why accounts with passwords, API tokens and sessions replace the tokens of the environment,
+  why `admin` follows its variables at each start, and why the old variable is removed at once.
+- [0050 — A record holds an account identifier, and a deletion empties the account row](0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md)
+  — why records hold `acct_` identifiers that one middleware shows as names, and why a deletion
+  changes no past record.
 
 ## Related
 
