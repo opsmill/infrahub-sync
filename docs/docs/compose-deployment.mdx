@@ -640,9 +640,9 @@ Each person signs in to the web interface with the name and the password of thei
 The header of every page shows the signed-in account and a **Sign out** action. Sign out
 ends the session in the Sync service and removes the session token from the browser tab. The
 web interface also removes the session token and shows the sign-in form again when the Sync
-API refuses a request with it: after the session was unused for the idle period
-(`INFRAHUB_SYNC_SESSION_IDLE_SECONDS`), or after an administrator disabled or deleted the
-account.
+API refuses a request with it, for example after the session was unused for the idle period
+(`INFRAHUB_SYNC_SESSION_IDLE_SECONDS`), after the password of the account changed, or after an
+administrator disabled or deleted the account.
 
 The web interface keeps the session token for the browser tab only, in the tab's session
 storage. Closing the tab removes it, and the Sync service sets no cookie. The web interface
