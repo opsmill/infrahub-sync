@@ -140,7 +140,8 @@ of the Compose deployment page, and keep the file at mode 0600, out of version c
 
 | Key | Required | Read by |
 | --- | --- | --- |
-| `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` | always | Sync API |
+| `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | always | Sync API |
+| `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` | never | Sync API |
 | `INFRAHUB_SYNC_PREFECT_AUTH_STRING` | always | Prefect server, Sync API, worker, bootstrap |
 | `INFRAHUB_SYNC_S3_ACCESS_KEY` | always | Sync API, worker, bootstrap, bundled object store |
 | `INFRAHUB_SYNC_S3_SECRET_KEY` | always | Sync API, worker, bootstrap, bundled object store |
@@ -151,9 +152,20 @@ of the Compose deployment page, and keep the file at mode 0600, out of version c
 | `INFRAHUB_SYNC_PREFECT_DATABASE_URL` | with your own PostgreSQL | Prefect server |
 | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | never | Sync API, worker |
 
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` maps each principal name to its token, for example
-`{"operator": {"token": "<random>", "administrator": true}}`. The token of a principal is the
-value you give the CLI as `INFRAHUB_SYNC_API_TOKEN`.
+The two `INFRAHUB_SYNC_ADMIN_ACCOUNT_*` keys define `admin`, the administrator account that
+always exists. Only the Sync API container receives them; the worker does not.
+
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is the password of `admin`: 12 to 1,024 characters of
+  valid UTF-8 text, with no default value. You need it to sign in as `admin` with
+  `infrahub-sync login`.
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is one API token of `admin`: at least 16 characters, and it
+  must not start with `ifs_pat_` or `ifs_ses_`. Without the key, `admin` has no API token. The
+  token is a value you can give the CLI as `INFRAHUB_SYNC_API_TOKEN`.
+
+The Sync API applies both keys each time it starts. When a value is not accepted, it does not
+start, and its log names the variable and never shows the value. The
+[`admin` account](./guides/accounts.mdx#the-admin-account) section of the accounts guide
+describes what the Sync API refuses to change on `admin`.
 
 With the bundled PostgreSQL, the chart builds both connection strings in the pod environment from
 the role, the database and the password, so `INFRAHUB_SYNC_PRODUCT_PASSWORD` and
@@ -164,10 +176,20 @@ The chart cannot read an existing Secret when it renders. A key that is missing 
 pod that needs the key, with the status `CreateContainerConfigError` and the key's name in the
 pod's events.
 
-You can instead set each credential as a value (`credentials.bearerTokens`,
-`credentials.prefectAuthString` and the others in `values.yaml`), and the chart creates the
-Secret. The values are then stored in your values file and in the Helm release record in the cluster,
-so a Secret you create yourself keeps them in fewer places.
+You can instead set each credential as a value (`credentials.adminAccountPassword`,
+`credentials.adminAccountToken`, `credentials.prefectAuthString` and the others in
+`values.yaml`), and the chart creates the Secret. The values are then stored in your values file
+and in the Helm release record in the cluster, so a Secret you create yourself keeps them in fewer
+places.
+
+`credentials.adminAccountPassword` is required when `credentials.existingSecret` is empty: without
+it, the render fails with
+`credentials.adminAccountPassword is required when credentials.existingSecret is empty`.
+`credentials.adminAccountToken` is optional and empty by default; when it is empty, the chart
+leaves the key out of its Secret. When the chart creates the Secret, it refuses to render a
+password shorter than 12 characters, or a token shorter than 16 characters or one that starts with
+`ifs_pat_` or `ifs_ses_`. The chart cannot check an existing Secret. A value in it that the Sync
+API does not accept stops the Sync API at start, and its log names the variable.
 
 ## Install
 
@@ -220,7 +242,8 @@ From your workstation, forward a local port to the Service, and keep the command
 kubectl -n infrahub-sync port-forward service/infrahub-sync-api 8000:8000
 ```
 
-Then, in another terminal, give the CLI the address and a principal's token. `read -rs` reads the
+Then, in another terminal, give the CLI the address and an API token: the `admin` token from
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, or a token that an account created. `read -rs` reads the
 token without printing it or writing it to the shell history:
 
 ```bash
@@ -229,8 +252,21 @@ read -rs INFRAHUB_SYNC_API_TOKEN && export INFRAHUB_SYNC_API_TOKEN
 infrahub-sync whoami
 ```
 
-`whoami` prints the principal, whether it is an administrator, and `approval_required`. A
+`whoami` prints the account, whether it is an administrator, and `approval_required`. A
 port forward ends when the Sync API pod is replaced, for example by an upgrade; start it again.
+
+Through the port forward, a person can sign in with an account name and password instead of a
+token. Leave `INFRAHUB_SYNC_API_TOKEN` unset, because a set token takes precedence over the saved
+session:
+
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+infrahub-sync login --name admin
+infrahub-sync whoami
+```
+
+`login` asks for the password without showing it and saves a session for that address, as
+[Sign in from a workstation](./guides/accounts.mdx#sign-in-from-a-workstation) describes.
 
 From inside the cluster, run the CLI from the Sync image in a pod that is deleted when the command
 ends. The command takes the token from the variable that `read -rs` set:
@@ -245,6 +281,9 @@ kubectl -n infrahub-sync run infrahub-sync-cli --rm -it --restart=Never \
   --command -- infrahub-sync whoami
 ```
 
+The pod keeps no file, so `infrahub-sync login` cannot keep a session there: the command presents
+`INFRAHUB_SYNC_API_TOKEN`.
+
 The notes that `helm install` prints hold both forms for your release, with its names and
 image, and a `kubectl wait` command for the bootstrap Job with a timeout of 10 minutes. In the
 second form the token is part of the pod definition, so prefer the port forward for a shared
@@ -255,6 +294,34 @@ The `infrahub-sync` commands in
 [Prepare a configuration](./compose-deployment.mdx#prepare-a-configuration) read the same two
 variables. Their `docker compose run` forms do not apply to this deployment. On a test cluster,
 OpsMill ran `whoami`, `configs register` and `configs list` through a port forward.
+
+### Create accounts after the first sign-in
+
+On a new release, `admin` is the only account. After you sign in as `admin` or present its
+token, create an account for each person and an API token for each script, as
+[Manage accounts](./guides/accounts.mdx) describes. These changes are stored in the product
+database: they change no value, no Secret and no pod.
+
+### Rotate the `admin` password or token
+
+Only the credentials Secret changes the password and the token of `admin`. To set a new password
+after a lost one, or to replace the token:
+
+- With a Secret you created, change the key in the Secret, then restart the Sync API Deployment
+  alone. No other pod reads the two keys:
+
+  ```bash
+  kubectl -n infrahub-sync rollout restart deployment/infrahub-sync-api
+  ```
+
+- With chart values, change `credentials.adminAccountPassword` or `credentials.adminAccountToken`
+  and run `helm upgrade` as in [Run the upgrade](#run-the-upgrade). The chart's Secret then
+  changes, so the upgrade replaces every pod that reads it, the worker included, and runs the
+  bootstrap Job again. Read [Before you upgrade](#before-you-upgrade) first.
+
+At its next start, the Sync API stores the new password and ends every sign-in session of
+`admin` when the password changed. It replaces the `admin` token, or removes it when the key is
+missing or empty. No other account changes.
 
 ## Settings
 
@@ -270,9 +337,11 @@ deployment page describe each variable.
 | `settings.workerQuerySeconds` | `10` | `PREFECT_WORKER_QUERY_SECONDS` |
 | `settings.workerHeartbeatSeconds` | `10` | `PREFECT_WORKER_HEARTBEAT_SECONDS` |
 | `settings.prefectUiUrl` | empty | `INFRAHUB_SYNC_PREFECT_UI_URL` |
+| `settings.sessionIdleSeconds` | empty, so the Sync API's 28800 seconds (8 hours) apply | `INFRAHUB_SYNC_SESSION_IDLE_SECONDS`, set only when given |
 | `image.tag` | the chart's `appVersion` | The tag of the Sync image, for every Sync pod |
 
-A change to a setting replaces the pods that read it when you run `helm upgrade`.
+A change to a setting replaces the pods that read it when you run `helm upgrade`. The chart
+refuses to render a `settings.sessionIdleSeconds` that is not a whole number of at least 60.
 
 Source credentials go to the worker only:
 
@@ -445,8 +514,9 @@ ways. Both are off by default, and the chart refuses to render with both on.
   Gateway instead, set `gatewayApi.gateway.enabled: true` and `gatewayApi.gateway.className`. The
   chart refuses `gatewayApi.enabled` with neither a parent reference nor its own Gateway.
 
-The Sync API serves plain HTTP; TLS ends at the Ingress or Gateway. Every request still needs a
-principal's token. Neither route was tested on a cluster for this chart version.
+The Sync API serves plain HTTP; TLS ends at the Ingress or Gateway. Every request still needs an
+API token or a sign-in session of an account. Neither route was tested on a cluster for this chart
+version.
 
 ## Upgrade
 
@@ -517,6 +587,23 @@ keeps the Sync version and changes another setting the bootstrap reads, such as 
 new Sync API and worker pods can start before the new bootstrap Job completes. Do not send
 requests to the Sync API until `helm upgrade` returns.
 :::
+
+### Upgrade from a release that set `credentials.bearerTokens`
+
+Earlier chart versions passed the callers of the Sync API in `credentials.bearerTokens`, as the
+key `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. The Sync API no longer reads that key, and the tokens
+it defined are refused. To upgrade:
+
+1. In your values file, set `credentials.adminAccountPassword` and, if a script or the CLI needs
+   a token, `credentials.adminAccountToken`, each with a new random value. Remove
+   `credentials.bearerTokens`. With a Secret you created, add the keys
+   `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` to it and remove
+   `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
+2. Run the upgrade as [Run the upgrade](#run-the-upgrade) describes.
+3. Create an account for each person and each script that had a token of its own, as
+   [Manage accounts](./guides/accounts.mdx) describes.
+
+Records of earlier runs keep the caller names that the old key defined.
 
 ### Stored records across Sync releases
 
