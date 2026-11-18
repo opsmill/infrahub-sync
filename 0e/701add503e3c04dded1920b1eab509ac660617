@@ -1,0 +1,44 @@
+tests/service/schedule_fixtures.py
+  s_29b17f91da9f30::t_d39f076bad3e27 72-73
+  s_29b17f91da9f30::t_3383fcef5b483e 132-138
+  s_29b17f91da9f30::t_0d4f8b92baf2a0 74
+  s_29b17f91da9f30::t_f04b4eb1e5f6a7 80-81,89-90
+infrahub_sync/service/orchestration.py
+  s_29b17f91da9f30::t_8e5e1e317b2e98 585-603
+  s_29b17f91da9f30::t_aed5434838544b 262-263
+  s_29b17f91da9f30::t_83495faa8ac47a 392-400
+  s_29b17f91da9f30::t_e78dabb00292e7 583-584
+infrahub_sync/service/schedules.py
+  s_29b17f91da9f30::t_7608b4e598f7db 143-149,157,160,171,179,182-183,188-197,203-204,206,209,214,217
+tests/service/test_prefect_creates_the_next_start.py
+  s_29b17f91da9f30::t_57089bdcce3556 20,38-41,46
+  s_29b17f91da9f30::t_e49775b152243c 60
+  s_29b17f91da9f30::t_a5655d7c2956ba 18-19,53,81
+  s_29b17f91da9f30::t_de78abc2148b78 1-17,21-37,42-45,47-52,54-59,61-80,82-90
+infrahub_sync/service/serve.py
+  s_29b17f91da9f30::t_b4a8e04938d46b 86-89
+infrahub_sync/service/bootstrap.py
+  s_29b17f91da9f30::t_1f76a0207ef3c3 330-332
+tests/service/test_schedule_prefect.py
+  s_29b17f91da9f30::t_5a30fc2a173991 108-158
+  s_29b17f91da9f30::t_57089bdcce3556 451,513
+  s_29b17f91da9f30::t_69e6457ee1f616 603-611
+  s_29b17f91da9f30::t_971783624c5683 630
+  s_29b17f91da9f30::t_a8a2df86d123b3 507-512,514-519
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e701add503e3c04dded1920b1eab509ac660617",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
