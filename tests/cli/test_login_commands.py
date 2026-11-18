@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections import UserDict
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import httpx
 import pytest
@@ -345,17 +346,20 @@ def test_a_refused_saved_session_is_removed_and_the_login_hint_is_printed(sync_a
     _assert_no_secret(result)
 
 
-class _LoginWhileWaiting(dict):
+class _LoginWhileWaiting(UserDict):
     """The answers of the fake Sync API; a `login` saves another session before the refusal arrives."""
 
-    def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
+    def get(self, key: str, default: object = None) -> object:
         write_session(URL, BOB_SESSION)
         return super().get(key, default)
 
 
 def test_a_session_saved_while_the_refused_one_was_in_use_is_kept(sync_api: FakeSyncAPI) -> None:
     write_session(URL, ALICE_SESSION)
-    sync_api.answers = _LoginWhileWaiting({"GET /me": sync_api.error(401, "unauthenticated")})
+    # The fake reads its answers with `get` only, so the mapping stands in for its dictionary.
+    sync_api.answers = cast(
+        "dict[str, httpx.Response]", _LoginWhileWaiting({"GET /me": sync_api.error(401, "unauthenticated")})
+    )
 
     result = _invoke("whoami")
 

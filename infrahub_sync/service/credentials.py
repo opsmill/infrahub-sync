@@ -122,9 +122,7 @@ def hash_password(password: str, *, n: int = SCRYPT_N, r: int = SCRYPT_R, p: int
 
 def _parse(stored_hash: str) -> tuple[int, int, int, bytes, bytes] | None:
     """Return the parameters, the salt and the key of a stored hash that is safe to verify."""
-    if len(stored_hash) > _MAX_HASH_TEXT_LENGTH:
-        return None
-    fields = stored_hash.split("$")
+    fields = stored_hash.split("$") if len(stored_hash) <= _MAX_HASH_TEXT_LENGTH else []
     if len(fields) != _HASH_FIELDS or fields[0] != SCRYPT_ALGORITHM:
         return None
     try:
