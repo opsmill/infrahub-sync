@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import AfterValidator
 
 from infrahub_sync.client.models import REASON_MAX_LENGTH
 
@@ -76,7 +77,9 @@ _ACCOUNT_ERRORS = _errors(401, 403, 404, 409, 422, 503)
 _OWN_ERRORS = _errors(401, 403, 404, 409, 422, 503)
 
 _Authenticate = Callable[..., Principal]
-_ReasonQuery = Annotated[str | None, Query(min_length=1, max_length=REASON_MAX_LENGTH)]
+_ReasonQuery = Annotated[
+    str | None, Query(min_length=1, max_length=REASON_MAX_LENGTH), AfterValidator(actions.printable_reason)
+]
 
 
 def _sign_in_router(service: RunService, authenticate: _Authenticate) -> APIRouter:

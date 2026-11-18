@@ -382,6 +382,18 @@ def test_the_fifth_wrong_current_password_refuses_the_right_one_and_the_sign_in(
     assert attempt.failed_count == SIGN_IN_FAILURE_LIMIT
 
 
+def test_a_refused_name_gets_the_refusal_before_the_rule_of_the_new_password(
+    api: AccountApi, alice: dict[str, str]
+) -> None:
+    for _ in range(SIGN_IN_FAILURE_LIMIT):
+        assert api.sign_in("alice", WRONG_PASSWORD).status_code == 401
+        api.clock.now += SECOND
+
+    response = api.call("PUT", "/me/password", alice, json={"current_password": PASSWORD, "new_password": "short"})
+
+    _error(response, 403, "current-password-refused")
+
+
 def test_a_password_change_clears_the_failed_attempts(api: AccountApi, alice: dict[str, str]) -> None:
     wrong = {"current_password": WRONG_PASSWORD, "new_password": NEW_PASSWORD}
     _error(api.call("PUT", "/me/password", alice, json=wrong), 403, "current-password-refused")

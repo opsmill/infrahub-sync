@@ -198,6 +198,29 @@ def test_a_reason_of_513_characters_is_refused_on_every_route(api: AccountApi) -
     assert len(api.events()) == events
 
 
+@pytest.mark.parametrize("reason", ["a\x00b", " padded ", "two\nlines", ""], ids=["nul", "padded", "newline", "empty"])
+def test_an_account_route_refuses_a_reason_that_is_not_printable_and_trimmed(api: AccountApi, reason: str) -> None:
+    """Such a reason is refused before the action: the store could not hold the event of the action."""
+    alice, root = api.session_headers("alice"), api.token_headers("root")
+    events = len(api.events())
+
+    answers = [
+        api.call("POST", "/accounts", root, json={"name": "carol", "password": PASSWORD, "reason": reason}),
+        api.call("PATCH", "/accounts/alice", root, json={"disabled": True, "reason": reason}),
+        api.call("PUT", "/accounts/alice/password", root, json={"new_password": NEW_PASSWORD, "reason": reason}),
+        api.call("POST", "/accounts/alice/unlock", root, json={"reason": reason}),
+        api.call("POST", "/me/tokens", alice, json={"name": "ci", "reason": reason}),
+        api.call("DELETE", "/me/tokens/any", alice, params={"reason": reason}),
+    ]
+
+    for response in answers:
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "request-invalid"
+    assert len(api.events()) == events
+    assert api.store.lookup_account_by_name("carol") is None
+    assert api.call("GET", "/me", alice).status_code == 200
+
+
 def test_a_reason_of_512_characters_is_accepted_and_recorded(api: AccountApi) -> None:
     longest = "r" * REASON_MAX_LENGTH
 

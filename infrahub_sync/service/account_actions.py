@@ -24,7 +24,7 @@ import re
 from datetime import datetime  # noqa: TC003 - Pydantic reads the annotation of a field when the class is built.
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from infrahub_sync.client.models import REASON_MAX_LENGTH
 from infrahub_sync.product_store.accounts import (
@@ -88,6 +88,7 @@ TOKEN_NOT_FOUND_MESSAGE = "the account has no token with this identifier"
 TOKEN_NAME_REFUSED_MESSAGE = "name must not contain a secret or a token"
 EXPIRY_IN_THE_PAST_MESSAGE = "expires_at must be a time in the future"
 NO_CHANGE_MESSAGE = "the request names no change; give 'disabled'"
+_REASON_MESSAGE = "reason must be printable and trimmed"
 _TOKEN_NAME_MESSAGE = "a token name must be printable and trimmed"
 _ENVIRONMENT_MANAGED_MESSAGE = (
     "the environment of the Sync API manages this account; change {variable} and restart the Sync API"
@@ -96,7 +97,20 @@ _ENVIRONMENT_MANAGED_MESSAGE = (
 _ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
 
 AccountState = Literal["active", "disabled", "all"]
-Reason = Annotated[str | None, Field(min_length=1, max_length=REASON_MAX_LENGTH)]
+
+
+def printable_reason(value: str | None) -> str | None:
+    """Refuse a reason that is not printable and trimmed, as a configuration request does.
+
+    PostgreSQL stores no NUL character in a text: such a reason would fail the write of the event
+    after the action is done.
+    """
+    if value is not None and (value != value.strip() or not value.isprintable()):
+        raise ValueError(_REASON_MESSAGE)
+    return value
+
+
+Reason = Annotated[str | None, Field(min_length=1, max_length=REASON_MAX_LENGTH), AfterValidator(printable_reason)]
 
 
 class _SecretRequest(BaseModel):
@@ -646,9 +660,9 @@ def change_own_password(service: RunService, principal: Principal, body: ChangeP
     name = account.name or ""
     if account.environment_managed:
         raise _environment_managed(ADMIN_ACCOUNT_PASSWORD_ENV)
-    _require_new_password(body.new_password)
     if sign_in_refused_until(service, name) is not None:
         raise _refuse_current_password(service, principal)
+    _require_new_password(body.new_password)
     if not 0 < len(body.current_password) <= PASSWORD_MAX_LENGTH:
         # No account has this password: nothing is checked and nothing is counted, as at sign-in.
         raise _refuse_current_password(service, principal)
