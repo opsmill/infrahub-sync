@@ -97,6 +97,8 @@ Security is enforced at the boundary, and secrets never leak.
 
 - Credentials MUST come from environment variables or a secret manager — never committed,
   printed, or logged.
+- One exception: Sync MAY display the value of an API token once, to the account that created
+  it, in the answer to its creation, and nowhere else.
 - Never print or guess secrets; tracebacks and structured logs MUST NOT contain credentials.
 - Example configurations MUST be authentic but sanitized. They MUST NOT contain real tokens or
   internal hostnames; use placeholder values instead.
@@ -202,4 +204,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.0.4 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-05
+**Version**: 1.1.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-18
