@@ -418,7 +418,8 @@ function RootComponent() {
         Skip to content
       </a>
       <header className="sticky top-0 z-40 border-b bg-background">
-        <div className="mx-auto flex h-12 max-w-[1200px] items-center gap-3 px-4 sm:gap-6">
+        {/* On a phone the navigation takes a second line, so every link stays in view. */}
+        <div className="mx-auto flex h-12 max-w-[1200px] items-center gap-3 px-4 max-sm:h-auto max-sm:flex-wrap max-sm:gap-y-0 max-sm:pt-2 sm:gap-6">
           <PlainLink
             to="/"
             aria-label="Infrahub Sync, configurations"
@@ -432,7 +433,7 @@ function RootComponent() {
           </PlainLink>
           <nav
             aria-label="Main"
-            className="flex shrink-0 items-center gap-1 max-sm:min-w-0 max-sm:shrink max-sm:self-stretch max-sm:overflow-x-auto max-sm:[scrollbar-width:none]"
+            className="flex shrink-0 items-center gap-1 max-sm:order-last max-sm:-ml-2 max-sm:min-h-12 max-sm:w-[calc(100%+0.5rem)] max-sm:flex-wrap"
           >
             {/* TanStack sets aria-current="page" on an exact match; a page inside the section gets "true". */}
             <Link
