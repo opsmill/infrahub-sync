@@ -1,0 +1,32 @@
+frontend/src/api/token.ts
+  s_cf9ada8f865389::t_48fd0da7115729 9
+  s_cf9ada8f865389::t_ce13c58fe36228 4-6,23-24
+frontend/src/api/client.ts
+  s_cf9ada8f865389::t_ec341067bc9ebc 118,128
+  s_cf9ada8f865389::t_fd7c9a43cc9006 6,36,86,108-117,119-127,129-150
+frontend/src/routes/__root.tsx
+  s_cf9ada8f865389::t_b237f1966dc523 15,131,136,138,199,282-319,452
+frontend/src/components/sign-in.tsx
+  s_cf9ada8f865389::t_8fff433f6a4107 1,3-43,49-108
+  s_cf9ada8f865389::t_292a54ef80876a 2,44-48
+frontend/src/main.tsx
+  s_cf9ada8f865389::t_292a54ef80876a 6,13,16
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_7473ba97e3d2f0 263,265,268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71042959cf7ea818cd7696c1f0f4bb8b6dc2e94f",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
