@@ -388,7 +388,7 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
               value={q ?? ""}
               onChange={(v) => setSearch({ q: v || undefined })}
               placeholder="Search runs"
-              label="Search runs by configuration, version, run ID, branch, actor or state"
+              label="Search runs by configuration, version, run ID, branch, state or the account that started the run"
             />
             <div className="hidden h-10 items-center sm:flex xl:ml-auto">
               <FilterTabs
@@ -588,7 +588,7 @@ function NoMatch({
   } else if (query || filter === "all") {
     title = `No runs match “${query ?? ""}”`;
     body =
-      "Search looks at configuration names and references, versions, run IDs, branches, actors and states.";
+      "Search looks at configuration names and references, versions, run IDs, branches, states and the accounts that started the runs.";
   } else {
     [title, body] = NO_MATCH[filter](loaded, configName);
   }

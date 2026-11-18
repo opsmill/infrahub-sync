@@ -608,7 +608,8 @@ export function RunPage({ runId }: { runId: string }) {
               <p className="flex items-center gap-1.5 text-foreground-muted text-sm">
                 <StateIcon state="insync" className="size-3.5 shrink-0 text-success" />
                 <span>
-                  Plan approved <When iso={run.approval.approved_at} />
+                  Plan approved by {run.approval.approved_by}{" "}
+                  <When iso={run.approval.approved_at} />
                 </span>
               </p>
             )}

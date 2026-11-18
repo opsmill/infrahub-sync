@@ -249,6 +249,15 @@ export function Details({
     rows.push(["Destination branch", <BranchBadge branch={run.destination_branch} />]);
   }
   rows.push(["Started", formatAbsolute(run.started_at)]);
+  // Older records name no account; the row is then left out.
+  if (run.actor)
+    rows.push(["Started by", <span className="[overflow-wrap:anywhere]">{run.actor}</span>]);
+  if (run.approval) {
+    rows.push([
+      "Plan approved by",
+      <span className="[overflow-wrap:anywhere]">{run.approval.approved_by}</span>,
+    ]);
+  }
   rows.push(["Finished", run.finished_at ? formatAbsolute(run.finished_at) : "Not finished"]);
   if (run.finished_at) {
     rows.push([

@@ -166,7 +166,8 @@ const hasStateNote = (run: Run, state: ListRunState) => {
 const Dot = () => <span aria-hidden="true">·</span>;
 
 /**
- * Version, the selectable run ID and the sync note, on the line under the run's name. The ID comes
+ * Version, the selectable run ID, the sync note and the account that started the run, on the line
+ * under the run's name. The ID comes
  * before the note so that it is never cut and lines up from row to row; the line wraps instead.
  * On touch the ID stays under the stretched link, so a tap anywhere opens the run.
  */
@@ -188,6 +189,12 @@ function IdLine({ run, withVersion }: { run: Run; withVersion: boolean }) {
         <>
           <Dot />
           <span className="whitespace-nowrap">Sync run, no review step</span>
+        </>
+      )}
+      {run.actor && (
+        <>
+          <Dot />
+          <span className="min-w-0 [overflow-wrap:anywhere]">Started by {run.actor}</span>
         </>
       )}
     </div>

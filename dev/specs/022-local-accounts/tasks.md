@@ -267,9 +267,9 @@ on this phase.
   a "try again" message for `503 sign-in-busy`.
 - [X] T050 [US2] In `frontend/src/routes/__root.tsx`, display the signed-in account from
   `GET /api/me` and a "Sign out" action.
-- [ ] T051 [P] [US2] Display the account that started a run and the account that approved its
+- [X] T051 [P] [US2] Display the account that started a run and the account that approved its
   plan in `frontend/src/features/runs/` (`RunPage.tsx`, `RunsPage.tsx`, `run-sections.tsx`).
-- [ ] T052 [P] [US2] Display the account that registered a version on the configuration page
+- [X] T052 [P] [US2] Display the account that registered a version on the configuration page
   (`frontend/src/routes/configs.$configId.tsx` and its feature files).
 - [ ] T053 [US2] Replace the "Sync frontend" rule in `AGENTS.md` with the rule of
   [contracts/web-interface.md](contracts/web-interface.md), and update `frontend/README.md`,

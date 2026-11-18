@@ -174,7 +174,7 @@ function DiffSummary({ detail }: { detail: ConfigurationDetail }) {
   );
 }
 
-/** Above the mapping: the version shown, why and when it was registered, and the version to compare with. */
+/** Above the mapping: the version shown, why, when and by which account it was registered, and the version to compare with. */
 export function VersionBar({ detail }: { detail: ConfigurationDetail }) {
   const { selected, summary } = detail;
   if (selected === undefined) return null;
@@ -189,8 +189,9 @@ export function VersionBar({ detail }: { detail: ConfigurationDetail }) {
           </>
         )}
         {summary && (
-          <span>
-            Registered <When iso={summary.created_at} />
+          <span className="[overflow-wrap:anywhere]">
+            Registered{summary.registered_by && ` by ${summary.registered_by}`}{" "}
+            <When iso={summary.created_at} />
           </span>
         )}
       </p>
