@@ -66,3 +66,30 @@ this session.
   Also: the Helm chart gap does not block T041; state it on the Kubernetes operator page and put
   the chart change under Blocked.
 - **Next**: following the answer, in that order.
+- Checks after the SQLAlchemy pin (the lock moved only SQLAlchemy, 2.1.6 to 2.0.55): release-pin
+  test `38 passed`, PostgreSQL tier `287 passed`, Python 3.10 legs passed.
+- Kubernetes page note on the chart and the worker's approval check (`ea0cef2c`, corrected in
+  `5999b819`).
+- Investigation of missed starts (commits `0e701add`, `7374b30f`, `681bb9e3`): Prefect generates
+  flow runs only from the current time, and a schedule change or delete deletes the future runs of
+  every schedule of the deployment. Fixed by asking Prefect to create the flow runs at once after
+  the match step changes a Prefect schedule. The late run after a stack restart does start (the
+  earlier bootstrap claim was wrong), but on the development stack it failed because Infrahub was
+  not ready yet. Quickstart section 5 step 1 assumed a delay under the 5-minute on-time window.
+
+### Advisor question 2 (about 18:15)
+
+- **Question**: (a) make `sync-worker` in the development Compose file wait for a healthy
+  `infrahub-server`? Options: yes; no, and report the late-run failure as a product question.
+  Recommended: yes. (b) Fix quickstart section 5 to use a delay above 5 minutes? Recommended: yes.
+  (c) Review tonight's changes before the report? Recommended: yes, one read-only reviewer.
+- **Answer**: (a) no: it hides the problem only when Infrahub runs on the same host, and a
+  `depends_on` on a profiled service breaks the `sync` preset; put "retry a late run when the
+  destination is not ready" under Blocked. (b) yes, and note under Risks that FR-018 does not state
+  the 5-minute on-time window. (c) yes: one read-only reviewer on the range since the last reviewed
+  commit, asked about every path that leaves a default-branch schedule active while approval is
+  required, what `create_scheduled_runs` creates, and whether Prefect's delete on a schedule change
+  removes only auto-scheduled runs; fix critical and high findings only; if one reaches the default
+  branch and is not small, take `default-branch` out of `serve.py` and untick T041. Also search for
+  the old bootstrap statement in tasks, docstrings, knowledge pages and the report.
+- **Next**: following the answer.
