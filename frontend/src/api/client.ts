@@ -117,7 +117,10 @@ export async function signIn(name: string, password: string): Promise<SignInResu
   try {
     const { data, error, response } = await fetchClient.POST("/auth/sign-in", {
       body: { name, password },
-      // A sign-in changes nothing that a second attempt cannot repeat, so it can time out.
+      // The Sync API can still open a session after the tab stops waiting. No one receives the
+      // token of that session, so it cannot be used, and the Sync API refuses it after the idle
+      // period. A second attempt opens a new session. Without the timeout, a Sync API that does
+      // not answer would leave the form waiting with no way to try again.
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (data?.token) {
