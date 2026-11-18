@@ -36,10 +36,12 @@ from .events import (
     SCHEDULE_START_MISSED,
     SCHEDULE_START_QUEUED,
     SCHEDULE_START_SKIPPED,
+    SCHEDULE_STOPPED,
     run_decision_type,
     run_event,
     schedule_event,
 )
+from .settings import approval_required
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -202,6 +204,9 @@ def decide_start(  # noqa: PLR0911  # pylint: disable=too-many-arguments,too-man
     """Decide whether the start of an active schedule runs, with the events of the decision.
 
     In order: the starts of the cadence that passed with no flow run are recorded as missed; a
+    schedule that writes to the default branch while the Sync API requires approval
+    (``INFRAHUB_SYNC_REQUIRE_APPROVAL`` in the worker's environment) creates no run and is
+    stopped with the reason ``approval-required`` (research R6); a
     start that is not the most recent start of the cadence, or that is later than the
     schedule's ``start_late_by_at_most_seconds``, is missed (research R10); a configuration
     version that cannot be run fails the start; a further start while another start waits is
@@ -232,6 +237,23 @@ def decide_start(  # noqa: PLR0911  # pylint: disable=too-many-arguments,too-man
             }
         )
 
+    if schedule.write_target == "default-branch" and approval_required():
+        # The worker's own check of research R6, so that no gap in the checks of the Sync API
+        # lets a schedule write to the default branch with no approved plan (FR-002). The
+        # admission stops the schedule in the transaction that records the start.
+        events.append(_start_event(schedule, SCHEDULE_START_SKIPPED, "skipped-approval-required", start, now))
+        stopped = schedule_event(
+            event_type=SCHEDULE_STOPPED,
+            actor=schedule.owner,
+            operation=SCHEDULE_START,
+            reason=None,
+            outcome="approval-required",
+            schedule_id=schedule.schedule_id,
+            config_id=schedule.config_id,
+            registry_version=schedule.registry_version,
+            created_at=now,
+        )
+        return not_run("approval-required", stopped)
     late = now - start
     if not waiting and (
         _later_start_passed(schedule, start, now) or late > timedelta(seconds=schedule.start_late_by_at_most_seconds)

@@ -314,6 +314,9 @@ services:
     environment:
       <<: *sync-storage
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
+      # The same value as on sync-api: before a scheduled run, the worker refuses a run that
+      # writes to the default branch while approval is required, and stops its schedule.
+      INFRAHUB_SYNC_REQUIRE_APPROVAL: "${INFRAHUB_SYNC_REQUIRE_APPROVAL-false}"
       PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
       # The API ages a worker out of the live set after three missed heartbeats
       # or thirty seconds, whichever is longer. Ten seconds puts a stopped or

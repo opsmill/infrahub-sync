@@ -448,6 +448,11 @@ _ACTIVE = {"state": "active", "state_reason": None}
         pytest.param([{"state": "deleted"}], id="delete-active"),
         pytest.param([{"state": "paused"}, {"state": "deleted"}], id="delete-paused"),
         pytest.param([_STOPPED, {"state": "deleted", "state_reason": None}], id="delete-stopped"),
+        # A resume of a paused schedule whose reason to stop holds stops it in one write.
+        pytest.param([{"state": "paused"}, _STOPPED], id="paused-to-stopped"),
+        pytest.param(
+            [_STOPPED, {"state": "stopped", "state_reason": "approval-required"}], id="stopped-with-another-reason"
+        ),
     ],
 )
 def test_a_schedule_follows_the_state_transitions_of_the_data_model(
@@ -464,7 +469,6 @@ def test_a_schedule_follows_the_state_transitions_of_the_data_model(
 @pytest.mark.parametrize(
     "steps",
     [
-        pytest.param([{"state": "paused"}, _STOPPED], id="paused-to-stopped"),
         pytest.param([_STOPPED, {"state": "paused", "state_reason": None}], id="stopped-to-paused"),
     ],
 )
@@ -478,6 +482,52 @@ def test_a_state_transition_outside_the_data_model_is_refused(
         projection.update_schedule(_changed(schedule, **steps[1]))
 
     assert _stored(projection, schedule.schedule_id).state == steps[0]["state"]
+
+
+def test_a_paused_schedule_is_stopped_with_its_event_in_one_write(projection: ProductProjection) -> None:
+    schedule = projection.update_schedule(_changed(_created(projection), state="paused", updated_at=_FIRST_START))
+    stopped_at = _FIRST_START + timedelta(minutes=1)
+    event = _start_event(schedule, _FIRST_START, outcome="approval-required").model_copy(
+        update={"event_type": "infrahub_sync.schedule.stopped", "details": None}
+    )
+
+    stored = projection.update_schedule(
+        _changed(schedule, state="stopped", state_reason="approval-required", updated_at=stopped_at),
+        expected_updated_at=_FIRST_START,
+        events=(event,),
+    )
+
+    assert (stored.state, stored.state_reason, stored.updated_at) == ("stopped", "approval-required", stopped_at)
+    assert [item.event_id for item in _schedule_events(projection, schedule)] == [event.event_id]
+
+
+def test_a_copy_that_the_model_refuses_is_not_stored_without_secrets(
+    projection: ProductProjection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A copy made with ``model_copy`` is not validated; the store validates it again before it writes it."""
+    schedule = _created(projection)
+    written: list[ScheduleRecord] = []
+    monkeypatch.setattr(projection._records, "update_schedule", lambda record, **_: written.append(record))
+
+    with pytest.raises(ValueError, match="stopped"):
+        projection.update_schedule(schedule.model_copy(update={"state": "stopped"}))
+
+    assert written == []
+
+
+def test_a_schedule_stopped_again_for_another_reason_starts_counting_failures_from_zero_when_active(
+    projection: ProductProjection,
+) -> None:
+    """A stop for repeated failures, then for approval, then a change that makes it active: the count starts again."""
+    schedule = _created(projection)
+    _failed_runs(projection, schedule, 5)
+    stopped = _stored(projection, schedule.schedule_id)
+    assert (stopped.state_reason, stopped.consecutive_failures) == ("repeated-failures", 5)
+    relabelled = projection.update_schedule(_changed(stopped, state_reason="approval-required"))
+
+    active = projection.update_schedule(_changed(relabelled, state="active", state_reason=None))
+
+    assert (active.state, active.consecutive_failures) == ("active", 0)
 
 
 @pytest.mark.parametrize("state", ["active", "paused", "deleted"])
@@ -714,6 +764,28 @@ def test_any_other_decision_on_the_waiting_start_ends_the_wait(projection: Produ
     assert (result.cause, result.schedule.waiting_start_at) == ("failed", None)
     with pytest.raises(ScheduledStartAlreadyRecordedError):
         _skip(projection, schedule, _FIRST_START, cause="queued")
+
+
+def test_a_start_refused_for_approval_stops_the_schedule_in_the_admission(projection: ProductProjection) -> None:
+    """The worker's check of research R6: the start creates no run, and the schedule stops with its events."""
+    schedule = _created(projection, overlap_policy="queue", prefect_synced=True)
+    _skip(projection, schedule, _FIRST_START, cause="queued")
+    start = _FIRST_START + _DAY
+    skipped = _start_event(schedule, start, outcome="skipped-approval-required")
+    stopped = _start_event(schedule, start, outcome="approval-required").model_copy(
+        update={"event_type": "infrahub_sync.schedule.stopped", "details": None}
+    )
+
+    result = _skip(projection, schedule, start, cause="approval-required", events=(skipped, stopped))
+
+    assert (result.started, result.cause) == (False, "approval-required")
+    stored = _stored(projection, schedule.schedule_id)
+    assert (stored.state, stored.state_reason, stored.prefect_synced) == ("stopped", "approval-required", False)
+    assert (stored.waiting_start_at, stored.last_start_at) == (None, start)
+    assert stored.updated_at == start + timedelta(seconds=1)
+    assert projection.list_runs(RunFilters(schedule_id=schedule.schedule_id)).items == ()
+    # The two events have one time, so their order is not part of the check.
+    assert {item.event_id for item in _schedule_events(projection, schedule)} == {skipped.event_id, stopped.event_id}
 
 
 def test_a_decision_made_from_another_waiting_start_is_refused(projection: ProductProjection) -> None:

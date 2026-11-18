@@ -668,10 +668,11 @@ write_when_left_out = ?, left_out_set_by = ?, left_out_set_at = ?, overlap_polic
 start_late_by_at_most_seconds = ?, state = ?, state_reason = ?, owner = ?, consecutive_failures = ?,
 prefect_schedule_id = ?, prefect_synced = ?, updated_at = ? WHERE schedule_id = ?"""
 # The state a schedule may move to, by its stored state (spec 021 data-model.md). A deleted
-# schedule accepts no action, and a paused schedule is never stopped.
+# schedule accepts no action. A paused schedule moves to `stopped` only when a resume finds a
+# reason that stops it, in one write with the event of the stop.
 _SCHEDULE_TRANSITIONS: dict[str, frozenset[str]] = {
     "active": frozenset({"active", "paused", "stopped", "deleted"}),
-    "paused": frozenset({"paused", "active", "deleted"}),
+    "paused": frozenset({"paused", "active", "stopped", "deleted"}),
     "stopped": frozenset({"stopped", "active", "deleted"}),
 }
 _SCHEDULE_FIXED_FIELDS = ("name", "config_id", "created_at")
@@ -3651,8 +3652,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         writes the version, the cadence, the write settings, the state and its reason, the
         owner, the Prefect schedule fields and ``updated_at``. It does not write
         ``last_start_at`` or the count of failed runs, which the admission of a start and the
-        end of a run own; a resume of a schedule stopped for ``repeated-failures`` sets the
-        count to zero (FR-032). It clears ``waiting_start_at`` when the schedule leaves the
+        end of a run own; a stopped schedule that becomes active, such as one resumed after
+        ``repeated-failures``, gets the count set to zero (FR-032). It clears ``waiting_start_at`` when the schedule leaves the
         state ``active`` or its cadence or overlap policy changes: the waiting flow run then
         creates no run, and the wait must not block the later starts.
 
@@ -3678,7 +3679,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             if schedule.state not in _SCHEDULE_TRANSITIONS[stored.state]:
                 msg = f"a schedule in the state {stored.state!r} cannot move to the state {schedule.state!r}"
                 raise ScheduleTransitionError(msg)
-            resumed_after_failures = stored.state_reason == "repeated-failures" and schedule.state == "active"
+            # A stopped schedule that becomes active counts its failed runs from zero again, also
+            # when a stop for repeated failures was later given another reason.
+            resumed_after_failures = stored.state == "stopped" and schedule.state == "active"
             cursor.execute(
                 self._sql(_UPDATE_SCHEDULE),
                 (
@@ -3896,7 +3899,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         ``decision.kept_run_ids`` to the state ``kept``, writes the events of the decision, and
         sets ``last_start_at`` to the start when it is later. A start queued under the ``queue``
         policy becomes ``waiting_start_at``; any other decision on the waiting start clears it,
-        and that start is exempt from the check against ``last_start_at``. For a start that runs it also writes the run, its
+        and that start is exempt from the check against ``last_start_at``. A decision with the
+        cause ``approval-required`` also moves the schedule to the state ``stopped`` with that
+        reason. For a start that runs it also writes the run, its
         receipt already accepted, its ``sync`` write admission, its one execution already
         claimed by ``worker_id``, and a ``pending`` branch row for a run with branch review.
 
@@ -3994,6 +3999,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 schedule_id,
             ),
         )
+        if cause == "approval-required":
+            self._stop_for_approval(cursor, schedule_id, now)
         stored = self._read_schedule(cursor, schedule_id)
         assert stored is not None
         earlier = self._read_schedule_branches(cursor, schedule_id, _EARLIER_BRANCH_STATES)
@@ -4003,6 +4010,22 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             run_id=run_id,
             schedule=stored,
             earlier_branches=tuple(branch for branch in earlier if branch.run_id != run_id),
+        )
+
+    def _stop_for_approval(self, cursor: _Cursor, schedule_id: str, now: datetime) -> None:
+        """Stop a schedule that writes to the default branch while the Sync API requires approval.
+
+        The worker found it when it admitted a start (research R6); the stop is saved in the
+        transaction of that admission, with the events of the decision. ``updated_at`` moves,
+        so a request of the Sync API made from the schedule as it was read is refused and
+        reads it again.
+        """
+        cursor.execute(
+            self._sql(
+                "UPDATE schedules SET state = 'stopped', state_reason = 'approval-required', "
+                "prefect_synced = FALSE, waiting_start_at = NULL, updated_at = ? WHERE schedule_id = ?"
+            ),
+            (_utc_iso(now), schedule_id),
         )
 
     def _insert_scheduled_run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -5762,12 +5785,13 @@ def _schedule_stopped_event(schedule: ScheduleRecord, run_id: str, created_at: d
 
 def _redacted_schedule(schedule: ScheduleRecord, secrets: Sequence[str]) -> ScheduleRecord:
     """Return ``schedule`` with every configured secret removed from the text a caller supplies."""
-    if not secrets:
-        return schedule
     values = schedule.model_dump()
-    for field in ("name", "cron", "timezone", "owner", "left_out_set_by"):
-        if values[field] is not None:
-            values[field] = redact(values[field], secrets)
+    if secrets:
+        for field in ("name", "cron", "timezone", "owner", "left_out_set_by"):
+            if values[field] is not None:
+                values[field] = redact(values[field], secrets)
+    # Validated again also with no secret, so a copy made with an update cannot store a record
+    # that the model refuses.
     return ScheduleRecord.model_validate(values)
 
 

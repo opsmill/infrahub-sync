@@ -1212,6 +1212,9 @@ ScheduledStartNotRunCause: TypeAlias = Literal[
     "skipped-start-waiting",
     "queued",
     "failed",
+    # The worker's own check of research R6: the schedule writes to the default branch while the
+    # Sync API requires approval. The admission also stops the schedule with this reason.
+    "approval-required",
 ]
 
 

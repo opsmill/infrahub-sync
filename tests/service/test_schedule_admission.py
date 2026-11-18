@@ -28,7 +28,9 @@ from infrahub_sync.product_store import (
     ScheduleRecord,
 )
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service import schedule_admission
 from infrahub_sync.service.schedule_admission import MISSED_STARTS_RECORDED_ONE_BY_ONE
+from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.service.schedule_fixtures import OWNER_TOKEN, WORKER_ID, ScheduleApi, headers, package, schedule_api
 
 if TYPE_CHECKING:
@@ -481,3 +483,61 @@ def test_a_resume_of_a_stopped_schedule_sets_the_count_to_zero(
     assert response.status_code == 200, response.text
     stored = api.stored(schedule_id)
     assert (stored.state, stored.consecutive_failures) == ("active", 0)
+
+
+def test_the_worker_stops_a_default_branch_schedule_while_approval_is_required(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
+) -> None:
+    """Research R6: the worker checks the approval setting itself, so no gap of the Sync API lets the run write."""
+    schedule_id = _schedule(api)
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+    executed: list[str] = []
+
+    def execute(run_id: str, stage: str, *_args: object, **_kwargs: object) -> tuple[dict[str, Any], Any]:
+        executed.append(run_id)
+        return _succeeded()(run_id, stage)
+
+    state = _start(monkeypatch, api, schedule_id, T0, execute=execute)
+
+    assert _completed(state)
+    assert (executed, _runs(api, schedule_id)) == ([], [])
+    stored = api.stored(schedule_id)
+    assert (stored.state, stored.state_reason, stored.prefect_synced) == ("stopped", "approval-required", False)
+    (skipped,) = _events(api, "infrahub_sync.schedule.start_skipped")
+    assert (skipped.outcome, skipped.run_id, skipped.actor) == ("skipped-approval-required", None, "owner")
+    (stopped,) = _events(api, "infrahub_sync.schedule.stopped")
+    assert (stopped.outcome, stopped.operation, stopped.actor) == ("approval-required", "schedule-start", "owner")
+
+
+def test_the_worker_runs_a_branch_review_schedule_while_approval_is_required(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
+) -> None:
+    schedule_id = _schedule(api, write_target="branch-review")
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+    decisions: list[str] = []
+    real_decide = schedule_admission.decide_start
+
+    def decide(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 - passes the decision through.
+        decision = real_decide(*args, **kwargs)
+        decisions.append(decision.kind)
+        return decision
+
+    monkeypatch.setattr(schedule_admission, "decide_start", decide)
+
+    _start(monkeypatch, api, schedule_id, T0)
+
+    assert decisions == ["started"]
+    assert api.stored(schedule_id).state == "active"
+
+
+def test_a_malformed_approval_setting_creates_no_run(monkeypatch: pytest.MonkeyPatch, api: ScheduleApi) -> None:
+    """The Sync API refuses to start with this value; a worker that has it creates no run and writes nothing."""
+    schedule_id = _schedule(api)
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "sometimes")
+
+    with pytest.raises(ValueError, match=REQUIRE_APPROVAL_ENV):
+        _start(monkeypatch, api, schedule_id, T0)
+
+    assert _runs(api, schedule_id) == []
+    stored = api.stored(schedule_id)
+    assert (stored.state, stored.last_start_at) == ("active", None)
