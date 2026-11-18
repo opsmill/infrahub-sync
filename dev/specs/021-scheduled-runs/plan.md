@@ -73,7 +73,7 @@ week. About 8 routes, 8 CLI commands, 2 tables.
 
 | Principle | Result | Note |
 | --- | --- | --- |
-| I. Read-only and dry-run by default | Pass, with the amendment of version 1.1.0 | The product owner decided on 2026-11-17 to amend the principle, and the amendment is on this branch. Branch review is the default write target, and the person's approval is the merge of the proposed change in Infrahub. A write to the default branch needs an explicit option (`--write-to-default-branch`), and creating the schedule with it is the deliberate act. |
+| I. Read-only and dry-run by default | Pass, with the amendment of version 1.1.0 | The product owner decided on 2026-11-17 to amend the principle, and the amendment is on this branch. A maintainer approved the amendment on 2026-11-18, as the constitution's amendment rule requires. Branch review is the default write target, and the person's approval is the merge of the proposed change in Infrahub. A write to the default branch needs an explicit option (`--write-to-default-branch`), and creating the schedule with it is the deliberate act. |
 | II. Sync idempotency and safety | Pass | A start creates one run (R2). Making the Prefect schedules match the stored ones can be repeated (R13). Repeating the branch review steps is safe (contract, requirement 4). A failed run replaces nothing. |
 | III. Adapter symmetry and pattern consistency | Pass | No adapter contract changes in this plan. Routes, models, client methods and commands follow the existing conventions (R13). |
 | IV. Type safety and explicit contracts | Pass | New models are Pydantic models with closed literals. New refusals have their own codes. |
