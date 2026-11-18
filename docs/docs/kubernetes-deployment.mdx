@@ -341,7 +341,8 @@ deployment page describe each variable.
 | `image.tag` | the chart's `appVersion` | The tag of the Sync image, for every Sync pod |
 
 A change to a setting replaces the pods that read it when you run `helm upgrade`. The chart
-refuses to render a `settings.sessionIdleSeconds` that is not a whole number of at least 60.
+refuses to render a `settings.sessionIdleSeconds` that is not a whole number of at least 60. The
+Sync API also refuses, at start, a value above 999999999999.
 
 Source credentials go to the worker only:
 

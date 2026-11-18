@@ -78,8 +78,8 @@ calls `StoreAccountResolver.resolve`:
    minute old, and returns the time stored before this request.
 3. The resolver refuses a disabled or deleted account and an unknown value with
    `unauthenticated`, and an API token after its expiry time with `token-expired`.
-4. A session not used for longer than `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` (default 28,800, at
-   least 60) is deleted with a second store call, and the request is refused.
+4. A session not used for longer than `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` (default 28,800, from
+   60 to 999,999,999,999) is deleted with a second store call, and the request is refused.
 
 The resolver caches nothing, so the next request of a disabled account is refused. The accepted
 `Principal` holds the account identifier in `actor`, the account name in `name`, the kind of
@@ -211,14 +211,17 @@ level in two transactions, so a failure of the second keeps the first and its ev
 
 `login` saves the session token and the account name in `sessions.json`, in the directory that
 `typer.get_app_dir("infrahub-sync")` returns. The directory has mode `0700`. A write goes to a
-temporary file with mode `0600`, which then replaces the file. Entries are keyed by the
+temporary file with mode `0600`, which then replaces the file. A write holds the lock file
+`sessions.json.lock` from its read to its replacement, so two commands that write at the same
+time do not lose each other's entry. Entries are keyed by the
 normalized address of the Sync API (`normalize_address`). A file that is missing or cannot be
 read counts as no saved session.
 
 `cli.py` presents `INFRAHUB_SYNC_API_TOKEN` when it is set and not empty, and reads the file
 only otherwise. `SyncClient.from_environment` reads no file, so a script that uses the client as
 a library depends on the variable only. When the Sync API refuses a saved session with `401`,
-the CLI removes the entry.
+the CLI removes the entry, but only while it still holds the refused token, so a session that a
+`login` saved meanwhile stays.
 
 ### The web interface
 
