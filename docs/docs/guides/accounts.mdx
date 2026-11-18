@@ -58,8 +58,9 @@ by you only, in the application directory of the CLI:
 
 Every later command presents that session. `whoami` prints the account as `actor`, and whether
 it is an administrator. A session ends when you run `infrahub-sync logout`, after the idle
-period without a request (8 hours by default), when the password of the account changes, and
-when an administrator disables the account. The deployment sets the idle period with
+period without a request (8 hours by default), when an administrator sets a new password for the
+account, and when an administrator disables the account. When you change your own password with
+`infrahub-sync password`, the session that made the change continues and your other sessions end. The deployment sets the idle period with
 `INFRAHUB_SYNC_SESSION_IDLE_SECONDS`.
 
 When `INFRAHUB_SYNC_API_TOKEN` is set and not empty, every command presents the variable and not the saved
@@ -249,6 +250,9 @@ with that name for 15 minutes:
 - A sign-in attempt during the refusal does not extend it.
 - The account is not disabled, and its API tokens keep working.
 - A wrong current password given to `infrahub-sync password` counts as a failed sign-in.
+- Each `sync-api` process checks the passwords for one name one at a time. When the deployment
+  runs several `sync-api` processes, sign-ins sent to different processes at the same moment can
+  get a few more password checks before the refusal starts: up to 4 more with 5 processes.
 
 `infrahub-sync accounts list` shows the time until which an account's sign-ins are refused. To
 end the refusal before that time, an administrator runs:

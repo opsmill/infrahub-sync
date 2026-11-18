@@ -111,8 +111,12 @@ Two limits keep the memory of password hashing bounded:
 
 `sign_in` in `account_actions.py` runs these steps:
 
-1. A name or a password that no account can have (empty, too long, a NUL character or a
-   character that UTF-8 cannot encode) is refused at once. Nothing is read, counted or recorded.
+1. A name that the store cannot count (`is_countable_name`: empty, longer than 64 characters
+   or 64 in lower case, a NUL character or a character that UTF-8 cannot encode) or a password
+   that no account can have (empty, longer than 1,024 characters or a character that UTF-8
+   cannot encode) is refused at once. Nothing is read, counted or recorded. The account-name
+   rule is not applied here: a name with a character that no account name can have, such as
+   `!`, goes through the next steps and its failures are counted.
 2. A name refused in `sign_in_attempts` is refused before any password check. The attempt is not
    counted and the refusal time does not move.
 3. Under the lock of the name and a place of the gate, the refusal is read again, and the
@@ -122,8 +126,10 @@ Two limits keep the memory of password hashing bounded:
 4. The store inserts the session in one transaction with its audit event, after it locks the
    account row and checks that the account is still active with the password that was checked.
 
-Every refused sign-in gets the same answer, `401` with one message, and writes an
-authentication refusal record without the name, except in step 1.
+Every sign-in refused for its credentials or for a refusal of its name gets the same answer,
+`401` with one message, and writes an authentication refusal record without the name, except in
+step 1. A sign-in that waits more than 5 seconds for the lock of its name or a place of the gate
+answers `503 sign-in-busy` instead, and is not counted.
 
 The constants are in `product_store/accounts.py`: 5 failures (`SIGN_IN_FAILURE_LIMIT`) within
 15 minutes refuse the name for 15 minutes. A wrong current password in `PUT /me/password`

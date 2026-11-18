@@ -54,7 +54,10 @@ unless your shell exports `INFRAHUB_SYNC_API_TOKEN`: Compose then uses the expor
 
 - **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is not an API token of an
   account, or, for the `cli` service, which keeps no saved session, it is empty. On a new deployment, give it the value of
-  `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`. An `operator.env` carried over from an earlier alpha
+  `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`. When `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is empty, the `admin`
+  account has no API token: set it to a token of at least 16 characters, restart `sync-api`, and set
+  `INFRAHUB_SYNC_API_TOKEN` to the same value, or create a token with `infrahub-sync tokens create`
+  and use that value. An `operator.env` carried over from an earlier alpha
   may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely, and may still set
   `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`: this release ignores that variable and refuses the
   tokens it defines. Remove it, and follow

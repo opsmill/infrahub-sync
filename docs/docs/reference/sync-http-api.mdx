@@ -65,7 +65,8 @@ S3 credentials use Boto3's standard credential-provider chain.
 ## Accounts and API tokens
 
 Every caller of the Sync API acts as an account stored in the product database. A request
-presents an API token or a session token in `Authorization: Bearer <token>`. A person gets a
+presents an API token or a session token in `Authorization: Bearer <token>`, except to
+`POST /auth/sign-in`, `GET /status` and `GET /version`, which take no token. A person gets a
 session token by signing in with the account name and password. A script uses an API token
 that an account created.
 
@@ -153,7 +154,9 @@ The refusals of these routes:
 - A token name that the account already uses answers `409`, code `token-name-taken`. An
   `expires_at` that is not in the future answers `422`, code `expiry-in-the-past`.
 - A caller that is not an administrator receives `403`, code `forbidden`, on the `/accounts`
-  routes. So an account cannot raise its own level.
+  routes. So an account cannot raise its own level. A body that is not valid JSON is read before
+  the token and the level are checked: it answers `422`, code `request-invalid`, whatever the
+  caller.
 - An unknown or deleted account name answers `404`, code `account-not-found`.
 - A `PATCH /accounts/{name}` body with neither `disabled` nor `administrator` answers `422`,
   code `request-invalid`.
@@ -170,7 +173,8 @@ The refusals of these routes:
   `ifs_pat_` or `ifs_ses_` answers `422`, code `secret-parameter-refused`.
 
 A request with no token, an unknown or deleted token, or a token of a disabled account answers
-`401`, code `unauthenticated`. An API token used after its expiry date answers `401`, code
+`401`, code `unauthenticated`, unless its body is not valid JSON: that answer is `422`, code
+`request-invalid`. An API token used after its expiry date answers `401`, code
 `token-expired`. A session idle for longer than `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` answers
 `401`, code `unauthenticated`.
 

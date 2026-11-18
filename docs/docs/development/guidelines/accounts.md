@@ -20,8 +20,10 @@ characters), in every record that says who acted: runs, approvals, configuration
 audit events and stored answers. Compare identifiers in every rights check. Do not write
 `Principal.name` to the store.
 
-A record that holds a name keeps that name after the account is deleted, and a new account with
-the same name would match it.
+A record that holds the identifier keeps it after the account is deleted. The Sync API then
+presents it as `Deleted account <short identifier>`, and a new account with the same name does not
+match it. A name written to a record instead would stay after the deletion, and a new account with
+the same name would match it and receive the rights of the deleted account on that record.
 
 ### Return an account identifier only in a field that `AccountNameMiddleware` presents
 
