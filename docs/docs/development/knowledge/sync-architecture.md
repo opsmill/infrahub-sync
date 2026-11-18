@@ -219,7 +219,7 @@ about once a minute. A change or a deletion of one Prefect schedule deletes the 
 of every schedule of the deployment that have not run, and a deletion also deletes the late ones.
 For that reason `match_prefect_schedules`, after it creates, changes or deletes a Prefect schedule,
 calls `PrefectOrchestration.create_scheduled_runs` (`POST /deployments/{id}/schedule`), which
-creates the flow runs of every active schedule at once, with the scheduler's idempotency key. A
+creates the flow runs of every active schedule at once, with the idempotency key of the scheduler. A
 failure of that call is logged; Prefect's scheduler then creates the flow runs at its next loop.
 
 A start can still have no flow run:

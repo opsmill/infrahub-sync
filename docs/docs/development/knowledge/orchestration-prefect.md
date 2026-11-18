@@ -397,7 +397,7 @@ parameter therefore never reaches the flow body.
   and a change or a deletion of one schedule deletes the future flow runs of every schedule of the
   deployment that have not run. A start within the next minute then gets no flow run.
   `POST /deployments/{id}/schedule` with an empty body creates the flow runs of every active
-  schedule from the current time, with the scheduler's idempotency key; the Sync API calls it
+  schedule from the current time, with the idempotency key of the scheduler; the Sync API calls it
   after it changes a Prefect schedule (`PrefectOrchestration.create_scheduled_runs`). See
   [A scheduled run](sync-architecture.md#a-scheduled-run).
 
