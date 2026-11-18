@@ -1,0 +1,19 @@
+docs/docs/reference/cli.mdx
+  s_a96b3d20730c9a::t_a48b8464e78d2a 45,180,193,435,447-448,546-547,627-829
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c058ac5c9eb3359e32e5ec423f44ba88fdfcc67b",
+  "prompts": {},
+  "sessions": {
+    "s_a96b3d20730c9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a6516814d3c1e6f4e",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
