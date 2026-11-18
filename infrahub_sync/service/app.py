@@ -63,7 +63,8 @@ from .models import (
     VersionResource,
 )
 from .paging import InvalidCursorError
-from .presentation import AccountNameMiddleware, AccountReader
+from .schedule_routes import schedule_router
+from .schedules import ScheduleService
 from .service import MAX_EVENT_OFFSET, RunService, ServiceAPIError, parse_event_time
 from .settings import approval_required, validate_settings
 
@@ -310,13 +311,17 @@ def _include_routers(
     authenticate: Callable[..., Principal],
     idempotency_key: Callable[..., str],
     configuration_routes: ConfigurationRoutes | None,
+    *,
+    schedules: ScheduleService | None,
 ) -> None:
     """Add the routes built outside ``create_app``.
 
-    They are the configurations, the approval, the events, the run logs, the saved plan and the accounts.
+    They are the routes of configurations, schedules, approval, events, run logs and the saved plan.
     """
     if configuration_routes is not None:
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
+    if schedules is not None:
+        application.include_router(schedule_router(schedules, authenticate, idempotency_key))
     application.include_router(approve_router(service, authenticate, idempotency_key))
     application.include_router(events_router(service, authenticate))
     application.include_router(run_logs_router(service, authenticate))
@@ -361,23 +366,14 @@ def _account_reader(service: RunService) -> AccountReader:
     return read_accounts
 
 
-def create_app(
-    service: RunService,
-    resolver: PrincipalResolver,
-    configuration_routes: ConfigurationRoutes | None = None,
-    reconciler: RunLivenessReconciler | None = None,
-) -> FastAPI:
-    """Create the service application from explicit providers.
-
-    Raises:
-        ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
-            is not accepted, so the service does not start.
-    """
-    validate_settings()
+def _lifespan(reconciler: RunLivenessReconciler | None, schedules: ScheduleService | None) -> Any:
+    """Return the lifespan of the application: the step of its start, then the liveness loop until it stops."""
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
         task = None
+        if schedules is not None:
+            await schedules.start()
         if reconciler is not None:
 
             async def reconcile_loop() -> None:
@@ -399,8 +395,47 @@ def create_app(
                 with suppress(CancelledError):
                     await task
 
-    application = FastAPI(title="Infrahub Sync API", version=installed_server_version(), lifespan=lifespan)
-    authenticate = _authenticator(service, resolver)
+    return lifespan
+
+
+def create_app(
+    service: RunService,
+    resolver: PrincipalResolver,
+    configuration_routes: ConfigurationRoutes | None = None,
+    reconciler: RunLivenessReconciler | None = None,
+    *,
+    schedules: ScheduleService | None = None,
+) -> FastAPI:
+    """Create the service application from explicit providers.
+
+    With ``schedules``, the application serves the schedule routes. When the API process starts,
+    it stops the schedules that can no longer run and makes the Prefect schedules match the stored
+    schedules, once (spec 021, research R6, R8 and R13).
+
+    Raises:
+        ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
+            is not accepted, so the service does not start.
+    """
+    validate_settings()
+
+    application = FastAPI(
+        title="Infrahub Sync API", version=installed_server_version(), lifespan=_lifespan(reconciler, schedules)
+    )
+    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+
+    def authenticate(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
+    ) -> Principal:
+        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
+        if not token:
+            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
+            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+        principal = resolver.resolve(token)
+        if principal is None:
+            service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
+            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+        return principal
 
     def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
         if value is None or not value.strip():
@@ -590,6 +625,6 @@ def create_app(
         status, content = await service.cancel_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    _include_routers(application, service, authenticate, idempotency_key, configuration_routes)
+    _include_routers(application, service, authenticate, idempotency_key, configuration_routes, schedules=schedules)
 
     return application

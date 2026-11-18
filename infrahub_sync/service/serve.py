@@ -18,13 +18,16 @@ from .credentials import no_account_hash
 from .liveness import LivenessPolicy, RunLivenessReconciler
 from .orchestration import (
     CancellationResult,
+    DeploymentSchedule,
     Observation,
+    ObservedDeploymentSchedule,
     PoolStatus,
     PrefectOrchestration,
     RunLogRead,
     Submission,
 )
 from .prefect_ui import prefect_ui_url_from_environment
+from .schedules import ScheduleService
 from .service import RunService
 from .settings import (
     ADMIN_ACCOUNT_PASSWORD_ENV,
@@ -44,6 +47,11 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
     from starlette.applications import Starlette
+
+# The write targets of a schedule that this build can run. A request for another write target
+# is refused with ``schedule-setting-not-available``. A later task of spec 021 adds
+# ``branch-review``, and user story 2 adds ``default-branch``.
+DELIVERED_SCHEDULE_WRITE_TARGETS: frozenset[str] = frozenset()
 
 
 class _ClientPerCallOrchestration:
@@ -69,6 +77,22 @@ class _ClientPerCallOrchestration:
         async with get_client() as client:
             return await PrefectOrchestration(client).read_logs(flow_run_ids)
 
+    async def read_schedules(self) -> tuple[ObservedDeploymentSchedule, ...]:
+        async with get_client() as client:
+            return await PrefectOrchestration(client).read_schedules()
+
+    async def create_schedule(self, schedule: DeploymentSchedule) -> str:
+        async with get_client() as client:
+            return await PrefectOrchestration(client).create_schedule(schedule)
+
+    async def update_schedule(self, orchestrator_id: str, schedule: DeploymentSchedule) -> None:
+        async with get_client() as client:
+            await PrefectOrchestration(client).update_schedule(orchestrator_id, schedule)
+
+    async def delete_schedule(self, orchestrator_id: str) -> None:
+        async with get_client() as client:
+            await PrefectOrchestration(client).delete_schedule(orchestrator_id)
+
 
 def build_app(
     *,
@@ -78,6 +102,7 @@ def build_app(
     configuration_routes_factory: Any = ConfigurationRoutes,
     app_factory: Any = create_app,
     start_check: Any = check_bootstrap_record,
+    schedule_service_factory: Any = ScheduleService,
 ) -> FastAPI:
     """Construct the service app from its environment-owned durable storage profile.
 
@@ -143,7 +168,14 @@ def build_app(
         policy,
         work_pool,
     )
-    return app_factory(service, resolver, configuration_routes, reconciler)
+    schedules = schedule_service_factory(
+        projection,
+        orchestration,
+        resolver,
+        delivered_write_targets=DELIVERED_SCHEDULE_WRITE_TARGETS,
+        secrets=resolver.secret_values,
+    )
+    return app_factory(service, resolver, configuration_routes, reconciler, schedules=schedules)
 
 
 def build_service(

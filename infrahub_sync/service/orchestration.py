@@ -15,6 +15,7 @@ from opsmill_prefect_extras.executors import (
     RemoteWorkflowExecutor,
 )
 from opsmill_prefect_extras.workflows import WorkflowDefinition
+from prefect.client.schemas.actions import DeploymentScheduleCreate
 from prefect.client.schemas.filters import LogFilter, LogFilterFlowRunId
 from prefect.client.schemas.objects import State, StateType, WorkerStatus
 from prefect.client.schemas.responses import (
@@ -23,6 +24,7 @@ from prefect.client.schemas.responses import (
     StateAcceptDetails,
     T,
 )
+from prefect.client.schemas.schedules import CronSchedule
 from prefect.client.schemas.sorting import LogSort
 from prefect.exceptions import ObjectNotFound
 from prefect.states import Cancelling
@@ -188,6 +190,54 @@ class PoolStatus:
             raise ValueError
 
 
+# The stage that a flow run of a schedule runs (spec 021, research R1).
+SCHEDULE_STAGE: Final = "sync"
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentSchedule:
+    """One schedule of the service deployment: the cadence that the orchestrator runs for one Sync schedule.
+
+    ``slug`` is the identifier of the Sync schedule. The flow runs of the schedule carry the
+    parameters ``schedule_id`` and ``stage``. ``orchestrator_id`` is the identifier that the
+    orchestrator gave the schedule; it is ``None`` for a schedule that is not created yet.
+    """
+
+    slug: str
+    cron: str
+    timezone: str
+    active: bool
+    orchestrator_id: str | None = None
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        """Return the parameters of the flow runs that the schedule creates."""
+        return {"schedule_id": self.slug, "stage": SCHEDULE_STAGE}
+
+    def matches(self, other: DeploymentSchedule) -> bool:
+        """Return whether both schedules hold the same cadence and the same active flag."""
+        return (self.slug, self.cron, self.timezone, self.active) == (
+            other.slug,
+            other.cron,
+            other.timezone,
+            other.active,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedDeploymentSchedule:
+    """One schedule that the orchestrator holds for the service deployment.
+
+    ``schedule`` is ``None`` when the orchestrator's schedule is not one that the Sync API
+    writes: it has no slug, another kind of cadence or other parameters. Such a schedule
+    matches no stored schedule.
+    """
+
+    orchestrator_id: str
+    slug: str | None
+    schedule: DeploymentSchedule | None
+
+
 class ServiceOrchestration(Protocol):
     """Small orchestration boundary consumed by the HTTP service."""
 
@@ -200,6 +250,14 @@ class ServiceOrchestration(Protocol):
     async def cancel(self, flow_run_id: str) -> CancellationResult: ...
 
     async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead: ...
+
+    async def read_schedules(self) -> tuple[ObservedDeploymentSchedule, ...]: ...
+
+    async def create_schedule(self, schedule: DeploymentSchedule) -> str: ...
+
+    async def update_schedule(self, orchestrator_id: str, schedule: DeploymentSchedule) -> None: ...
+
+    async def delete_schedule(self, orchestrator_id: str) -> None: ...
 
 
 def run_tags(parameters: dict[str, object]) -> frozenset[str]:
@@ -305,6 +363,34 @@ class _PoolClient(Protocol):
     async def get_scheduled_flow_runs_for_work_pool(self, work_pool_name: str) -> list[Any]: ...
 
 
+class _ScheduleClient(Protocol):
+    """Pinned Prefect client methods used only for the schedules of the service deployment."""
+
+    async def read_deployment_by_name(self, name: str) -> Any: ...
+
+    async def read_deployment_schedules(self, deployment_id: UUID) -> list[Any]: ...
+
+    async def create_deployment_schedules(
+        self, deployment_id: UUID, schedules: list[DeploymentScheduleCreate]
+    ) -> list[Any]: ...
+
+    async def update_deployment_schedule(  # pylint: disable=too-many-positional-arguments  # Prefect's signature
+        self,
+        deployment_id: UUID,
+        schedule_id: UUID,
+        active: bool | None = None,
+        schedule: CronSchedule | None = None,
+        max_scheduled_runs: int | None = None,
+        parameters: dict[str, Any] | None = None,
+        slug: str | None = None,
+    ) -> None: ...
+
+    async def delete_deployment_schedule(self, deployment_id: UUID, schedule_id: UUID) -> None: ...
+
+
+_SCHEDULES_UNAVAILABLE: Final = "the orchestrator could not be reached"
+
+
 class PrefectOrchestration:
     """Use Prefect Extras for submission and Prefect as live-state authority."""
 
@@ -402,6 +488,99 @@ class PrefectOrchestration:
             msg = "the orchestrator could not be reached"
             raise OrchestrationUnavailableError(msg, error_class=type(exc).__name__) from None
         return RunLogRead(expired=False, logs=tuple(logs))
+
+    async def _deployment_id(self, client: _ScheduleClient) -> UUID:
+        """Return the identifier of the service deployment ``infrahub-sync-service/run``."""
+        deployment = await client.read_deployment_by_name(SERVICE_DEFINITION.key)
+        return cast("UUID", deployment.id)
+
+    async def read_schedules(self) -> tuple[ObservedDeploymentSchedule, ...]:
+        """Read the schedules of the service deployment.
+
+        Raises:
+            OrchestrationUnavailableError: a request failed or timed out, or the deployment does not exist.
+        """
+        client = cast("_ScheduleClient", self._client)
+        try:
+            schedules = await client.read_deployment_schedules(await self._deployment_id(client))
+        except (ObjectNotFound, httpx.HTTPError, TimeoutError) as exc:
+            raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
+        return tuple(_observed_schedule(schedule) for schedule in schedules)
+
+    async def create_schedule(self, schedule: DeploymentSchedule) -> str:
+        """Create one schedule of the service deployment and return the orchestrator's identifier of it.
+
+        Raises:
+            OrchestrationUnavailableError: a request failed or timed out, or the deployment does not exist.
+        """
+        client = cast("_ScheduleClient", self._client)
+        create = DeploymentScheduleCreate(
+            schedule=CronSchedule(cron=schedule.cron, timezone=schedule.timezone),
+            active=schedule.active,
+            parameters=schedule.parameters,
+            slug=schedule.slug,
+        )
+        try:
+            created = await client.create_deployment_schedules(await self._deployment_id(client), [create])
+        except (ObjectNotFound, httpx.HTTPError, TimeoutError) as exc:
+            raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
+        if len(created) != 1:
+            raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class="UnexpectedScheduleCount")
+        return str(created[0].id)
+
+    async def update_schedule(self, orchestrator_id: str, schedule: DeploymentSchedule) -> None:
+        """Set the cadence, the active flag, the slug and the parameters of one schedule of the deployment.
+
+        Raises:
+            OrchestrationUnavailableError: a request failed or timed out, or the schedule does not exist.
+        """
+        client = cast("_ScheduleClient", self._client)
+        try:
+            await client.update_deployment_schedule(
+                await self._deployment_id(client),
+                UUID(orchestrator_id),
+                active=schedule.active,
+                schedule=CronSchedule(cron=schedule.cron, timezone=schedule.timezone),
+                parameters=schedule.parameters,
+                slug=schedule.slug,
+            )
+        except (ObjectNotFound, httpx.HTTPError, TimeoutError) as exc:
+            raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
+
+    async def delete_schedule(self, orchestrator_id: str) -> None:
+        """Delete one schedule of the service deployment; a schedule that no longer exists counts as deleted.
+
+        Raises:
+            OrchestrationUnavailableError: a request failed or timed out, or the deployment does not exist.
+        """
+        client = cast("_ScheduleClient", self._client)
+        try:
+            deployment_id = await self._deployment_id(client)
+        except (ObjectNotFound, httpx.HTTPError, TimeoutError) as exc:
+            raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
+        try:
+            await client.delete_deployment_schedule(deployment_id, UUID(orchestrator_id))
+        except ObjectNotFound:
+            return
+        except (httpx.HTTPError, TimeoutError) as exc:
+            raise OrchestrationUnavailableError(_SCHEDULES_UNAVAILABLE, error_class=type(exc).__name__) from None
+
+
+def _observed_schedule(entry: Any) -> ObservedDeploymentSchedule:
+    """Copy what the match step compares from one schedule that the orchestrator holds."""
+    orchestrator_id = str(entry.id)
+    slug = entry.slug if isinstance(entry.slug, str) and entry.slug else None
+    cadence = entry.schedule
+    cron = getattr(cadence, "cron", None)
+    timezone_name = getattr(cadence, "timezone", None)
+    if slug is None or not isinstance(cron, str) or not isinstance(timezone_name, str):
+        return ObservedDeploymentSchedule(orchestrator_id=orchestrator_id, slug=slug, schedule=None)
+    schedule = DeploymentSchedule(
+        slug=slug, cron=cron, timezone=timezone_name, active=bool(entry.active), orchestrator_id=orchestrator_id
+    )
+    if dict(entry.parameters or {}) != schedule.parameters:
+        return ObservedDeploymentSchedule(orchestrator_id=orchestrator_id, slug=slug, schedule=None)
+    return ObservedDeploymentSchedule(orchestrator_id=orchestrator_id, slug=slug, schedule=schedule)
 
 
 def _flow_run_log(entry: Any) -> FlowRunLog:

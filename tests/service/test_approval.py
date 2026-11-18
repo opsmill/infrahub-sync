@@ -24,6 +24,7 @@ from infrahub_sync.service.orchestration import CancellationResult, Observation,
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -41,7 +42,7 @@ OTHER_CHECKSUM = "b" * 64
 RUN_ID = "run-approval-001"
 
 
-class _RecordingOrchestration:
+class _RecordingOrchestration(NoDeploymentSchedules):
     """Records every submission so a test can show approval submits nothing."""
 
     def __init__(self) -> None:

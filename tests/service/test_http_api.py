@@ -81,6 +81,7 @@ from infrahub_sync.service.read_progress import StoreSideReadObserver, record_wa
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -139,7 +140,7 @@ def _registered_package() -> ConfigurationPackage:
     )
 
 
-class _FakeOrchestration:
+class _FakeOrchestration(NoDeploymentSchedules):
     def __init__(self) -> None:
         self.submissions: list[tuple[dict[str, object], str]] = []
         self.by_key: dict[str, Submission] = {}

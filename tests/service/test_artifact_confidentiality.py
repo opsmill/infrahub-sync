@@ -19,7 +19,7 @@ from infrahub_sync.product_store.bundle import (
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.models import EMITTED_RESOURCES, EmittedArtifactListResource
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
-from tests.service.accounts import account_identifier, seed_accounts
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -46,7 +46,7 @@ _BUNDLE = write_bundle(
 )
 
 
-class _StubOrchestration:
+class _StubOrchestration(NoDeploymentSchedules):
     """Satisfies the orchestration boundary; the read routes under test never call it."""
 
     async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:

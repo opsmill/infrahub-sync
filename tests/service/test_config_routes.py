@@ -38,7 +38,7 @@ from infrahub_sync.service.orchestration import CancellationResult, Observation,
 from infrahub_sync.service.serve import build_app
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from tests.configuration.validation_packages import package, package_data
-from tests.service.accounts import account_identifier, seed_accounts
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
 OTHER_TOKEN = "reader-token-canary-0004"  # noqa: S105 - deliberate non-secret boundary canary.
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from infrahub_sync.service.liveness import RunLivenessReconciler
 
 
-class _Orchestration:  # pylint: disable=too-few-public-methods
+class _Orchestration(NoDeploymentSchedules):  # pylint: disable=too-few-public-methods
     async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:  # noqa: ARG002, PLR6301
         return Submission(flow_run_id="test-flow", state="pending")
 
@@ -1073,7 +1073,7 @@ def test_build_app_binds_one_projection_and_passes_configuration_dependency(
         assert product_projection is projection_dependency
         return route_dependency
 
-    def application(run: object, resolver: object, routes: object, reconciler: object) -> object:
+    def application(run: object, resolver: object, routes: object, reconciler: object, **_schedules: object) -> object:
         del reconciler
         received.extend((run, resolver, routes))
         return object()
@@ -1114,7 +1114,9 @@ def test_build_app_composes_one_service_projection_for_runs_and_configurations(
         received.append("routes")
         return object()
 
-    def app_factory(run_service: object, resolver: object, routes: object, reconciler: object) -> object:
+    def app_factory(
+        run_service: object, resolver: object, routes: object, reconciler: object, **_schedules: object
+    ) -> object:
         del run_service, resolver, routes, reconciler
         received.append("app")
         return object()
@@ -1143,7 +1145,9 @@ def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
     class Resolver:
         secret_values: tuple[str, ...] = ()
 
-    def app_factory(_service: object, _resolver: object, _routes: object, reconciler: RunLivenessReconciler) -> object:
+    def app_factory(
+        _service: object, _resolver: object, _routes: object, reconciler: RunLivenessReconciler, **_schedules: object
+    ) -> object:
         captured.append(reconciler)
         return object()
 
@@ -1183,7 +1187,7 @@ def test_build_app_passes_the_validated_prefect_ui_url_to_the_run_service(
         resolver_factory=Resolver,
         run_service_factory=run_service_factory,
         configuration_routes_factory=lambda **_kwargs: object(),
-        app_factory=lambda *_args: object(),
+        app_factory=lambda *_args, **_kwargs: object(),
         start_check=_record_matches,
     )
 

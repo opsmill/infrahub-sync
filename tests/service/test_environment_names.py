@@ -77,7 +77,7 @@ def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pyte
         projection_factory=lambda: projection,
         run_service_factory=lambda *_args, **_kwargs: object(),
         configuration_routes_factory=lambda **_kwargs: object(),
-        app_factory=lambda *args: args,
+        app_factory=lambda *args, **_kwargs: args,
         start_check=lambda _pool: None,
     )
 

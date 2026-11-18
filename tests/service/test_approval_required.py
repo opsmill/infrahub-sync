@@ -24,7 +24,7 @@ from infrahub_sync.service.models import PlanOperationResource, PlanResource, Pl
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV, approval_required, validate_settings
-from tests.service.accounts import account_identifier, seed_accounts
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -80,7 +80,7 @@ def test_any_other_value_stops_the_service_at_start_up_naming_the_variable(
 
 
 # T028: admission with the setting on.
-class _RecordingOrchestration:
+class _RecordingOrchestration(NoDeploymentSchedules):
     """Records every submission so a test can show a refusal submits nothing."""
 
     def __init__(self) -> None:

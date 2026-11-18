@@ -29,7 +29,7 @@ from infrahub_sync.service.app import create_app
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
-from tests.service.accounts import seed_accounts
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -42,7 +42,7 @@ T0 = datetime(2026, 11, 6, 10, tzinfo=timezone.utc)
 _WORKER_ID = "0f4b8a8e-5d0c-4f0e-9b6a-3c1d2e4f5a6b"
 
 
-class _FakeOrchestration:
+class _FakeOrchestration(NoDeploymentSchedules):
     """Accept every submission and report each flow run as running."""
 
     def __init__(self) -> None:

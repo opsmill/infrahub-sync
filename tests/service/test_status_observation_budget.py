@@ -36,6 +36,7 @@ from infrahub_sync.service.auth import Principal, Resolution
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import RunService
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -77,7 +78,7 @@ class _CountingProjection(ProductProjection):
         super().observe_prefect_execution(run_id, flow_run_id, state=state, secrets=secrets)
 
 
-class _CountingOrchestration:
+class _CountingOrchestration(NoDeploymentSchedules):
     """A scripted Prefect double that records every remote observation it is asked for."""
 
     def __init__(self, observations: dict[str, Observation] | None = None) -> None:

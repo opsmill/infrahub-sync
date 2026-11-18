@@ -26,6 +26,7 @@ from infrahub_sync.service.orchestration import (
     RunLogRead,
     Submission,
 )
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -72,7 +73,7 @@ def test_admission_ttl_refuses_oversized_digits_with_fixed_unchained_error(
     assert caught.value.__cause__ is None
 
 
-class _Orchestration:
+class _Orchestration(NoDeploymentSchedules):
     def __init__(self, pool: PoolStatus, observation: Observation | None = None) -> None:
         self.pool = pool
         self.observation = observation or Observation(available=True, state="running")
