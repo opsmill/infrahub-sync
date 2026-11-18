@@ -34,6 +34,7 @@ from .models import (
     MAX_LOG_LIMIT,
     MAX_REPORT_LIMIT,
     MIN_LIMIT,
+    REASON_MAX_LENGTH,
     AccountResource,
     ApplyRunRequest,
     ApprovedRunResource,
@@ -1336,10 +1337,19 @@ class SyncClient:  # pylint: disable=too-many-public-methods
 
     @staticmethod
     def _with_reason(values: dict[str, Any], reason: object) -> dict[str, Any]:
-        """Add the optional audit reason to a request body or to query parameters."""
+        """Add the optional audit reason to a request body or to query parameters.
+
+        The reason follows the rule of the account routes: 1 to 512 printable characters, with no
+        space at either end. Another reason is refused before any request.
+        """
         if reason is None:
             return values
-        if not isinstance(reason, str) or not reason:
+        if (
+            not isinstance(reason, str)
+            or not 1 <= len(reason) <= REASON_MAX_LENGTH
+            or reason != reason.strip()
+            or not reason.isprintable()
+        ):
             raise ClientInputError(_REASON_ARG)
         return {**values, _REASON_ARG: reason}
 
