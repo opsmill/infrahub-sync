@@ -116,9 +116,20 @@ class _Reader:
         ),
         pytest.param(
             {"primary_resource": {"kind": "account", "id": _ID_A}},
-            {"primary_resource": {"kind": "account", "id": _ID_A}},
-            id="resource-outside-related-is-unchanged",
+            {"primary_resource": {"kind": "account", "id": "Alice"}},
+            id="primary-resource-of-kind-account",
         ),
+        pytest.param(
+            {"primary_resource": {"kind": "account", "id": _ID_B}},
+            {"primary_resource": {"kind": "account", "id": "Deleted account 1234abcd"}},
+            id="primary-resource-of-a-deleted-account",
+        ),
+        pytest.param(
+            {"primary_resource": {"kind": "run", "id": _ID_A}, "resource": {"kind": "account", "id": _ID_A}},
+            {"primary_resource": {"kind": "run", "id": _ID_A}, "resource": {"kind": "account", "id": _ID_A}},
+            id="resource-outside-related-and-primary-is-unchanged",
+        ),
+        pytest.param({"primary_resource": None}, {"primary_resource": None}, id="no-primary-resource"),
         pytest.param(
             {"actor": _ID_A, "reason": f"asked by {_ID_A}", "message": _ID_A, "id": _ID_A},
             {"actor": "Alice", "reason": f"asked by {_ID_A}", "message": _ID_A, "id": _ID_A},

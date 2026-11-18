@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 ACCOUNT_FIELDS = frozenset({"actor", "approved_by", "registered_by"})
 # The key that holds the related resources of an event, and the kind of an entry that names an account.
 RELATED_KEY = "related"
+# The key that holds the resource an event is about.
+PRIMARY_KEY = "primary_resource"
 ACCOUNT_KIND = "account"
 
 AccountReader = Callable[[Sequence[str]], Mapping[str, "Account"]]
@@ -60,8 +62,8 @@ def present_accounts(body: Any, read_accounts: AccountReader) -> Any:
     """Return the body with each account identifier replaced by the display name of its account.
 
     Only the string value of `actor`, `approved_by` or `registered_by`, and the `id` of a related
-    resource of kind `account`, is replaced, and only when it has the form of an account
-    identifier. An identifier that no account has is left as it is. The accounts are read with
+    resource or of a primary resource of kind `account`, is replaced, and only when it has the
+    form of an account identifier. An identifier that no account has is left as it is. The accounts are read with
     one call; a body that holds no identifier is returned as it is, with no call.
     """
     identifiers = account_identifiers(body)
@@ -84,13 +86,15 @@ def _convert_accounts(value: Any, convert: _Convert) -> Any:
             converted[key] = _convert_identifier(item, convert)
         elif key == RELATED_KEY and isinstance(item, list):
             converted[key] = [_convert_related(entry, convert) for entry in item]
+        elif key == PRIMARY_KEY:
+            converted[key] = _convert_related(item, convert)
         else:
             converted[key] = _convert_accounts(item, convert)
     return converted
 
 
 def _convert_related(entry: Any, convert: _Convert) -> Any:
-    """Convert the `id` of a related resource of kind `account`; convert any other entry like a body."""
+    """Convert the `id` of a resource of kind `account`; convert any other entry like a body."""
     if isinstance(entry, dict) and entry.get("kind") == ACCOUNT_KIND and isinstance(entry.get("id"), str):
         return {**entry, "id": _convert_identifier(entry["id"], convert)}
     return _convert_accounts(entry, convert)
