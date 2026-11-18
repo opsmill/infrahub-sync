@@ -337,7 +337,7 @@ tokens.
 - [X] T062 [US4] Regenerate `frontend/src/api/types.generated.ts`, and add the queries and
   actions for accounts and tokens to `frontend/src/api/queries.ts` and
   `frontend/src/api/actions.ts`.
-- [ ] T063 [P] [US4] Create the "My account" page in `frontend/src/routes/account.tsx`: change
+- [X] T063 [P] [US4] Create the "My account" page in `frontend/src/routes/account.tsx`: change
   the password, list tokens, create a token with its value displayed once, delete a token.
 - [ ] T064 [P] [US4] Create the "Accounts" page in `frontend/src/routes/accounts.tsx`: the list
   with level and state, the filter on active accounts, and create, set level, set password,
