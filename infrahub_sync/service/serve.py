@@ -13,6 +13,7 @@ from infrahub_sync.execution import collect_secret_values
 from .app import create_app
 from .auth import StoreAccountResolver, apply_admin_account
 from .config_routes import ConfigurationRoutes
+from .credentials import no_account_hash
 from .liveness import LivenessPolicy, RunLivenessReconciler
 from .orchestration import (
     CancellationResult,
@@ -113,6 +114,9 @@ def build_app(
         # Removed before the secret values are collected below: the password is in no list of
         # secret values, so no free-text check can be used to test candidate passwords.
         os.environ.pop(ADMIN_ACCOUNT_PASSWORD_ENV, None)
+        # Made now, so the first sign-in with an unknown name does not compute it and take
+        # longer than a sign-in with a known name.
+        no_account_hash()
         resolver = StoreAccountResolver(projection, idle_seconds=idle_seconds, admin_token=admin_account.token)
     # The configuration diagnostics quote declared keys, so this surface needs the ordinary
     # environment secrets as well as the `admin` token that the environment defines.

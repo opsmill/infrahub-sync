@@ -86,6 +86,9 @@ _REGISTRY_VERSION_MESSAGE = "registry_version must be an integer in the registry
 _REASON_MESSAGE = "reason must be printable and trimmed"
 # The longest reason a request can give for an action.
 REASON_MAX_LENGTH = 512
+# The rule of a local account name (spec 022, research R8), which the Sync API and the client both
+# apply: no space, so a name differs from every placeholder and is safe in a URL path.
+ACCOUNT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$"
 _JSON_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
 _ARTIFACT_TIME_MESSAGE = "artifact-reference timestamps must include a timezone"
 _EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"

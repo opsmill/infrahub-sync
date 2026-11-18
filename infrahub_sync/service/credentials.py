@@ -23,7 +23,6 @@ import secrets
 import threading
 from base64 import b64decode, b64encode
 from contextlib import contextmanager
-from functools import lru_cache
 from typing import TYPE_CHECKING
 from weakref import WeakValueDictionary
 
@@ -159,14 +158,22 @@ def verify_password(password: str, stored_hash: str) -> bool:
     return hmac.compare_digest(derived, key)
 
 
-@lru_cache(maxsize=1)
+_NO_ACCOUNT_HASH: list[str] = []
+_NO_ACCOUNT_HASH_LOCK = threading.Lock()
+
+
 def no_account_hash() -> str:
     """Return a fixed hash to verify against when a name has no account.
 
     It is made once for the process, from a random password that is not kept, so no password
     verifies it. A sign-in with an unknown name then takes the time of a sign-in with a known one.
+    The lock makes requests that arrive together wait for the one computation: each would
+    otherwise compute its own hash, outside the places of the gate, with 32 MiB each.
     """
-    return hash_password(secrets.token_urlsafe(TOKEN_RANDOM_BYTES))
+    with _NO_ACCOUNT_HASH_LOCK:
+        if not _NO_ACCOUNT_HASH:
+            _NO_ACCOUNT_HASH.append(hash_password(secrets.token_urlsafe(TOKEN_RANDOM_BYTES)))
+        return _NO_ACCOUNT_HASH[0]
 
 
 def new_api_token() -> str:

@@ -284,7 +284,15 @@ def logout_cmd(ctx: typer.Context) -> None:
             # A session the Sync API no longer accepts has already ended.
             if error.status != _UNAUTHENTICATED:
                 raise
-        remove_session(address)
+        try:
+            remove_session(address)
+        except OSError:
+            # The same plain error line as `login` when the file cannot be written.
+            typer.echo(
+                support.display(f"error: signed out, but the session could not be removed from {default_directory()}"),
+                err=True,
+            )
+            raise typer.Exit(1) from None
         typer.echo("signed out")
         _echo_precedence_notice()
 

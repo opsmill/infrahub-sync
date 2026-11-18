@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 import structlog
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_validator
 
-from infrahub_sync.client.models import REASON_MAX_LENGTH
+from infrahub_sync.client.models import ACCOUNT_NAME_PATTERN, REASON_MAX_LENGTH
 from infrahub_sync.product_store.accounts import (
     ACCOUNT_ID_PREFIX,
     SIGN_IN_NAME_MAX_LENGTH,
@@ -75,9 +75,6 @@ if TYPE_CHECKING:
     from .auth import Principal
 
 TOKEN_NAME_MAX_LENGTH = 64
-# The rule of an account name (research R8): no space, so a name differs from every placeholder
-# and is safe in a URL path.
-ACCOUNT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$"
 # The names no account can be created with, in any letter case: the account that the environment
 # manages, and the values a record holds when no account applies.
 RESERVED_ACCOUNT_NAMES = frozenset({"admin", "unknown", "unauthenticated"})

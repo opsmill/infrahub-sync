@@ -334,6 +334,22 @@ def test_an_unset_or_empty_token_variable_means_no_token(environment: dict[str, 
             ADMIN_ACCOUNT_TOKEN_ENV,
             id="token-with-the-session-prefix",
         ),
+        # A request presents the token in an HTTP header: such a token could never match.
+        pytest.param(
+            {ADMIN_ACCOUNT_PASSWORD_ENV: _PASSWORD, ADMIN_ACCOUNT_TOKEN_ENV: "token-chosen-by-the-opérateur"},
+            ADMIN_ACCOUNT_TOKEN_ENV,
+            id="token-not-ascii",
+        ),
+        pytest.param(
+            {ADMIN_ACCOUNT_PASSWORD_ENV: _PASSWORD, ADMIN_ACCOUNT_TOKEN_ENV: "token-chosen-by-the-operator\udcff"},
+            ADMIN_ACCOUNT_TOKEN_ENV,
+            id="token-not-utf-8",
+        ),
+        pytest.param(
+            {ADMIN_ACCOUNT_PASSWORD_ENV: _PASSWORD, ADMIN_ACCOUNT_TOKEN_ENV: " token-chosen-by-the-operator"},
+            ADMIN_ACCOUNT_TOKEN_ENV,
+            id="token-with-a-leading-space",
+        ),
     ],
 )
 def test_a_bad_variable_stops_the_start_with_a_message_that_names_it(

@@ -28,6 +28,7 @@ from .errors import (
     TransportError,
 )
 from .models import (
+    ACCOUNT_NAME_PATTERN,
     LOG_STAGES,
     MAX_LIMIT,
     MAX_LOG_LIMIT,
@@ -122,7 +123,7 @@ _EXPIRES_AT_ARG = "expires_at"
 _TOKEN_ID_ARG = "token_id"
 _ACCOUNT_STATES = frozenset({"active", "disabled", "all"})
 # The rule of an account name, as the Sync API applies it. A name that matches is safe in a URL path.
-_ACCOUNT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$")
+_ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
 # The value a client built by `SyncClient.without_token` holds in place of a token. It is never sent.
 _NO_TOKEN = "-"
 

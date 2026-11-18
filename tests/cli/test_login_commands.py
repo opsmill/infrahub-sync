@@ -467,6 +467,26 @@ def test_logout_keeps_the_session_when_the_sync_api_cannot_be_reached(sync_api: 
     _assert_no_secret(result)
 
 
+def test_logout_reports_a_session_that_cannot_be_removed(
+    sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_session(URL, ALICE_SESSION)
+    sync_api.answers["POST /auth/sign-out"] = NO_CONTENT
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("infrahub_sync.cli_accounts.remove_session", refuse)
+
+    result = _invoke("logout")
+
+    assert result.exit_code == 1
+    assert "signed out, but the session could not be removed" in result.stderr
+    assert "Traceback" not in result.output
+    assert not result.stdout
+    _assert_no_secret(result)
+
+
 def test_logout_without_an_address_prints_the_address_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("INFRAHUB_SYNC_API_URL")
 

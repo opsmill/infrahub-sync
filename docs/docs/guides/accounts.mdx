@@ -22,8 +22,9 @@ from two variables of the `sync-api` service:
 
 - `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`: required, 12 to 1,024 characters of valid UTF-8 text,
   no default value.
-- `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`: optional, at least 16 characters, and it must not start
-  with `ifs_pat_` or `ifs_ses_`. Empty or unset, `admin` has no API token.
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`: optional, at least 16 printable ASCII characters with no
+  space at either end, and it must not start with `ifs_pat_` or `ifs_ses_`. Empty or unset,
+  `admin` has no API token.
 
 `sync-api` applies both at each start. The CLI and the Sync API refuse to change the password,
 the tokens or the level of `admin`, and refuse to disable or delete it. The CLI prints one

@@ -157,8 +157,10 @@ it collects the secret values, so the password is in no free-text check. The tok
 stays in `resolver.secret_values`.
 
 `settings.py` stops the start when a variable breaks a rule: the password has 12 to 1,024
-characters that UTF-8 can encode; the token has at least 16 characters and does not start with
-`ifs_pat_` or `ifs_ses_`. The message names the variable and never the value.
+characters that UTF-8 can encode; the token has at least 16 printable ASCII characters, no space
+at either end, and does not start with `ifs_pat_` or `ifs_ses_`. A request presents the token in
+an HTTP header, which the Sync API reads as Latin-1 and without surrounding spaces, so no other
+token could match. The message names the variable and never the value.
 
 Every account route that would change the password, the tokens, the level or the state of an
 `environment_managed` account, or delete it, answers `409 environment-managed-account`. Unlock

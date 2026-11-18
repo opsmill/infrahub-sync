@@ -131,7 +131,8 @@ def admin_account_settings(environ: Mapping[str, str] | None = None) -> AdminAcc
 
     Raises:
         AccountSettingsError: the password is unset, empty, shorter than 12 or longer than 1,024
-            characters, or not valid UTF-8 text; or the token is shorter than 16 characters or
+            characters, or not valid UTF-8 text; or the token is shorter than 16 characters,
+            holds a character that is not printable ASCII, starts or ends with a space, or
             starts with ``ifs_pat_`` or ``ifs_ses_``.
     """
     env = os.environ if environ is None else environ
@@ -155,6 +156,12 @@ def admin_account_settings(environ: Mapping[str, str] | None = None) -> AdminAcc
         return AdminAccountSettings(password=password)
     if len(token) < ADMIN_ACCOUNT_TOKEN_MIN_LENGTH:
         msg = f"{ADMIN_ACCOUNT_TOKEN_ENV} must have at least {ADMIN_ACCOUNT_TOKEN_MIN_LENGTH} characters"
+        raise AccountSettingsError(msg)
+    if not (token.isascii() and token.isprintable()) or token != token.strip():
+        # A request presents the token in an HTTP header, which the Sync API reads as Latin-1 and
+        # without surrounding spaces: any other token could never match. A byte that is not UTF-8
+        # reaches Python as a lone surrogate, which has no digest.
+        msg = f"{ADMIN_ACCOUNT_TOKEN_ENV} must hold printable ASCII characters only, with no space at either end"
         raise AccountSettingsError(msg)
     if token.startswith(TOKEN_PREFIXES):
         msg = f"{ADMIN_ACCOUNT_TOKEN_ENV} must not start with {' or '.join(TOKEN_PREFIXES)}"
