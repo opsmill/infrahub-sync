@@ -1,0 +1,1 @@
+The Sync API no longer reads `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, and its tokens no longer work. Before you upgrade, set `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` (and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` if a script or the Compose `cli` service needs a token), then create an account for each person.
