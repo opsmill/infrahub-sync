@@ -62,10 +62,13 @@ request. Without the option, the token does not expire.
   hint. A file that cannot be read counts as no saved session.
 - **Output formats**: a table, or `key: value` lines, by default; JSON with `--json` on the
   commands that list it above.
-- **Error messages**: the client keeps no message text of an answer, so the CLI prints, for each
-  refusal code of the account routes, its own fixed message with the status and the code. The
-  message for `environment-managed-account` says that `admin` is always an active administrator,
-  and names both `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`.
+- **Error messages**: the client keeps no message text of an answer, so the CLI prints the status
+  and the code of a refusal, and for the codes of the account routes listed in
+  `ACCOUNT_ERROR_MESSAGES` (`infrahub_sync/cli_accounts.py`), its own fixed message. The codes
+  `forbidden`, `unauthenticated`, `request-invalid` and `secret-parameter-refused` have no message
+  of their own there. The message for `environment-managed-account` says that `admin` is always
+  an active administrator, and names both `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and
+  `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`.
 - **Exit codes** follow the existing mapping of API errors. A refusal before any request (a
   missing terminal, a missing option, an `--expires` value that is not accepted) exits with `2`.
 - Every new command has generated reference documentation (`uv run invoke docs.generate`).

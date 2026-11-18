@@ -259,8 +259,8 @@ line "Changed during implementation:" gives what the first text said and why it 
   refusal.
 - Changed during implementation: the first text read the refusal once, before the check. The
   review found that parallel sign-ins all passed that read before the first failure was counted,
-  so tens of passwords could be checked for each refusal. The lock and the second read close
-  this within one process.
+  so tens of passwords could be checked for each refusal. The lock and the second read limit
+  this to one more check for each additional process.
 - **Ways to end a refusal early**:
     - an administrator clears it for any account, `admin` included
       (`POST /accounts/{name}/unlock`);
@@ -277,8 +277,8 @@ line "Changed during implementation:" gives what the first text said and why it 
   When too few rows can be deleted, because the others hold a refusal in force, the new name is
   not recorded and its sign-in gets the same refusal.
 - Changed during implementation: the first text deleted the rows with the oldest window, which
-  could include a refusal in force. The review found that a flood of failed sign-ins for unknown
-  names could then end the refusal of a real account.
+  could include a refusal in force. The review found that many failed sign-ins for unknown names
+  could then delete the refusal of a real account, and so end it.
 - **A known limit**: a person who knows an account name can keep that account from signing in
   with its password, by failing 5 times in each 15-minute window. The rule is the one the
   maintainer chose in the interview. The alternative is a delay that grows with each failure and
@@ -358,7 +358,7 @@ line "Changed during implementation:" gives what the first text said and why it 
       change that runs at the same time either comes first and the insertion is refused, or
       comes after and deletes what was inserted.
 - Changed during implementation: the last point was added after the review found that a session
-  or a token created during a disable or a password reset outlived it.
+  or a token created during a disable or a password reset was still accepted after it.
 - **The CLI keeps the session token in a file** `sessions.json` in the directory that
   `typer.get_app_dir("infrahub-sync")` returns. Typer is a base dependency, so this works on
   Python 3.10 without the `service` extra.

@@ -130,7 +130,7 @@ helper.
 | IV. Type safety | New resources are Pydantic models. New errors are specific exceptions and API error codes. | Pass |
 | V. Test discipline | Unit tests for each requirement on both store dialects; parametrized tests for names, password lengths and refusal cases. | Pass |
 | VI. Secrets | Passwords are stored as scrypt hashes and tokens as digests. The `admin` password and token come from the environment. No password is logged, printed or returned. A token value and a session token are returned once, to the account that created them, and `tokens create` prints the token value once. The principle says credentials are "never printed", so this is a deviation: see "Complexity Tracking". | Deviation, justified |
-| VII. Simplicity | The existing resolver protocol, bearer scheme, audit path and text columns are reused. No new dependency. One new module for accounts in the service, one in the store. | Pass |
+| VII. Simplicity | The existing resolver protocol, bearer scheme, audit path and text columns are reused. No new dependency. One new module for accounts in the store. In the service, the implementation has four (`credentials.py`, `account_routes.py`, `account_actions.py`, `presentation.py`), and the CLI two (`cli_accounts.py`, `cli_session.py`). | Pass |
 
 Post-design re-check: one justified deviation, on principle VI. The feature amends the principle
 (FR-040).
