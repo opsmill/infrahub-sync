@@ -21,6 +21,14 @@ if TYPE_CHECKING:
     from invoke.tasks import Task
 
 ADMIN_TOKEN = dev.PUBLIC_INFRAHUB_ADMIN_TOKEN
+# What `infrahub-sync demo prepare --json` prints on a first run, trimmed to what `dev.demo` reads.
+PREPARED = {
+    "schema": "loaded",
+    "configuration": "registered",
+    "config_id": "cfg-demo-1",
+    "version": 1,
+    "name": "from-netbox",
+}
 
 
 def _resolved(
@@ -78,6 +86,9 @@ class FakeDocker:
         self.netbox_running = False
         # False makes the local NetBox probes fail, as when Docker does not answer them.
         self.netbox_probe_ok = True
+        # What `infrahub-sync demo prepare --json` prints, and whether it succeeds.
+        self.prepare_stdout = json.dumps(PREPARED)
+        self.prepare_ok = True
         self.commands: list[str] = []
         self.envs: list[dict[str, str] | None] = []
 
@@ -93,10 +104,16 @@ class FakeDocker:
             return _Result("netbox-id" if self.netbox_running and running_probe else "", ok=self.netbox_probe_ok)
         return None
 
+    def _prepare_answer(self, command: str) -> _Result | None:
+        """Answer `infrahub-sync demo prepare`, which `dev.demo` runs on the host."""
+        if command.startswith(dev.DEMO_PREPARE_COMMAND):
+            return _Result(self.prepare_stdout, ok=self.prepare_ok)
+        return None
+
     def run(self, command: str, **kwargs: Any) -> _Result:  # noqa: ANN401 -- Invoke's keyword arguments
         self.commands.append(command)
         self.envs.append(kwargs.get("env"))
-        probe = self._preset_probe(command)
+        probe = self._preset_probe(command) or self._prepare_answer(command)
         if probe is not None:
             return probe
         if command.endswith("config --format json"):
@@ -439,6 +456,7 @@ def test_the_dev_namespace_holds_the_contract_tasks() -> None:
         "api",
         "worker",
         "frontend",
+        "demo",
     }
 
 
@@ -546,13 +564,13 @@ def test_the_preset_variable_selects_a_local_infrahub(
 
 
 def test_an_unknown_preset_is_refused_before_anything_starts(context: Context, fake: FakeDocker) -> None:
-    with pytest.raises(dev.DevStackError, match="expected one of sync, infrahub, preview"):
+    with pytest.raises(dev.DevStackError, match="expected one of sync, infrahub, preview, demo"):
         _body(dev.dev_start)(context, preset="everything")
 
     assert fake.compose_commands() == []
 
 
-@pytest.mark.parametrize("preset", ["infrahub", "preview"])
+@pytest.mark.parametrize("preset", ["infrahub", "preview", "demo"])
 def test_a_local_infrahub_preset_and_an_infrahub_network_are_refused_together(
     context: Context, fake: FakeDocker, preset: str
 ) -> None:
@@ -720,3 +738,205 @@ def test_dev_seed_without_a_local_infrahub_names_the_preset_to_start(context: Co
 
     with pytest.raises(dev.DevStackError, match="--preset infrahub"):
         _body(dev.dev_seed)(context)
+
+
+# ----- The `demo` preset and `dev.demo` -----------------------------------------------------
+
+
+def test_the_demo_preset_runs_infrahub_and_netbox_without_the_smoke_dataset() -> None:
+    demo = dev.preset_named("demo")
+
+    assert demo.local_infrahub
+    assert demo.netbox
+    assert not demo.smoke_dataset
+    # `preview` is unchanged: the same services, and the smoke dataset.
+    preview = dev.preset_named("preview")
+    assert (preview.local_infrahub, preview.netbox, preview.smoke_dataset) == (True, True, True)
+
+
+def test_dev_start_with_the_demo_preset_starts_netbox_and_writes_nothing_into_infrahub(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.running = set()
+    events: list[str] = []
+    monkeypatch.setattr(dev, "netbox_token", lambda _values: "nbt_dev.token")
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: events.append("netbox"))
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda *_args: events.append("seed"))
+
+    _body(dev.dev_start)(context, preset="demo")
+
+    assert events == ["netbox"]
+    assert "--profile sync --profile infrahub " in fake.compose_commands()[0]
+    assert {
+        dev.INFRAHUB_CREDENTIAL_VARIABLE: ADMIN_TOKEN,
+        dev.NETBOX_CREDENTIAL_VARIABLE: "nbt_dev.token",
+    } in fake.envs
+
+
+@pytest.fixture
+def demo(fake: FakeDocker, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace what `dev.demo` does outside Docker; returns the NetBox and seed events it records."""
+    fake.running = set()
+    events: list[str] = []
+    monkeypatch.delenv(dev.SYNC_TOKEN_VARIABLE, raising=False)
+    monkeypatch.setattr(dev, "netbox_token", lambda _values: "nbt_dev.token")
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: events.append("netbox"))
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda *_args: events.append("seed"))
+    monkeypatch.setattr(dev, "_frontend_submodule_present", lambda: True)
+    monkeypatch.setattr(dev, "recorded_dataset", lambda: None)
+    return events
+
+
+def _prepare_call(fake: FakeDocker) -> tuple[str, dict[str, str]]:
+    (index,) = [i for i, command in enumerate(fake.commands) if command.startswith(dev.DEMO_PREPARE_COMMAND)]
+    return fake.commands[index], fake.envs[index] or {}
+
+
+def test_dev_demo_runs_demo_prepare_on_the_host_with_the_tokens_in_the_environment(
+    context: Context, fake: FakeDocker, demo: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _body(dev.dev_demo)(context)
+
+    command, env = _prepare_call(fake)
+    assert command == (
+        "uv run infrahub-sync demo prepare --netbox-url http://netbox:8080 "
+        "--infrahub-url http://infrahub-server:8000 --infrahub-address http://127.0.0.1:8091 --json"
+    )
+    assert env == {
+        dev.INFRAHUB_TOKEN_VARIABLE: ADMIN_TOKEN,
+        dev.SYNC_URL_VARIABLE: "http://127.0.0.1:8001",
+        dev.SYNC_TOKEN_VARIABLE: dev.API_TOKEN,
+    }
+    assert ADMIN_TOKEN not in command
+    assert dev.API_TOKEN not in command
+    # The stack starts before the preparation runs, and nothing seeds the smoke dataset.
+    assert demo == ["netbox"]
+    output = capsys.readouterr().out
+    assert "schema: loaded" in output
+    assert "configuration: registered" in output
+    assert "Web interface  http://127.0.0.1:8001" in output
+    assert "uv run infrahubctl branch create netbox-demo-1" in output
+    assert (
+        'uv run infrahub-sync plan --config-id cfg-demo-1 --version 1 --branch netbox-demo-1 --reason "demo"' in output
+    )
+
+
+@pytest.mark.usefixtures("demo")
+def test_dev_demo_with_a_new_netbox_says_it_loaded_the_demo_dataset(
+    context: Context, fake: FakeDocker, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.netbox_running = False
+
+    _body(dev.dev_demo)(context)
+
+    output = capsys.readouterr().out
+    assert "loaded the 'demo' dataset" in output
+    assert "netbox.seed --dataset demo" not in output
+
+
+@pytest.mark.parametrize(
+    ("recorded", "expected"),
+    [
+        (None, "the dataset it holds is not known"),
+        ("the 'seed' dataset at tier S", "it holds the 'seed' dataset at tier S"),
+    ],
+    ids=["unknown", "recorded"],
+)
+@pytest.mark.usefixtures("demo")
+def test_dev_demo_keeps_an_existing_netbox_and_prints_the_reload_command(  # noqa: PLR0913, PLR0917 -- pytest fixtures
+    context: Context,
+    fake: FakeDocker,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    recorded: str | None,
+    expected: str,
+) -> None:
+    fake.netbox_running = True
+    monkeypatch.setattr(dev, "recorded_dataset", lambda: recorded)
+
+    _body(dev.dev_demo)(context)
+
+    output = capsys.readouterr().out
+    assert "keeps its data" in output
+    assert expected in output
+    assert "uv run invoke netbox.seed --dataset demo" in output
+
+
+@pytest.mark.usefixtures("demo")
+def test_dev_demo_prints_no_token_the_user_set(
+    context: Context,
+    fake: FakeDocker,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake.infrahub["infrahub_token"] = CUSTOM_TOKEN
+    sync_token = "a-sync-token-of-the-developer"  # noqa: S105 -- a test value
+    monkeypatch.setenv(dev.SYNC_TOKEN_VARIABLE, sync_token)
+    resolve = dev.dev_settings
+    monkeypatch.setattr(
+        dev,
+        "dev_settings",
+        lambda *args, **kwargs: dataclasses.replace(
+            resolve(*args, **kwargs), bearer_tokens=json.dumps({"mine": {"token": sync_token}})
+        ),
+    )
+
+    _body(dev.dev_demo)(context)
+
+    command, env = _prepare_call(fake)
+    # The shell's Sync token reaches the command through the inherited environment, not `env`.
+    assert dev.SYNC_TOKEN_VARIABLE not in env
+    assert env[dev.INFRAHUB_TOKEN_VARIABLE] == CUSTOM_TOKEN
+    assert CUSTOM_TOKEN not in command
+    assert sync_token not in command
+    output = capsys.readouterr().out
+    assert CUSTOM_TOKEN not in output
+    assert sync_token not in output
+    assert dev.API_TOKEN not in output
+    assert "from BEARER_TOKENS" in output
+    assert f"from {dev.INFRAHUB_ADMIN_TOKEN_VARIABLE}" in output
+
+
+@pytest.mark.usefixtures("demo")
+def test_dev_demo_prints_the_development_tokens_when_they_are_in_use(
+    context: Context, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _body(dev.dev_demo)(context)
+
+    output = capsys.readouterr().out
+    assert f"INFRAHUB_SYNC_API_TOKEN={dev.API_TOKEN}" in output
+    assert f"INFRAHUB_API_TOKEN={ADMIN_TOKEN}" in output
+
+
+def test_dev_demo_without_a_sync_token_for_bearer_tokens_stops_before_starting(
+    context: Context, fake: FakeDocker, demo: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resolve = dev.dev_settings
+    monkeypatch.setattr(
+        dev,
+        "dev_settings",
+        lambda *args, **kwargs: dataclasses.replace(
+            resolve(*args, **kwargs), bearer_tokens=json.dumps({"mine": {"token": CUSTOM_TOKEN}})
+        ),
+    )
+
+    with pytest.raises(dev.DevStackError, match=dev.SYNC_TOKEN_VARIABLE):
+        _body(dev.dev_demo)(context)
+
+    assert fake.compose_commands() == []
+    assert demo == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [("", False), ("not json", True), (json.dumps({"schema": "loaded"}), True)],
+    ids=["failed", "not-json", "no-configuration"],
+)
+@pytest.mark.usefixtures("demo")
+def test_dev_demo_refuses_a_preparation_it_cannot_read(
+    context: Context, fake: FakeDocker, answer: tuple[str, bool]
+) -> None:
+    fake.prepare_stdout, fake.prepare_ok = answer
+
+    with pytest.raises(dev.DevStackError, match="demo prepare"):
+        _body(dev.dev_demo)(context)

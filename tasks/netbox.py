@@ -608,6 +608,21 @@ def destroy(context: Context) -> None:
     print(f" - [{NAMESPACE}] Local NetBox stopped and data volumes removed")
 
 
+def recorded_dataset() -> str | None:
+    """Name the dataset this checkout last loaded into the local NetBox, when it can tell.
+
+    Only a `seed` load leaves a record (`.netbox/tier.json`, which a `demo` restore
+    removes), so the answer is the `seed` dataset and its tier, or None. None does not mean
+    the `demo` dataset: another checkout, or a change made in NetBox, leaves no record here.
+    """
+    try:
+        state = json.loads((STATE_DIR / "tier.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    tier = state.get("tier") if isinstance(state, dict) else None
+    return f"the {DEFAULT_DATASET!r} dataset at tier {tier}" if isinstance(tier, str) else None
+
+
 def netbox_image() -> str:
     """Read the full pinned NetBox image reference without loading credentials."""
     import yaml  # noqa: PLC0415 -- keep task imports lightweight

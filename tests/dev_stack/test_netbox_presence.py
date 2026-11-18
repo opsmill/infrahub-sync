@@ -113,3 +113,23 @@ def test_a_failed_demo_restore_removes_the_partial_netbox(monkeypatch: pytest.Mo
 
     assert fake.commands[-1].endswith(" down --volumes")
     assert "--project-name netbox-dev" in fake.commands[-1]
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (None, None),
+        ('{"tier": "M", "image": "netbox", "phase": "seeded"}', "the 'seed' dataset at tier M"),
+        ("not json", None),
+        ('["M"]', None),
+    ],
+    ids=["no-record", "seed-tier", "unreadable", "not-an-object"],
+)
+def test_recorded_dataset_names_only_a_seed_load_it_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, record: str | None, expected: str | None
+) -> None:
+    monkeypatch.setattr(netbox, "STATE_DIR", tmp_path)
+    if record is not None:
+        (tmp_path / "tier.json").write_text(record, encoding="utf-8")
+
+    assert netbox.recorded_dataset() == expected

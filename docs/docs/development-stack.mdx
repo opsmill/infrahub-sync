@@ -52,6 +52,7 @@ server and the Sync services:
 | `sync` (default) | Nothing. The worker syncs into an Infrahub you already run, by default one on your machine at port 8000. | `uv run invoke dev.start` |
 | `infrahub` | A local Infrahub, which `dev.seed` and `dev.smoke` write to. | `uv run invoke dev.infrahub` or `uv run invoke dev.start --preset infrahub` |
 | `preview` | A local Infrahub and the local NetBox, and the smoke dataset loaded into that Infrahub. One command from a fresh clone to a stack you can try. | `uv run invoke dev.preview` or `uv run invoke dev.start --preset preview` |
+| `demo` | A local Infrahub and the local NetBox with the `demo` dataset. Nothing is written into Infrahub. `dev.demo` also loads the NetBox demo's schema and registers its configuration. | `uv run invoke dev.demo` or `uv run invoke dev.start --preset demo` |
 
 `dev.deps` takes the same `--preset` option. To use one preset for every task in a shell,
 export `INFRAHUB_SYNC_DEV_PRESET`, for example `export INFRAHUB_SYNC_DEV_PRESET=infrahub`.
@@ -65,7 +66,8 @@ A task without `--preset` or the variable follows the stack's containers:
 
 So after `dev.infrahub`, the tasks `dev.start`, `dev.restart`, `dev.seed` and `dev.smoke` keep
 using the local Infrahub without the option. The containers never select `preview`, because it
-writes the smoke dataset to Infrahub: name it with `dev.preview` or the variable. If Docker does
+writes the smoke dataset to Infrahub: name it with `dev.preview` or the variable. They never select
+`demo` either: name it with `dev.demo` or the variable. If Docker does
 not answer, the task stops and asks you to name the preset.
 
 Moving to a lighter preset does not stop containers that already run. For example,
@@ -584,9 +586,10 @@ Use the addresses the worker container can reach, as in step 6.
 | Task | What it does |
 | --- | --- |
 | `dev.build [--no-cache]` | Builds the image from your checkout and labels it with the hash of its build inputs. |
-| `dev.start [--preset NAME] [--infrahub-network NAME]` | Rebuilds the image when its inputs changed, then starts the containers of the preset and waits until they are healthy. The preset is `sync`, `infrahub` or `preview`. |
+| `dev.start [--preset NAME] [--infrahub-network NAME]` | Rebuilds the image when its inputs changed, then starts the containers of the preset and waits until they are healthy. The preset is `sync`, `infrahub`, `preview` or `demo`. |
 | `dev.infrahub` | `dev.start --preset infrahub`: the Sync services and a local Infrahub. |
 | `dev.preview` | `dev.start --preset preview`: a local Infrahub, the local NetBox and the smoke dataset in Infrahub. |
+| `dev.demo` | `dev.start --preset demo`, then `infrahub-sync demo prepare` on your machine: loads the NetBox demo's schema into the local Infrahub and registers its configuration. A new NetBox gets the `demo` dataset; an existing NetBox keeps its data. Prints the web interface address, the configuration ID and the commands for a first plan. |
 | `dev.restart` | Recreates the Sync containers so they run the mounted code. No rebuild. |
 | `dev.deps [--preset NAME] [--infrahub-network NAME]` | Rebuilds the image when its inputs changed, starts the containers the Sync processes depend on, prints the addresses and returns. |
 | `dev.api` | Runs the Sync API on the host, in the foreground. |

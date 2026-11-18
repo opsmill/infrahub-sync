@@ -501,3 +501,16 @@ def test_dev_deps_with_the_preview_preset_starts_netbox_and_seeds_infrahub(
 
     assert events == ["netbox", "seed"]
     assert fake.compose_commands()[0].startswith("docker compose --profile infrahub ")
+
+
+def test_dev_deps_with_the_demo_preset_starts_netbox_and_seeds_nothing(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: events.append("netbox"))
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda *_args: events.append("seed"))
+
+    _body(dev.dev_deps)(context, preset="demo")
+
+    assert events == ["netbox"]
+    assert fake.compose_commands()[0].startswith("docker compose --profile infrahub ")
