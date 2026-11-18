@@ -334,7 +334,7 @@ tokens.
 `sign_in_refused_until` is in the future, and offers unlock as the only action for `admin`
 ([contracts/web-interface.md](contracts/web-interface.md)).
 
-- [ ] T062 [US4] Regenerate `frontend/src/api/types.generated.ts`, and add the queries and
+- [X] T062 [US4] Regenerate `frontend/src/api/types.generated.ts`, and add the queries and
   actions for accounts and tokens to `frontend/src/api/queries.ts` and
   `frontend/src/api/actions.ts`.
 - [ ] T063 [P] [US4] Create the "My account" page in `frontend/src/routes/account.tsx`: change
