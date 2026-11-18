@@ -1,0 +1,31 @@
+docs/docs/operations/compose-troubleshooting.mdx
+  s_cf9ada8f865389::t_5ede0e331154a2 64-67,69-75
+docs/docs/operations/day-2-operations.mdx
+  s_cf9ada8f865389::t_5ede0e331154a2 129,135-143
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_2f12efec942255 243-244
+tests/cli/test_parity_and_closure.py
+  s_cf9ada8f865389::t_5ae6ac75f0ea8a 37,273-274
+docs/docs/compose-deployment.mdx
+  s_cf9ada8f865389::t_5ede0e331154a2 212,232-233,243-244,261,273-280
+docs/docs/guides/accounts.mdx
+  s_cf9ada8f865389::t_5ede0e331154a2 123,130-138,205,230-237
+docs/docs/reference/sync-http-api.mdx
+  s_cf9ada8f865389::t_5ede0e331154a2 100-102,115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4fe3d93157fe445702b36270f2eb4fe290a7847f",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
