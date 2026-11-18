@@ -3,16 +3,18 @@
 Five operations that the worker of a scheduled run calls. This specification builds them (FR-029,
 FR-030, research R15). They are two parts of INFP-655; only a scheduled run uses them here.
 
-All five run in the worker, with the Infrahub client and the destination credentials the worker
-already holds.
+All five run in the worker, with an Infrahub client that the operations module builds from the
+destination settings and credential the worker already holds, with the run's branch as its default
+branch (research R15). It is built before the destination adapter and kept until the end of the
+run.
 
 | Operation | Input | Result | Used for |
 | --- | --- | --- | --- |
 | Create a branch for a run | A branch name | The branch exists in Infrahub, created from the default branch, with no synchronization to Git. The run's schema read, plan, verify and apply steps use it. | FR-001, FR-029 |
 | Delete a branch | A branch name that Infrahub Sync created | The branch no longer exists. | FR-020, FR-022, FR-029 |
 | Open a proposed change | A branch that a run wrote to, a title, a description | The identifier of an open proposed change from the branch to the default branch | FR-001, FR-030 |
-| Read a proposed change | An identifier | One of `open`, `approved`, `merged`, `closed` | FR-021, FR-031 |
-| Close a proposed change | An identifier, a comment | The proposed change is closed and holds the comment | FR-020, FR-030 |
+| Read a proposed change | An identifier | One of `open`, `approved`, `merging`, `merged`, `closed`, `canceled` | FR-021, FR-031 |
+| Close a proposed change | An identifier, a comment | The proposed change is closed and holds the comment, or it was already `closed`, `canceled` or `merged` | FR-020, FR-030 |
 
 ## Rules
 
@@ -24,7 +26,12 @@ already holds.
 3. **Failures are typed.** Each operation fails with a failure class that the run's failure record
    can hold (ADR 0021), with no text from Infrahub.
 4. **Repeating is safe.** Creating a branch that already exists, closing a proposed change that is
-   already closed, and deleting a branch that no longer exists succeed.
+   already closed, canceled or merged, and deleting a branch that no longer exists succeed. Infrahub
+   refuses an update of a proposed change that is not open, so the close reads the state first.
+6. **The destination is `main`.** Infrahub accepts a proposed change only to `main`. A request for
+   a schedule with branch review is refused when the destination's default branch is another one.
+7. **The close comes before the delete.** Deleting a branch sets its proposed changes to
+   `canceled`.
 5. **Only what a schedule created.** The delete and close operations are called only with a branch
    and a proposed change that a `schedule_branches` row names.
 
@@ -48,9 +55,16 @@ already holds.
 
 ## Permissions in Infrahub
 
-The token of the worker must be allowed to create and delete branches, and to create, update and
-comment on proposed changes. The deployment guide states this, and the first task of phase 4
-records the exact permissions.
+Checked from the source code on 2026-11-18 (research, "Checked since, for R11 and R15"), not yet
+against a running Infrahub. Because the requests go to the run's branch, the worker's account
+needs:
+
+- object permission `create` on `CoreProposedChange` and on `CoreChangeComment`, and `update` on
+  `CoreProposedChange`, for branches other than the default branch;
+- the global permission `delete_branch` only if the account did not create the branch itself.
+
+Creating a branch needs no permission. The default group "Infrahub Users" holds all of these. The
+deployment guide states them.
 
 ## Tests
 

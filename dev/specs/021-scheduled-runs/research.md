@@ -319,7 +319,7 @@ write guard:
    default branch.
 
 After the write is committed as the stage result, and outside the scope whose failures make a
-write ambiguous (`service/flow.py:1502-1508`):
+write ambiguous (`service/flow.py`, `_failure_exit`):
 
 5. Open the proposed change (R15). Its description states the count of records left out.
 6. For each earlier branch of the schedule in the states `open` and `pending`, close its
@@ -440,16 +440,35 @@ and a lateness they control.
 ## R15. The branch and the proposed change are made with the Infrahub SDK, in the worker
 
 **Decision**: One new module of the service holds five operations, called by the scheduled
-`sync` stage with the Infrahub client that the destination adapter already builds
-(`adapters/infrahub.py:1008`):
+`sync` stage. The module builds its own `InfrahubClientSync` from the same destination settings
+as the destination adapter: the address, and the token that `select_runtime_credential(settings,
+"token", ("INFRAHUB_API_TOKEN",))` returns (`adapters/infrahub.py:984-1008`), with the run's
+branch as its default branch. The flow builds it before the destination adapter, because the
+adapter reads the schema of its branch when it is built and that branch must exist
+(`adapters/infrahub.py:1023`), and keeps it until the end of steps 5 and 6, because
+`_execute_stage` returns no reference to the adapter's client (`flow.py:887, 1155`). The
+requests about the proposed change are sent to the run's branch, so the token needs the object
+permissions of other branches and not `edit_default_branch` (checked from the source code, see
+below):
 
 | Operation | How |
 | --- | --- |
 | Create a branch | `client.branch.create(branch_name=..., sync_with_git=False, wait_until_completion=True)`. A branch of that name that exists counts as created. |
 | Delete a branch | `client.branch.delete(...)`. A branch that no longer exists counts as deleted. |
 | Open a proposed change | Create a `CoreProposedChange` node with `name`, `description`, `source_branch` and `destination_branch`. |
-| Read a proposed change | Read the node's `state` and its `approved_by` peers: `approved` when the state is open and `approved_by` holds at least one account. |
-| Close a proposed change | Add a `CoreChangeComment` to the node, then set its `state` to closed. |
+| Read a proposed change | Read the node's `state` and its `approved_by` peers. The result is `approved` when the state is `open` and `approved_by` holds at least one account, else the state itself: `open`, `merging`, `merged`, `closed` or `canceled`. |
+| Close a proposed change | Read the state first. Only when it is `open`: add a `CoreChangeComment` to the node, then set its `state` to `closed`. A state of `closed`, `canceled` or `merged` counts as done; `merging` counts as merged and the proposed change is kept. Infrahub refuses an update of a proposed change that is not open. |
+
+Other facts from the source code that the operations follow:
+
+- Infrahub accepts a proposed change only to the branch `main`, and refuses a second open
+  proposed change for the same source branch. The default branch of the destination must be
+  `main` for branch review; the request for a schedule with branch review is refused otherwise.
+- Deleting a branch sets its proposed changes to `canceled`. The close comes before the delete,
+  so the comment of a replaced proposed change is kept.
+- Two runs of one configuration can overlap during steps 5 and 6. `update_schedule_branch` locks
+  the row and refuses a row in a final state, so only one of them records a replacement; the
+  other skips it. No second write guard is needed.
 
 **Rationale**:
 
@@ -464,6 +483,10 @@ and a lateness they control.
 
 **Failures** are mapped to failure classes in `service/failure_cause.py`, with no text from
 Infrahub in the record (ADR 0021).
+
+**Corrected on 2026-11-18** after the source check of task T059: the first version of this
+decision used the destination adapter's client, read four states, and closed a proposed change
+with no read of its state.
 
 ## Facts not known at the time of writing
 
