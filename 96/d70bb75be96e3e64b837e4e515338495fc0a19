@@ -1,0 +1,21 @@
+dev/specs/021-scheduled-runs/contracts/branch-review.md
+  s_29b17f91da9f30::t_ba14abfb5e6fcb 31-33
+dev/specs/021-scheduled-runs/research.md
+  s_29b17f91da9f30::t_34cbb2b50e2bd5 466-468
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "96d70bb75be96e3e64b837e4e515338495fc0a19",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
