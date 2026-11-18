@@ -1,6 +1,10 @@
 # 37. An approval is a record on the run that the Sync API stores, and one service setting makes it required
 
-**Status**: Accepted
+**Status**: Accepted; amended on 2026-11-18 by
+[ADR 0052](0052-a-scheduled-write-to-a-branch-that-sync-creates-needs-no-approval.md) — a
+scheduled run that writes to a branch that Infrahub Sync created for it needs no approval, a
+schedule that writes to the default branch is refused while approval is required, and the worker
+checks the setting when it admits a scheduled start. The body below is unchanged
 **Date**: 2026-11-14
 **Source**: `dev/specs/archive/014-plan-approval/research.md` (R6, R7, R8, R9)
 

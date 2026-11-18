@@ -151,7 +151,11 @@ Infrahub Sync has no loop of its own that starts scheduled runs. Prefect holds t
 Sync schedule has one Prefect schedule on the deployment `infrahub-sync-service/run`, with a
 `CronSchedule(cron, timezone)` and the flow parameters `schedule_id` and `stage = "sync"`.
 Prefect's scheduler creates the flow runs ahead of time, and a Sync worker runs them like any
-other flow run of that deployment. Research R1 of spec 021 records why.
+other flow run of that deployment.
+[ADR 0051](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0051-a-schedule-is-a-prefect-schedule-and-the-worker-admits-each-start.md)
+records why, and
+[ADR 0052](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0052-a-scheduled-write-to-a-branch-that-sync-creates-needs-no-approval.md)
+records why a run with branch review needs no Sync approval.
 
 - **The Sync API stores, then matches Prefect.** `ScheduleService` (`service/schedules.py`)
   validates a request, writes the schedule to the product store, then calls
@@ -204,6 +208,57 @@ A failure in step 3 is recorded as `branch_review.failure` in the stage result a
 a scheduled run and the schedule's count of failed runs in one transaction, and stops the
 schedule at the fifth failed run in a row. The records are described in
 [Durable product records](../../reference/durable-product-records.mdx#schedule-records).
+
+#### When a start gets no flow run
+
+<!-- Extracted from dev/specs/archive/021-scheduled-runs on 2026-11-18 -->
+
+Prefect's scheduler creates the flow runs of a schedule ahead of time: at least 3 runs and at
+least one hour of runs. It creates them only for the start times after the moment its loop runs,
+about once a minute. A change or a deletion of one Prefect schedule deletes the future flow runs
+of every schedule of the deployment that have not run, and a deletion also deletes the late ones.
+For that reason `match_prefect_schedules`, after it creates, changes or deletes a Prefect schedule,
+calls `PrefectOrchestration.create_scheduled_runs` (`POST /deployments/{id}/schedule`), which
+creates the flow runs of every active schedule at once, with the scheduler's idempotency key. A
+failure of that call is logged; Prefect's scheduler then creates the flow runs at its next loop.
+
+A start can still have no flow run:
+
+- when that call failed, for a start within the next minute;
+- when a schedule is deleted while the worker is stopped, for the late starts of the other
+  schedules;
+- when the Prefect server is stopped for longer than the flow runs it created ahead.
+
+The worker records such a start as missed, with the cause `missed-skipped`, when it admits the
+next start of the schedule. A start that passes while the worker or the Prefect server is stopped
+keeps its flow run; when the worker takes it, the admission counts a start up to 5 minutes late
+(`ON_TIME_SECONDS` in `service/schedule_admission.py`) as on time. It runs the most recent start
+that is later than that but within the schedule's late-start duration, with a
+`missed-started-late` event, and records every other late start as missed, with no run. The bootstrap job keeps the Prefect schedules: applying the deployment again does not
+remove schedules that have a slug, so its match step only repairs differences.
+
+Prefect's scheduler needs SQLAlchemy below 2.1 while the `prefect` pin is 3.8.6; see the traps in
+[Prefect orchestration](orchestration-prefect.md#prefect-specific-traps).
+
+#### A start that waits
+
+Two cases make a start wait, with no run created:
+
+- the overlap policy `queue`, while another run of the configuration is in progress;
+- a destination that does not answer yet. Before the admission, `_destination_not_ready`
+  (`service/flow.py`) reads the destination schema of the schedule's version. Only the read
+  reasons `timeout` and `unreachable` make the start wait; a refused token, a missing permission
+  or a missing branch does not.
+
+The flow sets the flow run's state to `AwaitingRetry`, 60 seconds later
+(`QUEUED_START_RECHECK_SECONDS`, `DESTINATION_RECHECK_SECONDS`), through the Prefect client, then
+raises Prefect's `Pause` signal (`_run_again_later`). The worker submits the flow run again at
+that time, with the same `expected_start_time`, so the admission applies the late-start rules to
+the original start. A destination wait lasts only while the start can still run one minute later
+within its late-start duration; after that, the run starts and records the destination failure.
+A wait is not a failed run and does not count toward the five failed runs that stop a schedule.
+[ADR 0053](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0053-a-waiting-scheduled-start-ends-its-flow-run-with-the-pause-signal.md)
+records why the flow does not return the state.
 
 ### Persistence and deployment limits
 

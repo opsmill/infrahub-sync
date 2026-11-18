@@ -110,8 +110,8 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why `verify` contacts the destination, why `apply` and `verify` call `Potenda.check_plan`,
   and which named checks a `verify` reports.
 - [0037 — An approval is a record on the run that the Sync API stores, and one service setting makes it required](0037-an-approval-is-a-record-on-the-run.md)
-  — why an approval is four columns of the run and not a phase, why the Sync API answers
-  `approve` without a flow run, and what `INFRAHUB_SYNC_REQUIRE_APPROVAL` refuses.
+  — **amended by 0052** — why an approval is four columns of the run and not a phase, why the
+  Sync API answers `approve` without a flow run, and what `INFRAHUB_SYNC_REQUIRE_APPROVAL` refuses.
 - [0038 — Cancelling a finished plan withdraws it, and a cancelled run is never applied](0038-cancelling-a-finished-plan-withdraws-it.md)
   — why `runs cancel` withdraws a plan that has nothing running, and why `apply`, `approve` and
   `resume` refuse a run in phase `cancelled`.
@@ -145,12 +145,16 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why a plan reads the creator `__system__` from node metadata, for the kinds listed in
   `INFRAHUB_BUILTIN_NODE_KINDS`, to leave out these deletes, and why no file accepts the delete of
   the `default` namespace by name.
-- [0049 — Sign-in uses local accounts in the product store, and the environment defines the `admin` account](0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md)
-  — why accounts with passwords, API tokens and sessions replace the tokens of the environment,
-  why `admin` follows its variables at each start, and why the old variable is removed at once.
-- [0050 — A record holds an account identifier, and a deletion empties the account row](0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md)
-  — why records hold `acct_` identifiers that one middleware shows as names, and why a deletion
-  changes no past record.
+- [0051 — A schedule's cadence is a Prefect schedule, and the worker admits each scheduled start](0051-a-schedule-is-a-prefect-schedule-and-the-worker-admits-each-start.md)
+  — why each Sync schedule is a Prefect schedule matched by slug, why the worker writes the run of
+  a scheduled start, how one run for each start is guaranteed, and which starts get no flow run.
+- [0052 — A scheduled write to a branch that Infrahub Sync creates for the run needs no Sync approval](0052-a-scheduled-write-to-a-branch-that-sync-creates-needs-no-approval.md)
+  — why branch review replaces the Sync approval with the merge of a proposed change, why a
+  schedule that writes to the default branch is refused while approval is required, and why the
+  worker checks the setting too. Amends 0037.
+- [0053 — A scheduled start that waits stores its Prefect state and ends its flow run with the `Pause` signal](0053-a-waiting-scheduled-start-ends-its-flow-run-with-the-pause-signal.md)
+  — why a start that waits for a running run or for its destination sets `AwaitingRetry` itself
+  and raises `Pause`, and why returning the state fails under a process worker.
 
 ## Related
 

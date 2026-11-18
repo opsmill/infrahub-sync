@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-17
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: User description: "A team should be able to schedule runs at a given time, on given
 days, or every X hours. A scheduled run has nobody present to verify, approve and apply, so the
@@ -20,13 +20,13 @@ Sources:
 - [INFP-655](https://opsmill.atlassian.net/browse/INFP-655): Apply and review changes through
   Infrahub branches. Two parts of that card are built by this specification, see
   [Branch and proposed change capabilities](#branch-and-proposed-change-capabilities).
-- [ADR 0037](../../adr/0037-an-approval-is-a-record-on-the-run.md): an approval is a record on the
+- [ADR 0037](../../../adr/0037-an-approval-is-a-record-on-the-run.md): an approval is a record on the
   run.
-- [ADR 0033](../../adr/0033-an-event-is-saved-in-the-transaction-of-its-decision.md): an event is
+- [ADR 0033](../../../adr/0033-an-event-is-saved-in-the-transaction-of-its-decision.md): an event is
   saved in the transaction of its decision.
-- [ADR 0010](../../adr/0010-a-managed-write-ends-in-a-verdict-not-a-retry.md): one write at a time
+- [ADR 0010](../../../adr/0010-a-managed-write-ends-in-a-verdict-not-a-retry.md): one write at a time
   for each registered configuration.
-- [Project constitution](../../../docs/docs/development/constitution.md), principles I and VII.
+- [Project constitution](../../../../docs/docs/development/constitution.md), principles I and VII.
 - The idea brief of 2026-11-17, agreed with the product owner in an interview. It is not stored in
   this repository; this specification holds its content.
 
