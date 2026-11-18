@@ -9,6 +9,7 @@ import uvicorn
 from prefect.client.orchestration import get_client
 
 from infrahub_sync.execution import collect_secret_values
+from infrahub_sync.product_store.accounts import DuplicateCredentialError
 
 from .app import create_app
 from .auth import StoreAccountResolver, apply_admin_account
@@ -27,6 +28,7 @@ from .prefect_ui import prefect_ui_url_from_environment
 from .service import RunService
 from .settings import (
     ADMIN_ACCOUNT_PASSWORD_ENV,
+    ADMIN_ACCOUNT_TOKEN_ENV,
     AccountSettingsError,
     admin_account_settings,
     session_idle_seconds,
@@ -94,7 +96,8 @@ def build_app(
     Raises:
         TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
         AccountSettingsError: when a variable of the ``admin`` account or the idle period of a
-            session holds a value that is not accepted. The message names the variable.
+            session holds a value that is not accepted, or when another account already has the
+            token of ``admin`` as an API token. The message names the variable.
         StartRefusedError: when the bootstrap record is missing or names another Sync version
             or work pool, or cannot be read.
     """
@@ -110,7 +113,11 @@ def build_app(
     if admin_account is None:
         resolver = resolver_factory()
     else:
-        apply_admin_account(projection, admin_account)
+        try:
+            apply_admin_account(projection, admin_account)
+        except DuplicateCredentialError:
+            msg = f"{ADMIN_ACCOUNT_TOKEN_ENV} is the value of an API token of another account; choose another value"
+            raise AccountSettingsError(msg) from None
         # Removed before the secret values are collected below: the password is in no list of
         # secret values, so no free-text check can be used to test candidate passwords.
         os.environ.pop(ADMIN_ACCOUNT_PASSWORD_ENV, None)

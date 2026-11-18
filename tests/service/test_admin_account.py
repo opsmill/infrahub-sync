@@ -437,6 +437,24 @@ def _build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **environment: str) 
     return app, captured
 
 
+def test_a_token_that_another_account_holds_stops_the_start_with_a_message_that_names_the_variable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projection = local_product_projection(tmp_path)
+    alice = projection.create_account(name="alice", password_hash=None, now=_T0)
+    projection.create_account_token(alice.account_id, name="ci", digest=digest(_TOKEN), now=_T0)
+    monkeypatch.setenv(ADMIN_ACCOUNT_PASSWORD_ENV, _PASSWORD)
+    monkeypatch.setenv(ADMIN_ACCOUNT_TOKEN_ENV, _TOKEN)
+
+    with pytest.raises(AccountSettingsError) as refused:
+        serve.build_app(projection_factory=lambda: projection, start_check=lambda _pool: None)
+
+    message = str(refused.value)
+    assert ADMIN_ACCOUNT_TOKEN_ENV in message
+    assert _TOKEN not in message
+    assert digest(_TOKEN) not in message
+
+
 def test_the_password_is_absent_from_the_environment_and_from_the_secret_values_afterwards(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
