@@ -569,7 +569,7 @@ store in a scratch directory, the fake orchestration, no liveness reconciler, `a
 password and token). The seed created, through the API, the administrator `alice` and the account
 `bob`, which is not an administrator. A headless Chromium (`chromium_headless_shell-1243`,
 Playwright 1.65.2 for Python through `uv run --no-project --with playwright`, no dependency added
-to the repository) ran these steps. The final run, on the last build, passed all 44 steps:
+to the repository) ran these steps. The final run, on the last build, passed all 49 steps:
 
 | Step | Result |
 |---|---|
@@ -586,7 +586,7 @@ to the repository) ran these steps. The final run, on the last build, passed all
 | `bob`: the token is deleted after its confirmation; the list is empty; the value answers `401` | pass |
 | `alice`: **Accounts** lists `admin`, `alice` and `bob`; `admin` shows "Defined by the deployment's environment" and no action | pass |
 | `alice`: the menu of her own row offers only **Disable**, **View API tokens** and **Delete** | pass |
-| `alice`: two different initial passwords are refused; `carol` is created and signs in through the API | pass |
+| `alice`: two different initial passwords are refused; `carol` is created and signs in through the API; focus returns to **Create an account** | pass |
 | `alice`: `carol` made an administrator, then not; focus returns to the **Actions** button of `carol` | pass |
 | `alice`: a password set for `carol` signs in; the first password is refused | pass |
 | `alice`: `carol` disabled, and her sign-in through the API is refused; the **Active** filter hides her, **Disabled** shows only her | pass |
@@ -597,12 +597,16 @@ to the repository) ran these steps. The final run, on the last build, passed all
 | `alice`: the delete dialog says the deletion cannot be reversed and that disabling can be; its button is refused until `carol` is typed | pass |
 | `alice`: the deletion shows `Deleted account <short identifier>`; `carol` cannot sign in | pass |
 | `admin`: **My account** shows that the environment defines the account, and offers no password or token action | pass |
+| `dora`, an administrator, disables her own account: the dialog says she will be signed out, the sign-in form follows with no token held, and her sign-in is refused | pass |
+| `erin`, an administrator, deletes her own account after typing her name: the same warning and sign-in form, and her sign-in is refused | pass |
 
-At a width of 390 pixels the pages have no horizontal scroll; the main navigation scrolls instead.
+At a width of 390 pixels the pages have no horizontal scroll: the main navigation scrolls
+instead, with no visible sign that more links follow. The **Accounts** steps ran as `alice`, an
+administrator the seed created, rather than as `admin` as scenario 6 words it.
 
-Not exercised in the browser: the `503 sign-in-busy` message; disabling or deleting one's own
-account (the page then shows the sign-in form; checked only by reading the code); the Clipboard
-API refusal (the run granted the clipboard permission, so **Copy** took the Clipboard API path).
+Not exercised in the browser: the `503 sign-in-busy` message; the visible message for a browser
+that does not copy (the run granted the clipboard permission, so **Copy** took the Clipboard API
+path).
 
 ### Unit tier
 
