@@ -499,3 +499,54 @@ and implements it on `EnvironmentPrincipalResolver`, which this branch removes
   (`0045-the-compose-file-defaults-its-internal-credentials.md`).
 - `docs/docs/development/adr-index.mdx` on this branch does not list 0043, 0046 or 0047, which
   `dev/adr/README.md` lists.
+
+## T054: User Story 2 checks (2026-11-18)
+
+### Frontend gates
+
+`pnpm check` (Biome, 74 files, no finding), `pnpm typecheck` (`tsc --noEmit`, no error) and
+`pnpm build` (Vite) pass in `frontend/`.
+
+### Sign-in part of quickstart scenario 6: pass
+
+Scenario 6 opens `http://127.0.0.1:8001/`. This check served this branch instead, on
+`127.0.0.1:18761`, from a throw-away script outside the repository:
+
+- `infrahub_sync.service.serve.build_service` with a SQLite product store in a scratch directory,
+  the `admin` account applied from a test password and token through
+  `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, and
+  `INFRAHUB_SYNC_WEB_DIRECTORY` set to `frontend/dist`;
+- the fake orchestration of `tests/service/test_http_api.py` in place of Prefect, and no liveness
+  reconciler, so nothing reaches a Prefect API;
+- seeded through the API: the account `alice` created by `admin`, one configuration registered by
+  `admin` (registration needs an administrator), and one plan run started by `alice`.
+
+A headless Chromium (the cached `chromium_headless_shell-1243`, driven by Playwright 1.65.2 for
+Python through `uv run --no-project --with playwright`, no dependency added to the repository)
+ran these steps. Every step passed:
+
+| Step | Result |
+|---|---|
+| Opening the run's address shows the sign-in form and no page content | pass |
+| A wrong password shows "The account name or the password is not accepted." | pass |
+| The password field is empty after the refusal | pass |
+| The right password signs in; the header shows `alice` and **Sign out** | pass |
+| The page asked for (the run) opens after sign-in | pass |
+| The run's details show "Started by" `alice` | pass |
+| The session token is in `sessionStorage` | pass |
+| A reload keeps the session | pass |
+| The runs list shows "Started by alice" | pass |
+| The configuration page shows "Registered by admin" | pass |
+| **Sign out** shows the sign-in form | pass |
+| Sign-out removes the token from `sessionStorage` | pass |
+| `GET /api/me` with the old session token answers `401` | pass |
+
+Not exercised in the browser: "approved by", because the fake orchestration produces no plan to
+approve; the `503 sign-in-busy` message; the return to the sign-in form after the idle period.
+The second half of scenario 6 ("My account", "Accounts") belongs to User Story 4.
+
+### Unit tier
+
+`uv run invoke tests.tests-unit`: 9922 passed, 4 skipped, 2 xfailed, 0 failed. The baseline was
+9923 passed: the two cases of the `dev.frontend` test that printed which token to enter became
+one test of the sign-in reminder.

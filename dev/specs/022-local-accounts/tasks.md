@@ -274,7 +274,7 @@ on this phase.
 - [X] T053 [US2] Replace the "Sync frontend" rule in `AGENTS.md` with the rule of
   [contracts/web-interface.md](contracts/web-interface.md), and update `frontend/README.md`,
   section "Calling the Sync API".
-- [ ] T054 [US2] Run `pnpm check`, `pnpm typecheck` and `pnpm build` in `frontend/`, then the
+- [X] T054 [US2] Run `pnpm check`, `pnpm typecheck` and `pnpm build` in `frontend/`, then the
   sign-in part of quickstart scenario 6; record the result in
   `dev/specs/022-local-accounts/notes.md`.
 
