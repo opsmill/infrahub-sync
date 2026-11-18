@@ -27,6 +27,7 @@ import pytest
 from diffsync import DiffSyncModel
 from diffsync.exceptions import ObjectNotFound
 from diffsync.store.local import LocalStore
+from typing_extensions import override
 
 from infrahub_sync import DiffSyncModelMixin, SchemaMappingFilter, SchemaMappingModel, SyncAdapter, SyncConfig
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
@@ -96,6 +97,11 @@ class _Harness(InfrahubAdapter):
         if wanted is None:
             return data
         return {key: value for key, value in data.items() if key in wanted}
+
+    @override
+    def _peer_fields_for_error(self, peer_node: object) -> list[str]:
+        # The fake data stands for every field that a full conversion of the node sets.
+        return list(getattr(peer_node, "_fake_diffsync_data", {}))
 
 
 def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> SimpleNamespace:

@@ -6,20 +6,23 @@ unchanged, which get string-coerced (e.g. ipaddress objects), and which
 must NOT be coerced (e.g. ``kind: List``). Their nodes have no
 relationships, so the method's relationship branch is a no-op.
 
-One test covers relationships. Its three nodes form a loop: a device whose
+Two tests cover relationships. Their three nodes form a loop: a device whose
 primary IP address points to an interface whose device is that same device.
-The test runs the real method and the real peer resolution on the device.
+The tests run the real method and the real peer resolution on the device.
 Each peer is converted only for its identifiers, so the conversion stops at
 the IP address. Without that filter, the conversion follows the loop until
-Python raises ``RecursionError``.
+Python raises ``RecursionError``. In the second test the IP address's
+identifier is not mapped: the error must list the IP address's other mapped
+fields without looking up the interface.
 
 The tests bypass network setup by constructing the adapter via
 ``__new__`` and supplying only the bits the method touches: ``config``
 and ``schema``, the adapter's own loaded kind-to-schema mapping, plus a
 node-like object exposing ``id``, ``get_kind()`` and one Python attribute
-for each Infrahub attribute or relationship. The relationship test also
-supplies ``client``, whose store holds the three nodes and whose ``get``
-fails the test, and one DiffSync model class per kind.
+for each Infrahub attribute or relationship. The relationship tests also
+supply ``client``, whose store holds the three nodes and records each
+lookup, and whose ``get`` fails the test, and one DiffSync model class per
+kind.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-from infrahub_sync.adapters.infrahub import InfrahubAdapter
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
 
 # Test constant — extracted to avoid PLR2004 (magic-value) warnings on the
 # repeated literal. 443 is just a representative HTTPS port for the Number
@@ -126,13 +129,15 @@ class FakeNode:
 
 
 class FakeNodeStore:
-    """Stand-in for the SDK node store, keyed by kind and node id."""
+    """Stand-in for the SDK node store, keyed by kind and node id. Records each lookup as (kind, id)."""
 
     def __init__(self, nodes: list[FakeNode]) -> None:
         self._nodes = {(node.get_kind(), node.id): node for node in nodes}
+        self.lookups: list[tuple[str, str]] = []
 
     def get(self, *, key: str, kind: str, raise_when_missing: bool = True) -> FakeNode | None:
         assert raise_when_missing is False
+        self.lookups.append((kind, key))
         return self._nodes.get((kind, key))
 
 
@@ -542,9 +547,16 @@ class LoopAdapter(FakeAdapter):
     InfraInterface = InterfaceModel
 
 
-def _make_loop_config() -> SyncConfig:
-    """SyncConfig that maps each kind of the loop with its relationship to the next kind."""
+def _make_loop_config(ip_address_fields: list[SchemaMappingField] | None = None) -> SyncConfig:
+    """SyncConfig that maps each kind of the loop with its relationship to the next kind.
 
+    ``ip_address_fields`` replaces the fields mapped for the IP address kind.
+    """
+    if ip_address_fields is None:
+        ip_address_fields = [
+            SchemaMappingField(name="address", mapping="address"),
+            SchemaMappingField(name="interface", mapping="interface", reference="InfraInterface"),
+        ]
     return SyncConfig(
         name="test",
         source=SyncAdapter(name="src", adapter="x:x"),
@@ -564,10 +576,7 @@ def _make_loop_config() -> SyncConfig:
                 name="IpamIPAddress",
                 mapping="IpamIPAddress",
                 identifiers=["address"],
-                fields=[
-                    SchemaMappingField(name="address", mapping="address"),
-                    SchemaMappingField(name="interface", mapping="interface", reference="InfraInterface"),
-                ],
+                fields=ip_address_fields,
             ),
             SchemaMappingModel(
                 name="InfraInterface",
@@ -617,3 +626,50 @@ def test_relationship_loop_converts_peers_by_identifiers_only() -> None:
     data = _serialise(adapter, device)
 
     assert data == {"local_id": "d1", "name": "sw1", "primary_ip": "10.0.0.1/32"}
+
+
+def test_peer_missing_identifier_lists_its_mapped_fields_without_resolving_its_peers() -> None:
+    """When an IP address cannot be identified, the error lists its other mapped fields.
+
+    The schema_mapping maps the IP address's ``description`` and ``interface``
+    but not its identifier, ``address``. ``present_keys`` lists ``description``
+    and ``interface``, read from the IP address's schema. The interface is not
+    looked up: resolving it would follow the loop back to the device.
+    """
+    device = FakeNode(
+        node_id="d1",
+        kind="InfraDevice",
+        attrs={"name": "sw1"},
+        peers={"primary_ip": ("IpamIPAddress", "ip1")},
+    )
+    ip_address = FakeNode(
+        node_id="ip1",
+        kind="IpamIPAddress",
+        attrs={"address": ipaddress.IPv4Interface("10.0.0.1/32"), "description": "loopback"},
+        peers={"interface": ("InfraInterface", "if1")},
+    )
+    interface = FakeNode(
+        node_id="if1",
+        kind="InfraInterface",
+        attrs={"name": "eth0"},
+        peers={"device": ("InfraDevice", "d1")},
+    )
+    nodes = [device, ip_address, interface]
+    adapter = LoopAdapter.__new__(LoopAdapter)
+    adapter.config = _make_loop_config(
+        ip_address_fields=[
+            SchemaMappingField(name="description", mapping="description"),
+            SchemaMappingField(name="interface", mapping="interface", reference="InfraInterface"),
+        ]
+    )
+    adapter.schema = {node.get_kind(): node.schema for node in nodes}
+    adapter.client = FakeClient(nodes)
+
+    with pytest.raises(PeerIdentifierError) as excinfo:
+        _serialise(adapter, device)
+
+    err = excinfo.value
+    assert err.peer_kind == "IpamIPAddress"
+    assert err.missing_keys == ("address",)
+    assert err.present_keys == ("local_id", "description", "interface")
+    assert adapter.client.store.lookups == [("IpamIPAddress", "ip1")]

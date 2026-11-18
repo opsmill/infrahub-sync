@@ -512,6 +512,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         peer_data = self.infrahub_node_to_diffsync(peer_node, fields=identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data)
         if missing:
+            # The other fields of the peer are read from its schema, not converted, for the
+            # same reason: converting its relationships would follow the loop.
+            present = dict.fromkeys([*peer_data, *self._peer_fields_for_error(peer_node)])
             err = PeerIdentifierError(
                 parent_kind=parent_node.get_kind(),
                 parent_id=str(getattr(parent_node, "id", None)),
@@ -520,7 +523,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 peer_id=str(getattr(peer_node, "id", None)),
                 identifiers=identifiers,
                 missing_keys=missing,
-                present_keys=tuple(peer_data.keys()),
+                present_keys=tuple(key for key in present if key not in missing),
             )
             if self.continue_on_error:
                 logger.warning("Skipping peer relationship: %s", err)
@@ -530,6 +533,52 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # Conversion runs before model_loader filters and transforms records. Only the
         # loader may add models to the DiffSync store, so excluded peers stay excluded.
         return peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
+
+    def _mapped_fields(
+        self, node_kind: str, wanted: set[str] | None = None
+    ) -> tuple[list[str], list[tuple[RelationshipSchemaAPI, MainSchemaTypesAPI]]]:
+        """Return the attributes and relationships of a kind that the schema_mapping maps.
+
+        Each relationship comes with the schema of its peer kind. A relationship whose peer
+        kind is not in the adapter's schema is left out. When `wanted` is set, only the names
+        it holds are returned.
+        """
+        # Schema comes from the adapter's loaded mapping; the SDK schema manager is not
+        # consulted because a node built with an explicit schema is absent from its cache
+        # and a lookup there could fetch.
+        node_schema = self.schema[node_kind]
+        attr_names = [
+            attr_name
+            for attr_name in node_schema.attribute_names
+            if (wanted is None or attr_name in wanted)
+            and has_field(config=self.config, name=node_kind, field=attr_name)
+        ]
+        relationships: list[tuple[RelationshipSchemaAPI, MainSchemaTypesAPI]] = []
+        for rel_schema in node_schema.relationships:
+            if wanted is not None and rel_schema.name not in wanted:
+                continue
+            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
+                continue
+            peer_schema = self.schema.get(rel_schema.peer)
+            if peer_schema is not None:
+                relationships.append((rel_schema, peer_schema))
+        return attr_names, relationships
+
+    def _peer_fields_for_error(self, peer_node: InfrahubNodeSync) -> list[str]:
+        """List the fields that a full conversion of a peer would set, for an error message.
+
+        Reads only the peer's schema and the ids the peer holds: no peer of the peer is
+        resolved and nothing is fetched, so a relationship loop is not followed. A relationship
+        of cardinality one is listed when it holds an id, whether or not that id resolves.
+        """
+        attr_names, relationships = self._mapped_fields(peer_node.get_kind())
+        rel_names = [
+            rel_schema.name
+            for rel_schema, _ in relationships
+            if rel_schema.cardinality == "many"
+            or (rel_schema.cardinality == "one" and getattr(peer_node, rel_schema.name).id)
+        ]
+        return [*attr_names, *rel_names]
 
     def infrahub_node_to_diffsync(self, node: InfrahubNodeSync, fields: Iterable[str] | None = None) -> dict[str, Any]:
         """
@@ -541,42 +590,27 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """
         wanted = set(fields) if fields is not None else None
         data: dict[str, Any] = {"local_id": str(node.id)}
-        node_kind = node.get_kind()
-        # Schema comes from the adapter's loaded mapping; the SDK schema manager is not
-        # consulted because a node built with an explicit schema is absent from its cache
-        # and a lookup there could fetch.
-        node_schema = self.schema[node_kind]
+        attr_names, relationships = self._mapped_fields(node.get_kind(), wanted)
 
-        for attr_name in node_schema.attribute_names:
-            if wanted is not None and attr_name not in wanted:
-                continue
-            if has_field(config=self.config, name=node_kind, field=attr_name):
-                attr = getattr(node, attr_name)
-                val = attr.value
-                # IP types come back from the Infrahub SDK as ipaddress
-                # objects; DiffSync models store them as their string form
-                # (e.g. "10.0.0.1/32"), so normalise here. Other non-string
-                # kinds — List, Number, Boolean, DateTime — pass through
-                # unchanged: stringifying them turns a real list `[]` into
-                # the four-character literal `"[]"`, which then fails
-                # Pydantic validation on `list[str]`-typed fields.
-                if isinstance(
-                    val,
-                    (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Network, ipaddress.IPv6Network),
-                ):
-                    data[attr_name] = str(val)
-                else:
-                    data[attr_name] = val
+        for attr_name in attr_names:
+            attr = getattr(node, attr_name)
+            val = attr.value
+            # IP types come back from the Infrahub SDK as ipaddress
+            # objects; DiffSync models store them as their string form
+            # (e.g. "10.0.0.1/32"), so normalise here. Other non-string
+            # kinds — List, Number, Boolean, DateTime — pass through
+            # unchanged: stringifying them turns a real list `[]` into
+            # the four-character literal `"[]"`, which then fails
+            # Pydantic validation on `list[str]`-typed fields.
+            if isinstance(
+                val,
+                (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Network, ipaddress.IPv6Network),
+            ):
+                data[attr_name] = str(val)
+            else:
+                data[attr_name] = val
 
-        for rel_schema in node_schema.relationships:
-            if wanted is not None and rel_schema.name not in wanted:
-                continue
-            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
-                continue
-            peer_schema = self.schema.get(rel_schema.peer)
-            if peer_schema is None:
-                continue
-
+        for rel_schema, peer_schema in relationships:
             if rel_schema.cardinality == "one":
                 rel: RelatedNodeSync = getattr(node, rel_schema.name)
                 if not rel.id:
