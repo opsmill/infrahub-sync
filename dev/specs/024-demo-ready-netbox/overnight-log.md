@@ -22,6 +22,48 @@ Run rules (from the maintainer, 2026-11-18 evening):
 - Chunk 2 (T011–T016, `dev.demo`): dispatched. A local session working on spec 022 waits for a
   one-line message when this chunk's Docker stack is destroyed.
 
+- Chunk 2 (T011–T016): ✅ T011–T015, commits `8894a6ba`, `8640d3c1`. ⚠️ T016 live scenarios not
+  run: stopped stacks `infrahub-sync-dev` and `infrahub-sync-netbox` (not ours) exist, and NetBox's
+  ready step attaches to the fixed `infrahub-sync-dev` worker; `dev.destroy` would delete their
+  data. Another session runs `infrahub-sync-021`. Chunk 2 rebuilt the shared `infrahub-sync:dev`
+  tag through `dev.build`. Told the spec 022 session that Docker is free from our side.
+
+- Chunk 3 (T017–T022): ✅ T017–T021, commit `7660164d` (ADR 0048). Image test passed on its own
+  tag `infrahub-sync:demo-024-test`, removed afterwards. ⚠️ T022 live part deferred. Flag for review:
+  `build_inputs_hash` in `tasks/dev.py` does not hash the two asset paths.
+- Chunk 4 (T023–T026): ✅ commits `f25ee9d4`, `4d40963e`. New page
+  `docs/docs/tutorials/try-the-netbox-demo.mdx`; publishing guide gained "A pre-release image of
+  the V3 line". Flags: `main` has no `ci-docker-image.yml`, so a dispatch uses
+  `--ref feature/v3-develop` (an earlier dispatch from a non-main branch worked); Vale exceptions
+  added for `Kubernetes` and `Styrmin`; web interface steps written from the frontend source, not run.
+- Order change (mine): review runs before chunk 5 (T027–T029), so the final verification in T028
+  covers the review fixes.
+- Review (4 agents in parallel: code, errors, tests, comments+types; simplify deferred until after
+  fixes). No critical finding. Converging findings: `--reason` 409 on re-run (all four), schema
+  non-convergence only warns then registers, replayed 201 reports `versioned`, URL userinfo not
+  redacted, missing tests for FR-010 package canary and Sync API errors at the CLI. Refuted:
+  first schema load reports `unchanged` (a fresh Infrahub already has a core schema hash), token
+  leaks, Python 3.10 issues. One fix subagent dispatched for items 1–9.
+- The spec 022 session runs its Compose tier as `infrahub-sync-022`, ports 8061, 4261, 8081.
+
 ## Advisor questions
 
-(none yet)
+1. **Q:** the live scenarios (quickstart 1–3) would touch stacks that are not ours. Options: skip and
+   report; run with an overridden project name; delete the old stacks. Recommended: try an override,
+   else skip.
+   **A:** never touch or destroy `infrahub-sync-dev`/`infrahub-sync-netbox` (group 1). Finish the
+   offline work first; at the end, try once with an isolated project name, own ports and own image
+   tag, only if every step (including NetBox's attach and the teardown) honours the override and the
+   021/022 sessions confirm they are done; otherwise skip and mark T016/T022 not done. Add to the
+   review: replayed version call state, `--reason` in the key hash, read the SDK `schema_updated`
+   before fixing, run `tests.check-310`. Chunk 3 must not run `dev.build`.
+   **Next:** dispatched chunk 3 with those limits. At the end, checked the override: the NetBox
+   tasks attach the fixed `infrahub-sync-dev` worker (`tasks/netbox.py:472`, `:747`), so the check
+   failed and the live scenarios were skipped, as the answer requires.
+
+- Fix subagent: items 1–8 ✅, item 9 ⚠️ finished by the orchestrator (stale `--url`, key and state
+  wording in plan.md, research.md, data-model.md). Commits `2f85d702`, `b95f236b`.
+- Chunk 5 done by the orchestrator: news fragment, `/.dev` ignored in `.yamllint.yml`, full
+  verification (unit tier 9003 passed at 17:11:55Z), no `Claude-Session` trailer, no token-like
+  string in the diff, no change in `../styrmin` or `../infrahub-helm-sync-chart`. Commit `fb50811d`.
+- Report written: `opsmill-implement-report.md`, status INCOMPLETE (T016, T022 live parts).
