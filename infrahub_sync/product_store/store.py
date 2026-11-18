@@ -49,6 +49,7 @@ from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
+    BootstrapRecord,
     ConfigurationBaseline,
     ConfigurationPage,
     ConfigurationSummary,
@@ -195,6 +196,10 @@ CREATE INDEX IF NOT EXISTS account_sessions_account
 CREATE TABLE IF NOT EXISTS sign_in_attempts (
     name_key TEXT PRIMARY KEY, failed_count INTEGER NOT NULL, window_started_at TEXT NOT NULL,
     refused_until TEXT
+);
+CREATE TABLE IF NOT EXISTS bootstrap_record (
+    record_id INTEGER PRIMARY KEY CHECK (record_id = 1), sync_version TEXT NOT NULL,
+    work_pool TEXT NOT NULL, completed_at TEXT NOT NULL
 );
 """
 # ``accounts_name_key`` is a plain unique index. SQLite and PostgreSQL both treat two empty
@@ -525,6 +530,17 @@ ON CONFLICT (worker_id) DO UPDATE SET credential_names = EXCLUDED.credential_nam
 observed_at = EXCLUDED.observed_at"""
 _SELECT_WORKER_ENVIRONMENTS = """SELECT worker_id, credential_names, observed_at FROM worker_environments
 ORDER BY worker_id"""
+# The table holds one row at most: `record_id` is always 1, so a write for another version or
+# work pool replaces the first. A write for the same version and work pool changes nothing, so
+# a repeated bootstrap on a converged deployment leaves the database as it was (spec 018 FR-010).
+_UPSERT_BOOTSTRAP_RECORD = """INSERT INTO bootstrap_record (record_id, sync_version, work_pool, completed_at)
+VALUES (1, ?, ?, ?)
+ON CONFLICT (record_id) DO UPDATE SET sync_version = EXCLUDED.sync_version,
+work_pool = EXCLUDED.work_pool, completed_at = EXCLUDED.completed_at
+WHERE bootstrap_record.sync_version <> EXCLUDED.sync_version OR bootstrap_record.work_pool <> EXCLUDED.work_pool"""
+_SELECT_BOOTSTRAP_RECORD = "SELECT sync_version, work_pool, completed_at FROM bootstrap_record WHERE record_id = 1"
+# PostgreSQL's `undefined_table`: the bootstrap has never created the product schema here.
+_POSTGRESQL_UNDEFINED_TABLE_CODE = "42P01"
 _UPSERT_CONFIGURATION_BASELINE = """INSERT INTO configuration_baselines (config_id, source_row_counts,
 runs_since_full_extract, updated_at) VALUES (?, ?, ?, ?)
 ON CONFLICT (config_id) DO UPDATE SET source_row_counts = EXCLUDED.source_row_counts,
@@ -663,6 +679,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]: ...
 
     def publish_worker_environment(self, environment: WorkerEnvironment) -> None: ...
+
+    def write_bootstrap_record(self, record: BootstrapRecord) -> None: ...
 
     def worker_environments(self) -> tuple[WorkerEnvironment, ...]: ...
 
@@ -1767,6 +1785,25 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     environment.observed_at.isoformat(),
                 ),
             )
+
+    def write_bootstrap_record(self, record: BootstrapRecord) -> None:
+        """Replace the one bootstrap record when it names another version or work pool (spec 018 FR-007b)."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(_UPSERT_BOOTSTRAP_RECORD),
+                    (record.sync_version, record.work_pool, record.completed_at.isoformat()),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
 
     def worker_environments(self) -> tuple[WorkerEnvironment, ...]:
         """Return every worker's last published credential variable names, by worker."""
@@ -4781,6 +4818,25 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             )
         )
 
+    def write_bootstrap_record(
+        self, sync_version: str, work_pool: str, *, completed_at: datetime | None = None
+    ) -> BootstrapRecord:
+        """Record the Sync version and work pool the bootstrap set up, replacing a record of another one.
+
+        The bootstrap calls this as its last step. The Sync API and the worker read the record
+        with `read_bootstrap_record` before they start (spec 018 FR-007b). A record that already
+        names this version and work pool is left as it is, with its first completion time, so
+        a repeated bootstrap changes nothing (FR-010). Returns the record as this call asked it
+        to be written.
+        """
+        record = BootstrapRecord(
+            sync_version=sync_version,
+            work_pool=work_pool,
+            completed_at=completed_at or datetime.now(timezone.utc),
+        )
+        self._records.write_bootstrap_record(record)
+        return record
+
     def live_worker_environments(self, *, observed_after: datetime) -> tuple[WorkerEnvironment, ...]:
         """Return the publications of the workers that published at or after `observed_after`, by worker."""
         return tuple(
@@ -4908,6 +4964,39 @@ def production_product_projection(
         PostgreSQLRunStore(connect),
         S3ArtifactStore(s3_client, bucket=bucket, prefix=prefix),
     )
+
+
+def read_bootstrap_record(connection: DBAPIConnection) -> BootstrapRecord | None:
+    """Return the bootstrap record, or None when there is none, on a plain connection.
+
+    This runs no schema initialization and no column migration, so a process that refuses to
+    start after this read has changed nothing in the database. A database in which the table
+    does not exist (SQLite's "no such table", PostgreSQL's `undefined_table`) holds no record.
+    The read is rolled back in every case, so the connection is not left in an aborted
+    transaction. The caller owns the connection and closes it.
+    """
+    cursor = connection.cursor()
+    try:
+        cursor.execute(_SELECT_BOOTSTRAP_RECORD)
+        row = cursor.fetchone()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # DB-API drivers share no error base; only an absent table means "no record".
+        connection.rollback()
+        if _is_undefined_table_error(exc):
+            return None
+        raise
+    finally:
+        cursor.close()
+    connection.rollback()
+    if row is None:
+        return None
+    return BootstrapRecord.model_validate({"sync_version": row[0], "work_pool": row[1], "completed_at": row[2]})
+
+
+def _is_undefined_table_error(exc: BaseException) -> bool:
+    if isinstance(exc, sqlite3.OperationalError):
+        return "no such table" in str(exc).lower()
+    return _sqlstate(exc) == _POSTGRESQL_UNDEFINED_TABLE_CODE
 
 
 def _side_read_column(side: str) -> str:

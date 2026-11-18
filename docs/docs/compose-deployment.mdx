@@ -19,7 +19,7 @@ flow, and for the configuration and reviewed-run procedure that follows it.
 
 ## Related operator pages
 
-[Operate a Compose deployment](operations/day-2-operations) · [Compose operator troubleshooting](operations/compose-troubleshooting) · [Supported platforms and limits](operations/supported-platforms-and-limits)
+[Operate a Compose deployment](operations/day-2-operations) · [Compose operator troubleshooting](operations/compose-troubleshooting) · [Supported platforms and limits](operations/supported-platforms-and-limits) · [Kubernetes deployment](kubernetes-deployment)
 
 ## Prerequisites
 
@@ -544,6 +544,12 @@ time that pull takes on your network. Each time comes from one run.
 the product schema, the artifact bucket, the Prefect work pool, and the installed
 deployment, and a second run creates none of them twice. It registers nothing,
 so a repeat leaves every configuration you registered exactly as it was.
+
+`sync-api` and `sync-worker` start only after `sync-bootstrap` has completed. The last step of
+`sync-bootstrap` records the Sync version and the work pool name it set up. When `sync-api` or
+`sync-worker` starts, it reads that record, and it stops with a line that starts with
+`refusing to start:` when the record is missing or names another version or work pool. Because
+Compose runs `sync-bootstrap` first, the check passes on the first start.
 
 A running deployment says nothing about a configuration. It starts with an empty
 registry, no credentials set, and no reachable destination. Whether a registered
@@ -1389,7 +1395,8 @@ writing is an ordinary failed run, and needs only a new plan.
 
 ## What this topology does not do
 
-- It runs on one host. There is no multi-host deployment and no clustering.
+- It runs on one host, with no clustering. To run Infrahub Sync on the nodes of a Kubernetes
+  cluster, use the [Kubernetes deployment](./kubernetes-deployment.mdx).
 - It has no public ingress and no TLS. Both published surfaces bind to
   `127.0.0.1` by default.
 - It has no in-place state migration, and no backup or restore.

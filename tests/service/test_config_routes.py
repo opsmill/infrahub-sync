@@ -1048,6 +1048,10 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
     assert config_service.calls == ["list_configs"]
 
 
+def _record_matches(_work_pool: str) -> None:
+    """Stand in for a bootstrap record that names this version and work pool."""
+
+
 def test_build_app_binds_one_projection_and_passes_configuration_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1081,6 +1085,7 @@ def test_build_app_binds_one_projection_and_passes_configuration_dependency(
             run_service_factory=lambda *_args, **_kwargs: object(),
             configuration_routes_factory=route_factory,
             app_factory=application,
+            start_check=_record_matches,
         )
         is not None
     )
@@ -1121,6 +1126,7 @@ def test_build_app_composes_one_service_projection_for_runs_and_configurations(
             run_service_factory=lambda value, *_args, **_kwargs: received.append(value) or object(),
             configuration_routes_factory=routes_factory,
             app_factory=app_factory,
+            start_check=_record_matches,
         )
         is not None
     )
@@ -1147,6 +1153,7 @@ def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
         run_service_factory=lambda *_args, **_kwargs: object(),
         configuration_routes_factory=lambda **_kwargs: object(),
         app_factory=app_factory,
+        start_check=_record_matches,
     )
 
     assert captured[0]._policy.stall_threshold_seconds == 60
@@ -1177,6 +1184,7 @@ def test_build_app_passes_the_validated_prefect_ui_url_to_the_run_service(
         run_service_factory=run_service_factory,
         configuration_routes_factory=lambda **_kwargs: object(),
         app_factory=lambda *_args: object(),
+        start_check=_record_matches,
     )
 
     assert received == [expected]

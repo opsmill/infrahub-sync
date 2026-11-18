@@ -69,7 +69,7 @@ smoke and integration suites against whatever environment your shell happens to 
 |---|---|---|---|
 | Unit | `uv run invoke tests.tests-unit` | The installed extras, plus the `docker compose` CLI on your PATH | Nothing outside `tmp_path` |
 | Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
-| Smoke | `uv run invoke dev.smoke` | The development stack, started with `dev.start` | Seeds and writes to the disposable stack |
+| Smoke | `uv run invoke dev.smoke` | The development stack with a local Infrahub, started with `dev.infrahub` | Seeds and writes to the disposable stack |
 | Image smoke | `uv run pytest -m docker tests/image/test_image_artifact.py` | A locally built image named by `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and a Docker daemon | Throwaway containers it starts and removes |
 | Compose (opt-in) | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose` | A Docker daemon and a locally built `infrahub-sync:compose-test` image | A real container stack it brings up and tears down |
 
@@ -137,7 +137,7 @@ Three families need more detail than the tables give:
   `INFRAHUB_ADDRESS` and
   `INFRAHUB_API_TOKEN` at a disposable Infrahub with the schema library loaded (see step 4 of
   [Run the complete tier](#run-the-complete-tier)) — the test writes to it and does not clean up, so reset it
-  (`invoke dev.destroy`, `dev.start`, reload the schema) between runs. Then:
+  (`invoke dev.destroy`, `dev.infrahub`, reload the schema) between runs. Then:
 
   ```bash
   uv run pytest -m integration tests/integration/test_saved_plan_apply_integration.py
@@ -228,7 +228,7 @@ not commit them. The other values are the development defaults of `development/d
 1. Start the services and create the three test databases:
 
    ```bash
-   uv run invoke dev.start
+   uv run invoke dev.infrahub
    for database in apply_guard_test product_store_test storage_test; do
      docker exec infrahub-sync-dev-postgres-1 createdb -U postgres "$database"
    done
@@ -269,7 +269,7 @@ not commit them. The other values are the development defaults of `development/d
    ```bash
    uv run invoke dev.destroy
    uv run invoke netbox.seed
-   uv run invoke dev.start
+   uv run invoke dev.infrahub
    uv run infrahubctl schema load tests/data/nightly_schema --wait 120
    export NETBOX_URL="<URL printed by netbox.seed>"
    export NETBOX_TOKEN="<token printed by netbox.seed>"
@@ -327,13 +327,13 @@ Run these commands from the repository root:
 
 2. Start a fresh development stack. The worker resolves the package's `netbox-token` credential
    from its own environment, so set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` to the token that step 1
-   printed before `dev.start` creates the worker container. `dev.start` sets
+   printed before `dev.infrahub` creates the worker container. `dev.infrahub` sets
    `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` to the stack's Infrahub admin token, and connects
    the worker to NetBox's network.
 
    ```bash
    uv run invoke dev.destroy
-   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke dev.start
+   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke dev.infrahub
    ```
 
 3. Load the schema library into the development stack's Infrahub. The example maps onto the 16 schemas
@@ -562,7 +562,7 @@ required pull-request check and does not publish a release candidate.
 #### Smoke
 
 ```bash
-uv run invoke dev.start
+uv run invoke dev.infrahub
 uv run invoke dev.smoke
 ```
 

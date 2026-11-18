@@ -210,7 +210,7 @@ The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` 
 - `linter.format-ruff`, `linter.lint-ruff`, `linter.lint-pylint`, `linter.lint-yaml`, `linter.lint-ty`.
 - `docs.generate`, `docs.docusaurus`, `docs.rumdl`, `docs.format-rumdl`, `docs.format`, `docs.lint`.
 - `tests.tests-unit`, `tests.tests-integration`, `tests.all`, `tests.check-310` (the Python 3.10 legs).
-- `dev.start`, `dev.restart`, `dev.smoke`, `dev.destroy` and the rest of the `dev` namespace — the local development stack (`development/docker-compose.yml`).
+- `dev.start` (presets `sync`, `infrahub`, `preview`; shortcuts `dev.infrahub` and `dev.preview`), `dev.restart`, `dev.smoke`, `dev.destroy` and the rest of the `dev` namespace — the local development stack (`development/docker-compose.yml`).
 - `netbox.start`, `netbox.seed`, `netbox.destroy` — the disposable local NetBox.
 
 ## Known Issues and Limitations

@@ -376,7 +376,7 @@ records the upstream commit and the local additions.
 | `__init__.py` | The `format` and `lint` aggregates, the only top-level tasks |
 | `linter.py`, `docs.py` | The individual lint and documentation legs |
 | `tests.py` | `tests.tests-unit`, `tests.tests-integration`, `tests.all` and `tests.check-310` |
-| `dev.py` | The local development stack: the `dev` namespace (`dev.start`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest) |
+| `dev.py` | The local development stack: the `dev` namespace (`dev.start` and its presets `dev.infrahub` and `dev.preview`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest) |
 | `smoke_dataset.py` | The smoke dataset that `dev.seed` and `dev.smoke` load; no task of its own |
 | `netbox.py` | The local NetBox for adapter work: the `netbox` namespace (`netbox.start`, `netbox.seed`, `netbox.destroy`, and dataset dump, restore and change tasks) |
 | `bench.py` | The NetBox benchmark runner: the `bench` namespace. It reads the Infrahub port and admin token of its destination through `resolved_compose()` in `dev.py` |
@@ -393,9 +393,11 @@ records the upstream commit and the local additions.
   as the override file of that include, which changes only their host ports.
   PostgreSQL, the object store and `prefect-server` have no profile; `sync-bootstrap`,
   `sync-api` and `sync-worker` have the `sync` profile; every included Infrahub service has the
-  `infrahub` profile. `dev.start` turns on both profiles and `dev.deps` only `infrahub`.
-  With an Infrahub network attached (`--infrahub-network`), `dev.start` turns on only `sync` and
-  `dev.deps` turns on no profile. The
+  `infrahub` profile. A preset decides the profiles: `sync`, the default, turns on only `sync`
+  for `dev.start` and no profile for `dev.deps`; `infrahub` and `preview` add `infrahub`, and
+  `preview` also starts the local NetBox from `tasks/netbox.py`. An Infrahub network
+  (`--infrahub-network`) selects `sync`. Without `--preset` or `INFRAHUB_SYNC_DEV_PRESET`,
+  `select_preset()` follows the stack's containers, which never select `preview`. The
   tasks read ports, the project name and the Infrahub admin token from
   `docker compose config --format json` (`dev_settings()` in `tasks/dev.py`), so a setting has
   one default, in the Compose file. ADR 0029 records why. Runtime state the

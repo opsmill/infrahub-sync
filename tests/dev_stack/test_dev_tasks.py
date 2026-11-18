@@ -67,12 +67,38 @@ class FakeDocker:
         self.project = project
         # `_resolved` keyword arguments for `infrahub-server`, such as `infrahub_host_ip`.
         self.infrahub: dict[str, str] = {}
+        # The services `ps --services --status running` reports; a running `infrahub-server`
+        # makes a task without a preset follow the `infrahub` preset.
+        self.running: set[str] = {"infrahub-server"}
+        # The services `ps --services --all` reports; None means the running ones.
+        self.existing: set[str] | None = None
+        # False makes the stack's `ps --services` probes fail, as with no Docker daemon.
+        self.probe_ok = True
+        # Whether the local NetBox (`netbox-absent` project, see the `fake` fixture) runs.
+        self.netbox_running = False
+        # False makes the local NetBox probes fail, as when Docker does not answer them.
+        self.netbox_probe_ok = True
         self.commands: list[str] = []
         self.envs: list[dict[str, str] | None] = []
+
+    def _preset_probe(self, command: str) -> _Result | None:
+        """Answer the probes the preset follows: the stack's running services and the local NetBox."""
+        if command.endswith("ps --services --status running"):
+            return _Result("\n".join(sorted(self.running)), ok=self.probe_ok)
+        if command.endswith("ps --services --all"):
+            existing = self.running if self.existing is None else self.existing
+            return _Result("\n".join(sorted(existing)), ok=self.probe_ok)
+        if "label=com.docker.compose.project=netbox-absent" in command:
+            running_probe = command.startswith("docker ps --quiet")
+            return _Result("netbox-id" if self.netbox_running and running_probe else "", ok=self.netbox_probe_ok)
+        return None
 
     def run(self, command: str, **kwargs: Any) -> _Result:  # noqa: ANN401 -- Invoke's keyword arguments
         self.commands.append(command)
         self.envs.append(kwargs.get("env"))
+        probe = self._preset_probe(command)
+        if probe is not None:
+            return probe
         if command.endswith("config --format json"):
             resolved = _resolved(
                 project=self.project,
@@ -86,18 +112,21 @@ class FakeDocker:
             return _Result("lab_default")
         if command.startswith("docker ps"):
             return _Result("worker-id")
-        if command.startswith("docker inspect"):
-            return _Result("")
+        # Everything else, `docker inspect` included, prints nothing and succeeds.
         return _Result()
 
     def compose_commands(self) -> list[str]:
         return [
-            command for command in self.commands if command.startswith("docker compose") and "config" not in command
+            command
+            for command in self.commands
+            if command.startswith("docker compose") and "config" not in command and " ps --services " not in command
         ]
 
 
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeDocker:
+    monkeypatch.delenv(dev.PRESET_VARIABLE, raising=False)
+    monkeypatch.delenv(dev.NETBOX_CREDENTIAL_VARIABLE, raising=False)
     monkeypatch.delenv(dev.INFRAHUB_NETWORK_VARIABLE, raising=False)
     monkeypatch.delenv(dev.INFRAHUB_URL_VARIABLE, raising=False)
     monkeypatch.delenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, raising=False)
@@ -122,9 +151,10 @@ def test_dev_settings_reads_the_resolved_development_file(context: Context, fake
     fake.infrahub["infrahub_host_ip"] = "0.0.0.0"  # noqa: S104 -- reading the settings starts nothing, so it is not refused
     settings = dev.dev_settings(context)
 
-    assert fake.commands == [
+    assert (
         "docker compose --profile sync --profile infrahub -f development/docker-compose.yml config --format json"
-    ]
+    ) in fake.commands
+    assert settings.preset.name == "infrahub"
     assert settings.project == "infrahub-sync-dev"
     assert settings.sync_api == dev.Publication("127.0.0.1", "8001")
     assert settings.prefect == dev.Publication("127.0.0.1", "4230")
@@ -156,7 +186,7 @@ def test_an_infrahub_network_drops_the_infrahub_profile(
     else:
         settings = dev.dev_settings(context, infrahub_network="lab_default")
 
-    assert "--profile infrahub" not in fake.commands[0]
+    assert "--profile infrahub" not in fake.commands[-1]
     assert settings.infrahub is None
     assert settings.infrahub_network == "lab_default"
     assert settings.worker_infrahub_url == "http://infrahub-server:8000"
@@ -174,6 +204,7 @@ def test_an_infrahub_network_takes_its_url_from_the_variable(context: Context, m
 
 
 def test_a_failed_config_names_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(dev.PRESET_VARIABLE, "infrahub")
     context = Context()
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(context, "run", lambda *_args, **_kwargs: _Result("", ok=False))
@@ -395,6 +426,8 @@ def test_the_dev_namespace_holds_the_contract_tasks() -> None:
     assert set(dev.ns.task_names) == {
         "build",
         "start",
+        "infrahub",
+        "preview",
         "restart",
         "stop",
         "destroy",
@@ -455,3 +488,244 @@ def test_dev_frontend_prints_which_token_to_enter_never_a_configured_token(
     output = capsys.readouterr().out
     assert f"Token to enter in the page: {label}" in output
     assert CUSTOM_TOKEN not in output
+
+
+# ----- Presets ------------------------------------------------------------------------------
+
+
+def test_without_a_preset_or_running_infrahub_dev_start_runs_the_sync_preset(
+    context: Context, fake: FakeDocker
+) -> None:
+    fake.running = set()
+
+    _body(dev.dev_start)(context)
+
+    assert fake.compose_commands() == [
+        "docker compose --profile sync --project-name infrahub-sync-dev "
+        "-f development/docker-compose.yml up --detach --wait --wait-timeout 420"
+    ]
+    # No local Infrahub, so no Infrahub credential defaults to its admin token.
+    assert all(not env for env in fake.envs)
+
+
+def test_the_sync_preset_reaches_an_infrahub_on_this_host(context: Context, fake: FakeDocker) -> None:
+    fake.running = set()
+
+    settings = dev.dev_settings(context)
+
+    assert settings.preset.name == "sync"
+    assert settings.infrahub is None
+    assert not settings.infrahub_network
+    assert settings.worker_infrahub_url == dev.HOST_INFRAHUB_URL
+
+
+def test_the_sync_preset_takes_its_infrahub_url_from_the_variable(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.running = set()
+    monkeypatch.setenv(dev.INFRAHUB_URL_VARIABLE, "http://infrahub.lab.invalid:8000")
+
+    assert dev.dev_settings(context).worker_infrahub_url == "http://infrahub.lab.invalid:8000"
+
+
+@pytest.mark.parametrize("source", ["option", "variable"])
+def test_a_named_preset_wins_over_the_running_containers(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], source: str
+) -> None:
+    if source == "variable":
+        monkeypatch.setenv(dev.PRESET_VARIABLE, "sync")
+        _body(dev.dev_start)(context)
+    else:
+        _body(dev.dev_start)(context, preset="sync")
+
+    assert "--profile infrahub" not in fake.compose_commands()[0]
+    # Infrahub from the earlier preset still runs; the task says so and how to stop it.
+    assert "dev.stop" in capsys.readouterr().out
+
+
+def test_the_preset_variable_selects_a_local_infrahub(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.running = set()
+    monkeypatch.setenv(dev.PRESET_VARIABLE, "infrahub")
+
+    _body(dev.dev_start)(context)
+
+    assert "--profile sync --profile infrahub " in fake.compose_commands()[0]
+
+
+def test_an_unknown_preset_is_refused_before_anything_starts(context: Context, fake: FakeDocker) -> None:
+    with pytest.raises(dev.DevStackError, match="expected one of sync, infrahub, preview"):
+        _body(dev.dev_start)(context, preset="everything")
+
+    assert fake.compose_commands() == []
+
+
+@pytest.mark.parametrize("preset", ["infrahub", "preview"])
+def test_a_local_infrahub_preset_and_an_infrahub_network_are_refused_together(
+    context: Context, fake: FakeDocker, preset: str
+) -> None:
+    with pytest.raises(dev.DevStackError, match="lab_default"):
+        _body(dev.dev_start)(context, preset=preset, infrahub_network="lab_default")
+
+    assert fake.compose_commands() == []
+
+
+def test_an_infrahub_network_wins_over_a_running_infrahub(context: Context, fake: FakeDocker) -> None:
+    assert "infrahub-server" in fake.running
+
+    settings = dev.dev_settings(context, infrahub_network="lab_default")
+
+    assert settings.preset.name == "sync"
+    assert settings.worker_infrahub_url == "http://infrahub-server:8000"
+
+
+@pytest.mark.parametrize(
+    ("running", "existing", "expected"),
+    [
+        (set(), set(), "sync"),
+        ({"infrahub-server", "sync-api"}, None, "infrahub"),
+        # A stopped stack starts again as it was: `dev.stop`, then a bare `dev.start`.
+        (set(), {"infrahub-server", "sync-api"}, "infrahub"),
+        # A lighter preset started over a stopped Infrahub stays that preset.
+        ({"sync-api"}, {"infrahub-server", "sync-api"}, "sync"),
+    ],
+    ids=["nothing", "infrahub-running", "stack-stopped", "infrahub-left-stopped"],
+)
+def test_a_task_without_a_preset_follows_the_stacks_containers(
+    context: Context, fake: FakeDocker, running: set[str], existing: set[str] | None, expected: str
+) -> None:
+    fake.running = running
+    fake.existing = existing
+
+    assert dev.dev_settings(context).preset.name == expected
+
+
+def test_the_containers_never_select_the_preview_preset(context: Context, fake: FakeDocker) -> None:
+    # A NetBox started on its own (`netbox.seed`) next to the `infrahub` preset must not make a
+    # bare `dev.start` seed Infrahub; the worker still gets the local NetBox's token.
+    fake.netbox_running = True
+
+    settings = dev.dev_settings(context)
+
+    assert settings.preset.name == "infrahub"
+    assert settings.local_netbox
+    assert settings.netbox_credential
+
+
+def test_a_failed_container_probe_is_refused_rather_than_read_as_no_infrahub(
+    context: Context, fake: FakeDocker
+) -> None:
+    fake.probe_ok = False
+
+    with pytest.raises(dev.DevStackError, match="--preset"):
+        _body(dev.dev_restart)(context)
+
+    assert fake.compose_commands() == []
+
+
+def test_a_failed_netbox_probe_does_not_stop_the_settings(
+    context: Context, fake: FakeDocker, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The NetBox check only sets a credential default; tasks such as `dev.api` still run."""
+    fake.netbox_probe_ok = False
+
+    settings = dev.dev_settings(context)
+
+    assert settings.preset.name == "infrahub"
+    assert not settings.netbox_credential
+    assert "the worker gets no NetBox credential by default" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("task_object", [dev.dev_stop, dev.dev_destroy, dev.dev_logs])
+def test_tasks_on_every_container_do_not_probe_the_preset(
+    context: Context, fake: FakeDocker, task_object: object
+) -> None:
+    fake.probe_ok = False
+
+    _body(task_object)(context)
+
+    assert not any(" ps --services " in command for command in fake.commands)
+
+
+def test_dev_restart_while_the_local_netbox_runs_keeps_both_credentials(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.netbox_running = True
+    monkeypatch.setattr(dev, "netbox_token", lambda _values: "nbt_dev.token")
+
+    _body(dev.dev_restart)(context)
+
+    assert {
+        dev.INFRAHUB_CREDENTIAL_VARIABLE: ADMIN_TOKEN,
+        dev.NETBOX_CREDENTIAL_VARIABLE: "nbt_dev.token",
+    } in fake.envs
+
+
+def test_a_bare_dev_start_next_to_a_running_netbox_seeds_nothing(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.netbox_running = True
+    calls: list[str] = []
+    monkeypatch.setattr(dev, "netbox_token", lambda _values: "nbt_dev.token")
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: calls.append("netbox"))
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda *_args: calls.append("seed"))
+
+    _body(dev.dev_start)(context)
+
+    assert calls == []
+
+
+def test_dev_infrahub_starts_the_infrahub_preset(context: Context, fake: FakeDocker) -> None:
+    fake.running = set()
+
+    _body(dev.dev_infrahub)(context)
+
+    assert "--profile sync --profile infrahub " in fake.compose_commands()[0]
+    assert {dev.INFRAHUB_CREDENTIAL_VARIABLE: ADMIN_TOKEN} in fake.envs
+
+
+def test_dev_preview_starts_netbox_then_the_stack_then_seeds_infrahub(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.running = set()
+    events: list[str] = []
+    monkeypatch.setattr(dev, "netbox_token", lambda _values: "nbt_dev.token")
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: events.append("netbox"))
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda _context, address, _token: events.append(f"seed {address}"))
+    real_run = fake.run
+
+    def run(command: str, **kwargs: Any) -> _Result:  # noqa: ANN401 -- Invoke's keyword arguments
+        if " up --detach" in command:
+            events.append("up")
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(context, "run", run)
+
+    _body(dev.dev_preview)(context)
+
+    assert events == ["netbox", "up", "seed http://127.0.0.1:8091"]
+    assert "--profile sync --profile infrahub " in fake.compose_commands()[0]
+    assert {
+        dev.INFRAHUB_CREDENTIAL_VARIABLE: ADMIN_TOKEN,
+        dev.NETBOX_CREDENTIAL_VARIABLE: "nbt_dev.token",
+    } in fake.envs
+
+
+def test_the_preview_preset_keeps_a_netbox_credential_the_shell_exports(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(dev.NETBOX_CREDENTIAL_VARIABLE, "exported")
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: None)
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda *_args: None)
+
+    _body(dev.dev_preview)(context)
+
+    assert all(dev.NETBOX_CREDENTIAL_VARIABLE not in (env or {}) for env in fake.envs)
+
+
+def test_dev_seed_without_a_local_infrahub_names_the_preset_to_start(context: Context, fake: FakeDocker) -> None:
+    fake.running = set()
+
+    with pytest.raises(dev.DevStackError, match="--preset infrahub"):
+        _body(dev.dev_seed)(context)

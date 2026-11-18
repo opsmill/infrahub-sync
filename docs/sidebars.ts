@@ -173,6 +173,7 @@ const sidebars: SidebarsConfig = {
     },
     'container-image',
     'compose-deployment',
+    'kubernetes-deployment',
     'contributing',
   ]
 };

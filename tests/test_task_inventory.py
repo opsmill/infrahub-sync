@@ -30,6 +30,8 @@ REQUIRED = {
     "tests.check-310",
     "dev.build",
     "dev.start",
+    "dev.infrahub",
+    "dev.preview",
     "dev.deps",
     "dev.api",
     "dev.worker",

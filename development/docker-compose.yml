@@ -1,8 +1,10 @@
 ---
-# Run from source: the whole Sync service, built from this checkout, and a local
-# Infrahub to sync into.
+# Run from source: the whole Sync service, built from this checkout, and, with a
+# preset that adds it, a local Infrahub to sync into.
 #
-#     uv run invoke dev.start
+#     uv run invoke dev.start                     # preset `sync`: no Infrahub
+#     uv run invoke dev.infrahub                  # preset `infrahub`: plus a local Infrahub
+#     uv run invoke dev.preview                   # preset `preview`: plus the local NetBox and the smoke dataset
 #     # or: docker compose -f development/docker-compose.yml --profile sync --profile infrahub up --detach --wait
 #
 # The operator deployment is the other way to run V3: the root
@@ -20,8 +22,10 @@
 #   the Sync API and the worker as processes on the host instead
 #   (`uv run invoke dev.deps`, then `dev.api` and `dev.worker`). They reach
 #   PostgreSQL, the object store and the Prefect server on their loopback ports.
-# - `infrahub`: the Infrahub services from `docker-compose.infrahub.yml`. Leave
-#   it off to sync into an Infrahub that already runs elsewhere.
+# - `infrahub`: the Infrahub services from `docker-compose.infrahub.yml`. The
+#   `infrahub` and `preview` presets turn it on; the default `sync` preset leaves
+#   it off to sync into an Infrahub that already runs elsewhere, by default one
+#   on this host at http://host.docker.internal:8000.
 #
 # Every Sync-image service mounts `infrahub_sync/` and `opsmill_prefect_extras/`
 # from this checkout, read-only, over the copies the image installed. A code

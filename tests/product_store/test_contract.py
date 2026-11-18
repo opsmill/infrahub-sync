@@ -76,6 +76,7 @@ EXPECTED_PUBLIC_NAMES = {
     "ArtifactUnavailableError",
     "AuditEvent",
     "BaselineWriteback",
+    "BootstrapRecord",
     "ConfigurationBaseline",
     "ConfigurationNotFoundError",
     "ConfigurationPage",
@@ -115,6 +116,7 @@ EXPECTED_PUBLIC_NAMES = {
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
+    "read_bootstrap_record",
     "run_apply_progress",
 }
 

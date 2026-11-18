@@ -17,6 +17,7 @@ from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
+    BootstrapRecord,
     ConfigurationBaseline,
     ConfigurationPage,
     ConfigurationSummary,
@@ -60,6 +61,7 @@ from infrahub_sync.product_store.store import (
     WriteAdmissionConflictError,
     local_product_projection,
     production_product_projection,
+    read_bootstrap_record,
     run_apply_progress,
 )
 
@@ -80,6 +82,7 @@ __all__ = (
     "ArtifactUnavailableError",
     "AuditEvent",
     "BaselineWriteback",
+    "BootstrapRecord",
     "ConfigurationBaseline",
     "ConfigurationNotFoundError",
     "ConfigurationPage",
@@ -119,5 +122,6 @@ __all__ = (
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
+    "read_bootstrap_record",
     "run_apply_progress",
 )

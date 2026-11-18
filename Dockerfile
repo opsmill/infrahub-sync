@@ -136,6 +136,16 @@ RUN groupadd --system --gid 10001 infrahub-sync \
       /var/lib/infrahub-sync/prefect \
       /tmp/infrahub-sync
 
+# tini is the first process (PID 1) of every container started from this image.
+# The kernel delivers no signal to PID 1 that has no handler, and PID 1 must
+# collect the exit status of orphaned processes. tini does both: it passes
+# SIGTERM on to the command (`-g`: to its whole process group, so the child
+# process of each run receives it too) and removes finished orphans. Same
+# entrypoint as the Infrahub image.
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends tini=0.19.0-1+b3 \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build --chown=0:0 /opt/infrahub-sync/venv /opt/infrahub-sync/venv
 COPY --chown=0:0 pyproject.toml uv.lock /opt/infrahub-sync/
 # The built web interface, served by the Sync API at the root.
@@ -152,5 +162,8 @@ WORKDIR /var/lib/infrahub-sync
 
 # The API is the default because it is the safe one: it admits nothing until it
 # is configured. The worker, the bootstrap, the CLI, and Python are explicit
-# command overrides, which is why this image needs no shell dispatcher.
+# command overrides, which is why this image needs no shell dispatcher. A Compose
+# `command:` keeps this entrypoint. A Kubernetes `command:` replaces it, so the
+# Helm chart starts each command with `/usr/bin/tini -g --` itself.
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
 CMD ["python", "-m", "infrahub_sync.service.serve"]

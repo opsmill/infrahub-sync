@@ -282,7 +282,7 @@ def _validate(
     """Drive the real serialized validation response for the one registered version."""
     monkeypatch.setenv(ADMIN_ACCOUNT_PASSWORD_ENV, "administrator-password-0001")
     monkeypatch.setenv(ADMIN_ACCOUNT_TOKEN_ENV, BEARER)
-    app = serve.build_app(projection_factory=lambda: projection)
+    app = serve.build_app(projection_factory=lambda: projection, start_check=lambda _pool: None)
     response = TestClient(app).post(
         f"/configs/{version.config_id}/versions/{version.registry_version}/validate",
         headers={"Authorization": f"Bearer {BEARER}"},

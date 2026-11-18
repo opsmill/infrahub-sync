@@ -200,6 +200,20 @@ def service_guard_secrets(*, environ: Mapping[str, str] | None = None) -> tuple[
     return dsn_secret_values(_database_url(values))
 
 
+def service_database_connection(values: Mapping[str, str]) -> Any:
+    """Open one plain product-database connection, with no schema initialization.
+
+    The start check reads the bootstrap record on it before anything else touches the
+    database (`start_check.py`).
+
+    Raises:
+        ValueError: when the database setting is missing or is not a connection string; the
+            message names the setting, never its value.
+        ProductStoreProviderError: when the database cannot be reached; it carries no driver text.
+    """
+    return PsycopgConnectionFactory()(_database_url(values))
+
+
 class EndpointSettingError(ValueError):
     """The S3 endpoint setting is refused; the message names the setting, never its value."""
 

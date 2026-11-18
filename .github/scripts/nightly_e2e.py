@@ -20,6 +20,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 REPORTS = ROOT / ".dev" / "nightly-e2e"
 SUITES = ("integration", "smoke", "saved-plan", "from-netbox", "v2-gate")
+# The development stack preset the suites run against: the Sync services and a local Infrahub.
+STACK_PRESET = "infrahub"
 EXPECTED_DEMO_OPERATIONS = 1687
 # The nodes that Infrahub creates itself on a new branch, by kind. The plan holds no delete
 # for them (ADR 0047), but the import branch still holds them, so the branch count of the
@@ -81,7 +83,9 @@ def environment() -> dict[str, str]:
     from tasks import dev  # noqa: PLC0415 -- suite-only dependency
     from tasks.netbox import load_netbox_env, netbox_token, netbox_url  # noqa: PLC0415 -- suite-only dependency
 
-    settings = dev.dev_settings()
+    # The same preset `start_stack` starts, so the addresses and token are the local Infrahub's
+    # even before the stack exists.
+    settings = dev.dev_settings(preset=STACK_PRESET)
     netbox = load_netbox_env()
     env = dict(os.environ)
     env.update(dev.host_environment(settings, "sync-worker"))
@@ -182,10 +186,10 @@ def schema(env: dict[str, str]) -> None:
 def start_stack(env: dict[str, str]) -> None:
     """Start the development stack, allowing the Infrahub health check one cold-start retry."""
     try:
-        run("uv", "run", "--no-sync", "invoke", "dev.start", env=env)
+        run("uv", "run", "--no-sync", "invoke", "dev.start", "--preset", STACK_PRESET, env=env)
     except subprocess.CalledProcessError:
         time.sleep(30)
-        run("uv", "run", "--no-sync", "invoke", "dev.start", env=env)
+        run("uv", "run", "--no-sync", "invoke", "dev.start", "--preset", STACK_PRESET, env=env)
 
 
 def parsed_fields(output: str) -> dict[str, str]:

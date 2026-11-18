@@ -256,9 +256,32 @@ def api_environment(storage_host: str) -> dict[str, str]:
     }
 
 
+# The bootstrap's last step, run from the image: the Sync API refuses to start until the
+# bootstrap record names its version and work pool (spec 018 FR-007b). The full bootstrap
+# needs a Prefect server, which this suite does not run.
+WRITE_BOOTSTRAP_RECORD = (
+    "import os; "
+    "from infrahub_sync.service.compatibility import installed_server_version; "
+    "from infrahub_sync.service.storage import service_product_projection; "
+    "service_product_projection().write_bootstrap_record("
+    "installed_server_version(), os.environ.get('INFRAHUB_SYNC_SERVICE_WORK_POOL', 'default'))"
+)
+
+
+def write_bootstrap_record(image_ref: str, storage_network: str, storage: str) -> None:
+    """Record this image's version and the default work pool, as the bootstrap does last."""
+    command = ["run", "--rm", "--read-only", "--network", storage_network, *tmpfs_arguments(WRITABLE_ROOTS)]
+    for key, value in api_environment(storage).items():
+        command += ["--env", f"{key}={value}"]
+    command += [image_ref, "python", "-c", WRITE_BOOTSTRAP_RECORD]
+    written = docker(command)
+    assert written.returncode == 0, written.stderr
+
+
 @pytest.fixture
 def started_container(image_ref: str, storage_network: str, storage: str) -> Iterator[str]:
     """Start the image's default command against real storage and yield its identifier."""
+    write_bootstrap_record(image_ref, storage_network, storage)
     command = [
         "run",
         "--detach",
