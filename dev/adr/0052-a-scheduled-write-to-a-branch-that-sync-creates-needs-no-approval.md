@@ -29,8 +29,9 @@ from a request that the Sync API admits.
 
 - **Two write targets.** A schedule writes either to a new branch for each run with a proposed
   change in Infrahub (`branch-review`, the default), or to the destination's default branch
-  (`default-branch`, only with `--write-to-default-branch`). A request that names no write target
-  never gets the default branch.
+  (`default-branch`, only with `--write-to-default-branch`). A request to create a schedule that
+  names no write target never gets the default branch. A change that names no write target keeps
+  the schedule's write target, `default-branch` included.
 - **Branch review needs no Sync approval.** A schedule with branch review is accepted, and its
   runs start, whatever `INFRAHUB_SYNC_REQUIRE_APPROVAL` is. The approval is the merge of the
   proposed change in Infrahub. The worker derives the branch name

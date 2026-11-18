@@ -395,7 +395,8 @@ parameter therefore never reaches the flow body.
 - **Prefect's scheduler creates flow runs only from the moment its loop runs.** The main loop runs
   every 60 seconds. Creating a deployment schedule does not change the deployment's `updated` time,
   and a change or a deletion of one schedule deletes the future flow runs of every schedule of the
-  deployment that have not run. A start within the next minute then gets no flow run.
+  deployment that have not run. A start that comes before the next run of that loop then gets no
+  flow run.
   `POST /deployments/{id}/schedule` with an empty body creates the flow runs of every active
   schedule from the current time, with the idempotency key of the scheduler; the Sync API calls it
   after it changes a Prefect schedule (`PrefectOrchestration.create_scheduled_runs`). See

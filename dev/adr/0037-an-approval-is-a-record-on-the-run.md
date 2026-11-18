@@ -1,11 +1,7 @@
 # 37. An approval is a record on the run that the Sync API stores, and one service setting makes it required
 
-**Status**: Accepted; amended on 2026-11-18 by
-[ADR 0052](0052-a-scheduled-write-to-a-branch-that-sync-creates-needs-no-approval.md) — a
-scheduled run that writes to a branch that Infrahub Sync created for it needs no approval, a
-schedule that writes to the default branch is refused while approval is required, and the worker
-checks the setting when it admits a scheduled start. The body below is unchanged
-**Date**: 2026-11-14
+**Status**: Accepted
+**Date**: 2026-11-14, amended 2026-11-18 (see [Amendment, 2026-11-18](#amendment-2026-11-18-scheduled-runs))
 **Source**: `dev/specs/archive/014-plan-approval/research.md` (R6, R7, R8, R9)
 
 ## Context
@@ -90,3 +86,22 @@ worker published.
 - **A setting for each configuration.** Deferred: the first version applies to the whole service.
 - **Check the approval in the worker as well.** Deferred: the worker receives a stage only through
   a receipt that the Sync API admitted.
+
+## Amendment, 2026-11-18: scheduled runs
+
+[ADR 0052](0052-a-scheduled-write-to-a-branch-that-sync-creates-needs-no-approval.md) changes this
+decision for the `sync` runs that a schedule starts. The body above is unchanged and still holds
+for the stages that a request starts.
+
+- A scheduled run that writes to a branch that Infrahub Sync created for it (`branch-review`)
+  needs no approval, whatever `INFRAHUB_SYNC_REQUIRE_APPROVAL` is. The approval is the merge of
+  its proposed change in Infrahub.
+- While the setting is on, the Sync API refuses a schedule that writes to the default branch, with
+  `409 approval-required-for-schedule`, and the API process stops such a schedule when it starts.
+- The worker reads the setting from its own environment each time it admits a scheduled start.
+  When the setting is on and the schedule writes to the default branch, the start creates no run
+  and the schedule is stopped with the reason `approval-required`. This replaces, for scheduled
+  starts, the consequence that a stage reaching the worker by another path is not checked, and
+  the deferred alternative of a check in the worker.
+- A change of the setting therefore needs a restart of the worker as well as of the Sync API, and
+  both must receive the same value.

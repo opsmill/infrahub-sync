@@ -32,8 +32,10 @@ The worker has no API token. It cannot ask the Sync API to create a run.
   schedule for each stored schedule that is not deleted, active only while the stored schedule is
   `active`. It leaves alone a Prefect schedule whose slug is not a Sync schedule identifier. The
   step runs after each schedule request, when the API process starts, and at the end of the
-  bootstrap job. When a Prefect call fails, the request answers `503 orchestration-unavailable`
-  and the stored schedule keeps `prefect_synced` false until a later run of the step succeeds.
+  bootstrap job. When a Prefect call that reads, creates, changes or deletes a schedule fails, the
+  request answers `503 orchestration-unavailable` and the stored schedule keeps `prefect_synced`
+  false until a later run of the step succeeds. The call that creates flow runs is the exception,
+  described in the next point.
 - **The step asks Prefect to create the flow runs at once.** After it creates, changes or deletes
   a Prefect schedule, the step calls `POST /deployments/{id}/schedule`
   (`PrefectOrchestration.create_scheduled_runs`). Prefect then creates the flow runs of every

@@ -349,8 +349,9 @@ the Sync API refuses a schedule that writes to the default branch and stops an e
 starts ([Schedule sync runs](./orchestration.mdx)). With Compose, the worker reads the same setting
 and also refuses to start a run of such a schedule, in case the Sync API could not stop it. The
 chart does not pass the setting to the worker yet, so on Kubernetes that second check does not run.
-After you set `settings.requireApproval` to `true`, check with `infrahub-sync schedules list` that
-no schedule that writes to the default branch is still active.
+After you set `settings.requireApproval` to `true`, list the active schedules with
+`infrahub-sync schedules list --state active --all`, then check with `infrahub-sync schedules show`
+that none of them has `write_target: default-branch`.
 
 Source credentials go to the worker only:
 

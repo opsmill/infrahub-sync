@@ -866,7 +866,7 @@ that the event does not use is `null`, and an event that records no fact has `de
 
 | Key | Holds | Used by |
 | --- | --- | --- |
-| `start_at` | The start time of the cadence. | Every event of a start of a schedule. |
+| `start_at` | The start time of the cadence. | Every event of one start of a schedule. The one event that records the older missed starts and `infrahub_sync.schedule.stopped` do not hold it. |
 | `starts`, `first_start_at`, `last_start_at` | The count, the first and the last of the missed starts. | The one event that records the missed starts older than the 500 most recent. |
 | `left_out` | The plan's count of records left out. | `infrahub_sync.run.synced` and `infrahub_sync.run.failed` of a scheduled run. |
 | `branch`, `proposed_change_id` | The branch and the proposed change of a run with branch review. | The events of a proposed change. |
@@ -1461,7 +1461,7 @@ The schedule routes answer these refusals:
 | 422 | `secret-parameter-refused` | A request field holds a credential. |
 | 422 | `request-invalid` | The body does not match the schema, names `name`, `config_id` or `owner` in a change, or changes nothing. |
 | 503 | `configuration-version-invalid` | The registered configuration version cannot be read. |
-| 503 | `orchestration-unavailable` | The schedule is stored and the task manager could not be reached. It starts no run until a later request on a schedule, or a restart of the Sync API, hands it over. |
+| 503 | `orchestration-unavailable` | The schedule is stored and the task manager could not be reached, or the product database failed while the schedule was handed to the task manager; the message says which. It starts no run until a later request on a schedule, or a restart of the Sync API, hands it over. |
 
 A resume of a paused schedule, or of a stopped schedule whose reason no longer holds (also
 `repeated-failures`), whose owner's actor no longer exists, or that writes to the default branch

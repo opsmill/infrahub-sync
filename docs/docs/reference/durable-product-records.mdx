@@ -314,7 +314,8 @@ the Sync API computes it each time it returns the schedule. Two partial unique i
 schedule that is not deleted for each name and for each configuration.
 
 The store saves the end of a scheduled run and the schedule's count of failed runs in one
-transaction. At the fifth failed run in a row, the same transaction stops the schedule and saves
+transaction. A run that ends as failed, interrupted or ambiguous counts as a failed run. At the
+fifth failed run in a row, the same transaction stops the schedule and saves
 its `infrahub_sync.schedule.stopped` event. When the worker handles a start of a schedule that writes to the default
 branch while approval is required, the transaction that records the start also stops the schedule
 with the reason `approval-required` and saves its event.

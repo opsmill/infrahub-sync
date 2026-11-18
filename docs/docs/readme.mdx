@@ -134,8 +134,9 @@ system keeps running.
 **Does Infrahub Sync schedule runs?**
 Yes. `infrahub-sync schedules create` starts a `sync` run of one configuration version on a cron
 cadence. By default each run writes to a new branch and opens a proposed change for review in
-Infrahub; `--write-to-default-branch` writes to the default branch instead, on a Sync API that
-does not require approval. See [Schedule sync runs](./orchestration.mdx). Runs can also be
+Infrahub; `--write-to-default-branch` writes instead to the branch that a `sync` of the
+configuration writes to (the destination branch it declares, else the default branch), when the
+Sync API and its workers do not require approval. See [Schedule sync runs](./orchestration.mdx). Runs can also be
 started from cron, a CI job, or another scheduler you already use.
 
 **What happens if a sync run fails partway through?**
