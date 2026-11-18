@@ -679,3 +679,68 @@ tests of `tests/dev_stack/smoke/test_scheduled_run.py`:
   worker recorded `start_missed` with `missed-skipped` for that start at the following start,
   which ran. A schedule created 42 seconds before a minute ran at that minute. Why the flow run
   was missing was not checked; Prefect's scheduler loop runs about once a minute.
+
+Checked since, for R1, R10 and R13, in the installed Prefect 3.8.6 and on the same development
+stack on 2026-11-18, from the source code and with schedules `* * * * *` on the default branch:
+
+- Prefect's scheduler creates flow runs only from the moment its loop runs. Both loops call
+  `_generate_scheduled_flow_runs` with `start_time=right_now` (`server/services/scheduler.py`,
+  `_collect_flow_runs`). The main loop runs every 60 seconds and selects a deployment when one of its
+  active schedules has fewer than 3 future scheduled flow runs or none beyond one hour
+  (`_get_select_deployments_to_schedule_query`). The 5-second loop selects only a deployment whose
+  `updated` time changed in the last 6 seconds (`_get_select_recent_deployments_to_schedule_query`).
+- Creating a deployment schedule (`POST /deployments/{id}/schedules`) does not change the
+  deployment's `updated` time and deletes no flow run. A change (`PATCH .../schedules/{schedule_id}`)
+  deletes the future flow runs of every schedule of the deployment that have not run
+  (`_delete_scheduled_runs` with `auto_scheduled_only` and `future_only`), and a deletion
+  (`DELETE .../schedules/{schedule_id}`) deletes every such flow run, also the ones whose start time
+  has passed (`server/api/deployments.py`, `update_deployment_schedule`, `delete_deployment_schedule`).
+  Neither changes the deployment's `updated` time, so only the 60-second loop creates the flow runs
+  again.
+- Observed: the main loop ran at about 4 seconds past each minute. A schedule created at 17:02:31
+  got no flow run for 17:03; its first flow runs were created at 17:03:04 from 17:04 on, and the
+  worker recorded `start_missed` with `missed-skipped` for 17:03 when it admitted 17:04. A resume of
+  schedule A at 17:06:49 deleted the flow runs of schedule B for 17:07 to 17:09; B got no flow run
+  for 17:07 and recorded `missed-skipped` for it at 17:08. `next_start_at` of A answered 17:07,
+  a start that did not run.
+- The bootstrap job does not remove the Prefect schedules of the deployment. `apply_deployments`
+  sends `schedules: []`, but when every schedule of the deployment has a slug, Prefect's
+  `PATCH /deployments/{id}` treats the list as targeted updates and keeps the schedules
+  (`server/api/deployments.py`, `update_deployment`, the branch where all existing and all provided
+  schedules have slugs). The update still deletes the future flow runs that have not run, and it
+  changes the deployment's `updated` time, so the 5-second loop creates them again. Observed after
+  a restart of the whole stack: the Prefect schedules kept their identifiers, the bootstrap applied
+  the deployment at 17:13:17.67, and the flow runs from 17:14 on were created at 17:13:18.36. This
+  contradicts the bootstrap bullet of R13; the match step of the bootstrap still runs and finds
+  nothing to change.
+- A start that passes while the Prefect server is stopped keeps its flow run, because Prefect creates
+  the flow runs ahead (at least 3 and at least one hour) and the bootstrap deletes only future ones.
+  Observed: the whole stack was stopped at 17:10:01 and started again at 17:13:01. The flow runs of
+  17:10, 17:11, 17:12 and 17:13, created at 17:07:05, were taken by the worker at 17:13:22. For each
+  schedule, 17:10, 17:11 and 17:12 were recorded as `start_missed` with `missed-skipped` and 17:13
+  started a run 22 seconds late. That run failed because Infrahub was not answering yet
+  (`DestinationSchemaUnavailableError`), which is a result of the restart of Infrahub in the same
+  stack.
+- `POST /deployments/{id}/schedule` with an empty body runs `schedule_runs` from the current time
+  for every active schedule of the deployment, with the scheduler's idempotency key
+  (`scheduled {deployment_id} {schedule_id} {date}`), `auto_scheduled` true and `created_by` the
+  schedule (`server/api/deployments.py`, `schedule_deployment`; `server/models/deployments.py`,
+  `_generate_scheduled_flow_runs`). The match step now calls it after it creates, changes or
+  deletes a Prefect schedule (`PrefectOrchestration.create_scheduled_runs`). Observed with that
+  call: a schedule created at 17:19:30 had its flow run for 17:20 at 17:19:31 and ran at 17:19:59.87;
+  schedule B ran at 17:20, 17:21 and 17:22 while schedule A was paused at 17:20:50 and resumed at
+  17:21:50; A ran at 17:22. No start was recorded as missed.
+- Section 5 of `quickstart.md`, run on the same stack with the call above, with a schedule
+  `*/5 * * * *`:
+    - Step 1: the worker was stopped at 17:24:30 and started at 17:27:01. The 17:25 start ran at
+      17:27:08, 2 minutes 8 seconds late, and no `start_missed` event was recorded. The admission
+      counts a start up to 5 minutes late as on time (`ON_TIME_SECONDS` in
+      `service/schedule_admission.py`, R10), so the expected `missed-started-late` of step 1 needs
+      a delay of more than 5 minutes. With the cadence changed to `*/10 * * * *`, the worker stopped
+      at 17:39:31 and started at 17:46:30, the 17:40 start ran at 17:46:40 and was recorded as
+      `start_missed` with `missed-started-late`.
+    - Step 2: with `start_late_by_at_most_seconds` 60, the worker stopped at 17:29:30 and started at
+      17:33:01, the 17:30 start created no run and was recorded at 17:33:08 as `start_missed` with
+      `missed-skipped`. It was recorded when the worker took its flow run, not at the next start.
+    - Step 3: the Sync API was stopped from 17:34:30 to 17:36:01; the 17:35 start ran at
+      17:34:59.79.
