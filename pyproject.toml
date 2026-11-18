@@ -68,6 +68,10 @@ prefect = [
     # FastAPI 0.159 breaks `prefect.server.api.server.create_app` (Prefect 3.8.6 passes
     # `min_items` to `Body()`), so hold the version the Prefect server is verified with.
     "fastapi==0.141.1",
+    # SQLAlchemy 2.1 breaks the Prefect 3.8.6 scheduler: `_insert_scheduled_flow_runs` raises
+    # `InvalidRequestError: Can't evaluate bulk DML statement`, so no deployment schedule creates
+    # a flow run. Hold the 2.0 series.
+    "sqlalchemy>=2.0,<2.1",
 ]
 # Sync HTTP service and worker profile (Python 3.11-3.13). Every runtime
 # imported directly by `infrahub_sync.service` is declared here; the reusable
@@ -100,6 +104,8 @@ service = [
     # packaging dependency, not a supported source-server profile.
     "pynautobot>=2.5,<3; python_version >= '3.11'",
     "pynetbox>=7.6,<8; python_version >= '3.11'",
+    # Same reason as in `prefect`: the Prefect 3.8.6 scheduler fails with SQLAlchemy 2.1.
+    "sqlalchemy>=2.0,<2.1; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",
 ]
 # The SDK the bundled IP Fabric source adapter imports at module top, kept out of
