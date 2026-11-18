@@ -47,7 +47,8 @@ own token, and to recover access when every other administrator is locked out.
       its password changes (except the session that made the change).
 
   The store holds only the SHA-256 digest of each value, with a unique index. Each request reads
-  the store once to resolve its value, and no result is cached, so the next request of a
+  the store once to resolve its value, and once more to delete a session found idle. No result
+  is cached, so the next request of a
   disabled account is refused. The value of an API token is returned once, in the answer of its
   creation.
 - **Passwords are hashed with scrypt** from the Python standard library
