@@ -416,6 +416,7 @@ def _build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **environment: str) 
         projection_factory=lambda: projection,
         run_service_factory=service_factory,
         configuration_routes_factory=routes_factory,
+        start_check=lambda _pool: None,
     )
     return app, captured
 
@@ -477,7 +478,7 @@ def test_a_resolver_given_to_the_factory_leaves_the_store_without_an_admin_accou
         secret_values: tuple[str, ...] = ()
 
     monkeypatch.delenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", raising=False)
-    serve.build_app(projection_factory=lambda: projection, resolver_factory=_Resolver)
+    serve.build_app(projection_factory=lambda: projection, resolver_factory=_Resolver, start_check=lambda _pool: None)
 
     assert projection.lookup_account_by_name("admin") is None
 
