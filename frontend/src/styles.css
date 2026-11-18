@@ -20,6 +20,13 @@ html {
   scroll-padding-bottom: 1.5rem;
 }
 
+/* On a phone the main navigation takes a second line, and the header is about 89px tall. */
+@media (width < 40rem) {
+  html {
+    scroll-padding-top: 6.5rem;
+  }
+}
+
 body {
   margin: 0;
 }

@@ -35,7 +35,10 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 const NAV = cn(
   "relative inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-md px-2 text-foreground-muted text-sm transition-colors duration-150 ease-out hover:bg-highlight hover:text-foreground motion-reduce:transition-none before:absolute before:inset-x-0 before:-inset-y-2",
   FOCUS,
-  "data-current:text-foreground data-current:after:absolute data-current:after:inset-x-2 data-current:after:bottom-[-9px] data-current:after:h-0.5 data-current:after:rounded-full data-current:after:bg-foreground"
+  "data-current:text-foreground data-current:after:absolute data-current:after:inset-x-2 data-current:after:bottom-[-9px] data-current:after:h-0.5 data-current:after:rounded-full data-current:after:bg-foreground",
+  // On a phone each link is a 48px line of its own row, so the underline stays at the bottom of
+  // that row whether the navigation takes one line or wraps.
+  "max-sm:h-12 max-sm:px-1.5 max-sm:data-current:after:inset-x-1.5 max-sm:data-current:after:bottom-[-1px]"
 );
 
 function Mark() {
@@ -433,7 +436,7 @@ function RootComponent() {
           </PlainLink>
           <nav
             aria-label="Main"
-            className="flex shrink-0 items-center gap-1 max-sm:order-last max-sm:-ml-2 max-sm:min-h-12 max-sm:w-[calc(100%+0.5rem)] max-sm:flex-wrap"
+            className="flex shrink-0 items-center gap-1 max-sm:order-last max-sm:-ml-1.5 max-sm:w-[calc(100%+0.375rem)] max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-0"
           >
             {/* TanStack sets aria-current="page" on an exact match; a page inside the section gets "true". */}
             <Link
