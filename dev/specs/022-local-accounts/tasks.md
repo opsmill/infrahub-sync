@@ -260,12 +260,12 @@ on this phase.
 
 - [X] T047 [US2] Regenerate `frontend/src/api/types.generated.ts` from the OpenAPI document of
   the Sync API.
-- [ ] T048 [US2] In `frontend/src/api/token.ts` and `frontend/src/api/client.ts`, keep the
+- [X] T048 [US2] In `frontend/src/api/token.ts` and `frontend/src/api/client.ts`, keep the
   session token where the token is kept today, and add the calls to sign in and sign out.
-- [ ] T049 [US2] Replace `frontend/src/components/token-entry.tsx` with
+- [X] T049 [US2] Replace `frontend/src/components/token-entry.tsx` with
   `frontend/src/components/sign-in.tsx`: a name, a password, one refusal message for `401`, and
   a "try again" message for `503 sign-in-busy`.
-- [ ] T050 [US2] In `frontend/src/routes/__root.tsx`, display the signed-in account from
+- [X] T050 [US2] In `frontend/src/routes/__root.tsx`, display the signed-in account from
   `GET /api/me` and a "Sign out" action.
 - [ ] T051 [P] [US2] Display the account that started a run and the account that approved its
   plan in `frontend/src/features/runs/` (`RunPage.tsx`, `RunsPage.tsx`, `run-sections.tsx`).

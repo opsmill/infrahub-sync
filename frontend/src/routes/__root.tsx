@@ -12,9 +12,8 @@ import {
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { type ComponentPropsWithRef, type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
-
+import { signOut } from "#/api/client";
 import { describeError, meQuery, statusQuery, versionQuery } from "#/api/queries";
-import { clearToken } from "#/api/token";
 import { announce, LiveRegion } from "#/components/announcer";
 import { FOCUS, FOCUS_RAC } from "#/components/classes";
 import { StateIcon } from "#/components/icons";
@@ -129,14 +128,14 @@ function useServiceState(): ServiceState & { showDetail: boolean } {
       showDetail: false,
     };
   }
-  // `GET /status` needs no token, so only `GET /me` shows that the Sync API refuses the token.
+  // `GET /status` needs no session, so only `GET /me` shows that the Sync API refuses the session.
   if (meFailure.failed && describeError(meFailure.error).status === 401) {
     return {
       icon: "failed",
       color: "text-danger",
-      label: "Sync API refused the token",
+      label: "Sync API refused the session",
       sentence:
-        "The Sync API answered, but it did not accept the token sent with requests from this page.",
+        "The Sync API answered, but it did not accept the session sent with requests from this page.",
       showDetail: false,
     };
   }
@@ -197,7 +196,7 @@ function Row({
 
 const DL = "col-span-2 grid grid-cols-subgrid gap-y-1.5";
 
-/** The Sync service's state in the header; opens the details and removes the token. */
+/** The Sync service's state in the header; opens the details. */
 function StatusMenu() {
   const s = useServiceState();
   const status = useQuery(statusQuery());
@@ -274,19 +273,47 @@ function StatusMenu() {
               )}
             </div>
           )}
-          <hr className="my-3 border-0 border-border border-t" />
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn("-ml-2", FOCUS_RAC)}
-            // Removing the token also empties the query cache and the downloaded plans.
-            onPress={clearToken}
-          >
-            Remove token
-          </Button>
         </PopoverDialog>
       </Popover>
     </PopoverTrigger>
+  );
+}
+
+/**
+ * The signed-in account, from `GET /me`, and the action that signs out. Signing out removes the
+ * session token, which also empties the query cache and the downloaded plans.
+ */
+function AccountControls() {
+  const me = useQuery(meQuery());
+  const [pending, setPending] = useState(false);
+  const name = me.data?.actor;
+
+  async function press() {
+    setPending(true);
+    await signOut();
+  }
+
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      {name && (
+        <span
+          className="min-w-0 max-w-24 truncate text-foreground-muted text-xs sm:max-w-48"
+          title={`Signed in as ${name}`}
+        >
+          <span className="sr-only">Signed in as </span>
+          {name}
+        </span>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn("shrink-0", FOCUS_RAC)}
+        onPress={press}
+        isDisabled={pending}
+      >
+        Sign out
+      </Button>
+    </div>
   );
 }
 
@@ -422,6 +449,7 @@ function RootComponent() {
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-2">
             <StatusMenu />
+            <AccountControls />
             <ThemeMenu />
           </div>
         </div>
