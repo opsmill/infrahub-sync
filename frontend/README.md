@@ -20,8 +20,10 @@ uv run invoke dev.frontend
 
 The task fetches the submodule when it is missing, installs the dependencies, sets the
 variable described in [Calling the Sync API](#calling-the-sync-api) and prints how to sign in
-as `admin`: the variable that holds its password and the public default of that password. To run it
-against another Sync service, export that variable and run:
+as `admin`: the variable that holds its password, `ADMIN_ACCOUNT_PASSWORD`, and the public default
+of that password. Use that default only on a Sync service that no one else can reach. To run the
+web interface against another Sync service, export the variable described in
+[Calling the Sync API](#calling-the-sync-api) and run:
 
 ```bash
 pnpm install

@@ -1,6 +1,10 @@
 # 43. The Sync service serves the web interface at the root of its address and the Sync API under `/api`
 
-**Status**: Accepted
+**Status**: Accepted; partly superseded on 2026-11-18 by
+[ADR 0049](0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md) — the web
+interface asks for an account name and a password and keeps the session token that the sign-in
+returns, in place of a Sync API token that a person enters, and
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` is no longer read. The body below is unchanged.
 **Date**: 2026-11-16
 **Source**: `dev/specs/017-serve-web-interface/spec.md` (decisions D-1 to D-3, FR-001 to FR-034),
 `dev/specs/017-serve-web-interface/research.md` (R-1 to R-7, R-12), issue #421

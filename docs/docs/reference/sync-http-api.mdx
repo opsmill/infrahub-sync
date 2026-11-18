@@ -90,8 +90,8 @@ a restart of the API also ends it for `admin`.
 longer read. A process that still has it starts and ignores it.
 
 Inject these values through your deployment's secret mechanism. Do not put a real password or
-token in a shell history, Sync configuration, request body, idempotency key, or Prefect
-parameter. The API returns a token value only once, in the answer that creates it.
+token in a shell history, Sync configuration, idempotency key, or Prefect parameter, or in a
+request body other than the password fields of the sign-in and password routes below. The API returns a token value only once, in the answer that creates it.
 
 Any account can create and inspect a run. Only the account that created a run, or an
 administrator, can verify, approve, apply, or cancel it. Every accepted mutation and
@@ -101,7 +101,8 @@ run is the name of the account.
 ### Sign-in, sign-out and account routes
 
 These routes take no `Idempotency-Key`. Each mutation except sign-in and sign-out accepts an
-optional `reason` of at most 512 characters, and records it in the audit history. The `DELETE` routes take it as a query
+optional `reason` of at most 512 characters. A mutation that changes something records it in
+the audit history; a `PATCH` that changes nothing records nothing. The `DELETE` routes take it as a query
 parameter; the other routes take it in the JSON body.
 
 | Route | Who | Behavior |
@@ -145,8 +146,9 @@ The refusals of these routes:
   longer than 1,024 characters answers `422`, code `password-too-long`. One that holds a
   character that UTF-8 cannot encode, such as a lone surrogate, answers `422`, code
   `password-invalid`.
-- An account name outside the rule of names, or a reserved name, answers `422`, code
-  `account-name-invalid`. A name that an account already has, in any letter case, answers `409`,
+- An account name outside the rule of names, a reserved name (`admin`, `unknown`,
+  `unauthenticated`, in any letter case), a name that starts with `acct_` in any letter case, or
+  a name that holds `ifs_pat_` or `ifs_ses_` answers `422`, code `account-name-invalid`. A name that an account already has, in any letter case, answers `409`,
   code `account-name-taken`.
 - A token name that the account already uses answers `409`, code `token-name-taken`. An
   `expires_at` that is not in the future answers `422`, code `expiry-in-the-past`.

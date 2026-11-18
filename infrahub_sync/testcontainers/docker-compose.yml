@@ -255,7 +255,7 @@ services:
       # loopback alone would be unreachable from its own published port.
       INFRAHUB_SYNC_SERVICE_HOST: "0.0.0.0"
       # The password of the `admin` account, at least 12 characters. The API applies
-      # it at each start: change it here and restart to change the password.
+      # it at each start: change it here and recreate the container to change it.
       INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD: >-
         ${INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD:?INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required}
       # Optional: one API token of the `admin` account, at least 16 printable ASCII

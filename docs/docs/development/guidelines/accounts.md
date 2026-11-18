@@ -53,7 +53,9 @@ credential for an account.
 
 An account route that changes the password, the tokens, the level or the state of an account
 with `environment_managed` set, or deletes it, answers `409 environment-managed-account`. The
-environment defines that account, and `sync-api` restores it at its next start.
+environment defines that account, and `sync-api` restores it at its next start. The route that
+ends the refusal after repeated failed sign-ins, `POST /accounts/{name}/unlock`, accepts that
+account: it is the way to recover `admin` without a restart.
 
 ### Name accounts in the web interface
 

@@ -6,7 +6,7 @@ title: "Local accounts and sign-in"
 
 <!-- Extracted from dev/specs/archive/022-local-accounts on 2026-11-18 -->
 
-Every request to the Sync API acts as an account that the product store holds. A person signs
+Every authenticated request to the Sync API acts as an account that the product store holds. A person signs
 in with an account name and a password and gets a session token. A script presents an API
 token that an account created for itself. The `admin` account is defined by the environment of
 `sync-api`. This page describes how the code does this. For the steps an operator follows, see
@@ -200,9 +200,12 @@ refused as `422 account-name-invalid`.
 Each accepted account action writes one audit event, of type `infrahub_sync.account.<action>`
 (for example `signed_in`, `created`, `token_created` or `deleted`), in the store transaction of
 the action. The related resources of kind `account` hold the identifiers of the account that
-acted and of the account acted on. A refused account action writes
-`infrahub_sync.account.refused` on its own, with an outcome such as `refused-authorization`,
-`refused-secret-parameter` or `refused-current-password`.
+acted and of the account acted on. Three kinds of refusal write `infrahub_sync.account.refused`
+on their own: a caller that is not an administrator (`refused-authorization`), a free text that
+holds a secret or a token prefix (`refused-secret-parameter`), and a wrong current password
+(`refused-current-password`). Other refusals, such as an invalid or taken name or a change to
+the `admin` account, write no event. `update_account` writes a change of state and a change of
+level in two transactions, so a failure of the second keeps the first and its event.
 
 ### The session file of the CLI
 

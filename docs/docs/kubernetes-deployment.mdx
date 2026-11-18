@@ -158,8 +158,8 @@ always exists. Only the Sync API container receives them; the worker does not.
 - `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is the password of `admin`: 12 to 1,024 characters of
   valid UTF-8 text, with no default value. You need it to sign in as `admin` with
   `infrahub-sync login`.
-- `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is one API token of `admin`: at least 16 characters, and it
-  must not start with `ifs_pat_` or `ifs_ses_`. Without the key, `admin` has no API token. The
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is one API token of `admin`: at least 16 printable ASCII
+  characters with no space at either end, and it must not start with `ifs_pat_` or `ifs_ses_`. Without the key, `admin` has no API token. The
   token is a value you can give the CLI as `INFRAHUB_SYNC_API_TOKEN`.
 
 The Sync API applies both keys each time it starts. When a value is not accepted, it does not

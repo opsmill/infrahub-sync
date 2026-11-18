@@ -52,8 +52,8 @@ only, never from `.env`. The deployment's
 `cli` service, run as `docker compose run --rm --no-deps -T cli ...`, reads it from `.env`,
 unless your shell exports `INFRAHUB_SYNC_API_TOKEN`: Compose then uses the exported value.
 
-- **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is empty, or is not an
-  API token of an account. On a new deployment, give it the value of
+- **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is not an API token of an
+  account, or, for the `cli` service, which keeps no saved session, it is empty. On a new deployment, give it the value of
   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`. An `operator.env` carried over from an earlier alpha
   may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely, and may still set
   `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`: this release ignores that variable and refuses the

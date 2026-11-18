@@ -255,8 +255,9 @@ no variable changes that. To set a new password after a lost one, or to replace
 the `admin` token:
 
 1. Edit `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` or
-   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` in `.env`. When you change the token,
-   change `INFRAHUB_SYNC_API_TOKEN` to the same value.
+   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` in `.env`. When you change the token and
+   `INFRAHUB_SYNC_API_TOKEN` holds the `admin` token, change it to the same value; leave
+   a token of another account as it is.
 2. Recreate `sync-api` alone, so it reads the new environment:
 
    ```bash

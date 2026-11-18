@@ -24,7 +24,8 @@ own token, and to recover access when every other administrator is locked out.
   creates, disables, enables and deletes accounts through the Sync API and the CLI.
 - **The environment defines the `admin` account.** `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is
   required and has 12 to 1,024 characters of valid UTF-8 text. `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is optional, has
-  at least 16 characters and must not start with `ifs_pat_` or `ifs_ses_`.
+  at least 16 printable ASCII characters with no space at either end, and must not start with
+  `ifs_pat_` or `ifs_ses_`.
     - At each start, `sync-api` makes the row `admin` match these variables in one transaction:
       it creates the row when it is missing, stores a new password hash and deletes the sessions
       of `admin` when the password changed, sets or deletes the one token that the environment
@@ -39,8 +40,9 @@ own token, and to recover access when every other administrator is locked out.
       password or to recover access, an operator edits the variable and restarts `sync-api`.
 - **A request presents a bearer value.** Each request keeps the header
   `Authorization: Bearer <value>`. The value is one of two kinds:
-    - an API token (`ifs_pat_` and 32 random bytes), which an account creates for itself and
-      which is valid until it expires or is deleted;
+    - an API token: `ifs_pat_` and 32 random bytes for a token that an account creates for
+      itself, valid until it expires or is deleted, or the value of
+      `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, which has neither prefix, for `admin`;
     - a session token (`ifs_ses_` and 32 random bytes), which a sign-in with a password
       returns, and which ends at sign-out, after `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` without
       use (default 28,800 seconds, 8 hours), when the account is disabled or deleted, and when
@@ -56,8 +58,9 @@ own token, and to recover access when every other administrator is locked out.
   with `maxmem` set to 64 MiB. The stored text names the algorithm and its parameters, so the
   parameters can be raised later and an old hash still verifies. At most two password checks or
   hashes of a new password run at the same time in one `sync-api` process; a request that waits
-  more than 5 seconds for its turn gets `503 sign-in-busy`. Password hashing therefore uses at
-  most about 64 MiB, whatever the number of requests. A password has at most 1,024 characters,
+  more than 5 seconds for its turn gets `503 sign-in-busy`. With the default parameters, two
+  computations use about 64 MiB. A stored hash is verified only when its parameters need at
+  most 64 MiB, so password hashing uses at most about 128 MiB, whatever the number of requests. A password has at most 1,024 characters,
   so the size of a request does not set the cost of a check.
 - **Repeated failed sign-ins refuse the name for a period.** After 5 failed sign-ins for one name
   within 15 minutes, a sign-in for that name is refused for 15 minutes before the password is
@@ -85,9 +88,11 @@ own token, and to recover access when every other administrator is locked out.
   transaction of the insert. A disable or a deletion that runs at the same time either comes
   first, and the insert is refused, or comes after, and deletes what was inserted. A password
   change does the same for a new session; it does not delete API tokens.
-- **An accepted account action and its audit event are written in one transaction**, as
+- **Each accepted account change and its audit event are written in one transaction**, as
   [ADR 0033](0033-an-event-is-saved-in-the-transaction-of-its-decision.md) requires for the
-  events of runs. A failure of either writes neither. A refused account action writes its
+  events of runs. A failure of either writes neither. A `PATCH /accounts/{name}` that changes
+  both the state and the level writes each change in its own transaction, so a failure of the
+  second keeps the first and its event. A refused account action writes its
   refusal event (`infrahub_sync.account.refused`) on its own.
 - **`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` is removed in the same release, with no transition
   period.** The service no longer reads it. This rests on the assumption that V3 has no
