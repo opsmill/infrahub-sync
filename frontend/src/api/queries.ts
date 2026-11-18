@@ -327,7 +327,7 @@ function noAnswerDetail(): string {
     : "Check that the Sync service is running, then try again.";
 }
 
-/** A sentence for each failure a page can meet: no answer, a refused token, a missing record or a refusal. */
+/** A sentence for each failure a page can meet: no answer, a refused session, a missing record or a refusal. */
 export function describeError(error: unknown): DescribedError {
   if (isEnvelope(error)) {
     const { code, message, status } = error.error;
@@ -373,8 +373,8 @@ export function describeError(error: unknown): DescribedError {
     if (status === 401) {
       return {
         ...base,
-        title: "The Sync API refused the token",
-        detail: "The Sync API refused the token. Enter a token again.",
+        title: "The Sync API refused the session",
+        detail: "The session has ended. Sign in again.",
         retryable: false,
         notFound: false,
       };

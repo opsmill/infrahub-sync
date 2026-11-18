@@ -113,7 +113,7 @@ class PlanDownload {
 
 const downloads = new Map<string, PlanDownload>();
 
-// A plan downloaded with a removed token is not shown to the person who enters the next one, and
+// A plan downloaded with a removed token is not shown to the person who signs in next, and
 // a download still in progress stops instead of reading the rest of the plan for nobody.
 onTokenCleared(() => {
   for (const download of downloads.values()) download.cancel();

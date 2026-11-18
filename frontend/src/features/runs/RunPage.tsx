@@ -581,8 +581,7 @@ export function RunPage({ runId }: { runId: string }) {
               !canAct &&
               (wouldCancel || wouldVerify || wouldApprove || wouldApply || wouldResume) && (
                 <p className="max-w-[40ch] text-foreground-muted text-xs">
-                  Only the token that started this run or an administrator token can act on this
-                  run.
+                  Only the account that started this run or an administrator can act on this run.
                 </p>
               )}
             {canAct && wouldCancel && (
