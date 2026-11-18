@@ -48,8 +48,9 @@ def _generate_infrahubsync_documentation() -> None:
 _AUTHENTICATION_INTRO = (
     "Sign in with `infrahub-sync login`, which saves a session for the address in\n"
     "`INFRAHUB_SYNC_API_URL`, or, for a script, set `INFRAHUB_SYNC_API_TOKEN` to an API token\n"
-    "of an account. When `INFRAHUB_SYNC_API_TOKEN` is set, every command presents it and not the\n"
-    "saved session. The CLI reads the token from the environment and never accepts it as a flag.\n"
+    "of an account. When `INFRAHUB_SYNC_API_TOKEN` is set and not empty, every command other than\n"
+    "`login` and `logout` presents it and not the saved session. The CLI reads the token from the\n"
+    "environment and never accepts it as a flag.\n"
     "See [Manage accounts](../guides/accounts.mdx) for accounts and tokens, and\n"
     "[Sync HTTP API — Accounts and API tokens](./sync-http-api.mdx#accounts-and-api-tokens).\n"
     "\n"

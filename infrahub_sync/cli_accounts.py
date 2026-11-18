@@ -238,8 +238,9 @@ def login_cmd(
 
     The password is asked for without echo. With --password-stdin it is read from standard input,
     and --name is required. The session is saved in sessions.json in the application directory of
-    infrahub-sync, readable by you only. While INFRAHUB_SYNC_API_TOKEN is set, every other command
-    uses that variable and not the saved session.
+    infrahub-sync, with mode 0600 so that only you can read it; on Windows, access to the file
+    follows the permissions of that directory. While INFRAHUB_SYNC_API_TOKEN is set and not empty,
+    every command other than login and logout uses that variable and not the saved session.
     """
     support = _support()
     with support.client_errors():

@@ -57,11 +57,12 @@ by you only, in the application directory of the CLI:
 - on macOS, `~/Library/Application Support/infrahub-sync/`.
 
 Every later command presents that session. `whoami` prints the account as `actor`, and whether
-it is an administrator. A session ends when you run `infrahub-sync logout`, after 8 hours
-without a request, when the password of the account changes, and when an administrator disables
-the account. The deployment sets the idle period with `INFRAHUB_SYNC_SESSION_IDLE_SECONDS`.
+it is an administrator. A session ends when you run `infrahub-sync logout`, after the idle
+period without a request (8 hours by default), when the password of the account changes, and
+when an administrator disables the account. The deployment sets the idle period with
+`INFRAHUB_SYNC_SESSION_IDLE_SECONDS`.
 
-When `INFRAHUB_SYNC_API_TOKEN` is set, every command presents the variable and not the saved
+When `INFRAHUB_SYNC_API_TOKEN` is set and not empty, every command presents the variable and not the saved
 session. `login` and `logout` still act on the saved session, and print a line that says so.
 
 The `cli` service of the Compose deployment keeps no file, so `login` does not keep a session

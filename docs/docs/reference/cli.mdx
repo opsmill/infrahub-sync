@@ -4,8 +4,9 @@ Synchronize registered configurations through the Sync API.
 
 Sign in with `infrahub-sync login`, which saves a session for the address in
 `INFRAHUB_SYNC_API_URL`, or, for a script, set `INFRAHUB_SYNC_API_TOKEN` to an API token
-of an account. When `INFRAHUB_SYNC_API_TOKEN` is set, every command presents it and not the
-saved session. The CLI reads the token from the environment and never accepts it as a flag.
+of an account. When `INFRAHUB_SYNC_API_TOKEN` is set and not empty, every command other than
+`login` and `logout` presents it and not the saved session. The CLI reads the token from the
+environment and never accepts it as a flag.
 See [Manage accounts](../guides/accounts.mdx) for accounts and tokens, and
 [Sync HTTP API — Accounts and API tokens](./sync-http-api.mdx#accounts-and-api-tokens).
 
@@ -57,8 +58,9 @@ Sign in with an account name and its password, and save the session for this Syn
 
 The password is asked for without echo. With --password-stdin it is read from standard input,
 and --name is required. The session is saved in sessions.json in the application directory of
-infrahub-sync, readable by you only. While INFRAHUB_SYNC_API_TOKEN is set, every other command
-uses that variable and not the saved session.
+infrahub-sync, with mode 0600 so that only you can read it; on Windows, access to the file
+follows the permissions of that directory. While INFRAHUB_SYNC_API_TOKEN is set and not empty,
+every command other than login and logout uses that variable and not the saved session.
 
 **Usage**:
 
