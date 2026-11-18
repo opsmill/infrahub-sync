@@ -612,3 +612,31 @@ path).
 
 `uv run invoke tests.tests-unit`: 9922 passed, 4 skipped, 2 xfailed, 0 failed, as before. No
 Python file changed.
+
+## Review fixes of the web interface (2026-11-18)
+
+The scenario of User Story 4 ran again against a new build of this branch, on `127.0.0.1:18761`,
+with headless Chromium, followed by these steps for the review findings. All 63 steps passed,
+the 44 earlier ones included.
+
+| Step | Result |
+| --- | --- |
+| **Create an account** with an empty name: the name field has `aria-invalid` and is described by the message; the password fields are not; both links end once a name is typed | pass |
+| `frank` deleted through the API while his row is shown; **Disable** on his row answers "No account with this name", and the row leaves the list behind the dialog | pass |
+| After that dialog closes, focus is on the **Accounts** heading, since the row is gone | pass |
+| **API tokens of grace**: **Delete** on a token moves focus to **Delete token** | pass |
+| A delete request with no answer shows an error and keeps the confirmation; **Keep** removes the error and returns focus to that row's **Delete** button | pass |
+| A token deleted through the API, then deleted in the dialog: "This token no longer exists", the row leaves the list, focus is on the dialog heading | pass |
+| A successful delete moves focus to the dialog heading | pass |
+| At 390 and 320 pixels, the four links of the main navigation are within the screen, the navigation and the page do not scroll sideways, and the current page's link is in view | pass |
+
+At 390 pixels the navigation takes one line below the logo and the account controls. At 320
+pixels **My account** wraps onto a third line. Screenshots of the header:
+`review-phone-header-390.png` and `review-phone-header-320.png` in the session scratchpad.
+
+The changelog fragment `+web-interface-no-actor.changed.md` said that the interface no longer
+names the actor that started a run and that only the starting token can act on a run. This
+branch names the account that started a run on the run list and the run page, and only that
+account or an administrator can act on it. The fragment now says only what is still true: the
+configuration list does not name who started the latest run.
+

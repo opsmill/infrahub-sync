@@ -19,8 +19,9 @@ uv run invoke dev.frontend
 ```
 
 The task fetches the submodule when it is missing, installs the dependencies, sets the
-variable described in [Calling the Sync API](#calling-the-sync-api) and prints where to find
-the token to enter in the page. To run it against another Sync service, export that variable and run:
+variable described in [Calling the Sync API](#calling-the-sync-api) and prints how to sign in
+as `admin`: the variable that holds its password and the public default of that password. To run it
+against another Sync service, export that variable and run:
 
 ```bash
 pnpm install
