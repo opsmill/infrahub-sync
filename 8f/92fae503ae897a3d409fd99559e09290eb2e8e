@@ -1,0 +1,19 @@
+docs/docs/kubernetes-deployment.mdx
+  s_f79ca1c28d97f1::t_3ff5aee0a1d757 143-144,155-168,179-192,245-246,255,258-270,284-286,298-325,340,343-344,517-519,591-607
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f92fae503ae897a3d409fd99559e09290eb2e8e",
+  "prompts": {},
+  "sessions": {
+    "s_f79ca1c28d97f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a62f33bbf5fe8c5b9",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
