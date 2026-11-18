@@ -125,3 +125,18 @@ What I did next:
   in the browser: "approved by", the busy message and the idle timeout. Unit tier: 9922 passed,
   0 failed, 2 xfailed (one fewer because a two-case test of `tasks/dev.py` became one case).
 - User Story 4 (T062 to T066) started.
+- User Story 4 (T062 to T066) done: nine commits `bb1f41e8` to `ceec7cae`; the browser scenario
+  passed 49 steps. All 74 tasks of `tasks.md` are ticked.
+- Review of the web interface (read-only): no critical or high finding; four medium and three
+  low findings sent to a fix subagent.
+- Second full Compose and image run, image built from the clean commit `ceec7cae` with
+  `VERSION=3.0.0a5`, `REVISION` and `CREATED` build arguments: 17:22 to 17:38 UTC, 108 passed,
+  1 failed. The failure is `test_the_image_carries_the_source_provenance_of_the_commit_it_was_built_from`:
+  the label held `ceec7cae` (correct), but the fix subagent committed `3452441a` during the run,
+  so `git rev-parse HEAD` no longer matched. A last run from the final commit, with no commit
+  during it, follows the review fixes.
+- Review fixes of the web interface: five commits `09232682` to `f7bc00f7`; all seven findings
+  fixed; the browser scenario passed 69 of 69 steps (49 earlier steps and 20 new ones). Left:
+  if an account is deleted while its tokens dialog is open, the old token rows may stay.
+- The fragment `changelog/+web-interface-no-actor.changed.md` was rewritten, not deleted: it now
+  says only that the configuration list does not name who started the latest run.
