@@ -1,0 +1,47 @@
+changelog/+sqlalchemy-prefect-scheduler.fixed.md
+  s_29b17f91da9f30::t_685f070d33b69f 1
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_29b17f91da9f30::t_89c70875f1505a 215
+docs/docs/readme.mdx
+  s_29b17f91da9f30::t_95cb39b32ace36 135-139
+docs/docs/reference/sync-http-api.mdx
+  s_29b17f91da9f30::t_119dc8fa7acb25 488
+  s_29b17f91da9f30::t_79234c9769bea3 1250-1251
+docs/docs/orchestration.mdx
+  s_29b17f91da9f30::t_112e87e3730555 65-69
+  s_29b17f91da9f30::t_5a5a568519f027 60
+  s_29b17f91da9f30::t_53d6cfa4a062f1 128-130
+  s_29b17f91da9f30::t_979d66c51bc4cd 204
+docs/docs/using-netbox-or-nautobot-with-infrahub.mdx
+  s_29b17f91da9f30::t_22bf3c9d44bcfe 79
+changelog/+scheduled-runs.added.md
+  s_29b17f91da9f30::t_5b19214d7d54fc 1
+docs/docs/operations/supported-platforms-and-limits.mdx
+  s_29b17f91da9f30::t_de5d025109fc96 55-57
+docs/docs/reference/cli.mdx
+  s_cf9ada8f865389::t_e4c71c5220a314 657-659,675,742
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6197ba4393a4dba449f613b694c82e81c77a50e",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
