@@ -1151,6 +1151,120 @@ class ScheduleFilters(BaseModel):
     state: ScheduleState | None = None
 
 
+# One page of schedules, newest first.
+SchedulePage: TypeAlias = StorePage[ScheduleRecord]
+
+# The count of failed runs in a row at which a schedule stops (spec 021, FR-032).
+MAX_CONSECUTIVE_FAILURES = 5
+# The event that records a schedule moving to the state ``stopped``, and the operation of an
+# event of a scheduled start. The store writes this event itself when the fifth failed run in a
+# row ends, so the two names live here; ``infrahub_sync.service.events`` uses the same values.
+SCHEDULE_STOPPED_EVENT_TYPE = "infrahub_sync.schedule.stopped"
+SCHEDULE_START_OPERATION = "schedule-start"
+
+# Why an admitted start of an active schedule creates no run.
+ScheduledStartNotRunCause: TypeAlias = Literal[
+    "missed",
+    "skipped-run-in-progress",
+    "skipped-approved-change-open",
+    "skipped-start-waiting",
+    "queued",
+    "failed",
+]
+
+
+class _ScheduledStartFacts(BaseModel):
+    """What both decisions on a scheduled start carry."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # The schedule's ``last_start_at`` that the decision was made from. The store refuses the
+    # decision when the stored value differs, so no missed start is recorded twice.
+    last_start_at: datetime | None = None
+    # The events of the start, in the order they are written: one for each missed start, and
+    # the event of this start.
+    events: tuple[AuditEvent, ...] = ()
+    # The runs of the schedule whose proposed change a person merged or closed: their
+    # ``schedule_branches`` rows move to the state ``kept``.
+    kept_run_ids: tuple[Annotated[str, Field(pattern=_IDENTIFIER_PATTERN)], ...] = ()
+
+    @field_validator("last_start_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            raise ValueError(_SCHEDULE_TIME_MESSAGE)
+        return value
+
+
+class ScheduledStartRun(_ScheduledStartFacts):
+    """The decision that a scheduled start runs: the run to create, and whether it has branch review.
+
+    The run is a ``sync`` run with the trigger type ``scheduled``, not finished, with no artifact
+    reference and no execution: the store adds its one execution, already claimed. With
+    ``branch_review`` the run's destination branch is the derived branch name, and the store
+    writes a ``schedule_branches`` row in the state ``pending`` for it.
+    """
+
+    kind: Literal["started"] = "started"
+    run: ProductRun
+    branch_review: bool = False
+
+    @model_validator(mode="after")
+    def _require_a_new_scheduled_sync(self) -> ScheduledStartRun:
+        run = self.run
+        if run.trigger_type != "scheduled" or run.operation != "sync":
+            msg = "a scheduled start creates a sync run with the trigger type scheduled"
+            raise ValueError(msg)
+        if run.finished_at is not None or run.outcome is not None or run.artifact_refs or run.prefect_executions:
+            msg = "the run of a scheduled start must be unfinished, with no artifact reference and no execution"
+            raise ValueError(msg)
+        if run.configuration_binding is None or run.actor is None:
+            msg = "the run of a scheduled start requires its configuration version and its actor"
+            raise ValueError(msg)
+        if self.branch_review and run.destination_branch is None:
+            msg = "a run with branch review requires its branch"
+            raise ValueError(msg)
+        return self
+
+
+class ScheduledStartNotRun(_ScheduledStartFacts):
+    """The decision that a scheduled start creates no run, with the cause."""
+
+    kind: Literal["not-started"] = "not-started"
+    cause: ScheduledStartNotRunCause
+
+
+ScheduledStartDecision: TypeAlias = Annotated[
+    ScheduledStartRun | ScheduledStartNotRun,
+    Field(discriminator="kind"),
+]
+
+
+class ScheduledStartResult(BaseModel):
+    """What the admission of a scheduled start wrote.
+
+    ``cause`` is set when no run was created: ``schedule-not-active`` when the schedule was not
+    active, in which case nothing was written, else the cause of the decision. ``schedule`` is
+    the stored schedule after the admission. ``earlier_branches`` holds the schedule's rows in
+    the states ``pending`` and ``open`` other than the row of the run that was created.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    started: bool
+    cause: ScheduledStartNotRunCause | Literal["schedule-not-active"] | None = None
+    run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    schedule: ScheduleRecord
+    earlier_branches: tuple[ScheduleBranch, ...] = ()
+
+    @model_validator(mode="after")
+    def _require_one_outcome(self) -> ScheduledStartResult:
+        if self.started is (self.run_id is None) or self.started is (self.cause is not None):
+            msg = "an admission result holds a run identifier when the start ran, else a cause"
+            raise ValueError(msg)
+        return self
+
+
 T = TypeVar("T")
 
 
