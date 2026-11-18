@@ -366,6 +366,28 @@ function sectionOf(pathname: string): "configs" | "runs" | "accounts" | "account
   return undefined;
 }
 
+/**
+ * Keeps `--header-height` on the document at the height of the sticky header, so the scroll padding
+ * keeps a heading clear of it however many lines the navigation takes.
+ */
+function useHeaderHeight() {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const header = ref.current;
+    if (!header || typeof ResizeObserver === "undefined") return;
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() => {
+      root.style.setProperty("--header-height", `${header.offsetHeight}px`);
+    });
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--header-height");
+    };
+  }, []);
+  return ref;
+}
+
 /** The title is read once it has not changed for this long. */
 const TITLE_SETTLE_MS = 300;
 /** After this time the title is read even while the page still loads, and later changes are not. */
@@ -377,6 +399,7 @@ function RootComponent() {
   // Only an administrator is offered the Accounts page; the Sync API refuses it to the others.
   const administrator = useQuery(meQuery()).data?.administrator === true;
 
+  const headerRef = useHeaderHeight();
   const mainRef = useRef<HTMLElement>(null);
   const lastPath = useRef(pathname);
   useEffect(() => {
@@ -420,7 +443,7 @@ function RootComponent() {
       >
         Skip to content
       </a>
-      <header className="sticky top-0 z-40 border-b bg-background">
+      <header ref={headerRef} className="sticky top-0 z-40 border-b bg-background">
         {/* On a phone the navigation takes a second line, so every link stays in view. */}
         <div className="mx-auto flex h-12 max-w-[1200px] items-center gap-3 px-4 max-sm:h-auto max-sm:flex-wrap max-sm:gap-y-0 max-sm:pt-2 sm:gap-6">
           <PlainLink
