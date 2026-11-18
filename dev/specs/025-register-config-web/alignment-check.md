@@ -23,6 +23,7 @@ the code or tighten security.
 | Minor | added | (none) | FR-022, SC-005 | FR-022 states what happens when User Story 4 is left out. SC-005 adds a measurable check for findings parity. |
 | Minor | added | (none) | FR-007, FR-009 | From the critique: choose a file without dragging; a validating state with Cancel available; a note when findings exceed one page. |
 | Minor | changed | Open question 3: normalize or accept the difference | Edge Cases, research R5 | Resolved: the route returns the package as the store keeps it, and the review step compares that. |
+| Corrected | changed | Question 5: "Register still allowed when the destination cannot be reached" (agreed) | FR-020, FR-022, User Story 2 scenario 8, User Story 4 | The first version of the spec put registration during an outage inside User Story 4 and blocked it when that story was left out. That contradicted the agreed answer. Corrected after review: registration during an outage is part of User Story 2, and User Story 4 holds only the mark. |
 
 ## Action
 

@@ -100,7 +100,20 @@ repository at commit `87d5a47f`.
   `CREATE TABLE IF NOT EXISTS`. A row means the version was registered without validation. The row
   is written in the same transaction as the version. Existing deployments get the empty table at
   start-up.
-- **Alternative rejected**: a new column. It needs a migration path that does not exist yet.
+- **Alternative rejected**: a new column declared in `CREATE TABLE`. This is the precedent of spec
+  019 (`plan_step`, [research R11](../019-second-plan-real-changes/research.md)): PR #425 removed
+  the start-up migration, so a database created by an earlier build does not gain the column. For
+  `plan_step` that is a missing timing; here every registration would fail with an unknown-column
+  error on a database created by the first alpha release, which this feature follows. A new table
+  created with `IF NOT EXISTS` reaches existing databases at start-up.
+- **Credential check (for `check_package`)**: the store runs `validate_package_credentials(package)`
+  before inserting a version (`ProductProjection.create_configuration`, `store.py` line 3824, and
+  the version path at line 3842). `check_package` calls the same function, so it gives the same
+  refusal without writing.
+- **Idempotency**: `ConfigurationRoutes.mutate` fingerprints `package` and `reason`
+  (`config_routes.py`, lines 318 to 331) and refuses a key reused with a different fingerprint.
+  The web interface therefore locks the review step's inputs after the first attempt (FR-017), and
+  `registered_without_validation` joins the fingerprint.
 
 ## R9. Route address
 

@@ -71,7 +71,8 @@ The request body accepts one new optional field:
 {"package": {"...": "..."}, "reason": "Add the VLAN mapping", "registered_without_validation": true}
 ```
 
-Default `false`. It is recorded on a created version only. When the package is identical to the
+Default `false`. It is part of the request fingerprint that the idempotency check compares, like
+`reason`. It is recorded on a created version only. When the package is identical to the
 newest version (`created: false`), the field is ignored and the existing version is returned as it
 is.
 
