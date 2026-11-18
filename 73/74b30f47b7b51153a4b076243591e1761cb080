@@ -1,0 +1,22 @@
+dev/specs/021-scheduled-runs/research.md
+  s_29b17f91da9f30::t_48c881808b766f 682-732
+  s_29b17f91da9f30::t_d117bc12e7edf5 733-746
+docs/docs/orchestration.mdx
+  s_29b17f91da9f30::t_73712a50436486 196-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7374b30f47b7b51153a4b076243591e1761cb080",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
