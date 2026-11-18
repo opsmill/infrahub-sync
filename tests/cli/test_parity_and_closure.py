@@ -33,11 +33,14 @@ REMOVED_COMMAND = re.compile(
     rf"|(?<![\w-]){_RETIRED_OPTION}(?![\w-])"
     rf"|{_CLI_INVOCATION}(?!{_CONFIGS_LIST})(?:(?!infrahub-sync|```|\n\s*\n)[\s\S])*?(?<![\w-])--(?:name|diff)(?![\w-])"
 )
+# `login --name` names the account to sign in as (spec 022) and is a current option too.
+_LOGIN = r"(?<![\w-])login(?![\w-])"
 _VALID_NAME_OPTION = re.compile(
-    # A `configs list ... --name` invocation on one line, or the `configs list` section of the
-    # generated CLI reference, which lists `--name` as an option bullet.
-    rf"{_CONFIGS_LIST}[^\n]*?(?<![\w-])--name(?![\w-])"
-    r"|^#+ `infrahub-sync configs list`\n(?:(?!#)[^\n]*\n)*",
+    # A `configs list ... --name` or `login ... --name` invocation on one line, or the
+    # `configs list` or `login` section of the generated CLI reference, which lists `--name`
+    # as an option bullet.
+    rf"(?:{_CONFIGS_LIST}|{_LOGIN})[^\n]*?(?<![\w-])--name(?![\w-])"
+    r"|^#+ `infrahub-sync (?:configs list|login)`\n(?:(?!#)[^\n]*\n)*",
     re.MULTILINE,
 )
 # `events --run-id` filters events by run (spec 012) and is a current option. The retired
@@ -49,7 +52,7 @@ _VALID_RUN_ID_OPTION = re.compile(
 
 
 def _without_current_options(text: str) -> str:
-    """Remove the current `configs list --name` and `events --run-id` usages before the removed-option check."""
+    """Remove the current `configs list --name`, `login --name` and `events --run-id` usages before the check."""
     return _VALID_RUN_ID_OPTION.sub("", _VALID_NAME_OPTION.sub("", text))
 
 
@@ -225,7 +228,7 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         path for path in (ROOT / "docs/docs").rglob("*.mdx") if "release-notes" not in path.relative_to(ROOT).parts
     )
     files.extend((ROOT / "examples").rglob("*.md"))
-    # Remove the valid `configs list --name` and `events --run-id` usages before the token check.
+    # Remove the valid `configs list --name`, `login --name` and `events --run-id` usages before the token check.
     text = _without_current_options("\n".join(path.read_text(encoding="utf-8") for path in files))
     removed_options = (
         "--name",
@@ -266,9 +269,12 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         ("infrahub-sync configs show --name from-netbox", True, True),
         ("### `infrahub-sync configs show`\n\n* `--name <str>`: Removed.\n", False, True),
         ("infrahub-sync diff --config from-netbox --version 1", True, False),
+        ("infrahub-sync login --name admin", False, False),
+        ("### `infrahub-sync login`\n\n* `--name <str>`: Account name.\n", False, False),
+        ("### `infrahub-sync logout`\n\n* `--name <str>`: Not an option.\n", False, True),
     ],
 )
-def test_removed_command_rule_exempts_only_configs_list_name(
+def test_removed_command_rule_exempts_only_configs_list_and_login_name(
     snippet: str, *, command_rejected: bool, name_token_remains: bool
 ) -> None:
     assert (REMOVED_COMMAND.search(snippet) is not None) is command_rejected

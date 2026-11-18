@@ -1089,7 +1089,7 @@ From Python:
 ```python
 from infrahub_sync.client import SyncClient
 
-with SyncClient("http://127.0.0.1:8001", "<the principal token>") as client:
+with SyncClient("http://127.0.0.1:8001", "<an API token>") as client:
     print(client.get_status().worker.state)
 ```
 
