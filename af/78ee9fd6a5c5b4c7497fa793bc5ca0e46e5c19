@@ -1,0 +1,19 @@
+dev/specs/022-local-accounts/overnight-log.md
+  s_cf9ada8f865389::t_e19fdc4c5ef5e3 123-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af78ee9fd6a5c5b4c7497fa793bc5ca0e46e5c19",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
