@@ -118,8 +118,8 @@ def test_a_load_report_lists_entries_per_kind_and_filtered_records() -> None:
 
 
 def test_the_failure_type_names() -> None:
-    # 17 from spec 007 and later, and six for the branch review of a scheduled run (spec 021).
-    assert len(FAILURE_TYPES) == 23
+    # 17 from spec 007 and later, and seven for the branch review of a scheduled run (spec 021).
+    assert len(FAILURE_TYPES) == 24
     assert "left_out_review_required" in FAILURE_TYPES
     assert "internal_error" in FAILURE_TYPES
 
