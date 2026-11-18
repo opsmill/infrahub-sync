@@ -262,6 +262,20 @@ def test_the_level_of_an_account_is_set_and_removed(projection: ProductProjectio
     assert demoted.administrator is False
 
 
+def test_a_change_to_the_value_an_account_already_has_changes_nothing(projection: ProductProjection) -> None:
+    account = _account(projection)
+    later = _T0 + timedelta(hours=1)
+
+    assert not projection.set_account_level(account.account_id, administrator=False, now=later)
+    assert not projection.enable_account(account.account_id, now=later)
+    assert projection.lookup_account(account.account_id) == account
+
+    assert projection.disable_account(account.account_id, now=later)
+    disabled = projection.lookup_account(account.account_id)
+    assert not projection.disable_account(account.account_id, now=later + timedelta(hours=1))
+    assert projection.lookup_account(account.account_id) == disabled
+
+
 def test_a_change_to_an_unknown_account_changes_nothing(projection: ProductProjection) -> None:
     account = _account(projection)
     unknown = "acct_" + "0" * 32

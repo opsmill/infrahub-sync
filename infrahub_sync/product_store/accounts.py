@@ -81,15 +81,18 @@ _SELECT_ACCOUNT_LIST = f"SELECT {_ACCOUNT_COLUMNS} FROM accounts WHERE accounts.
 _ACCOUNT_LIST_DISABLED = " AND accounts.disabled = ?"
 _ACCOUNT_LIST_ORDER = " ORDER BY accounts.name_key, accounts.account_id"
 # A deleted account keeps its row and takes no further change.
+# The level and the state statements change only a row whose value differs, so that a request that
+# repeats a change, or two concurrent requests for the same change, report one change and one event.
 _UPDATE_ACCOUNT_LEVEL = (
-    "UPDATE accounts SET administrator = ?, updated_at = ? WHERE account_id = ? AND deleted_at IS NULL"
+    "UPDATE accounts SET administrator = ?, updated_at = ? "
+    "WHERE account_id = ? AND deleted_at IS NULL AND administrator <> ?"
 )
 _UPDATE_ACCOUNT_PASSWORD_HASH = (
     "UPDATE accounts SET password_hash = ?, password_changed_at = ?, updated_at = ? "
     "WHERE account_id = ? AND deleted_at IS NULL"
 )
 _UPDATE_ACCOUNT_DISABLED = (
-    "UPDATE accounts SET disabled = ?, updated_at = ? WHERE account_id = ? AND deleted_at IS NULL"
+    "UPDATE accounts SET disabled = ?, updated_at = ? WHERE account_id = ? AND deleted_at IS NULL AND disabled <> ?"
 )
 # The deletion empties what names the account and what signs it in, and keeps the two identifiers
 # that every record holds or displays (research R7).
@@ -131,6 +134,10 @@ _UPDATE_SESSION_LAST_USED = "UPDATE account_sessions SET last_used_at = ? WHERE 
 _UPDATE_ACCOUNT_ENVIRONMENT_FLAGS = (
     "UPDATE accounts SET administrator = ?, disabled = ?, environment_managed = ?, updated_at = ? WHERE account_id = ?"
 )
+# Takes the lock of the row of the name before it is read, as ``_LOCK_ACCOUNT`` does by identifier,
+# so that a deletion that commits after the read cannot leave the environment applied to a
+# deleted row.
+_LOCK_ACCOUNT_BY_NAME_KEY = "UPDATE accounts SET updated_at = updated_at WHERE name_key = ? AND deleted_at IS NULL"
 _COUNT_ENVIRONMENT_TOKENS = "SELECT COUNT(*) FROM account_tokens WHERE account_id = ? AND environment_managed = ?"
 _COUNT_MATCHING_ENVIRONMENT_TOKENS = (
     "SELECT COUNT(*) FROM account_tokens "
@@ -332,8 +339,11 @@ def list_accounts(cursor: _Cursor, sql: Sql, *, disabled: bool | None = None) ->
 
 
 def set_account_level(cursor: _Cursor, sql: Sql, account_id: str, *, administrator: bool, now: datetime) -> bool:
-    """Set whether the account is an administrator. Return whether an account changed."""
-    cursor.execute(sql(_UPDATE_ACCOUNT_LEVEL), (administrator, _utc_iso(now), account_id))
+    """Set whether the account is an administrator. Return whether an account changed.
+
+    An account that already has the level does not change.
+    """
+    cursor.execute(sql(_UPDATE_ACCOUNT_LEVEL), (administrator, _utc_iso(now), account_id, administrator))
     return cursor.rowcount == 1
 
 
@@ -345,8 +355,11 @@ def set_account_password_hash(cursor: _Cursor, sql: Sql, account_id: str, *, pas
 
 
 def disable_account(cursor: _Cursor, sql: Sql, account_id: str, *, now: datetime) -> bool:
-    """Disable the account and delete its tokens and its sessions. Return whether an account changed."""
-    cursor.execute(sql(_UPDATE_ACCOUNT_DISABLED), (True, _utc_iso(now), account_id))
+    """Disable the account and delete its tokens and its sessions. Return whether an account changed.
+
+    A disabled account does not change.
+    """
+    cursor.execute(sql(_UPDATE_ACCOUNT_DISABLED), (True, _utc_iso(now), account_id, True))
     if cursor.rowcount != 1:
         return False
     delete_tokens(cursor, sql, account_id)
@@ -355,8 +368,11 @@ def disable_account(cursor: _Cursor, sql: Sql, account_id: str, *, now: datetime
 
 
 def enable_account(cursor: _Cursor, sql: Sql, account_id: str, *, now: datetime) -> bool:
-    """Enable the account. It has no token and no session until it creates one."""
-    cursor.execute(sql(_UPDATE_ACCOUNT_DISABLED), (False, _utc_iso(now), account_id))
+    """Enable the account. It has no token and no session until it creates one.
+
+    Return whether an account changed; an active account does not change.
+    """
+    cursor.execute(sql(_UPDATE_ACCOUNT_DISABLED), (False, _utc_iso(now), account_id, False))
     return cursor.rowcount == 1
 
 
@@ -529,9 +545,12 @@ def apply_environment_account(
       when ``token_digest`` is empty.
     - The record of failed sign-in attempts for the name is deleted.
 
-    A statement that would change nothing is not sent, so a second call with the same environment
-    leaves every row as it is.
+    A statement that would change a value is sent only when the value differs, so a second call with
+    the same environment leaves every row as it is. The row of the name is locked before it is read, so a concurrent
+    deletion either ends before the read, and the account is created again, or waits for the
+    transaction.
     """
+    cursor.execute(sql(_LOCK_ACCOUNT_BY_NAME_KEY), (name_key(name),))
     account = read_account_by_name(cursor, sql, name)
     if account is None:
         account = create_account(
