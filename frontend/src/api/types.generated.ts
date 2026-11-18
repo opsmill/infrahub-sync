@@ -73,7 +73,7 @@ export interface paths {
         };
         /**
          * List Runs
-         * @description Return one page of runs, newest first, optionally for one configuration or version.
+         * @description Return one page of runs, newest first, optionally for one configuration, version, trigger or schedule.
          */
         get: operations["list_runs_runs_get"];
         put?: never;
@@ -311,6 +311,150 @@ export interface paths {
         put?: never;
         /** Validate */
         post: operations["validate_configs__config_id__versions__registry_version__validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Schedules
+         * @description Return one page of schedules, newest first; without ``state``, deleted schedules are left out.
+         */
+        get: operations["list_schedules_schedules_get"];
+        put?: never;
+        /**
+         * Create Schedule
+         * @description Create a schedule that starts a ``sync`` run of one configuration version on a cron cadence.
+         */
+        post: operations["create_schedule_schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Schedule
+         * @description Return one schedule, also a deleted schedule.
+         */
+        get: operations["get_schedule_schedules__schedule_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change Schedule
+         * @description Change one or more settings of a schedule.
+         */
+        post: operations["change_schedule_schedules__schedule_id__change_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause Schedule
+         * @description Pause a schedule: it starts no run until it is resumed.
+         */
+        post: operations["pause_schedule_schedules__schedule_id__pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Schedule
+         * @description Make a paused schedule active, or a stopped schedule whose reason no longer holds.
+         */
+        post: operations["resume_schedule_schedules__schedule_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete Schedule
+         * @description Delete a schedule; its record, its runs and its open proposed change are kept.
+         */
+        post: operations["delete_schedule_schedules__schedule_id__delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/take-over": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take Over Schedule
+         * @description Make the calling administrator the owner of a schedule; a schedule stopped because its owner is gone becomes active.
+         */
+        post: operations["take_over_schedule_schedules__schedule_id__take_over_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -882,14 +1026,29 @@ export interface components {
             reason?: string | null;
         };
         /**
-         * ChangePasswordRequest
-         * @description The current password of the caller and the password that replaces it.
+         * ChangeScheduleRequest
+         * @description Request a change of one or more settings of a schedule.
+         *
+         *     A setting that is `None` keeps its value. The request must name at least one setting. The
+         *     name, the configuration and the owner of a schedule cannot be changed, so the model refuses
+         *     them as unknown fields. `cron` and `timezone` are not validated here, as in
+         *     `CreateScheduleRequest`.
          */
-        ChangePasswordRequest: {
-            /** Current Password */
-            current_password: string;
-            /** New Password */
-            new_password: string;
+        ChangeScheduleRequest: {
+            /** Registry Version */
+            registry_version?: number | null;
+            /** Cron */
+            cron?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Write Target */
+            write_target?: ("branch-review" | "default-branch") | null;
+            /** Write When Left Out */
+            write_when_left_out?: boolean | null;
+            /** Overlap Policy */
+            overlap_policy?: ("reject" | "queue") | null;
+            /** Start Late By At Most Seconds */
+            start_late_by_at_most_seconds?: number | null;
             /** Reason */
             reason?: string | null;
         };
@@ -1020,45 +1179,49 @@ export interface components {
             reason?: string | null;
         };
         /**
-         * CreateTokenRequest
-         * @description The name of a new API token and, when it has one, its expiry date with a time zone.
+         * CreateScheduleRequest
+         * @description Request a schedule that starts a `sync` run of one configuration version on a cron cadence.
+         *
+         *     `cron` and `timezone` are text that this model does not validate: the Sync API validates
+         *     both and answers `schedule-cron-invalid` or `schedule-timezone-invalid`. The Sync API also
+         *     decides which pairs of settings it accepts. `start_late_by_at_most_seconds` is `None` when
+         *     the request does not set it, and the Sync API then uses 3600.
          */
-        CreateTokenRequest: {
+        CreateScheduleRequest: {
             /** Name */
             name: string;
-            /** Expires At */
-            expires_at?: string | null;
+            /** Config Id */
+            config_id: string;
+            /** Registry Version */
+            registry_version: number;
+            /** Cron */
+            cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            timezone: string;
+            /**
+             * Write Target
+             * @default branch-review
+             * @enum {string}
+             */
+            write_target: "branch-review" | "default-branch";
+            /**
+             * Write When Left Out
+             * @default false
+             */
+            write_when_left_out: boolean;
+            /**
+             * Overlap Policy
+             * @default reject
+             * @enum {string}
+             */
+            overlap_policy: "reject" | "queue";
+            /** Start Late By At Most Seconds */
+            start_late_by_at_most_seconds?: number | null;
             /** Reason */
             reason?: string | null;
-        };
-        /**
-         * CreatedTokenResource
-         * @description The answer of the creation of an API token: the token and its value, returned this once.
-         */
-        CreatedTokenResource: {
-            /** Token Id */
-            token_id: string;
-            /** Name */
-            name: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Expires At */
-            expires_at?: string | null;
-            /** Last Used At */
-            last_used_at?: string | null;
-            /** Token */
-            token: string;
-        };
-        /**
-         * DeletedAccountResource
-         * @description The answer of a deletion: what every record of the account displays from now on.
-         */
-        DeletedAccountResource: {
-            /** Placeholder */
-            placeholder: string;
         };
         /**
          * ErrorDetail
@@ -1090,6 +1253,34 @@ export interface components {
          */
         ErrorEnvelope: {
             error: components["schemas"]["ErrorDetail"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EventDetailsResource
+         * @description The facts of one event, under a closed set of keys. A key the event does not use is ``None``.
+         *
+         *     ``cause`` is a refusal code or a failure class, never free text from Infrahub.
+         */
+        EventDetailsResource: {
+            /** Start At */
+            start_at?: string | null;
+            /** Starts */
+            starts?: number | null;
+            /** First Start At */
+            first_start_at?: string | null;
+            /** Last Start At */
+            last_start_at?: string | null;
+            /** Left Out */
+            left_out?: number | null;
+            /** Branch */
+            branch?: string | null;
+            /** Proposed Change Id */
+            proposed_change_id?: string | null;
+            /** Replaced Run Id */
+            replaced_run_id?: string | null;
+            /** Cause */
+            cause?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -1163,6 +1354,7 @@ export interface components {
              * @default []
              */
             related: components["schemas"]["EventRelatedResource"][];
+            details?: components["schemas"]["EventDetailsResource"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -1573,6 +1765,16 @@ export interface components {
             destination_branch?: string | null;
             approval?: components["schemas"]["RunApprovalResource"] | null;
             /**
+             * Trigger Type
+             * @default manual
+             * @enum {string}
+             */
+            trigger_type: "manual" | "scheduled";
+            /** Schedule Id */
+            schedule_id?: string | null;
+            /** Scheduled Start At */
+            scheduled_start_at?: string | null;
+            /**
              * Artifact Refs
              * @default []
              */
@@ -1770,6 +1972,106 @@ export interface components {
              * @default []
              */
             resumes: components["schemas"]["ResumeResource"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleActionRequest
+         * @description Request a pause, a resume, a deletion or a take-over of a schedule, with an optional reason.
+         */
+        ScheduleActionRequest: {
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ScheduleOpenBranchResource
+         * @description The most recent branch of a schedule that is open for review, with the run that wrote it.
+         */
+        ScheduleOpenBranchResource: {
+            /** Run Id */
+            run_id: string;
+            /** Branch */
+            branch: string;
+            /** Proposed Change Id */
+            proposed_change_id?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SchedulePage
+         * @description One page of the schedule list, newest first. ``next_cursor`` is ``None`` on the last page.
+         */
+        SchedulePage: {
+            /** Items */
+            items: components["schemas"]["ScheduleResource"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleResource
+         * @description Represent one schedule: its cadence, its settings, its state and its most recent run.
+         *
+         *     ``write_target``, ``overlap_policy``, ``state`` and ``state_reason`` are plain strings, so
+         *     the client still reads a value a newer Sync API adds. ``newer_version``,
+         *     ``start_late_by_at_most_seconds`` and ``waiting_start_at`` are ``None`` for a Sync API that
+         *     does not return them. All times are in UTC.
+         */
+        ScheduleResource: {
+            /** Schedule Id */
+            schedule_id: string;
+            /** Name */
+            name: string;
+            /** Config Id */
+            config_id: string;
+            /** Registry Version */
+            registry_version: number;
+            /** Newer Version */
+            newer_version?: number | null;
+            /** Cron */
+            cron: string;
+            /** Timezone */
+            timezone: string;
+            /** Write Target */
+            write_target: string;
+            /** Write When Left Out */
+            write_when_left_out: boolean;
+            /** Left Out Set By */
+            left_out_set_by?: string | null;
+            /** Left Out Set At */
+            left_out_set_at?: string | null;
+            /** Overlap Policy */
+            overlap_policy: string;
+            /** Start Late By At Most Seconds */
+            start_late_by_at_most_seconds?: number | null;
+            /** State */
+            state: string;
+            /** State Reason */
+            state_reason?: string | null;
+            /** Owner */
+            owner: string;
+            /** Next Start At */
+            next_start_at?: string | null;
+            /** Waiting Start At */
+            waiting_start_at?: string | null;
+            /** Last Run Id */
+            last_run_id?: string | null;
+            /** Prefect Synced */
+            prefect_synced: boolean;
+            /** Consecutive Failures */
+            consecutive_failures: number;
+            open_branch?: components["schemas"]["ScheduleOpenBranchResource"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         } & {
             [key: string]: unknown;
         };
@@ -2097,6 +2399,8 @@ export interface operations {
             query?: {
                 config_id?: string | null;
                 registry_version?: string | null;
+                trigger_type?: string | null;
+                schedule_id?: string | null;
                 limit?: string | null;
                 cursor?: string | null;
             };
@@ -3217,6 +3521,651 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_schedules_schedules_get: {
+        parameters: {
+            query?: {
+                config_id?: string | null;
+                state?: string | null;
+                limit?: string | null;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_schedule_schedules_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_schedule_schedules__schedule_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    change_schedule_schedules__schedule_id__change_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    pause_schedule_schedules__schedule_id__pause_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    resume_schedule_schedules__schedule_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_schedule_schedules__schedule_id__delete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    take_over_schedule_schedules__schedule_id__take_over_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
