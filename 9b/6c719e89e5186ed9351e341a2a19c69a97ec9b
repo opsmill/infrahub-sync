@@ -1,0 +1,65 @@
+tests/client/test_schedules.py
+  s_29b17f91da9f30::t_8a05f624bf51ae 1-295
+infrahub_sync/client/client.py
+  s_29b17f91da9f30::t_f3b4394f94202d 401,407-409,411-415,422-427,432-438,443-548
+  s_29b17f91da9f30::t_4789da6a70e33a 566-567
+  s_29b17f91da9f30::t_c860f0c064af1e 42
+  s_29b17f91da9f30::t_3cb198acf4ab96 51
+  s_29b17f91da9f30::t_3b9868fbff5a6d 68-70
+  s_29b17f91da9f30::t_c69507463d6cf7 114-119
+infrahub_sync/cli.py
+  s_29b17f91da9f30::t_3710327a788e8b 2030-2037
+  s_29b17f91da9f30::t_daf0d955bb9640 2232-2234,2241,2244-2251,2253
+  s_29b17f91da9f30::t_bfb7f88de32a3f 2524
+  s_29b17f91da9f30::t_820788e7006957 2226,2271-2499,2501-2510,2513-2523,2525,2527-2537,2539-2560,2562-2570
+  s_29b17f91da9f30::t_a33d8a2a983c71 118
+  s_29b17f91da9f30::t_10d48218b69c22 2261
+  s_29b17f91da9f30::t_6882a833d52fb9 130,133
+  s_29b17f91da9f30::t_63a156e65eb492 49-50
+  s_29b17f91da9f30::t_4ae585c2990eab 1809,1818-1824,1826,1828,1833-1836,1840,1845-1854,1858-1859
+  s_29b17f91da9f30::t_6ae0df710c3acd 15
+  s_29b17f91da9f30::t_3ec592ea58f852 2197-2207,2210,2216-2220
+  s_29b17f91da9f30::t_708f4aac8310d2 2500
+  s_29b17f91da9f30::t_512b22e16e8839 2511-2512
+  s_29b17f91da9f30::t_eaa3555f191318 2526
+  s_29b17f91da9f30::t_284965b2bbbb57 2538
+  s_29b17f91da9f30::t_dc449dd54c1fed 2561
+  s_9893e0fde7bc0f::t_6abc80156f2085 33,39,2022-2023
+tests/cli/test_schedule_commands.py
+  s_29b17f91da9f30::t_dd07544b72a75d 1-154,156-168,170,172-187,189-261,263-435
+  s_29b17f91da9f30::t_131c5e77b807f5 155
+  s_29b17f91da9f30::t_0d84f6d0eb37a6 169
+  s_29b17f91da9f30::t_0986f475c290b7 171
+  s_29b17f91da9f30::t_2f23749a5dde12 188
+  s_29b17f91da9f30::t_4df235161280fb 262
+tests/cli/test_client_commands.py
+  s_9893e0fde7bc0f::t_381c44fde4bd1d 933-935,1962-1963
+tests/cli/test_parity_and_closure.py
+  s_9893e0fde7bc0f::t_02e493f0df1337 79-87,124-132,142,187-189
+dev/specs/021-scheduled-runs/tasks.md
+  s_29b17f91da9f30::t_1da81bdf629330 79,90-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9b6c719e89e5186ed9351e341a2a19c69a97ec9b",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_9893e0fde7bc0f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abfa522d5fbf261ed",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
