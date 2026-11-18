@@ -321,6 +321,9 @@ def test_the_printed_form_of_a_session_and_of_a_created_token_holds_no_value() -
     for printed in (repr(created), str(created), f"{created}", repr((created,))):
         assert TOKEN_VALUE not in printed
         assert "ci" in printed
+    # Rich and other pretty-printers read `__repr_args__`, not `__repr__`.
+    assert "token" not in dict(session.__repr_args__())
+    assert "token" not in dict(created.__repr_args__())
 
 
 @pytest.mark.parametrize(

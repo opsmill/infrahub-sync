@@ -120,7 +120,11 @@ _CONFIG_HELP = "Configuration ID or name. The ID is tried first, then the name."
 _ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 _READABLE_ESCAPES = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
 
-app = typer.Typer(help="Synchronize registered configurations through the Sync API.")
+app = typer.Typer(
+    help="Synchronize registered configurations through the Sync API.",
+    # A local variable of a command can hold a typed password or a token; a traceback shows none.
+    pretty_exceptions_show_locals=False,
+)
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
 runs_app = typer.Typer(help="Inspect service-owned runs.")
 app.add_typer(configs_app, name="configs")

@@ -1104,7 +1104,7 @@ class SessionResource(_ResourceModel):
     The Sync API returns the token this once. Its printed form shows the account name only.
     """
 
-    token: str
+    token: str = Field(repr=False)
     account: AccountResource
     idle_seconds: int
 
@@ -1131,7 +1131,7 @@ class CreatedTokenResource(TokenResource):
     Its printed form shows the token name only.
     """
 
-    token: str
+    token: str = Field(repr=False)
 
     def __repr__(self) -> str:
         """Show the token name only, so that no log line or traceback holds the value."""

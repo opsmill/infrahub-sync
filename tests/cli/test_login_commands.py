@@ -573,3 +573,8 @@ def test_the_session_file_never_holds_a_password(sync_api: FakeSyncAPI, session_
     text = (session_directory / SESSION_FILE_NAME).read_text(encoding="utf-8")
     assert PASSWORD not in text
     assert json.loads(text) == {URL: {"token": SESSION_TOKEN, "account": "alice"}}
+
+
+def test_an_unexpected_exception_prints_no_local_variable() -> None:
+    # A local variable of `login` or `password` holds a typed password; a traceback must not show it.
+    assert app.pretty_exceptions_show_locals is False
