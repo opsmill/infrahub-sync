@@ -1,0 +1,55 @@
+.github/scripts/nightly_e2e.py
+  s_2d3d101935fd75::t_4759f3568a4384 23-24,86-88,190,193
+AGENTS.md
+  s_2d3d101935fd75::t_2e40c557bd520f 209
+README.md
+  s_2d3d101935fd75::t_6f1c2da1b54d6b 77-78,82-84,95,103-105,110-112
+changelog/+dev-stack-presets.changed.md
+  s_2d3d101935fd75::t_c469c348577803 1
+dev/adr/0029-the-development-stack-is-one-compose-file-with-profiles.md
+  s_2d3d101935fd75::t_332a7fb9cc91a3 4,27-28,73-93
+development/README.md
+  s_2d3d101935fd75::t_b0fc89aca0292f 3-5,14-16,19-22,26-27
+development/docker-compose.yml
+  s_2d3d101935fd75::t_8726ec17246d61 2-3,5-7,25-28
+docs/docs/contributing.mdx
+  s_2d3d101935fd75::t_20b385b023fbc9 158-162,167
+docs/docs/creating-a-sync-project.mdx
+  s_2d3d101935fd75::t_2ad58d59521586 98-99
+docs/docs/development-stack.mdx
+  s_2d3d101935fd75::t_3a3566e399fe07 6-11,45-86,90-91,108,111,114-116,119-121,127-128,140-144,168-169,214,218,278-301,311-313,322,567-569,571,574
+docs/docs/development/guidelines/testing-tiers.md
+  s_2d3d101935fd75::t_4ca51a3e861823 72,140,231,272,330,336,565
+docs/docs/development/knowledge/repository-tour.md
+  s_2d3d101935fd75::t_1951d2cdd0c442 341,358-362
+tasks/dev.py
+  s_2d3d101935fd75::t_470b281336bf2c 9-28,64,70-80,109-112,115-116,191-242,279-280,302-310,329-330,436-443,446-449,452-456,474,478-535,538-542,544,546-575,743-745,747-752,794,801,803-809,823-825,832,838-843,847-872,965-967,982,1024-1027,1029-1032,1034,1042-1043,1049-1078,1097,1108-1110,1127,1161-1163,1168-1172,1174,1178-1179,1192-1193,1254-1255
+tasks/netbox.py
+  s_2d3d101935fd75::t_b0324961e21b24 38,435-439,445-450,492,498-561
+tests/dev_stack/test_deps_mode.py
+  s_2d3d101935fd75::t_85d0f8cdb8b4fd 136-140,480-501
+tests/dev_stack/test_dev_tasks.py
+  s_2d3d101935fd75::t_9266180c567a50 69-79,83-94,98-100,114,119-121,127-128,153,155-156,188,206,429-430,491-731
+tests/dev_stack/test_netbox_presence.py
+  s_2d3d101935fd75::t_0e60b4b20f147e 1-115
+tests/test_nightly_e2e.py
+  s_2d3d101935fd75::t_787f56d723dc5a 14-15,49-64
+tests/test_task_inventory.py
+  s_2d3d101935fd75::t_3a5d8c33633974 33-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67c47caa14400aab7cd9aa00f41ed31b1d7fb6c3",
+  "prompts": {},
+  "sessions": {
+    "s_2d3d101935fd75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e718161f-01ea-4015-976a-63ce56c6c4bf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
