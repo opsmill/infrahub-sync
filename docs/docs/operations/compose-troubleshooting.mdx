@@ -71,7 +71,7 @@ unless your shell exports `INFRAHUB_SYNC_API_TOKEN`: Compose then uses the expor
       characters, or not valid UTF-8 text;
     - `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is shorter than 16 characters, holds a character that
       is not printable ASCII, starts or ends with a space, or starts with `ifs_pat_` or `ifs_ses_`;
-    - `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number of at least 60.
+    - `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number from 60 to 999999999999.
 
   Correct the value, then run `docker compose up -d --wait --no-deps sync-api`.
 - **A person's sign-in is refused although the password is right.** After 5 failed sign-ins

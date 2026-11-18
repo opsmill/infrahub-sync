@@ -42,7 +42,12 @@ PASSWORD_MAX_LENGTH = 1024
 ADMIN_ACCOUNT_TOKEN_MIN_LENGTH = 16
 SESSION_IDLE_SECONDS_DEFAULT = 28800
 SESSION_IDLE_SECONDS_MINIMUM = 60
-_SESSION_IDLE_SECONDS_MAX_DIGITS = 12
+# The largest period that a ``timedelta`` holds with room to spare: about 31,700 years.
+SESSION_IDLE_SECONDS_MAXIMUM = 999_999_999_999
+_SESSION_IDLE_SECONDS_MAX_DIGITS = len(str(SESSION_IDLE_SECONDS_MAXIMUM))
+_SESSION_IDLE_SECONDS_RULE = (
+    f"must be a whole number from {SESSION_IDLE_SECONDS_MINIMUM} to {SESSION_IDLE_SECONDS_MAXIMUM}"
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -175,18 +180,19 @@ def session_idle_seconds(environ: Mapping[str, str] | None = None) -> int:
     Unset or empty means the default of 28800 seconds.
 
     Raises:
-        AccountSettingsError: the value is not a whole number of at least 60.
+        AccountSettingsError: the value is not a whole number from 60 to 999999999999.
     """
     env = os.environ if environ is None else environ
     value = env.get(SESSION_IDLE_SECONDS_ENV, "").strip()
     if not value:
         return SESSION_IDLE_SECONDS_DEFAULT
     # The length is checked first: Python refuses to convert a very long text of digits.
-    if not (value.isascii() and value.isdigit()) or len(value) > _SESSION_IDLE_SECONDS_MAX_DIGITS:
-        msg = f"{SESSION_IDLE_SECONDS_ENV} must be a whole number of at least {SESSION_IDLE_SECONDS_MINIMUM}"
-        raise AccountSettingsError(msg)
-    if int(value) < SESSION_IDLE_SECONDS_MINIMUM:
-        msg = f"{SESSION_IDLE_SECONDS_ENV} must be a whole number of at least {SESSION_IDLE_SECONDS_MINIMUM}"
+    if (
+        not (value.isascii() and value.isdigit())
+        or len(value) > _SESSION_IDLE_SECONDS_MAX_DIGITS
+        or not SESSION_IDLE_SECONDS_MINIMUM <= int(value) <= SESSION_IDLE_SECONDS_MAXIMUM
+    ):
+        msg = f"{SESSION_IDLE_SECONDS_ENV} {_SESSION_IDLE_SECONDS_RULE}"
         raise AccountSettingsError(msg)
     return int(value)
 

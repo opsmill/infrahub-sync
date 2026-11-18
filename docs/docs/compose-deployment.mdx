@@ -122,7 +122,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` | empty | Set on `sync-api`. One API token of the `admin` account: at least 16 printable ASCII characters with no space at either end, and it must not start with `ifs_pat_` or `ifs_ses_`. Empty, `admin` has no API token. `sync-api` applies it at each start. |
-| `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` | `28800` (8 hours) | Set on `sync-api`. The number of seconds without a request after which a sign-in session ends. A whole number of at least 60. Empty means the default. |
+| `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` | `28800` (8 hours) | Set on `sync-api`. The number of seconds without a request after which a sign-in session ends. A whole number from 60 to 999999999999. Empty means the default. |
 | `INFRAHUB_SYNC_API_TOKEN` | empty | The API token the `cli` service presents: the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, or a token that an account created with `infrahub-sync tokens create`. Empty, every `cli` call is refused. |
 | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | empty | The destination Infrahub token, for a package that references it. |
 | `INFRAHUB_SYNC_CREDENTIAL_*` | empty | Source credentials, for a package that references them. Only the worker receives them. The full list is in [Credential variables the worker receives](#credential-variables-the-worker-receives). |
@@ -279,7 +279,7 @@ changes.
 - `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is shorter than 16 characters, holds a
   character that is not printable ASCII, starts or ends with a space, or starts
   with `ifs_pat_` or `ifs_ses_`.
-- `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number of at least 60.
+- `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number from 60 to 999999999999.
 
 Its log names the variable and never shows the value:
 

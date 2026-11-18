@@ -76,7 +76,7 @@ define it and the sessions:
 | --- | --- | --- |
 | `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | yes | The password of `admin`. 12 to 1,024 characters of valid UTF-8 text. No default value. |
 | `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` | no | One API token of `admin`. At least 16 printable ASCII characters with no space at either end, and it must not start with `ifs_pat_` or `ifs_ses_`. Empty or unset: `admin` has no API token. |
-| `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` | no | The number of seconds without a request after which a session ends. Default `28800` (8 hours). A whole number of at least 60. Empty means the default. |
+| `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` | no | The number of seconds without a request after which a session ends. Default `28800` (8 hours). A whole number from 60 to 999999999999. Empty means the default. |
 
 The API applies the first two at each start, then removes the password from its own process
 environment. A value that breaks a rule stops the start with a message that names the variable

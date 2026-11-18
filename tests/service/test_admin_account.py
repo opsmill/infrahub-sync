@@ -375,8 +375,8 @@ def test_a_bad_variable_stops_the_start_with_a_message_that_names_it(
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(None, 28800), ("", 28800), ("60", 60), (" 3600 ", 3600)],
-    ids=("unset", "empty", "minimum", "spaces"),
+    [(None, 28800), ("", 28800), ("60", 60), (" 3600 ", 3600), ("999999999999", 999_999_999_999)],
+    ids=("unset", "empty", "minimum", "spaces", "maximum"),
 )
 def test_the_idle_period_is_read_from_the_environment(value: str | None, expected: int) -> None:
     environment = {} if value is None else {SESSION_IDLE_SECONDS_ENV: value}
@@ -384,8 +384,8 @@ def test_the_idle_period_is_read_from_the_environment(value: str | None, expecte
     assert session_idle_seconds(environment) == expected
 
 
-@pytest.mark.parametrize("value", ["59", "7", "-60", "3600.5", "1e4", "an hour", "9" * 5000])
-def test_an_idle_period_that_is_not_a_whole_number_of_at_least_60_is_refused(
+@pytest.mark.parametrize("value", ["59", "7", "-60", "3600.5", "1e4", "an hour", "1000000000000", "9" * 5000])
+def test_an_idle_period_that_is_not_a_whole_number_from_60_to_the_maximum_is_refused(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
     monkeypatch.setenv(SESSION_IDLE_SECONDS_ENV, value)
