@@ -1,0 +1,21 @@
+tests/service/test_admin_account.py
+  s_cf9ada8f865389::t_86a43e121252c4 440-457
+infrahub_sync/service/serve.py
+  s_cf9ada8f865389::t_0579828e318722 12,31,99-100,116-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ceae03bfebad6873e1dbd28076f8bcab86204274",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
