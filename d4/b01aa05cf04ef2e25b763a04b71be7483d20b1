@@ -1,0 +1,25 @@
+infrahub_sync/service/account_actions.py
+  s_fba65eab43238c::t_db26d73f8f988e 27,91,100-113,665
+infrahub_sync/service/account_routes.py
+  s_fba65eab43238c::t_5a6457505931ff 21,80-82
+tests/service/test_free_text.py
+  s_fba65eab43238c::t_0267855845f5eb 201-223
+tests/service/test_token_routes.py
+  s_fba65eab43238c::t_6ba3b399fa77ff 385-396
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d4b01aa05cf04ef2e25b763a04b71be7483d20b1",
+  "prompts": {},
+  "sessions": {
+    "s_fba65eab43238c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac2d1eaf457ba695c",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
