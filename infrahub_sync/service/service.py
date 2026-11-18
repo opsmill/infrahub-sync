@@ -550,6 +550,7 @@ class RunService:
         """Accept an independently auditable, read-only verification."""
         self._require_safe_reason(principal.actor, "verify", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "verify", request.reason)
+        self._refuse_scheduled_branch_review(run, principal, "verify", request.reason)
         body = request.model_dump(mode="json")
         # The branch the run was created for, so the destination-binding check compares the
         # plan with the destination it was planned against. `None` for a run that predates the
@@ -588,6 +589,7 @@ class RunService:
         """Accept apply only for the exact reviewed retained plan."""
         self._require_safe_reason(principal.actor, "apply", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "apply", request.reason)
+        self._refuse_scheduled_branch_review(run, principal, "apply", request.reason)
         body = request.model_dump(mode="json")
         parameters = self._stage_parameters(
             run,
@@ -671,6 +673,7 @@ class RunService:
         operation = "resume"
         self._require_safe_reason(principal.actor, operation, request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, operation, request.reason)
+        self._refuse_scheduled_branch_review(run, principal, operation, request.reason)
         body = request.model_dump(mode="json")
         # The branch the run was planned against, as `verify` uses: the saved plan's destination.
         parameters = self._stage_parameters(
@@ -766,6 +769,32 @@ class RunService:
             operation=operation,
             reason=reason,
             outcome="refused-cancelled",
+        )
+
+    def _refuse_scheduled_branch_review(
+        self, run: ProductRun, principal: Principal, operation: str, reason: str | None
+    ) -> None:
+        """Refuse to verify, apply or resume a scheduled run with branch review (spec 021, FR-028).
+
+        A run has branch review when the admission of its start wrote its branch row; the
+        schedule's write target of today does not decide it. The refusal is recorded like any
+        other, before any receipt is looked up or reserved.
+
+        Raises:
+            ServiceAPIError: ``409 scheduled-run-not-appliable``.
+        """
+        if run.trigger_type != "scheduled" or not self._projection.lookup_schedule_branch(run.run_id).available:
+            return
+        raise self._refusal(
+            409,
+            "scheduled-run-not-appliable",
+            "this scheduled run writes through branch review and cannot be verified, applied or resumed by a "
+            "person; the next run of its schedule replaces it",
+            run_id=run.run_id,
+            actor=principal.actor,
+            operation=operation,
+            reason=reason,
+            outcome="refused-scheduled-run-not-appliable",
         )
 
     def _require_write_confirmation(
@@ -1431,31 +1460,50 @@ class RunService:
         *,
         config_id: str | None = None,
         registry_version: int | None = None,
+        trigger_type: str | None = None,
+        schedule_id: str | None = None,
         cursor: str | None = None,
         limit: int | None = None,
     ) -> RunPage:
         """Return one page of runs, newest first, optionally for one configuration or version.
 
+        ``trigger_type`` (``manual`` or ``scheduled``) and ``schedule_id`` restrict the list to
+        the runs that a person or a schedule started (spec 021). An unknown schedule matches
+        no run rather than being refused.
+
         Raises:
-            ServiceAPIError: ``422 request-invalid`` for a version without a configuration or a
-                limit outside 1-200; ``404 configuration-not-found`` or
+            ServiceAPIError: ``422 request-invalid`` for a version without a configuration, a
+                limit outside 1-200, an unknown trigger type or a malformed schedule
+                identifier; ``404 configuration-not-found`` or
                 ``404 configuration-version-not-found`` for an unknown filter value.
             InvalidCursorError: ``cursor`` does not decode or was issued for other filters.
         """
         if registry_version is not None and config_id is None:
             raise self._error(422, "request-invalid", "registry_version requires config_id")
         page_size = page_size_or_refuse(limit, secrets=self._secrets)
+        try:
+            run_filters = RunFilters.model_validate(
+                {
+                    "config_id": config_id,
+                    "registry_version": registry_version,
+                    "trigger_type": trigger_type,
+                    "schedule_id": schedule_id,
+                }
+            )
+        except ValueError:
+            # The message names no value: the query string is the caller's, not the server's.
+            raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
         if config_id is not None:
             self._require_configuration_filter(config_id, registry_version)
         filters: dict[str, FilterValue] = {
             "list": "runs",
             "config_id": config_id,
             "registry_version": registry_version,
+            "trigger_type": trigger_type,
+            "schedule_id": schedule_id,
         }
         after = None if cursor is None else timestamp_key(decode_cursor(cursor, filters))
-        page = self._projection.list_runs(
-            RunFilters(config_id=config_id, registry_version=registry_version), after=after, limit=page_size
-        )
+        page = self._projection.list_runs(run_filters, after=after, limit=page_size)
         last = page.items[-1] if page.has_more else None
         next_cursor = None if last is None else timestamp_cursor(last.started_at, last.run_id, filters)
         return public_run_page(page.items, next_cursor)

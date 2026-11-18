@@ -535,21 +535,28 @@ def create_app(
         return JSONResponse(status_code=status, content=content)
 
     @application.get("/runs", responses=ERROR_RESPONSES)
-    def list_runs(
+    def list_runs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         _principal: Annotated[Principal, Depends(authenticate)],
         config_id: Annotated[str | None, Query(pattern=CONFIG_ID_PATTERN)] = None,
         registry_version: Annotated[str | None, Query()] = None,
+        trigger_type: Annotated[str | None, Query()] = None,
+        schedule_id: Annotated[str | None, Query()] = None,
         limit: Annotated[str | None, Query()] = None,
         cursor: Annotated[str | None, Query()] = None,
     ) -> RunPage:
-        """Return one page of runs, newest first, optionally for one configuration or version."""
+        """Return one page of runs, newest first, optionally for one configuration, version, trigger or schedule."""
         version = (
             None
             if registry_version is None
             else parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION)
         )
         return service.list_runs(
-            config_id=config_id, registry_version=version, cursor=cursor, limit=parse_page_limit(limit)
+            config_id=config_id,
+            registry_version=version,
+            trigger_type=trigger_type,
+            schedule_id=schedule_id,
+            cursor=cursor,
+            limit=parse_page_limit(limit),
         )
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)

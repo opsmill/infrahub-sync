@@ -81,7 +81,8 @@ from infrahub_sync.service.read_progress import StoreSideReadObserver, record_wa
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
-from tests.service.schedule_fixtures import NoDeploymentSchedules
+from tests.service.schedule_fixtures import OWNER_TOKEN as SCHEDULE_OWNER_TOKEN
+from tests.service.schedule_fixtures import NoDeploymentSchedules, schedule_api
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -2999,3 +3000,96 @@ def test_the_client_keeps_a_plan_step_part_and_field_from_a_newer_server() -> No
     assert set(parsed.parts) == {"comparing", "publishing"}
     assert parsed.parts["comparing"].model_extra == {"field_from_a_newer_server": "readable"}
     assert parsed.model_extra == {"field_from_a_newer_server": 1}
+
+
+# The routes of the schedules (spec 021): every one is authenticated and declares 401 and 422.
+_SCHEDULE_OPERATIONS = {
+    ("/schedules", "post"),
+    ("/schedules", "get"),
+    ("/schedules/{schedule_id}", "get"),
+    ("/schedules/{schedule_id}/change", "post"),
+    ("/schedules/{schedule_id}/pause", "post"),
+    ("/schedules/{schedule_id}/resume", "post"),
+    ("/schedules/{schedule_id}/delete", "post"),
+}
+
+
+def test_the_schedule_routes_are_authenticated_and_declare_their_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    api = schedule_api(monkeypatch, tmp_path)
+
+    paths = api.client.get("/openapi.json").json()["paths"]
+
+    operations = {(path, method) for path, route in paths.items() if path.startswith("/schedules") for method in route}
+    assert operations == _SCHEDULE_OPERATIONS
+    for path, method in operations:
+        operation = paths[path][method]
+        assert "401" in operation["responses"]
+        assert "422" in operation["responses"]
+        assert operation["security"] == [{"BearerAuth": []}]
+        url = path.replace("{schedule_id}", f"s-{'0' * 32}")
+        unauthenticated = api.client.request(method.upper(), url, headers={"Idempotency-Key": "no-token"}, json={})
+        assert unauthenticated.status_code == 401, (path, method, unauthenticated.text)
+    assert {"/runs", "/runs/{run_id}", "/events"} <= set(paths)
+
+
+def test_the_run_list_filters_on_the_trigger_and_the_schedule_and_returns_the_run_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    api = schedule_api(monkeypatch, tmp_path)
+    read = {"Authorization": f"Bearer {SCHEDULE_OWNER_TOKEN}"}
+    schedule_id = api.create(write_target="default-branch")["schedule_id"]
+    start = datetime(2027, 1, 5, 1, tzinfo=timezone.utc)
+    scheduled = api.scheduled_run(schedule_id, start)
+    manual = api.client.post(
+        "/runs",
+        json={"operation": "plan", "config_id": api.config_id, "registry_version": 1, "reason": "by hand"},
+        headers={**read, "Idempotency-Key": "manual-plan"},
+    )
+    assert manual.status_code == 202, manual.text
+    manual_id = manual.json()["run"]["run_id"]
+
+    def listed(**params: str) -> list[str]:
+        response = api.client.get("/runs", headers=read, params=params)
+        assert response.status_code == 200, response.text
+        return [item["run_id"] for item in response.json()["items"]]
+
+    assert listed(trigger_type="scheduled") == [scheduled]
+    assert listed(trigger_type="manual") == [manual_id]
+    assert listed(schedule_id=schedule_id) == [scheduled]
+    assert listed(schedule_id=f"s-{'0' * 32}") == []
+    assert set(listed()) == {scheduled, manual_id}
+    item = api.client.get("/runs", headers=read, params={"schedule_id": schedule_id}).json()["items"][0]
+    assert (item["trigger_type"], item["schedule_id"], item["scheduled_start_at"]) == (
+        "scheduled",
+        schedule_id,
+        "2027-01-05T01:00:00Z",
+    )
+    resource = api.client.get(f"/runs/{manual_id}", headers=read).json()["run"]
+    assert (resource["trigger_type"], resource["schedule_id"], resource["scheduled_start_at"]) == (
+        "manual",
+        None,
+        None,
+    )
+    for invalid in ({"trigger_type": "hourly"}, {"schedule_id": "not-a-schedule"}):
+        refused = api.client.get("/runs", headers=read, params=invalid)
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["error"]["code"] == "request-invalid"
+    # A cursor is valid only for the filters it was issued for.
+    again = api.client.post(
+        "/runs",
+        json={"operation": "plan", "config_id": api.config_id, "registry_version": 1, "reason": "again"},
+        headers={**read, "Idempotency-Key": "manual-plan-again"},
+    )
+    assert again.status_code == 202, again.text
+    first = api.client.get("/runs", headers=read, params={"trigger_type": "manual", "limit": "1"}).json()
+    assert first["next_cursor"] is not None
+    same_filter = api.client.get(
+        "/runs", headers=read, params={"trigger_type": "manual", "cursor": first["next_cursor"]}
+    )
+    other_filter = api.client.get(
+        "/runs", headers=read, params={"trigger_type": "scheduled", "cursor": first["next_cursor"]}
+    )
+    assert same_filter.status_code == 200, same_filter.text
+    assert other_filter.status_code == 422, other_filter.text

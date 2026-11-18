@@ -13,7 +13,7 @@ import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, NoReturn
 from uuid import UUID
@@ -26,7 +26,7 @@ from prefect.client.orchestration import get_client
 from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
 from prefect.runtime import flow_run as current_flow_run
-from prefect.states import Failed, State
+from prefect.states import Completed, Failed, State
 from pydantic_core import to_json
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
@@ -74,6 +74,7 @@ from infrahub_sync.plan.verify import (
 from infrahub_sync.product_store import (
     AuditEvent,
     BaselineWriteback,
+    DuplicateRunError,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     ExecutionWriteback,
@@ -112,6 +113,7 @@ from .plan_step import StorePlanStepObserver
 from .read_progress import StoreSideReadObserver, record_waiting
 from .resume_view import uncertain_positions
 from .run_artifact import publish_run_artifact
+from .schedule_admission import admit_scheduled_start
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
@@ -468,8 +470,11 @@ def _require_work_pool_binding(flow_run: object) -> tuple[str, str]:
     return work_pool_name, work_pool_id
 
 
-def _require_current_worker_identity(flow_run_id: str, worker_id: str) -> None:
-    """Require the child's worker UUID to remain canonical immediately before claim."""
+def _require_current_worker_identity(flow_run_id: str, worker_id: str) -> Any:
+    """Require the child's worker UUID to remain canonical immediately before claim.
+
+    Returns the flow run that Prefect holds, as it was read for the check.
+    """
     worker_name = os.environ.get("PREFECT__WORKER_NAME")
     if not worker_name:
         raise RuntimeError(_WORKER_EXECUTION_IDENTITY_UNAVAILABLE)
@@ -505,6 +510,7 @@ def _require_current_worker_identity(flow_run_id: str, worker_id: str) -> None:
         or record.status != WorkerStatus.ONLINE
     ):
         raise RuntimeError(_WORKER_EXECUTION_IDENTITY_UNAVAILABLE)
+    return flow_run
 
 
 def _prefect_flow_run_id() -> str:
@@ -531,6 +537,139 @@ def _claim_current_execution(projection: ProductProjection, run_id: str) -> tupl
     ):
         raise ExecutionClaimRefusedError(run_id)
     return flow_run_id, worker_id
+
+
+def _now() -> datetime:
+    """Return the current time in UTC; the one clock of a scheduled start, which tests replace (research R14)."""
+    return datetime.now(timezone.utc)
+
+
+@dataclass(frozen=True)
+class ScheduledFlowRun:
+    """What the flow run that Prefect holds says about a scheduled start.
+
+    `auto_scheduled` is true only for a flow run that a Prefect schedule created.
+    `expected_start_time` is the start time of the cadence.
+    """
+
+    auto_scheduled: bool
+    expected_start_time: datetime | None
+
+
+def _scheduled_flow_run(flow_run_id: str, worker_id: str) -> ScheduledFlowRun:
+    """Check this worker's identity and read the scheduling facts of the flow run from Prefect.
+
+    `prefect.runtime.flow_run` does not expose `auto_scheduled`, so the flow run is read
+    through the Prefect client, in the read that the worker identity check makes.
+    """
+    flow_run = _require_current_worker_identity(flow_run_id, worker_id)
+    expected = getattr(flow_run, "expected_start_time", None)
+    return ScheduledFlowRun(
+        auto_scheduled=getattr(flow_run, "auto_scheduled", None) is True,
+        expected_start_time=expected if isinstance(expected, datetime) and expected.utcoffset() is not None else None,
+    )
+
+
+class BranchReviewNotAvailableError(RuntimeError):
+    """A scheduled run with branch review cannot plan or write in this build (spec 021, phase 4).
+
+    The admission creates the run and its `pending` branch row; the `sync` stage then refuses
+    to plan or write, and the run ends as failed with this failure class.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(
+            f"scheduled run {run_id} writes through branch review, which this build of Infrahub Sync cannot do yet; "
+            "change the schedule's write target to default-branch to write without review"
+        )
+
+
+def _refuse_branch_review_until_available(run_id: str) -> NoReturn:
+    """The one place that refuses a run with branch review, until the branch steps exist (research R11)."""
+    raise BranchReviewNotAvailableError(run_id)
+
+
+@dataclass(frozen=True)
+class _Execution:  # pylint: disable=too-many-instance-attributes
+    """The execution this flow run holds, and the run values that its stage takes.
+
+    A flow run of the Sync API takes the values from its parameters. A scheduled flow run
+    takes them from the run that its admission created.
+    """
+
+    run_id: str
+    flow_run_id: str
+    worker_id: str
+    config_id: str | None
+    registry_version: int | None
+    package_checksum: str | None
+    branch: str | None
+    confirm_writes: bool
+    branch_review: bool = False
+
+
+def _refused_flow_run(lines: SyncFlowLines, message: str) -> State[Any]:
+    """Log a refusal in the flow run log and fail the flow run with a returned state, with no traceback."""
+    lines.log(logging.ERROR, "%s", message)
+    return Failed(message=message)
+
+
+def _admit_scheduled_flow_run(
+    projection: ProductProjection, schedule_id: str, lines: SyncFlowLines
+) -> _Execution | State[Any]:
+    """Admit the start of a scheduled flow run, and return its execution or the state that ends it.
+
+    A flow run that no Prefect schedule created is refused. A start that creates no run ends
+    the flow run as completed, with one line that says why, and no run record. A start that
+    already has a run is refused, as a second claim of a run is.
+    """
+    worker_id = _canonical_uuid(os.environ.get("PREFECT__WORKER_ID"))
+    flow_run_id = _prefect_flow_run_id()
+    if worker_id is None:
+        raise RuntimeError(_WORKER_EXECUTION_ID_INVALID)
+    facts = _scheduled_flow_run(flow_run_id, worker_id)
+    if not facts.auto_scheduled or facts.expected_start_time is None:
+        return _refused_flow_run(
+            lines,
+            f"flow run {flow_run_id} names schedule {schedule_id} but no Prefect schedule created it; "
+            "a scheduled run starts only from its schedule",
+        )
+    start = facts.expected_start_time.astimezone(timezone.utc)
+    try:
+        admission = admit_scheduled_start(
+            projection,
+            schedule_id=schedule_id,
+            scheduled_start_at=start,
+            flow_run_id=flow_run_id,
+            worker_id=worker_id,
+            now=_now(),
+            receipt_age_limit=timedelta(seconds=LivenessPolicy.from_environment().admission_ttl_seconds),
+        )
+    except DuplicateRunError:
+        return _refused_flow_run(
+            lines,
+            f"the start {start.isoformat()} of schedule {schedule_id} already has a run; "
+            "this flow run creates no second run",
+        )
+    run = admission.run
+    if run is None:
+        message = f"the start {start.isoformat()} of schedule {schedule_id} created no run ({admission.cause})"
+        lines.info(message)
+        return Completed(message=message)
+    lines.info(f"the start {start.isoformat()} of schedule {schedule_id} created run {run.run_id}")
+    return _Execution(
+        run_id=run.run_id,
+        flow_run_id=flow_run_id,
+        worker_id=worker_id,
+        config_id=run.config_id,
+        registry_version=run.registry_version,
+        package_checksum=run.package_checksum,
+        # A run that writes to the default branch passes no branch, as a `sync` of a person
+        # that names none; a run with branch review writes to its derived branch.
+        branch=run.destination_branch if admission.branch_review else None,
+        confirm_writes=True,
+        branch_review=admission.branch_review,
+    )
 
 
 def _worker_execution_context(
@@ -744,6 +883,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     flow_run_id: str,
     confirm_left_out: bool = False,
     plan_step: StorePlanStepObserver | None = None,
+    branch_review: bool = False,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary.
 
@@ -759,12 +899,17 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
 
     A `sync` whose plan leaves out records stops after the plan is saved, before any write,
     and gives back its write admission (spec 007 FR-012, research R11): see `_left_out_stop`.
+
+    A scheduled run with branch review (`branch_review`) is refused before it plans or writes:
+    see `_refuse_branch_review_until_available`.
     """
     if stage in ("plan", "sync"):
         record_waiting(projection, run_id, flow_run_id)
         plan_step = plan_step or StorePlanStepObserver(projection, run_id, flow_run_id)
         plan_step.begin()
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
+    if branch_review:
+        _refuse_branch_review_until_available(run_id)
     if stage in _WRITE_STAGES and not confirm_writes:
         msg = f"confirm_writes=true is required for service stage={stage}"
         raise ValueError(msg)
@@ -1408,9 +1553,9 @@ def _service_run_name() -> str:
 
 
 @flow(name=SERVICE_FLOW_NAME, flow_run_name=_service_run_name)
-def service_sync_run(  # pylint: disable=too-many-positional-arguments
-    run_id: str,
-    stage: ServiceStage,
+def service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many-locals
+    run_id: str | None = None,
+    stage: ServiceStage = "sync",
     config_id: str | None = None,
     registry_version: int | None = None,
     package_checksum: str | None = None,
@@ -1419,13 +1564,19 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     confirm_writes: bool = False,
     configuration_name: str | None = None,
     confirm_left_out: bool = False,
+    schedule_id: str | None = None,
 ) -> dict[str, Any] | State[Any]:
-    """Execute one API-reserved stage and publish its durable product data.
+    """Execute one API-reserved stage, or one scheduled start, and publish its durable product data.
 
     `configuration_name` is the configuration's readable name, used only for the run's
     title; the configuration is identified by `config_id`. `confirm_left_out` is the apply
     request's confirmation that the records the plan leaves out were reviewed; the engine
     checks it again (spec 007 research R10).
+
+    A flow run of the Sync API carries `run_id`. A flow run of a Prefect schedule carries
+    `schedule_id` and the stage `sync` instead: the worker admits its start first and, when
+    the start runs, executes the `sync` stage of the run that the admission created
+    (spec 021, research R2). A start that creates no run ends the flow run as completed.
 
     A refused execution claim, and a failure whose recorded evidence has a cause, end the flow
     run with a returned `Failed` state, so no traceback passes through Prefect's engine; any
@@ -1438,15 +1589,36 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     # the `infrahub_sync` logger tree with the same prefix.
     lines = SyncFlowLines(run_logger, secrets)
     failure: Exception | None = None
+    if (run_id is None) is (schedule_id is None):
+        return _refused_flow_run(lines, "a service flow run carries exactly one of run_id and schedule_id")
+    if schedule_id is not None and stage != "sync":
+        return _refused_flow_run(lines, f"a flow run of schedule {schedule_id} runs the stage sync, not {stage}")
     projection = _runtime()
-    try:
-        flow_run_id, worker_id = _claim_current_execution(projection, run_id)
-    except ExecutionClaimRefusedError as refused:
-        # Put the recovery guidance in the flow run log, where an operator who
-        # pressed Retry looks for it, then fail the flow run with a returned state,
-        # so Prefect's engine does not log the refusal a second time with a traceback.
-        lines.log(logging.ERROR, "%s", refused)
-        return Failed(message=str(refused))
+    if schedule_id is not None:
+        admitted = _admit_scheduled_flow_run(projection, schedule_id, lines)
+        if not isinstance(admitted, _Execution):
+            return admitted
+        execution = admitted
+    else:
+        assert run_id is not None
+        try:
+            flow_run_id, worker_id = _claim_current_execution(projection, run_id)
+        except ExecutionClaimRefusedError as refused:
+            # Put the recovery guidance in the flow run log, where an operator who
+            # pressed Retry looks for it, then fail the flow run with a returned state,
+            # so Prefect's engine does not log the refusal a second time with a traceback.
+            return _refused_flow_run(lines, str(refused))
+        execution = _Execution(
+            run_id=run_id,
+            flow_run_id=flow_run_id,
+            worker_id=worker_id,
+            config_id=config_id,
+            registry_version=registry_version,
+            package_checksum=package_checksum,
+            branch=branch,
+            confirm_writes=confirm_writes,
+        )
+    run_id, flow_run_id, worker_id = execution.run_id, execution.flow_run_id, execution.worker_id
     secrets[:] = collect_secret_values()
     # Owned here rather than by the stage, so the failure boundary can read it however the
     # stage ended.
@@ -1465,12 +1637,12 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
             result, writeback = _execute_stage(
                 run_id,
                 stage,
-                config_id,
-                registry_version,
-                package_checksum,
-                branch,
+                execution.config_id,
+                execution.registry_version,
+                execution.package_checksum,
+                execution.branch,
                 expected_checksum,
-                confirm_writes=confirm_writes,
+                confirm_writes=execution.confirm_writes,
                 secrets=secrets,
                 projection=projection,
                 tracker=tracker,
@@ -1478,6 +1650,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 flow_run_id=flow_run_id,
                 confirm_left_out=confirm_left_out,
                 plan_step=plan_step,
+                branch_review=execution.branch_review,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc
