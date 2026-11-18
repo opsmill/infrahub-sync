@@ -1,0 +1,64 @@
+docs/docs/operations/supported-platforms-and-limits.mdx
+  s_29b17f91da9f30::t_1a0ca39b6c1cf0 50-52
+docs/docs/readme.mdx
+  s_29b17f91da9f30::t_48c9df55bd250a 135-137
+docs/docs/reference/durable-product-records.mdx
+  s_29b17f91da9f30::t_82f9bd4b74541c 225-231
+  s_1a9d42b5aabd99::t_c2b29a3a8b5970 305-343
+changelog/+scheduled-runs.added.md
+  s_29b17f91da9f30::t_d876ad15ae99df 1
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_29b17f91da9f30::t_1e7d4070940bb4 215
+docs/docs/orchestration.mdx
+  s_29b17f91da9f30::t_021ae2a0c54830 5-8,10-14,16-249,253-255,260-261,263-264,266,268-269,274-275,277-278,289-290,294-295,302-303,306-307,309,390,394,396,398,401,405,411-414,419-423,440-449,456
+  s_29b17f91da9f30::t_cac743bfffdbfd 310-313
+docs/docs/reference/prefect-remote-run.mdx
+  s_29b17f91da9f30::t_89a2c587537d5c 188-190
+docs/docs/using-netbox-or-nautobot-with-infrahub.mdx
+  s_29b17f91da9f30::t_02097c80eb9272 79
+docs/docs/development/knowledge/sync-architecture.md
+  s_29b17f91da9f30::t_4141cebdacc2d8 148-203
+docs/docs/development/knowledge/repository-tour.md
+  s_29b17f91da9f30::t_ff4c7a5af07dae 132-155
+  s_29b17f91da9f30::t_71f629fa3c16f9 265-273
+docs/docs/reference/sync-http-api.mdx
+  s_29b17f91da9f30::t_05d5f687f803a0 694
+  s_29b17f91da9f30::t_e5c51046464194 573-577
+  s_29b17f91da9f30::t_ef870a509b5700 1236-1352
+  s_29b17f91da9f30::t_b9d683e0e34bff 1204-1210
+  s_29b17f91da9f30::t_75759d7e152434 683-685
+  s_29b17f91da9f30::t_b62ea917df8d2d 477-485
+  s_29b17f91da9f30::t_fb7a6c86acd4b6 770-785
+  s_29b17f91da9f30::t_8a81e5e12a22f8 1469-1470
+  s_29b17f91da9f30::t_5cc222f9db1d2a 1458
+  s_29b17f91da9f30::t_2cbb1bf8ea32e5 527-540
+  s_29b17f91da9f30::t_67c3f73e5edeec 1459
+  s_29b17f91da9f30::t_d9423004661019 560-561
+  s_29b17f91da9f30::t_2f3ba7a361bb42 1460
+  s_29b17f91da9f30::t_63f6b501fd28e0 466
+  s_29b17f91da9f30::t_81ef5697db99e2 733-751
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e27e39a2fa7f808596123a8533d75ea4f9ec9b21",
+  "prompts": {},
+  "sessions": {
+    "s_1a9d42b5aabd99": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac6a228b2fb9b3016",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
