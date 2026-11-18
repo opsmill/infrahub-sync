@@ -306,6 +306,10 @@ signs in, changes their password and creates a token, and the administrator disa
 - **FR-008**: The system MUST refuse every request that changes the password of `admin`, creates
   or deletes a token of `admin`, changes its level, disables it or deletes it, and the refusal
   MUST name the environment variable to edit.
+    - Updated 2026-11-18 to match the implementation: the refusal of a password or token change
+      names its variable. No variable changes the level or the state of `admin`, so the refusal
+      of a level change, a disable or a deletion says that `admin` is always an active
+      administrator that the environment defines (review fix `052e8c5d`).
 - **FR-009**: The system MUST NOT read `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. The shipped
   deployment files, the development stack and the documentation MUST no longer name it.
 
@@ -319,6 +323,9 @@ signs in, changes their password and creates a token, and the administrator disa
 - **FR-012**: An account name MUST be unique without regard to letter case among the accounts
   that are not deleted, MUST NOT contain a space, and MUST NOT be `admin`, `unknown` or
   `unauthenticated`.
+    - Updated 2026-11-18 to match the implementation: the reserved names are refused in any
+      letter case. A name that starts with `acct_` (research R8) or that contains `ifs_pat_` or
+      `ifs_ses_` is refused too.
 - **FR-013**: Each account MUST be able to change its own password by giving its current
   password. An administrator MUST be able to set a new password for another account.
 
@@ -350,9 +357,17 @@ signs in, changes their password and creates a token, and the administrator disa
     - Requests with a token are not affected.
     - An administrator MUST be able to end the refusal for another account, and a restart of the
       Sync API MUST end it for `admin`.
+    - Updated 2026-11-18 to match the implementation: an administrator can end the refusal for
+      any account, `admin` and their own included (review fix `052e8c5d`). Each Sync API process
+      checks one password for a name at a time, so with P processes at most 5 + (P − 1)
+      passwords are checked for each refusal (review fix `b3d3b353`).
 - **FR-021a**: The system MUST limit the number of passwords it checks at the same time, and
   MUST answer "service unavailable" to a sign-in that waits too long, so that sign-in requests
   cannot exhaust the memory of the Sync API.
+    - Updated 2026-11-18 to match the implementation: the hash of a new password (account
+      creation, set password, change of password) shares the same limit and answers the same
+      way. A sign-in also answers "service unavailable" when another check of the same name in
+      the process does not end within 5 seconds (review fix `b3d3b353`).
 - **FR-022**: A session that a person opened with a password MUST end after a period without
   activity. The period is a setting of the deployment, with a default of 8 hours.
 - **FR-023**: A person MUST be able to end their session (sign out) from the CLI and from the web
@@ -365,6 +380,10 @@ signs in, changes their password and creates a token, and the administrator disa
   its name and displays the account name.
 - **FR-024a**: The system MUST refuse a request whose free text (a reason) contains an API token
   or a session token, and MUST limit the length of a reason.
+    - Updated 2026-11-18 to match the implementation: the system finds a token by its prefix,
+      `ifs_pat_` or `ifs_ses_`, because it stores only digests, and the token of `admin` by its
+      value. The same check applies to the name of a new API token. A reason has at most 512
+      characters (research R4).
 - **FR-025**: The system MUST write an audit event for each account action: create, set level,
   disable, enable, delete, change of password, creation and deletion of a token. The event names
   the account that acted and the account acted on, and never contains a password or a token

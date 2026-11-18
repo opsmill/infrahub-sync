@@ -12,7 +12,10 @@ uv run invoke dev.start
 export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
 ```
 
-The development stack sets the `admin` password and the token `infrahub-sync-dev-token`.
+The development stack sets the `admin` password `infrahub-sync-dev-password` and the token
+`infrahub-sync-dev-token`. Without a terminal, give each password with `--password-stdin`;
+`login --password-stdin` also needs `--name`, and `password --password-stdin` reads two lines,
+the current password and then the new one.
 
 ## Offline checks
 
@@ -37,8 +40,8 @@ uv run infrahub-sync login --name alice
 uv run infrahub-sync whoami                      # actor: alice, administrator: false
 uv run infrahub-sync password                    # replace the initial password
 uv run infrahub-sync runs list
-uv run infrahub-sync tokens create ci-nightly    # prints the value once
-INFRAHUB_SYNC_API_TOKEN=<value> uv run infrahub-sync whoami   # actor: alice
+TOKEN=$(uv run infrahub-sync tokens create ci-nightly)   # the value is the only line of standard output
+INFRAHUB_SYNC_API_TOKEN=$TOKEN uv run infrahub-sync whoami   # actor: alice
 ```
 
 Expected: no file of the deployment changed and no service restarted.
@@ -52,9 +55,13 @@ Set `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` in the environment of `sync-api`, rest
 
 ```bash
 uv run infrahub-sync login --name admin
-uv run infrahub-sync password                    # refused, names the variable
-uv run infrahub-sync accounts disable admin      # refused, names the variable
+uv run infrahub-sync password                    # refused: 409 environment-managed-account
+uv run infrahub-sync accounts disable admin      # refused: 409 environment-managed-account
+uv run infrahub-sync accounts unlock admin       # accepted
 ```
+
+Each refusal prints the status, the code and the CLI's fixed message for the code, which names
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`.
 
 Change the password variable of `sync-api`, restart `sync-api` only, and sign in with the new
 password. Expected: the old password is refused. Start `sync-api` without the password variable.
@@ -70,9 +77,9 @@ run `infrahub-sync accounts unlock alice`. Expected: she signs in.
 
 ```bash
 uv run infrahub-sync accounts disable alice      # as admin
-INFRAHUB_SYNC_API_TOKEN=<value> uv run infrahub-sync whoami   # 401
+INFRAHUB_SYNC_API_TOKEN=$TOKEN uv run infrahub-sync whoami   # 401
 uv run infrahub-sync accounts enable alice
-uv run infrahub-sync accounts delete alice       # prints "Deleted account <identifier>"
+uv run infrahub-sync accounts delete alice       # asks for confirmation; prints "Deleted account <short identifier>"
 uv run infrahub-sync runs list                   # her runs show the placeholder
 uv run infrahub-sync accounts create alice
 ```

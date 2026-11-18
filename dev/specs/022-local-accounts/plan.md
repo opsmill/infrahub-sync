@@ -27,7 +27,11 @@ acted:
 - **New routes and commands** let a person sign in and out, change a password, manage tokens
   and, as an administrator, manage accounts ([contracts](contracts/)).
 - **The web interface** gains a sign-in form, the names of accounts on records, and two pages
-  for accounts and tokens. This part needs the agreement of the colleague who builds it.
+  for accounts and tokens. This part needs the agreement of the colleague who builds it, and is
+  not implemented yet.
+
+This plan was brought in line with the implementation on 2026-11-18. Where a part changed, a line
+"Changed during implementation:" gives the reason.
 
 ## Delivery order
 
@@ -47,6 +51,11 @@ depends on the other.
 
 Step 1 holds everything a team needs to operate accounts safely: every sign-in rule, a way to
 replace a lost password, and a way to remove a person's access.
+
+Status on 2026-11-18: steps 1 and 2 are implemented
+([implementation report](opsmill-implement-report.md)). Steps 3 and 4 are not started: they wait
+for the agreement of the colleague who builds the web interface. Until then, the token field of
+the web interface accepts an API token of an account (FR-015).
 
 ## Technical Context
 
@@ -81,10 +90,15 @@ test runner: `pnpm check`, `pnpm typecheck`, `pnpm build` and the manual scenari
 **Performance Goals**:
 
 - A request with a token or a session adds one store call, which is one database connection,
-  with one indexed read and at most one write a minute for each token or session.
+  with one indexed read and at most one write a minute for each token or session. A session
+  found idle adds a second call, which deletes it.
 - An answer that names accounts adds one store call to read their names.
 - A sign-in with a password takes under one second when no other sign-in is waiting. Password
-  checks use at most about 64 MiB in one `sync-api` process (research R2).
+  checks and the hashes of new passwords use at most about 64 MiB in one `sync-api` process
+  (research R2).
+- One password check for each name runs at a time in one process (research R6). With P
+  `sync-api` processes, at most 5 + (P − 1) passwords are checked for each refusal after
+  repeated failures, not exactly 5.
 
 **Constraints**:
 
@@ -100,7 +114,9 @@ test runner: `pnpm check`, `pnpm typecheck`, `pnpm build` and the manual scenari
 **Scale/Scope**: about 16 source files in Python, 14 new test files and 32 existing test files
 that change their set-up, 3 deployment files, 8 documentation pages, 2 decision records, one
 sentence of the constitution, and about 10 files in `frontend/`. Tens of accounts for
-one deployment, not thousands.
+one deployment, not thousands. The implementation of steps 1 and 2 added 7 source modules and
+20 test files (three of them helpers or fixtures), and moved 31 existing test files to the shared
+helper.
 
 ## Constitution Check
 
@@ -151,8 +167,10 @@ infrahub_sync/
 │   │                         #   StoreAccountResolver replaces EnvironmentPrincipalResolver;
 │   │                         #   apply the admin variables
 │   ├── presentation.py       # new: identifiers to display names in every outgoing body
-│   ├── credentials.py        # new: password hash and verify, token and session values, digests
-│   ├── account_routes.py     # new: /auth, /me/password, /me/tokens, /accounts
+│   ├── credentials.py        # new: password hash and verify, token and session values, digests,
+│   │                         #   the gate of two scrypt computations, one check for each name
+│   ├── account_routes.py     # new: declares /auth, /me/password, /me/tokens, /accounts
+│   ├── account_actions.py    # new: the requests, answers, rights, refusals and events of each route
 │   ├── app.py                # mount the account routes; the new refusal code; present answers
 │   ├── serve.py              # build the new resolver; apply the admin variables at start
 │   ├── service.py            # the free-text check refuses token prefixes
@@ -163,14 +181,15 @@ infrahub_sync/
 │   ├── client.py             # account, token and session methods
 │   └── models.py             # the new resources; a maximum length for every reason
 ├── cli_session.py            # new: read, write and remove a saved session (Python 3.10)
-├── cli.py                    # login, logout, password, tokens, accounts; session file lookup
+├── cli_accounts.py           # new: login, logout, password, tokens, accounts; fixed error messages
+├── cli.py                    # registers the account commands; session file lookup
 └── testcontainers/           # docker-compose.yml and helpers.py: the admin variables
 
 docker-compose.yml            # sync-api: the admin variables; the old variable removed
 development/docker-compose.yml
 tasks/                        # dev tasks that read BEARER_TOKENS
 
-frontend/src/
+frontend/src/                 # not changed yet: User Stories 2 and 4
 ├── api/token.ts, client.ts, queries.ts, actions.ts, types.generated.ts
 ├── components/sign-in.tsx    # replaces token-entry.tsx
 ├── routes/__root.tsx         # signed-in account, sign out
@@ -178,23 +197,25 @@ frontend/src/
 └── features/runs/, features/configs/   # accounts on records
 
 tests/
-├── conftest or tests/service/accounts.py   # the shared fixture: seeded accounts and their tokens
-├── product_store/test_accounts.py, test_account_deletion.py
+├── service/accounts.py, service/account_api.py   # the shared helpers: seeded accounts and their tokens
+├── product_store/test_accounts.py, test_account_deletion.py, test_sign_in_attempts.py
 ├── service/test_account_resolver.py, test_admin_account.py, test_sign_in.py,
 │   test_account_routes.py, test_token_routes.py, test_account_events.py,
-│   test_account_presentation.py
+│   test_account_presentation.py, test_credentials.py, test_free_text.py,
+│   test_no_secret_output.py
 ├── client/test_account_client.py
-├── cli/test_account_commands.py, test_login_commands.py, test_cli_session.py
+├── cli/conftest.py, test_account_commands.py, test_login_commands.py, test_cli_session.py
 ├── compose/, dev_stack/, image/            # the new variables
-└── 32 existing files                       # set-up moves to the shared fixture
+└── 31 existing files                       # set-up moves to the shared helper
 
 docs/docs/
 ├── compose-deployment.mdx, quickstart-compose.mdx, development-stack.mdx
+├── kubernetes-deployment.mdx # the chart values of the admin account (spec 018, merged)
 ├── operations/day-2-operations.mdx, operations/compose-troubleshooting.mdx
 ├── reference/sync-http-api.mdx, reference/ (generated CLI pages)
 └── guides/accounts.mdx       # new: add a person, give a script a token, disable or delete
 
-dev/adr/                      # two records (research R12)
+dev/adr/                      # 0049 and 0050 (research R12)
 docs/docs/development/constitution.md   # one sentence of principle VI (FR-040)
 AGENTS.md                     # the frontend rule, the CLI command list
 changelog/                    # one `added` fragment, one `removed` fragment; 421.added.md
@@ -207,6 +228,16 @@ module beside `config_routes.py`, which is the existing example of a route group
 `app.py`. The CLI commands go in two new Typer groups, `accounts` and `tokens`, beside `configs`
 and `runs`.
 
+Changed during implementation:
+
+- `account_routes.py` only declares the routes; each route calls one function of a new module,
+  `account_actions.py`, which holds the requests, the answers and the actions. The documents of
+  the implementation do not record why the routes were split in two modules.
+- The commands `login`, `logout`, `password`, `tokens` and `accounts` are in a new module,
+  `cli_accounts.py`. `cli.py` calls its `register` once, and `cli_accounts.py` imports nothing
+  from `cli.py`. `cli.py` keeps the lookup of the session file.
+- No file in `frontend/` changed: steps 3 and 4 are not started.
+
 ## Risks
 
 - **A request in progress during a deletion** writes the identifier of the deleted account. It
@@ -218,10 +249,15 @@ and `runs`.
   it would accept a request after an account is disabled.
 - **The refusal after repeated failures** can be caused on purpose by a person who knows a name
   (R6). The limit is stated in the spec.
+- **Several `sync-api` processes** each run one password check for a name at a time, so with P
+  processes up to 5 + (P − 1) passwords are checked for each refusal (R6).
+- **A table of failed sign-ins full of refusals in force** does not record a new name, so a
+  wrong password for that name is not counted until a row can be deleted (R6).
 - **The web interface steps need an agreement** that was not given. Steps 1 and 2 do not depend
   on it, and the token field keeps working with an account token.
-- **Spec 018 (Helm chart)** names the removed variable on another branch. The branch that merges
-  second updates the chart.
+- **Spec 018 (Helm chart)** named the removed variable on another branch. It was merged into this
+  branch, which updated the Kubernetes page for the chart values of the `admin` account; the
+  chart itself is in `opsmill/infrahub-helm`.
 - **A production deployment of V3**, if one exists at release time, loses its tokens at the
   upgrade. The upgrade note says to set the `admin` variables first.
 
@@ -230,3 +266,6 @@ and `runs`.
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 | --- | --- | --- |
 | Principle VI, "never printed": a token value is displayed once | A person must receive the token to give it to a script, and Sync keeps only its digest | Never displaying it would mean an administrator writes tokens into the environment, which is the problem this feature removes. The feature amends the principle (FR-040). |
+
+The implementation amended principle VI in `docs/docs/development/constitution.md` (task T069),
+so this deviation is now allowed by the principle. No other deviation was added.

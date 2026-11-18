@@ -6,6 +6,10 @@ Each entry states a decision, the reason and the alternatives. File and line ref
 the branch `feature/v3-develop` at commit `7987596f`. The entries R1, R2, R4 to R7 and R9 were
 revised after the [critique](critiques/critique-20261117.md).
 
+On 2026-11-18, after the implementation and its review, every entry was brought in line with the
+code, which is the reference. Where a decision changed, the entry states the final decision, and a
+line "Changed during implementation:" gives what the first text said and why it changed.
+
 ## What the code does today
 
 - **One resolver, one protocol.** `create_app` receives a `PrincipalResolver`
@@ -81,16 +85,31 @@ revised after the [critique](critiques/critique-20261117.md).
 ## R2. How a password is stored
 
 - **Decision**: `hashlib.scrypt` from the Python standard library, with a random 16-byte salt for
-  each password, and an explicit `maxmem`. The stored text holds the algorithm name, the cost
-  parameters, the salt and the derived key, so the parameters can be raised later and an old
-  hash still verifies.
+  each password, a 32-byte derived key, and `maxmem` set to 64 MiB. The stored text is
+  `scrypt$<N>$<r>$<p>$<salt>$<derived key>`, with the salt and the key in base64 without padding,
+  so the parameters can be raised later and an old hash still verifies.
 - **Cost parameters**: N = 2^15, r = 8, p = 3, which is one of the scrypt settings the OWASP
-  Password Storage Cheat Sheet lists, and needs about 32 MiB for one verification. Implementation
-  confirms the setting against the current cheat sheet, and a test fails if the parameters in
-  the code fall below the chosen setting.
-- **At most two verifications run at the same time** in one `sync-api` process. A sign-in that
-  waits more than 5 seconds for its turn answers `503` with the code `sign-in-busy`. So password
-  hashing uses at most about 64 MiB, whatever the number of sign-in requests.
+  Password Storage Cheat Sheet lists, and needs about 32 MiB for one verification. The setting
+  was confirmed against the cheat sheet on 2026-11-17 ([notes.md](notes.md), T002), and a test
+  fails if the parameters in the code fall below it.
+- **A stored hash is verified only when its parameters are within ceilings**: at most 64 MiB of
+  memory, `p` at most 16 and a derived key of at most 128 bytes. A hash that cannot be read
+  verifies no password, gets the answer of a wrong password, and writes one log line,
+  `account_password_hash_unreadable`, with the account identifier and never the hash.
+- **At most two scrypt computations run at the same time** in one `sync-api` process: the
+  verifications of sign-in and of a current password, and the hash of every new password
+  (`POST /accounts`, `PUT /accounts/{name}/password`, `PUT /me/password`). A request that waits
+  more than 5 seconds for its turn answers `503` with the code `sign-in-busy`. So password
+  hashing uses at most about 64 MiB, whatever the number of requests.
+- **A password has 1 to 1,024 characters that UTF-8 can encode.** A longer password is refused
+  before any hash is computed, so the size of a request does not set the cost of a check. A new
+  password longer than 1,024 characters answers `422 password-too-long`; one that holds a
+  character UTF-8 cannot encode, such as a lone surrogate, answers `422 password-invalid`. At
+  sign-in, such a password gets the one sign-in refusal, with no check.
+- Changed during implementation: the first text limited sign-ins only. Hashing a new password
+  costs as much memory as a check, so it shares the same two places. The maximum length and the
+  UTF-8 rule were added after the review found that such a password answered `503`, and that an
+  `admin` password longer than 1,024 characters could never sign in.
 - **Rationale**: no new dependency (constitution VII). scrypt is a memory-hard function made for
   passwords. Without `maxmem`, `hashlib.scrypt` refuses these parameters; the reviewer measured
   this. Sign-in routes are synchronous FastAPI routes, which run in the thread pool, so a
@@ -105,13 +124,17 @@ revised after the [critique](critiques/critique-20261117.md).
 ## R3. What a request presents
 
 - **Decision**: every request keeps presenting `Authorization: Bearer <value>`. The value is one
-  of two kinds, told apart by a prefix:
+  of two kinds:
     - an **API token** (`ifs_pat_…`), created by an account, valid until it expires or is deleted;
     - a **session token** (`ifs_ses_…`), returned by a sign-in with a password, valid until
       sign-out or until it has not been used for the idle period.
 
-  Both are 32 random bytes from `secrets.token_urlsafe`. The store holds only the SHA-256 digest,
-  with a unique index, so one lookup by digest finds the row.
+  Both are the prefix and 32 random bytes from `secrets.token_urlsafe`. The store holds only the
+  SHA-256 digest, with a unique index. The resolver looks for the digest among the API tokens
+  first, then among the sessions, and the table that holds it gives the kind.
+- Changed during implementation: the first text said the prefix tells the two kinds apart. The
+  token of `admin` has no prefix (it must not start with either), so the kind comes from the
+  table. The prefixes still serve the free-text check (R4).
 - **Rationale**:
     - The CLI, scripts and the web interface already send a bearer value, so every route keeps
       its path, request and response (FR-005, FR-015, SC-006).
@@ -139,32 +162,42 @@ revised after the [critique](critiques/critique-20261117.md).
   account, refuses a disabled or deleted account, an expired token and a session idle for longer
   than the idle period, and records the time of use when the last recorded use is more than a
   minute old. The store has no connection pool, so this is one more connection for each request.
-  No result is cached, because a cache would accept a request after an account is disabled
-  (FR-027).
+  A session found idle costs a second call, which deletes it. No result is cached, because a
+  cache would accept a request after an account is disabled (FR-027).
 - **`GET /me`** keeps its fields: `actor` is the account name, taken from `Principal.name`.
 - **Free text** (FR-024, [`secret-redaction.md`](../../../docs/docs/development/guidelines/secret-redaction.md)):
   the service cannot list tokens it stores as digests. So:
     - a free-text parameter that contains `ifs_pat_` or `ifs_ses_` is refused with the existing
-      `422`, whoever the token belongs to;
+      `422`, code `secret-parameter-refused`, whoever the token belongs to;
     - the token of `admin` stays in `secret_values`, as a principal token is today, and must not
       start with either prefix;
     - the password of `admin` is in no check (R5);
     - every `reason` field gets a maximum length of 512 characters, as one of them has today
-      (`client/models.py:194`).
+      (`client/models.py:194`). On the account routes, a `reason` must also be printable and
+      trimmed, as a configuration request requires.
 
-  The check runs in `service.py` and in `config_routes.py`, which both receive the secrets when
-  they are built.
+  The check runs in `service.py`, in `config_routes.py` and in the account routes
+  (`account_actions.py`), on every `reason` and on the name of a new API token. On an account
+  route, the refusal also writes the event `infrahub_sync.account.refused` with the outcome
+  `refused-secret-parameter`, and without the refused text. An account name that contains a
+  token prefix is refused as `422 account-name-invalid` (R8).
+- Changed during implementation: the first text named `reason` only, on the existing routes. The
+  name of an API token is shown in every list of tokens, so it gets the same check, and the
+  account routes needed the check too.
 
 ## R5. The `admin` account
 
 - **Decision**: two variables in the environment of `sync-api`:
-    - `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, required, at least 12 characters;
+    - `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, required, 12 to 1,024 characters of valid UTF-8
+      text;
     - `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, optional, at least 16 characters, as a principal token
-      today (`auth.py:36`).
+      today (`auth.py:36`), and not starting with `ifs_pat_` or `ifs_ses_`.
 
-  `build_app` applies them before it builds the resolver, in one transaction that takes the
-  advisory lock of schema initialization on PostgreSQL (`store.py:858`), so two `sync-api`
-  processes that start together do not conflict:
+  A value that breaks a rule stops the start with a message that names the variable and never
+  the value. `build_app` applies them before it builds the resolver, in one transaction that
+  takes the advisory lock of schema initialization on PostgreSQL (`store.py:858`), and the write
+  lock of the database on SQLite, so two `sync-api` processes that start together do not
+  conflict:
     - it creates the row `admin` when it is missing, as an active administrator marked
       `environment_managed`;
     - when the stored hash does not verify the password of the environment, it stores a new hash
@@ -177,7 +210,20 @@ revised after the [critique](critiques/critique-20261117.md).
   candidate passwords in a `reason` and learn which one the service refuses, with no limit; the
   reviewer found this in the first design.
 - **Every account route refuses a change to an `environment_managed` account** with `409` and
-  the code `environment-managed-account`, and the message names the variable.
+  the code `environment-managed-account`:
+    - a change of its password (`PUT /accounts/admin/password`, `PUT /me/password`): the message
+      names `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`;
+    - the creation or the deletion of one of its tokens: the message names
+      `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`;
+    - a change of its state or its level, or its deletion: the message says that `admin` is
+      always an active administrator that the environment defines, because no variable changes
+      that.
+
+  `POST /accounts/admin/unlock` is accepted: it ends a refusal and changes nothing that the
+  environment defines. The CLI prints one fixed message for the code, which says all of this.
+- Changed during implementation: the first text said that every refusal names the variable. No
+  variable disables, deletes or sets the level of `admin`, so naming one there would point the
+  operator to an edit that does nothing.
 - **Rationale**: decision D-2 of the spec. Applying at the start of `sync-api`, and not in
   `sync-bootstrap`, means a restart of `sync-api` alone is enough to rotate or recover.
 - **The names** include `ACCOUNT` because `INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD` already exists
@@ -193,18 +239,46 @@ revised after the [critique](critiques/critique-20261117.md).
     - When the count reaches 5, the row gets a `refused_until` time 15 minutes later. While that
       time is in the future, a sign-in for the name is refused before the password is checked.
     - **An attempt made while the name is refused does not count and does not move
-      `refused_until`.** When the time passes, the count starts again from zero.
-    - A successful sign-in deletes the row.
+      `refused_until`.** When the time passes, the next failure starts a new window with a count
+      of one.
+    - A successful sign-in deletes the row. So do a new password, set by an administrator or by
+      the account, and the deletion of the account.
 - **A name that has no account** is counted in the same way, and its sign-in runs one password
   verification against a fixed hash. So the answer and its duration do not show whether the
   account exists (FR-003).
+- **A name or a password that no account can have** gets the same refusal with no check, no
+  count and no record: a name that is empty, longer than 64 characters (also in lower case),
+  holds a NUL character or a character UTF-8 cannot encode, and a password that is empty or
+  longer than 1,024 characters or holds a character UTF-8 cannot encode.
+- **One check at a time for each name in a process.** A sign-in or a password change holds a
+  lock for the lower-case name, then a place of the gate (R2), then reads the refusal again
+  immediately before the check, and counts a failure before it lets the lock go. A request that
+  finds the name refused at that point checks nothing and counts nothing. A request that waits
+  more than 5 seconds for the lock answers `503 sign-in-busy`. The lock is held in the memory of
+  the process, so with P `sync-api` processes at most 5 + (P − 1) passwords are checked for each
+  refusal.
+- Changed during implementation: the first text read the refusal once, before the check. The
+  review found that parallel sign-ins all passed that read before the first failure was counted,
+  so tens of passwords could be checked for each refusal. The lock and the second read close
+  this within one process.
 - **Ways to end a refusal early**:
-    - an administrator clears it for another account (`POST /accounts/{name}/unlock`);
+    - an administrator clears it for any account, `admin` included
+      (`POST /accounts/{name}/unlock`);
     - a restart of `sync-api` clears it for `admin` (R5);
     - requests with an API token are never affected.
-- **Bounds**: a name longer than 64 characters is refused before any write. The table holds at
-  most 10,000 rows: a write that would exceed this first deletes the rows with the oldest
-  window. The limit on concurrent verifications (R2) bounds the memory.
+- Changed during implementation: the first text said "for another account". Unlock changes
+  nothing that the environment defines, so it is accepted for `admin` too.
+- **Bounds**: the limit on concurrent verifications (R2) bounds the memory. The table holds at
+  most 10,000 rows. To add a row for a new name when the table is full, the store deletes rows
+  in this order, and never a row whose refusal is in force:
+    1. the rows whose window started more than 15 minutes ago, which count nothing any more;
+    2. then the rows with the oldest window.
+
+  When too few rows can be deleted, because the others hold a refusal in force, the new name is
+  not recorded and its sign-in gets the same refusal.
+- Changed during implementation: the first text deleted the rows with the oldest window, which
+  could include a refusal in force. The review found that a flood of failed sign-ins for unknown
+  names could then end the refusal of a real account.
 - **A known limit**: a person who knows an account name can keep that account from signing in
   with its password, by failing 5 times in each 15-minute window. The rule is the one the
   maintainer chose in the interview. The alternative is a delay that grows with each failure and
@@ -224,7 +298,10 @@ revised after the [critique](critiques/critique-20261117.md).
     - an identifier of a deleted account becomes `Deleted account <short identifier>`;
     - a value that is not an account identifier is left as it is (R1).
 
-  It reads the accounts it needs in one store call for each answer.
+  It reads the accounts it needs in one store call for each answer. It is an ASGI middleware,
+  `AccountNameMiddleware` (`presentation.py`), so it covers every JSON answer of the API
+  application, including an answer replayed for an `Idempotency-Key`, and the `id` of a primary
+  resource of kind `account`.
 - **Decision, deletion**: one update of the account row. It removes the name, the lower-case key
   and the password hash, and sets the deletion time. The row keeps the identifier and the short
   identifier. The same transaction deletes the tokens, the sessions and the `sign_in_attempts`
@@ -236,9 +313,13 @@ revised after the [critique](critiques/critique-20261117.md).
 - **Where the name of a deleted account can remain**:
     - free text that a person typed: `reason`, `approval_reason`, `registration_reason`;
     - log lines, if a later change logs a name; none does today;
-    - the session file of a CLI that signed in as the account, which holds no name.
+    - the session file of a CLI that signed in as the account, on the workstation of that
+      person. It holds the account name next to the session token, until `logout` removes the
+      entry, or until the CLI removes it because the Sync API refuses the session.
 
   The documentation says so, and the search of SC-007 excludes the free-text columns.
+- Changed during implementation: the first text said the session file holds no name. The CLI
+  saves the account name with the session token, to print it.
 - **Alternatives considered**: resolve names in each route. Rejected: about ten routes and two
   replay paths would each need it, and a new route could forget it. One boundary function is
   tested once against every response model.
@@ -246,10 +327,15 @@ revised after the [critique](critiques/critique-20261117.md).
 ## R8. Account names
 
 - **Decision**: a name matches `^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$`. The store keeps the name as
-  typed, for display, and a lower-case key with a unique index that ignores deleted rows.
-  Refused as names: `admin` (taken by the row that the environment manages), `unknown` and
-  `unauthenticated` (values the code writes when no account applies), and anything that starts
-  with `acct_`.
+  typed, for display, and a lower-case key with a unique index. A deleted row has an empty
+  (`NULL`) key, and both databases treat two empty values as different, so the index does not
+  count deleted rows. Refused as names, in any letter case, with `422 account-name-invalid`:
+  `admin` (taken by the row that the environment manages), `unknown` and `unauthenticated`
+  (values the code writes when no account applies), anything that starts with `acct_`, and
+  anything that contains `ifs_pat_` or `ifs_ses_`. A name that is taken answers
+  `409 account-name-taken`.
+- Changed during implementation: the token prefixes were added to the refused names. A token
+  pasted as a name would otherwise be stored and shown as it was sent.
 - **Rationale**: the documentation already shows an email address as a principal name
   (`docs/docs/compose-deployment.mdx:569`). No space keeps a name different from every
   placeholder and safe in a URL path.
@@ -264,16 +350,38 @@ revised after the [critique](critiques/critique-20261117.md).
       its account changes, except the session that made the change.
     - Disabling an account deletes its tokens and its sessions. Enabling it therefore restores
       nothing (FR-029). The maintainer decided this in the interview.
-    - Changing a password does not delete the tokens of the account.
+    - Changing a password does not delete the tokens of the account. A password change made with
+      an API token keeps no session.
+    - A sign-in or a new API token is written only while the account is active and, for a
+      sign-in, still has the password that was checked: the store locks the account row in the
+      transaction that inserts the session or the token. A disable, a deletion or a password
+      change that runs at the same time either comes first and the insertion is refused, or
+      comes after and deletes what was inserted.
+- Changed during implementation: the last point was added after the review found that a session
+  or a token created during a disable or a password reset outlived it.
 - **The CLI keeps the session token in a file** `sessions.json` in the directory that
-  `typer.get_app_dir("infrahub-sync")` returns, with mode `0600`, keyed by the address of the
-  Sync API. Typer is a base dependency, so this works on Python 3.10 without the `service`
-  extra.
+  `typer.get_app_dir("infrahub-sync")` returns. Typer is a base dependency, so this works on
+  Python 3.10 without the `service` extra.
+    - The directory is created with mode `0700`. A write goes to a temporary file with mode
+      `0600` in the same directory, which then replaces the file, so the token is never readable
+      by another user and an interrupted write leaves the previous file whole.
+    - Each entry holds the session token and the account name, keyed by the normalized address
+      of the Sync API: the scheme and the host in lower case, trailing slashes and one trailing
+      `/api` removed, the query and the fragment dropped, the port kept as written. An address
+      without `http` or `https`, without a host, or with a user name or a password has no entry.
+    - A file that is missing or cannot be read as JSON of that shape counts as no saved session.
 - **The lookup of the file is in the CLI, not in `SyncClient.from_environment`.** A script that
   uses the client as a library reads no file.
-- **`INFRAHUB_SYNC_API_TOKEN`, when set, is used and the file is not read.** `login` still
-  signs in and saves the session, and prints a line that says the variable takes precedence.
-  `logout` ends the saved session and prints the same line.
+- **`INFRAHUB_SYNC_API_TOKEN`, when set and not empty, is used and the file is not read.**
+  `login` still signs in and saves the session, and prints a line that says the variable takes
+  precedence. `logout` ends the saved session and prints the same line.
+- **A saved session that the Sync API refuses** with `401 unauthenticated` is removed from the
+  file, and the CLI prints the `login` hint.
+- **`login` reads the password from a prompt, or with `--password-stdin` from standard input.**
+  Without a terminal, or with `--password-stdin`, it requires `--name`.
+- **The account and token commands print a table by default, and JSON with `--json`.**
+- Changed during implementation: the contract named "the existing output option", which does not
+  exist; `--json` is a new option of these commands.
 - **On the Compose deployment**, the `cli` service keeps no file. The documented first step
   there is to set `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` and to give the same value to
   `INFRAHUB_SYNC_API_TOKEN`. `login` is for a CLI installed on a workstation.
@@ -287,10 +395,25 @@ revised after the [critique](critiques/critique-20261117.md).
 - **No `Idempotency-Key`** on the account routes. Creating an account that exists answers `409`,
   and the other actions give the same result when repeated.
 - **`reason` is optional** on the account routes, and is recorded in the audit event when given.
-- **Audit**: each account action writes an `audit_events` row through the existing
-  `record_audit` path, with an `event_type` of the form `infrahub_sync.account.<action>` and a
-  related resource of kind `account` that holds the identifier of the account acted on. A refused
-  sign-in writes the existing authentication refusal record, without the name that was tried.
+- **Audit**: each accepted account action writes one `audit_events` row in the transaction of
+  the action, so a failure of either writes neither. Its `event_type` is
+  `infrahub_sync.account.<action>`, with underscores as in every other event type: `signed_in`,
+  `signed_out`, `created`, `disabled`, `enabled`, `level_set`, `password_set` (by an
+  administrator), `password_changed` (by the account), `unlocked`, `token_created`,
+  `token_deleted` and `deleted`. Its related resources of kind `account` hold the identifiers of
+  the account that acted and of the account acted on.
+    - A field of `PATCH /accounts/{name}` that the account already has changes nothing and
+      writes no event. When both fields change, each is written with its own event.
+    - A refused account action writes `infrahub_sync.account.refused`, on its own, with an
+      outcome that says why: `refused-authorization` (not an administrator),
+      `refused-secret-parameter` (R4) or `refused-current-password`.
+    - A refused sign-in writes the existing authentication refusal record, with one reason for
+      every cause and without the name that was tried. A sign-in with a name or a password that
+      no account can have (R6) writes no record.
+- Changed during implementation: the first text wrote the events through the existing
+  `record_audit` path, after the action. The review found an action could be stored without its
+  event, so the store now writes both in one transaction. The action part of an event type uses
+  underscores, as the existing event types do.
 
 ## R11. What changes in the deployment and the tests
 
@@ -304,19 +427,29 @@ revised after the [critique](critiques/critique-20261117.md).
   `tests/product_store`), and 20 call `create_app`. One shared fixture builds a store-backed
   resolver with seeded accounts and returns their tokens, so each file changes its set-up and
   not its assertions.
-- **The development stack** sets the `admin` password and token to fixed development values, so
-  `infrahub-sync-dev-token` keeps working.
-- **Spec 018 (Helm chart)** is on another branch and names the removed variable. The branch that
-  merges second updates the chart values.
+  The implementation moved 31 test files to the shared helper `tests/service/accounts.py`.
+- **The development stack** sets the `admin` password to `infrahub-sync-dev-password` and its
+  token to `infrahub-sync-dev-token`, so `infrahub-sync-dev-token` keeps working. The variables
+  `ADMIN_ACCOUNT_PASSWORD` and `ADMIN_ACCOUNT_TOKEN` of the developer's shell replace them.
+- **Spec 018 (Helm chart)** was merged into this branch. The chart itself is in the repository
+  `opsmill/infrahub-helm`. Its values `credentials.adminAccountPassword` (required when the chart
+  creates the Secret) and `credentials.adminAccountToken` (optional) replace
+  `credentials.bearerTokens`, and `settings.sessionIdleSeconds` sets
+  `INFRAHUB_SYNC_SESSION_IDLE_SECONDS`. This branch describes them on
+  `docs/docs/kubernetes-deployment.mdx`.
+- Changed during implementation: the first text left the chart to the branch that merges
+  second. This branch merged second, so it updated the Kubernetes page.
 
 ## R12. Decision records and rules to write
 
 - A new decision record: sign-in uses local accounts in the product store, and the `admin`
-  account is defined by the environment.
+  account is defined by the environment. Written as
+  [ADR 0049](../../adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md).
 - A new decision record: a record holds an account identifier, and a deletion empties the
-  account row.
-- `AGENTS.md`: the Sync frontend rule is replaced (FR-036), and the CLI command list gains the
-  new commands.
+  account row. Written as
+  [ADR 0050](../../adr/0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md).
+- `AGENTS.md`: the CLI command list gains the new commands. The Sync frontend rule is replaced
+  (FR-036) with User Story 2, which is not implemented yet.
 - **Constitution principle VI** says credentials are "never committed, printed, or logged". This
   feature displays a token value once, to the account that created it. The feature amends the
   principle with one sentence that allows it (FR-040). The wider rework of principle VI, for

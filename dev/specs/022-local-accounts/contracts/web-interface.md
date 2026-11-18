@@ -17,12 +17,14 @@ the API accepts it as a bearer value (FR-015).
 - **A `401` for the held session** returns the person to the sign-in form, as a refused token
   does today.
 - **The signed-in account** is displayed in the page header, with a "Sign out" action that calls
-  `POST /api/auth/sign-out` and removes the session token.
+  `POST /api/auth/sign-out` and removes the session token. `GET /api/me` returns the account name
+  in `actor`, and `administrator`. The answer of the sign-in also holds the account
+  (`SessionResource.account`) and the idle period in seconds (`idle_seconds`).
 - **Accounts on records**:
     - a run displays the account that started it;
     - an approved plan displays the account that approved it;
     - a configuration version displays the account that registered it;
-    - `Deleted account <identifier>` is displayed as the API returns it.
+    - `Deleted account <short identifier>` is displayed as the API returns it.
 - **The rule in `AGENTS.md`** becomes: "Name the account where it explains who acted: the
   signed-in account, the account that started a run, approved a plan or registered a version."
 
@@ -34,7 +36,9 @@ the API accepts it as a bearer value (FR-015).
 - **"My account" page**, for every account: change the password, list the tokens, create a token
   and delete a token. A created token value is displayed once, with a copy action.
 - **The `admin` account** is displayed with a note that the deployment's environment defines it.
-  Its actions are not offered.
+  Its actions are not offered. The API refuses each of them with `409`, code
+  `environment-managed-account`, except unlock (`POST /api/accounts/admin/unlock`), which it
+  accepts.
 - **An account that is not an administrator** is not offered the "Accounts" page.
 
 ## Checks

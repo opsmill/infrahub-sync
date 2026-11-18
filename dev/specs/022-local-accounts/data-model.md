@@ -12,8 +12,8 @@ as in the existing tables.
 | `account_id` | text, primary key | `acct_` and 32 hexadecimal characters. This is the value every record holds (research R1). |
 | `short_id` | text, unique | 8 hexadecimal characters, chosen at creation. Shown only in `Deleted account <short_id>`. |
 | `name` | text, nullable | As typed. Matches the name rule (research R8). Empty after a deletion. |
-| `name_key` | text, nullable, unique | The lower-case name. Empty after a deletion, so the name is free again. |
-| `password_hash` | text, nullable | Algorithm, cost parameters, salt and derived key (research R2). Never returned. Empty after a deletion. |
+| `name_key` | text, nullable, unique | The lower-case name. Empty (`NULL`) after a deletion, so the name is free again: both databases treat two empty values as different. |
+| `password_hash` | text, nullable | `scrypt$<N>$<r>$<p>$<salt>$<derived key>` (research R2). Never returned. Empty after a deletion. |
 | `administrator` | boolean | The level. |
 | `disabled` | boolean | `false` when created. |
 | `environment_managed` | boolean | `true` only for `admin`. |
@@ -26,8 +26,13 @@ States and transitions:
 - **disabled → active** (administrator): restores sign-in with the password only.
 - **active or disabled → deleted** (administrator): empties `name`, `name_key` and
   `password_hash`, sets `deleted_at`, and deletes the tokens, the sessions and the
-  `sign_in_attempts` row. Not reversible.
-- An `environment_managed` account has no transition.
+  `sign_in_attempts` row. Not reversible. A deleted row takes no further change.
+- An `environment_managed` account has no transition. `sync-api` sets it back to an active
+  administrator at each start if a row differs.
+- Each transition, and every other accepted account action, writes its audit event in the same
+  transaction (research R10).
+- A session or an API token is inserted only while its account is active, in a transaction that
+  locks the account row (research R9).
 
 ## `account_tokens`
 
@@ -35,11 +40,11 @@ States and transitions:
 | --- | --- | --- |
 | `token_id` | text, primary key | A random UUID. Used to delete a token. |
 | `account_id` | text | The owner. |
-| `name` | text | Unique for one account. 1 to 64 characters. |
+| `name` | text | Unique for one account. 1 to 64 printable characters, with no space at either end, no secret of the process and no token prefix (research R4). The token of `admin` is named `environment`. |
 | `digest` | text, unique | SHA-256 of the token value (research R3). |
 | `created_at` | text | |
 | `expires_at` | text, nullable | The optional expiry date. |
-| `last_used_at` | text, nullable | Written when the last recorded use is more than a minute old. |
+| `last_used_at` | text, nullable | Written when it is empty or the last recorded use is more than a minute old. |
 | `environment_managed` | boolean | `true` for the one token of `admin` that the environment sets. |
 
 ## `account_sessions`
@@ -56,12 +61,21 @@ States and transitions:
 
 | Field | Type | Rule |
 | --- | --- | --- |
-| `name_key` | text, primary key | The lower-case name that was tried, whether or not an account has it. At most 64 characters. |
+| `name_key` | text, primary key | The lower-case name that was tried, whether or not an account has it. 1 to 64 characters, with no NUL character. |
 | `failed_count` | integer | Failures in the current window. |
 | `window_started_at` | text | Start of the 15-minute window. |
 | `refused_until` | text, nullable | Set when the count reaches 5. Not moved by an attempt made while the name is refused. |
 
-The table holds at most 10,000 rows (research R6).
+A row is deleted by a successful sign-in, a new password of the account, an unlock, the deletion
+of the account, and, for `admin`, each start of `sync-api`.
+
+The table holds at most 10,000 rows (research R6). To add a row when it is full, the store
+deletes the rows whose window started more than 15 minutes ago, then the rows with the oldest
+window, and never a row whose refusal is in force. When too few rows can be deleted, the new name
+is not recorded.
+
+Changed during implementation: the first rule deleted the rows with the oldest window, which could
+include a refusal in force (research R6).
 
 ## Existing columns that hold an account
 
@@ -90,7 +104,7 @@ resources of kind `account`, hold a display name: the account name, or
 `Deleted account <short_id>` (research R7).
 
 - **`PrincipalResource`** (`GET /me`, existing): `actor`, `administrator`, `approval_required`.
-  No change.
+  No change of fields. `actor` holds the account name.
 - **`AccountResource`**: `name`, `administrator`, `disabled`, `environment_managed`,
   `created_at`, `sign_in_refused_until` (a time, or nothing). Never a password hash, and never
   the account identifier.
@@ -100,3 +114,8 @@ resources of kind `account`, hold a display name: the account name, or
   once, by the creation.
 - **`SessionResource`**: `token`, the session token, `account` (an `AccountResource`) and
   `idle_seconds`. Returned once, by the sign-in.
+- **`DeletedAccountResource`**: `placeholder`, the text that every record of the account
+  displays from now on (`Deleted account <short_id>`). Returned by `DELETE /accounts/{name}`.
+
+`SessionResource` and `CreatedTokenResource` print the account name or the token name only, so
+no log line or traceback holds the token. Every resource refuses a field it does not declare.
