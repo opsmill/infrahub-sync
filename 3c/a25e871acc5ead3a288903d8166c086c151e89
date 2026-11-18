@@ -1,0 +1,162 @@
+tests/service/test_compose_bootstrap.py
+  s_cf9ada8f865389::t_114e24ee96be74 14,16,27-32,42,51,458-566
+  s_cf9ada8f865389::t_80644156acf465 567-568
+changelog/+dev-stack-presets.changed.md
+  s_cf9ada8f865389::t_114e24ee96be74 1
+infrahub_sync/service/start_check.py
+  s_cf9ada8f865389::t_114e24ee96be74 1-115
+infrahub_sync/service/storage.py
+  s_cf9ada8f865389::t_114e24ee96be74 203-216
+README.md
+  s_cf9ada8f865389::t_114e24ee96be74 77-78,82-84,95,103-105,110-112
+tests/dev_stack/test_deps_mode.py
+  s_cf9ada8f865389::t_114e24ee96be74 137-141,482-503
+infrahub_sync/service/worker.py
+  s_cf9ada8f865389::t_114e24ee96be74 8,33,39,556-605,612-616,625
+Dockerfile
+  s_cf9ada8f865389::t_114e24ee96be74 139-148,165-168
+dev/specs/018-helm-chart-kubernetes/critiques/critique-2026-11-16.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-141
+dev/specs/018-helm-chart-kubernetes/data-model.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-100
+docs/docs/development/knowledge/repository-tour.md
+  s_cf9ada8f865389::t_114e24ee96be74 379,396-400
+docs/docs/creating-a-sync-project.mdx
+  s_cf9ada8f865389::t_114e24ee96be74 98-99
+infrahub_sync/product_store/store.py
+  s_cf9ada8f865389::t_114e24ee96be74 52,200-203,533-543,683-684,1789-1807,4821-4839,4969-4999
+  s_cf9ada8f865389::t_b3060460740329 5000-5001
+AGENTS.md
+  s_cf9ada8f865389::t_114e24ee96be74 213
+docker-compose.yml
+  s_cf9ada8f865389::t_114e24ee96be74 373-375,381
+tests/compose/test_compose_contract.py
+  s_cf9ada8f865389::t_114e24ee96be74 1070,1077-1078
+dev/specs/018-helm-chart-kubernetes/tasks.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-564
+infrahub_sync/product_store/__init__.py
+  s_cf9ada8f865389::t_114e24ee96be74 20,64,85,125
+docs/sidebars.ts
+  s_cf9ada8f865389::t_114e24ee96be74 176
+tasks/netbox.py
+  s_cf9ada8f865389::t_114e24ee96be74 38,435-439,445-450,492,498-559
+  s_cf9ada8f865389::t_ae2dbf57f966ee 560-561
+dev/specs/018-helm-chart-kubernetes/quickstart.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-116
+dev/adr/README.md
+  s_cf9ada8f865389::t_114e24ee96be74 136-139
+dev/specs/018-helm-chart-kubernetes/research.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-257
+changelog/+bootstrap-record.added.md
+  s_cf9ada8f865389::t_114e24ee96be74 1
+docs/docs/development-stack.mdx
+  s_cf9ada8f865389::t_114e24ee96be74 6-11,45-86,90-91,108,111,114-116,119-121,127-128,140-144,181-182,227,231,250-255,297-320,330-332,341,588-590,592,595
+tests/image/conftest.py
+  s_cf9ada8f865389::t_114e24ee96be74 259-280,284
+docs/docs/contributing.mdx
+  s_cf9ada8f865389::t_114e24ee96be74 158-162,167
+tests/test_nightly_e2e.py
+  s_cf9ada8f865389::t_114e24ee96be74 14-15,49-62
+  s_cf9ada8f865389::t_838e551b07cf6b 63-64
+tests/service/test_environment_names.py
+  s_cf9ada8f865389::t_114e24ee96be74 81
+tests/product_store/test_bootstrap_record.py
+  s_cf9ada8f865389::t_114e24ee96be74 1-211
+tests/test_task_inventory.py
+  s_cf9ada8f865389::t_114e24ee96be74 33-34
+docs/docs/operations/supported-platforms-and-limits.mdx
+  s_cf9ada8f865389::t_114e24ee96be74 42-47,59-60
+dev/specs/018-helm-chart-kubernetes/plan.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-212
+dev/specs/018-helm-chart-kubernetes/spec.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-420
+dev/specs/018-helm-chart-kubernetes/contracts/rendered-release.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-84
+dev/specs/018-helm-chart-kubernetes/verification.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-916
+changelog/422.added.md
+  s_cf9ada8f865389::t_114e24ee96be74 1
+changelog/+worker-sigterm.fixed.md
+  s_cf9ada8f865389::t_114e24ee96be74 1
+dev/specs/018-helm-chart-kubernetes/contracts/values.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-104
+tests/service/test_start_check.py
+  s_cf9ada8f865389::t_114e24ee96be74 1-279
+tests/dev_stack/test_dev_tasks.py
+  s_cf9ada8f865389::t_114e24ee96be74 70-80,84-95,99-101,115,120-122,128-129,154,156-157,189,207,429-430,491-731
+.github/scripts/nightly_e2e.py
+  s_cf9ada8f865389::t_114e24ee96be74 23-24,86-88,189,192
+dev/adr/0029-the-development-stack-is-one-compose-file-with-profiles.md
+  s_cf9ada8f865389::t_114e24ee96be74 4,27-28,73-93
+tests/image/test_image_artifact.py
+  s_cf9ada8f865389::t_114e24ee96be74 151-167
+development/docker-compose.yml
+  s_cf9ada8f865389::t_114e24ee96be74 2-3,5-7,25-28
+infrahub_sync/service/bootstrap.py
+  s_cf9ada8f865389::t_114e24ee96be74 8-12,44,100,335,337,351,353,357-363,369
+infrahub_sync/product_store/models.py
+  s_cf9ada8f865389::t_114e24ee96be74 471-490
+docs/docs/kubernetes-deployment.mdx
+  s_cf9ada8f865389::t_114e24ee96be74 1-572
+dev/adr/0045-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-139
+dev/specs/018-helm-chart-kubernetes/alignment-check.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-32
+tests/dev_stack/test_netbox_presence.py
+  s_cf9ada8f865389::t_114e24ee96be74 1-115
+tests/service/test_serve_site.py
+  s_cf9ada8f865389::t_114e24ee96be74 52,75
+tests/service/test_config_routes.py
+  s_cf9ada8f865389::t_114e24ee96be74 1051-1054,1088,1129,1156,1187
+changelog/+image-tini.changed.md
+  s_cf9ada8f865389::t_114e24ee96be74 1
+infrahub_sync/testcontainers/docker-compose.yml
+  s_cf9ada8f865389::t_114e24ee96be74 373-375,381
+docs/docs/container-image.mdx
+  s_cf9ada8f865389::t_114e24ee96be74 74
+docs/docs/development/guidelines/testing-tiers.md
+  s_cf9ada8f865389::t_114e24ee96be74 72,140,231,272,330,336,565
+tasks/dev.py
+  s_cf9ada8f865389::t_114e24ee96be74 9-28,64,70-80,109-112,115-116,193-244,281-282,305-313,332-333,439-446,449-452,455-459,477,481-538,541-545,547,549-578,746-748,750-755,790,797,799-805,819-821,828,834-839,843-868,961-963,978,1020-1023,1025-1028,1030,1038-1039,1045-1074,1093,1104-1106,1123,1157-1159,1164-1168,1170,1174-1175,1188-1189,1250-1251
+dev/specs/018-helm-chart-kubernetes/checklists/requirements.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-43
+dev/specs/018-helm-chart-kubernetes/opsmill-implement-report.md
+  s_cf9ada8f865389::t_114e24ee96be74 1-156
+infrahub_sync/service/serve.py
+  s_cf9ada8f865389::t_114e24ee96be74 34,77,85-86,97-98,106-107,133,145,149,154-156,164
+  s_cf9ada8f865389::t_2601d92a033633 84
+  s_cf9ada8f865389::t_349ea418896c55 87
+  s_cf9ada8f865389::t_9d865186b25ffb 173
+tests/service/test_trust_store_entry_points.py
+  s_cf9ada8f865389::t_114e24ee96be74 20-21,24
+tests/service/test_installed_flow_identity.py
+  s_cf9ada8f865389::t_114e24ee96be74 271
+tests/product_store/test_contract.py
+  s_cf9ada8f865389::t_114e24ee96be74 79,119
+docs/docs/compose-deployment.mdx
+  s_cf9ada8f865389::t_114e24ee96be74 22,548-553,1398-1399
+docs/docs/reference/sync-http-api.mdx
+  s_cf9ada8f865389::t_114e24ee96be74 208-215,226-227,306
+tests/service/test_validation_secret_containment.py
+  s_cf9ada8f865389::t_114e24ee96be74 285
+tests/service/test_worker_termination.py
+  s_cf9ada8f865389::t_114e24ee96be74 1-131
+development/README.md
+  s_cf9ada8f865389::t_114e24ee96be74 3-5,14-16,19-22,26-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ca25e871acc5ead3a288903d8166c086c151e89",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
