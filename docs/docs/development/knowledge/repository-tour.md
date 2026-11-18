@@ -38,9 +38,18 @@ behavior.
 - [`infrahub_sync/client/`][src-infrahub-sync-client] — the only place that builds Sync API requests.
   `client.py` holds the synchronous client, `models.py` its typed request and response shapes,
   and `errors.py` its error taxonomy.
+- `infrahub_sync/cli_accounts.py` — the commands of the local accounts: `login`, `logout`,
+  `password`, and the `tokens` and `accounts` groups. `cli.py` calls its `register` once; the
+  module imports nothing from `cli.py`. It never takes a password as an argument: it reads it from
+  a prompt without echo, or from standard input with `--password-stdin`.
+- `infrahub_sync/cli_session.py` — the session file that `login` writes: `sessions.json` in the
+  directory that `typer.get_app_dir("infrahub-sync")` returns, mode `0600`, one session token for
+  each Sync API address. It needs no `service` extra, so it works on Python 3.10. The lookup is
+  in the CLI, not in `SyncClient`, so a script that uses the client as a library reads no file.
 
 The command surface is `configs` (including the local `configs convert`), `runs`, `plan`,
-`verify`, `approve`, `sync`, `apply`, `events` and `whoami`. See the
+`verify`, `approve`, `sync`, `apply`, `events`, `whoami`, `login`, `logout`, `password`, `tokens`
+and `accounts`. See the
 [CLI reference](../../reference/cli.mdx) for every option.
 
 To trace a registered run from a CLI command to execution, follow these modules:
@@ -104,6 +113,29 @@ Two facts about it are often missed:
 
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
+
+The local accounts live in these service modules
+([ADR 0049](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md),
+[ADR 0050](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md)):
+
+- `auth.py` resolves the caller of each request. `StoreAccountResolver` reads the SHA-256 digest
+  of the bearer value (an API token `ifs_pat_…`, a session token `ifs_ses_…` or the token of
+  `admin`) in the product store, with its account, for every request, and caches nothing.
+  `Principal.actor` holds the account identifier and `Principal.name` the account name.
+  `apply_admin_account` makes the `admin` account match the environment at start.
+- `credentials.py` hashes and verifies passwords with `hashlib.scrypt`, makes token and session
+  values, computes their digests, and limits the password checks that run at the same time
+  (`VerificationGate`).
+- `settings.py` also reads `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`,
+  `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` and `INFRAHUB_SYNC_SESSION_IDLE_SECONDS`. `serve.py`
+  applies the `admin` variables, then removes the password variable from the environment of the
+  process.
+- `account_routes.py` declares the routes `/auth/sign-in`, `/auth/sign-out`, `/accounts…`,
+  `/me/password` and `/me/tokens`; each calls one function of `account_actions.py`, which holds
+  the requests, the answers, the rights and the audit events of the account actions.
+- `presentation.py` holds `AccountNameMiddleware`, which replaces the account identifiers in
+  every JSON answer, replayed answers included, with the account name, or with
+  `Deleted account <short identifier>`.
 
 Six service modules carry what a run tells the operator:
 
@@ -211,6 +243,12 @@ are the deep documents.
 `store.py` the durable projection, `models.py` the record types and `bundle.py` the artifact
 bundle. [Durable product records](../../reference/durable-product-records.mdx) documents what
 is kept.
+
+`accounts.py` holds the statements of the four account tables (`accounts`, `account_tokens`,
+`account_sessions`, `sign_in_attempts`): creating and reading accounts, tokens and sessions by
+digest, the deletion that empties an account row, the `admin` row that the environment manages,
+and the count of failed sign-ins. Each function takes the caller's cursor, so `store.py` owns
+the transaction, and it receives digests, never token values.
 
 The store serves the lists from its own tables only. `list_runs`, `list_configuration_page` and
 `list_configuration_version_page` each read one page in a fixed order, newest first, and one row
