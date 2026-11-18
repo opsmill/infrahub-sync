@@ -1,0 +1,91 @@
+tests/service/test_schedule_branch_review.py
+  s_29b17f91da9f30::t_f2936f80eaf3dd 1-132,135-204
+  s_29b17f91da9f30::t_6572292771512f 133-134
+tests/service/test_http_api.py
+  s_29b17f91da9f30::t_0dc03128bd2a14 2979-2981
+  s_29b17f91da9f30::t_b81d3472bb47fe 2976-2978
+  s_29b17f91da9f30::t_4e275aeddc2979 2982-2984
+  s_683439a13d97ae::t_ecea668559a758 83-84,2949-2975,2985-3041
+infrahub_sync/service/app.py
+  s_29b17f91da9f30::t_f12f1ac6a4e2e7 492,496-497,501,508-513
+infrahub_sync/service/flow.py
+  s_29b17f91da9f30::t_2d56637fd3d9a2 77
+  s_29b17f91da9f30::t_c40c6351fdc575 16
+  s_29b17f91da9f30::t_bfb79e6135c3de 886
+  s_29b17f91da9f30::t_370207554d9abf 1640-1643,1645,1653
+  s_29b17f91da9f30::t_6c8756eb5034bb 902-904,911-912
+  s_29b17f91da9f30::t_30890f431ecb63 116
+  s_29b17f91da9f30::t_148c1a6b2563c5 1556-1558,1567,1569,1576-1580,1592-1595,1597-1621
+  s_29b17f91da9f30::t_f8276a88fe498e 29
+  s_29b17f91da9f30::t_d2c82553f0683e 513
+  s_29b17f91da9f30::t_d6717d21d25f88 473-477
+  s_29b17f91da9f30::t_83bc705e3a7093 542-610,612-617,619-674
+  s_29b17f91da9f30::t_607a366224c711 611
+  s_29b17f91da9f30::t_db1e401a46dc3a 618
+infrahub_sync/service/schedule_admission.py
+  s_29b17f91da9f30::t_f70300f3705554 1-14,16-42,44-222,224-319
+  s_29b17f91da9f30::t_a2cae42baf776c 43
+  s_29b17f91da9f30::t_118a9a7ba6841b 15
+  s_29b17f91da9f30::t_1994c111034d0b 223
+tests/service/test_registered_schema_guard.py
+  s_29b17f91da9f30::t_7d61d06542282d 604
+infrahub_sync/service/models.py
+  s_29b17f91da9f30::t_5afeb8bf1f9b5e 261-262
+  s_29b17f91da9f30::t_42116d6b9e88db 278
+tests/service/test_flow_and_prefect.py
+  s_29b17f91da9f30::t_7567ecb47e473f 988
+  s_29b17f91da9f30::t_d123c22470d4f5 270-271
+infrahub_sync/service/service.py
+  s_29b17f91da9f30::t_9812912cca2aa6 701-726
+  s_29b17f91da9f30::t_86b7d3243d2f8a 520
+  s_29b17f91da9f30::t_10710c98f1b7c5 482
+  s_29b17f91da9f30::t_d1e5f672b79be1 1388-1389,1395-1398,1400-1402,1409-1420,1427-1428,1431
+  s_29b17f91da9f30::t_9d5d9e2aa166db 603
+infrahub_sync/service/worker.py
+  s_29b17f91da9f30::t_6135e0a287e215 420-424
+  s_29b17f91da9f30::t_4d3f2a21f09cc2 30
+tests/service/test_schedule_admission.py
+  s_29b17f91da9f30::t_56264fac48ee9e 252-255
+  s_29b17f91da9f30::t_dc387e982084cb 282,289,297
+  s_29b17f91da9f30::t_1ae6aacb7a146d 49-52
+  s_29b17f91da9f30::t_1ec834c4163a24 1-37,39-48,53-65,68-251,256-281,283-288,290-296,298-340,342-361,363-372,374-390,392-398,400-411,413-420
+  s_29b17f91da9f30::t_8e7e1c294590cc 66-67
+  s_29b17f91da9f30::t_dc5b3386053989 38
+  s_29b17f91da9f30::t_5c0215b1cc5b3a 341
+  s_29b17f91da9f30::t_8d55fe5386257a 362
+  s_29b17f91da9f30::t_76ebb121def4e0 373
+  s_29b17f91da9f30::t_7db4b891b26260 391
+  s_29b17f91da9f30::t_31f6fc7c51914d 399
+  s_29b17f91da9f30::t_e3395f390d2cb6 412
+tests/service/test_worker_environment.py
+  s_29b17f91da9f30::t_6d1d2ce893b9f3 45-49
+  s_29b17f91da9f30::t_ca33be8393c6d2 265-286
+tests/service/test_events_route.py
+  s_683439a13d97ae::t_1e57a3248aa69b 33-34,36-38,409-469
+dev/specs/021-scheduled-runs/tasks.md
+  s_29b17f91da9f30::t_8d5f9a12a23c9e 74,77-78,86-87,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "22e2aed279046fb1fbd5cbcb1e7ed5b1f59d47aa",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_683439a13d97ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8ec7fffc3702df47",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
