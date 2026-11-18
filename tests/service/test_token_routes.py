@@ -475,6 +475,21 @@ def test_a_token_created_while_the_account_is_disabled_does_not_exist_when_it_is
     assert [event for event in api.events() if event.operation == "create-token"] == []
 
 
+def test_the_token_list_of_an_account_deleted_after_its_request_was_resolved_is_refused(
+    api: AccountApi, alice: dict[str, str]
+) -> None:
+    session = alice["Authorization"].removeprefix("Bearer ")
+    resolved = StoreAccountResolver(api.store, idle_seconds=IDLE_SECONDS, clock=api.clock).resolve(session)
+    assert resolved.principal is not None
+    response = api.call("DELETE", "/accounts/alice", api.session_headers("root"))
+    assert response.status_code == 200, response.text
+
+    with pytest.raises(ServiceAPIError) as refused:
+        account_actions.list_own_tokens(api.service, resolved.principal)
+
+    assert (refused.value.status, refused.value.code) == (401, "unauthenticated")
+
+
 _SURROGATE = '"correct-horse-\\ud800-battery"'
 
 

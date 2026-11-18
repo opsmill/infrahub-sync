@@ -10,9 +10,10 @@ reads the product store, the clock and the free-text check through the ``RunServ
 - ``change_own_password``, ``list_own_tokens``, ``create_own_token`` and ``delete_own_token`` are the
   actions of an account on itself.
 
-Each accepted action writes one audit event that names the account acted on by its identifier.
-The store writes the event in the transaction of the action, so a failure of either writes
-neither. The events of refusals, which change nothing else, are written on their own.
+Each accepted change writes one audit event that names the account acted on by its identifier.
+The store writes the event in the transaction of the change, so a failure of either writes
+neither. ``update_account`` writes a change of state and a change of level in two transactions.
+The events of refusals, which change nothing else, are written on their own.
 
 No function of this module puts a password, a token value, a session token, a digest or a hash in
 a log line, an exception or an audit record. A session token is in one place, the answer of a
@@ -933,8 +934,9 @@ def change_own_password(service: RunService, principal: Principal, body: ChangeP
 
 
 def list_own_tokens(service: RunService, principal: Principal) -> list[TokenResource]:
-    """Return the API tokens of the caller's account, oldest first, without any value."""
-    return [token_resource(token) for token in service.accounts.projection.list_account_tokens(principal.actor)]
+    """Return the API tokens of the caller's account, oldest first; ``401`` after its deletion."""
+    account_id = _own_account(service, principal).account_id
+    return [token_resource(token) for token in service.accounts.projection.list_account_tokens(account_id)]
 
 
 def create_own_token(service: RunService, principal: Principal, body: CreateTokenRequest) -> CreatedTokenResource:
