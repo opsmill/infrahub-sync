@@ -1,0 +1,23 @@
+frontend/src/features/runs/plan-download.tsx
+  s_cf9ada8f865389::t_03506647a964b2 116
+frontend/src/api/queries.ts
+  s_cf9ada8f865389::t_03506647a964b2 330,376-377
+frontend/src/features/runs/RunPage.tsx
+  s_cf9ada8f865389::t_03506647a964b2 584
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b3b775d395f4ba22311766e637082a6e000a797",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
