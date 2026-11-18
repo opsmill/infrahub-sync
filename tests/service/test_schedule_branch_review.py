@@ -134,6 +134,14 @@ def test_the_branch_name_is_derived_from_the_schedule_and_the_start() -> None:
     assert branch_review_branch("nightly", SCHEDULE_ID, T0 + timedelta(days=1)) != expected
 
 
+def test_the_branch_name_holds_no_two_dots_in_a_row() -> None:
+    """A schedule name may hold ``..``; an Infrahub branch name, a Git reference, may not."""
+    branch = branch_review_branch("a..b...c", SCHEDULE_ID, T0)
+
+    assert branch.startswith("sync/a.b.c-20260302-")
+    assert ".." not in branch
+
+
 def test_two_attempts_of_one_start_derive_the_same_branch(api: ScheduleApi) -> None:
     schedule = _schedule(api)
     now = T0 + timedelta(seconds=5)

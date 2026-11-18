@@ -8,6 +8,7 @@ reads the clock: the current time is an argument (research R14).
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -62,6 +63,8 @@ ON_TIME_SECONDS = 300
 MISSED_STARTS_RECORDED_ONE_BY_ONE = 500
 # How many times a decision is made again when the schedule changed while it was being made.
 ADMISSION_ATTEMPTS = 5
+# Two or more dots in a row, which an Infrahub branch name refuses (Git reference rules).
+_DOT_RUN = re.compile(r"\.{2,}")
 
 # Refusal codes of a configuration version that a start cannot run, in ``details.cause``.
 _VERSION_NOT_FOUND = "configuration-version-not-found"
@@ -131,11 +134,13 @@ def branch_review_branch(schedule_name: str, schedule_id: str, start: datetime) 
 
     ``sync/<schedule name>-<YYYYMMDD of the start>-<6 hexadecimal characters>``: the characters
     begin ``sha256(schedule_id + ":" + start)``, with the start in UTC as ISO 8601 text, so two
-    attempts of one start derive the same name.
+    attempts of one start derive the same name. A schedule name may hold ``..``, which a Git
+    reference, and so an Infrahub branch name, refuses: each run of dots becomes one dot.
     """
     start_utc = start.astimezone(timezone.utc)
     digest = sha256(f"{schedule_id}:{start_utc.isoformat()}".encode()).hexdigest()[:6]
-    return f"sync/{schedule_name}-{start_utc:%Y%m%d}-{digest}"
+    name = _DOT_RUN.sub(".", schedule_name)
+    return f"sync/{name}-{start_utc:%Y%m%d}-{digest}"
 
 
 def admit_scheduled_start(  # pylint: disable=too-many-arguments
@@ -239,6 +244,7 @@ def decide_start(  # noqa: PLR0911  # pylint: disable=too-many-arguments,too-man
                 "cause": cause,
                 "last_start_at": schedule.last_start_at,
                 "waiting_start_at": schedule.waiting_start_at,
+                "schedule_updated_at": schedule.updated_at,
                 "events": (*events, *(() if event is None else (event,))),
                 "kept_run_ids": tuple(kept_run_ids),
             }
@@ -352,6 +358,7 @@ def decide_start(  # noqa: PLR0911  # pylint: disable=too-many-arguments,too-man
         branch_review=branch_review,
         last_start_at=schedule.last_start_at,
         waiting_start_at=schedule.waiting_start_at,
+        schedule_updated_at=schedule.updated_at,
         events=(*events, *started_late, *kept_events, accepted),
         kept_run_ids=tuple(kept_run_ids),
     )

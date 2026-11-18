@@ -362,7 +362,9 @@ class _PoolClient(Protocol):
 
     async def read_workers_for_work_pool(self, work_pool_name: str) -> list[Any]: ...
 
-    async def get_scheduled_flow_runs_for_work_pool(self, work_pool_name: str) -> list[Any]: ...
+    async def get_scheduled_flow_runs_for_work_pool(
+        self, work_pool_name: str, *, scheduled_before: datetime | None = None
+    ) -> list[Any]: ...
 
 
 class _ScheduleClient(Protocol):
@@ -454,7 +456,11 @@ class PrefectOrchestration:
         try:
             client = cast("_PoolClient", self._client)
             workers = _pinned_list(await client.read_workers_for_work_pool(work_pool_name))
-            scheduled = _pinned_list(await client.get_scheduled_flow_runs_for_work_pool(work_pool_name))
+            # Only the flow runs due by now: Prefect's scheduler creates the future flow runs of
+            # each active schedule in advance, and those wait for their time, not for a worker.
+            scheduled = _pinned_list(
+                await client.get_scheduled_flow_runs_for_work_pool(work_pool_name, scheduled_before=now)
+            )
             parsed = tuple(_pool_worker(worker) for worker in workers)
             return PoolStatus(detail_available=True, queue_depth=len(scheduled), observed_at=now, workers=parsed)
         except (ObjectNotFound, httpx.HTTPError, AttributeError, TypeError, ValueError):

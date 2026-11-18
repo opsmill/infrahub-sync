@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, get_args
 
+import httpx
 import structlog
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import Error as InfrahubSDKError
@@ -82,6 +83,10 @@ _PROPOSED_CHANGE_CLOSE = (
     "mutation SyncProposedChangeClose($id: String!) "
     '{ CoreProposedChangeUpdate(data: {id: $id, state: {value: "closed"}}) { ok } }'
 )
+# What a branch request raises when it fails: an SDK error, or an HTTP status error that the SDK
+# raises as it is for a status other than 401, 403 and 404 (a 502 of a proxy, for example). The
+# branch list then decides whether the branch exists (rule 4).
+_REQUEST_ERRORS: tuple[type[Exception], ...] = (InfrahubSDKError, httpx.HTTPError)
 
 
 class BranchReviewError(Exception):
@@ -207,7 +212,7 @@ def _branch_exists(client: InfrahubClientSync, name: str) -> bool | None:
     """Whether the branch exists, or `None` when Infrahub cannot tell."""
     try:
         return name in _branches(client)
-    except (InfrahubSDKError, BranchListFailedError):
+    except (*_REQUEST_ERRORS, BranchListFailedError):
         return None
 
 
@@ -222,7 +227,7 @@ def create_branch(client: InfrahubClientSync, name: str) -> None:
         client.execute_graphql(
             query=_BRANCH_CREATE, variables=variables, branch_name=DEFAULT_BRANCH, tracker="sync-branch-create"
         )
-    except InfrahubSDKError as exc:
+    except _REQUEST_ERRORS as exc:
         if _branch_exists(client, name):
             logger.info("branch_review.branch_exists", branch=name)
             return
@@ -241,7 +246,7 @@ def delete_branch(client: InfrahubClientSync, name: str) -> None:
         client.execute_graphql(
             query=_BRANCH_DELETE, variables=variables, branch_name=DEFAULT_BRANCH, tracker="sync-branch-delete"
         )
-    except InfrahubSDKError as exc:
+    except _REQUEST_ERRORS as exc:
         if _branch_exists(client, name) is False:
             logger.info("branch_review.branch_missing", branch=name)
             return

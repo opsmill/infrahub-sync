@@ -1079,7 +1079,12 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     ) -> ScheduleRecord: ...
 
     def record_schedule_prefect_sync(
-        self, schedule_id: str, *, prefect_schedule_id: str | None, synced: bool
+        self,
+        schedule_id: str,
+        *,
+        prefect_schedule_id: str | None,
+        synced: bool,
+        expected_updated_at: datetime | None = None,
     ) -> bool: ...
 
     def schedule_branches(
@@ -3718,15 +3723,30 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         assert updated is not None
         return updated
 
-    def record_schedule_prefect_sync(self, schedule_id: str, *, prefect_schedule_id: str | None, synced: bool) -> bool:
+    def record_schedule_prefect_sync(
+        self,
+        schedule_id: str,
+        *,
+        prefect_schedule_id: str | None,
+        synced: bool,
+        expected_updated_at: datetime | None = None,
+    ) -> bool:
         """Record the Prefect schedule of a schedule and whether it matches the record.
 
         Only these two fields are written, so a call made after a request to Prefect cannot
-        undo a change that was saved in between. Returns whether a schedule has the identifier.
+        undo a change that was saved in between. With ``expected_updated_at``, nothing is
+        written when the stored schedule changed after it was read: the Prefect schedule was
+        made from the earlier record, so the change keeps ``prefect_synced`` as it saved it.
+        Returns whether a schedule was written.
         """
+        if expected_updated_at is None:
+            return self._execution_update(
+                "UPDATE schedules SET prefect_schedule_id = ?, prefect_synced = ? WHERE schedule_id = ?",
+                (prefect_schedule_id, synced, schedule_id),
+            )
         return self._execution_update(
-            "UPDATE schedules SET prefect_schedule_id = ?, prefect_synced = ? WHERE schedule_id = ?",
-            (prefect_schedule_id, synced, schedule_id),
+            "UPDATE schedules SET prefect_schedule_id = ?, prefect_synced = ? WHERE schedule_id = ? AND updated_at = ?",
+            (prefect_schedule_id, synced, schedule_id, _utc_iso(expected_updated_at)),
         )
 
     def _read_schedule_branches(
@@ -3913,8 +3933,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             DuplicateRunError: The start already has a run; nothing is written.
             ScheduledStartAlreadyRecordedError: The start is not later than ``last_start_at``,
                 is not the waiting start and has no run, so it was already recorded.
-            ScheduleChangedError: The decision was made from another ``last_start_at`` or
-                ``waiting_start_at``, its
+            ScheduleChangedError: The decision was made from another ``last_start_at``,
+                ``waiting_start_at`` or ``updated_at``, its
                 run does not match the stored schedule, or a kept run has no branch row in
                 the states ``pending`` and ``open``.
             ConfigurationNotFoundError: The schedule's configuration version is not registered.
@@ -3960,9 +3980,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 "its last recorded start"
             )
             raise ScheduledStartAlreadyRecordedError(msg)
-        if (decision.last_start_at, decision.waiting_start_at) != (schedule.last_start_at, schedule.waiting_start_at):
-            msg = f"schedule {schedule_id!r} recorded another start after the decision was made"
-            raise ScheduleChangedError(msg)
+        _refuse_stale_decision(schedule, decision)
         for kept_run_id in decision.kept_run_ids:
             cursor.execute(
                 self._sql(
@@ -4971,10 +4989,23 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             events=tuple(_redact_event(event, secrets) for event in events),
         )
 
-    def record_schedule_prefect_sync(self, schedule_id: str, *, prefect_schedule_id: str | None, synced: bool) -> bool:
-        """Record a schedule's Prefect schedule and whether it matches the record; nothing else changes."""
+    def record_schedule_prefect_sync(
+        self,
+        schedule_id: str,
+        *,
+        prefect_schedule_id: str | None,
+        synced: bool,
+        expected_updated_at: datetime | None = None,
+    ) -> bool:
+        """Record a schedule's Prefect schedule and whether it matches the record; nothing else changes.
+
+        With ``expected_updated_at``, nothing is written when the schedule changed after it was read.
+        """
         return self._records.record_schedule_prefect_sync(
-            schedule_id, prefect_schedule_id=prefect_schedule_id, synced=synced
+            schedule_id,
+            prefect_schedule_id=prefect_schedule_id,
+            synced=synced,
+            expected_updated_at=expected_updated_at,
         )
 
     def schedule_branches(
@@ -5729,6 +5760,22 @@ def _schedule_branch_from_row(row: Sequence[Any]) -> ScheduleBranch:
 
 def _start_has_run_message(schedule_id: str, scheduled_start_at: datetime, run_id: str) -> str:
     return f"the start {_utc_iso(scheduled_start_at)} of schedule {schedule_id!r} already has the Sync run {run_id!r}"
+
+
+def _refuse_stale_decision(schedule: ScheduleRecord, decision: ScheduledStartDecision) -> None:
+    """Raise `ScheduleChangedError` when a decision on a start was made from another state of the schedule.
+
+    The decision names the ``last_start_at`` and ``waiting_start_at`` it was made from, so no
+    missed start is recorded twice, and the ``updated_at``, so a change of the cadence, the
+    left-out setting or the overlap policy saved after the read is not admitted under the
+    earlier settings. The caller decides again from the stored schedule.
+    """
+    if (decision.last_start_at, decision.waiting_start_at) != (schedule.last_start_at, schedule.waiting_start_at):
+        msg = f"schedule {schedule.schedule_id!r} recorded another start after the decision was made"
+        raise ScheduleChangedError(msg)
+    if decision.schedule_updated_at is not None and decision.schedule_updated_at != schedule.updated_at:
+        msg = f"schedule {schedule.schedule_id!r} changed after the decision was made"
+        raise ScheduleChangedError(msg)
 
 
 def _scheduled_start_receipt(run: ProductRun, flow_run_id: str, now: datetime) -> MutationReceipt:

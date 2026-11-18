@@ -1436,17 +1436,18 @@ def _create_run_branch(review: _BranchReview, settings: Mapping[str, Any]) -> No
 def _branch_review_stop(
     run_id: str, saved: SavedPlan, sync_name: str, review: _BranchReview
 ) -> tuple[dict[str, Any], ExecutionFinishWriteback] | None:
-    """Record the plan's counts for the proposed change; end the stage when the plan has no operation.
+    """Record the plan's counts for the proposed change; end the stage when the plan writes nothing.
 
     The run then deletes its branch, writes nothing and opens no proposed change (FR-022); its
     result says that the branch was removed, and the store moves its branch row to `removed` in
-    the same commit.
+    the same commit. A delete operation counts as no write: the apply never executes a delete,
+    so a plan that holds only deletes would leave an empty branch for review.
     """
     summary = saved.summary()
     review.created = summary.by_action.get("create", 0)
     review.updated = summary.by_action.get("update", 0)
     review.left_out = summary.left_out
-    if summary.total > 0:
+    if summary.total - summary.deletes_not_executed > 0:
         return None
     review_ops.delete_branch(review.client, review.branch)
     branch = review.branch

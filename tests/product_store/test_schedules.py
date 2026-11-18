@@ -733,6 +733,32 @@ def test_a_decision_made_from_an_earlier_last_start_is_refused(projection: Produ
     assert _stored(projection, schedule.schedule_id).last_start_at == _FIRST_START
 
 
+def test_a_decision_made_before_a_change_of_the_schedule_is_refused(projection: ProductProjection) -> None:
+    """A change saved after the decision read the schedule is not admitted under the earlier settings."""
+    schedule = _created(projection)
+    projection.update_schedule(
+        schedule.model_copy(update={"cron": "30 2 * * *", "updated_at": schedule.updated_at + _DAY}),
+        expected_updated_at=schedule.updated_at,
+    )
+
+    with pytest.raises(ScheduleChangedError):
+        projection.admit_scheduled_start(
+            schedule.schedule_id,
+            _FIRST_START,
+            "flow-stale",
+            _WORKER_ID,
+            _FIRST_START,
+            ScheduledStartNotRun(
+                cause="missed",
+                schedule_updated_at=schedule.updated_at,
+                events=(_start_event(schedule, _FIRST_START, outcome="missed-skipped"),),
+            ),
+        )
+
+    assert _schedule_events(projection, schedule) == ()
+    assert _stored(projection, schedule.schedule_id).last_start_at is None
+
+
 # --- the start that waits under the `queue` policy (research R7, FR-016) -----------------
 
 

@@ -201,7 +201,18 @@ async def _match_one(
     current: ScheduleRecord,
     existing: ObservedDeploymentSchedule | None,
 ) -> bool:
-    """Give one stored schedule the Prefect schedule it needs, record that it matches, and say if Prefect changed."""
+    """Give one stored schedule the Prefect schedule it needs, record that it matches, and say if Prefect changed.
+
+    The schedule is read again first: the list that the match step read can be older than a change
+    that another request or the worker saved since. A schedule deleted in between is left to the
+    match of its deletion. The match is recorded only when the schedule did not change after this
+    read, so a later change keeps ``prefect_synced`` false until its own match.
+    """
+    latest = projection.lookup_schedule(current.schedule_id).value
+    if latest is not None:
+        if latest.state == "deleted":
+            return False
+        current = latest
     desired = _desired(current)
     changed = False
     if existing is None:
@@ -213,7 +224,12 @@ async def _match_one(
             await orchestration.update_schedule(orchestrator_id, desired)
             changed = True
     if not current.prefect_synced or current.prefect_schedule_id != orchestrator_id:
-        projection.record_schedule_prefect_sync(current.schedule_id, prefect_schedule_id=orchestrator_id, synced=True)
+        projection.record_schedule_prefect_sync(
+            current.schedule_id,
+            prefect_schedule_id=orchestrator_id,
+            synced=True,
+            expected_updated_at=current.updated_at,
+        )
     return changed
 
 
@@ -769,6 +785,10 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             return replayed
         reserved: MutationReceipt | None = None
         for _attempt in range(_SAVE_ATTEMPTS):
+            if not context.administrator and schedule.owner != context.actor:
+                # An administrator took the schedule over after it was first read: the caller
+                # no longer owns the schedule that a retry would change.
+                raise self._released(reserved, self._forbidden(context))
             if schedule.state == "deleted" and context.operation != DELETE:
                 raise self._released(
                     reserved,
@@ -867,14 +887,18 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         if schedule is None:
             raise self._refusal(context, 404, "schedule-not-found", "the requested schedule does not exist")
         if not context.administrator and schedule.owner != context.actor:
-            raise self._refusal(
-                context.of(schedule),
-                403,
-                "forbidden",
-                "only the owner of the schedule or an administrator may change, pause, resume or delete it",
-                outcome="refused-authorization",
-            )
+            raise self._forbidden(context.of(schedule))
         return schedule
+
+    def _forbidden(self, context: _Request) -> ServiceAPIError:
+        """Return the refusal of a caller who is neither the owner of the schedule nor an administrator."""
+        return self._refusal(
+            context,
+            403,
+            "forbidden",
+            "only the owner of the schedule or an administrator may change, pause, resume or delete it",
+            outcome="refused-authorization",
+        )
 
     def _receipt(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
