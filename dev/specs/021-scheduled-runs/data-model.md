@@ -61,12 +61,15 @@ State transitions:
 | (none) | create | `active` |
 | `active` | pause | `paused` |
 | `paused` | resume | `active` |
+| `paused` | resume, when the owner's actor does not exist on the Sync API | `stopped`, reason `owner-not-found`; the resume is refused with `schedule-stopped` |
+| `paused` | resume, when the Sync API requires approval and the write target is the default branch | `stopped`, reason `approval-required`; the resume is refused with `schedule-stopped` |
 | `active` | the owner's actor does not exist on the Sync API, when the API process starts | `stopped`, reason `owner-not-found` |
 | `active` | the Sync API requires approval and the write target is the default branch, when the API process starts | `stopped`, reason `approval-required` |
 | `active` | the fifth consecutive failed run ends | `stopped`, reason `repeated-failures` |
 | `stopped` | resume, when the reason no longer holds | `active` |
 | `stopped` (`repeated-failures`) | resume, always | `active`, with `consecutive_failures` at 0 |
 | `stopped` (`owner-not-found`) | take over by an administrator (user story 3) | `active`, with the administrator as owner |
+| `stopped` (`owner-not-found`) | take over by an administrator, when the Sync API requires approval and the write target is the default branch | `stopped`, reason `approval-required`, with the administrator as owner |
 | `stopped` (`approval-required`) | change of the write target to `branch-review` | `active` |
 | `active`, `paused`, `stopped` | delete | `deleted` |
 

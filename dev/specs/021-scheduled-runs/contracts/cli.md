@@ -32,8 +32,8 @@ infrahub-sync schedules create --name from-netbox-nightly --config from-netbox -
 | `--version` | Required. |
 | `--cron` | Required. |
 | `--timezone` | Default `UTC`. |
-| `--write-to-default-branch` | Selects the write target `default-branch` (user story 2). Without it the write target is branch review. |
-| `--write-when-left-out` | Turns the left-out setting on. Only with `--write-to-default-branch`. |
+| `--write-to-default-branch` | Selects the write target `default-branch` (user story 2). Without it the write target is branch review. Arrives with T041; the command does not offer it before. |
+| `--write-when-left-out` / `--no-write-when-left-out` | Turns the left-out setting on or off. The Sync API refuses it on for branch review. |
 | `--overlap-policy` | `reject` (default) or `queue` (user story 3). |
 | `--start-late-by-at-most` | A duration such as `30m` or `2h` (user story 3). |
 
@@ -52,7 +52,7 @@ run and the count of consecutive failed runs (FR-033).
 ## `infrahub-sync schedules change <schedule>`
 
 Options: `--version`, `--cron`, `--timezone`, `--write-to-default-branch` and
-`--write-to-branch-review`, `--write-when-left-out` and `--no-write-when-left-out`,
+`--write-to-branch-review` (both arrive with T041), `--write-when-left-out` and `--no-write-when-left-out`,
 `--overlap-policy`, `--start-late-by-at-most`. A command with none of them exits 2. Output as
 for `create`.
 

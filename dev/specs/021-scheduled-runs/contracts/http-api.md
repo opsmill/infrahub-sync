@@ -76,6 +76,9 @@ Refusals:
 | 422 | `schedule-cron-invalid` | The cron expression is not valid, or does not have five fields. The message holds the reason. |
 | 503 | `orchestration-unavailable` | The schedule is stored and the task manager could not be reached. The schedule starts no run until a later request, or a restart of the Sync API, hands it to the task manager. `GET /schedules/{schedule_id}` shows `prefect_synced: false`. |
 | 422 | `schedule-timezone-invalid` | The time zone name is not known. |
+| 422 | `secret-parameter-refused` | A request field holds a credential that the Sync API knows. The schedule is not stored. |
+| 503 | `configuration-version-invalid` | The registered configuration version cannot be read. |
+| 409 | `idempotency-conflict`, `idempotency-in-progress` | The existing rules for a repeated `Idempotency-Key`. |
 | 422 | `schedule-setting-not-available` | `overlap_policy` is `queue` or `start_late_by_at_most_seconds` is set, before user story 3 is delivered. `write_target` is `default-branch`, before user story 2 is delivered. `write_target` is `branch-review`, or is absent, before the worker side of user story 1 is delivered. |
 
 ## `GET /schedules`
@@ -109,6 +112,7 @@ The refusals of `POST /schedules` apply, and:
 | 404 | `schedule-not-found` | |
 | 409 | `schedule-deleted` | |
 | 422 | `request-invalid` | The body names `name`, `config_id` or `owner`, or changes nothing. |
+| 409 | `schedule-changed` | Another writer changed the schedule during each of three attempts to save the request. Send the request again. |
 
 ## `POST /schedules/{schedule_id}/pause` and `POST /schedules/{schedule_id}/resume`
 
@@ -121,6 +125,7 @@ and a resume of an active schedule answer `200` and change nothing.
 | 404 | `schedule-not-found` | |
 | 409 | `schedule-deleted` | |
 | 409 | `schedule-stopped` | A resume of a stopped schedule whose reason still holds. The message names the reason and the action it needs. |
+| 409 | `schedule-changed` | As for a change. It also answers a deletion and a take-over. |
 
 A resume of a stopped schedule whose reason no longer holds answers `200`, and the schedule is
 active.

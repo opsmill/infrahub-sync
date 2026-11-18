@@ -34,7 +34,7 @@ The actor is the schedule's owner. `operation` is `schedule-start`. `details.sta
 | `infrahub_sync.schedule.start_queued` | The start waits under the `queue` policy (user story 3). | The run in progress. | `queued` |
 | `infrahub_sync.schedule.start_missed` | The start time passed while the worker or the task manager was not running. Recorded when the next flow run of the schedule is admitted. | The late run, if one started. | `missed-skipped` or `missed-started-late` |
 | `infrahub_sync.schedule.start_failed` | The run could not be created, for example because the configuration version can no longer be run. `details.cause` holds the refusal code. | none | `failed` |
-| `infrahub_sync.schedule.stopped` | The schedule moved to the state `stopped`. Written by the Sync API when it starts, or, for `repeated-failures`, with the end of the fifth failed run. `details.start_at` is absent. | The fifth failed run, for `repeated-failures`. | `owner-not-found`, `approval-required` or `repeated-failures` |
+| `infrahub_sync.schedule.stopped` | The schedule moved to the state `stopped`. Written by the Sync API when it starts, by a resume of a paused schedule whose reason holds, by a take-over that leaves the schedule stopped for `approval-required`, or, for `repeated-failures`, with the end of the fifth failed run. For a resume or a take-over, the actor is the caller and `operation` is the operation of the request (`schedule-resume` or `schedule-take-over`). `details.start_at` is absent. | The fifth failed run, for `repeated-failures`. | `owner-not-found`, `approval-required` or `repeated-failures` |
 
 - A start that creates a run on time writes no schedule event. The run's own events
   (`infrahub_sync.run.accepted` and the stage result) name the schedule.
