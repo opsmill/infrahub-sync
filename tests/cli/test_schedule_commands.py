@@ -586,7 +586,9 @@ def _public_run(**extra: object) -> PublicRunResource:
 
 
 def test_runs_list_filters_on_the_trigger_type_and_a_schedule_name(client: MagicMock) -> None:
-    client.list_runs.return_value = RunPage(items=(_public_run(trigger_type="scheduled", schedule_id=SCHEDULE_ID),))
+    client.list_runs.return_value = RunPage(
+        items=(_public_run(trigger_type="scheduled", schedule_id=SCHEDULE_ID, scheduled_start_at=NOW),)
+    )
 
     result = _invoke(client, "runs", "list", "--trigger-type", "scheduled", "--schedule", NAME)
 

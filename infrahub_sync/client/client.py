@@ -442,7 +442,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if registry_version is not None:
             params["registry_version"] = self._positive_integer(registry_version, "registry_version")
         if trigger_type is not None:
-            if trigger_type not in _TRIGGER_TYPES:
+            if not isinstance(trigger_type, str) or trigger_type not in _TRIGGER_TYPES:
                 raise ClientInputError(_TRIGGER_TYPE_ARG)
             params[_TRIGGER_TYPE_ARG] = trigger_type
         if schedule_id is not None:

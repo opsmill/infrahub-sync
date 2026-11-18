@@ -318,6 +318,7 @@ def test_list_events_sends_the_related_schedule_and_parses_the_details() -> None
         (lambda client: client.list_schedules(state=" active"), "state"),
         (lambda client: client.list_schedules(limit=0), "limit"),
         (lambda client: client.list_runs(trigger_type="daily"), "trigger_type"),
+        (lambda client: client.list_runs(trigger_type=["manual"]), "trigger_type"),
         (lambda client: client.list_runs(schedule_id="bad id"), "schedule_id"),
     ],
 )

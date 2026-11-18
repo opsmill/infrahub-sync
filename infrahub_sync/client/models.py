@@ -108,6 +108,8 @@ _EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"
 _ARTIFACT_KEY_MESSAGE = "artifact object and manifest keys must include the content digest"
 _BINDING_MESSAGE = "configuration binding must be all absent or all present"
 _FINISHED_RUN_MESSAGE = "a finished product record requires an outcome"
+_SCHEDULED_RUN_MESSAGE = "a scheduled run requires its schedule and its scheduled start time"
+_MANUAL_RUN_MESSAGE = "a manual run cannot name a schedule or a scheduled start time"
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
 _WORKER_STATUS_MESSAGE = "worker status is invalid"
@@ -422,6 +424,11 @@ class PublicRunResource(_ResourceModel):
         binding = (self.config_id, self.registry_version, self.package_checksum)
         if any(value is None for value in binding) and any(value is not None for value in binding):
             raise ValueError(_BINDING_MESSAGE)
+        start = (self.schedule_id, self.scheduled_start_at)
+        if self.trigger_type == "scheduled" and any(value is None for value in start):
+            raise ValueError(_SCHEDULED_RUN_MESSAGE)
+        if self.trigger_type == "manual" and any(value is not None for value in start):
+            raise ValueError(_MANUAL_RUN_MESSAGE)
         if self.finished_at is not None and self.outcome is None:
             raise ValueError(_FINISHED_RUN_MESSAGE)
         artifact_ids = [reference.artifact_id for reference in self.artifact_refs]

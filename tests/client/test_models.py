@@ -356,8 +356,22 @@ def test_a_run_resource_carries_the_schedule_and_the_start_time_of_a_scheduled_r
 
 @pytest.mark.parametrize(
     "override",
-    [{"trigger_type": "webhook"}, {"trigger_type": "scheduled", "scheduled_start_at": "2026-11-18T01:00:00"}],
-    ids=["unknown-trigger-type", "naive-start-time"],
+    [
+        {"trigger_type": "webhook"},
+        {"trigger_type": "scheduled", "schedule_id": "s-" + "3f" * 16, "scheduled_start_at": "2026-11-18T01:00:00"},
+        {"trigger_type": "scheduled", "schedule_id": "s-" + "3f" * 16},
+        {"trigger_type": "scheduled", "scheduled_start_at": "2026-11-18T01:00:00Z"},
+        {"trigger_type": "manual", "schedule_id": "s-" + "3f" * 16},
+        {"trigger_type": "manual", "scheduled_start_at": "2026-11-18T01:00:00Z"},
+    ],
+    ids=[
+        "unknown-trigger-type",
+        "naive-start-time",
+        "scheduled-without-start-time",
+        "scheduled-without-schedule",
+        "manual-with-schedule",
+        "manual-with-start-time",
+    ],
 )
 def test_an_invalid_trigger_field_of_a_run_is_refused(override: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
