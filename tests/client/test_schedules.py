@@ -176,7 +176,7 @@ def test_get_schedule_reads_one_schedule_with_its_open_branch() -> None:
     assert schedule.open_branch.proposed_change_id == "pc-1"
 
 
-def test_change_schedule_posts_only_the_changed_settings() -> None:
+def test_change_schedule_posts_the_changed_setting_and_leaves_the_others_null() -> None:
     requests: list[httpx.Request] = []
     client = _client(requests, _fixed(200, _schedule(cron="0 3 * * *")))
 
@@ -186,7 +186,17 @@ def test_change_schedule_posts_only_the_changed_settings() -> None:
     sent = requests[0]
     assert (sent.method, sent.url.path) == ("POST", f"/api/schedules/{SCHEDULE_ID}/change")
     assert sent.headers["Idempotency-Key"] == "key-2"
-    assert json.loads(sent.content)["cron"] == "0 3 * * *"
+    # A null setting keeps its value: the Sync API reads `None` as a setting that the change leaves out.
+    assert json.loads(sent.content) == {
+        "registry_version": None,
+        "cron": "0 3 * * *",
+        "timezone": None,
+        "write_target": None,
+        "write_when_left_out": None,
+        "overlap_policy": None,
+        "start_late_by_at_most_seconds": None,
+        "reason": None,
+    }
 
 
 @pytest.mark.parametrize(
