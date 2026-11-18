@@ -1,0 +1,34 @@
+docs/docs/operations/compose-troubleshooting.mdx
+  s_cf9ada8f865389::t_e3d4f7b25f3154 70-71
+docs/docs/development-stack.mdx
+  s_cf9ada8f865389::t_7bb7e8bfc7ede6 368
+docs/docs/guides/accounts.mdx
+  s_cf9ada8f865389::t_dcd2a157e71a6b 79,81
+  s_cf9ada8f865389::t_50a2f4016d5f1b 29-33
+docs/docs/reference/sync-http-api.mdx
+  s_cf9ada8f865389::t_656b6e81031ec5 133-140
+  s_cf9ada8f865389::t_947c30f8a7e3e6 1390
+docs/docs/development/knowledge/repository-tour.md
+  s_cf9ada8f865389::t_297126922b5652 46-48
+  s_cf9ada8f865389::t_8f2c69cad77aa1 128-130
+dev/adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md
+  s_cf9ada8f865389::t_b71d1e31482fb2 69-74
+  s_cf9ada8f865389::t_a6e06242552589 26
+  s_cf9ada8f865389::t_369f252b32224b 56-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f986d490eca8f0343a8adb44731deb091c4f19d",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
