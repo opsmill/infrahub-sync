@@ -357,7 +357,7 @@ def tokens_create(
 ) -> None:
     """Create an API token for your account and print its value once.
 
-    The value is the only line on standard output, so TOKEN=$(infrahub-sync tokens create ci)
+    The value is the only line on standard output, so `TOKEN=$(infrahub-sync tokens create ci)`
     captures it. The Sync API does not show the value again.
     """
     support = _support()
