@@ -87,10 +87,12 @@ export const Route = createFileRoute("/runs/$runId")({
 | `/` | Every configuration, grouped by the state of its latest run: failed or waiting for review, running, no current plan, in sync. | `GET /configs`, `GET /runs`, and `GET /configs/{config_id}/versions/{registry_version}` for each latest version |
 | `/configs/{config_id}` | The latest run, then tabs for the configuration's runs, its versions with who registered them and why, and the declared source, destination and mapping. **Start run** creates a plan or a sync. | `GET /configs/{config_id}`, `GET /configs/{config_id}/versions`, `GET /runs?config_id=`, `POST /runs` |
 | `/runs` | Every run, newest first, with filters and older pages. | `GET /runs` |
+| `/account` | The signed-in account: change its password, and list, create and delete its API tokens. A created token's value is shown once. | `GET /me`, `PUT /me/password`, `GET /me/tokens`, `POST /me/tokens`, `DELETE /me/tokens/{token_id}` |
+| `/accounts` | For administrators: every account with its level and state, a filter on the state, and create, set level, set password, allow sign-in again, disable, enable, the tokens of an account, and delete. Other accounts see a message that only an administrator can manage accounts. | `GET /accounts`, `POST /accounts`, `PATCH /accounts/{name}`, `PUT /accounts/{name}/password`, `POST /accounts/{name}/unlock`, `DELETE /accounts/{name}`, `GET /accounts/{name}/tokens`, `DELETE /accounts/{name}/tokens/{token_id}` |
 | `/runs/{run_id}` | The plan, verify and apply steps with their timings, the failure detail, the planned changes by kind, the run's files and its executions. **Verify**, **Apply** and **Cancel run** act on the run. | `GET /runs/{run_id}`, `GET /runs/{run_id}/plan`, `GET /runs/{run_id}/artifacts`, `POST /runs/{run_id}/verify`, `POST /runs/{run_id}/apply`, `POST /runs/{run_id}/cancel` |
 
-The top bar reads `GET /status` for the worker state and `GET /me` to check that the Sync API
-accepts the token; it does not display the token's actor. A run in progress is read again every
+The top bar reads `GET /status` for the worker state and `GET /me` for the signed-in account,
+which it displays, and its level, which decides whether the **Accounts** link is shown. A run in progress is read again every
 2 seconds; lists every 10 seconds.
 
 Each write sends an `Idempotency-Key`. A dialog keeps its key until a field changes, so sending

@@ -112,6 +112,7 @@ function AccountsPage({ state }: { state: AccountState }) {
   const navigate = useNavigate({ from: "/accounts" });
   const now = useNow();
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const createRef = useRef<HTMLButtonElement>(null);
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<{ action: Action; account: Account }>();
   const [deleted, setDeleted] = useState<{ name: string; placeholder: string }>();
@@ -126,14 +127,17 @@ function AccountsPage({ state }: { state: AccountState }) {
   }
   const self = me.data.actor;
 
-  /** Returns focus to the control that opened a dialog, or to the heading when it is gone. */
-  function closeDialog(name?: string) {
+  /**
+   * Returns focus to the control that opened a dialog: the Actions button of the account, or
+   * `fallback`. The heading takes it when that control is gone, as after a deletion.
+   */
+  function closeDialog(name?: string, fallback?: HTMLElement | null) {
     setOpen(undefined);
     setCreating(false);
     requestAnimationFrame(() => {
       const trigger = name
         ? document.querySelector<HTMLElement>(`[data-actions-for="${CSS.escape(name)}"]`)
-        : null;
+        : fallback;
       (trigger ?? headingRef.current)?.focus();
     });
   }
@@ -151,7 +155,7 @@ function AccountsPage({ state }: { state: AccountState }) {
           >
             Accounts
           </h1>
-          <Button size="sm" variant="primary" onPress={() => setCreating(true)}>
+          <Button ref={createRef} size="sm" variant="primary" onPress={() => setCreating(true)}>
             Create an account
           </Button>
         </div>
@@ -209,7 +213,9 @@ function AccountsPage({ state }: { state: AccountState }) {
           />
         )}
       </div>
-      {creating && <CreateAccountDialog onClose={() => closeDialog()} />}
+      {creating && (
+        <CreateAccountDialog onClose={() => closeDialog(undefined, createRef.current)} />
+      )}
       {open?.action === "level" && (
         <LevelDialog account={open.account} onClose={() => closeDialog(open.account.name)} />
       )}
@@ -865,7 +871,12 @@ function TokensDialog({ account, onClose }: { account: Account; onClose: () => v
           </p>
         </div>
         {tokens.isError && !tokens.data ? (
-          <ErrorPanel error={tokens.error} compact onRetry={() => void tokens.refetch()} />
+          <div className="flex flex-col items-start gap-2">
+            <AccountError error={tokens.error} />
+            <Button size="sm" variant="outline" onPress={() => void tokens.refetch()}>
+              Try again
+            </Button>
+          </div>
         ) : tokens.isPending ? (
           <div aria-busy="true" className="flex flex-col gap-2">
             <Bar className="h-9 w-full" />

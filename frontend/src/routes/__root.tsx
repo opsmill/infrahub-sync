@@ -297,7 +297,7 @@ function AccountControls() {
     <div className="flex min-w-0 items-center gap-1">
       {name && (
         <span
-          className="min-w-0 max-w-24 truncate max-sm:sr-only text-foreground-muted text-xs sm:max-w-48"
+          className="min-w-0 max-w-24 truncate text-foreground-muted text-xs sm:max-w-48"
           title={`Signed in as ${name}`}
         >
           <span className="sr-only">Signed in as </span>
