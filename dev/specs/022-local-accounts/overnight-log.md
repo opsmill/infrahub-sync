@@ -120,3 +120,8 @@ What I did next:
 - The two corrected Compose tests passed against the same image:
   `test_the_deployed_worker_container_mounts_only_the_ca_directory` (16:33:46 UTC, 103 s) and
   `test_the_cli_container_holds_no_credential_beyond_its_own_api_token` (16:33:59 UTC).
+- User Story 2 (T047 to T054) done: nine commits `63fd2da3` to `945b219f`; the headless browser
+  scenario passed 16 steps (Playwright 1.65.2, server on 127.0.0.1:18761, stopped). Not tested
+  in the browser: "approved by", the busy message and the idle timeout. Unit tier: 9922 passed,
+  0 failed, 2 xfailed (one fewer because a two-case test of `tasks/dev.py` became one case).
+- User Story 4 (T062 to T066) started.
