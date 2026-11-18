@@ -1,0 +1,21 @@
+docs/docs/guides/accounts.mdx
+  s_cf9ada8f865389::t_6d7eedcbf67997 275-277
+docs/docs/reference/sync-http-api.mdx
+  s_cf9ada8f865389::t_446e94fb995f2e 129-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be7dff95c847e93e0f517c40bf649adfb77da5c0",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
