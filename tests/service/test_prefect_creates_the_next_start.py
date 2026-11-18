@@ -76,13 +76,23 @@ async def _check() -> None:
         assert str(first.created_by.id) == schedule_id
         assert first.parameters == {"schedule_id": _SLUG, "stage": "sync"}
 
-        # A pause and a resume change the schedule: Prefect deletes its future flow runs, and the
-        # call creates them again from now.
+        # A pause and a resume change the schedule: Prefect deletes its flow runs whose start time
+        # is still to come, and the call creates them again from now.
         await orchestration.update_schedule(schedule_id, replace(_EVERY_MINUTE, active=False))
         await orchestration.update_schedule(schedule_id, _EVERY_MINUTE)
-        assert await _flow_runs(client, deployment_id) == []
+        assert await _future_flow_runs(client, deployment_id) == []
         await orchestration.create_scheduled_runs()
-        assert [run.expected_start_time for run in await _flow_runs(client, deployment_id)]
+        assert await _future_flow_runs(client, deployment_id)
+
+
+async def _future_flow_runs(client: PrefectClient, deployment_id: UUID) -> list[FlowRun]:
+    """The flow runs whose start time is still to come; a minute can turn while the test runs."""
+    now = datetime.now(timezone.utc)
+    return [
+        run
+        for run in await _flow_runs(client, deployment_id)
+        if run.expected_start_time is not None and run.expected_start_time > now
+    ]
 
 
 def test_the_flow_run_of_the_next_start_exists_as_soon_as_the_schedule_is_created() -> None:

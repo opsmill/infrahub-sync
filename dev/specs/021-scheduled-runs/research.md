@@ -744,3 +744,18 @@ stack on 2026-11-18, from the source code and with schedules `* * * * *` on the 
       `missed-skipped`. It was recorded when the worker took its flow run, not at the next start.
     - Step 3: the Sync API was stopped from 17:34:30 to 17:36:01; the 17:35 start ran at
       17:34:59.79.
+- With the call above, a restart of the whole stack across a start, with a schedule
+  `*/10 * * * *` created at 17:49:31: the stack was stopped from 17:49:37 to 17:49:53 and started
+  again at 17:56:30; the bootstrap ran from 17:56:42 to 17:56:44. The flow run of 17:50 kept its
+  identifier and its Prefect schedule. The worker took it at 17:56:47, recorded `start_missed` with
+  `missed-started-late` for 17:50, and started the run 6 minutes 47 seconds late. The run failed with
+  `DestinationSchemaUnavailableError`: the Infrahub server container of the stack started at
+  17:56:47.90 and answered at 17:56:59, after the run. In `development/docker-compose.yml`,
+  `sync-worker` does not wait for the Infrahub server, and a schedule does not run a failed start
+  again.
+- A deletion of a schedule while the worker is stopped deletes the waiting flow runs of the other
+  schedules. Observed: schedules C and D `* * * * *`, the worker stopped at 17:58:32, the flow run of
+  C for 17:59 in the state `Late` at 17:59:15. The deletion of D at 17:59:18 deleted it; the call
+  above created the flow runs of C from 18:00 at 17:59:18.63. The worker started again at 17:59:44
+  and ran no 17:59 run; the 18:00 start ran and recorded `start_missed` with `missed-skipped` for
+  17:59.

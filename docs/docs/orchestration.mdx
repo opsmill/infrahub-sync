@@ -185,9 +185,11 @@ they run again, the worker handles the most recent missed start of each schedule
   duration (default one hour), one run starts, however many starts were missed.
 - Otherwise no run starts.
 
-Every missed start is recorded as `infrahub_sync.schedule.start_missed`, with the outcome
-`missed-started-late` when a late run started and `missed-skipped` when none did. Missed starts are
-recorded when the next start of the schedule is handled, not when the service returns. When more
+A run that starts no more than five minutes after its start time counts as on time: it records no
+missed start. Every other missed start is recorded as `infrahub_sync.schedule.start_missed`, with
+the outcome `missed-started-late` when a late run started and `missed-skipped` when none did. The
+worker records missed starts when it handles the next flow run of the schedule: the waiting flow
+run of a missed start, as soon as the worker runs again, or otherwise the next start. When more
 than 500 starts of one schedule were missed, the 500 most recent are recorded one by one, and the
 older ones in one event that holds their count and their first and last start times. A paused or
 stopped schedule records no missed start. A late run follows the overlap policy like any other
@@ -197,7 +199,8 @@ A late start can only run when Prefect created its flow run before the start tim
 the flow runs of each schedule ahead of time: at least the next three starts, and every start of
 the next hour. A start that passes while the Prefect server is stopped therefore keeps its flow run
 when the server returns, also after a restart of the whole Sync service. These cases leave a start
-with no flow run, so it does not run, and the next start that runs records it as `missed-skipped`:
+with no flow run, so it does not run, and the worker records it as `missed-skipped` when it handles
+the next flow run of the schedule:
 
 - The Prefect server was stopped for longer than the starts it had created ahead, for example more
   than an hour for a schedule that starts every minute. When it returns, Prefect creates flow runs
