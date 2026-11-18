@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from infrahub_sync.product_store import (
     MAX_CONSECUTIVE_FAILURES,
@@ -185,6 +186,7 @@ def _admit(  # noqa: PLR0913 - the facts of one admission.
     events: tuple[AuditEvent, ...] = (),
     kept_run_ids: tuple[str, ...] = (),
     run: ProductRun | None = None,
+    receipt_age_limit: timedelta | None = None,
 ) -> ScheduledStartResult:
     """Admit a start that runs, from the stored state of the schedule."""
     new_run = run or _scheduled_run(projection, schedule, start, destination_branch=branch)
@@ -202,6 +204,7 @@ def _admit(  # noqa: PLR0913 - the facts of one admission.
             last_start_at=getattr(projection.lookup_schedule(schedule.schedule_id).value, "last_start_at", None),
             waiting_start_at=getattr(projection.lookup_schedule(schedule.schedule_id).value, "waiting_start_at", None),
         ),
+        receipt_age_limit=receipt_age_limit,
     )
 
 
@@ -954,6 +957,17 @@ def test_a_run_with_branch_review_has_a_pending_branch_row(projection: ProductPr
     assert not projection.lookup_schedule_branch("run-unknown").available
 
 
+def test_an_open_branch_row_names_its_proposed_change() -> None:
+    with pytest.raises(ValidationError, match="proposed change"):
+        ScheduleBranch(
+            schedule_id="s-" + "3f" * 16,
+            run_id="run-open-without-change",
+            branch="sync/nightly-20261118-abc123",
+            state="open",
+            created_at=_FIRST_START,
+        )
+
+
 def test_a_run_that_writes_to_the_default_branch_has_no_branch_row(projection: ProductProjection) -> None:
     schedule = _created(projection)
 
@@ -996,7 +1010,9 @@ def test_a_branch_row_in_a_final_state_accepts_no_change(projection: ProductProj
     )
 
     with pytest.raises(ScheduleTransitionError):
-        projection.update_schedule_branch(stored.model_copy(update={"state": "open", "replaced_by_run_id": None}))
+        projection.update_schedule_branch(
+            stored.model_copy(update={"state": "open", "replaced_by_run_id": None, "proposed_change_id": "pc-1"})
+        )
 
     assert projection.lookup_schedule_branch(row.run_id).value == stored
 
@@ -1459,6 +1475,21 @@ def test_a_run_with_an_execution_that_has_not_ended_is_in_progress(projection: P
 
     assert _in_progress(projection, schedule, after=timedelta(days=30)) == run.run_id
     assert _in_progress(projection, other) is None
+
+
+def test_a_start_decided_to_run_is_refused_when_a_run_of_the_configuration_started_since(
+    projection: ProductProjection,
+) -> None:
+    """The decision read the runs in progress before the admission; the admission reads them again."""
+    schedule = _created(projection)
+    run, receipt = _manual_run(projection, schedule, "plan")
+    _submitted(projection, run, receipt)
+
+    with pytest.raises(ScheduleChangedError, match="started after the decision"):
+        _admit(projection, schedule, _FIRST_START, receipt_age_limit=_LIMIT)
+
+    assert _stored(projection, schedule.schedule_id).last_start_at is None
+    assert _in_progress(projection, schedule) == run.run_id
 
 
 def test_a_scheduled_run_that_was_admitted_is_in_progress_until_it_ends(projection: ProductProjection) -> None:

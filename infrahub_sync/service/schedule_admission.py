@@ -45,7 +45,7 @@ from .events import (
 from .settings import approval_required
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterator, Mapping
 
     from infrahub_sync.product_store import (
         AuditEvent,
@@ -115,7 +115,9 @@ class StartAdmission:
     ``run`` is the run that was created, or ``None`` when the start created no run; ``cause``
     then says why. Besides the causes of the store, the cause is ``schedule-not-found``,
     ``start-not-in-cadence`` (the cadence of the stored schedule no longer holds the start
-    time) or ``start-already-recorded`` (a missed start that a later start already recorded).
+    time), ``start-already-recorded`` (a missed start that a later start already recorded) or
+    ``destination-not-ready`` (the start waits for its destination to answer; ``not_ready``
+    says why).
 
     ``confirm_left_out`` is true when the run writes the records that its plan keeps when it
     leaves some out: always for branch review, and for the default branch when the schedule's
@@ -127,6 +129,25 @@ class StartAdmission:
     branch_review: bool = False
     confirm_left_out: bool = False
     earlier_branches: tuple[ScheduleBranch, ...] = ()
+    not_ready: str | None = None
+
+
+def _not_admitted(
+    schedule: ScheduleRecord | None,
+    scheduled_start_at: datetime,
+    destination_not_ready: Callable[[ScheduleRecord], str | None] | None,
+) -> StartAdmission | None:
+    """Return the admission of a start that is decided before the store is asked, or ``None``."""
+    if schedule is None:
+        return StartAdmission(run=None, cause="schedule-not-found")
+    if schedule.state != "active":
+        return StartAdmission(run=None, cause="schedule-not-active")
+    if not _in_cadence(schedule, scheduled_start_at):
+        return StartAdmission(run=None, cause="start-not-in-cadence")
+    not_ready = None if destination_not_ready is None else destination_not_ready(schedule)
+    if not_ready is not None:
+        return StartAdmission(run=None, cause="destination-not-ready", not_ready=not_ready)
+    return None
 
 
 def branch_review_branch(schedule_name: str, schedule_id: str, start: datetime) -> str:
@@ -153,6 +174,7 @@ def admit_scheduled_start(  # pylint: disable=too-many-arguments
     now: datetime,
     receipt_age_limit: timedelta,
     read_proposed_changes: EarlierProposedChangesReader | None = None,
+    destination_not_ready: Callable[[ScheduleRecord], str | None] | None = None,
 ) -> StartAdmission:
     """Decide on one start of a schedule and save the decision, with the run when it runs.
 
@@ -160,7 +182,11 @@ def admit_scheduled_start(  # pylint: disable=too-many-arguments
     does not hold, write nothing. When the schedule changes while the decision is made, the
     schedule is read again and the decision made again, at most ``ADMISSION_ATTEMPTS`` times.
     ``read_proposed_changes`` reads the earlier proposed changes of a schedule with branch
-    review: see `decide_start`.
+    review: see `decide_start`. ``destination_not_ready`` returns why the destination of the
+    schedule, as read in this attempt, does not answer yet, or ``None``; it runs in each attempt,
+    so a schedule that changed between two attempts has the destination of its new version
+    checked. A reason ends the admission with the cause ``destination-not-ready`` and writes
+    nothing (FR-035).
 
     Raises:
         DuplicateRunError: The start already has a run.
@@ -168,12 +194,10 @@ def admit_scheduled_start(  # pylint: disable=too-many-arguments
     """
     for _ in range(ADMISSION_ATTEMPTS):
         schedule = projection.lookup_schedule(schedule_id).value
-        if schedule is None:
-            return StartAdmission(run=None, cause="schedule-not-found")
-        if schedule.state != "active":
-            return StartAdmission(run=None, cause="schedule-not-active")
-        if not _in_cadence(schedule, scheduled_start_at):
-            return StartAdmission(run=None, cause="start-not-in-cadence")
+        not_admitted = _not_admitted(schedule, scheduled_start_at, destination_not_ready)
+        if not_admitted is not None:
+            return not_admitted
+        assert schedule is not None
         decision = decide_start(
             projection,
             schedule,
@@ -184,10 +208,17 @@ def admit_scheduled_start(  # pylint: disable=too-many-arguments
         )
         try:
             result = projection.admit_scheduled_start(
-                schedule_id, scheduled_start_at, flow_run_id, worker_id, now, decision
+                schedule_id,
+                scheduled_start_at,
+                flow_run_id,
+                worker_id,
+                now,
+                decision,
+                receipt_age_limit=receipt_age_limit,
             )
         except (ScheduleChangedError, ConfigurationNotFoundError):
-            # Another start, a person or a removed version changed what the decision was made from.
+            # Another start, a person, a run admitted since the decision, or a removed version
+            # changed what the decision was made from.
             continue
         except ScheduledStartAlreadyRecordedError:
             return StartAdmission(run=None, cause="start-already-recorded")

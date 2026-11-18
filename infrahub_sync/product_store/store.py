@@ -1113,6 +1113,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         worker_id: str,
         now: datetime,
         decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
     ) -> ScheduledStartResult: ...
 
     def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None: ...
@@ -3913,6 +3915,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         worker_id: str,
         now: datetime,
         decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
     ) -> ScheduledStartResult:
         """Write the decision on one start of a schedule in one transaction (spec 021, research R2).
 
@@ -3927,6 +3931,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         reason. For a start that runs it also writes the run, its
         receipt already accepted, its ``sync`` write admission, its one execution already
         claimed by ``worker_id``, and a ``pending`` branch row for a run with branch review.
+        When ``receipt_age_limit`` is given, a start that runs checks again, in the transaction,
+        that no run of the configuration is in progress (`run_in_progress`). This finds a run that
+        a person started while the decision was made, which can take seconds when it reads
+        Infrahub. It does not close the race: a person's request takes no lock that this
+        transaction holds, so on PostgreSQL one that commits between this check and the commit
+        of the admission is not seen.
 
         Raises:
             ScheduleNotFoundError: No schedule has the identifier.
@@ -3935,14 +3945,22 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 is not the waiting start and has no run, so it was already recorded.
             ScheduleChangedError: The decision was made from another ``last_start_at``,
                 ``waiting_start_at`` or ``updated_at``, its
-                run does not match the stored schedule, or a kept run has no branch row in
-                the states ``pending`` and ``open``.
+                run does not match the stored schedule, a kept run has no branch row in
+                the states ``pending`` and ``open``, or a run of the configuration started
+                after a decision to run.
             ConfigurationNotFoundError: The schedule's configuration version is not registered.
         """
         try:
             with self._transaction() as cursor:
                 return self._admit_scheduled_start(
-                    cursor, schedule_id, scheduled_start_at, flow_run_id, worker_id, now, decision
+                    cursor,
+                    schedule_id,
+                    scheduled_start_at,
+                    flow_run_id,
+                    worker_id,
+                    now,
+                    decision,
+                    receipt_age_limit=receipt_age_limit,
                 )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # The unique index on the start is what refuses a second run if the check under
@@ -3964,6 +3982,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         worker_id: str,
         now: datetime,
         decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
     ) -> ScheduledStartResult:
         schedule = self._locked_schedule(cursor, schedule_id)
         if schedule.state != "active":
@@ -3981,6 +4001,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             )
             raise ScheduledStartAlreadyRecordedError(msg)
         _refuse_stale_decision(schedule, decision)
+        if isinstance(decision, ScheduledStartRun) and receipt_age_limit is not None:
+            self._refuse_run_started_since(cursor, schedule.config_id, now - receipt_age_limit)
         for kept_run_id in decision.kept_run_ids:
             cursor.execute(
                 self._sql(
@@ -4031,6 +4053,18 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             schedule=stored,
             earlier_branches=tuple(branch for branch in earlier if branch.run_id != run_id),
         )
+
+    def _refuse_run_started_since(self, cursor: _Cursor, config_id: str, oldest: datetime) -> None:
+        """Raise ``ScheduleChangedError`` when a run of the configuration is in progress.
+
+        The decision to run read the runs in progress outside the admission's transaction,
+        possibly seconds earlier while it read Infrahub: a run admitted since then makes the
+        caller decide again.
+        """
+        in_progress = self._run_in_progress(cursor, config_id, oldest)
+        if in_progress is not None:
+            msg = f"run {in_progress!r} of configuration {config_id!r} started after the decision to run"
+            raise ScheduleChangedError(msg)
 
     def _stop_for_approval(self, cursor: _Cursor, schedule_id: str, cause: str | None, now: datetime) -> None:
         """Stop the schedule when the cause of the decision is ``approval-required``; else do nothing.
@@ -4115,16 +4149,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         person, an interrupted run and an abandoned execution all have a terminal verdict, so
         they are not in progress. The receipt times are compared as times, not as text.
         """
-        oldest = now - receipt_age_limit
         with self._reading() as cursor:
-            cursor.execute(self._sql(_SELECT_RUN_WITH_OPEN_EXECUTION), (config_id,))
-            row = cursor.fetchone()
-            if row is not None:
-                return str(row[0])
-            cursor.execute(self._sql(_SELECT_UNRESOLVED_STAGE_RECEIPTS), (config_id, *_ARBITRATED_OPERATIONS))
-            for run_id, created_at in cursor.fetchall():
-                if datetime.fromisoformat(str(created_at)) > oldest:
-                    return str(run_id)
+            return self._run_in_progress(cursor, config_id, now - receipt_age_limit)
+
+    def _run_in_progress(self, cursor: _Cursor, config_id: str, oldest: datetime) -> str | None:
+        """`run_in_progress` with the caller's cursor; a receipt counts when created after ``oldest``."""
+        cursor.execute(self._sql(_SELECT_RUN_WITH_OPEN_EXECUTION), (config_id,))
+        row = cursor.fetchone()
+        if row is not None:
+            return str(row[0])
+        cursor.execute(self._sql(_SELECT_UNRESOLVED_STAGE_RECEIPTS), (config_id, *_ARBITRATED_OPERATIONS))
+        for run_id, created_at in cursor.fetchall():
+            if datetime.fromisoformat(str(created_at)) > oldest:
+                return str(run_id)
         return None
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
@@ -5068,6 +5105,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         now: datetime,
         decision: ScheduledStartDecision,
         *,
+        receipt_age_limit: timedelta | None = None,
         secrets: Sequence[str] = (),
     ) -> ScheduledStartResult:
         """Write the worker's decision on one start of a schedule in one transaction.
@@ -5091,7 +5129,13 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         if isinstance(decision, ScheduledStartRun):
             updates["run"] = _redacted_run(decision.run, secrets)
         return self._records.admit_scheduled_start(
-            schedule_id, scheduled_start_at, flow_run_id, worker_id, now, decision.model_copy(update=updates)
+            schedule_id,
+            scheduled_start_at,
+            flow_run_id,
+            worker_id,
+            now,
+            decision.model_copy(update=updates),
+            receipt_age_limit=receipt_age_limit,
         )
 
     def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None:

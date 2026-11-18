@@ -21,7 +21,15 @@ pytest.importorskip("fastapi")
 from prefect.states import State
 
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
-from infrahub_sync.product_store import AuditEvent, ExecutionFinishWriteback, ProductRun, RunFilters, ScheduleRecord
+from infrahub_sync.product_store import (
+    AuditEvent,
+    ExecutionFinishWriteback,
+    ProductRun,
+    RunFilters,
+    ScheduleChangedError,
+    ScheduleRecord,
+)
+from infrahub_sync.product_store import store as product_store
 from infrahub_sync.runtime_schema import worker as runtime_schema_worker
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import DESTINATION_RECHECK_SECONDS, QUEUED_START_RECHECK_SECONDS
@@ -132,16 +140,29 @@ def _person_plan(api: ScheduleApi) -> str:
 
 
 class _RunInProgress:
-    """The store question of research R7, with a switch that ends the run in progress."""
+    """The store question of research R7, with a switch that ends the run in progress.
+
+    The switch answers both reads: the decision's, and the admission's read in its transaction.
+    """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, api: ScheduleApi) -> None:
         self.ended = False
         asked = api.projection.run_in_progress
+        asked_in_transaction = product_store._RelationalRunStore._run_in_progress
 
         def run_in_progress(config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None:
             return None if self.ended else asked(config_id, now, receipt_age_limit)
 
+        def run_in_progress_in_transaction(
+            store: Any,  # noqa: ANN401 - the store's private class.
+            cursor: Any,  # noqa: ANN401 - the store's private cursor type.
+            config_id: str,
+            oldest: datetime,
+        ) -> str | None:
+            return None if self.ended else asked_in_transaction(store, cursor, config_id, oldest)
+
         monkeypatch.setattr(api.projection, "run_in_progress", run_in_progress)
+        monkeypatch.setattr(product_store._RelationalRunStore, "_run_in_progress", run_in_progress_in_transaction)
 
 
 @pytest.fixture
@@ -538,3 +559,46 @@ def test_a_paused_schedule_does_not_read_its_destination(monkeypatch: pytest.Mon
     assert state.is_completed()
     assert read == []
     assert _runs(api, schedule_id) == []
+
+
+def test_a_default_branch_start_while_approval_is_required_is_stopped_without_waiting_for_its_destination(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
+) -> None:
+    """The admission stops such a schedule, so an outage of its destination must not delay the stop."""
+    schedule_id = _schedule(api)
+    read = _destination(monkeypatch, "unreachable")
+    monkeypatch.setenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", "true")
+
+    state = _start(monkeypatch, api, schedule_id, T0, T0 + ON_TIME)
+
+    assert isinstance(state, State)
+    assert state.is_completed()
+    assert read == []
+    assert _runs(api, schedule_id) == []
+    stored = api.stored(schedule_id)
+    assert (stored.state, stored.state_reason) == ("stopped", "approval-required")
+
+
+def test_each_admission_attempt_checks_the_destination_of_the_schedule_it_read(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
+) -> None:
+    """A schedule that changes while a start is admitted gets its destination checked again."""
+    schedule_id = _schedule(api)
+    read = _destination(monkeypatch, None)
+    admit = api.projection.admit_scheduled_start
+    attempts: list[int] = []
+
+    def changed_once(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 - the store's own signature.
+        attempts.append(1)
+        if len(attempts) == 1:
+            message = "the schedule changed"
+            raise ScheduleChangedError(message)
+        return admit(*args, **kwargs)
+
+    monkeypatch.setattr(api.projection, "admit_scheduled_start", changed_once)
+
+    result = _start(monkeypatch, api, schedule_id, T0, T0 + ON_TIME)
+
+    assert isinstance(result, dict)
+    assert len(attempts) == 2
+    assert read == ["main", "main"]

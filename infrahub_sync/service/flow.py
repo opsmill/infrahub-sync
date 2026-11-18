@@ -137,6 +137,7 @@ from .run_artifact import publish_run_artifact
 from .schedule_admission import EarlierProposedChangesUnreadableError, admit_scheduled_start
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
+from .settings import approval_required
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
 
 logger = logging.getLogger(__name__)
@@ -729,18 +730,6 @@ def _admit_scheduled_flow_run(
         )
     start = facts.expected_start_time.astimezone(timezone.utc)
     now = _now()
-    not_ready = _destination_not_ready(projection, schedule_id, start, now)
-    if not_ready is not None:
-        # The destination does not answer yet, for example while it starts again after a
-        # maintenance: Prefect runs this flow run again one minute later, while the start can
-        # still run. No run is created, so the wait counts as no failure (FR-035).
-        recheck_at = now + timedelta(seconds=DESTINATION_RECHECK_SECONDS)
-        message = (
-            f"the start {start.isoformat()} of schedule {schedule_id} waits for its destination "
-            f"to answer ({not_ready}); this flow run starts again at {recheck_at.isoformat()}"
-        )
-        lines.info(message)
-        return AwaitingRetry(scheduled_time=recheck_at, message=message)
     try:
         admission = admit_scheduled_start(
             projection,
@@ -751,6 +740,7 @@ def _admit_scheduled_flow_run(
             now=now,
             receipt_age_limit=timedelta(seconds=LivenessPolicy.from_environment().admission_ttl_seconds),
             read_proposed_changes=_earlier_proposed_changes_reader(projection),
+            destination_not_ready=lambda schedule: _destination_not_ready(projection, schedule, start, now),
         )
     except DuplicateRunError:
         return _refused_flow_run(
@@ -759,6 +749,17 @@ def _admit_scheduled_flow_run(
             "this flow run creates no second run",
         )
     run = admission.run
+    if run is None and admission.cause == "destination-not-ready":
+        # The destination does not answer yet, for example while it starts again after a
+        # maintenance: Prefect runs this flow run again one minute later, while the start can
+        # still run. No run is created, so the wait counts as no failure (FR-035).
+        recheck_at = now + timedelta(seconds=DESTINATION_RECHECK_SECONDS)
+        message = (
+            f"the start {start.isoformat()} of schedule {schedule_id} waits for its destination "
+            f"to answer ({admission.not_ready}); this flow run starts again at {recheck_at.isoformat()}"
+        )
+        lines.info(message)
+        return AwaitingRetry(scheduled_time=recheck_at, message=message)
     if run is None and admission.cause == "queued":
         # The start waits under the `queue` policy: Prefect runs this flow run again one minute
         # later, until no run of the configuration is in progress (research R7).
@@ -808,7 +809,7 @@ def _admit_scheduled_flow_run(
 
 
 def _destination_not_ready(
-    projection: ProductProjection, schedule_id: str, start: datetime, now: datetime
+    projection: ProductProjection, schedule: ScheduleRecord, start: datetime, now: datetime
 ) -> str | None:
     """Return why the destination of a scheduled start does not answer yet, or `None` (spec 021, FR-035).
 
@@ -818,10 +819,11 @@ def _destination_not_ready(
     cannot be reached, answers with a server error or does not answer in time makes the start
     wait. The start waits only while it can still run one recheck later, within its late-start
     duration; after that the start runs, and its run records the destination failure. A schedule
-    that is not active, and any other failure, wait for nothing: the admission decides.
+    that is not active, a schedule that the admission stops because it writes to the default
+    branch while approval is required (or the approval setting cannot be read), and any other
+    failure, wait for nothing: the admission decides.
     """
-    schedule = projection.lookup_schedule(schedule_id).value
-    if schedule is None or schedule.state != "active":
+    if schedule.state != "active" or _stopped_by_approval(schedule):
         return None
     last_wait = start + timedelta(seconds=schedule.start_late_by_at_most_seconds - DESTINATION_RECHECK_SECONDS)
     if now > last_wait:
@@ -838,6 +840,20 @@ def _destination_not_ready(
     except (ConfigurationPackageParseError, RuntimeSchemaError):
         return None
     return None
+
+
+def _stopped_by_approval(schedule: ScheduleRecord) -> bool:
+    """Whether the admission stops this schedule, or creates no run, because of the approval setting.
+
+    A schedule that writes to the default branch while approval is required is stopped, and a
+    value of the setting that is not accepted creates no run: neither waits for its destination.
+    """
+    if schedule.write_target != "default-branch":
+        return False
+    try:
+        return approval_required()
+    except ValueError:
+        return True
 
 
 def _destination_settings(projection: ProductProjection, schedule: ScheduleRecord) -> Mapping[str, Any]:

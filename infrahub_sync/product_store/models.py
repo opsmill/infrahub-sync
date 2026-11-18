@@ -1132,9 +1132,12 @@ class ScheduleBranch(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _require_replacing_run(self) -> ScheduleBranch:
+    def _require_consistent_state(self) -> ScheduleBranch:
         if (self.state == "replaced") is (self.replaced_by_run_id is None):
             msg = "a schedule branch names the run that replaced it only in the state replaced, and always there"
+            raise ValueError(msg)
+        if self.state == "open" and self.proposed_change_id is None:
+            msg = "a schedule branch in the state open names the proposed change that its run opened"
             raise ValueError(msg)
         return self
 

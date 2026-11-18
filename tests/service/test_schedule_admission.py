@@ -285,6 +285,37 @@ def test_reject_skips_the_start_and_names_the_run_in_progress(
     assert skipped.details.start_at == T0
 
 
+def test_a_run_that_a_person_starts_while_the_start_is_decided_skips_the_start(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
+) -> None:
+    """The first decision missed the person's run; the admission sees it and the start is decided again."""
+    schedule_id = _schedule(api)
+    response = api.client.post(
+        "/runs",
+        json={"operation": "plan", "config_id": api.config_id, "registry_version": 1, "reason": "look first"},
+        headers=headers(OWNER_TOKEN),
+    )
+    assert response.status_code == 202, response.text
+    in_progress = response.json()["run"]["run_id"]
+    read_in_progress = api.projection.run_in_progress
+    reads: list[str | None] = []
+
+    def first_read_sees_no_run(config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None:
+        found = None if not reads else read_in_progress(config_id, now, receipt_age_limit)
+        reads.append(found)
+        return found
+
+    monkeypatch.setattr(api.projection, "run_in_progress", first_read_sees_no_run)
+
+    state = _start(monkeypatch, api, schedule_id, T0)
+
+    assert _completed(state)
+    assert reads == [None, in_progress]
+    assert _runs(api, schedule_id) == []
+    (skipped,) = _events(api, "infrahub_sync.schedule.start_skipped")
+    assert (skipped.run_id, skipped.outcome) == (in_progress, "skipped-run-in-progress")
+
+
 def test_a_start_later_than_its_duration_is_recorded_as_missed_with_no_run(
     monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
 ) -> None:
