@@ -1,0 +1,24 @@
+tests/service/test_no_secret_output.py
+  s_cf9ada8f865389::t_abe9c0d7f711fe 1-52,54-176,181-211,213-271,279-299,305-307,311-320,322-354,357-360,368-396,398-400,402-422
+  s_cf9ada8f865389::t_980ca2df3b1063 53,321
+  s_cf9ada8f865389::t_17a50c4aacaed9 177-180,397,401
+  s_cf9ada8f865389::t_015a559a853c4e 272-278,300-304,308-310
+  s_cf9ada8f865389::t_67fac48ee35962 212,355-356
+  s_cf9ada8f865389::t_383bb085965956 361-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9babc5f682de26b388d54a7f8d651fd5f9bb241",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
