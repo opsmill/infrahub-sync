@@ -46,8 +46,20 @@ the registered package (FR-010); approval untouched (FR-011); no edit outside th
 
 ## Constitution Check
 
-No `dev/constitution.md` or `.specify/memory/constitution.md` exists. The gates applied are the
-`AGENTS.md` rules:
+Checked against `.specify/memory/constitution.md` (corrected at the start of implementation; the
+first draft of this plan missed the file):
+
+- I. Read-only by default: `demo prepare` writes a schema and a configuration, and only as an
+  explicit command a person or a deployment step runs. It never plans, syncs or applies, and no
+  other command calls it implicitly.
+- II. Idempotency: re-running changes nothing (FR-008); a stopped run is completed by running again.
+- III. Adapter symmetry: no adapter change.
+- IV. Types: new code typed; `ty` clean, no overrides.
+- V. Tests: atomic unit tests, plus build and image tests.
+- VI. Secrets: tokens from the environment only, never in output (FR-010).
+- VII. Simplicity: no new dependency; one module, one preset, one task.
+
+The `AGENTS.md` rules also apply:
 
 - Plan, ask, act, verify, record: the command is read-and-register only; it never plans or applies.
 - Idempotency: FR-004 and FR-008 require it, and the Sync API already returns an identical version
