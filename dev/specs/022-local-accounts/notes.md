@@ -616,8 +616,8 @@ Python file changed.
 ## Review fixes of the web interface (2026-11-18)
 
 The scenario of User Story 4 ran again against a new build of this branch, on `127.0.0.1:18761`,
-with headless Chromium, followed by these steps for the review findings. All 63 steps passed,
-the 44 earlier ones included.
+with headless Chromium, followed by these steps for the review findings. All 69 steps passed:
+the 49 earlier ones and the 20 below.
 
 | Step | Result |
 | --- | --- |
@@ -628,15 +628,17 @@ the 44 earlier ones included.
 | A delete request with no answer shows an error and keeps the confirmation; **Keep** removes the error and returns focus to that row's **Delete** button | pass |
 | A token deleted through the API, then deleted in the dialog: "This token no longer exists", the row leaves the list, focus is on the dialog heading | pass |
 | A successful delete moves focus to the dialog heading | pass |
-| At 390 and 320 pixels, the four links of the main navigation are within the screen, the navigation and the page do not scroll sideways, and the current page's link is in view | pass |
+| **My account**: closing the delete dialog returns focus to the row's **Delete** button | pass |
+| **My account**: a token deleted through the API, then deleted on the page: "This token no longer exists", the row leaves the list, and after the dialog closes focus is on the **API tokens** heading | pass |
+| At 390, 360 and 320 pixels, with **Configurations** and then **My account** as the current page (six steps): the four links of the main navigation are within the screen, the navigation and the page do not scroll sideways, and the current page's underline stays inside the header | pass |
 
-At 390 pixels the navigation takes one line below the logo and the account controls. At 320
-pixels **My account** wraps onto a third line. Screenshots of the header:
-`review-phone-header-390.png` and `review-phone-header-320.png` in the session scratchpad.
+At 390 and 360 pixels the navigation takes one line below the logo and the account controls. At
+320 pixels **My account** wraps onto a third line, and the underline of the current page stays at
+the bottom of its own line. Screenshots of the header are in the session scratchpad, named
+`review-phone-header-<width>-<page>.png`.
 
 The changelog fragment `+web-interface-no-actor.changed.md` said that the interface no longer
 names the actor that started a run and that only the starting token can act on a run. This
 branch names the account that started a run on the run list and the run page, and only that
 account or an administrator can act on it. The fragment now says only what is still true: the
 configuration list does not name who started the latest run.
-
