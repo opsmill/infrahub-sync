@@ -85,6 +85,48 @@ then shows the sign-in form again. The web interface has no field for an API tok
 The pages name the account that started a run, the account that approved a plan and the account
 that registered a configuration version.
 
+## Manage accounts in the web interface
+
+The web interface offers the account actions of the CLI on two pages. Each page offers only the
+actions that the Sync API accepts from your account.
+
+**My account** is linked from the header for every account. On it you:
+
+- change your password: type the current password, then the new password twice. The page checks
+  that the new password has 12 to 1,024 characters and that both values match before it sends
+  them. After the change, your other sessions end, your API tokens keep working, and this browser
+  tab stays signed in;
+- view your API tokens: the name, the creation date, the expiry date and the date of last use,
+  never the value;
+- create an API token, with an optional expiry. A date alone means the end of that day, 23:59:59
+  UTC, as `infrahub-sync tokens create --expires` does; a date and a time are read in the
+  browser's time zone. The page shows the value once, with a **Copy** action, and the value is
+  gone when you dismiss it, reload the page or leave it. Copy it before you leave;
+- delete an API token. A script that sends it is refused from its next request.
+
+For `admin`, the page states that the environment of the Sync service defines the account, and
+offers no password or token action.
+
+**Accounts** is linked from the header for administrators only. An account that is not an
+administrator and opens the page by its address sees that only an administrator can manage
+accounts. The page lists each account with its level, its state, and the time until which its
+sign-in is refused after repeated failures. The filter shows all accounts, active accounts only,
+or disabled accounts only. The **Actions** menu of an account offers:
+
+- **Make administrator** or **Remove administrator rights**;
+- **Set password**, which asks for the new password twice;
+- **Allow sign-in again**, while the sign-in of the account is refused;
+- **Disable** or **Enable**;
+- **View API tokens**, where you can delete a token of the account;
+- **Delete**, which asks you to type the account name, says that a deletion cannot be reversed
+  and that disabling can be, and then shows the placeholder that past records display.
+
+The menu of your own account offers no level change and no **Set password**: change your password
+on **My account**. If you disable or delete your own account, the page says that you will be
+signed out, and shows the sign-in form after the change. The `admin` row states that the
+deployment's environment defines it; its only action is **Allow sign-in again**, while its sign-in
+is refused.
+
 ## Add a person
 
 As an administrator, create the account. The CLI asks for the initial password twice, without
