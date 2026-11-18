@@ -251,6 +251,19 @@ def test_the_gate_frees_its_place_when_a_verification_fails(monkeypatch: pytest.
     assert gate.verify(_PASSWORD, stored)
 
 
+def test_the_gate_checks_a_stored_hash_that_cannot_be_read_against_the_fixed_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A damaged account row takes the time of a check, as a name with no account does."""
+    gate = VerificationGate(limit=1, wait_seconds=0.01)
+    fixed = no_account_hash()
+    checked: list[str] = []
+    monkeypatch.setattr(credentials, "verify_password", lambda _password, stored: checked.append(stored) or True)
+
+    assert not gate.verify(_PASSWORD, "scrypt$32768$8$3$not-base64!$a2V5")
+    assert checked == [fixed]
+
+
 def test_the_gate_of_the_process_lets_two_verifications_run_and_waits_five_seconds() -> None:
     assert credentials.VERIFICATION_LIMIT == 2
     assert credentials.VERIFICATION_WAIT_SECONDS == 5
@@ -261,6 +274,7 @@ def test_the_gate_asks_admit_while_it_holds_a_place_and_checks_nothing_when_refu
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gate = VerificationGate(limit=1, wait_seconds=0.01)
+    stored = hash_password(_PASSWORD, **_FAST)
     checked: list[str] = []
     monkeypatch.setattr(credentials, "verify_password", lambda _password, stored: checked.append(stored) or True)
     places_free_during_admit: list[bool] = []
@@ -273,13 +287,13 @@ def test_the_gate_asks_admit_while_it_holds_a_place_and_checks_nothing_when_refu
         return False
 
     with pytest.raises(VerificationNotAdmittedError) as refused:
-        gate.verify(_PASSWORD, "stored", admit=admit)
+        gate.verify(_PASSWORD, stored, admit=admit)
 
     assert places_free_during_admit == [False]
     assert checked == []
     assert _PASSWORD not in str(refused.value)
-    assert gate.verify(_PASSWORD, "stored", admit=lambda: True) is True
-    assert checked == ["stored"]
+    assert gate.verify(_PASSWORD, stored, admit=lambda: True) is True
+    assert checked == [stored]
 
 
 def test_a_password_that_utf_8_cannot_encode_is_not_hashed_and_verifies_nothing() -> None:

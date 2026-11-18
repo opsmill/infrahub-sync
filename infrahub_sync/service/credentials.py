@@ -234,6 +234,10 @@ class VerificationGate:
         When it returns false, the password is not checked. A sign-in uses it to read the refusal
         of its name again after it waited for a place.
 
+        A stored hash that cannot be read verifies no password, after a check against the fixed
+        hash of ``no_account_hash``: a damaged account row takes the time of a check, as a name
+        with no account does.
+
         Raises:
             SignInBusyError: no place became free within the wait.
             VerificationNotAdmittedError: ``admit`` returned false; no password was checked.
@@ -241,6 +245,9 @@ class VerificationGate:
         with self.place():
             if admit is not None and not admit():
                 raise VerificationNotAdmittedError(_NOT_ADMITTED_MESSAGE)
+            if not is_readable_hash(stored_hash):
+                verify_password(password, no_account_hash())
+                return False
             return verify_password(password, stored_hash)
 
     def hash(self, password: str) -> str:
