@@ -105,11 +105,12 @@ required variable INFRAHUB_SYNC_PRODUCT_PASSWORD is missing a value: INFRAHUB_SY
 | `INFRAHUB_SYNC_PREFECT_AUTH_STRING` | `prefect-server` and the Sync services: the Prefect API credential. See [Prefect API authentication](#prefect-api-authentication). |
 | `INFRAHUB_SYNC_S3_ACCESS_KEY` | `object-store` and the Sync services |
 | `INFRAHUB_SYNC_S3_SECRET_KEY` | `object-store` and the Sync services |
-| `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` | `sync-api`: a JSON object of API principals |
+| `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | `sync-api`: the password of the `admin` account |
 
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` maps each principal name to its token, for
-example `{"operator": {"token": "<random>", "administrator": true}}`. The API
-refuses a token shorter than 16 characters.
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is the password of `admin`, the
+administrator account that always exists. It has at least 12 characters and no
+default value. `sync-api` applies it at each start, then removes it from its own
+process environment. To change it, see [Recover or rotate the `admin` account](#recover-or-rotate-the-admin-account).
 
 The database connection strings are composed inside the file from the role,
 database, and password settings. A password used in them must be URL-safe:
@@ -120,7 +121,9 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `INFRAHUB_SYNC_API_TOKEN` | empty | The token the `cli` service presents. It must equal a principal's `token` in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. Empty, every `cli` call is refused. |
+| `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` | empty | Set on `sync-api`. One API token of the `admin` account: at least 16 characters, and it must not start with `ifs_pat_` or `ifs_ses_`. Empty, `admin` has no API token. `sync-api` applies it at each start. |
+| `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` | `28800` (8 hours) | Set on `sync-api`. The number of seconds without a request after which a sign-in session ends. A whole number of at least 60. Empty means the default. |
+| `INFRAHUB_SYNC_API_TOKEN` | empty | The API token the `cli` service presents: the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, or a token that an account created with `infrahub-sync tokens create`. Empty, every `cli` call is refused. |
 | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | empty | The destination Infrahub token, for a package that references it. |
 | `INFRAHUB_SYNC_CREDENTIAL_*` | empty | Source credentials, for a package that references them. Only the worker receives them. The full list is in [Credential variables the worker receives](#credential-variables-the-worker-receives). |
 | `VERSION` | the release the file was taken from | The tag of the Sync image. See [Choose an image](#choose-an-image). |
@@ -159,10 +162,11 @@ INFRAHUB_SYNC_PREFECT_PASSWORD=<random hex>
 INFRAHUB_SYNC_PREFECT_AUTH_STRING=<random hex>
 INFRAHUB_SYNC_S3_ACCESS_KEY=<random hex>
 INFRAHUB_SYNC_S3_SECRET_KEY=<random hex>
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "<principal token>", "administrator": true}}
+INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=<admin password, at least 12 characters>
 
-# The token the cli service presents: the same value as the principal's token
-INFRAHUB_SYNC_API_TOKEN=<principal token>
+# An API token of admin, and the same value for the cli service to present
+INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=<admin token, at least 16 characters>
+INFRAHUB_SYNC_API_TOKEN=<admin token, at least 16 characters>
 
 # Only for a registered package that references them
 # INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
@@ -179,7 +183,7 @@ To generate the credentials instead, run this once, in the directory of
 
 ```bash
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
-principal=$(rand 24)
+admin_token=$(rand 24)
 # mktemp creates the file readable by you alone, whatever an existing .env allowed.
 env_file=$(mktemp .env.XXXXXX)
 cat > "$env_file" <<EOF
@@ -189,14 +193,24 @@ INFRAHUB_SYNC_PREFECT_PASSWORD=$(rand 24)
 INFRAHUB_SYNC_PREFECT_AUTH_STRING=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
-INFRAHUB_SYNC_API_TOKEN=$principal
+INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=$(rand 24)
+INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=$admin_token
+INFRAHUB_SYNC_API_TOKEN=$admin_token
 EOF
 mv -f "$env_file" .env
 ```
 
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` and `INFRAHUB_SYNC_API_TOKEN` hold one
-credential. If you change the principal's token, change both to the same value.
+The `cli` service keeps no file between calls, so it cannot keep a sign-in
+session. It presents `INFRAHUB_SYNC_API_TOKEN` instead. On a new deployment the
+only API token that exists is the `admin` token, so the script gives
+`INFRAHUB_SYNC_API_TOKEN` the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`. If you
+change the `admin` token, change both lines to the same value. To give the `cli`
+service a token of another account, see
+[Give a script an API token](./guides/accounts.mdx#give-a-script-an-api-token).
+
+The `admin` password is the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` in
+`.env`. You need it to sign in to the web interface or with `infrahub-sync login`
+as `admin`.
 
 Handle `.env` as the secret it is:
 
@@ -210,6 +224,61 @@ A variable exported in your shell overrides the same name in `.env`. An exported
 `VERSION`, a common name, silently changes the Sync image. Check `env` before you
 start, or unset it.
 :::
+
+### Upgrade from a release that read `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`
+
+Earlier releases defined the Sync API callers in
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. `sync-api` no longer reads that variable.
+A deployment that still sets it starts, ignores it, and refuses the tokens it
+defines. To upgrade:
+
+1. In `.env`, add `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and
+   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, each with a new random value.
+2. Remove the `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` line.
+3. Set `INFRAHUB_SYNC_API_TOKEN` to the value of
+   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`.
+4. Run `docker compose up -d --wait`, which recreates `sync-api` and gives it the
+   new environment.
+5. Create an account for each person and each script that had a token of its
+   own, as [Manage accounts](./guides/accounts.mdx) describes. The old tokens do
+   not carry over.
+
+Records of earlier runs keep the caller names that the old variable defined.
+
+### Recover or rotate the `admin` account
+
+Only `.env` changes the `admin` account. The CLI and the Sync API refuse to
+change its password or its token, or to disable it, and the refusal names the
+variable to edit instead. To set a new password after a lost one, or to replace
+the `admin` token:
+
+1. Edit `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` or
+   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` in `.env`. When you change the token,
+   change `INFRAHUB_SYNC_API_TOKEN` to the same value.
+2. Recreate `sync-api` alone, so it reads the new environment:
+
+   ```bash
+   docker compose up -d --wait sync-api
+   ```
+
+   `docker compose restart` keeps the environment the container already had, so
+   it does not apply the change.
+
+At this start, `sync-api` stores the new password and ends every session of
+`admin` when the password changed. It replaces the `admin` token, or removes it
+when the variable is empty. The start also ends a refusal after repeated failed
+sign-ins for `admin`. No other service needs a restart, and no other account
+changes.
+
+When `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is shorter than 12 characters, when
+the token is shorter than 16 characters or starts with `ifs_pat_` or `ifs_ses_`,
+or when `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number of at least
+60, `sync-api` does not start. Its log names the variable and never shows the
+value:
+
+```bash
+docker compose logs sync-api --tail 20
+```
 
 ### Credentials in a package
 
@@ -544,14 +613,14 @@ configurations and runs and acts on them. Open the address of the Sync API port 
 a browser, by default `http://127.0.0.1:8001`. The web interface needs no other
 port, service or setting.
 
-Each person signs in to the web interface with a Sync API token:
+Each person signs in to the web interface with an API token of their account:
 
 1. The web interface asks for a Sync API token. Enter a token and select
    **Continue**.
 2. The web interface checks the token with the Sync API before it accepts it. When
    the Sync API refuses the token, the page says so, and you can enter another one.
 3. Every request the web interface sends to the Sync API carries that token, so the
-   person acts with the permissions of its principal, as with the CLI.
+   person acts with the permissions of the account that owns it, as with the CLI.
 
 To remove the token from the browser tab, select the Sync service status at the top
 of the page, then select **Remove token**. The web interface also removes the token and asks
@@ -562,17 +631,14 @@ The web interface keeps the token for the browser tab only, in the tab's session
 storage. Closing the tab removes it, and the Sync service sets no cookie. The Sync
 service never sends a token to the browser: each person enters their own.
 
-To give each person their own token, add one principal per person to
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` in `.env`, then recreate `sync-api` with
-`docker compose up -d --wait`:
+To give each person their own token, an administrator creates an account for the
+person, and the person signs in with `infrahub-sync login` and creates a token with
+`infrahub-sync tokens create`. Neither step changes `.env` or restarts a service.
+See [Manage accounts](./guides/accounts.mdx).
 
-```dotenv
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "<principal token>", "administrator": true}, "alice@example.com": {"token": "<another token>", "administrator": false}}
-```
-
-Any principal can create and inspect a run. Only the principal that created a
-run, or an administrator, can verify, approve, apply or cancel it. See
-[Configure principals](./reference/sync-http-api.mdx#configure-principals).
+Any account can create and inspect a run. Only the account that created a run, or
+an administrator, can verify, approve, apply or cancel it. See
+[Accounts and API tokens](./reference/sync-http-api.mdx#accounts-and-api-tokens).
 
 The Sync API is served under `/api` on the same port, for example
 `http://127.0.0.1:8001/api/status`. Keep `INFRAHUB_SYNC_API_URL` set to the address
@@ -810,6 +876,18 @@ The exported `INFRAHUB_SYNC_API_TOKEN` also overrides the value in `.env` for ev
 `docker compose` command you run from this shell, including the `cli` service. After
 you change the token in `.env`, export it again, or open a new shell.
 
+A CLI installed on a workstation can sign in with an account name and password
+instead of a token. Leave `INFRAHUB_SYNC_API_TOKEN` unset and run:
+
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
+infrahub-sync login --name admin
+infrahub-sync whoami
+```
+
+`login` asks for the password without showing it and saves a session for that
+Sync API address. See [Sign in from a workstation](./guides/accounts.mdx#sign-in-from-a-workstation).
+
 See [Connect the CLI to the Sync API](running-a-sync#connect-the-cli-to-the-sync-api).
 The commands on this page use the CLI this way.
 
@@ -822,11 +900,10 @@ docker compose run --rm --no-deps -T cli configs list
 ```
 
 The `cli` service sits in the `cli` profile, so `up` never starts it, and
-`docker compose run` uses it all the same. It presents `INFRAHUB_SYNC_API_TOKEN`,
-which must equal the principal's token inside
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. They are one credential: if you change one,
-change the other to the same value. With `INFRAHUB_SYNC_API_TOKEN` empty, the API
-refuses every `cli` call.
+`docker compose run` uses it all the same. It presents `INFRAHUB_SYNC_API_TOKEN`
+from `.env`: the `admin` token, or a token that an account created. The service
+keeps no file, so `infrahub-sync login` does not keep a session there. With
+`INFRAHUB_SYNC_API_TOKEN` empty, the API refuses every `cli` call.
 
 Each call is one container: nothing is published, no service is started as a
 side effect, no volume is kept, and the container is removed when the command

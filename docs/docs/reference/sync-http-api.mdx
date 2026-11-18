@@ -62,32 +62,82 @@ The API and worker each create a process-local client from the same PostgreSQL/S
 They share durable records and artifacts through those services, not through a product filesystem.
 S3 credentials use Boto3's standard credential-provider chain.
 
-## Configure principals
+## Accounts and API tokens
 
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` contains a non-empty JSON object keyed by actor. Each
-entry has a bearer token of at least 16 characters and an optional administrator flag:
+Every caller of the Sync API acts as an account stored in the product database. A request
+presents an API token or a session token in `Authorization: Bearer <token>`. A person gets a
+session token by signing in with the account name and password. A script uses an API token
+that an account created.
 
-```bash
-export INFRAHUB_SYNC_SERVICE_BEARER_TOKENS='{
-  "automation@example.com": {
-    "token": "replace-with-a-secret-token",
-    "administrator": false
-  },
-  "sync-admin@example.com": {
-    "token": "replace-with-another-secret-token",
-    "administrator": true
-  }
-}'
-```
+The `admin` account always exists and is an administrator. Three variables of the API process
+define it and the sessions:
 
-Inject this value through your deployment's secret mechanism. Do not put a real token in a
-shell history, Sync configuration, request body, idempotency key, or Prefect parameter.
-Tokens must be unique. The resolver compares them with a timing-safe operation and never
-persists, returns, or submits them to Prefect.
+| Variable | Required | Rule |
+| --- | --- | --- |
+| `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | yes | The password of `admin`. At least 12 characters. No default value. |
+| `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` | no | One API token of `admin`. At least 16 characters, and it must not start with `ifs_pat_` or `ifs_ses_`. Empty or unset: `admin` has no API token. |
+| `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` | no | The number of seconds without a request after which a session ends. Default `28800` (8 hours). A whole number of at least 60. Empty means the default. |
 
-Any authenticated principal can create and inspect a run. Only the initiating actor or an
-administrator can verify, approve, apply, or cancel it. Every accepted mutation and authorization
-refusal records secret-safe actor, reason, and outcome evidence.
+The API applies the first two at each start, then removes the password from its own process
+environment. A value that breaks a rule stops the start with a message that names the variable
+and never shows the value. The API and the CLI refuse every change to `admin`: its password and
+its token change only through these variables and a restart of the API.
+
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, which defined the callers in earlier releases, is no
+longer read. A process that still has it starts and ignores it.
+
+Inject these values through your deployment's secret mechanism. Do not put a real password or
+token in a shell history, Sync configuration, request body, idempotency key, or Prefect
+parameter. The API returns a token value only once, in the answer that creates it.
+
+Any account can create and inspect a run. Only the account that created a run, or an
+administrator, can verify, approve, apply, or cancel it. Every accepted mutation and
+authorization refusal records secret-safe actor, reason, and outcome evidence. The `actor` of a
+run is the name of the account.
+
+### Sign-in, sign-out and account routes
+
+These routes take no `Idempotency-Key`. Each mutation accepts an optional `reason` in its body,
+at most 512 characters, and records it in the audit history.
+
+| Route | Who | Behavior |
+| --- | --- | --- |
+| `POST /auth/sign-in` | anyone, without a token | Takes `{"name", "password"}` and returns a session token. |
+| `POST /auth/sign-out` | a session | Ends the session. With an API token, it answers `422`, code `not-a-session`. |
+| `PUT /me/password` | any account | Takes `{"current_password", "new_password"}`. The other sessions of the account end. Its API tokens keep working. |
+| `GET /me/tokens` | any account | Lists the API tokens of the account, without their values. |
+| `POST /me/tokens` | any account | Takes `{"name", "expires_at"?}` and returns the new token value once. |
+| `DELETE /me/tokens/{token_id}` | any account | Deletes one API token of the account. |
+| `GET /accounts` | administrator | Lists accounts. Query `state=active`, `disabled` or `all` (the default). |
+| `POST /accounts` | administrator | Takes `{"name", "password", "administrator"?}` and creates an account. |
+| `GET /accounts/{name}` | administrator | Returns one account. |
+| `PATCH /accounts/{name}` | administrator | Takes `{"administrator"?, "disabled"?}`. Disabling deletes the API tokens of the account and ends its sessions. |
+| `PUT /accounts/{name}/password` | administrator | Takes `{"new_password"}`. Every session of the account ends. |
+| `POST /accounts/{name}/unlock` | administrator | Ends a refusal after repeated failed sign-ins. |
+
+The refusals of these routes:
+
+- A wrong name, a wrong password, a disabled account and a name refused after repeated failures
+  all answer `401`, code `sign-in-refused`, with one message that does not say whether the
+  account exists.
+- After 5 failed sign-ins for one name in 15 minutes, the API refuses that name for 15 minutes.
+  An attempt during the refusal does not extend it. API tokens of the account keep working.
+- A wrong `current_password` answers `403`, code `current-password-refused`, and counts as a
+  failed sign-in.
+- A password shorter than 12 characters answers `422`, code `password-too-short`.
+- A caller that is not an administrator receives `403`, code `forbidden`, on the `/accounts`
+  routes.
+- A change to `admin`, including `PUT /me/password` and the `/me/tokens` mutations called by
+  `admin`, answers `409`, code `environment-managed-account`. The message names the variable to
+  change instead.
+- A `reason` that contains a token value, or the prefix `ifs_pat_` or `ifs_ses_`, answers `422`.
+
+A request with no token, an unknown or deleted token, or a token of a disabled account answers
+`401`, code `unauthenticated`. An API token used after its expiry date answers `401`, code
+`token-expired`. A session idle for longer than `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` answers
+`401`, code `unauthenticated`.
+
+For the CLI commands that call these routes, see [Manage accounts](../guides/accounts.mdx).
 
 ## Deploy the service flow
 
@@ -215,12 +265,16 @@ already has the tables.
 
 :::
 
-The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and any
-network access controls at your ingress boundary. The bearer-token provider is the MVP
-application authentication boundary, not a replacement for transport security.
+Also export `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, and optionally
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, as [Accounts and API tokens](#accounts-and-api-tokens)
+describes. Without the password, the API does not start.
 
-Open `http://127.0.0.1:8000/api/docs`, select **Authorize**, and enter the configured token
-without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
+The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and any
+network access controls at your ingress boundary. Accounts and tokens authenticate the callers
+of the application. They do not replace transport security.
+
+Open `http://127.0.0.1:8000/api/docs`, select **Authorize**, and enter an API token or a
+session token without the `Bearer` prefix. Swagger UI adds the complete `Authorization` header.
 
 ## Discovery and liveness
 

@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
         'v2-to-v3',
         'orchestration',
         'custom-certificates',
+        'guides/accounts',
       ],
     },
     {

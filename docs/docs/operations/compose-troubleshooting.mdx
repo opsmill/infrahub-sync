@@ -45,17 +45,32 @@ deployment starts empty.
 
 ## Command-line client failures
 
-The `infrahub-sync` CLI calls the Sync API with `INFRAHUB_SYNC_API_TOKEN`. On your
-machine, the CLI reads it from your environment only, never from `.env`. The deployment's
+The `infrahub-sync` CLI calls the Sync API with `INFRAHUB_SYNC_API_TOKEN` when it is set,
+and otherwise with the session that `infrahub-sync login` saved for the address in
+`INFRAHUB_SYNC_API_URL`. On your machine, the CLI reads the variable from your environment
+only, never from `.env`. The deployment's
 `cli` service, run as `docker compose run --rm --no-deps -T cli ...`, reads it from `.env`,
 unless your shell exports `INFRAHUB_SYNC_API_TOKEN`: Compose then uses the exported value.
 
-- **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is empty, or differs
-  from the principal's token in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. An `operator.env`
-  carried over from an earlier alpha may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely.
-  Add it to `.env`, with the token already inside `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
+- **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is empty, or is not an
+  API token of an account. On a new deployment, give it the value of
+  `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`. An `operator.env` carried over from an earlier alpha
+  may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely, and may still set
+  `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`: this release ignores that variable and refuses the
+  tokens it defines. Remove it, and follow
+  [Upgrade from a release that read `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`](../compose-deployment#upgrade-from-a-release-that-read-infrahub_sync_service_bearer_tokens).
   After you change the token in `.env`, export it again, or open a new shell, so that
   neither the CLI on your machine nor the `cli` service presents the old exported value.
+- **`sync-api` does not start after a change to `.env`.** Its log names the variable it
+  refused: `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` shorter than 12 characters,
+  `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` shorter than 16 characters or starting with
+  `ifs_pat_` or `ifs_ses_`, or `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` that is not a whole
+  number of at least 60. Correct the value, then run `docker compose up -d --wait sync-api`.
+- **A person's sign-in is refused although the password is right.** After 5 failed sign-ins
+  for one name in 15 minutes, the Sync API refuses that name for 15 minutes, with the same
+  message as a wrong password. An administrator ends the refusal with
+  `infrahub-sync accounts unlock NAME`. For `admin`, recreating `sync-api` also ends it. See
+  [End a refusal after repeated failed sign-ins](../guides/accounts#end-a-refusal-after-repeated-failed-sign-ins).
 - **The `cli` service cannot read a mounted package.** The image runs as UID 10001, so the file
   must be readable by other users. Run `chmod 0644` on it, and mount it read-only as in
   [Registering a package](../compose-deployment#registering-a-package).

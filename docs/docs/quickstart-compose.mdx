@@ -55,12 +55,12 @@ directory.
 ## Write the credentials
 
 The file needs seven credentials, and defaults none of them. This generates random
-values for each, and gives the bundled CLI the same token as the one principal
-the API accepts:
+values for each, including the password of the `admin` account. It also gives
+`admin` an API token, and gives the bundled CLI the same token:
 
 ```sh
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
-principal=$(rand 24)
+admin_token=$(rand 24)
 # mktemp creates the file readable by you alone, whatever an existing .env allowed.
 env_file=$(mktemp .env.XXXXXX)
 cat > "$env_file" <<EOF
@@ -70,8 +70,9 @@ INFRAHUB_SYNC_PREFECT_PASSWORD=$(rand 24)
 INFRAHUB_SYNC_PREFECT_AUTH_STRING=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
-INFRAHUB_SYNC_API_TOKEN=$principal
+INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=$(rand 24)
+INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=$admin_token
+INFRAHUB_SYNC_API_TOKEN=$admin_token
 EOF
 mv -f "$env_file" .env
 docker compose config --quiet
@@ -102,6 +103,19 @@ The same address serves the Sync web interface: open `http://127.0.0.1:8001` in 
 browser and enter a Sync API token. The Sync API is under `/api` on that address.
 See [Open the web interface](./compose-deployment.mdx#open-the-web-interface).
 
+## Check who you are signed in as
+
+The bundled CLI presents the `admin` token from `.env`:
+
+```sh
+docker compose run --rm --no-deps -T cli whoami
+```
+
+The output shows `actor: admin` and `administrator: true`. The `admin` password is
+the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` in `.env`. To add an account
+for each person and an API token for each script, see
+[Manage accounts](./guides/accounts.mdx).
+
 ## Identify your installed version
 
 ```sh
@@ -118,7 +132,8 @@ An earlier alpha deployed through the `infrahub-sync-compose` wrapper. Start the
 release in a new directory with a new `.env`, and empty state. If the old
 deployment uses the same ports, stop it first and keep its directory and volumes.
 Do not point the new deployment at the old data. Supply credentials in the new
-`.env`, register your configuration again, and review a fresh plan before
+`.env`, without `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, which this release no
+longer reads. Register your configuration again, and review a fresh plan before
 applying. The [wrapper equivalents](./compose-deployment.mdx#wrapper-equivalents)
 map each old command to its `docker compose` form.
 

@@ -1,0 +1,233 @@
+---
+title: Manage accounts
+---
+
+Each person and each script that calls the Sync API acts as an account. An account has a name,
+a password, and the administrator level or not. A person signs in with the name and password;
+a script presents an API token that an account created. The Sync API records each run, approval
+and change with the name of the account that made it.
+
+An administrator adds, changes and disables accounts with the `infrahub-sync accounts` commands.
+None of these changes edits `.env` or restarts a service. The one exception is the `admin`
+account, which the deployment's environment defines.
+
+The commands on this page need a CLI connected to the Sync API, as
+[Connect the CLI to the Sync API](../running-a-sync.mdx#connect-the-cli-to-the-sync-api)
+describes. From a repository checkout, run each command as `uv run infrahub-sync <command>`.
+
+## The `admin` account
+
+The `admin` account always exists and is an administrator. Its password and its API token come
+from two variables of the `sync-api` service:
+
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`: required, at least 12 characters, no default value.
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`: optional, at least 16 characters, and it must not start
+  with `ifs_pat_` or `ifs_ses_`. Empty or unset, `admin` has no API token.
+
+`sync-api` applies both at each start. The CLI and the Sync API refuse to change the password or
+the tokens of `admin`, and refuse to disable it. The refusal names the variable to edit. To
+replace a lost `admin` password, or to rotate its token, edit the variable and recreate
+`sync-api` alone; see
+[Recover or rotate the `admin` account](../compose-deployment.mdx#recover-or-rotate-the-admin-account).
+
+## Sign in from a workstation
+
+On a workstation where the CLI is installed, sign in with the account name. Leave
+`INFRAHUB_SYNC_API_TOKEN` unset:
+
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
+infrahub-sync login --name alice
+infrahub-sync whoami
+```
+
+`login` asks for the password without showing it, and prints the account name. It saves a
+session token for the address in `INFRAHUB_SYNC_API_URL` in the file `sessions.json`, readable
+by you only, in the application directory of the CLI:
+
+- on Linux, `~/.config/infrahub-sync/`, or `$XDG_CONFIG_HOME/infrahub-sync/` when
+  `XDG_CONFIG_HOME` is set;
+- on macOS, `~/Library/Application Support/infrahub-sync/`.
+
+Every later command presents that session. `whoami` prints the account as `actor`, and whether
+it is an administrator. A session ends when you run `infrahub-sync logout`, after 8 hours
+without a request, when the password of the account changes, and when an administrator disables
+the account. The deployment sets the idle period with `INFRAHUB_SYNC_SESSION_IDLE_SECONDS`.
+
+When `INFRAHUB_SYNC_API_TOKEN` is set, every command presents the variable and not the saved
+session. `login` and `logout` still act on the saved session, and print a line that says so.
+
+The `cli` service of the Compose deployment keeps no file, so `login` does not keep a session
+there. That service presents `INFRAHUB_SYNC_API_TOKEN` from `.env`, which is the `admin` token
+on a new deployment.
+
+## Add a person
+
+As an administrator, create the account. The CLI asks for the initial password twice, without
+showing it:
+
+```bash
+infrahub-sync accounts create alice
+```
+
+Add `--administrator` to give the account the administrator level. A password has at least 12
+characters. The Sync API sets no rule on the kinds of characters and never asks for a periodic
+change.
+
+Give the initial password to the person by a channel you trust. The person then signs in and
+replaces it:
+
+```bash
+infrahub-sync login --name alice
+infrahub-sync password
+```
+
+`password` asks for the current password once and the new one twice. The other sessions of the
+account end. Its API tokens keep working.
+
+An account that is not an administrator can create and inspect runs, and can verify, approve,
+apply or cancel the runs it created. An administrator can also act on the runs of other
+accounts, register configurations, and manage accounts.
+
+To view every account, with its level, its state and the time until which its sign-ins are
+refused:
+
+```bash
+infrahub-sync accounts list
+```
+
+## Give a script an API token
+
+A script presents an API token in `INFRAHUB_SYNC_API_TOKEN`. Sign in as the account the script
+acts for, and create a token:
+
+```bash
+TOKEN=$(infrahub-sync tokens create ci-nightly)
+```
+
+The token value is the only line `tokens create` prints on standard output, so the command
+above stores it in `TOKEN`. The Sync API does not show the value again. Store it in the secret
+store of the system that runs the script, which sets it for the script:
+
+```bash
+export INFRAHUB_SYNC_API_TOKEN=<the token value>
+infrahub-sync whoami
+```
+
+`whoami` prints the account that owns the token. The Sync API records each action of the script
+with the name of that account.
+
+Add `--expires 2027-01-31` to make the token stop working after that day, in UTC. Without
+`--expires`, the token does not expire.
+
+To view your tokens, with the name, the token ID, the creation date, the expiry date and the
+date of last use, and to delete one:
+
+```bash
+infrahub-sync tokens list
+infrahub-sync tokens delete TOKEN_ID
+```
+
+`tokens list` never shows a token value. After `tokens delete`, the Sync API refuses the value.
+
+When an administrator disables an account, the Sync API deletes every token of that account. A
+script that should keep working when a person leaves needs an account of its own: create an
+account such as `ci-nightly`, sign in as it once, and create its token.
+
+## Replace a lost password
+
+A person who forgot their password cannot sign in, and cannot change it themselves. An
+administrator sets a new one:
+
+```bash
+infrahub-sync accounts set-password alice
+```
+
+The CLI asks for the new password twice. Every session of the account ends. The API tokens of
+the account keep working. Give the new password to the person, who signs in and changes it with
+`infrahub-sync password`.
+
+For the `admin` account, edit `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` instead, as
+[The `admin` account](#the-admin-account) describes.
+
+## End a refusal after repeated failed sign-ins
+
+After 5 failed sign-ins for one account name in 15 minutes, the Sync API refuses every sign-in
+with that name for 15 minutes:
+
+- The refusal has the same message as a wrong password, so it does not say whether the account
+  exists.
+- A sign-in attempt during the refusal does not extend it.
+- The account is not disabled, and its API tokens keep working.
+- A wrong current password given to `infrahub-sync password` counts as a failed sign-in.
+
+`infrahub-sync accounts list` shows the time until which an account's sign-ins are refused. To
+end the refusal before that time, an administrator runs:
+
+```bash
+infrahub-sync accounts unlock alice
+```
+
+For `admin`, recreating `sync-api` also ends the refusal.
+
+## Disable an account
+
+When a person leaves, or a token may be known to someone else, an administrator disables the
+account:
+
+```bash
+infrahub-sync accounts disable alice
+```
+
+From the next request, the Sync API refuses the password, every session and every API token of
+the account. It deletes the account's tokens and sessions. A run that is in progress continues.
+Records of past runs, approvals and changes keep showing the account name, and the name stays
+taken.
+
+To let the person sign in again:
+
+```bash
+infrahub-sync accounts enable alice
+```
+
+The person signs in with the password. The tokens and sessions deleted at the disable stay
+refused: the person creates new tokens.
+
+## What someone who knows an account name can do
+
+Account names are not secret: they appear in run records and in the web interface. A person who
+knows a name, but not its password, can fail 5 sign-ins with that name. The Sync API then
+refuses sign-ins with that name for 15 minutes, and the same person can start a new refusal in
+each 15-minute period. What limits the effect:
+
+- The person learns nothing about the account: the refusal has the same message as a wrong
+  password, and the same message answers a name that has no account.
+- API tokens of the account keep working, so scripts are not affected.
+- An administrator ends the refusal at any time with `infrahub-sync accounts unlock NAME`, and a
+  restart of `sync-api` ends it for `admin`.
+- The refusal does not disable the account or change its password.
+
+The Sync API does not limit sign-ins by client address, because behind a proxy, or on the
+loopback address of a Compose deployment, it often receives every request from the same
+address. To find where repeated failed sign-ins come from, read the access log of the proxy in
+front of the Sync API, if there is one.
+
+## Write a reason
+
+The account and token commands that change something accept `--reason`, which the Sync API
+records in the audit history. A reason has at most 512 characters. The Sync API refuses a reason
+that contains a token value or the prefix `ifs_pat_` or `ifs_ses_`.
+
+## Read the output from a script
+
+`tokens list`, `tokens create`, `accounts list`, `accounts create`, `accounts disable` and
+`accounts enable` take `--json` to print the answer of the Sync API as JSON. With
+`tokens create --json`, the token value is in that JSON.
+
+## Related pages
+
+- [Compose deployment](../compose-deployment.mdx): the `admin` variables in `.env`, and the
+  upgrade from `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`
+- [Sync HTTP API](../reference/sync-http-api.mdx#accounts-and-api-tokens): the sign-in, account
+  and token routes
+- [CLI reference](../reference/cli.mdx): every option of the account and token commands
