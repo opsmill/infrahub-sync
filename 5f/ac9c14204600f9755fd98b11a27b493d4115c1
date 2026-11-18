@@ -1,0 +1,29 @@
+dev/specs/021-scheduled-runs/contracts/events.md
+  s_29b17f91da9f30::t_c02a9b7b08b57c 37
+dev/specs/021-scheduled-runs/contracts/cli.md
+  s_29b17f91da9f30::t_2eabcb6e490715 55
+  s_29b17f91da9f30::t_24800ddf0a5fae 35-36
+dev/specs/021-scheduled-runs/contracts/http-api.md
+  s_29b17f91da9f30::t_846b7171d97acc 115
+  s_29b17f91da9f30::t_7f0ce2d9e4ba13 128
+  s_29b17f91da9f30::t_a8f3c47cb3de98 79-81
+dev/specs/021-scheduled-runs/data-model.md
+  s_29b17f91da9f30::t_42ca17babc5b63 72
+  s_29b17f91da9f30::t_e8305d2c4ddda2 64-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5fac9c14204600f9755fd98b11a27b493d4115c1",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
