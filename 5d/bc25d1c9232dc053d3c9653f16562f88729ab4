@@ -1,0 +1,42 @@
+tests/service/test_credentials.py
+  s_cf9ada8f865389::t_49d8b723758440 264
+  s_cf9ada8f865389::t_18a181fb0a166a 14,261-263,265-279
+tests/service/test_token_routes.py
+  s_cf9ada8f865389::t_49d8b723758440 489,504
+  s_cf9ada8f865389::t_54ba28a8106415 476-488,490-503,505-509
+infrahub_sync/service/settings.py
+  s_cf9ada8f865389::t_cf9bc34ef6f08d 27,39-41,133,145-152
+  s_cf9ada8f865389::t_f9ae5ef9d9e7ac 134-135
+infrahub_sync/service/account_actions.py
+  s_cf9ada8f865389::t_ea4f33b36b1f85 380,461,549,910,914
+  s_cf9ada8f865389::t_22258d8615913d 25,71,396-410
+  s_cf9ada8f865389::t_cf9bc34ef6f08d 29,62-68,98-100,115-116,314-317,324,360-362,374-379,381,446,548,550-552,554,559-560,567-568,574-576,907
+tests/service/test_sign_in.py
+  s_cf9ada8f865389::t_54ba28a8106415 19,800-849
+infrahub_sync/service/credentials.py
+  s_cf9ada8f865389::t_87a12feae039bf 60,72-79,93-101,103-104,109-113,138-142,156-157
+  s_cf9ada8f865389::t_22258d8615913d 28,249-278
+tests/service/test_admin_account.py
+  s_cf9ada8f865389::t_cc40d910b3c92f 28,493-496,503
+  s_cf9ada8f865389::t_692ab6eb097fa5 313-321,483-492,497-502,504-505
+tests/service/test_account_routes.py
+  s_cf9ada8f865389::t_87b904adf28d0d 922
+  s_cf9ada8f865389::t_49d8b723758440 928-929,943,966
+  s_cf9ada8f865389::t_89b9637af2ad53 918-921,923-927,930-942,944-965,967-971
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5dbc25d1c9232dc053d3c9653f16562f88729ab4",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
