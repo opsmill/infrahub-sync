@@ -1,0 +1,26 @@
+dev/specs/archive/021-scheduled-runs/EXTRACTED.md
+  s_29b17f91da9f30::t_9194bff2d7a38f 20-21
+dev/adr/0051-a-schedule-is-a-prefect-schedule-and-the-worker-admits-each-start.md
+  s_29b17f91da9f30::t_37d420d7e612b7 63
+  s_29b17f91da9f30::t_43fcb793afe33b 12-13
+  s_29b17f91da9f30::t_df8cf6d528859a 55-57
+dev/adr/0052-a-scheduled-write-to-a-branch-that-sync-creates-needs-no-approval.md
+  s_29b17f91da9f30::t_1fcd881c4a4a34 79-81
+  s_29b17f91da9f30::t_da48eca39d1017 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e515fa71a843938cb95aac401fa382aba5b77828",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
