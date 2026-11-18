@@ -1,0 +1,24 @@
+dev/specs/021-scheduled-runs/opsmill-implement-report.md
+  s_29b17f91da9f30::t_e4edab3673b927 3-8,14-17,163-198
+dev/specs/021-scheduled-runs/overnight-log.md
+  s_29b17f91da9f30::t_be161ae03ee0a2 96-106
+  s_29b17f91da9f30::t_43609cea18e44a 107-110
+dev/specs/021-scheduled-runs/morning-report.md
+  s_29b17f91da9f30::t_b312fc6fa35009 1-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d56d2e8a24086629e97a0c0c7b9dc5953663eb16",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
