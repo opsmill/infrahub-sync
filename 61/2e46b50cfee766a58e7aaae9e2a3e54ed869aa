@@ -1,0 +1,34 @@
+docs/docs/guides/accounts.mdx
+  s_cf9ada8f865389::t_2b0db0b803e63a 27-29,145-158,218-277,312-314
+docs/docs/reference/sync-http-api.mdx
+  s_cf9ada8f865389::t_ade5c86a5d2ffc 101-102,115,118-120,133-141,149-167
+  s_cf9ada8f865389::t_47c74352cf3d57 168
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_a4741c834cb2d1 317
+docs/docs/reference/cli.mdx
+  s_5229dda822e5c1::t_e3a906840d7bca 785-788,906-990
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "612e46b50cfee766a58e7aaae9e2a3e54ed869aa",
+  "prompts": {},
+  "sessions": {
+    "s_5229dda822e5c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae541806440b45beb",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
