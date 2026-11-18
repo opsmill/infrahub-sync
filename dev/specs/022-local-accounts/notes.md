@@ -429,3 +429,73 @@ project ran no worker; the cause was not investigated further. This is the cance
 spec 012, not an account behavior, and the rights of an
 administrator over the run of the deleted account are covered by
 `test_a_run_in_progress_is_not_stopped_by_the_deletion_and_an_administrator_cancels_it`.
+
+## T073: Gates after Phase 7
+
+Run on 2026-11-18, Python 3.11.8, SQLite 3.45.1:
+
+- `uv run invoke format`, `uv run invoke lint` and `uv run ruff check .`: exit 0. `lint` prints 25
+  `unused-ignore-comment` warnings of ty, none in a file of Phase 7.
+- `uv run invoke tests.tests-unit`: 9765 passed, 4 skipped, 469 deselected, 2 xfailed. The
+  baseline of the chunk was 9761 passed; the 4 new cases are in
+  `tests/service/test_no_secret_output.py`.
+- `uv run invoke tests.check-310`: all three Python 3.10 legs passed (6926 passed, 103 skipped,
+  409 deselected, 2 xfailed).
+- `uv run infrahub-sync --help` and `uv run infrahub-sync accounts --help`: exit 0.
+- `uv run invoke docs.docusaurus`: static files generated. `uv run invoke docs.rumdl` and
+  `uv run rumdl check .`: no issues.
+
+## T074: Notes for the pull request
+
+Searched on 2026-11-18 with `git grep -n SERVICE_BEARER_TOKENS <branch> -- .`, keeping the files
+that each branch changed since its merge base with `022-local-accounts`. No other branch was
+edited.
+
+### The Helm chart of spec 018 names the removed variable
+
+`origin/018-helm-chart-kubernetes` (`dd800065`) holds no chart directory yet. Its values contract
+and its operator page name `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`:
+
+- `dev/specs/018-helm-chart-kubernetes/contracts/values.md:21`: the value
+  `credentials.bearerTokens` sets the removed variable;
+- `docs/docs/kubernetes-deployment.mdx:143` and `:154`: the variable table and the description of
+  the principals;
+- `dev/specs/018-helm-chart-kubernetes/contracts/rendered-release.md`, `data-model.md`,
+  `tasks.md` and `verification.md`.
+
+The branch that merges second replaces `credentials.bearerTokens` with values for
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` (required) and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`
+(optional), and updates the Kubernetes page. The same branch also changes
+`infrahub_sync/service/serve.py`, `docker-compose.yml`, `development/docker-compose.yml`,
+`infrahub_sync/testcontainers/docker-compose.yml` and `tasks/dev.py`, which this branch changes
+for the `admin` variables, so the merge has conflicts in these files.
+
+### Spec 021 adds a method to the resolver that this branch removes
+
+`021-scheduled-runs` (`3987a12e`) adds `principal_of(actor)` to the `PrincipalResolver` protocol
+and implements it on `EnvironmentPrincipalResolver`, which this branch removes
+(`infrahub_sync/service/auth.py`). A schedule keeps the actor name of its owner
+(`dev/specs/021-scheduled-runs/research.md`, R8). After both merge:
+
+- `StoreAccountResolver` needs `principal_of`, and a schedule must hold the account identifier,
+  not the name, so that ADR 0050 holds: a deleted account owns no schedule, and a new account with
+  the same name does not take the schedule over.
+- Its tests in `tests/service/` (`schedule_fixtures.py`, `test_schedule_bootstrap.py` and the
+  existing tests it changes) build the removed resolver and move to `tests/service/accounts.py`.
+
+### Spec 020 changes the same files
+
+`020-product-store-failure-cause` (`e7b93f09`) changes `infrahub_sync/service/serve.py`,
+`docs/docs/compose-deployment.mdx`, `docs/docs/development-stack.mdx` and
+`docs/docs/operations/day-2-operations.mdx`, which name the removed variable on that branch.
+`019-second-plan-real-changes` changes no file that names it.
+
+### Decision record numbers
+
+- This branch uses 0049 and 0050. 0048 is taken on `020-product-store-failure-cause`.
+- 0045 is used twice already: on `018-helm-chart-kubernetes`
+  (`0045-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md`)
+  and on `origin/compose-default-internal-credentials`
+  (`0045-the-compose-file-defaults-its-internal-credentials.md`).
+- `docs/docs/development/adr-index.mdx` on this branch does not list 0043, 0046 or 0047, which
+  `dev/adr/README.md` lists.

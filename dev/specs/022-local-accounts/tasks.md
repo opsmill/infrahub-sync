@@ -345,29 +345,29 @@ tokens.
 
 ## Phase 7: Polish and cross-cutting work
 
-- [ ] T067 [P] Write the decision record "Sign-in uses local accounts in the product store, and
+- [X] T067 [P] Write the decision record "Sign-in uses local accounts in the product store, and
   the environment defines the `admin` account" in `dev/adr/`, with the next free number at the
   time of writing, and add it to `dev/adr/README.md` and `docs/docs/development/adr-index.mdx`.
   Cite no internal source.
-- [ ] T068 [P] Write the decision record "A record holds an account identifier, and a deletion
+- [X] T068 [P] Write the decision record "A record holds an account identifier, and a deletion
   empties the account row" in `dev/adr/`, and index it in the same two files.
-- [ ] T069 [P] Add the sentence of FR-040 to principle VI in
+- [X] T069 [P] Add the sentence of FR-040 to principle VI in
   `docs/docs/development/constitution.md`, and update its version line and date as its
   "Governance" section requires.
-- [ ] T070 [P] Update `AGENTS.md`: the new commands in "CLI Commands", and
+- [X] T070 [P] Update `AGENTS.md`: the new commands in "CLI Commands", and
   `docs/docs/development/knowledge/repository-tour.md` for the new modules.
-- [ ] T071 [P] Add `changelog/+local-accounts.added.md` and
+- [X] T071 [P] Add `changelog/+local-accounts.added.md` and
   `changelog/+bearer-tokens-variable.removed.md` with
   `uv run --extra dev towncrier create`, and edit `changelog/421.added.md` so it no longer names
   the removed variable.
-- [ ] T072 Write the search of SC-005 as a test in `tests/service/test_no_secret_output.py`: run
+- [X] T072 Write the search of SC-005 as a test in `tests/service/test_no_secret_output.py`: run
   the User Story 1 flow against a test app with captured logs and search every answer, log line
   and audit row for the passwords, the token values after creation and the digests.
-- [ ] T073 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`,
+- [X] T073 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`,
   `uv run invoke tests.tests-unit`, `uv run invoke tests.check-310`,
   `uv run infrahub-sync --help`, `uv run infrahub-sync accounts --help` and
   `uv run invoke docs.docusaurus`.
-- [ ] T074 Note for the pull request, in `dev/specs/022-local-accounts/notes.md`: the Helm chart
+- [X] T074 Note for the pull request, in `dev/specs/022-local-accounts/notes.md`: the Helm chart
   of spec 018 names the removed variable; the branch that merges second updates the chart
   values to the `admin` variables.
 
