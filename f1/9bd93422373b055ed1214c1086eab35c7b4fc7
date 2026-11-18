@@ -1,0 +1,30 @@
+tests/service/test_start_check.py
+  s_cf9ada8f865389::t_d770ea2ed7f2ff 191-192
+  s_cf9ada8f865389::t_8da4fce63cbfec 28
+tests/service/test_admin_account.py
+  s_f79ca1c28d97f1::t_b4084bb72e6903 419,481
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f19bd93422373b055ed1214c1086eab35c7b4fc7",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_f79ca1c28d97f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a62f33bbf5fe8c5b9",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
