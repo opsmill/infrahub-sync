@@ -140,3 +140,75 @@ What I did next:
   if an account is deleted while its tokens dialog is open, the old token rows may stay.
 - The fragment `changelog/+web-interface-no-actor.changed.md` was rewritten, not deleted: it now
   says only that the configuration list does not name who started the latest run.
+- Final run on the final commit `91e00376`, tree clean, no commit during the run:
+  - image built with `VERSION=3.0.0a5`, `REVISION=91e00376…` and `CREATED`;
+  - Compose and image tiers (`pytest -m "compose or docker" tests/compose tests/image`, prefix
+    `infrahub-sync-022`): 17:55 to 18:11 UTC, 109 passed, 0 failed; no container left;
+  - `invoke lint` and `ruff check .`: clean; unit tier: 9922 passed, 4 skipped, 2 xfailed,
+    0 failed; `tests.check-310`: all three legs passed (7028 passed); `pnpm check` and
+    `pnpm typecheck`: pass; the five CLI `--help` commands: exit 0.
+
+## Morning report
+
+### 1. Done
+
+- **All 74 tasks of `tasks.md` are ticked**, User Stories 1 to 4. The web interface asks for
+  an account name and a password, names the account that started a run, approved a plan or
+  registered a version, and has "My account" and "Accounts" pages. The token field is gone.
+- **Design documents match the code**: research, data model, the four contracts, plan,
+  quickstart, five spec requirements (marked "Updated 2026-11-18 to match the
+  implementation"), the user documentation and ADR 0049.
+- **Tests**: unit tier 9922 passed, 0 failed; Python 3.10 legs pass; Compose and image tiers
+  109 passed on the final commit; headless browser scenarios: 16 steps (User Story 2), 49
+  steps (User Story 4) and 69 steps after the review fixes, all passed.
+- **Branch**: `022-local-accounts`, 88 commits ahead of `origin/feature/v3-develop`, not
+  pushed, no pull request, no `Claude-Session` trailer. Report of the implementation:
+  `dev/specs/022-local-accounts/opsmill-implement-report.md`; screenshots and scripts of the
+  browser checks are in the session scratchpad (`shot-*.png`, `us4-*.png`,
+  `review-phone-header-*.png`, `web_review.py`).
+
+### 2. Blocked
+
+Nothing is blocked.
+
+### 3. Advisor decisions
+
+See "Advisor questions" above: A1 (six questions of the spec alignment, and the checks for the
+web interface) and A2 (two stale Compose assertions, fixed; the image tier needs the build
+arguments).
+
+### 4. Not done
+
+- **Pull request**: not opened, by the standing rule that a pull request needs your explicit
+  request.
+- **Browser checks not covered**: the `503 sign-in-busy` message, the idle timeout of a
+  session, "Plan approved by" (the fake orchestration makes no plan), and the message shown when
+  the browser refuses to copy a token.
+- **Deferred review findings** of the API and CLI, listed in section 5 of
+  `opsmill-implement-report.md` (type invariants, simplifications, an unreadable session file
+  treated as empty).
+- **Spec archive**: `speckit-opsmill-extract` has not run.
+
+### 5. Risks to check before accepting
+
+- **Choices made without you** in the web interface: no API token field at all (only sign-in);
+  the storage key renamed to `infrahub-sync.session-token`, so an open tab that held a token
+  shows the sign-in form; an administrator's own row offers no level change and no password
+  change (the page points to "My account"); deleting an account requires typing its name;
+  `admin` offers only unlock.
+- **Known limit of the sign-in refusal**: with about four or more `sync-api` processes, an
+  attacker can fill the 10,000-row table with refusals in force, after which a new name's
+  failures are not counted (research R6). Alternative: refuse uncounted names while the table
+  is full.
+- **Rewritten changelog fragment** `changelog/+web-interface-no-actor.changed.md` (from spec
+  017): it now keeps only the claim that the configuration list does not name who started the
+  latest run.
+- **Two Compose tests changed** to accept the CA mount of the worker and the web directory of
+  the image (A2). The nightly end-to-end workflow had not run on `feature/v3-develop` since
+  2026-10-02.
+- **Generated API types**: the 422 descriptions changed from "Unprocessable Content" to
+  "Unprocessable Entity", probably from the FastAPI version installed here.
+- **`infrahub_sync/service/account_actions.py` is at Pylint's 1,000-line limit**: the next
+  change there must split it.
+- **Helm chart PR #129** (infrahub-helm): its end-to-end job will fail until it runs an
+  Infrahub Sync image with local accounts; chart version and `appVersion` not raised.
