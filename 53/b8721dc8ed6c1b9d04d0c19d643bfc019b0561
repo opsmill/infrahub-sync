@@ -1,0 +1,19 @@
+docs/docs/development-stack.mdx
+  s_2d3d101935fd75::t_b1f5e50ce699cf 237-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53b8721dc8ed6c1b9d04d0c19d643bfc019b0561",
+  "prompts": {},
+  "sessions": {
+    "s_2d3d101935fd75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e718161f-01ea-4015-976a-63ce56c6c4bf",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
