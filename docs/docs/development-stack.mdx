@@ -436,8 +436,9 @@ This path imports the official NetBox demo data from a local NetBox into a branc
 Infrahub started from Infrahub's own Compose file. It takes about 30 minutes, most of it the
 apply.
 
-To prepare the same import with one command, `uv run invoke dev.demo`, follow
-[Try the NetBox demo](./tutorials/try-the-netbox-demo.mdx).
+`uv run invoke dev.demo` prepares the same import with one command, on the development stack's
+own Infrahub instead of the one that step 1 starts. To follow that path, read
+[Import NetBox demo data in one command](./tutorials/try-the-netbox-demo.mdx).
 
 1. Start a local Infrahub with Infrahub's own Compose file. Put it in a directory outside
    the checkout, because the checkout's root already holds a `docker-compose.yml`, the Sync

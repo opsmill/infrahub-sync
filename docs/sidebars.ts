@@ -19,10 +19,10 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Tutorials',
       items: [
+        'tutorials/try-the-netbox-demo',
         'tutorials/netbox-to-existing-infrahub',
         'tutorials/nautobot-to-existing-infrahub',
         'tutorials/netbox-demo-to-infrahub',
-        'tutorials/try-the-netbox-demo',
       ],
     },
     {
