@@ -295,6 +295,28 @@ def test_create_branch_answered_without_ok_counts_as_created_when_the_branch_exi
     assert client.operations() == ["SyncBranchCreate", "SyncBranchList"]
 
 
+@pytest.mark.parametrize(
+    ("operation", "mutation", "call", "error"),
+    [
+        ("SyncBranchCreate", "BranchCreate", create_branch, BranchCreateFailedError),
+        ("SyncBranchDelete", "BranchDelete", delete_branch, BranchDeleteFailedError),
+    ],
+    ids=["create", "delete"],
+)
+def test_a_branch_list_that_cannot_be_reached_after_a_refused_mutation_stays_the_cause(
+    operation: str, mutation: str, call: Callable[..., None], error: type[Exception]
+) -> None:
+    unreachable = ServerNotReachableError(address="http://x")
+    client = FakeInfrahub(
+        handlers={operation: lambda _v: {mutation: {"ok": False}}, "SyncBranchList": _raise(unreachable)}
+    )
+
+    with pytest.raises(error) as caught:
+        call(_sdk(client), RUN_BRANCH)
+
+    assert caught.value.__cause__ is unreachable
+
+
 # --- Delete a branch -------------------------------------------------------------------------
 
 

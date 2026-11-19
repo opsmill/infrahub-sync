@@ -220,12 +220,18 @@ def _mutation_ok(data: object, mutation: str) -> bool:
     return isinstance(payload, dict) and payload.get("ok") is True
 
 
-def _branch_exists(client: InfrahubClientSync, name: str) -> bool | None:
-    """Whether the branch exists, or `None` when Infrahub cannot tell."""
+def _branch_exists(client: InfrahubClientSync, name: str) -> tuple[bool | None, Exception | None]:
+    """Whether the branch exists, or `None` when Infrahub cannot tell, and the request failure.
+
+    A request failure of the branch list is returned so that the caller raises its operation
+    failure from it, and the transport classification still sees an unreachable destination.
+    """
     try:
-        return name in _branches(client)
-    except (*_REQUEST_ERRORS, BranchListFailedError):
-        return None
+        return name in _branches(client), None
+    except _REQUEST_ERRORS as exc:
+        return None, exc
+    except BranchListFailedError:
+        return None, None
 
 
 def create_branch(client: InfrahubClientSync, name: str) -> None:
@@ -246,10 +252,11 @@ def create_branch(client: InfrahubClientSync, name: str) -> None:
         if _mutation_ok(data, "BranchCreate"):
             logger.info("branch_review.branch_created", branch=name)
             return
-    if _branch_exists(client, name):
+    exists, list_failure = _branch_exists(client, name)
+    if exists:
         logger.info("branch_review.branch_exists", branch=name)
         return
-    raise BranchCreateFailedError from failure
+    raise BranchCreateFailedError from failure or list_failure
 
 
 def delete_branch(client: InfrahubClientSync, name: str) -> None:
@@ -270,10 +277,11 @@ def delete_branch(client: InfrahubClientSync, name: str) -> None:
         if _mutation_ok(data, "BranchDelete"):
             logger.info("branch_review.branch_deleted", branch=name)
             return
-    if _branch_exists(client, name) is False:
+    exists, list_failure = _branch_exists(client, name)
+    if exists is False:
         logger.info("branch_review.branch_missing", branch=name)
         return
-    raise BranchDeleteFailedError from failure
+    raise BranchDeleteFailedError from failure or list_failure
 
 
 def open_proposed_change(client: InfrahubClientSync, *, branch: str, title: str, description: str) -> str:
