@@ -10,6 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccountRouteImport } from './routes/account'
+import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as ConfigsConfigIdRouteImport } from './routes/configs.$configId'
 import { Route as RunsIndexRouteImport } from './routes/runs.index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
@@ -17,6 +19,16 @@ import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountsRoute = AccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConfigsConfigIdRoute = ConfigsConfigIdRouteImport.update({
@@ -37,12 +49,16 @@ const RunsRunIdRoute = RunsRunIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/accounts': typeof AccountsRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/runs/': typeof RunsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/accounts': typeof AccountsRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/runs': typeof RunsIndexRoute
@@ -50,20 +66,43 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/accounts': typeof AccountsRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/runs/': typeof RunsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/configs/$configId' | '/runs/$runId' | '/runs/'
+  fullPaths:
+    | '/'
+    | '/account'
+    | '/accounts'
+    | '/configs/$configId'
+    | '/runs/$runId'
+    | '/runs/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/configs/$configId' | '/runs/$runId' | '/runs'
-  id: '__root__' | '/' | '/configs/$configId' | '/runs/$runId' | '/runs/'
+  to:
+    | '/'
+    | '/account'
+    | '/accounts'
+    | '/configs/$configId'
+    | '/runs/$runId'
+    | '/runs'
+  id:
+    | '__root__'
+    | '/'
+    | '/account'
+    | '/accounts'
+    | '/configs/$configId'
+    | '/runs/$runId'
+    | '/runs/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRoute
+  AccountsRoute: typeof AccountsRoute
   ConfigsConfigIdRoute: typeof ConfigsConfigIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
   RunsIndexRoute: typeof RunsIndexRoute
@@ -76,6 +115,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accounts': {
+      id: '/accounts'
+      path: '/accounts'
+      fullPath: '/accounts'
+      preLoaderRoute: typeof AccountsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/configs/$configId': {
@@ -104,6 +157,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRoute,
+  AccountsRoute: AccountsRoute,
   ConfigsConfigIdRoute: ConfigsConfigIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,
   RunsIndexRoute: RunsIndexRoute,

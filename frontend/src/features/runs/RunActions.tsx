@@ -385,7 +385,7 @@ export function ApplyDialog({
               <dd className="flex min-w-0 items-start gap-1.5">
                 <StateIcon state="insync" className="mt-0.5 size-3.5 shrink-0 text-success" />
                 <span className="text-pretty">
-                  Yes, <When iso={run.approval.approved_at} />.
+                  Yes, by {run.approval.approved_by}, <When iso={run.approval.approved_at} />.
                 </span>
               </dd>
             </>
@@ -1008,7 +1008,7 @@ export function ResumeDialog({
             <>
               <dt className="text-subtle">Approved</dt>
               <dd className="min-w-0 text-pretty">
-                Yes, <When iso={run.approval.approved_at} />.
+                Yes, by {run.approval.approved_by}, <When iso={run.approval.approved_at} />.
               </dd>
             </>
           )}

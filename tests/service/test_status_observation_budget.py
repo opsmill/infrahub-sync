@@ -32,7 +32,7 @@ from infrahub_sync.product_store import (
     local_product_projection,
 )
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import Principal
+from infrahub_sync.service.auth import Principal, Resolution
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import RunService
@@ -116,10 +116,10 @@ class _Resolver:
     secret_values: tuple[str, ...] = ()
 
     @staticmethod
-    def resolve(token: str) -> Principal:
+    def resolve(token: str) -> Resolution:
         """Accept any bearer token as the same operator."""
         del token
-        return Principal(actor="operator")
+        return Resolution.accepted(Principal(actor="operator"))
 
 
 def _pending(flow_run_id: str, attempt: int) -> PrefectExecutionLink:

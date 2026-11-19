@@ -84,6 +84,11 @@ _LEGAL_EXECUTION_VERDICTS = {
 }
 _REGISTRY_VERSION_MESSAGE = "registry_version must be an integer in the registry allocatable range"
 _REASON_MESSAGE = "reason must be printable and trimmed"
+# The longest reason a request can give for an action.
+REASON_MAX_LENGTH = 512
+# The rule of a local account name (spec 022, research R8), which the Sync API and the client both
+# apply: no space, so a name differs from every placeholder and is safe in a URL path.
+ACCOUNT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$"
 _JSON_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
 _ARTIFACT_TIME_MESSAGE = "artifact-reference timestamps must include a timezone"
 _EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"
@@ -120,7 +125,7 @@ class CreateRunRequest(_RequestModel):
     registry_version: int
     branch: str | None = None
     confirm_writes: bool = False
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
     @field_validator("registry_version", mode="before")
     @classmethod
@@ -133,7 +138,7 @@ class CreateRunRequest(_RequestModel):
 class VerifyRunRequest(_RequestModel):
     """Request verification of a saved run plan."""
 
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class ApplyRunRequest(_RequestModel):
@@ -148,7 +153,7 @@ class ApplyRunRequest(_RequestModel):
     confirm_writes: bool = False
     confirm_left_out: StrictBool = False
     branch: str | None = None
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
     # No return annotation on purpose: with one, Pydantic replaces the model's serialization
     # JSON schema (and so the OpenAPI document) with a bare object.
@@ -164,13 +169,13 @@ class ApproveRunRequest(_RequestModel):
     """Request approval of a run's saved plan, bound to the reviewed checksum, without applying it."""
 
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class CancelRunRequest(_RequestModel):
     """Request cancellation of an accepted run."""
 
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class ResumeRunRequest(_RequestModel):
@@ -183,7 +188,7 @@ class ResumeRunRequest(_RequestModel):
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirm_writes: bool = False
     confirm_left_out: StrictBool = False
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class ConfigMutationRequest(_RequestModel):
@@ -191,7 +196,7 @@ class ConfigMutationRequest(_RequestModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
     package: dict[str, Any]
-    reason: str | None = Field(default=None, min_length=1, max_length=512)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
     @field_validator("reason")
     @classmethod
@@ -1083,6 +1088,65 @@ class ValidationReportResource(_ResourceModel):
     limit: int
     total_findings: int
     next_offset: int | None
+
+
+class AccountResource(_ResourceModel):
+    """What the Sync API shows of a local account: its name, its level and its state."""
+
+    name: str
+    administrator: bool
+    disabled: bool
+    environment_managed: bool
+    created_at: datetime
+    sign_in_refused_until: datetime | None = None
+
+
+class DeletedAccountResource(_ResourceModel):
+    """The answer of a deletion: what every record of the deleted account displays from now on."""
+
+    placeholder: str
+
+
+class SessionResource(_ResourceModel):
+    """The answer of a sign-in: the session token, the account and the idle period of a session.
+
+    The Sync API returns the token this once. Its printed form shows the account name only.
+    """
+
+    token: str = Field(repr=False)
+    account: AccountResource
+    idle_seconds: int
+
+    def __repr__(self) -> str:
+        """Show the account name only, so that no log line or traceback holds the session token."""
+        return f"SessionResource(account={self.account.name!r})"
+
+    __str__ = __repr__
+
+
+class TokenResource(_ResourceModel):
+    """What the Sync API shows of an API token: never its value."""
+
+    token_id: str
+    name: str
+    created_at: datetime
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+
+
+class CreatedTokenResource(TokenResource):
+    """The answer of the creation of an API token: the token and its value, returned this once.
+
+    Its printed form shows the token name only.
+    """
+
+    token: str = Field(repr=False)
+
+    def __repr__(self) -> str:
+        """Show the token name only, so that no log line or traceback holds the value."""
+        return f"CreatedTokenResource(name={self.name!r})"
+
+    __str__ = __repr__
 
 
 class ErrorDetail(_ResourceModel):

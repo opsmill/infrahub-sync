@@ -36,6 +36,9 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.compose
 
+# Where docker-compose.yml mounts the operator's CA certificates (`x-sync-ca`, ADR 0026).
+CA_DIRECTORY = "/etc/infrahub-sync/ca"
+
 
 @pytest.fixture(scope="module")
 def pending_update(infrahub_fixture: dict[str, str]) -> str:
@@ -50,17 +53,22 @@ def destination_url() -> str:
     return f"http://host.docker.internal:{FIXTURE_INFRAHUB_PORT}"
 
 
-def test_the_deployed_worker_container_mounts_nothing(deployment: Deployment) -> None:
+def test_the_deployed_worker_container_mounts_only_the_ca_directory(deployment: Deployment) -> None:
     """Read from the running container, not the file that asked for it.
 
     A resolved Compose model says what was requested; this says what Docker
-    actually gave the process that ran the plan below.
+    actually gave the process that ran the plan below. ADR 0026 gives the worker
+    one mount: the operator's CA certificates, read-only, which `sync-api` and
+    `sync-bootstrap` share. Anything else, or a writable CA mount, fails.
     """
     worker = inspect(deployment.container("sync-worker"))
     api = inspect(deployment.container("sync-api"))
 
-    assert worker["Mounts"] == [], f"the worker container mounts {worker['Mounts']}"
-    assert {mount["Source"] for mount in worker["Mounts"]} & {mount["Source"] for mount in api["Mounts"]} == set()
+    shapes = [(mount["Type"], mount["Destination"], mount["RW"]) for mount in worker["Mounts"]]
+    assert shapes == [("volume", CA_DIRECTORY, False)], f"the worker container mounts {worker['Mounts']}"
+    assert worker["Mounts"][0]["Name"].endswith("_sync-ca-certificates"), worker["Mounts"][0]["Name"]
+    other_worker_sources = {mount["Source"] for mount in worker["Mounts"] if mount["Destination"] != CA_DIRECTORY}
+    assert other_worker_sources & {mount["Source"] for mount in api["Mounts"]} == set()
 
 
 def test_the_deployed_worker_has_no_configuration_directory_in_its_environment(

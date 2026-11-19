@@ -228,6 +228,36 @@ export const runLogQuery = (runId: string, stage: string) =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
+/* ---------- accounts and tokens ---------- */
+
+/** The states `GET /accounts` filters on. */
+export type AccountState = "active" | "disabled" | "all";
+
+/**
+ * The API tokens of the signed-in account, oldest first. The account lists poll as the other lists
+ * do, so a change made by another administrator or in another tab shows up.
+ */
+export const myTokensQuery = () =>
+  $api.queryOptions("get", "/me/tokens", {}, { refetchInterval: poll(LIST_REFRESH_MS) });
+
+/** Every account in a state, by name. Only an administrator can read it. */
+export const accountsQuery = (state: AccountState) =>
+  $api.queryOptions(
+    "get",
+    "/accounts",
+    { params: { query: { state } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
+/** The API tokens of another account, oldest first. Only an administrator can read them. */
+export const accountTokensQuery = (name: string) =>
+  $api.queryOptions(
+    "get",
+    "/accounts/{name}/tokens",
+    { params: { path: { name } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
 /** The newest run of each configuration, from one page of `GET /runs`. */
 export function latestRunByConfig(runs: Run[]): Map<string, Run> {
   const latest = new Map<string, Run>();
@@ -327,7 +357,7 @@ function noAnswerDetail(): string {
     : "Check that the Sync service is running, then try again.";
 }
 
-/** A sentence for each failure a page can meet: no answer, a refused token, a missing record or a refusal. */
+/** A sentence for each failure a page can meet: no answer, a refused session, a missing record or a refusal. */
 export function describeError(error: unknown): DescribedError {
   if (isEnvelope(error)) {
     const { code, message, status } = error.error;
@@ -373,8 +403,8 @@ export function describeError(error: unknown): DescribedError {
     if (status === 401) {
       return {
         ...base,
-        title: "The Sync API refused the token",
-        detail: "The Sync API refused the token. Enter a token again.",
+        title: "The Sync API refused the session",
+        detail: "The session has ended. Sign in again.",
         retryable: false,
         notFound: false,
       };
@@ -423,4 +453,82 @@ export function describeError(error: unknown): DescribedError {
     notFound: false,
     kind: "unknown",
   };
+}
+
+/** The shortest and the longest password the Sync API accepts, in characters. */
+export const PASSWORD_MIN = 12;
+export const PASSWORD_MAX = 1024;
+
+/** Refusals of an account or token action, in words. The keys are the Sync API error codes. */
+const ACCOUNT_ERRORS: Record<string, { title: string; detail?: string }> = {
+  forbidden: {
+    title: "Only an administrator can manage accounts",
+    detail: "Ask an administrator to make this change.",
+  },
+  "current-password-refused": {
+    title: "The current password is not accepted",
+    detail:
+      "Type the password you signed in with. After repeated failures, the account is refused for a while.",
+  },
+  "password-too-short": {
+    title: "The new password is too short",
+    detail: `Use at least ${PASSWORD_MIN} characters.`,
+  },
+  "password-too-long": {
+    title: "The new password is too long",
+    detail: `Use at most ${PASSWORD_MAX.toLocaleString("en")} characters.`,
+  },
+  "password-invalid": {
+    title: "The new password contains a character that cannot be stored",
+    detail: "Remove the character, then try again.",
+  },
+  "sign-in-busy": {
+    title: "The Sync service is checking too many passwords",
+    detail: "Try again in a moment.",
+  },
+  "environment-managed-account": {
+    title: "The deployment's environment defines the admin account",
+    detail:
+      "The environment of the Sync service defines this account, which is always an active administrator. Change its password or its token there.",
+  },
+  "account-name-taken": {
+    title: "An account with this name exists",
+    detail: "Names are compared without regard to letter case. Choose another name.",
+  },
+  "account-name-invalid": {
+    title: "This account name is not allowed",
+    detail:
+      "Use a name without spaces. The names admin, unknown and unauthenticated are reserved, and a name cannot start with acct_ or contain a token prefix.",
+  },
+  "account-not-found": {
+    title: "No account with this name",
+    detail: "Another administrator may have deleted it. The list shows the accounts that exist.",
+  },
+  "token-name-taken": {
+    title: "You already have a token with this name",
+    detail: "Choose another name.",
+  },
+  "token-not-found": {
+    title: "This token no longer exists",
+    detail: "It may have been deleted already. The list shows the tokens that exist.",
+  },
+  "expiry-in-the-past": {
+    title: "The expiry date is in the past",
+    detail: "Choose a date and a time in the future, or leave the expiry empty.",
+  },
+  "secret-parameter-refused": {
+    title: "A value in this form looks like a token or a secret",
+    detail: "Change the name or the reason, then try again.",
+  },
+};
+
+/** `describeError`, with the refusals of the account and token routes said for those pages. */
+export function describeAccountError(error: unknown): DescribedError {
+  const described = describeError(error);
+  const code = described.code;
+  if (described.kind !== "envelope" || !code || !Object.hasOwn(ACCOUNT_ERRORS, code)) {
+    return described;
+  }
+  const words = ACCOUNT_ERRORS[code];
+  return { ...described, title: words.title, detail: words.detail, notFound: false };
 }

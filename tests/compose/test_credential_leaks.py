@@ -83,7 +83,7 @@ def _environment_values(container: str) -> list[str]:
 
 def _run_one_plan(deployment: Deployment) -> None:
     """Register the smoke package and plan it, so a run resolves its credential before any search."""
-    principal = json.loads(deployment.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))["compose-suite"]["token"]
+    principal = deployment.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN")
     with api_client(deployment, principal) as client:
         config_id, registry_version = register(
             client, smoke_package(deployment.destination), "compose suite: leak check configuration"

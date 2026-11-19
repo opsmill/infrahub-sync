@@ -3,7 +3,7 @@ import createFetchClient from "openapi-fetch";
 import createQueryHooks from "openapi-react-query";
 
 import { isEnvelope, isTimeout, REQUEST_TIMEOUT_MS, SyncApiUnavailable } from "./errors";
-import { bearer, clearToken, getToken, onTokenCleared, refusesHeldToken } from "./token";
+import { bearer, clearToken, getToken, onTokenCleared, refusesHeldToken, setToken } from "./token";
 import type { paths } from "./types.generated";
 
 export const queryClient = new QueryClient({
@@ -33,7 +33,7 @@ export const fetchClient = createFetchClient<paths>({
     ),
 });
 
-// Answers read with a removed token are not shown to the person who enters the next one,
+// Answers read with a removed token are not shown to the person who signs in next,
 // whichever way the token was removed.
 onTokenCleared(() => queryClient.clear());
 
@@ -83,7 +83,7 @@ export async function fetchWithToken(url: string, signal?: AbortSignal): Promise
 
 fetchClient.use({
   onRequest({ request }) {
-    // A request that already names a token, such as the check of a typed token, keeps it.
+    // A request that already names a token keeps it.
     const token = getToken();
     if (token && !request.headers.has("Authorization")) {
       request.headers.set("Authorization", bearer(token));
@@ -105,3 +105,49 @@ fetchClient.use({
 });
 
 export const $api = createQueryHooks(fetchClient);
+
+/** The result of a sign-in, without the password or the session token. */
+export type SignInResult = "signed-in" | "refused" | "busy" | "no-answer";
+
+/**
+ * Signs in with an account name and a password, and keeps the session token for this tab when the
+ * Sync API accepts them. The password is sent once and is not kept.
+ */
+export async function signIn(name: string, password: string): Promise<SignInResult> {
+  try {
+    const { data, error, response } = await fetchClient.POST("/auth/sign-in", {
+      body: { name, password },
+      // The Sync API can still open a session after the tab stops waiting. No one receives the
+      // token of that session, so it cannot be used, and the Sync API refuses it after the idle
+      // period. A second attempt opens a new session. Without the timeout, a Sync API that does
+      // not answer would leave the form waiting with no way to try again.
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (data?.token) {
+      setToken(data.token);
+      return "signed-in";
+    }
+    if (response.status === 401) return "refused";
+    if (isEnvelope(error) && error.error.code === "sign-in-busy") return "busy";
+    return "no-answer";
+  } catch {
+    // A network failure, a timeout, or an answer without a Sync API envelope.
+    return "no-answer";
+  }
+}
+
+/**
+ * Ends the session with the Sync API, then removes the token from this tab whatever the answer:
+ * a refused or unanswered sign-out, or an API token (`422 not-a-session`), still signs out here.
+ */
+export async function signOut(): Promise<void> {
+  try {
+    if (getToken()) {
+      await fetchClient.POST("/auth/sign-out", { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    }
+  } catch {
+    // The token is removed below.
+  } finally {
+    clearToken();
+  }
+}

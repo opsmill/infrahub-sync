@@ -289,7 +289,7 @@ def test_a_format_4_plan_is_still_verified(tmp_path: Path) -> None:
     assert failures == []
 
 
-def test_a_format_4_plan_is_still_approved_by_checksum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_format_4_plan_is_still_approved_by_checksum(tmp_path: Path) -> None:
     """The Sync API approves a format 4 plan by the checksum of its saved plan (FR-012)."""
     pytest.importorskip("prefect")
     pytest.importorskip("fastapi")
@@ -300,9 +300,9 @@ def test_a_format_4_plan_is_still_approved_by_checksum(tmp_path: Path, monkeypat
     from infrahub_sync.product_store import local_product_projection
     from infrahub_sync.service import flow as service_flow
     from infrahub_sync.service.app import create_app
-    from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
     from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
     from tests.service import test_approval
+    from tests.service.accounts import seed_accounts
 
     _format_4_plan(tmp_path)
     saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
@@ -310,9 +310,8 @@ def test_a_format_4_plan_is_still_approved_by_checksum(tmp_path: Path, monkeypat
     assert saved.checksum_ok is True
     checksum = saved.manifest.plan_checksum
 
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": test_approval.OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection((tmp_path / "service").resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": test_approval.OWNER_TOKEN}}).resolver
     version = projection.create_configuration(test_approval._registered_package())
     test_approval._stored_run(projection, version, publish=False)
     projection.publish_artifact(

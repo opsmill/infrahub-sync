@@ -35,7 +35,8 @@ def _resolved(
         "sync-api": {
             "ports": [{"mode": "ingress", "host_ip": "127.0.0.1", "target": 8000, "published": "8001"}],
             "environment": {
-                "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"dev": {"token": "infrahub-sync-dev-token"}}',
+                "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": "infrahub-sync-dev-password",
+                "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": "infrahub-sync-dev-token",
                 "INFRAHUB_SYNC_SERVICE_WORK_POOL": "infrahub-sync",
             },
         },
@@ -227,17 +228,16 @@ def test_a_publication_url_uses_its_bind_address(host_ip: str, url: str) -> None
 
 
 @pytest.mark.parametrize(
-    ("bearer_tokens", "label"),
+    ("admin_token", "label"),
     [
-        (json.dumps({"dev": {"token": dev.API_TOKEN}}), dev.API_TOKEN),
-        (json.dumps({"mine": {"token": f"{dev.API_TOKEN}-of-my-own"}}), "from BEARER_TOKENS"),
-        ("{not json", "from BEARER_TOKENS"),
-        (json.dumps([{"token": dev.API_TOKEN}]), "from BEARER_TOKENS"),
+        (dev.API_TOKEN, dev.API_TOKEN),
+        (f"{dev.API_TOKEN}-of-my-own", "from ADMIN_ACCOUNT_TOKEN"),
+        ("", "from ADMIN_ACCOUNT_TOKEN"),
     ],
-    ids=["exact-dev-token", "dev-token-as-substring", "invalid-json", "not-an-object"],
+    ids=["exact-dev-token", "dev-token-as-substring", "no-token"],
 )
-def test_the_urls_print_the_dev_bearer_token_only_on_an_exact_match(bearer_tokens: str, label: str) -> None:
-    assert dev.bearer_label(bearer_tokens) == label
+def test_the_urls_print_the_dev_bearer_token_only_on_an_exact_match(admin_token: str, label: str) -> None:
+    assert dev.bearer_label(admin_token) == label
 
 
 CUSTOM_TOKEN = "a-token-of-the-developer"  # noqa: S105 -- a test value
@@ -464,29 +464,20 @@ def test_dev_frontend_fetches_a_missing_submodule_first(
     assert fake.commands[-3] == f"git submodule update --init {dev.FRONTEND_SUBMODULE}"
 
 
-@pytest.mark.parametrize(
-    ("bearer_tokens", "label"),
-    [
-        (json.dumps({"dev": {"token": dev.API_TOKEN}}), dev.API_TOKEN),
-        (json.dumps({"mine": {"token": CUSTOM_TOKEN}}), "from BEARER_TOKENS"),
-    ],
-    ids=["dev-token", "token-of-the-developer"],
-)
-def test_dev_frontend_prints_which_token_to_enter_never_a_configured_token(
+def test_dev_frontend_prints_how_to_sign_in_never_a_configured_token(
     context: Context,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    bearer_tokens: str,
-    label: str,
 ) -> None:
     resolve = dev.dev_settings
-    monkeypatch.setattr(dev, "dev_settings", lambda ctx: dataclasses.replace(resolve(ctx), bearer_tokens=bearer_tokens))
+    monkeypatch.setattr(dev, "dev_settings", lambda ctx: dataclasses.replace(resolve(ctx), admin_token=CUSTOM_TOKEN))
     monkeypatch.setattr(dev, "_frontend_submodule_present", lambda: True)
 
     _body(dev.dev_frontend)(context)
 
     output = capsys.readouterr().out
-    assert f"Token to enter in the page: {label}" in output
+    assert "Sign in on the page as admin, with the password in ADMIN_ACCOUNT_PASSWORD" in output
+    assert f"(by default {dev.ADMIN_PASSWORD})" in output
     assert CUSTOM_TOKEN not in output
 
 

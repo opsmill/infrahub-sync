@@ -44,7 +44,6 @@ stack.
 from __future__ import annotations
 
 import concurrent.futures
-import json
 import threading
 import time
 import uuid
@@ -137,14 +136,12 @@ def live_stack_fixture() -> LiveStack:
             probe.execute("SELECT 1")
     except psycopg.Error as exc:
         pytest.skip(f"development stack PostgreSQL unreachable ({exc}); start it with `invoke dev.start`")
-    principals = json.loads(settings.bearer_tokens)
-    actor = min(principals)
     return LiveStack(
         sync_api=settings.sync_api_url,
         infrahub=settings.worker_infrahub_url,
         infrahub_host=settings.infrahub_url,
         infrahub_token=settings.infrahub_admin_token,
-        bearer_token=principals[actor]["token"],
+        bearer_token=settings.admin_token,
         database_url=database_url,
     )
 

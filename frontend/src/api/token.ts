@@ -1,12 +1,12 @@
 import { useSyncExternalStore } from "react";
 
 /*
- * The Sync API token the person entered. It is kept for this browser tab only: `sessionStorage`
- * is discarded when the tab closes. When the browser blocks storage, the token is kept in memory
- * and is lost on a reload.
+ * The session token the Sync API returned when the person signed in. It is kept for this browser
+ * tab only: `sessionStorage` is discarded when the tab closes. When the browser blocks storage, the
+ * token is kept in memory and is lost on a reload. No cookie is set.
  */
 
-const STORAGE_KEY = "infrahub-sync.api-token";
+const STORAGE_KEY = "infrahub-sync.session-token";
 
 /** The token to keep for a typed value: trimmed, or `undefined` when nothing is left. */
 export function normalizeToken(value: string | null | undefined): string | undefined {
@@ -20,8 +20,8 @@ export function bearer(token: string): string {
 }
 
 /**
- * True when a 401 answers a request that carried the token held now. A 401 for a request sent
- * with an earlier token must not remove a token entered since.
+ * True when a 401 answers a request that carried the token held now, for example after the session
+ * ended. A 401 for a request sent with an earlier token must not remove a token kept since.
  */
 export function refusesHeldToken(
   status: number,

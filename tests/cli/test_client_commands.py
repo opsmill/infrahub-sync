@@ -2460,7 +2460,7 @@ SERVICE_URL_HINT = (
     "hint: set INFRAHUB_SYNC_API_URL or pass --api-url to the address of the Sync service, "
     "for example http://127.0.0.1:8001. The client adds /api."
 )
-BEARER_HINT = "hint: set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token"
+BEARER_HINT = "hint: run infrahub-sync login, or set INFRAHUB_SYNC_API_TOKEN to a Sync API token"
 
 
 def test_an_address_that_answers_a_web_page_prints_not_a_sync_api() -> None:

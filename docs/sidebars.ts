@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
         'v2-to-v3',
         'orchestration',
         'custom-certificates',
+        'guides/accounts',
       ],
     },
     {
@@ -101,6 +102,7 @@ const sidebars: SidebarsConfig = {
             'development/knowledge/plan-artifact',
             'development/knowledge/planned-write-and-apply',
             'development/knowledge/apply-guard',
+            'development/knowledge/local-accounts',
             'development/knowledge/configuration-foundation',
             'development/knowledge/v2-configuration-conversion',
             'development/knowledge/execution-surface',
@@ -136,6 +138,7 @@ const sidebars: SidebarsConfig = {
             'development/guidelines/testing',
             'development/guidelines/testing-tiers',
             'development/guidelines/secret-redaction',
+            'development/guidelines/accounts',
             'development/guidelines/ci-workflows',
             'development/guidelines/invoke-tasks',
           ],

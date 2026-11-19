@@ -581,8 +581,7 @@ export function RunPage({ runId }: { runId: string }) {
               !canAct &&
               (wouldCancel || wouldVerify || wouldApprove || wouldApply || wouldResume) && (
                 <p className="max-w-[40ch] text-foreground-muted text-xs">
-                  Only the token that started this run or an administrator token can act on this
-                  run.
+                  Only the account that started this run or an administrator can act on this run.
                 </p>
               )}
             {canAct && wouldCancel && (
@@ -608,7 +607,9 @@ export function RunPage({ runId }: { runId: string }) {
               <p className="flex items-center gap-1.5 text-foreground-muted text-sm">
                 <StateIcon state="insync" className="size-3.5 shrink-0 text-success" />
                 <span>
-                  Plan approved <When iso={run.approval.approved_at} />
+                  Plan approved by{" "}
+                  <span className="[overflow-wrap:anywhere]">{run.approval.approved_by}</span>{" "}
+                  <When iso={run.approval.approved_at} />
                 </span>
               </p>
             )}

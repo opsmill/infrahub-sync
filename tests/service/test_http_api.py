@@ -56,7 +56,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+from infrahub_sync.service.auth import StoreAccountResolver
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.service.models import (
     ApplyRunRequest,
@@ -79,6 +79,7 @@ from infrahub_sync.service.orchestration import (
 from infrahub_sync.service.plan_step import StorePlanStepObserver
 from infrahub_sync.service.read_progress import StoreSideReadObserver, record_waiting
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
@@ -193,21 +194,18 @@ class _FakeOrchestration:
 
 
 @pytest.fixture
-def service_api(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> tuple[TestClient, ProductProjection, _FakeOrchestration]:
-    monkeypatch.setenv(
-        PRINCIPALS_ENV,
-        json.dumps(
-            {
-                "owner": {"token": OWNER_TOKEN},
-                "other": {"token": OTHER_TOKEN},
-                "admin": {"token": ADMIN_TOKEN, "administrator": True},
-            }
-        ),
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
+def service_api(tmp_path: Path) -> tuple[TestClient, ProductProjection, _FakeOrchestration]:
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(
+        projection,
+        {
+            "owner": {"token": OWNER_TOKEN},
+            "other": {"token": OTHER_TOKEN},
+            "admin": {"token": ADMIN_TOKEN, "administrator": True},
+        },
+        # The service lists one token for redaction: the token of ``admin`` that the environment defines.
+        environment_token=True,
+    ).resolver
     orchestration = _FakeOrchestration()
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
@@ -249,7 +247,7 @@ def test_admission_reads_registered_binding_before_allocating_run(
         reason="plan registered package",
     )
     service = RunService(projection, orchestration)
-    principal = EnvironmentPrincipalResolver.from_environment().resolve(OWNER_TOKEN)
+    principal = StoreAccountResolver(projection, idle_seconds=600).resolve(OWNER_TOKEN).principal
     assert principal is not None
 
     _status, body = asyncio.run(service.create_run(request, principal, "registered-key"))
@@ -329,7 +327,10 @@ def test_run_creation_refuses_legacy_credential_identifiers_before_reservation(
     if identifier != "INFRAHUB_SYNC_CREDENTIAL_":
         assert identifier not in response.text
     assert projection.lookup_run("refused-credential-run").value is None
-    assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value is None
+    assert (
+        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()).value
+        is None
+    )
     assert orchestration.submissions == []
     assert projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
 
@@ -414,7 +415,10 @@ def test_run_creation_refuses_unused_legacy_credential_declarations(
     assert "LEGACY_SOURCE_TOKEN" not in response.text
     assert "legacy-source-value-canary" not in response.text
     assert projection.lookup_run("unused-credential-run").value is None
-    assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value is None
+    assert (
+        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()).value
+        is None
+    )
     assert orchestration.submissions == []
 
 
@@ -430,7 +434,7 @@ def test_saved_plan_refuses_legacy_source_credential_before_reservation(
     run = ProductRun(
         run_id="legacy-saved-plan",
         operation="plan",
-        actor="owner",
+        actor=account_identifier(projection, "owner"),
         configuration_reference=f"{version.config_id}@{version.registry_version}",
         config_id=version.config_id,
         registry_version=version.registry_version,
@@ -456,7 +460,10 @@ def test_saved_plan_refuses_legacy_source_credential_before_reservation(
     assert "recreate saved plans against it" in error["message"]
     assert "LEGACY_SOURCE_TOKEN" not in response.text
     assert "legacy-source-value-canary" not in response.text
-    assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value is None
+    assert (
+        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()).value
+        is None
+    )
     assert projection.lookup_run(run.run_id).value == before_request
     assert projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
     assert orchestration.submissions == []
@@ -480,7 +487,7 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
     run = ProductRun(
         run_id="legacy-credential-receipt",
         operation="sync" if operation == "sync" else "plan",
-        actor="owner",
+        actor=account_identifier(projection, "owner"),
         configuration_reference=f"{version.config_id}@{version.registry_version}",
         config_id=version.config_id,
         registry_version=version.registry_version,
@@ -507,7 +514,7 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
         path, target = f"/runs/{run.run_id}/{operation}", run.run_id
     body = request.model_dump(mode="json")
     receipt = RunService._new_receipt(
-        actor="owner",
+        actor=account_identifier(projection, "owner"),
         idempotency_key=RAW_KEY,
         operation=operation,
         target_run_id=target,
@@ -527,7 +534,9 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
             response_body=stored_response,
             flow_run_id=str(uuid5(NAMESPACE_URL, receipt.receipt_id)),
         )
-    before_retry = projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value
+    before_retry = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()
+    ).value
 
     response = client.post(path, headers=AUTH, json=body)
 
@@ -536,7 +545,10 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
     assert retained_run is not None
     assert retained_run.model_dump(exclude={"audit_links"}) == run.model_dump(exclude={"audit_links"})
     assert [event.outcome for event in projection.audit_events(run.run_id)] == (["replayed"] if accepted else [])
-    assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value == before_retry
+    assert (
+        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()).value
+        == before_retry
+    )
     if accepted:
         assert response.status_code == 202
         assert response.json() == stored_response
@@ -618,13 +630,10 @@ def _settle_open_executions(projection: ProductProjection, run_id: str) -> None:
         )
 
 
-def test_worker_published_plan_is_retrievable_through_an_independent_api_projection(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_worker_published_plan_is_retrievable_through_an_independent_api_projection(tmp_path: Path) -> None:
     """Worker publication crosses the shared backend and the API artifact boundary."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     api_projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(api_projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     worker_projection = local_product_projection(tmp_path.resolve())
     version = api_projection.create_configuration(_registered_package())
     run_id = "run-worker-api-artifact"
@@ -636,7 +645,7 @@ def test_worker_published_plan_is_retrievable_through_an_independent_api_project
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(api_projection, "owner"),
             started_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc),
             phase="accepted",
         )
@@ -692,8 +701,13 @@ def test_authentication_idempotency_and_secret_boundaries(
         assert response.json()["error"]["code"] == "unauthenticated"
         assert response.headers["WWW-Authenticate"] == "Bearer"
 
-    first = _create(client, reason=f"requested because {OWNER_TOKEN}", authorization=f"Bearer    {OWNER_TOKEN}")
-    replay = _create(client, reason=f"requested because {OWNER_TOKEN}")
+    # A reason that holds the token of `admin` is refused before the request reserves its key,
+    # and the event of the refusal holds no reason.
+    assert (
+        _create(client, reason=f"requested because {ADMIN_TOKEN}").json()["error"]["code"] == "secret-parameter-refused"
+    )
+    first = _create(client, reason="requested by the owner", authorization=f"Bearer    {OWNER_TOKEN}")
+    replay = _create(client, reason="requested by the owner")
     conflict = _create(client, reason="different reason")
 
     assert first.status_code == replay.status_code == 202
@@ -718,10 +732,12 @@ def test_authentication_idempotency_and_secret_boundaries(
     }
     assert RAW_KEY not in opaque_key
     boundary = repr((first.json(), parameters, projection.audit_events()))
+    assert ADMIN_TOKEN not in boundary
     assert OWNER_TOKEN not in boundary
     assert RAW_KEY not in boundary
     database_bytes = (tmp_path / "product-records.sqlite3").read_bytes()
     assert OWNER_TOKEN.encode() not in database_bytes
+    assert ADMIN_TOKEN.encode() not in database_bytes
     assert RAW_KEY.encode() not in database_bytes
     assert any(event.outcome == "refused-authentication" for event in projection.audit_events())
 
@@ -730,7 +746,7 @@ def test_authentication_idempotency_and_secret_boundaries(
         headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "secret-parameter-key"},
         json={
             "operation": "plan",
-            "config_id": OWNER_TOKEN,
+            "config_id": ADMIN_TOKEN,
             "registry_version": 1,
             "reason": "reject credential-bearing parameter",
         },
@@ -883,7 +899,9 @@ def test_cancellation_transport_failure_remains_a_typed_mutation_error(
     assert run is not None
     assert run.prefect_executions[-1].cancellation_requested_at is not None
     assert run.prefect_executions[-1].cancellation_acknowledged_at is None
-    receipt = projection.lookup_mutation("owner", sha256(b"cancel-transport-failure").hexdigest()).value
+    receipt = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(b"cancel-transport-failure").hexdigest()
+    ).value
     assert receipt is not None
     assert receipt.state == "processing"
 
@@ -957,7 +975,9 @@ def test_cancel_rejected_or_malformed_prefect_results_never_acknowledge_or_repla
     run = projection.lookup_run(run_id).value
     assert run is not None
     assert run.prefect_executions[-1].cancellation_acknowledged_at is None
-    receipt = projection.lookup_mutation("owner", sha256(b"cancel-prefect-refusal").hexdigest()).value
+    receipt = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(b"cancel-prefect-refusal").hexdigest()
+    ).value
     assert receipt is not None
     assert receipt.state == "processing"
     assert prefect_client.calls == [UUID(flow_run_id), UUID(flow_run_id)]
@@ -1007,7 +1027,7 @@ def test_cancel_refuses_run_without_execution_without_reserving_receipt(
             run_id=run_id,
             operation="plan",
             configuration_reference="legacy",
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc),
             phase="accepted",
         )
@@ -1021,7 +1041,10 @@ def test_cancel_refuses_run_without_execution_without_reserving_receipt(
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "no-active-execution"
-    assert projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value is None
+    assert (
+        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(key.encode()).hexdigest()).value
+        is None
+    )
     assert orchestration.cancelled == []
 
 
@@ -1051,7 +1074,10 @@ def test_cancel_observation_failure_before_admission_has_no_receipt_or_secret(
     assert response.json()["error"]["code"] == "orchestration-unavailable"
     assert response.json()["error"]["mutation_id"] is None
     assert "token-canary" not in response.text
-    assert projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value is None
+    assert (
+        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(key.encode()).hexdigest()).value
+        is None
+    )
     assert orchestration.cancelled == []
 
 
@@ -1087,7 +1113,12 @@ def test_cancel_replays_same_key_and_refuses_distinct_key_without_reserving_rece
     assert replayed.json() == accepted.json()
     assert refused.status_code == 409
     assert refused.json()["error"]["code"] == "execution-terminal"
-    assert projection.lookup_mutation("owner", sha256(second_key.encode()).hexdigest()).value is None
+    assert (
+        projection.lookup_mutation(
+            account_identifier(projection, "owner"), sha256(second_key.encode()).hexdigest()
+        ).value
+        is None
+    )
     assert len(orchestration.cancelled) == 1
 
 
@@ -1171,7 +1202,9 @@ def test_cancel_post_admission_cas_loss_completes_replayable_conflict(
     assert refused.status_code == 409
     assert refused.json()["error"]["code"] == "execution-terminal"
     assert replayed.json() == refused.json()
-    receipt = projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value
+    receipt = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(key.encode()).hexdigest()
+    ).value
     assert receipt is not None
     assert (receipt.state, receipt.response_status) == ("accepted", 409)
     assert orchestration.cancelled == []
@@ -1220,7 +1253,9 @@ def test_cancel_append_during_observation_never_targets_the_stale_execution(
     assert replayed.json() == refused.json()
     assert orchestration.cancelled == []
     run = projection.lookup_run(run_id).value
-    receipt = projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value
+    receipt = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(key.encode()).hexdigest()
+    ).value
     assert run is not None
     assert receipt is not None
     assert all(link.cancellation_requested_at is None for link in run.prefect_executions)
@@ -1680,7 +1715,10 @@ def test_owner_and_administrator_mutation_matrix(
     allowed = expected_status == 202
     expected_outcome = "accepted" if allowed else "refused-authorization"
     assert any(
-        event.actor == actor and event.operation == operation and event.outcome == expected_outcome for event in events
+        event.actor == account_identifier(projection, actor)
+        and event.operation == operation
+        and event.outcome == expected_outcome
+        for event in events
     )
     if allowed and operation in {"verify", "apply"}:
         assert len(orchestration.submissions) == 2
@@ -1827,8 +1865,19 @@ def test_confirmation_schema_errors_and_openapi_contract(
 
     paths = openapi["paths"]
     assert set(paths) == {
+        "/accounts",
+        "/accounts/{name}",
+        "/accounts/{name}/password",
+        "/accounts/{name}/unlock",
+        "/accounts/{name}/tokens",
+        "/accounts/{name}/tokens/{token_id}",
+        "/auth/sign-in",
+        "/auth/sign-out",
         "/events",
         "/me",
+        "/me/password",
+        "/me/tokens",
+        "/me/tokens/{token_id}",
         "/runs",
         "/runs/{run_id}",
         "/runs/{run_id}/plan",
@@ -1849,7 +1898,8 @@ def test_confirmation_schema_errors_and_openapi_contract(
     }
     for path, route in paths.items():
         for operation in route.values():
-            if path in {"/status", "/version"}:
+            # A sign-in presents a name and a password, not a bearer value.
+            if path in {"/status", "/version", "/auth/sign-in"}:
                 assert "security" not in operation
                 continue
             assert "401" in operation["responses"]
@@ -2568,7 +2618,7 @@ def test_an_accepted_plan_records_a_run_accepted_event_with_its_resources(
         run.destination_branch,
     )
     assert event.related == (
-        RelatedResource(kind="account", id="owner"),
+        RelatedResource(kind="account", id=account_identifier(projection, "owner")),
         RelatedResource(kind="config", id=version.config_id),
         RelatedResource(kind="config_version", id=f"{version.config_id}@{version.registry_version}"),
         RelatedResource(kind="branch", id=run.destination_branch),
@@ -2585,10 +2635,12 @@ def test_a_replayed_request_records_a_run_replayed_event(
     assert _create(client).status_code == 202
 
     assert _typed(projection, run_id) == [
-        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
-        ("infrahub_sync.run.replayed", "plan", "replayed", "owner"),
+        ("infrahub_sync.run.accepted", "plan", "accepted", account_identifier(projection, "owner")),
+        ("infrahub_sync.run.replayed", "plan", "replayed", account_identifier(projection, "owner")),
     ]
-    assert projection.audit_events(run_id)[-1].related[0] == RelatedResource(kind="account", id="owner")
+    assert projection.audit_events(run_id)[-1].related[0] == RelatedResource(
+        kind="account", id=account_identifier(projection, "owner")
+    )
 
 
 def test_every_refusal_except_authentication_records_a_run_refused_event(
@@ -2618,7 +2670,7 @@ def test_every_refusal_except_authentication_records_a_run_refused_event(
         assert event.event_type == expected, event.outcome
     authorization = next(event for event in refusals if event.outcome == "refused-authorization")
     assert authorization.primary_resource == PrimaryResource(kind="run", id=run_id)
-    assert authorization.related[0] == RelatedResource(kind="account", id="other")
+    assert authorization.related[0] == RelatedResource(kind="account", id=account_identifier(projection, "other"))
 
 
 def test_an_orchestration_failure_records_a_run_unavailable_event(
@@ -2632,7 +2684,9 @@ def test_an_orchestration_failure_records_a_run_unavailable_event(
 
     assert response.status_code == 503
     run_id = response.json()["error"]["run_id"]
-    assert _typed(projection, run_id) == [("infrahub_sync.run.unavailable", "plan", "unavailable", "owner")]
+    assert _typed(projection, run_id) == [
+        ("infrahub_sync.run.unavailable", "plan", "unavailable", account_identifier(projection, "owner"))
+    ]
 
 
 def test_an_accepted_cancel_and_the_recorded_cancellation_record_their_events(
@@ -2656,9 +2710,9 @@ def test_an_accepted_cancel_and_the_recorded_cancellation_record_their_events(
     asyncio.run(reconciler.reconcile_run(run_id))
 
     assert _typed(projection, run_id) == [
-        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
-        ("infrahub_sync.run.accepted", "cancel", "accepted", "admin"),
-        ("infrahub_sync.run.cancelled", "cancel", "cancelled", "admin"),
+        ("infrahub_sync.run.accepted", "plan", "accepted", account_identifier(projection, "owner")),
+        ("infrahub_sync.run.accepted", "cancel", "accepted", account_identifier(projection, "admin")),
+        ("infrahub_sync.run.cancelled", "cancel", "cancelled", account_identifier(projection, "admin")),
     ]
     cancelled = projection.audit_events(run_id)[-1]
     assert cancelled.primary_resource == PrimaryResource(kind="run", id=run_id)
@@ -2685,8 +2739,8 @@ def test_an_interrupted_execution_records_a_run_failed_event_with_its_verdict(
     asyncio.run(reconciler.reconcile_run(run_id))
 
     assert _typed(projection, run_id) == [
-        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
-        ("infrahub_sync.run.failed", "plan", "ambiguous", "owner"),
+        ("infrahub_sync.run.accepted", "plan", "accepted", account_identifier(projection, "owner")),
+        ("infrahub_sync.run.failed", "plan", "ambiguous", account_identifier(projection, "owner")),
     ]
     stored = projection.lookup_run(run_id).value
     assert stored is not None

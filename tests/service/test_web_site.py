@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -19,7 +18,6 @@ from fastapi.testclient import TestClient
 
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.web import (
     ASSET_CACHE_CONTROL,
@@ -28,6 +26,7 @@ from infrahub_sync.service.web import (
     NOT_FOUND_MESSAGE,
     create_site,
 )
+from tests.service.accounts import seed_accounts
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -422,10 +421,9 @@ def test_the_service_lifespan_runs_the_api_lifespan(web_directory: Path) -> None
 # The real Sync API under the mount.
 @pytest.fixture
 def real_site(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, web_directory: Path) -> TestClient:
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": "web-site-owner-token"}}))
     monkeypatch.delenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", raising=False)
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection((tmp_path / "store").resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": "web-site-owner-token"}}).resolver
     # No route these tests call reaches the orchestration.
     service = RunService(projection, object(), secrets=resolver.secret_values)  # ty: ignore[invalid-argument-type]
     return TestClient(create_site(create_app(service, resolver), web_directory))

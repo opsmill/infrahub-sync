@@ -33,11 +33,14 @@ REMOVED_COMMAND = re.compile(
     rf"|(?<![\w-]){_RETIRED_OPTION}(?![\w-])"
     rf"|{_CLI_INVOCATION}(?!{_CONFIGS_LIST})(?:(?!infrahub-sync|```|\n\s*\n)[\s\S])*?(?<![\w-])--(?:name|diff)(?![\w-])"
 )
+# `login --name` names the account to sign in as (spec 022) and is a current option too.
+_LOGIN = r"(?<![\w.-])infrahub-sync\s+login(?![\w-])"
 _VALID_NAME_OPTION = re.compile(
-    # A `configs list ... --name` invocation on one line, or the `configs list` section of the
-    # generated CLI reference, which lists `--name` as an option bullet.
-    rf"{_CONFIGS_LIST}[^\n]*?(?<![\w-])--name(?![\w-])"
-    r"|^#+ `infrahub-sync configs list`\n(?:(?!#)[^\n]*\n)*",
+    # A `configs list ... --name` or `login ... --name` invocation on one line, or the
+    # `configs list` or `login` section of the generated CLI reference, which lists `--name`
+    # as an option bullet.
+    rf"(?:{_CONFIGS_LIST}|{_LOGIN})[^\n]*?(?<![\w-])--name(?![\w-])"
+    r"|^#+ `infrahub-sync (?:configs list|login)`\n(?:(?!#)[^\n]*\n)*",
     re.MULTILINE,
 )
 # `events --run-id` filters events by run (spec 012) and is a current option. The retired
@@ -49,7 +52,7 @@ _VALID_RUN_ID_OPTION = re.compile(
 
 
 def _without_current_options(text: str) -> str:
-    """Remove the current `configs list --name` and `events --run-id` usages before the removed-option check."""
+    """Remove the current `configs list --name`, `login --name` and `events --run-id` usages before the check."""
     return _VALID_RUN_ID_OPTION.sub("", _VALID_NAME_OPTION.sub("", text))
 
 
@@ -76,6 +79,22 @@ CLI_CLIENT_PARITY = (
     ("whoami", "me", "GET /me"),
     ("apply RUN_ID", "apply", "POST /runs/{run_id}/apply"),
     ("apply RUN_ID failure evidence", "get_results", "GET /runs/{run_id}/results"),
+    ("login", "sign_in", "POST /auth/sign-in"),
+    ("logout", "sign_out", "POST /auth/sign-out"),
+    ("password", "change_password", "PUT /me/password"),
+    ("tokens list", "list_tokens", "GET /me/tokens"),
+    ("tokens create NAME", "create_token", "POST /me/tokens"),
+    ("tokens delete TOKEN_ID", "delete_token", "DELETE /me/tokens/{token_id}"),
+    ("accounts list", "list_accounts", "GET /accounts"),
+    ("accounts create NAME", "create_account", "POST /accounts"),
+    ("accounts set-password NAME", "set_account_password", "PUT /accounts/{name}/password"),
+    ("accounts unlock NAME", "unlock_account", "POST /accounts/{name}/unlock"),
+    ("accounts disable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
+    ("accounts enable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
+    ("accounts set-level NAME", "set_account_level", "PATCH /accounts/{name}"),
+    ("accounts delete NAME", "delete_account", "DELETE /accounts/{name}"),
+    ("accounts tokens NAME", "list_account_tokens", "GET /accounts/{name}/tokens"),
+    ("accounts delete-token NAME TOKEN_ID", "delete_account_token", "DELETE /accounts/{name}/tokens/{token_id}"),
 )
 
 
@@ -112,6 +131,22 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "me",
         "apply",
         "get_results",
+        "sign_in",
+        "sign_out",
+        "change_password",
+        "list_tokens",
+        "create_token",
+        "delete_token",
+        "list_accounts",
+        "create_account",
+        "set_account_password",
+        "unlock_account",
+        "set_account_disabled",
+        "set_account_disabled",
+        "set_account_level",
+        "delete_account",
+        "list_account_tokens",
+        "delete_account_token",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 
@@ -124,6 +159,8 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
     assert "plan" in help_text
     assert "verify" in help_text
     assert "whoami" in help_text
+    for command in ("login", "logout", "password", "tokens", "accounts"):
+        assert command in help_text
     # `diff` is a hidden, deprecated alias of `plan`.
     assert "diff" not in help_text
     assert "sync" in help_text
@@ -199,7 +236,7 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         path for path in (ROOT / "docs/docs").rglob("*.mdx") if "release-notes" not in path.relative_to(ROOT).parts
     )
     files.extend((ROOT / "examples").rglob("*.md"))
-    # Remove the valid `configs list --name` and `events --run-id` usages before the token check.
+    # Remove the valid `configs list --name`, `login --name` and `events --run-id` usages before the token check.
     text = _without_current_options("\n".join(path.read_text(encoding="utf-8") for path in files))
     removed_options = (
         "--name",
@@ -240,9 +277,14 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         ("infrahub-sync configs show --name from-netbox", True, True),
         ("### `infrahub-sync configs show`\n\n* `--name <str>`: Removed.\n", False, True),
         ("infrahub-sync diff --config from-netbox --version 1", True, False),
+        ("infrahub-sync login --name admin", False, False),
+        ("uv run infrahub-sync login --name admin", False, False),
+        ("docker login registry.example.net --name builder", False, True),
+        ("### `infrahub-sync login`\n\n* `--name <str>`: Account name.\n", False, False),
+        ("### `infrahub-sync logout`\n\n* `--name <str>`: Not an option.\n", False, True),
     ],
 )
-def test_removed_command_rule_exempts_only_configs_list_name(
+def test_removed_command_rule_exempts_only_configs_list_and_login_name(
     snippet: str, *, command_rejected: bool, name_token_remains: bool
 ) -> None:
     assert (REMOVED_COMMAND.search(snippet) is not None) is command_rejected

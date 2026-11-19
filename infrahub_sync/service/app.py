@@ -3,7 +3,7 @@
 import logging
 import os
 from asyncio import CancelledError, create_task, sleep
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from typing import Annotated, Any
@@ -24,7 +24,9 @@ from infrahub_sync.client.models import (
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.models import PROBLEM_TYPES
+from infrahub_sync.product_store import Account
 
+from .account_routes import account_router
 from .auth import Principal, PrincipalResolver
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
 from .config_routes import (
@@ -61,6 +63,7 @@ from .models import (
     VersionResource,
 )
 from .paging import InvalidCursorError
+from .presentation import AccountNameMiddleware, AccountReader
 from .service import MAX_EVENT_OFFSET, RunService, ServiceAPIError, parse_event_time
 from .settings import approval_required, validate_settings
 
@@ -308,13 +311,54 @@ def _include_routers(
     idempotency_key: Callable[..., str],
     configuration_routes: ConfigurationRoutes | None,
 ) -> None:
-    """Add the routes built outside ``create_app``: configurations, approval, events, run logs and the saved plan."""
+    """Add the routes built outside ``create_app``.
+
+    They are the configurations, the approval, the events, the run logs, the saved plan and the accounts.
+    """
     if configuration_routes is not None:
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
     application.include_router(approve_router(service, authenticate, idempotency_key))
     application.include_router(events_router(service, authenticate))
     application.include_router(run_logs_router(service, authenticate))
     application.include_router(plan_router(service, authenticate))
+    application.include_router(account_router(service, authenticate))
+
+
+def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable[..., Principal]:
+    """Return the dependency that resolves the bearer value of a request to its principal.
+
+    A missing or unknown value answers ``401 unauthenticated``. An API token after its expiry date
+    answers ``401 token-expired``. Every refusal is recorded, without the value.
+    """
+    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+
+    def authenticate(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
+    ) -> Principal:
+        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
+        if not token:
+            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
+            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+        resolution = resolver.resolve(token)
+        if resolution.principal is not None:
+            return resolution.principal
+        if resolution.refusal == "token-expired":
+            service.record_authentication_refusal(request.url.path, "expired-bearer-token")
+            raise ServiceAPIError(401, "token-expired", "the API token has expired")
+        service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
+        raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+
+    return authenticate
+
+
+def _account_reader(service: RunService) -> AccountReader:
+    """Return the account read of the presentation; the service is asked only when an answer names an account."""
+
+    def read_accounts(account_ids: Sequence[str]) -> Mapping[str, Account]:
+        return service.read_accounts(account_ids)
+
+    return read_accounts
 
 
 def create_app(
@@ -356,21 +400,7 @@ def create_app(
                     await task
 
     application = FastAPI(title="Infrahub Sync API", version=installed_server_version(), lifespan=lifespan)
-    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
-
-    def authenticate(
-        request: Request,
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
-    ) -> Principal:
-        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
-        if not token:
-            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        principal = resolver.resolve(token)
-        if principal is None:
-            service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        return principal
+    authenticate = _authenticator(service, resolver)
 
     def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
         if value is None or not value.strip():
@@ -425,6 +455,10 @@ def create_app(
         """Return unauthenticated lifecycle state without provider identifiers."""
         return await service.status(os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"))
 
+    # Added before `contain_unhandled_error`, so it runs inside it: every JSON answer of a route or
+    # of an exception handler passes through it, and a failed account read answers that 503.
+    application.add_middleware(AccountNameMiddleware, read_accounts=_account_reader(service))
+
     @application.middleware("http")
     async def contain_unhandled_error(
         request: Request,
@@ -449,7 +483,9 @@ def create_app(
     def get_me(principal: Annotated[Principal, Depends(authenticate)]) -> PrincipalResource:
         """Return the caller's actor name, administrator flag and the approval setting; performs no other action."""
         return PrincipalResource(
-            actor=principal.actor,
+            # A principal of the product store carries its account name; the identifier in
+            # `actor` is never shown.
+            actor=principal.actor if principal.name is None else principal.name,
             administrator=principal.administrator,
             approval_required=approval_required(),
         )

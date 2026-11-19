@@ -56,7 +56,7 @@ CREDENTIALS = (
     "INFRAHUB_SYNC_PREFECT_PASSWORD",
     "INFRAHUB_SYNC_S3_ACCESS_KEY",
     "INFRAHUB_SYNC_S3_SECRET_KEY",
-    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
+    "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD",
 )
 # The database bootstrap script: a top-level `configs` entry, mounted where the
 # job's entrypoint runs it.

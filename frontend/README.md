@@ -19,8 +19,11 @@ uv run invoke dev.frontend
 ```
 
 The task fetches the submodule when it is missing, installs the dependencies, sets the
-variable described in [Calling the Sync API](#calling-the-sync-api) and prints where to find
-the token to enter in the page. To run it against another Sync service, export that variable and run:
+variable described in [Calling the Sync API](#calling-the-sync-api) and prints how to sign in
+as `admin`: the variable that holds its password, `ADMIN_ACCOUNT_PASSWORD`, and the public default
+of that password. Use that default only on a Sync service that no one else can reach. To run the
+web interface against another Sync service, export the variable described in
+[Calling the Sync API](#calling-the-sync-api) and run:
 
 ```bash
 pnpm install
@@ -44,11 +47,20 @@ import { Button } from "@infrahub/ui";
 ### Calling the Sync API
 
 The browser sends API requests to `/api` on the page's own origin, where the Sync service serves
-the Sync API. Each person enters their own Sync API token in the page. The page sends it as a
-bearer token with every request and keeps it for the browser tab only.
+the Sync API. While the tab holds no session, the page shows only the sign-in form
+(`src/components/sign-in.tsx`). The form sends the account name and the password to
+`POST /api/auth/sign-in` and keeps the session token of the answer in `sessionStorage`, for the
+browser tab only (`src/api/token.ts`); the password is not kept. The page sends the session token
+as a bearer token with every request. No cookie is used.
+
+A `401` for a request that carried the held session token, for example after the session was
+unused for the idle period, removes the token and shows the sign-in form again. **Sign out** in
+the header calls `POST /api/auth/sign-out` with the session token, then removes the token from the
+tab whatever the answer. The header names the signed-in account from `GET /api/me`.
 
 In development, the Vite server forwards every request under `/api` to the Sync service without
-changing the path and without adding a token, so you enter a token in the page as in a deployment.
+changing the path and without adding an `Authorization` header, so you sign in on the page as in a
+deployment.
 The server reads the Sync service's address from the same environment variable as the
 `infrahub-sync` CLI, from the shell only, not from a `.env` file: `INFRAHUB_SYNC_API_URL`, by
 default `http://127.0.0.1:8001`.
@@ -78,10 +90,12 @@ export const Route = createFileRoute("/runs/$runId")({
 | `/` | Every configuration, grouped by the state of its latest run: failed or waiting for review, running, no current plan, in sync. | `GET /configs`, `GET /runs`, and `GET /configs/{config_id}/versions/{registry_version}` for each latest version |
 | `/configs/{config_id}` | The latest run, then tabs for the configuration's runs, its versions with who registered them and why, and the declared source, destination and mapping. **Start run** creates a plan or a sync. | `GET /configs/{config_id}`, `GET /configs/{config_id}/versions`, `GET /runs?config_id=`, `POST /runs` |
 | `/runs` | Every run, newest first, with filters and older pages. | `GET /runs` |
+| `/account` | The signed-in account: change its password, and list, create and delete its API tokens. A created token's value is shown once. | `GET /me`, `PUT /me/password`, `GET /me/tokens`, `POST /me/tokens`, `DELETE /me/tokens/{token_id}` |
+| `/accounts` | For administrators: every account with its level and state, a filter on the state, and create, set level, set password, allow sign-in again, disable, enable, the tokens of an account, and delete. Other accounts see a message that only an administrator can manage accounts. | `GET /accounts`, `POST /accounts`, `PATCH /accounts/{name}`, `PUT /accounts/{name}/password`, `POST /accounts/{name}/unlock`, `DELETE /accounts/{name}`, `GET /accounts/{name}/tokens`, `DELETE /accounts/{name}/tokens/{token_id}` |
 | `/runs/{run_id}` | The plan, verify and apply steps with their timings, the failure detail, the planned changes by kind, the run's files and its executions. **Verify**, **Apply** and **Cancel run** act on the run. | `GET /runs/{run_id}`, `GET /runs/{run_id}/plan`, `GET /runs/{run_id}/artifacts`, `POST /runs/{run_id}/verify`, `POST /runs/{run_id}/apply`, `POST /runs/{run_id}/cancel` |
 
-The top bar reads `GET /status` for the worker state and `GET /me` to check that the Sync API
-accepts the token; it does not display the token's actor. A run in progress is read again every
+The top bar reads `GET /status` for the worker state and `GET /me` for the signed-in account,
+which it displays, and its level, which decides whether the **Accounts** link is shown. A run in progress is read again every
 2 seconds; lists every 10 seconds.
 
 Each write sends an `Idempotency-Key`. A dialog keeps its key until a field changes, so sending

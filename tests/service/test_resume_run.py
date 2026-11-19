@@ -58,6 +58,7 @@ from infrahub_sync.service.service import PLAN_ARTIFACT_ID, _PlanLayoutCache  # 
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.configuration.validation_packages import package
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
+from tests.service.accounts import account_identifier
 from tests.service.execution_fixtures import bind_granting_guard
 from tests.service.test_http_api import (
     _PLAN_WORKER_ID,
@@ -387,7 +388,7 @@ def test_a_resume_of_a_cancelled_run_is_refused_with_run_not_resumable(service_a
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime.now(timezone.utc),
             phase="cancelled",
         )

@@ -254,10 +254,17 @@ services:
       # Loopback belongs to the host publication below. A container listening on
       # loopback alone would be unreachable from its own published port.
       INFRAHUB_SYNC_SERVICE_HOST: "0.0.0.0"
-      # A JSON object of API principals, for example
-      # {"operator": {"token": "<random>", "administrator": true}}.
-      INFRAHUB_SYNC_SERVICE_BEARER_TOKENS: >-
-        ${INFRAHUB_SYNC_SERVICE_BEARER_TOKENS:?INFRAHUB_SYNC_SERVICE_BEARER_TOKENS is required}
+      # The password of the `admin` account, at least 12 characters. The API applies
+      # it at each start: change it here and recreate the container to change it.
+      INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD: >-
+        ${INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD:?INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required}
+      # Optional: one API token of the `admin` account, at least 16 printable ASCII
+      # characters with no space at either end, not starting with `ifs_pat_` or
+      # `ifs_ses_`. Empty or unset: `admin` has no token.
+      INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN: "${INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN:-}"
+      # Optional: the seconds without activity after which a session ends, at least
+      # 60. Empty or unset: 28800.
+      INFRAHUB_SYNC_SESSION_IDLE_SECONDS: "${INFRAHUB_SYNC_SESSION_IDLE_SECONDS:-}"
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
       # true: apply refuses a plan without a matching approval, and sync is refused.
       INFRAHUB_SYNC_REQUIRE_APPROVAL: "${INFRAHUB_SYNC_REQUIRE_APPROVAL-false}"
@@ -374,9 +381,10 @@ services:
     entrypoint: ["infrahub-sync"]
     init: true
     environment:
-      # The API on the deployment's own network, and the token of a principal in
-      # INFRAHUB_SYNC_SERVICE_BEARER_TOKENS. Empty when unset, so a call against
-      # an authenticated deployment refuses at the API rather than failing here.
+      # The API on the deployment's own network, and an API token of an account: the
+      # value of INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN, or a token that an account
+      # created. Empty when unset, so a call against an authenticated deployment
+      # refuses at the API rather than failing here.
       INFRAHUB_SYNC_API_URL: "http://sync-api:8000"
       INFRAHUB_SYNC_API_TOKEN: "${INFRAHUB_SYNC_API_TOKEN:-}"
     read_only: true

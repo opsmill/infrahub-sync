@@ -6,7 +6,6 @@ and the setting's values in ``data-model.md``.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
@@ -21,11 +20,11 @@ from fastapi.testclient import TestClient
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.product_store import ProductProjection, ProductRun, RunFilters, local_product_projection
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV, approval_required, validate_settings
+from tests.service.accounts import account_identifier, seed_accounts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -73,8 +72,7 @@ def test_any_other_value_stops_the_service_at_start_up_naming_the_variable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, value: str
 ) -> None:
     monkeypatch.setenv(REQUIRE_APPROVAL_ENV, value)
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(local_product_projection(tmp_path.resolve()), {"owner": {"token": OWNER_TOKEN}}).resolver
     service = RunService(local_product_projection(tmp_path.resolve()), _RecordingOrchestration())
 
     with pytest.raises(ValueError, match=REQUIRE_APPROVAL_ENV):
@@ -140,9 +138,8 @@ _Api = tuple[TestClient, ProductProjection, _RecordingOrchestration, "Configurat
 @pytest.fixture(name="api")
 def _api_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Api:
     monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     orchestration = _RecordingOrchestration()
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
@@ -158,7 +155,7 @@ def _stored_plan_run(projection: ProductProjection, version: ConfigurationVersio
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime(2026, 11, 10, 12, tzinfo=timezone.utc),
             phase="planned",
         )
@@ -232,7 +229,7 @@ def test_apply_of_an_unapproved_run_is_refused_and_names_the_approve_command(api
     assert error["code"] == "approval-required"
     assert f"approve {RUN_ID} --expected-checksum {CHECKSUM}" in error["message"]
     assert orchestration.submissions == []
-    assert projection.lookup_mutation("owner", _key_digest("apply-key")).value is None
+    assert projection.lookup_mutation(account_identifier(projection, "owner"), _key_digest("apply-key")).value is None
     assert _outcomes(projection, "apply", RUN_ID) == ["refused-approval-required"]
 
 
@@ -276,7 +273,7 @@ def test_sync_is_refused_before_any_run_record_is_created(api: _Api) -> None:
         assert command in error["message"]
     assert orchestration.submissions == []
     assert projection.list_runs(RunFilters()).items == ()
-    assert projection.lookup_mutation("owner", _key_digest("sync-key")).value is None
+    assert projection.lookup_mutation(account_identifier(projection, "owner"), _key_digest("sync-key")).value is None
     assert _outcomes(projection, "sync") == ["refused-approval-required"]
     # The refusal names the configuration and version, as the confirmation refusal does, so a
     # search of the events by configuration finds it.

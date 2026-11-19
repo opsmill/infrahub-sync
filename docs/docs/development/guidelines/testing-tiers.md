@@ -689,7 +689,8 @@ The class adds these fixtures to the ones `TestInfrahubDocker` provides, such as
 - `infrahub_sync_compose`: the Sync deployment, written to disk and not started.
 - `infrahub_sync_app`: the started Sync deployment.
 - `sync_api_url`: the Sync API address on `127.0.0.1`, at the port Docker published.
-- `sync_api_token`: the token of the test deployment's administrator principal.
+- `sync_api_token`: the API token that the test deployment's `cli` service presents
+  (`INFRAHUB_SYNC_API_TOKEN`); by default, the token of the `admin` account.
 
 Two variables select the Sync image, the same two the root file reads:
 

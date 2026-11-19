@@ -436,12 +436,18 @@ def test_the_page_starts_the_deployment_with_a_bounded_wait() -> None:
 
 
 def test_the_troubleshooting_page_covers_an_operator_file_without_the_cli_token() -> None:
-    """An `operator.env` from an earlier alpha has no `INFRAHUB_SYNC_API_TOKEN` line at all."""
+    """An `operator.env` from an earlier alpha has no `INFRAHUB_SYNC_API_TOKEN` line at all.
+
+    It may also still set the variable that spec 022 removed, so the page names it, says to
+    remove it, and names the `admin` token that `INFRAHUB_SYNC_API_TOKEN` takes instead.
+    """
     troubleshooting = TROUBLESHOOTING.read_text(encoding="utf-8")
 
     assert "`operator.env`" in troubleshooting
     assert "INFRAHUB_SYNC_API_TOKEN" in troubleshooting
+    assert "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN" in troubleshooting
     assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in troubleshooting
+    assert "Remove it" in troubleshooting
 
 
 PREFECT_UI_SNIPPET = REPO_ROOT / "docs" / "docs" / "snippets" / "prefect-ui.override.yml"

@@ -323,11 +323,15 @@ def approval_error_body(
 
 
 def already_approved_body(approval: RunApproval, *, run_id: str, mutation_id: str | None) -> dict[str, Any]:
-    """Return the ``already-approved`` refusal, carrying the approval the run already has."""
+    """Return the ``already-approved`` refusal, carrying the approval the run already has.
+
+    The message names no account: ``approved_by`` holds an account identifier, which the API
+    shows as a name only in the approval of the details.
+    """
     return approval_error_body(
         409,
         "already-approved",
-        f"the run's plan was already approved by {approval.approved_by!r}",
+        "the run's plan was already approved",
         run_id=run_id,
         mutation_id=mutation_id,
         details={"approval": approval.model_dump(mode="json")},
@@ -727,7 +731,7 @@ RunPage: TypeAlias = StorePage[ProductRun]
 
 
 # An event's dotted type, ``infrahub_sync.<resource>.<action>`` (spec 012, FR-012).
-EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config)\.[a-z_]+$"
+EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|account)\.[a-z_]+$"
 # The kinds of resource an event names besides its primary resource, in the order an event lists them.
 RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "branch"]
 _RELATED_KIND_ORDER: dict[str, int] = {"account": 0, "config": 1, "config_version": 2, "branch": 3}
@@ -828,6 +832,108 @@ class EventFilters(BaseModel):
 
 # One page of events, oldest first.
 EventPage: TypeAlias = StorePage[AuditEvent]
+
+ACCOUNT_ID_PATTERN = r"^acct_[0-9a-f]{32}$"
+_ACCOUNT_SHORT_ID_PATTERN = r"^[0-9a-f]{8}$"
+_ACCOUNT_NAME_MAX_LENGTH = 64
+
+
+def _require_aware(value: datetime | None) -> datetime | None:
+    if value is not None and value.utcoffset() is None:
+        msg = "account timestamps must include a timezone"
+        raise ValueError(msg)
+    return value
+
+
+class Account(BaseModel):
+    """One local account of the Sync API.
+
+    ``account_id`` is the value every other record holds. ``name`` and ``name_key`` are empty
+    once the account is deleted; ``short_id`` then identifies it in a display name.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    account_id: str = Field(pattern=ACCOUNT_ID_PATTERN)
+    short_id: str = Field(pattern=_ACCOUNT_SHORT_ID_PATTERN)
+    name: str | None = None
+    # The lower-case name. Unique among the accounts that have one.
+    name_key: str | None = None
+    # Algorithm, cost parameters, salt and derived key, as the caller built them. Left out of
+    # the representation and of every serialized form, so that it reaches no log and no answer.
+    password_hash: str | None = Field(default=None, repr=False, exclude=True)
+    administrator: bool = False
+    disabled: bool = False
+    environment_managed: bool = False
+    created_at: datetime
+    updated_at: datetime
+    password_changed_at: datetime
+    deleted_at: datetime | None = None
+
+    _aware = field_validator("created_at", "updated_at", "password_changed_at", "deleted_at")(_require_aware)
+
+
+class AccountToken(BaseModel):
+    """One API token of an account. The store keeps its digest, which this record leaves out."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    token_id: str = Field(min_length=1)
+    account_id: str = Field(pattern=ACCOUNT_ID_PATTERN)
+    name: str = Field(min_length=1, max_length=_ACCOUNT_NAME_MAX_LENGTH)
+    created_at: datetime
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+    environment_managed: bool = False
+
+    _aware = field_validator("created_at", "expires_at", "last_used_at")(_require_aware)
+
+
+class AccountSession(BaseModel):
+    """One session of an account. The store keeps its digest, which this record leaves out."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: str = Field(min_length=1)
+    account_id: str = Field(pattern=ACCOUNT_ID_PATTERN)
+    created_at: datetime
+    last_used_at: datetime
+
+    _aware = field_validator("created_at", "last_used_at")(_require_aware)
+
+
+class SignInAttempt(BaseModel):
+    """The failed sign-ins of one lower-case name in the current window."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name_key: str = Field(min_length=1, max_length=_ACCOUNT_NAME_MAX_LENGTH)
+    failed_count: int = Field(ge=0)
+    window_started_at: datetime
+    refused_until: datetime | None = None
+
+    _aware = field_validator("window_started_at", "refused_until")(_require_aware)
+
+
+class ResolvedCredential(BaseModel):
+    """The API token or session that a digest matches, with its account.
+
+    The store reports what it holds and decides nothing: the caller checks ``account.disabled``,
+    ``expires_at`` and the idle period. ``last_used_at`` is the value stored before this
+    resolution, so that an idle period is measured from the previous use.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    account: Account
+    kind: Literal["token", "session"]
+    # ``token_id`` of a token, ``session_id`` of a session.
+    credential_id: str = Field(min_length=1)
+    # Always empty for a session.
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+
+    _aware = field_validator("expires_at", "last_used_at")(_require_aware)
 
 
 T = TypeVar("T")

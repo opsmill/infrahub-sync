@@ -30,8 +30,15 @@ export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
 export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
 ```
 
-The token has no command-line option, so it does not appear in shell history or in
-process arguments. `--api-url` overrides the URL for one command. For a
+`infrahub-sync-dev-token` is the API token of the stack's `admin` account. The token has no
+command-line option, so it does not appear in shell history or in process arguments.
+
+Instead of a token, a person can sign in with an account name and password. Leave
+`INFRAHUB_SYNC_API_TOKEN` unset and run `infrahub-sync login`; the CLI saves a session for the
+address in `INFRAHUB_SYNC_API_URL` and presents it to every later command. When
+`INFRAHUB_SYNC_API_TOKEN` is set and not empty, the CLI presents the variable and not the
+session, except for `login` and `logout`. See
+[Manage accounts](./guides/accounts.mdx). `--api-url` overrides the URL for one command. For a
 [Compose deployment](./compose-deployment.mdx) with the default port, the URL is
 `http://127.0.0.1:8001`, and the token is the `INFRAHUB_SYNC_API_TOKEN` value in its `.env`.
 

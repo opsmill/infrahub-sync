@@ -51,7 +51,7 @@ Sync container blocks the runner, including stopped containers and stacks with o
 API or database. The benchmark checks the fixed development Compose project before
 restoring NetBox or rebuilding Infrahub. For v3, the runner builds the Sync image from
 this checkout and uses the existing start tasks for its API and worker. v3 requires
-`INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API principal.
+`INFRAHUB_SYNC_API_TOKEN` in your environment, set to an API token of the local stack, such as the `admin` token.
 v2 uses its isolated release environment and does not require the Sync API or its token.
 Sync lifecycle commands explicitly select `infrahub-sync-dev` and this checkout's
 `development/docker-compose.yml`. The runner refuses to start a cell, before any Docker command or database

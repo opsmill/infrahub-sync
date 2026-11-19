@@ -417,7 +417,7 @@ export function ConfigurationPage({
           <section
             id={MAPPING_SECTION_ID}
             aria-labelledby="mapping-title"
-            className="flex scroll-mt-16 flex-col gap-2"
+            className="flex scroll-mt-16 flex-col gap-2 max-sm:scroll-mt-24"
           >
             <SectionHeading
               id="mapping-title"

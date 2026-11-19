@@ -20,7 +20,6 @@ Compose takes literally: a `$` in an exported password or token is not interpola
 from __future__ import annotations
 
 import importlib.metadata
-import json
 import os
 import re
 import shutil
@@ -50,9 +49,11 @@ SYNC_WORKER_SERVICE = "sync-worker"
 # The services whose logs a failed class reports.
 LOGGED_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker", "prefect-server")
 
-# The API principal of the test deployment. `INFRAHUB_SYNC_API_TOKEN` is what the root
-# file's `cli` service presents, so the two defaults name the same principal.
+# The API token of the `admin` account of the test deployment. `INFRAHUB_SYNC_API_TOKEN` is
+# what the root file's `cli` service presents, so the two defaults hold the same token.
 TEST_API_TOKEN = "infrahub-sync-test-token-0123456789"
+# The password of the `admin` account of a test deployment. Not a real credential.
+TEST_ADMIN_PASSWORD = "infrahub-sync-test-password-0123456789"
 
 # The variable `InfrahubDockerCompose.create_env_file` reads the Infrahub administrator token
 # from, and the Sync variable that carries the same token to the worker.
@@ -70,9 +71,9 @@ TEST_DEFAULTS: dict[str, str] = {
     "INFRAHUB_SYNC_PREFECT_AUTH_STRING": "test-prefect-auth-string",
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "test-access-key",
     "INFRAHUB_SYNC_S3_SECRET_KEY": "test-secret-key",
-    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": json.dumps(
-        {"test": {"token": TEST_API_TOKEN, "administrator": True}}, separators=(",", ":")
-    ),
+    # The `admin` account of the test deployment: its password, and `TEST_API_TOKEN` as its API token.
+    "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": TEST_ADMIN_PASSWORD,
+    "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": TEST_API_TOKEN,
     "INFRAHUB_SYNC_API_TOKEN": TEST_API_TOKEN,
     # The Infrahub test deployment's administrator token, so a run can write to it.
     INFRAHUB_CREDENTIAL_VARIABLE: PROJECT_ENV_VARIABLES[INFRAHUB_ADMIN_TOKEN_VARIABLE],

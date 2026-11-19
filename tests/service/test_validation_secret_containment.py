@@ -34,10 +34,11 @@ from infrahub_sync.product_store import configs, local_product_projection
 from infrahub_sync.product_store.configs import ValidationReport
 from infrahub_sync.service import serve
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.config_routes import ConfigurationRoutes
 from infrahub_sync.service.orchestration import Submission
 from infrahub_sync.service.service import RunService
+from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV
+from tests.service.accounts import seed_accounts
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -161,16 +162,15 @@ class _Orchestration:  # pylint: disable=too-few-public-methods
         return Submission(flow_run_id="unused", state="pending")
 
 
-def _validate_injected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, report: ValidationReport) -> dict[str, Any]:
+def _validate_injected(tmp_path: Path, report: ValidationReport) -> dict[str, Any]:
     """Serialize `report` through the real route, router and HTTP response.
 
     Only the application service behind the route is replaced. The route's own secret set, its
     redaction of the selected page, and the response model are the production ones.
     """
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": BEARER, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
-    secrets = tuple(dict.fromkeys((*collect_secret_values(), *resolver.secret_values)))
     projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(projection, {"admin": {"token": BEARER, "administrator": True}}).resolver
+    secrets = tuple(dict.fromkeys((*collect_secret_values(), *resolver.secret_values)))
 
     class _Service:
         ConfigsError = configs.ConfigsError
@@ -280,7 +280,8 @@ def _validate(
     monkeypatch: pytest.MonkeyPatch, projection: ProductProjection, version: ConfigurationVersion
 ) -> dict[str, Any]:
     """Drive the real serialized validation response for the one registered version."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": BEARER, "administrator": True}}))
+    monkeypatch.setenv(ADMIN_ACCOUNT_PASSWORD_ENV, "administrator-password-0001")
+    monkeypatch.setenv(ADMIN_ACCOUNT_TOKEN_ENV, BEARER)
     app = serve.build_app(projection_factory=lambda: projection, start_check=lambda _pool: None)
     response = TestClient(app).post(
         f"/configs/{version.config_id}/versions/{version.registry_version}/validate",
@@ -413,9 +414,7 @@ def test_two_secret_named_settings_stay_distinguishable_after_redaction(
     assert all(location != SOURCE_SETTINGS for location in redacted)
 
 
-def test_the_stable_machine_fields_survive_redaction_byte_for_byte(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: None
-) -> None:
+def test_the_stable_machine_fields_survive_redaction_byte_for_byte(tmp_path: Path, environment: None) -> None:
     """Every closed-vocabulary field leaves the boundary as the exact value that entered it.
 
     Compared against the pre-redaction report rather than against a set of permitted values: an
@@ -425,7 +424,7 @@ def test_the_stable_machine_fields_survive_redaction_byte_for_byte(
     _ = environment
     pre_redaction = _injected_report(SHAPED_SECRETS["quoted"])
 
-    report = _validate_injected(monkeypatch, tmp_path, pre_redaction)
+    report = _validate_injected(tmp_path, pre_redaction)
 
     assert report["config_id"] == pre_redaction.config_id
     assert report["registry_version"] == pre_redaction.registry_version

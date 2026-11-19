@@ -25,6 +25,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.product_store.store import FileArtifactStore, SQLiteRunStore
 from infrahub_sync.service import serve, worker
+from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV
 from infrahub_sync.service.start_check import START_REFUSED_MESSAGE, StartRefusedError, check_bootstrap_record
 from infrahub_sync.service.storage import DATABASE_URL_ENV
 
@@ -187,6 +188,8 @@ def _refuse(_work_pool: str) -> NoReturn:
 def test_the_api_factory_refuses_before_the_product_schema_step(monkeypatch: pytest.MonkeyPatch) -> None:
     """`uvicorn --factory infrahub_sync.service.serve:build_app` runs the check without `main()`."""
     monkeypatch.setattr(serve, "install_custom_ca_bundle", lambda: None)
+    # The variables of the `admin` account are read first; a valid password lets the check run.
+    monkeypatch.setenv(ADMIN_ACCOUNT_PASSWORD_ENV, "administrator-password-0001")
 
     with pytest.raises(StartRefusedError):
         serve.build_app(

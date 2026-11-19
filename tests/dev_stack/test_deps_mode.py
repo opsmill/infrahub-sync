@@ -57,7 +57,8 @@ def _resolved(*, infrahub: bool) -> dict[str, Any]:
             "environment": {
                 **SYNC_ENV,
                 "INFRAHUB_SYNC_SERVICE_HOST": "0.0.0.0",  # noqa: S104 -- the container's value
-                "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"dev": {"token": "infrahub-sync-dev-token"}}',
+                "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": "infrahub-sync-dev-password",
+                "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": "infrahub-sync-dev-token",
             },
             "volumes": [SOURCE_MOUNT, CA_VOLUME],
         },
@@ -228,7 +229,8 @@ def test_dev_api_runs_in_the_foreground_against_the_loopback_publications(
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
     assert environment["PREFECT_API_URL"] == "http://127.0.0.1:4230/api"
     assert environment["INFRAHUB_SYNC_SERVICE_HOST"] == "127.0.0.1"
-    assert environment["INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"]
+    assert environment["INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"]
+    assert environment["INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"] == dev.API_TOKEN
     assert environment[dev.INFRAHUB_CREDENTIAL_VARIABLE] == ADMIN_TOKEN
     # No PID file, no other file either.
     assert list(tmp_path.iterdir()) == []

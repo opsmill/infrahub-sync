@@ -122,7 +122,7 @@ report healthy, and prints the preset and the addresses:
 
 | Service | Default address | Set by |
 | --- | --- | --- |
-| Sync API | `http://127.0.0.1:8001`, bearer token `infrahub-sync-dev-token` | `SYNC_API_PORT` |
+| Sync API | `http://127.0.0.1:8001`, account `admin` with password `infrahub-sync-dev-password` and API token `infrahub-sync-dev-token` | `SYNC_API_PORT`, `ADMIN_ACCOUNT_PASSWORD`, `ADMIN_ACCOUNT_TOKEN` |
 | Prefect UI and API | `http://127.0.0.1:4230` | `PREFECT_PORT` |
 | Infrahub, with the `infrahub` and `preview` presets | `http://127.0.0.1:8000`, login `admin` / `infrahub` | `INFRAHUB_PORT`, `INFRAHUB_BIND_ADDRESS` |
 | NetBox, with the `preview` preset | `http://localhost:8082` | `development/netbox/netbox.env` |
@@ -158,6 +158,19 @@ curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:800
 The `status` response reports `"service": "ready"` when the worker is running. The service
 starts with an empty configuration registry and connects to no source or destination until you
 register a package.
+
+The stack gives the `admin` account of the Sync API the password `infrahub-sync-dev-password`
+and the API token `infrahub-sync-dev-token`. Both values are public, so use them on your own
+machine only. To sign in with the password instead of the token, leave `INFRAHUB_SYNC_API_TOKEN`
+unset:
+
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
+uv run infrahub-sync login --name admin
+uv run infrahub-sync whoami
+```
+
+To add accounts and tokens, see [Manage accounts](./guides/accounts.mdx).
 
 Run the smoke suite:
 
@@ -266,13 +279,12 @@ The task fetches the `frontend/vendor/infrahub` submodule when it is missing, in
 dependencies and serves the interface on `http://localhost:3000` until you stop it with Ctrl-C.
 
 The server forwards every request under `/api` to the Sync API of the stack, at the same path, and
-adds no token. Open the page and enter a Sync API token, as in a deployment. The task prints which
-token to enter: `infrahub-sync-dev-token` when a principal in `BEARER_TOKENS` has the development
-token, otherwise `from BEARER_TOKENS`, which means a token you set there. The task never prints a
-token you set yourself.
+adds no `Authorization` header. Open the page and sign in, as in a deployment: as `admin`, with the
+password in `ADMIN_ACCOUNT_PASSWORD`, by default `infrahub-sync-dev-password`. The task prints the
+same reminder, and never prints a password or a token you set yourself.
 
-The page keeps the token for the browser tab only. To remove it, select the Sync service status
-at the top of the page, then select **Remove token**.
+The page keeps the session token for the browser tab only. To end the session, select
+**Sign out** in the page header.
 
 To view the built web interface from `dev.api` instead, build it with `pnpm build` in `frontend/`
 and start `dev.api` with `INFRAHUB_SYNC_WEB_DIRECTORY` set to the absolute path of
@@ -352,6 +364,8 @@ resolved Compose file, so they print and use the values you set.
 | `STORAGE_POSTGRES_PORT` | `5440` | PostgreSQL's host port |
 | `MINIO_PORT` | `9010` | The object store's host port |
 | `SYNC_IMAGE` | `infrahub-sync:dev` | The image tag the stack builds and runs |
+| `ADMIN_ACCOUNT_PASSWORD` | `infrahub-sync-dev-password` | The password of the Sync API's `admin` account, 12 to 1,024 characters |
+| `ADMIN_ACCOUNT_TOKEN` | `infrahub-sync-dev-token` | The API token of the Sync API's `admin` account: at least 16 printable ASCII characters with no space at either end, not starting with `ifs_pat_` or `ifs_ses_` |
 
 Compose also reads a `.env` file from the `development/` directory. The repository ignores
 `*.env` files, so a forgotten `development/.env` changes the stack without any change in

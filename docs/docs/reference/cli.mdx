@@ -2,18 +2,22 @@
 
 Synchronize registered configurations through the Sync API.
 
-Set `INFRAHUB_SYNC_API_TOKEN` to the bearer token for your actor before running any
-command; the CLI reads it from the environment and never accepts it as a flag. See
-[Sync HTTP API — Configure principals](./sync-http-api.mdx#configure-principals) for how
-tokens are issued.
+Sign in with `infrahub-sync login`, which saves a session for the address in
+`INFRAHUB_SYNC_API_URL`, or, for a script, set `INFRAHUB_SYNC_API_TOKEN` to an API token
+of an account. When `INFRAHUB_SYNC_API_TOKEN` is set and not empty, every command other than
+`login` and `logout` presents it and not the saved session. The CLI reads the token from the
+environment and never accepts it as a flag.
+See [Manage accounts](../guides/accounts.mdx) for accounts and tokens, and
+[Sync HTTP API — Accounts and API tokens](./sync-http-api.mdx#accounts-and-api-tokens).
 
 When the Sync API address is missing or invalid, or the token is missing, a command prints
 `error: client-input` and `argument: service_url` or `argument: token` on standard error,
 then a `hint:` line. An address is invalid when it does not use `http` or `https`, has no
 host, or carries a user name, a password, a query string or a fragment. For the address,
 set `INFRAHUB_SYNC_API_URL` or pass `--api-url` with the address of the Sync service, for
-example `http://127.0.0.1:8001`; the client adds `/api`. For the token, set
-`INFRAHUB_SYNC_API_TOKEN`. Other `client-input` errors print no `hint:` line.
+example `http://127.0.0.1:8001`; the client adds `/api`. For the token, run
+`infrahub-sync login` or set `INFRAHUB_SYNC_API_TOKEN`. Other `client-input` errors print no
+`hint:` line.
 
 **Usage**:
 
@@ -33,15 +37,76 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
+* `login`: Sign in with an account name and its...
+* `logout`: Sign out: end the session saved for this...
+* `password`: Change the password of your account.
 * `plan`: Create a plan run and review its saved...
 * `sync`: Create a confirmed synchronization run.
 * `apply`: Apply a service-owned plan after binding...
 * `approve`: Record approval of the named run&#x27;s saved...
 * `verify`: Check that the named run&#x27;s saved plan...
-* `whoami`: Show the actor the API token authenticates...
+* `whoami`: Show the account that the API token or the...
 * `events`: List typed events, oldest first: time,...
 * `configs`: Register and inspect configuration packages.
 * `runs`: Inspect service-owned runs.
+* `tokens`: List, create and delete the API tokens of...
+* `accounts`: Manage local accounts.
+
+## `infrahub-sync login`
+
+Sign in with an account name and its password, and save the session for this Sync API address.
+
+The password is asked for without echo. With --password-stdin it is read from standard input,
+and --name is required. The session is saved in sessions.json in the application directory of
+infrahub-sync, with mode 0600 so that only you can read it; on Windows, access to the file
+follows the permissions of that directory. While INFRAHUB_SYNC_API_TOKEN is set and not empty,
+every command other than login and logout uses that variable and not the saved session.
+
+**Usage**:
+
+```console
+$ infrahub-sync login [OPTIONS]
+```
+
+**Options**:
+
+* `--name <str>`: Account name. Asked for when not given.
+* `--password-stdin`: Read the password from standard input instead of a prompt.
+* `--help`: Show this message and exit.
+
+## `infrahub-sync logout`
+
+Sign out: end the session saved for this Sync API address and remove it from the session file.
+
+While INFRAHUB_SYNC_API_TOKEN is set, this command still acts on the saved session.
+
+**Usage**:
+
+```console
+$ infrahub-sync logout [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+## `infrahub-sync password`
+
+Change the password of your account. Your other sessions end; your API tokens stay.
+
+The current password is asked for once and the new one twice, without echo.
+
+**Usage**:
+
+```console
+$ infrahub-sync password [OPTIONS]
+```
+
+**Options**:
+
+* `--password-stdin`: Read two lines from standard input instead of prompts: the current password, then the new one.
+* `--reason <str>`: Optional audit reason for the change.
+* `--help`: Show this message and exit.
 
 ## `infrahub-sync plan`
 
@@ -162,7 +227,7 @@ $ infrahub-sync verify [OPTIONS] {run_id}
 
 ## `infrahub-sync whoami`
 
-Show the actor the API token authenticates as and whether it is an administrator.
+Show the account that the API token or the saved session belongs to, whether it is an administrator, and whether approval is required.
 
 **Usage**:
 
@@ -617,4 +682,311 @@ $ infrahub-sync runs logs [OPTIONS] {run_id}
 
 * `--stage <str>`: Only lines of this stage: plan, verify, apply, sync, resume.
 * `--follow`: Read new lines every 2 seconds until the run ends.
+* `--help`: Show this message and exit.
+
+## `infrahub-sync tokens`
+
+List, create and delete the API tokens of your account.
+
+**Usage**:
+
+```console
+$ infrahub-sync tokens [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the API tokens of your account: name,...
+* `create`: Create an API token for your account and...
+* `delete`: Delete one API token of your account.
+
+### `infrahub-sync tokens list`
+
+List the API tokens of your account: name, token ID, creation, expiry and last use. No value is shown.
+
+**Usage**:
+
+```console
+$ infrahub-sync tokens list [OPTIONS]
+```
+
+**Options**:
+
+* `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync tokens create`
+
+Create an API token for your account and print its value once.
+
+The value is the only line on standard output, so `TOKEN=$(infrahub-sync tokens create ci)`
+captures it. The Sync API does not show the value again.
+
+**Usage**:
+
+```console
+$ infrahub-sync tokens create [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the new token, unique in your account.  [required]
+
+**Options**:
+
+* `--expires <str>`: Expiry as an ISO 8601 date or date-time. A date alone, such as 2027-01-31, means the last second of that day in UTC. A date-time must carry a time zone, such as 2027-01-31T12:00:00+00:00. Without this option the token does not expire.
+* `--reason <str>`: Optional audit reason for the creation.
+* `--json`: Print the answer of the Sync API as JSON, with the token value in it.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync tokens delete`
+
+Delete one API token of your account. The Sync API refuses its value afterwards.
+
+**Usage**:
+
+```console
+$ infrahub-sync tokens delete [OPTIONS] {token_id}
+```
+
+**Arguments**:
+
+* `token_id`: Token ID, as `tokens list` prints it.  [required]
+
+**Options**:
+
+* `--reason <str>`: Optional audit reason for the deletion.
+* `--help`: Show this message and exit.
+
+## `infrahub-sync accounts`
+
+Manage local accounts. Every command needs an administrator.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List accounts by name: name, level, state,...
+* `create`: Create an account.
+* `set-password`: Replace the password of an account.
+* `unlock`: End the refusal of an account&#x27;s sign-ins...
+* `disable`: Disable an account.
+* `enable`: Enable a disabled account.
+* `set-level`: Set the level of an account.
+* `delete`: Delete an account.
+* `tokens`: List the API tokens of an account: name,...
+* `delete-token`: Delete one API token of an account.
+
+### `infrahub-sync accounts list`
+
+List accounts by name: name, level, state, and the time until which sign-ins are refused.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts list [OPTIONS]
+```
+
+**Options**:
+
+* `--state <active|disabled|all>`: Only accounts in this state.  [default: all]
+* `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts create`
+
+Create an account. The initial password is asked for twice, without echo.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts create [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the new account.  [required]
+
+**Options**:
+
+* `--administrator`: Give the account the administrator level.
+* `--password-stdin`: Read the password from standard input instead of a prompt.
+* `--reason <str>`: Optional audit reason for the creation.
+* `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts set-password`
+
+Replace the password of an account. The new password is asked for twice; every session of the account ends.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts set-password [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--password-stdin`: Read the password from standard input instead of a prompt.
+* `--reason <str>`: Optional audit reason for the change.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts unlock`
+
+End the refusal of an account&#x27;s sign-ins that follows repeated failed sign-ins.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts unlock [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--reason <str>`: Optional audit reason for the unlock.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts disable`
+
+Disable an account. The Sync API deletes its API tokens and ends its sessions.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts disable [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--reason <str>`: Optional audit reason for the change.
+* `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts enable`
+
+Enable a disabled account. Its earlier API tokens and sessions are not restored.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts enable [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--reason <str>`: Optional audit reason for the change.
+* `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts set-level`
+
+Set the level of an account. It applies from the next request of the account, with no new sign-in.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts set-level [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--administrator / --no-administrator`: Give the account the administrator level, or take it away. One of the two is required.
+* `--reason <str>`: Optional audit reason for the change.
+* `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts delete`
+
+Delete an account. This cannot be reversed; `accounts disable` can.
+
+The name, the password, the API tokens and the sessions of the account are removed. Its runs,
+approvals and audit events stay, and display `Deleted account` and a short identifier, which
+this command prints. The name can be given to a new account, which has no right over the old
+runs.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts delete [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--yes`: Delete without asking for confirmation.
+* `--reason <str>`: Optional audit reason for the deletion.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts tokens`
+
+List the API tokens of an account: name, token ID, creation, expiry and last use. No value is shown.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts tokens [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+
+**Options**:
+
+* `--json`: Print the answer of the Sync API as JSON.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync accounts delete-token`
+
+Delete one API token of an account. The Sync API refuses its value afterwards.
+
+**Usage**:
+
+```console
+$ infrahub-sync accounts delete-token [OPTIONS] {name} {token_id}
+```
+
+**Arguments**:
+
+* `name`: Account name.  [required]
+* `token_id`: Token ID, as `accounts tokens` prints it.  [required]
+
+**Options**:
+
+* `--reason <str>`: Optional audit reason for the deletion.
 * `--help`: Show this message and exit.

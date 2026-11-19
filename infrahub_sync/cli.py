@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unicodedata
 from contextlib import contextmanager
+from contextvars import ContextVar
 from enum import Enum
 from functools import wraps
 from math import isfinite
@@ -24,6 +25,7 @@ import typer
 import yaml
 from pydantic import ValidationError
 
+from infrahub_sync import cli_accounts, cli_session
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
@@ -118,7 +120,11 @@ _CONFIG_HELP = "Configuration ID or name. The ID is tried first, then the name."
 _ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 _READABLE_ESCAPES = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
 
-app = typer.Typer(help="Synchronize registered configurations through the Sync API.")
+app = typer.Typer(
+    help="Synchronize registered configurations through the Sync API.",
+    # A local variable of a command can hold a typed password or a token; a traceback shows none.
+    pretty_exceptions_show_locals=False,
+)
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
 runs_app = typer.Typer(help="Inspect service-owned runs.")
 app.add_typer(configs_app, name="configs")
@@ -169,23 +175,63 @@ def main(
     _setup_logging(level=level)
     ctx.ensure_object(dict)
     ctx.obj["api_url"] = api_url or ""
+    _SAVED_SESSION.set(None)
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 
 
+# The Sync API address and the token of the saved session that this command presents, or nothing
+# when the command presents INFRAHUB_SYNC_API_TOKEN or an injected client. `_client_errors` reads
+# it to remove a saved session that the Sync API refuses.
+_SAVED_SESSION: ContextVar[tuple[str, str] | None] = ContextVar("_SAVED_SESSION", default=None)
+
+
+def _api_url(ctx: typer.Context) -> str:
+    ctx.ensure_object(dict)
+    return cast("str", ctx.obj.get("api_url", ""))
+
+
+def _keep_client(ctx: typer.Context, client: SyncClient) -> SyncClient:
+    ctx.obj["client"] = client
+    ctx.call_on_close(client.close)
+    return client
+
+
 def _client(ctx: typer.Context) -> SyncClient:
-    """Return the injected client or construct the command's one shared HTTP boundary."""
+    """Return the injected client or construct the command's one shared HTTP boundary.
+
+    The client presents INFRAHUB_SYNC_API_TOKEN when it is set and not empty, and the session
+    file is then not read. Otherwise it presents the session that `login` saved for the address.
+    """
     ctx.ensure_object(dict)
     injected = ctx.obj.get("client")
     if injected is not None:
         return cast("SyncClient", injected)
-    client = SyncClient(
-        cast("str", ctx.obj.get("api_url", "")),
-        os.environ.get("INFRAHUB_SYNC_API_TOKEN", ""),
-    )
-    ctx.obj["client"] = client
-    ctx.call_on_close(client.close)
-    return client
+    api_url = _api_url(ctx)
+    token = os.environ.get(cli_accounts.API_TOKEN_VARIABLE, "")
+    saved = None if token else cli_session.read_session(api_url)
+    client = SyncClient(api_url, token if saved is None else saved.token)
+    if saved is not None:
+        _SAVED_SESSION.set((api_url, saved.token))
+    return _keep_client(ctx, client)
+
+
+def _sign_in_client(ctx: typer.Context) -> SyncClient:
+    """Return the injected client, or a client that holds no token, for `login`."""
+    ctx.ensure_object(dict)
+    injected = ctx.obj.get("client")
+    if injected is not None:
+        return cast("SyncClient", injected)
+    return _keep_client(ctx, SyncClient.without_token(_api_url(ctx)))
+
+
+def _session_client(ctx: typer.Context, token: str) -> SyncClient:
+    """Return the injected client, or a client that presents a saved session token, for `logout`."""
+    ctx.ensure_object(dict)
+    injected = ctx.obj.get("client")
+    if injected is not None:
+        return cast("SyncClient", injected)
+    return _keep_client(ctx, SyncClient(_api_url(ctx), token))
 
 
 def _escape_character(character: str) -> str:
@@ -230,8 +276,10 @@ _CLIENT_INPUT_HINTS = {
         "set INFRAHUB_SYNC_API_URL or pass --api-url to the address of the Sync service, "
         "for example http://127.0.0.1:8001. The client adds /api."
     ),
-    "token": "set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token",
+    "token": "run infrahub-sync login, or set INFRAHUB_SYNC_API_TOKEN to a Sync API token",
 }
+_SESSION_REFUSED_HINT = "the Sync API no longer accepts the saved session, so it was removed; run infrahub-sync login"
+_UNAUTHENTICATED = "unauthenticated"
 _NOT_SYNC_API_HINT = (
     "Check INFRAHUB_SYNC_API_URL. It holds the address of the Sync service, without /api. "
     "The Sync service and the CLI must come from the same release."
@@ -315,7 +363,37 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         isinstance(error, APIError) and error.code == UNSUPPORTED_STORE_REASON
     ):
         result = (result[0], (*result[1], ("message", UNSUPPORTED_STORE_MESSAGE)))
-    return result
+    return result[0], (*result[1], *_account_message(error))
+
+
+def _account_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return the fixed message of a refusal of an account route, as one more error field."""
+    if not isinstance(error, APIError) or isinstance(error, ConfigsAPIError):
+        return ()
+    message = cli_accounts.ACCOUNT_ERROR_MESSAGES.get(error.code)
+    return () if message is None else (("message", message),)
+
+
+def _forget_refused_session(error: SyncClientError) -> None:
+    """Remove the saved session that the Sync API refused, and print the `login` hint.
+
+    Nothing is removed when the command presented INFRAHUB_SYNC_API_TOKEN, or when the file no
+    longer holds the refused token, for example after a `login` that ran meanwhile.
+    """
+    saved = _SAVED_SESSION.get()
+    if saved is None or not isinstance(error, APIError):
+        return
+    if error.status != 401 or error.code != _UNAUTHENTICATED:
+        return
+    address, token = saved
+    try:
+        removed = cli_session.remove_session(address, token=token)
+    except OSError:
+        removed = False
+    if not removed:
+        typer.echo("hint: the Sync API no longer accepts the saved session; run infrahub-sync login", err=True)
+        return
+    typer.echo(f"hint: {_SESSION_REFUSED_HINT}", err=True)
 
 
 @contextmanager
@@ -327,6 +405,7 @@ def _client_errors() -> Iterator[None]:
         label, fields = _error_fields(error)
         typer.echo(f"error: {label}", err=True)
         _echo_fields(fields, err=True)
+        _forget_refused_session(error)
         raise typer.Exit(2 if isinstance(error, ClientInputError) else 1) from None
 
 
@@ -364,6 +443,22 @@ def _echo_idempotency_key(key: str) -> None:
 def _stdin_is_interactive() -> bool:
     """Report whether a person can answer a confirmation prompt on standard input."""
     return sys.stdin.isatty()
+
+
+cli_accounts.register(
+    app,
+    cli_accounts.CommandSupport(
+        client=_client,
+        sign_in_client=_sign_in_client,
+        session_client=_session_client,
+        api_url=_api_url,
+        client_errors=_client_errors,
+        echo_fields=_echo_fields,
+        display=_display,
+        # Looked up at each call, so a test that replaces the function is honored.
+        stdin_is_interactive=lambda: _stdin_is_interactive(),  # noqa: PLW0108  # pylint: disable=unnecessary-lambda
+    ),
+)
 
 
 def _is_not_found(error: SyncClientError) -> bool:
@@ -1780,7 +1875,7 @@ def _echo_verification_operations(verification: dict[str, Any]) -> None:
 
 @app.command("whoami")
 def whoami_cmd(ctx: typer.Context) -> None:
-    """Show the actor the API token authenticates as and whether it is an administrator."""
+    """Show the account that the API token or the saved session belongs to, whether it is an administrator, and whether approval is required."""
     with _client_errors():
         principal = _client(ctx).me()
         _echo_fields(

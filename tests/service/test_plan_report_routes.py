@@ -17,7 +17,6 @@ review document; `GET /runs/{run_id}/plan` does not return them.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -33,11 +32,11 @@ from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.service import RunService
 from tests.plan.conftest import load_plan_problem_fixture
 from tests.plan.problem_plan import RUN_ID as PLAN_RUN_ID
 from tests.plan.problem_plan import PlannedFixture, plan_fixture
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.test_http_api import _FakeOrchestration, _publish_plan, _registered_package
 
 if TYPE_CHECKING:
@@ -50,11 +49,10 @@ PAGE_FIELDS = {"run_id", "plan_checksum", "entries", "offset", "limit", "total",
 ROUTES = [("problems", "problem"), ("left-out", "left_out"), ("kept", "kept")]
 
 
-def _service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[ProductProjection, TestClient]:
+def _service(tmp_path: Path) -> tuple[ProductProjection, TestClient]:
     """A product store with one accepted plan run, and a client of the Sync API over it."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection((tmp_path / "store").resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     version = projection.create_configuration(_registered_package())
     projection.create_run(
         ProductRun(
@@ -64,7 +62,7 @@ def _service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[ProductPr
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime(2026, 11, 11, 12, tzinfo=timezone.utc),
             phase="accepted",
         )
@@ -79,14 +77,14 @@ def _published_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple
     fixture = load_plan_problem_fixture()
     planned = plan_fixture(fixture)
     saved = read_saved_plan(sync_name=fixture.config_data["name"], run_id=PLAN_RUN_ID)
-    projection, client = _service(monkeypatch, tmp_path)
+    projection, client = _service(tmp_path)
     service_flow._publish_plan(projection, RUN_ID, saved, ())
     return client, planned
 
 
-def _published_format_3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
+def _published_format_3(tmp_path: Path) -> TestClient:
     """A run whose published plan carries no report, as a plan saved before format 4."""
-    projection, client = _service(monkeypatch, tmp_path)
+    projection, client = _service(tmp_path)
     _publish_plan(projection, RUN_ID)
     return client
 
@@ -178,27 +176,25 @@ def test_an_expected_checksum_that_differs_is_plan_changed(monkeypatch: pytest.M
     assert same.status_code == 200
 
 
-def test_an_unknown_problem_type_is_refused(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_an_unknown_problem_type_is_refused(tmp_path: Path) -> None:
     """A `problem_type` outside the nine names is 422."""
-    client = _published_format_3(monkeypatch, tmp_path)
+    client = _published_format_3(tmp_path)
 
     assert _get(client, "problems", problem_type="not_a_problem_type").status_code == 422
 
 
 @pytest.mark.parametrize("limit", [0, 501])
-def test_a_limit_outside_1_to_500_is_refused(limit: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    client = _published_format_3(monkeypatch, tmp_path)
+def test_a_limit_outside_1_to_500_is_refused(limit: int, tmp_path: Path) -> None:
+    client = _published_format_3(tmp_path)
 
     assert _get(client, "problems", limit=limit).status_code == 422
 
 
 @pytest.mark.parametrize(("route", "entry"), ROUTES)
-def test_a_plan_without_a_report_returns_empty_lists(
-    route: str, entry: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_a_plan_without_a_report_returns_empty_lists(route: str, entry: str, tmp_path: Path) -> None:
     """A plan saved before format 4 has no report: each list is empty."""
     del entry
-    client = _published_format_3(monkeypatch, tmp_path)
+    client = _published_format_3(tmp_path)
 
     response = _get(client, route)
 
@@ -207,8 +203,8 @@ def test_a_plan_without_a_report_returns_empty_lists(
     assert (body["entries"], body["total"], body["next_offset"]) == ([], 0, None)
 
 
-def test_an_unknown_run_is_run_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    client = _published_format_3(monkeypatch, tmp_path)
+def test_an_unknown_run_is_run_not_found(tmp_path: Path) -> None:
+    client = _published_format_3(tmp_path)
 
     response = _get(client, "problems", run_id="run-that-does-not-exist")
 
@@ -250,9 +246,9 @@ def test_the_plan_summary_holds_the_report_counts_and_not_the_report(
     assert summary["deletes_withheld_by_kind"] == withheld
 
 
-def test_a_plan_without_a_report_has_zero_counts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_a_plan_without_a_report_has_zero_counts(tmp_path: Path) -> None:
     """A review published before format 4 validates, with zero counts and Dropdown values not checked."""
-    client = _published_format_3(monkeypatch, tmp_path)
+    client = _published_format_3(tmp_path)
 
     summary = client.get(f"/runs/{RUN_ID}/plan", headers=HEADERS).json()["summary"]
 

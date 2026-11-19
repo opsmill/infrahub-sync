@@ -148,8 +148,11 @@ def test_the_cli_container_holds_no_credential_beyond_its_own_api_token(docker_d
     # names what the file supplies rather than matching credential-shaped
     # words -- an over-broad match here would report the base image's own keys.
     supplied = {name for name in digests if name.startswith(("INFRAHUB_", "AWS_", "POSTGRES_", "PREFECT_API"))}
+    # The image itself sets INFRAHUB_SYNC_WEB_DIRECTORY (an `ENV` of the Dockerfile since the web
+    # interface is built into the image). It is a path, not a credential, and no operator supplies it.
+    image_defaults = {"INFRAHUB_SYNC_WEB_DIRECTORY"}
 
-    assert supplied == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN"}, sorted(supplied)
+    assert supplied == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN", *image_defaults}, sorted(supplied)
 
     # The intended value arrived, and no other operator input did. Both compared
     # as digests before the assertions, so what reaches a failure report is a
@@ -181,8 +184,8 @@ def _deployment_cli(deployment: Deployment, *arguments: str) -> Captured:
 def test_the_cli_service_reaches_the_deployment_with_the_token_its_env_file_carries(deployment: Deployment) -> None:
     """The replacement for `./infrahub-sync-compose cli configs list`.
 
-    The `.env` carries the principal's token twice: once in the API's
-    `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, once as the `INFRAHUB_SYNC_API_TOKEN`
+    The `.env` carries the API token of the `admin` account twice: once as the API's
+    `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, once as the `INFRAHUB_SYNC_API_TOKEN`
     the `cli` service presents. A call that authenticated proves both reached
     the right container.
     """

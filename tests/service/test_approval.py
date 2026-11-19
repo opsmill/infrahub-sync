@@ -6,7 +6,6 @@ The cases follow the order of evaluation in the HTTP contract of spec 014
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -20,10 +19,10 @@ from fastapi.testclient import TestClient
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection, ProductRun, local_product_projection
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
@@ -98,19 +97,16 @@ _Api = tuple[TestClient, ProductProjection, _RecordingOrchestration, "Configurat
 
 
 @pytest.fixture(name="api")
-def _api_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Api:
-    monkeypatch.setenv(
-        PRINCIPALS_ENV,
-        json.dumps(
-            {
-                "owner": {"token": OWNER_TOKEN},
-                "other": {"token": OTHER_TOKEN},
-                "admin": {"token": ADMIN_TOKEN, "administrator": True},
-            }
-        ),
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
+def _api_fixture(tmp_path: Path) -> _Api:
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(
+        projection,
+        {
+            "owner": {"token": OWNER_TOKEN},
+            "other": {"token": OTHER_TOKEN},
+            "admin": {"token": ADMIN_TOKEN, "administrator": True},
+        },
+    ).resolver
     orchestration = _RecordingOrchestration()
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
@@ -133,7 +129,7 @@ def _stored_run(
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime(2026, 11, 10, 12, tzinfo=timezone.utc),
             phase=phase,
         )
@@ -205,17 +201,14 @@ def test_approve_records_the_approval_and_returns_the_run_with_the_plan_summary(
     stored = projection.lookup_run(RUN_ID).value
     assert stored is not None
     assert stored.approval is not None
-    assert stored.approval.approved_by == "owner"
+    assert stored.approval.approved_by == account_identifier(projection, "owner")
     assert _outcomes(projection) == ["accepted"]
 
 
-def test_an_approval_and_its_accepted_event_carry_one_clock_reading(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_an_approval_and_its_accepted_event_carry_one_clock_reading(tmp_path: Path) -> None:
     """An injected clock that advances on every read still stamps both records with one time."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     version = projection.create_configuration(_registered_package())
     readings = iter(datetime(2026, 11, 11, 12, second, tzinfo=timezone.utc) for second in range(60))
     service = RunService(
@@ -408,7 +401,7 @@ def test_a_second_approval_is_refused_with_the_existing_approval_in_details(api:
     stored = projection.lookup_run(RUN_ID).value
     assert stored is not None
     assert stored.approval is not None
-    assert stored.approval.approved_by == "owner"
+    assert stored.approval.approved_by == account_identifier(projection, "owner")
     assert _outcomes(projection) == ["accepted", "refused-already-approved"]
 
 

@@ -160,7 +160,7 @@ CONTRACT_ENVIRONMENT: dict[str, str] = {
     "INFRAHUB_SYNC_PREFECT_AUTH_STRING": "contract-prefect-auth-string",
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "contract-access-key",
     "INFRAHUB_SYNC_S3_SECRET_KEY": "contract-secret-key",
-    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"contract": {"token": "contract-token-0123456789"}}',
+    "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": "contract-admin-account-password",
     "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "contract-destination-token",
 }
 
@@ -479,7 +479,15 @@ def canaries() -> dict[str, str]:
 
     planted = {
         kind: canary(kind)
-        for kind in ("administrator", "product", "prefect", "prefect_auth", "object_store", "principal")
+        for kind in (
+            "administrator",
+            "product",
+            "prefect",
+            "prefect_auth",
+            "object_store",
+            "admin_account",
+            "principal",
+        )
     }
     # Registered at the boundary, so no retained Compose or Docker stream can
     # render one. The sweeps still search the raw streams for these values.

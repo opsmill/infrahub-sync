@@ -128,8 +128,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
   out and deletes are kept.
 - [0043 — The Sync service serves the web interface at the root of its address and the Sync API under `/api`](0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md)
-  — why every Sync API route moved under `/api`, why the web interface keeps a person's token for
-  the browser tab, and why the CLI adds `/api` to `INFRAHUB_SYNC_API_URL`.
+  — **partly superseded by 0049** — why every Sync API route moved under `/api`, why the web
+  interface keeps a person's token for the browser tab, and why the CLI adds `/api` to
+  `INFRAHUB_SYNC_API_URL`.
 - [0044 — The base install declares no Redis client, and no code imports the Redis store](0044-the-base-install-declares-no-redis-client.md)
   — why the `redis` dependency and the `RedisStore` import were removed, and the refusal a
   configured store gets. Supersedes 0008.
@@ -144,6 +145,12 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why a plan reads the creator `__system__` from node metadata, for the kinds listed in
   `INFRAHUB_BUILTIN_NODE_KINDS`, to leave out these deletes, and why no file accepts the delete of
   the `default` namespace by name.
+- [0049 — Sign-in uses local accounts in the product store, and the environment defines the `admin` account](0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md)
+  — why accounts with passwords, API tokens and sessions replace the tokens of the environment,
+  why `admin` follows its variables at each start, and why the old variable is removed at once.
+- [0050 — A record holds an account identifier, and a deletion empties the account row](0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md)
+  — why records hold `acct_` identifiers that one middleware shows as names, and why a deletion
+  changes no past record.
 
 ## Related
 

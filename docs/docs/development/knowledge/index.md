@@ -49,6 +49,13 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
   writes across processes: its direct-connection requirement, key derivation, deadline
   bounds, ownership proof, and failure sanitizing.
 
+### Accounts and sign-in
+
+- [Local accounts and sign-in](local-accounts.md) — the four account tables, how a request is
+  resolved to an account, password hashing and its limits, the refusal after failed sign-ins,
+  the `admin` account of the environment, account names in answers, the session file of the
+  CLI, and the sign-in of the web interface.
+
 ### Configuration and execution {#running-a-sync-from-something-other-than-the-cli}
 
 - [Configuration foundation](configuration-foundation.md) — declared package identity,

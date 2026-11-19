@@ -14,6 +14,7 @@ from infrahub_sync.product_store import AuditEvent, ProductRun, RelatedResource
 
 _RUN_PREFIX = "infrahub_sync.run."
 _CONFIG_PREFIX = "infrahub_sync.config."
+_ACCOUNT_PREFIX = "infrahub_sync.account."
 # The event a successful stage records, by stage.
 _STAGE_SUCCESS_TYPES = {
     "plan": f"{_RUN_PREFIX}planned",
@@ -29,6 +30,26 @@ CONFIG_REGISTERED = f"{_CONFIG_PREFIX}registered"
 CONFIG_VERSION_REGISTERED = f"{_CONFIG_PREFIX}version_registered"
 # A version request whose content matches an existing version returns that version.
 CONFIG_VERSION_RETRIEVED = f"{_CONFIG_PREFIX}version_retrieved"
+# The events of the account actions. An action is written with underscores, as every event type is.
+ACCOUNT_SIGNED_IN = f"{_ACCOUNT_PREFIX}signed_in"
+ACCOUNT_SIGNED_OUT = f"{_ACCOUNT_PREFIX}signed_out"
+ACCOUNT_CREATED = f"{_ACCOUNT_PREFIX}created"
+ACCOUNT_DISABLED = f"{_ACCOUNT_PREFIX}disabled"
+ACCOUNT_ENABLED = f"{_ACCOUNT_PREFIX}enabled"
+# An administrator set the password of an account.
+ACCOUNT_PASSWORD_SET = f"{_ACCOUNT_PREFIX}password_set"
+# An account changed its own password.
+ACCOUNT_PASSWORD_CHANGED = f"{_ACCOUNT_PREFIX}password_changed"
+# An administrator ended the refusal that follows repeated failed sign-ins.
+ACCOUNT_UNLOCKED = f"{_ACCOUNT_PREFIX}unlocked"
+ACCOUNT_TOKEN_CREATED = f"{_ACCOUNT_PREFIX}token_created"
+ACCOUNT_TOKEN_DELETED = f"{_ACCOUNT_PREFIX}token_deleted"
+# An administrator changed the level of an account.
+ACCOUNT_LEVEL_SET = f"{_ACCOUNT_PREFIX}level_set"
+# An administrator deleted an account. The store writes this event in the transaction of the deletion.
+ACCOUNT_DELETED = f"{_ACCOUNT_PREFIX}deleted"
+# A request for an account action that was refused: its outcome says why.
+ACCOUNT_REFUSED = f"{_ACCOUNT_PREFIX}refused"
 
 
 def _decision_action(outcome: str) -> str | None:
@@ -150,4 +171,36 @@ def config_event(
         config_id=config_id,
         registry_version=registry_version if config_id is not None else None,
         related=related_resources(actor, config_id=config_id, registry_version=registry_version),
+    )
+
+
+def account_event(
+    event_type: str,
+    *,
+    actor: str,
+    account_id: str,
+    operation: str,
+    reason: str | None = None,
+    outcome: str = "accepted",
+    created_at: datetime | None = None,
+) -> AuditEvent:
+    """Build the event of one account action, which names the account acted on.
+
+    ``actor`` and ``account_id`` are account identifiers, never names: ``actor`` made the request
+    and ``account_id`` is the account that the action changed. They are the same for an action
+    of a person on their own account. The event has no primary resource.
+
+    ``created_at`` defaults to the current UTC time; a caller with an injected clock passes its value.
+    """
+    related = {RelatedResource(kind="account", id=identifier) for identifier in (actor, account_id)}
+    return AuditEvent(
+        event_id=f"a-{uuid4().hex}",
+        run_id=None,
+        actor=actor,
+        operation=operation,
+        reason=reason,
+        outcome=outcome,
+        created_at=created_at or datetime.now(timezone.utc),
+        event_type=event_type,
+        related=tuple(related),
     )

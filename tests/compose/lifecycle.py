@@ -345,15 +345,14 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
 
     The shape the operator documentation asks for: every required credential, the
     image under test as `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and the
-    principal's token a second time as `INFRAHUB_SYNC_API_TOKEN`, which is what
-    the `cli` service presents to the API. The passwords are the session's
+    API token of the `admin` account a second time as `INFRAHUB_SYNC_API_TOKEN`,
+    which is what the `cli` service presents to the API. The passwords are the session's
     canaries, so their appearance anywhere an operator can see is a leak.
 
     The S3 access key is a fixed name unless a caller passes one: the external store
     tests start their own store with the same constant.
     """
     repository, _, version = image.rpartition(":")
-    principals = json.dumps({"compose-suite": {"token": canaries["principal"], "administrator": True}})
     values = {
         "INFRAHUB_SYNC_DOCKER_IMAGE": repository,
         "VERSION": version,
@@ -365,7 +364,8 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
         "INFRAHUB_SYNC_PREFECT_AUTH_STRING": canaries["prefect_auth"],
         "INFRAHUB_SYNC_S3_ACCESS_KEY": access_key,
         "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
-        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": principals,
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": canaries["admin_account"],
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": canaries["principal"],
         "INFRAHUB_SYNC_API_TOKEN": canaries["principal"],
         "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": destination_token,
     }
