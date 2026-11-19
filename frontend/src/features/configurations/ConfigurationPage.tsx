@@ -541,7 +541,7 @@ export function ConfigurationPage({
       {dropped && (
         <PackageReview
           key={dropped.key}
-          target={{ configId }}
+          target={{ kind: "version", configId }}
           document={dropped.text}
           onClose={() => setDropped(undefined)}
           onRefused={(message) => {

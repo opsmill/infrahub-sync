@@ -1,4 +1,5 @@
 import { Button, Card, Label, Select, SelectItem, SelectList, SelectTrigger } from "@infrahub/ui";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
@@ -12,7 +13,7 @@ import {
 } from "react";
 import { cn } from "tailwind-variants";
 
-import { describeError } from "#/api/queries";
+import { describeError, meQuery } from "#/api/queries";
 import type { Run } from "#/api/types";
 import { ChevronRightIcon, STATE_TEXT, StateIcon } from "#/components/icons";
 import {
@@ -35,6 +36,8 @@ import { StartRunDialog, type StartRunTarget } from "#/features/runs/StartRunDia
 import { useDocumentTitle } from "#/lib/title";
 
 import { InSyncSection } from "./InSyncSection";
+import { PackageDropArea } from "./PackageDropArea";
+import { PackageReview } from "./PackageReview";
 import { LIFT, SearchHint, SystemsLine } from "./row-parts";
 
 import {
@@ -517,6 +520,11 @@ export function ConfigurationsPage({
   } = useConfigurationRows();
   const navigate = useNavigate();
   const [starting, setStarting] = useState<StartRunTarget | null>(null);
+  /** The text of the package file under review, and the refusal of the last one. */
+  const [dropped, setDropped] = useState<{ text: string; key: number }>();
+  const [dropMessage, setDropMessage] = useState<string>();
+  // Only an administrator token can register; the area stays disabled until `/me` answers.
+  const administrator = useQuery(meQuery()).data?.administrator === true;
   const searchRef = useRef<HTMLInputElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const focusFilter = useRef(false);
@@ -613,6 +621,16 @@ export function ConfigurationsPage({
       <output aria-live="polite" className="sr-only">
         {announcement}
       </output>
+
+      <div className="mb-6">
+        <PackageDropArea
+          action="Register a configuration"
+          disabled={!administrator}
+          message={dropMessage}
+          onMessage={setDropMessage}
+          onFile={(text) => setDropped({ text, key: Date.now() })}
+        />
+      </div>
 
       <div ref={groupsRef} aria-busy={isPending}>
         {isPending ? (
@@ -725,6 +743,18 @@ export function ConfigurationsPage({
         )}
       </div>
       {starting && <StartRunDialog target={starting} onClose={() => setStarting(null)} />}
+      {dropped && (
+        <PackageReview
+          key={dropped.key}
+          target={{ kind: "configuration" }}
+          document={dropped.text}
+          onClose={() => setDropped(undefined)}
+          onRefused={(message) => {
+            setDropped(undefined);
+            setDropMessage(message);
+          }}
+        />
+      )}
     </>
   );
 }

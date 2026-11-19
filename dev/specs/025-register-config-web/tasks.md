@@ -85,9 +85,9 @@ next version.
 
 **Independent test**: quickstart Scenario 3.
 
-- [ ] T023 [P] [US3] In `frontend/src/api/actions.ts`, add `useRegisterConfig` (`POST /configs` with an `Idempotency-Key` header passed by the caller)
-- [ ] T024 [US3] In `PackageReview.tsx`, support the target "new configuration": no comparison; title "Register a new configuration"; look up `GET /configs?name=<name>` and, when one exists, show "A configuration named A already exists." with a link to that configuration's page labelled "Add a version to it instead"; Register calls `useRegisterConfig` and navigates to the new configuration's page
-- [ ] T025 [US3] In `frontend/src/features/configurations/ConfigurationsPage.tsx`, add the "Register a configuration" drop area with the same administrator rule as T021; run `cd frontend && pnpm check && pnpm typecheck`
+- [X] T023 [P] [US3] In `frontend/src/api/actions.ts`, add `useRegisterConfig` (`POST /configs` with an `Idempotency-Key` header passed by the caller)
+- [X] T024 [US3] In `PackageReview.tsx`, support the target "new configuration": no comparison; title "Register a new configuration"; look up `GET /configs?name=<name>` and, when one exists, show "A configuration named A already exists." with a link to that configuration's page labelled "Add a version to it instead"; Register calls `useRegisterConfig` and navigates to the new configuration's page
+- [X] T025 [US3] In `frontend/src/features/configurations/ConfigurationsPage.tsx`, add the "Register a configuration" drop area with the same administrator rule as T021; run `cd frontend && pnpm check && pnpm typecheck`
 
 **Checkpoint**: quickstart Scenario 3 passes by hand.
 

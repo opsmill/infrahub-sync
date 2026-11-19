@@ -80,6 +80,11 @@ export function moreFindingsText(check: PackageCheck): string | undefined {
 export const reviewTitle = (name: string, nextVersion: number) =>
   `Add version ${nextVersion} to ${name}`;
 
+export const NEW_CONFIGURATION_TITLE = "Register a new configuration";
+
+/** The warning for a new configuration whose name is in use. Names are not unique (FR-013). */
+export const sameNameText = (name: string) => `A configuration named ${name} already exists.`;
+
 export const validatingText = (branch: string) => `Validating against branch ${branch}…`;
 
 export const validText = (branch: string) => `Valid against branch ${branch}`;

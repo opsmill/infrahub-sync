@@ -154,18 +154,32 @@ export function useCheckPackage() {
   return $api.useMutation("post", "/configs/validate");
 }
 
+/** After a registration, every configuration read is read again; runs are not affected. */
+function useInvalidateConfigs() {
+  const client = useQueryClient();
+  return () =>
+    client.invalidateQueries({
+      predicate: (query) =>
+        typeof query.queryKey[1] === "string" && query.queryKey[1].startsWith("/configs"),
+    });
+}
+
 /**
  * Registers a package as the next version of a configuration. The caller passes the
  * `Idempotency-Key` header and keeps it for the whole review, so a retry after a lost answer
  * cannot register a second version.
  */
 export function useCreateConfigVersion() {
-  const client = useQueryClient();
-  return $api.useMutation("post", "/configs/{config_id}/versions", {
-    onSuccess: () =>
-      client.invalidateQueries({
-        predicate: (query) =>
-          typeof query.queryKey[1] === "string" && query.queryKey[1].startsWith("/configs"),
-      }),
-  });
+  const invalidate = useInvalidateConfigs();
+  return $api.useMutation("post", "/configs/{config_id}/versions", { onSuccess: invalidate });
+}
+
+/**
+ * Registers a package as a new configuration with its first version. The caller passes the
+ * `Idempotency-Key` header and keeps it for the whole review, so a retry after a lost answer
+ * cannot register a second configuration.
+ */
+export function useRegisterConfig() {
+  const invalidate = useInvalidateConfigs();
+  return $api.useMutation("post", "/configs", { onSuccess: invalidate });
 }

@@ -1,18 +1,23 @@
 import { Button } from "@infrahub/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import { useCheckPackage, useCreateConfigVersion, useIdempotencyKey } from "#/api/actions";
-import { configQuery, configVersionQuery } from "#/api/queries";
-import type { PackageCheck, RegisteredVersion } from "#/api/types";
+import {
+  useCheckPackage,
+  useCreateConfigVersion,
+  useIdempotencyKey,
+  useRegisterConfig,
+} from "#/api/actions";
+import { configQuery, configsNamedQuery, configVersionQuery } from "#/api/queries";
+import type { PackageCheck, RegisteredConfiguration, RegisteredVersion } from "#/api/types";
 import { CheckIcon } from "#/components/icons";
 import { CODE_CHIP, InlineCode, Notice } from "#/components/page";
 import { diffMappings, mappingEntries, removedEntries } from "#/domain/mapping";
 import { plural } from "#/domain/run-state";
 import { describeSystem } from "#/domain/systems";
-import { DialogFrame, Field, INPUT, MutationError, ReasonField } from "#/features/runs/form";
+import { DialogFrame, Field, INPUT, LINK, MutationError, ReasonField } from "#/features/runs/form";
 
 import { MappingList } from "./detail-mapping";
 import {
@@ -23,6 +28,7 @@ import {
   isNoAnswer,
   MESSAGES,
   moreFindingsText,
+  NEW_CONFIGURATION_TITLE,
   REASON_MAX_LENGTH,
   REVIEW_FINDINGS_LIMIT,
   refusalMessage,
@@ -30,15 +36,18 @@ import {
   renameText,
   resultKind,
   reviewTitle,
+  sameNameText,
   unchangedText,
   validatingText,
   validText,
 } from "./package-review";
 
-/** Where the reviewed package goes: the next version of a registered configuration. */
-export interface ReviewTarget {
-  configId: string;
-}
+/**
+ * Where the reviewed package goes.
+ * - `version`: the next version of a registered configuration, compared with its newest version.
+ * - `configuration`: a new configuration with version 1, with nothing to compare.
+ */
+export type ReviewTarget = { kind: "version"; configId: string } | { kind: "configuration" };
 
 /** A branch typed in the field is checked once typing stops for this long. */
 const BRANCH_CHECK_DELAY_MS = 600;
@@ -51,7 +60,8 @@ type Outcome =
 
 /**
  * The review step for one dropped package file: what it declares, how its mapping differs from
- * the newest version, and the result of validating it against a destination branch. Register is
+ * the newest version (for a new version) or whether its name is in use (for a new
+ * configuration), and the result of validating it against a destination branch. Register is
  * enabled only for a valid package, or, as "Register without validation", when the destination
  * cannot be reached.
  */
@@ -68,22 +78,28 @@ export function PackageReview({
   /** A first check the Sync API refused: the file is not a package it accepts. */
   onRefused: (message: string) => void;
 }) {
-  const { configId } = target;
+  const configId = target.kind === "version" ? target.configId : undefined;
+  const isNew = configId === undefined;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   // One key for the whole review: every attempt sends the same request with it (FR-017).
   const [key] = useIdempotencyKey();
   const check = useCheckPackage();
-  const create = useCreateConfigVersion();
-  const config = useQuery(configQuery(configId));
+  const createVersion = useCreateConfigVersion();
+  const registerConfig = useRegisterConfig();
+  const create = isNew ? registerConfig : createVersion;
+  const config = useQuery({ ...configQuery(configId ?? ""), enabled: !isNew });
 
   /** The branch of the latest check; `null` for the first check, which reads the package only. */
   const [checkedBranch, setCheckedBranch] = useState<string | null>(null);
   const [lastCheck, setLastCheck] = useState<PackageCheck>();
   const [branch, setBranch] = useState("");
   const [reason, setReason] = useState("");
-  /** The newest version when the review opened, or when a newer one was found; `null` for none. */
-  const [compared, setCompared] = useState<number | null>();
+  /**
+   * The newest version when the review opened, or when a newer one was found; `null` for none,
+   * which is always the case for a new configuration.
+   */
+  const [compared, setCompared] = useState<number | null | undefined>(isNew ? null : undefined);
   /** The request of the first attempt; every retry sends it unchanged. */
   const [sent, setSent] = useState<Body>();
   const [preparing, setPreparing] = useState(false);
@@ -140,11 +156,15 @@ export function PackageReview({
   }, [effectiveBranch, checkedBranch, sent]);
 
   const base = useQuery({
-    ...configVersionQuery(configId, compared ?? 0),
-    enabled: typeof compared === "number",
+    ...configVersionQuery(configId ?? "", compared ?? 0),
+    enabled: !isNew && typeof compared === "number",
   });
 
   const content = lastCheck ? declaredContent(lastCheck) : undefined;
+  // Names are not unique: a configuration with the same name is reported, never refused (FR-013).
+  const packageName = content?.configuration.name ?? "";
+  const namesake = useQuery({ ...configsNamedQuery(packageName), enabled: isNew && !!packageName });
+  const existing = isNew ? namesake.data?.items[0] : undefined;
   const nextMappings = content?.configuration.schema_mapping ?? [];
   const baseMappings = base.data?.declared_content.configuration.schema_mapping;
   const diff =
@@ -176,8 +196,20 @@ export function PackageReview({
         ? "Register without validation"
         : "Register";
 
-  const send = (body: Body) =>
-    create.mutate(
+  const open = (id: string) => {
+    onClose();
+    void navigate({ to: "/configs/$configId", params: { configId: id }, search: {} });
+  };
+
+  const send = (body: Body) => {
+    if (configId === undefined) {
+      registerConfig.mutate(
+        { params: { header: { "Idempotency-Key": key } }, body },
+        { onSuccess: (data) => open((data as RegisteredConfiguration).configuration.config_id) }
+      );
+      return;
+    }
+    createVersion.mutate(
       {
         params: { path: { config_id: configId }, header: { "Idempotency-Key": key } },
         body,
@@ -189,11 +221,11 @@ export function PackageReview({
             setOutcome({ kind: "unchanged", version: registered.version.registry_version });
             return;
           }
-          onClose();
-          void navigate({ to: "/configs/$configId", params: { configId }, search: {} });
+          open(configId);
         },
       }
     );
+  };
 
   const register = async () => {
     if (sent) {
@@ -202,6 +234,13 @@ export function PackageReview({
     }
     if (!lastCheck) return;
     setOutcome(undefined);
+    if (configId === undefined) {
+      // A new configuration has no newest version to read again.
+      const body: Body = { package: lastCheck.declared_content, reason: reason.trim() || null };
+      setSent(body);
+      send(body);
+      return;
+    }
     // The configuration is read again, not taken from the cache, so a version registered
     // elsewhere since the review opened is found (FR-018).
     setPreparing(true);
@@ -233,7 +272,12 @@ export function PackageReview({
 
   const name = config.data?.name ?? configId;
   const configuration = content?.configuration;
-  const rename = renameText(config.data?.name, configuration?.name);
+  const rename = isNew ? undefined : renameText(config.data?.name, configuration?.name);
+  const title = isNew
+    ? NEW_CONFIGURATION_TITLE
+    : compared === undefined
+      ? `Add a version to ${name}`
+      : reviewTitle(name ?? "", (compared ?? 0) + 1);
   const credentials = content ? credentialVariables(content) : [];
   const entries = mappingEntries(nextMappings, diff);
   const removed = removedEntries(baseMappings, diff);
@@ -250,7 +294,10 @@ export function PackageReview({
   const outcomeNotice = create.isError ? (
     noAnswer ? (
       <Notice tone="danger" role="alert" title={MESSAGES.requestFailed}>
-        <p>Retrying sends the same request. No second version is registered.</p>
+        <p>
+          Retrying sends the same request. No second {isNew ? "configuration" : "version"} is
+          registered.
+        </p>
       </Notice>
     ) : refusalMessage(create.error) === `${MESSAGES.administratorRequired}.` ? (
       <Notice tone="danger" role="alert" title={`${MESSAGES.administratorRequired}.`} />
@@ -278,10 +325,8 @@ export function PackageReview({
     <DialogFrame
       isOpen
       onOpenChange={(open) => !open && close()}
-      title={
-        compared === undefined ? `Add a version to ${name}` : reviewTitle(name, (compared ?? 0) + 1)
-      }
-      ariaLabel={`Add a version to ${name}`}
+      title={title}
+      ariaLabel={isNew ? NEW_CONFIGURATION_TITLE : `Add a version to ${name}`}
       description={
         configuration && (
           <>
@@ -299,7 +344,13 @@ export function PackageReview({
       error={footer}
       submitLabel={submitLabel}
       submitVariant={kind === "unreachable" && !sent ? "warning" : "primary"}
-      pendingLabel={preparing ? "Reading the configuration again" : "Registering the version"}
+      pendingLabel={
+        preparing
+          ? "Reading the configuration again"
+          : isNew
+            ? "Registering the configuration"
+            : "Registering the version"
+      }
       isPending={preparing || create.isPending}
       isDisabled={isDisabled}
       disabledReason={
@@ -331,6 +382,26 @@ export function PackageReview({
         )
       ) : (
         <>
+          {existing && (
+            <Notice
+              tone="warning"
+              role="note"
+              title={sameNameText(existing.name ?? configuration?.name ?? "")}
+            >
+              <p>
+                <Link
+                  to="/configs/$configId"
+                  params={{ configId: existing.config_id }}
+                  search={{}}
+                  className={LINK}
+                  onClick={onClose}
+                >
+                  Add a version to it instead
+                </Link>
+              </p>
+            </Notice>
+          )}
+
           {typeof compared === "number" && (
             <section aria-labelledby="review-comparison" className="flex flex-col gap-2">
               <h3 id="review-comparison" className="font-medium text-foreground text-sm">

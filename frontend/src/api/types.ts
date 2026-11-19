@@ -68,6 +68,12 @@ export interface RegisteredVersion {
   created: boolean;
 }
 
+/** `POST /configs`; the OpenAPI document types its response as `unknown`. */
+export interface RegisteredConfiguration {
+  configuration: ConfigurationSummary;
+  version: RegisteredVersion["version"];
+}
+
 /** The error envelope every Sync API error uses. */
 export interface ApiErrorBody {
   error: {
