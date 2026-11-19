@@ -1,0 +1,21 @@
+dev/specs/026-schedules-web-page/spec.md
+  s_caab93ebf0934a::t_6d10984147adda 1-431
+dev/specs/026-schedules-web-page/checklists/requirements.md
+  s_caab93ebf0934a::t_5525a75ff8b3be 1-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "431800eda5158fcbf16f47e4b4161f3ea2738deb",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
