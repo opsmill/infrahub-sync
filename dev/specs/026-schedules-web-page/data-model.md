@@ -121,13 +121,15 @@ integers without leading signs; `*` is the only wildcard the forms produce.
 
 | Form | Values | Cron expression | Words shown |
 | --- | --- | --- | --- |
+| Every N minutes | N in 5, 10, 15, 20, 30 | `*/N * * * *` | "Every N minutes" |
 | Every hour | minute `m` (0-59) | `m * * * *` | "Every hour at minute m" |
+| Every N hours | N in 2, 3, 4, 6, 8, 12; minute `m` | `m */N * * *` | "Every N hours, at minute m, from 00:mm" |
 | Every day | time `h:m` | `m h * * *` | "Every day at hh:mm" |
 | Every week | days `d1,d2,…` (0 = Sunday … 6 = Saturday, at least one, sorted), time `h:m` | `m h * * d1,d2,…` | "Every week on Monday and Thursday at hh:mm" |
 | Every month | day of month `D` (1-31), time `h:m` | `m h D * *` | "Every month on day D at hh:mm"; for D above 28, add "Months without day D have no start." |
 | Custom | the expression | as typed | The five fields labelled: minute, hour, day of month, month, day of week |
 
-Reading back: `7` as a day of week (Sunday in some cron dialects) is "Custom", not "Every week",
+Reading back: `*/N` with N outside the lists above (for example `*/7`) is "Custom". `7` as a day of week (Sunday in some cron dialects) is "Custom", not "Every week",
 so the helper never rewrites an expression the person typed.
 
 ### Cadence preview
@@ -161,7 +163,7 @@ Each entry of the "History" section is one `EventResource`.
 | `infrahub_sync.schedule.deleted` | any | "Deleted" |
 | `infrahub_sync.schedule.taken_over` | any | "Taken over" |
 | `infrahub_sync.schedule.refused` | the cause | "Request refused: <operation in words>" and the cause |
-| `infrahub_sync.schedule.replayed` | any | "Request repeated with the same retry key" |
+| `infrahub_sync.schedule.replayed` | any | "Request repeated with the same retry key" (shown only with "Show all events") |
 | `infrahub_sync.schedule.start_skipped` | `skipped-run-in-progress` | "Start skipped: a run of this configuration was in progress" |
 | | `skipped-approved-change-open` | "Start skipped: an approved proposed change of this schedule is not merged yet" |
 | | `skipped-start-waiting` | "Start skipped: another start was already waiting" |
@@ -175,7 +177,7 @@ Each entry of the "History" section is one `EventResource`.
 | `infrahub_sync.schedule.proposed_change_replaced` | `replaced` | "Earlier proposed change replaced" |
 | `infrahub_sync.schedule.proposed_change_kept` | `kept-merged`, `kept-closed`, `kept-missing`, `kept-approved` | "Earlier proposed change kept: it was merged" / "closed" / "deleted in Infrahub" / "approved" |
 | `infrahub_sync.schedule.proposed_change_failed` | `failed` | "Proposed change failed" and the cause |
-| `infrahub_sync.run.accepted` (with "Include run events") | any | "Run started" |
+| `infrahub_sync.run.accepted` (with "Show all events") | any | "Run started" |
 | `infrahub_sync.run.synced` | any | "Run wrote its changes", and the count of records left out when `details.left_out` is set |
 | `infrahub_sync.run.failed` | any | "Run failed" |
 | other `infrahub_sync.run.*` | any | The event's `operation` and `outcome` as returned |

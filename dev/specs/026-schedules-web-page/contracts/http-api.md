@@ -71,5 +71,6 @@ GET /events?related=schedule:<schedule_id>&order=desc&until=<time of the first r
 of older pages (FR-034). The newest events are read again with a request without `until`, and
 added above the list when their `event_id` is not shown yet.
 
-Without "Include run events", the request adds `event_type=<type>` for each schedule event type
-of the spec 021 events contract.
+Without "Show all events", the request adds `event_type=<type>` for each schedule event type
+of the spec 021 events contract except `infrahub_sync.schedule.replayed`. With it, the request has
+no `event_type` filter.

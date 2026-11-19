@@ -46,6 +46,8 @@ All commands exit 0.
 | 5 | Open "Create schedule" again for the same configuration and save. | The refusal names the existing schedule. |
 | 5a | In the create form, choose "Every day" at 02:00, time zone `Europe/Paris`. | The cron expression `0 2 * * *` is shown, with "Every day at 02:00" and five start times at 02:00 Paris time. |
 | 5b | Choose "Every week", Monday and Thursday at 06:30. | `30 6 * * 1,4` and the next five Mondays and Thursdays. |
+| 5b2 | Choose "Every N minutes" with 15, then "Every N hours" with 4 at minute 10. | `*/15 * * * *`, then `10 */4 * * *`, each with its preview. |
+| 5b3 | Open the create form with a browser set to `Europe/Paris`. | The time zone is `Europe/Paris`, with the notice that the CLI fills in UTC. |
 | 5c | Choose "Custom" and type `*/15 9-17 * * 1-5`. | Each field is labelled; within a second of the last key press the preview shows five starts. |
 | 5d | Type `0 0 29 2 *`. Then type `0 0 30 2 *`. | One or two starts on 29 February and "No further start in the next 5 years."; then the Sync API's message "has no start time" under the field. |
 | 5e | Type `61 * * * *`. | The Sync API's message under the field, before saving. The history of no schedule gains a "refused" event. |
@@ -65,7 +67,7 @@ All commands exit 0.
 | 17 | Open `/schedules/does-not-exist`. | "Schedule not found" with a link to the list. |
 | 18 | On an active schedule's page, read "Next starts". | Five start times, the first equal to the next start in the header. |
 | 19 | Start a manual run of the scheduled configuration just before a scheduled start, so the start is skipped. Open the schedule page. | "History" lists "Start skipped: a run of this configuration was in progress", linking to the manual run, above the earlier pause and resume events with their reasons and accounts. |
-| 20 | Turn on "Include run events". | Run events ("Run started", "Run wrote its changes") appear between the schedule events. |
+| 20 | Turn on "Show all events". | Run events ("Run started", "Run wrote its changes") and requests repeated with the same retry key appear between the schedule events. |
 | 21 | With more than 50 events, choose "Load older events" while a new event is recorded. | Older events are added below; no event is listed twice; the new event appears at the top. |
 
 Scenario 13 needs a second configuration. Register a copy of the `from-netbox` package under

@@ -65,7 +65,7 @@ Sections, in order:
    set it and when, overlap policy, late start.
 5. Next starts: the next five start times of an active schedule.
 6. Review branch: the open branch, the run that created it, the proposed change identifier.
-7. History: the schedule's events, newest first, with the switch "Include run events" and "Load
+7. History: the schedule's events, newest first, with the switch "Show all events" and "Load
    older events".
 8. Record: created and updated times.
 

@@ -50,6 +50,28 @@ Sources:
 - [`AGENTS.md`](../../../AGENTS.md), section "Sync frontend": name the account that acted, with the
   name the Sync API returns; never show an account identifier.
 
+## Clarifications
+
+### Session 2026-11-20
+
+The maintainer asked for these questions to be answered by an advisor agent (Claude, `fable`
+model), not by the maintainer.
+
+- Q: Which time zone does the create form fill in? → A: The browser's time zone, with a notice when
+  it is not UTC, because the CLI fills in UTC and a team can have schedules in both.
+- Q: Does the cadence helper offer intervals shorter than an hour or longer than one hour? → A: Yes:
+  "Every N minutes" (N = 5, 10, 15, 20 or 30) and "Every N hours" (N = 2, 3, 4, 6, 8 or 12, at a
+  chosen minute), because sync jobs often run at those intervals and a mistyped custom expression
+  is the more likely cause of unwanted starts.
+- Q: What does the history show by default? → A: The schedule's own events, with a switch for the
+  events of its runs (no change).
+- Q: Does the default history show refused and repeated requests? → A: Refused requests yes;
+  requests repeated with the same retry key no, because they record no change. They appear when
+  the switch shows all events.
+- Q: How strong is the delete confirmation? → A: A confirmation dialog that states the consequences
+  (no change). Typing the name suits data that cannot be recreated; a deleted schedule's record and
+  runs are kept.
+
 ## Background
 
 ### What a team can do today
@@ -100,11 +122,14 @@ maintainer. Each one can be changed during review.
    fields. The next start times come from the Sync API, computed by the same code that the
    scheduler uses, so the preview never disagrees with the real starts, including at a
    daylight-saving change. The web interface does not compute start times itself.
-4. **The time zone defaults to the viewer's browser time zone.** The CLI defaults to UTC. A person
-   who sets "every day at 02:00" in a web form expects their own time zone.
+4. **The time zone defaults to the viewer's browser time zone, with a notice when it is not UTC.**
+   The CLI defaults to UTC. A person who sets "every day at 02:00" in a web form expects their own
+   time zone; the notice says that the CLI fills in UTC, so a team's schedules can be in different
+   time zones.
 5. **The schedule page shows the schedule's event history, newest first.** By default it shows the
-   events of the schedule itself: requests, skipped, missed and failed starts, stops and proposed
-   changes. A switch adds the events of the schedule's runs.
+   events of the schedule itself: requests and refused requests, skipped, missed and failed
+   starts, stops and proposed changes. A switch shows all events, which adds the events of the
+   schedule's runs and the requests repeated with the same retry key.
 6. **Two additions to the Sync API, nothing else.** A read-only route returns the next start times
    of a cron expression and a time zone (FR-031). `GET /events` can list events newest first
    (FR-032). Every other page uses an existing route.
@@ -255,6 +280,10 @@ helper, check the preview, then try to create a second one for the same configur
     zone with its offset.
 14. **Given** a custom expression that matches one of the helper's forms, **When** the form opens it
     (in the change form), **Then** the helper shows that form, for example "Every day at 02:00".
+15. **Given** "Every N minutes" with N = 15, **Then** the cron expression is `*/15 * * * *`; **given**
+    "Every N hours" with N = 4 at minute 10, **Then** it is `10 */4 * * *`.
+16. **Given** the browser's time zone is `Europe/Paris`, **When** the create form opens, **Then** it
+    fills in `Europe/Paris` and states that the CLI fills in UTC.
 
 ---
 
@@ -343,8 +372,9 @@ run of the same configuration is in progress, then open the schedule page.
    failed run with a link.
 4. **Given** more events than one page, **When** the operator asks for older events, **Then** the
    next page is added below, with no event shown twice even when new events arrived meanwhile.
-5. **Given** the switch "Include run events", **When** the operator turns it on, **Then** the
-   history also lists the events of the schedule's runs.
+5. **Given** the switch "Show all events", **When** the operator turns it on, **Then** the
+   history also lists the events of the schedule's runs and the requests repeated with the same
+   retry key, which are hidden by default.
 6. **Given** a request refused by the Sync API, **Then** the event shows the refusal in words.
 7. **Given** an event type the web interface does not know, **Then** the event is shown with its
    type as the Sync API returns it.
@@ -438,7 +468,9 @@ run of the same configuration is in progress, then open the schedule page.
   the administrator as the account that started them.
 - **FR-017**: The create form MUST offer every setting of `POST /schedules`, with these values
   filled in: the configuration's latest version, the browser's time zone, branch review, overlap
-  policy "reject", a late start of at most one hour, and "write when records are left out" off.
+  policy "reject", a late start of at most one hour, and "write when records are left out" off. When
+  the browser's time zone is not UTC, the form MUST state: "The CLI fills in UTC. Schedules of your
+  team can be in different time zones."
 - **FR-018**: The change form MUST offer every setting that `POST /schedules/{schedule_id}/change`
   accepts, filled in with the values of the schedule when the form opened. It MUST send only the
   settings whose value differs from those opening values, so a setting that another person
@@ -464,9 +496,10 @@ run of the same configuration is in progress, then open the schedule page.
 #### Cron helper and preview (User Story 4)
 
 - **FR-025**: The create and change forms MUST offer these cadence forms, each building a cron
-  expression: "Every hour" at a chosen minute; "Every day" at a chosen time; "Every week" on chosen
-  days at a chosen time; "Every month" on a chosen day of the month at a chosen time; and
-  "Custom", a cron expression typed by the person.
+  expression: "Every N minutes" (N = 5, 10, 15, 20 or 30); "Every hour" at a chosen minute; "Every N
+  hours" (N = 2, 3, 4, 6, 8 or 12) at a chosen minute; "Every day" at a chosen time; "Every week"
+  on chosen days at a chosen time; "Every month" on a chosen day of the month at a chosen time;
+  and "Custom", a cron expression typed by the person.
 - **FR-026**: When a cron expression matches one of the forms of FR-025, the form MUST show that form
   with its values. Any other expression MUST be shown as "Custom".
 - **FR-027**: For a custom expression, the form MUST label each of the five fields with its name
@@ -496,8 +529,9 @@ run of the same configuration is in progress, then open the schedule page.
   way to load older events. Each event MUST show its time, what happened in words, the account that
   acted, the reason when one was given, and a link to the run it names. The texts MUST cover every
   event type of the spec 021 events contract; another type MUST be shown as returned.
-- **FR-034**: The history MUST show the schedule's own events by default, and MUST offer a switch
-  that adds the events of the schedule's runs. Loading older events MUST NOT show an event twice
+- **FR-034**: The history MUST show the schedule's own events by default, except the requests
+  repeated with the same retry key (`infrahub_sync.schedule.replayed`). It MUST offer a switch "Show
+  all events" that adds the events of the schedule's runs and the repeated requests. Loading older events MUST NOT show an event twice
   when newer events were recorded after the first page was read.
 
 #### Documentation

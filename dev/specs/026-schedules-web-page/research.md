@@ -112,15 +112,16 @@ answered, every action is shown as available and the Sync API decides, as `RunPa
 
 **Decision**:
 
-- The cadence field is a helper with five forms: "Every hour", "Every day", "Every week", "Every
-  month" and "Custom" (data-model "Cadence helper forms"). The first four are built from a minute,
-  a time, days of the week and a day of the month; the helper writes the cron expression and shows
-  it under the form, so the person learns the notation. "Custom" is a text field with a label for
-  each of the five fields.
+- The cadence field is a helper with seven forms: "Every N minutes", "Every hour", "Every N
+  hours", "Every day", "Every week", "Every month" and "Custom" (data-model "Cadence helper forms";
+  the interval forms were added by the clarification of 2026-11-20). The first six are built from
+  a fixed list of intervals, a minute, a time, days of the week and a day of the month; the helper
+  writes the cron expression and shows it under the form, so the person learns the notation.
+  "Custom" is a text field with a label for each of the five fields.
 - `cronFromForm(form)` and `formFromCron(cron)` in `domain/cadence.ts` convert both ways.
   `formFromCron` recognizes only the exact patterns of the table; anything else is "Custom", so
   the helper never rewrites an expression.
-- The words for the four forms are built by the helper itself. A custom expression gets no words:
+- The words for the six built forms are produced by the helper itself. A custom expression gets no words:
   describing every cron expression in words needs a parser (for example the `cronstrue` library)
   whose reading can differ from Prefect's in edge cases, such as a day of month and a day of week
   both set. The preview of R12 shows what the expression does.
@@ -207,7 +208,7 @@ reading every page first. Sorting in the store is one clause.
 **Decision**: `eventText(event)` in `domain/schedule-events.ts` maps `event_type` and `outcome` to
 the texts of data-model "History entries", and returns the type and outcome as given for anything
 else. The frontend has no event texts today (no use of `event_type` in `frontend/src`), so the
-run events shown with "Include run events" get three texts of their own: `infrahub_sync.run.accepted`
+run events shown with "Show all events" get three texts of their own: `infrahub_sync.run.accepted`
 "Run started", `infrahub_sync.run.synced` "Run wrote its changes" and `infrahub_sync.run.failed`
 "Run failed". Any other run event shows its `operation` and `outcome` as returned.
 
