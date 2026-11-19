@@ -15,6 +15,11 @@ or to the Sync API, unless a gap blocks the page. Spec 021 planned for this page
 shows schedules from the same Sync API. It is built separately and is not part of this
 specification."
 
+The maintainer reviewed the first version of this specification on 2026-11-19 and asked for three
+additions: "I think we need to preview start time and to have some kind of helper for the cron
+notation, from memory gitlab or GitHub did that. We need the schedule event history." Decisions 3,
+5 and 6, User Stories 4 and 7, and FR-025 to FR-034 come from that review.
+
 Sources:
 
 - [Spec 021](../archive/021-scheduled-runs/spec.md), scheduled runs. Lines 556 and 574 put the web
@@ -28,6 +33,13 @@ Sources:
   reason of a stopped schedule needs, as the CLI states it.
 - [`infrahub_sync/service/presentation.py`](../../../infrahub_sync/service/presentation.py): the
   Sync API answers `owner` and `left_out_set_by` with account names, not account identifiers.
+- [`infrahub_sync/service/schedule_cadence.py`](../../../infrahub_sync/service/schedule_cadence.py):
+  start times are computed by the `CronSchedule` class that Prefect's scheduler uses, including at
+  daylight-saving changes.
+- [Spec 021, events contract](../archive/021-scheduled-runs/contracts/events.md): the events of a
+  schedule, and `GET /events?related=schedule:<schedule_id>`, which returns its history.
+- [`infrahub_sync/product_store/store.py`](../../../infrahub_sync/product_store/store.py),
+  `list_events`: events are listed oldest first, paged by offset.
 - [`frontend/src/api/types.generated.ts`](../../../frontend/src/api/types.generated.ts): the API
   types of the web interface already include the schedule routes and the run fields
   `trigger_type`, `schedule_id` and `scheduled_start_at`.
@@ -82,15 +94,20 @@ maintainer. Each one can be changed during review.
 2. **Every signed-in account sees the actions.** An action the account may not take is shown as
    unavailable with the reason, as the run page already does for run actions. The Sync API stays
    the authority: a refusal it returns is shown as it is.
-3. **The cadence is entered as a cron expression.** The page shows the next start that the Sync API
-   returns after a save. The web interface does not compute start times itself, so it can never
-   show a time the Sync API disagrees with.
+3. **The cadence is entered with a helper, and its next start times are shown before saving.** The
+   helper offers common cadences (every hour, every day, every week, every month) and builds the
+   cron expression from them, and a custom cron expression with a label for each of its five
+   fields. The next start times come from the Sync API, computed by the same code that the
+   scheduler uses, so the preview never disagrees with the real starts, including at a
+   daylight-saving change. The web interface does not compute start times itself.
 4. **The time zone defaults to the viewer's browser time zone.** The CLI defaults to UTC. A person
    who sets "every day at 02:00" in a web form expects their own time zone.
-5. **Schedule history beyond runs is not shown.** Skipped starts, missed starts and stop events are
-   in the event record of the Sync API. Showing them is not part of the brief and is left out.
-6. **No change to the Sync API.** Every action uses an existing route. If the plan finds a gap that
-   blocks a page, the gap is added to this specification before any API change.
+5. **The schedule page shows the schedule's event history, newest first.** By default it shows the
+   events of the schedule itself: requests, skipped, missed and failed starts, stops and proposed
+   changes. A switch adds the events of the schedule's runs.
+6. **Two additions to the Sync API, nothing else.** A read-only route returns the next start times
+   of a cron expression and a time zone (FR-031). `GET /events` can list events newest first
+   (FR-032). Every other page uses an existing route.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -198,8 +215,8 @@ starting from the configuration page or from the schedules list.
 **Why this priority**: Creating a schedule is less frequent than acting on one. The CLI already
 covers it, and every other story depends on a schedule existing.
 
-**Independent Test**: Create a schedule for a configuration that has none, then try to create a
-second one for the same configuration.
+**Independent Test**: Create a schedule for a configuration that has none with the "Every day"
+helper, check the preview, then try to create a second one for the same configuration.
 
 **Acceptance Scenarios**:
 
@@ -223,6 +240,21 @@ second one for the same configuration.
    form shows the refusal, which names the existing schedule, with a link to it.
 8. **Given** the operator saves and the network fails before the answer, **When** they save again,
    **Then** only one schedule exists.
+9. **Given** the create form, **When** the operator chooses "Every day" and the time 02:00, **Then**
+   the cron expression `0 2 * * *` is filled in, and the form shows "Every day at 02:00" and the
+   next five start times in the chosen time zone.
+10. **Given** "Every week", **When** the operator chooses Monday and Thursday at 06:30, **Then** the
+    cron expression is `30 6 * * 1,4`.
+11. **Given** "Custom", **When** the operator types `*/15 9-17 * * 1-5`, **Then** the form labels
+    each field (minute `*/15`, hour `9-17`, day of month `*`, month `*`, day of week `1-5`) and,
+    within a second of the last key press, shows the next five start times.
+12. **Given** "Custom", **When** the operator types an expression the Sync API refuses, **Then** the
+    preview shows the Sync API's message under the field, before any save.
+13. **Given** the time zone `Europe/Paris` and a preview that crosses a daylight-saving change,
+    **Then** the preview shows the start times the scheduler will use, each in the schedule's time
+    zone with its offset.
+14. **Given** a custom expression that matches one of the helper's forms, **When** the form opens it
+    (in the change form), **Then** the helper shows that form, for example "Every day at 02:00".
 
 ---
 
@@ -288,6 +320,37 @@ out of the stop reason `owner-not-found` without restoring the account.
 
 ---
 
+### User Story 7 - Read a schedule's history (Priority: P2)
+
+An operator wants to know why a schedule did not start a run last night, when it stopped, or who
+paused it and why. They read the schedule's history on its page.
+
+**Why this priority**: A start that is skipped or missed creates no run. Without the history, the
+web interface cannot explain why no run happened, which is the question an operator asks most
+often about a schedule after "is it working?".
+
+**Independent Test**: Pause and resume a schedule with reasons, let a start be skipped because a
+run of the same configuration is in progress, then open the schedule page.
+
+**Acceptance Scenarios**:
+
+1. **Given** a schedule with events, **When** the operator opens its page, **Then** the "History"
+   section lists the schedule's events newest first, each with its time, what happened in words,
+   the account that acted, the reason when one was given, and a link to the run it names.
+2. **Given** a start skipped because a run was in progress, **Then** the event reads "Start skipped:
+   a run of this configuration was in progress" and links to that run.
+3. **Given** a schedule stopped after repeated failures, **Then** the stop event names the fifth
+   failed run with a link.
+4. **Given** more events than one page, **When** the operator asks for older events, **Then** the
+   next page is added below, with no event shown twice even when new events arrived meanwhile.
+5. **Given** the switch "Include run events", **When** the operator turns it on, **Then** the
+   history also lists the events of the schedule's runs.
+6. **Given** a request refused by the Sync API, **Then** the event shows the refusal in words.
+7. **Given** an event type the web interface does not know, **Then** the event is shown with its
+   type as the Sync API returns it.
+
+---
+
 ### Edge Cases
 
 - **No schedule exists.** The list states that no schedule exists and offers "Create schedule".
@@ -310,7 +373,18 @@ out of the stop reason `owner-not-found` without restoring the account.
   Story 1, scenario 5.
 - **A credential in a field.** The Sync API refuses with `secret-parameter-refused`. The form shows
   the refusal and does not repeat the value of the field in the message.
-- **A deleted schedule.** It shows no action that changes it. Its runs stay reachable.
+- **A deleted schedule.** It shows no action that changes it. Its runs and its history stay
+  reachable.
+- **The preview is requested while typing.** The form waits until the person stops typing before it
+  asks for a preview, and shows only the answer to the latest expression.
+- **A cron expression with few or no starts.** `0 0 29 2 *` (29 February) has one or two starts in
+  the next 5 years; the preview lists them and states that there is no further start in that
+  period. `0 0 30 2 *` (30 February) has none; the Sync API refuses it with
+  `schedule-cron-invalid`, on save as in the preview, and the preview shows that message.
+- **The preview route does not answer.** The form states that the preview is not available and
+  still allows saving; the Sync API checks the expression on save.
+- **Many missed starts recorded at once.** One event can hold more than 500 missed starts. The
+  history shows the count and the first and last start times.
 
 ## Requirements *(mandatory)*
 
@@ -387,10 +461,50 @@ out of the stop reason `owner-not-found` without restoring the account.
   confirms. A refusal with `schedule-changed` (another writer changed the schedule during each of
   three save attempts) MUST keep the values entered and say that the save can be sent again.
 
+#### Cron helper and preview (User Story 4)
+
+- **FR-025**: The create and change forms MUST offer these cadence forms, each building a cron
+  expression: "Every hour" at a chosen minute; "Every day" at a chosen time; "Every week" on chosen
+  days at a chosen time; "Every month" on a chosen day of the month at a chosen time; and
+  "Custom", a cron expression typed by the person.
+- **FR-026**: When a cron expression matches one of the forms of FR-025, the form MUST show that form
+  with its values. Any other expression MUST be shown as "Custom".
+- **FR-027**: For a custom expression, the form MUST label each of the five fields with its name
+  (minute, hour, day of month, month, day of week) and the value typed. When the expression does not
+  have five fields, the form MUST say so before any request.
+- **FR-028**: The form MUST show the next five start times of the cron expression and time zone
+  entered, from the Sync API, in the schedule's time zone with its offset, and in the viewer's
+  local time when it differs. It MUST update them when the expression or the time zone changes,
+  within one second after the person stops typing.
+- **FR-029**: A preview refusal MUST be shown under the field it concerns, with the Sync API's
+  message, before any save. A preview that cannot be read MUST NOT prevent saving.
+- **FR-030**: The schedule page of an active schedule MUST show its next five start times.
+
+#### Sync API additions
+
+- **FR-031**: The Sync API MUST return the next start times of a cron expression and a time zone,
+  without storing anything, for any authenticated account. It MUST compute them with the same code
+  that computes a schedule's `next_start_at`, MUST return at most 20 start times, and MUST refuse an
+  expression or a time zone with the same codes and messages as `POST /schedules`
+  (`schedule-cron-invalid`, `schedule-timezone-invalid`).
+- **FR-032**: `GET /events` MUST accept an order, oldest first (the default, as today) or newest
+  first. An existing caller that sends no order MUST get the same answer as today.
+
+#### Schedule history (User Story 7)
+
+- **FR-033**: The schedule page MUST show the schedule's events newest first, 50 at a time, with a
+  way to load older events. Each event MUST show its time, what happened in words, the account that
+  acted, the reason when one was given, and a link to the run it names. The texts MUST cover every
+  event type of the spec 021 events contract; another type MUST be shown as returned.
+- **FR-034**: The history MUST show the schedule's own events by default, and MUST offer a switch
+  that adds the events of the schedule's runs. Loading older events MUST NOT show an event twice
+  when newer events were recorded after the first page was read.
+
 #### Documentation
 
 - **FR-024**: The user documentation for schedules MUST describe where schedules are found in the
-  web interface and which actions it offers.
+  web interface, which actions it offers, the cron helper and the history. The Sync HTTP API
+  reference MUST describe the route of FR-031 and the order of FR-032.
 
 ### Key Entities
 
@@ -400,6 +514,12 @@ out of the stop reason `owner-not-found` without restoring the account.
   deleted.
 - **Scheduled run**: a run with the trigger type `scheduled`, the identifier of the schedule that
   started it and the time the schedule meant to start it.
+- **Schedule event**: an entry of the Sync API's event record that names the schedule: a request
+  on the schedule, a start that was skipped, queued, missed or failed, a stop, or a proposed change
+  of a scheduled run. It has a time, a type, the account that acted, an outcome, an optional reason
+  and the resources it names.
+- **Cadence preview**: the next start times of a cron expression in a time zone, as the scheduler
+  computes them. It is not stored.
 - **Signed-in account**: the account name and administrator flag that the Sync API returns for the
   person's session or token. It decides which actions are available.
 
@@ -418,14 +538,22 @@ out of the stop reason `owner-not-found` without restoring the account.
 - **SC-005**: Retrying any schedule action after a network failure never creates two schedules and
   never applies one action twice.
 - **SC-006**: No page of this feature shows an account identifier.
+- **SC-007**: For every cron expression and time zone in the test set, including a daylight-saving
+  change, the preview shows the same start times as the `next_start_at` values the schedule then
+  takes.
+- **SC-008**: An operator can create a daily, a weekly and a monthly schedule without typing a cron
+  expression.
+- **SC-009**: For a start that created no run, an operator can find from the schedule page why it
+  did not run, with no terminal.
 
 ## Out of Scope
 
-- Changes to the scheduling engine or the Sync API. If the plan finds a gap that blocks a page, the
-  gap is added to this specification first.
-- The event history of a schedule: skipped starts, missed starts and stop events.
-- A preview of the next start times before saving, and a cadence entered with fields such as a time
-  of day and a list of days.
+- Changes to the scheduling engine, and Sync API changes other than FR-031 and FR-032.
+- A cadence stored as named fields (time of day, list of days). The helper only builds a cron
+  expression; the schedule stores the cron expression, as today.
+- A description in words of any custom cron expression. The helper describes its own forms; for
+  a custom expression it labels the fields and shows the preview.
+- A `schedules preview` command in the CLI.
 - Links into Infrahub for the open review branch and its proposed change. Whether the web
   interface knows the address of the destination Infrahub is not known.
 - A notification when a schedule stops.
@@ -436,7 +564,9 @@ out of the stop reason `owner-not-found` without restoring the account.
   compare the signed-in account's name with the owner name. Account names are unique among
   accounts that are not deleted.
 - The schedule routes and the run fields that this feature uses are already in the generated API
-  types of the web interface.
+  types of the web interface. The generated types are refreshed for FR-031 and FR-032.
+- Every authenticated account can read `GET /events` today, so every account that can view a
+  schedule can view its history.
 - The web interface already refreshes lists on an interval and loads further pages of a list. The
   schedules pages use the same behavior.
 - The browser offers the list of named time zones, and the Sync API accepts those names. A time

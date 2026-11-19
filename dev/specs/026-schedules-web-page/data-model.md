@@ -113,6 +113,77 @@ otherwise be sent back with the old value. When a later read of the schedule dif
 opening values, the form shows "This schedule changed since you opened this form" with a reload. When only `reason` or
 nothing would be sent, the form states "Nothing changed" and sends no request (FR-018).
 
+### Cadence helper forms
+
+The helper builds a cron expression from a form and reads an expression back into a form. An
+expression that matches none of these patterns exactly is "Custom". Numbers are plain decimal
+integers without leading signs; `*` is the only wildcard the forms produce.
+
+| Form | Values | Cron expression | Words shown |
+| --- | --- | --- | --- |
+| Every hour | minute `m` (0-59) | `m * * * *` | "Every hour at minute m" |
+| Every day | time `h:m` | `m h * * *` | "Every day at hh:mm" |
+| Every week | days `d1,d2,…` (0 = Sunday … 6 = Saturday, at least one, sorted), time `h:m` | `m h * * d1,d2,…` | "Every week on Monday and Thursday at hh:mm" |
+| Every month | day of month `D` (1-31), time `h:m` | `m h D * *` | "Every month on day D at hh:mm"; for D above 28, add "Months without day D have no start." |
+| Custom | the expression | as typed | The five fields labelled: minute, hour, day of month, month, day of week |
+
+Reading back: `7` as a day of week (Sunday in some cron dialects) is "Custom", not "Every week",
+so the helper never rewrites an expression the person typed.
+
+### Cadence preview
+
+| Value | Source | Shown as |
+| --- | --- | --- |
+| `starts` | `GET /schedules/next-starts` | Each time in the schedule's time zone with its offset (for example "Sun 29 Mar 2026, 03:00 CEST (+02:00)"), and the viewer's local time when the zones differ. |
+| fewer than 5 starts | same | "No further start in the next 5 years." after the starts listed. |
+| `schedule-cron-invalid`, `schedule-timezone-invalid` | same | The Sync API message under the cron expression or the time zone. |
+| no answer | same | "The preview is not available. The Sync API checks the expression when you save." |
+
+### History entries
+
+Each entry of the "History" section is one `EventResource`.
+
+| Field | Shown as |
+| --- | --- |
+| `occurred_at` | Local time and relative time (`When`). |
+| `event_type`, `outcome` | The text of the table below. |
+| `actor` | Account name, as returned (FR-007). |
+| `reason` | Quoted, when not empty. |
+| `related` entry of kind `run` | Link "View run". |
+| `details` | Only `start_at` ("for the start at <time>"), `cause` (start and proposed change failures), `left_out`, and, for a grouped missed-start event, `starts`, `first_start_at`, `last_start_at`. |
+
+| `event_type` | `outcome` | Text |
+| --- | --- | --- |
+| `infrahub_sync.schedule.created` | any | "Schedule created" |
+| `infrahub_sync.schedule.changed` | any | "Settings changed" |
+| `infrahub_sync.schedule.paused` | any | "Paused" |
+| `infrahub_sync.schedule.resumed` | any | "Resumed" |
+| `infrahub_sync.schedule.deleted` | any | "Deleted" |
+| `infrahub_sync.schedule.taken_over` | any | "Taken over" |
+| `infrahub_sync.schedule.refused` | the cause | "Request refused: <operation in words>" and the cause |
+| `infrahub_sync.schedule.replayed` | any | "Request repeated with the same retry key" |
+| `infrahub_sync.schedule.start_skipped` | `skipped-run-in-progress` | "Start skipped: a run of this configuration was in progress" |
+| | `skipped-approved-change-open` | "Start skipped: an approved proposed change of this schedule is not merged yet" |
+| | `skipped-start-waiting` | "Start skipped: another start was already waiting" |
+| | `skipped-approval-required` | "Start skipped: this Sync API requires an approved plan before a write to the default branch" |
+| `infrahub_sync.schedule.start_queued` | `queued` | "Start waiting for the run in progress" |
+| `infrahub_sync.schedule.start_missed` | `missed-skipped` | "Start missed: the worker or the task manager was not running" |
+| | `missed-started-late` | "Started late: the worker or the task manager was not running at the start time" |
+| `infrahub_sync.schedule.start_failed` | `failed` | "Start failed" and the cause |
+| `infrahub_sync.schedule.stopped` | a stop reason | "Stopped:" and the reason text of "State and stop reason" |
+| `infrahub_sync.schedule.proposed_change_opened` | `opened` | "Proposed change opened" |
+| `infrahub_sync.schedule.proposed_change_replaced` | `replaced` | "Earlier proposed change replaced" |
+| `infrahub_sync.schedule.proposed_change_kept` | `kept-merged`, `kept-closed`, `kept-missing`, `kept-approved` | "Earlier proposed change kept: it was merged" / "closed" / "deleted in Infrahub" / "approved" |
+| `infrahub_sync.schedule.proposed_change_failed` | `failed` | "Proposed change failed" and the cause |
+| `infrahub_sync.run.accepted` (with "Include run events") | any | "Run started" |
+| `infrahub_sync.run.synced` | any | "Run wrote its changes", and the count of records left out when `details.left_out` is set |
+| `infrahub_sync.run.failed` | any | "Run failed" |
+| other `infrahub_sync.run.*` | any | The event's `operation` and `outcome` as returned |
+| any other | any | The type and outcome as returned. |
+
+A missed-start event that groups more than 500 starts reads "N starts missed between <first> and
+<last>".
+
 ### Refusals mapped to a field
 
 | Code | Field |

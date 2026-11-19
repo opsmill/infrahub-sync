@@ -4,7 +4,9 @@ Every path below is relative to the repository root. Frontend paths are under `f
 
 ## R1. Whether the Sync API covers every page
 
-**Decision**: No Sync API change is needed.
+**Decision**: The existing routes cover the list, the schedule page and the actions. Two additions
+are needed after the maintainer's review: a cadence preview route (R12) and a newest-first order
+for `GET /events` (R13).
 
 **Findings**:
 
@@ -20,8 +22,8 @@ Every path below is relative to the repository root. Frontend paths are under `f
 - The Sync API replaces account identifiers with account names in `owner` and `left_out_set_by`
   (`ACCOUNT_FIELDS` in `infrahub_sync/service/presentation.py:27`).
 
-**Alternatives considered**: A route that previews the next start times of a cron expression.
-The spec puts that preview out of scope, so no route is added.
+**Alternatives considered**: Computing previews in the browser and reading the history oldest
+first. Both are rejected in R12 and R13.
 
 ## R2. Where the pages sit and how they are routed
 
@@ -106,13 +108,24 @@ answered, every action is shown as available and the Sync API decides, as `RunPa
 
 **Rationale**: One function holds the whole rule, so it can be tested without a browser.
 
-## R7. Cron expression and time zone input
+## R7. Cron helper and time zone input
 
 **Decision**:
 
-- The cron expression is a text field with a hint that gives the five fields and two examples
-  (`0 2 * * *`, every day at 02:00; `*/30 * * * *`, every 30 minutes). The web interface does not
-  parse it. The Sync API checks it and its message is shown under the field.
+- The cadence field is a helper with five forms: "Every hour", "Every day", "Every week", "Every
+  month" and "Custom" (data-model "Cadence helper forms"). The first four are built from a minute,
+  a time, days of the week and a day of the month; the helper writes the cron expression and shows
+  it under the form, so the person learns the notation. "Custom" is a text field with a label for
+  each of the five fields.
+- `cronFromForm(form)` and `formFromCron(cron)` in `domain/cadence.ts` convert both ways.
+  `formFromCron` recognizes only the exact patterns of the table; anything else is "Custom", so
+  the helper never rewrites an expression.
+- The words for the four forms are built by the helper itself. A custom expression gets no words:
+  describing every cron expression in words needs a parser (for example the `cronstrue` library)
+  whose reading can differ from Prefect's in edge cases, such as a day of month and a day of week
+  both set. The preview of R12 shows what the expression does.
+- GitLab's pipeline schedules offer a similar choice of common cadences and a custom cron
+  expression; this design follows that idea. GitHub was not checked.
 - The time zone is a `Select` filled from `Intl.supportedValuesOf("timeZone")`, with `UTC` added
   when missing. The browser's time zone (`Intl.DateTimeFormat().resolvedOptions().timeZone`) is
   selected by default. When `supportedValuesOf` is not available, the field is a text field. The
@@ -141,9 +154,69 @@ Rejected: a second cron reading that can differ from the Sync API's.
 - `RunsPage.tsx`: the search parameter `schedule` (validated like `config`), shown as a removable
   filter "Schedule: <name>", passed to `runPagesQuery`.
 
+## R12. Cadence preview route
+
+**Decision**: Add `GET /schedules/next-starts` (contracts/http-api.md) to
+`infrahub_sync/service/schedule_routes.py`, with a method `next_starts(cron, timezone, count)` on
+`ScheduleService` in `infrahub_sync/service/schedules.py` that calls
+`schedule_cadence.starts_between(cron, timezone, now, now + 5 years, count)` with the service clock.
+`InvalidCadenceError` maps to `schedule-cron-invalid` or `schedule-timezone-invalid` with the same
+message as the create path (`schedules.py:1081-1083`), raised with `_error`, not `_refusal`, so no
+event is recorded. A response model `ScheduleNextStarts` is added to `infrahub_sync/client/models.py`, next to `ScheduleResource`. The credential check reuses `_refuse_secret_values` without recording an event. The
+form calls the route 400 ms after the last change and ignores answers to older requests (TanStack
+Query keyed by `cron` and `timezone`).
+
+**Rationale**: `schedule_cadence` uses Prefect's `CronSchedule`, the class Prefect's scheduler
+uses, including at daylight-saving changes. Any computation in the browser can disagree with the
+starts that happen. A `GET` needs no retry key: it stores nothing.
+
+**Alternatives considered**:
+
+- A cron library in the browser. Rejected: a second computation that can disagree with Prefect.
+- `POST /schedules` with a "dry run" flag. Rejected: every `POST` needs a retry key and writes an
+  event, and a create needs a name and a configuration the person may not have chosen yet.
+- A preview inside `GET /schedules/{id}` only. Rejected: the create form has no schedule yet.
+
+## R13. Newest-first events
+
+**Decision**: Add an `order` query parameter (`asc` default, `desc`) to `GET /events` in
+`infrahub_sync/service/app.py:282`, carried through `RunService.list_events`
+(`infrahub_sync/service/service.py:1511`) to `ProductStore.list_events`
+(`infrahub_sync/product_store/store.py:3306`), which uses `ORDER BY created_at DESC, event_id DESC`
+for `desc`. The protocol at `store.py:1031` and every implementation of it get the parameter with
+the default `asc`. The schedule page fixes `until` to the time of its first read, so older pages
+do not shift when new events arrive (contracts/http-api.md).
+
+**Rationale**: The events are listed oldest first, paged by offset. A schedule that starts every 5
+minutes records about 860 events a day with its run events. Showing the newest events would mean
+reading every page first. Sorting in the store is one clause.
+
+**Alternatives considered**:
+
+- Reading every page in the browser and reversing it. Rejected: unbounded reads.
+- A `since` window (the last 7 days) read oldest first. Rejected: the newest event is still on the
+  last page, and a quiet schedule can have its last event older than the window.
+- A route `GET /schedules/{id}/events`. Rejected: `GET /events?related=schedule:<id>` already
+  selects the right events; only the order is missing.
+
+## R14. History texts
+
+**Decision**: `eventText(event)` in `domain/schedule-events.ts` maps `event_type` and `outcome` to
+the texts of data-model "History entries", and returns the type and outcome as given for anything
+else. The frontend has no event texts today (no use of `event_type` in `frontend/src`), so the
+run events shown with "Include run events" get three texts of their own: `infrahub_sync.run.accepted`
+"Run started", `infrahub_sync.run.synced` "Run wrote its changes" and `infrahub_sync.run.failed`
+"Run failed". Any other run event shows its `operation` and `outcome` as returned.
+
 ## R9. Tests
 
-**Decision**: Add Vitest to the frontend for the pure functions in `domain/schedules.ts`: the
+**Decision**: Python: pytest unit tests for the preview route (starts equal to
+`schedule_cadence.starts_between`, a daylight-saving case in `Europe/Paris`, `count` bounds, both
+refusals, no event recorded on a refusal, the route not read as a schedule identifier) in
+`tests/service/test_schedule_next_starts.py`, and for `order=desc` (order, ties on `created_at`,
+default unchanged, invalid value) in `tests/service/test_events_route.py`. Frontend: add Vitest
+for the pure functions in `domain/cadence.ts` (both directions, every form, the patterns that must
+stay "Custom") and `domain/schedule-events.ts`, and for those in `domain/schedules.ts`: the
 permission rule, the state and stop-reason texts, and the change request built from the opening
 values and the form, including the case where a later read differs from the opening values. Add
 `pnpm test` to the `frontend-lint` job in `.github/workflows/workflow-linter.yml`. Check the pages
@@ -167,7 +240,9 @@ dependency. Browser tests would need a running Sync API and are not justified fo
 
 - `docs/docs/orchestration.mdx`: a section "Manage schedules in the web interface" after
   "Change, pause, resume, delete and take over a schedule", and a web interface column or line in
-  "Check a schedule" (FR-024).
+  "Check a schedule". Describe the cron helper and the history (FR-024).
+- `docs/docs/reference/sync-http-api.mdx`: the route `GET /schedules/next-starts` and the `order`
+  parameter in "List events" (`:806`).
 - `frontend/README.md:86-102`: add the schedules pages and the routes they call to the table of
   pages.
 - A news fragment `changelog/+schedules-web-interface.added.md`.

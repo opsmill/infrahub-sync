@@ -1,0 +1,73 @@
+# Contract: Sync HTTP API additions
+
+Paths are given without the `/api` prefix, as in `docs/docs/reference/sync-http-api.mdx`. Both
+additions need a bearer token, store nothing and write no event. Errors use the existing error
+body.
+
+## `GET /schedules/next-starts` (FR-031)
+
+Returns the next start times of a cron expression in a time zone, as the scheduler computes them.
+
+| Query | Required | Meaning |
+| --- | --- | --- |
+| `cron` | yes | A cron expression with five fields. |
+| `timezone` | no, default `UTC` | A time zone name. |
+| `count` | no, default `5` | The number of start times, from 1 to 20. |
+
+Answer `200`:
+
+```json
+{
+  "cron": "0 2 * * *",
+  "timezone": "Europe/Paris",
+  "starts": ["2026-11-20T01:00:00Z", "2026-11-21T01:00:00Z"],
+  "searched_until": "2031-11-19T21:40:00Z"
+}
+```
+
+- `starts` are in UTC, in increasing order, later than the time of the request. They are computed
+  with `schedule_cadence.starts_between(cron, timezone, now, now + 5 years, count)`, the module
+  that computes a schedule's `next_start_at`.
+- `starts` holds fewer than `count` times when the expression has fewer starts before
+  `searched_until`, for example `0 0 29 2 *`. The web interface then states that there is no
+  further start in the next 5 years.
+- An expression that has no start at all, for example `0 0 30 2 *`, is refused with
+  `schedule-cron-invalid`, as `POST /schedules` refuses it (`schedule_cadence.validate`).
+
+Refusals:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 422 | `schedule-cron-invalid` | `schedule_cadence` raises `InvalidCadenceError` with the field `cron`. Same message as `POST /schedules`. |
+| 422 | `schedule-timezone-invalid` | `schedule_cadence` raises `InvalidCadenceError` with the field `timezone`. Same message as `POST /schedules`. |
+| 422 | `request-invalid` | `cron` is absent, or `count` is not an integer from 1 to 20. |
+
+- No refusal of this route records an event. A refusal of `POST /schedules` records
+  `infrahub_sync.schedule.refused`; this route is called while a person types, so it must not.
+- The route is declared before `GET /schedules/{schedule_id}` in
+  `infrahub_sync/service/schedule_routes.py`, so `next-starts` is never read as a schedule
+  identifier.
+- The values are checked for a known credential like every other request field; a credential is
+  refused with `secret-parameter-refused` and is not repeated in the message.
+
+## `GET /events` (changed, FR-032)
+
+| Query | Values | Meaning |
+| --- | --- | --- |
+| `order` | `asc` (default), `desc` | `asc`: oldest first, by `created_at` then `event_id`, as today. `desc`: newest first, by `created_at` then `event_id`, both descending. |
+
+Every other parameter is unchanged. A value of `order` other than `asc` or `desc` is refused with
+`422 request-invalid`. A request without `order` gets the same answer as before this change.
+
+The web interface reads the history of a schedule with:
+
+```text
+GET /events?related=schedule:<schedule_id>&order=desc&until=<time of the first read>&limit=50&offset=<n>
+```
+
+`until` is fixed to the time of the first read, so events recorded later do not shift the offset
+of older pages (FR-034). The newest events are read again with a request without `until`, and
+added above the list when their `event_id` is not shown yet.
+
+Without "Include run events", the request adds `event_type=<type>` for each schedule event type
+of the spec 021 events contract.

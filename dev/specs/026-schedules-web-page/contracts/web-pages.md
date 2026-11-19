@@ -1,8 +1,8 @@
 # Contract: Schedule pages of the web interface
 
 The addresses, search parameters and Sync API calls of each page. The Sync API routes are those of
-the [spec 021 HTTP contract](../../archive/021-scheduled-runs/contracts/http-api.md); this feature
-adds none.
+the [spec 021 HTTP contract](../../archive/021-scheduled-runs/contracts/http-api.md), and the two
+additions of [http-api.md](http-api.md).
 
 ## Navigation
 
@@ -45,6 +45,8 @@ Empty states:
 | `POST /schedules/{schedule_id}/change` | Change dialog. Sends only the fields that changed. |
 | `POST /schedules/{schedule_id}/delete` | Delete dialog, after confirmation. |
 | `POST /schedules/{schedule_id}/take-over` | Take-over dialog, after confirmation. Administrators only. |
+| `GET /schedules/next-starts?cron=…&timezone=…&count=5` | For an active schedule, its next five starts. |
+| `GET /events?related=schedule:<schedule_id>&order=desc&…` | The "History" section: first page on load and every 10 seconds (without `until`), older pages on demand (with `until`). See http-api.md. |
 
 Every `POST` sends `Idempotency-Key`. The key is kept while the dialog is open and its fields are
 unchanged, so a second press after a lost answer resends the same key. Every `POST` body may hold
@@ -61,8 +63,11 @@ Sections, in order:
    `/runs?schedule=<schedule_id>`.
 4. Settings: cron expression, time zone, write target, "write when records are left out" with who
    set it and when, overlap policy, late start.
-5. Review branch: the open branch, the run that created it, the proposed change identifier.
-6. Record: created and updated times.
+5. Next starts: the next five start times of an active schedule.
+6. Review branch: the open branch, the run that created it, the proposed change identifier.
+7. History: the schedule's events, newest first, with the switch "Include run events" and "Load
+   older events".
+8. Record: created and updated times.
 
 ## Create dialog
 
@@ -73,8 +78,11 @@ configuration and its latest version chosen).
 | --- | --- |
 | `GET /configs` | When no configuration is chosen, for the configuration choice. |
 | `GET /configs/{config_id}/versions` | When a configuration is chosen, for the version choice. |
+| `GET /schedules/next-starts?cron=…&timezone=…&count=5` | 400 ms after the cron expression or the time zone last changed, when the expression has five fields. Only the answer to the latest request is shown. |
 | `POST /schedules` | On save. A `201` answer opens `/schedules/$scheduleId` of the returned schedule. |
 | `GET /schedules?config_id=…&limit=1` | After a `503 orchestration-unavailable` refusal, whose body holds no schedule: finds the stored schedule and opens its page, which shows the task-manager warning. |
+
+The change dialog uses the same cadence helper and preview as the create dialog.
 
 ## Changes to existing pages
 
