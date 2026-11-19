@@ -14,7 +14,7 @@ Run rules (from the maintainer, 2026-11-18 evening):
 
 - Prep done before the run: spec, plan, critique (3 must-address fixed), tasks (29), alignment
   ⚠️ minor drift. Constitution check added to plan.md at the start of implementation.
-- Chunk 1 (T001–T010, `demo prepare`): ✅ commit `d95ceefb`. Flags carried to the review phase:
+- Chunk 1 (T001–T010, `demo prepare`): ✅ commit `23232abf`. Flags carried to the review phase:
   - a second run with another `--reason` gets 409 `idempotency-conflict` (the reason is part of the
     request fingerprint, not of the key);
   - `schema_updated` may be false on a fresh Infrahub's first load, which would report `unchanged`;
@@ -22,16 +22,16 @@ Run rules (from the maintainer, 2026-11-18 evening):
 - Chunk 2 (T011–T016, `dev.demo`): dispatched. A local session working on spec 022 waits for a
   one-line message when this chunk's Docker stack is destroyed.
 
-- Chunk 2 (T011–T016): ✅ T011–T015, commits `8894a6ba`, `8640d3c1`. ⚠️ T016 live scenarios not
+- Chunk 2 (T011–T016): ✅ T011–T015, commits `cbce50c7`, `4d59a0f1`. ⚠️ T016 live scenarios not
   run: stopped stacks `infrahub-sync-dev` and `infrahub-sync-netbox` (not ours) exist, and NetBox's
   ready step attaches to the fixed `infrahub-sync-dev` worker; `dev.destroy` would delete their
   data. Another session runs `infrahub-sync-021`. Chunk 2 rebuilt the shared `infrahub-sync:dev`
   tag through `dev.build`. Told the spec 022 session that Docker is free from our side.
 
-- Chunk 3 (T017–T022): ✅ T017–T021, commit `7660164d` (ADR 0048). Image test passed on its own
+- Chunk 3 (T017–T022): ✅ T017–T021, commit `d168c641` (ADR 0048). Image test passed on its own
   tag `infrahub-sync:demo-024-test`, removed afterwards. ⚠️ T022 live part deferred. Flag for review:
   `build_inputs_hash` in `tasks/dev.py` does not hash the two asset paths.
-- Chunk 4 (T023–T026): ✅ commits `f25ee9d4`, `4d40963e`. New page
+- Chunk 4 (T023–T026): ✅ commits `ec4fb79c`, `a7a3b44b`. New page
   `docs/docs/tutorials/try-the-netbox-demo.mdx`; publishing guide gained "A pre-release image of
   the V3 line". Flags: `main` has no `ci-docker-image.yml`, so a dispatch uses
   `--ref feature/v3-develop` (an earlier dispatch from a non-main branch worked); Vale exceptions
@@ -73,10 +73,10 @@ Run rules (from the maintainer, 2026-11-18 evening):
    29010, image `infrahub-sync:demo-024`; started it.
 
 - Fix subagent: items 1–8 ✅, item 9 ⚠️ finished by the orchestrator (stale `--url`, key and state
-  wording in plan.md, research.md, data-model.md). Commits `2f85d702`, `b95f236b`.
+  wording in plan.md, research.md, data-model.md). Commits `4207356b`, `cff006e6`.
 - Chunk 5 done by the orchestrator: news fragment, `/.dev` ignored in `.yamllint.yml`, full
   verification (unit tier 9003 passed at 17:11:55Z), no `Claude-Session` trailer, no token-like
-  string in the diff, no change in `../styrmin` or `../infrahub-helm-sync-chart`. Commit `fb50811d`.
+  string in the diff, no change in `../styrmin` or `../infrahub-helm-sync-chart`. Commit `1e5d9ffd`.
 - Report written: `opsmill-implement-report.md`, status INCOMPLETE (T016, T022 live parts).
 - Live run on project `infrahub-sync-024` (2026-11-19, no NetBox, no invoke task). `demo prepare`
   from the host, four runs between 13:59:10Z and 13:59:38Z: `loaded`/`registered` v1; another
@@ -94,7 +94,7 @@ Run rules (from the maintainer, 2026-11-18 evening):
    then run `dev.demo` on isolated projects? **A:** yes: pass the project down instead of resolving
    it in `tasks/netbox.py`; check every setting read-only first; snapshot the other projects and
    compare after teardown; tell sessions 021 and 022 about the NetBox port; do not apply.
-   **Next:** commit `42e5e3f0`. Session 021 agreed; session 022 is no longer running. The
+   **Next:** commit `e7921073`. Session 021 agreed; session 022 is no longer running. The
    `infrahub-sync-dev` containers had been removed by someone else; their volumes remain and were
    not touched.
 
@@ -108,3 +108,17 @@ Run rules (from the maintainer, 2026-11-18 evening):
   says how to plan an earlier version.
 - Teardown: both projects, the image and `netbox.local.env` removed; the other projects' containers,
   networks and the volume list are identical to the snapshot.
+
+## Rebase onto `feature/v3-develop` (2026-11-19)
+
+- Rebased onto `1dc5e204` (schedules, #437; local accounts, #436). Commit IDs in these reports are
+  the new ones.
+- Conflicts: `infrahub_sync/cli.py` (the `demo` and `schedules` command groups, and the client
+  error handler, which now also removes a refused saved session), `dev/adr/README.md` (0048 kept
+  beside 0049 to 0053), `docs/docs/reference/cli.mdx` (regenerated).
+- The local accounts change removed `BEARER_TOKENS` from the development stack and replaced the
+  web interface's token prompt with an account name and a password. `dev.demo` read the removed
+  setting and failed 11 unit tests. Fixed in `bd3e42fb`: the task reads `ADMIN_ACCOUNT_TOKEN`,
+  prints how to sign in as `admin`, and the tutorial says the same. `demo prepare` now removes a
+  saved session that the Sync API refuses, with a test.
+- The live scenarios ran before the rebase. They were not run again.

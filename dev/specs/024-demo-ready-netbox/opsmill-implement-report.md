@@ -4,7 +4,7 @@
 
 - Spec directory: `dev/specs/024-demo-ready-netbox`
 - Branch: `024-demo-ready-netbox`, worktree `.worktrees/024-demo-ready-netbox`. Not pushed, no pull request.
-- Base commit: `4ce055ec`. Head commit: the commit that adds this report.
+- Base commit: `3458c13d`. Head commit: the commit that adds this report.
 - Wall-clock time: about 1 h 20 min, from 15:50Z to 17:15Z on 2026-11-18, then the live scenarios from 13:59Z to 14:26Z on 2026-11-19.
 
 ## 1. Summary
@@ -19,18 +19,18 @@
 
 | Chunk | Tasks | ✅ / ⚠️ / ❌ | Commits | Flagged |
 | --- | --- | --- | --- | --- |
-| 1. Setup and the `demo prepare` command | T001–T010 | 10 / 0 / 0 | `d95ceefb` | `--reason` 409 on re-run; the contract said `--url`, the CLI option is `--api-url` |
-| 2. User Story 1: `demo` preset and `dev.demo` | T011–T016 | 6 / 0 / 0 | `8894a6ba`, `8640d3c1`, `42e5e3f0` | live scenarios run on 2026-11-19 after the NetBox attach fix; rebuilt the shared `infrahub-sync:dev` tag; `dev.demo` fetches the `frontend/vendor/infrahub` submodule |
-| 3. User Story 2: assets in the wheel and the image | T017–T022 | 6 / 0 / 0 | `7660164d` | live scenarios run on 2026-11-19; ADR 0048; `.github/file-filters.yml` updated; `build_inputs_hash` does not hash the asset paths |
-| 4. User Stories 3 and 4: documentation | T023–T026 | 4 / 0 / 0 | `f25ee9d4`, `4d40963e` | `main` has no `ci-docker-image.yml`, so a dispatch uses `--ref feature/v3-develop`; Vale exceptions for `Kubernetes` and `Styrmin` |
-| Review fixes | review items 1–9 | 8 / 1 / 0 | `2f85d702`, `b95f236b` | item 9 finished by the orchestrator |
-| 5. Polish, done by the orchestrator | T027–T029 | 3 / 0 / 0 | `fb50811d` | `.yamllint.yml` now ignores `/.dev` |
+| 1. Setup and the `demo prepare` command | T001–T010 | 10 / 0 / 0 | `23232abf` | `--reason` 409 on re-run; the contract said `--url`, the CLI option is `--api-url` |
+| 2. User Story 1: `demo` preset and `dev.demo` | T011–T016 | 6 / 0 / 0 | `cbce50c7`, `4d59a0f1`, `e7921073` | live scenarios run on 2026-11-19 after the NetBox attach fix; rebuilt the shared `infrahub-sync:dev` tag; `dev.demo` fetches the `frontend/vendor/infrahub` submodule |
+| 3. User Story 2: assets in the wheel and the image | T017–T022 | 6 / 0 / 0 | `d168c641` | live scenarios run on 2026-11-19; ADR 0048; `.github/file-filters.yml` updated; `build_inputs_hash` does not hash the asset paths |
+| 4. User Stories 3 and 4: documentation | T023–T026 | 4 / 0 / 0 | `ec4fb79c`, `a7a3b44b` | `main` has no `ci-docker-image.yml`, so a dispatch uses `--ref feature/v3-develop`; Vale exceptions for `Kubernetes` and `Styrmin` |
+| Review fixes | review items 1–9 | 8 / 1 / 0 | `4207356b`, `cff006e6` | item 9 finished by the orchestrator |
+| 5. Polish, done by the orchestrator | T027–T029 | 3 / 0 / 0 | `1e5d9ffd` | `.yamllint.yml` now ignores `/.dev` |
 
 ## 3. Tasks not completed
 
 None. T016 and T022 were finished on 2026-11-19:
 
-- **First blocker:** the NetBox tasks attached NetBox's network to the worker of the fixed project `infrahub-sync-dev`, so a live run would have changed a stack this run did not create. Commit `42e5e3f0` passes the stack's resolved project to the NetBox attach instead, so a stack started under another project name attaches only its own worker.
+- **First blocker:** the NetBox tasks attached NetBox's network to the worker of the fixed project `infrahub-sync-dev`, so a live run would have changed a stack this run did not create. Commit `e7921073` passes the stack's resolved project to the NetBox attach instead, so a stack started under another project name attaches only its own worker.
 - **The run:** `dev.demo` ran with `COMPOSE_PROJECT_NAME=infrahub-sync-024`, its own ports and image tag, and a gitignored `development/netbox/netbox.local.env` that named the NetBox project `infrahub-sync-netbox-024` on port 28080. Both projects, the image and the file were removed afterwards.
 - **Proof that nothing else changed:** the containers, states and networks of `infrahub-sync-dev`, `infrahub-sync-netbox` and `infrahub-sync-021`, and the lists of Docker networks and volumes, were identical before and after the run.
 - **Not run:** the apply in scenario 1, because AGENTS.md requires human approval for an apply; and the web interface steps of the tutorial.
@@ -51,7 +51,7 @@ All runs are on macOS with Python 3.11.8 through `uv run`, from the worktree. Th
 | `tests/demo/test_wheel_assets.py::test_the_wheel_carries_the_demo_schema_and_package` | unit (builds a wheel) | `uv run pytest tests/demo/test_wheel_assets.py -v` | 2026-11-18T16:25:04Z | `uv` on `PATH` | `PASSED` |
 | `tests/image/test_demo_assets.py` (2 tests) and `tests/image/test_build_context.py::test_the_build_context_holds_only_what_the_image_needs` | image (`docker` marker) | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=demo-024-test uv run pytest -m docker tests/image/test_demo_assets.py tests/image/test_build_context.py -v` | 2026-11-18T16:17:45Z | Docker 29.8.2, image `infrahub-sync:demo-024-test` | `3 passed in 3.49s` |
 | Whole unit tier on the final tree | unit | `uv run invoke tests.tests-unit` | 2026-11-18T17:11:55Z | n/a | `9003 passed, 4 skipped, 385 deselected, 2 xfailed` |
-| Python 3.10 legs | unit | `uv run invoke tests.check-310` | about 2026-11-18T16:58Z, before `b95f236b` | `.dev/check-310-venv` | `check-310 passed all three Python 3.10 legs` (6645 passed, 101 skipped) |
+| Python 3.10 legs | unit | `uv run invoke tests.check-310` | about 2026-11-18T16:58Z, before `cff006e6` | `.dev/check-310-venv` | `check-310 passed all three Python 3.10 legs` (6645 passed, 101 skipped) |
 | `demo prepare` from the host, four runs: first address; another reason; `http://netbox:8080`; first address again | e2e, manual | `uv run infrahub-sync demo prepare --netbox-url … --infrahub-url http://infrahub-server:8000 --infrahub-address http://127.0.0.1:28000 --reason … --json` | 2026-11-19T13:59:10Z to 13:59:38Z | Compose project `infrahub-sync-024`, profiles `sync` and `infrahub`, ports 28000/28001, image `infrahub-sync:demo-024`, removed afterwards | `"schema": "loaded"`, `"configuration": "registered"`, `"version": 1`; then `unchanged` v1; `versioned` v2; `unchanged` v1 |
 | `demo prepare` from the image, no checkout | e2e, manual | `docker run --rm --network infrahub-sync-024_default --entrypoint infrahub-sync infrahub-sync:demo-024 demo prepare --netbox-url https://netbox.example.test --infrahub-url http://infrahub-server:8000 --json` | 2026-11-19T13:59:44Z | same project | `"configuration": "versioned"`, `"schema_files": 16`, `"version": 3` |
 | Quickstart scenario 1: `dev.demo` from no stack and no NetBox, then a branch and a plan | e2e, manual | `time uv run invoke dev.demo`, then `infrahubctl branch create netbox-demo-1` and `uv run infrahub-sync plan --config-id 20261119T1418-52e9ccdf --version 1 --branch netbox-demo-1 --reason "demo"` | 2026-11-19T14:16:08Z to 14:19:07Z | projects `infrahub-sync-024` and `infrahub-sync-netbox-024`, image `infrahub-sync:demo-024` built by the run, Docker layer cache warm | `real 2m29.713s`; `schema: loaded`, `configuration: registered`, version 1; plan `operations: 1687`, `by_action: create=1687`, 20 kinds, `problems: 0` |
@@ -88,7 +88,7 @@ Four review agents covered code, error handling, tests, and comments with types.
 - `dev.demo` runs `demo prepare` on the host, because the development stack's source mount hides the bundled assets (critique E1).
 - The review ran before chunk 5, and the orchestrator did chunk 5 (a news fragment and the verification) itself.
 - Simplify review not run. It is advisory, it edits code, and the run was unattended.
-- Live scenarios first skipped on the advisor's ruling, then run on 2026-11-19 after the fix in `42e5e3f0` made every step use the isolated project (see `overnight-log.md`).
+- Live scenarios first skipped on the advisor's ruling, then run on 2026-11-19 after the fix in `e7921073` made every step use the isolated project (see `overnight-log.md`).
 - The apply in scenario 1 was not run: AGENTS.md requires human approval for an apply.
 - `.yamllint.yml` now ignores `/.dev`. Without that, the Python 3.10 check environment holds a copy of the bundled `package.yml` that fails yamllint.
 - Vale exceptions added for `Kubernetes` and `Styrmin`.

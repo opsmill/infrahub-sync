@@ -25,7 +25,7 @@ is [opsmill-implement-report.md](opsmill-implement-report.md).
   not conflict, so the quickstart now uses a conflicting schema.
 - **Fix found by the live run:** the NetBox tasks attached the worker of the fixed
   `infrahub-sync-dev` project, so a stack under another project name changed a stack it did not
-  own. Commit `42e5e3f0` fixes it, with tests.
+  own. Commit `e7921073` fixes it, with tests.
 - **Web interface:** **Start run** plans the latest version (from the frontend source). The
   tutorial now says how to plan an earlier version.
 - **Prerequisites of way 2b, a Styrmin demo:** the schema and the package ship inside the wheel and the
@@ -37,9 +37,15 @@ is [opsmill-implement-report.md](opsmill-implement-report.md).
   No code was needed.
 - **Tutorial (P4):** `docs/docs/tutorials/try-the-netbox-demo.mdx` covers the three ways and ends with a
   "Send feedback" section.
-- **Checks on the final tree:** unit tier 9003 passed; `invoke lint`, `ruff check .` and `docs.lint`
-  pass. On 2026-11-19, `docs.generate` changed no file, `docs.docusaurus` built the site, and
-  `tests.check-310` passed all three Python 3.10 legs (6648 passed, 101 skipped, 2 xfailed).
+- **Rebase onto `feature/v3-develop` (2026-11-19):** onto `1dc5e204`. The local accounts change
+  broke `dev.demo` (it read the removed `BEARER_TOKENS` setting) and changed the web sign-in to an
+  account name and a password; fixed in `bd3e42fb`. The tutorial was then reworked and retitled
+  "Import NetBox demo data in one command".
+- **Checks after the rebase, on `bd3e42fb` (2026-11-19):** unit tier 10,760 passed;
+  `invoke lint` and `ruff check .` pass (`ty` reports 29 warnings in files this branch does not
+  change); `docs.lint` passes; `docs.docusaurus` built the site; `tests.check-310` passed all
+  three Python 3.10 legs (7,455 passed). After the docs rework, `docs.lint` and
+  `docs.docusaurus` passed again and every new link anchor exists in the built site.
 
 ## 2. Blocked
 
@@ -61,13 +67,14 @@ is [opsmill-implement-report.md](opsmill-implement-report.md).
    removed.
 3. **Q:** may I fix the NetBox attach and run `dev.demo` on isolated projects? **A:** yes, with
    read-only checks first, a before-and-after snapshot of the other projects, and no apply.
-   **Next:** fixed in `42e5e3f0`, ran scenarios 1 to 4; the snapshot matched after teardown.
+   **Next:** fixed in `e7921073`, ran scenarios 1 to 4; the snapshot matched after teardown.
 
 ## 4. Not done
 
 - The apply in quickstart scenario 1: AGENTS.md requires human approval for an apply, so the plan
   was created but not applied.
 - The web interface steps in the tutorial were written from the frontend source and not run.
+- The live scenarios ran before the rebase and were not run again after it.
 - The Styrmin drivers: out of scope for this repository.
 - The simplify review: it edits code and the run was unattended.
 - `/speckit.opsmill.extract` and a pull request: left for you.
