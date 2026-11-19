@@ -1395,7 +1395,9 @@ class PackageCheckResource(_ResourceModel):
 
     ``package_checksum`` and ``declared_content`` are what registering the package would store.
     ``destination_read`` is ``not_requested`` without a branch, ``read`` when the destination
-    schema was read, or the reason the read failed.
+    schema was read, or the reason the read failed: ``timeout``, ``unreachable``,
+    ``unauthorized``, ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured`` or
+    ``credentials``.
     """
 
     # Keys and values of the declared content are returned exactly, so registering the

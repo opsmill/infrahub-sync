@@ -165,11 +165,12 @@ for each finding on the page. Findings have the format described in
 | `timeout`, `unreachable` | The Sync API could not reach the destination. |
 | `unauthorized`, `forbidden` | The destination refused the destination token. |
 | `nobranch` | The branch does not exist in the destination. |
+| `rejected` | The destination answered but rejected the schema read, or returned a schema response that the Sync API cannot use. |
 | `unconfigured` | The package declares no destination URL. |
 | `credentials` | The destination token reference does not resolve in the service environment. |
 
 For every value other than `not_requested` and `read`, the findings also include a
-`destination_schema_read_failed` finding.
+`destination-schema-read-failed` finding.
 
 The command exits 1 when any finding, an error or a warning, is on the returned page, with or
 without `--branch`. `configs validate` exits 1 only for an error finding, and only with

@@ -873,7 +873,8 @@ class _PackageChecks:
     ``destination_read`` is ``"not_requested"`` when the caller asked for no destination
     checks, ``"read"`` when no destination read failed, or the ``reason`` of the
     ``DestinationSchemaReadError`` a failed read raised (``timeout``, ``unreachable``,
-    ``unauthorized``, ``forbidden``, ``nobranch``, ``unconfigured``, ``credentials``).
+    ``unauthorized``, ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured``,
+    ``credentials``).
     """
 
     findings: tuple[ValidationFinding, ...]

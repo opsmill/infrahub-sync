@@ -42,15 +42,18 @@ repository at commit `87d5a47f`.
 - **Finding**: `_infrahub_call` in
   [`configuration/capabilities.py`](../../../infrahub_sync/configuration/capabilities.py) (line 253)
   raises `DestinationSchemaReadError` with `reason` set to `timeout`, `unreachable`,
-  `unauthorized`, `forbidden` or `nobranch`; `_resolved_client_settings` (line 194) adds
-  `unconfigured` (no destination URL) and `credentials` (the token reference does not resolve).
+  `unauthorized`, `forbidden`, `nobranch`, `rejected` (the destination answered, but the SDK raised
+  an error the other reasons do not cover, or the response is not a schema Sync can use) or
+  `unconfigured` (the declared settings cannot configure a client); `_resolved_client_settings`
+  (line 194) adds `unconfigured` (no destination URL) and `credentials` (the token reference does
+  not resolve).
   [`schema_validation.py`](../../../infrahub_sync/configuration/schema_validation.py) (lines 282 and
-  374) turns it into a finding with code `destination_schema_read_failed`. The reason is only in the
+  374) turns it into a finding with code `destination-schema-read-failed`. The reason is only in the
   message text.
 - **Decision**: keep the finding (FR-002), and also return a structured `destination_read` value on
   the new route: `not_requested` (no branch), `read`, or the failure reason. The web interface
   treats `timeout` and `unreachable` as "the destination cannot be reached" (FR-004, FR-020). It
-  treats `unauthorized`, `forbidden`, `nobranch`, `unconfigured` and `credentials` as ordinary
+  treats `unauthorized`, `forbidden`, `nobranch`, `rejected`, `unconfigured` and `credentials` as ordinary
   findings that block registration,
   because they describe a problem the operator must fix, not an outage.
 - **Alternative rejected**: parse the reason from the finding message. Message text is not a
@@ -79,8 +82,9 @@ repository at commit `87d5a47f`.
 - **Finding**: no request body limit was found in `infrahub_sync/service/`. The bundle limit
   `MAX_BUNDLE_BYTES` (64 MiB, `product_store/bundle.py`) applies to run bundles, not to requests. A
   reverse proxy in front of the service can apply its own limit and answer HTTP 413.
-- **Decision**: no new limit (spec Edge Cases). The web interface shows "The file is larger than the
-  Sync API accepts" when the route answers 413, from the service or from a proxy.
+- **Decision**: no new limit (spec Edge Cases). The Sync API sets no size limit on the request
+  body, so it never answers 413. A proxy in front of it may answer 413, and the web interface shows
+  "The file is larger than the Sync API accepts" for that answer.
 
 ## R7. Default validation branch
 

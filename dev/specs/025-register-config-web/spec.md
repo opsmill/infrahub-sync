@@ -231,9 +231,10 @@ registered without validation.
 - **Several files dropped at once**: the web interface refuses the drop with "Drop one package file".
 - **A file that is not YAML or JSON, or is empty**: the web interface refuses it before the review
   step and says why.
-- **A file larger than the Sync API accepts**: the web interface refuses it before the review step.
-  The limit is the one the Sync API already applies to a request body; this feature does not invent
-  a new one.
+- **A file larger than a proxy in front of the Sync API accepts**: the web interface refuses it
+  before the review step. The Sync API sets no size limit on a request body, and this feature does
+  not add one. A proxy in front of the Sync API may answer 413, and the web interface shows a
+  message for that answer.
 - **A v2 `config.yml`**: the web interface recognizes it (it has no `configuration` key and has
   top-level `source` and `destination` keys) and says: "This is a v2 configuration. Convert it with
   `infrahub-sync configs convert`, then drop the package here. Converting a v2 configuration in the
@@ -306,7 +307,7 @@ registered without validation.
 - **FR-016**: The web interface MUST refuse, before the review step, with a message for each case:
   - a drop of more than one file;
   - a file that is not YAML or JSON, or is empty;
-  - a file larger than the Sync API accepts;
+  - a file that a proxy in front of the Sync API refuses with 413;
   - a v2 `config.yml`, with the message given under Edge Cases.
 - **FR-017**: All registration attempts from one review step MUST use the same idempotency key and
   the same request. After the first attempt, the reason and the other inputs of the review step

@@ -47,8 +47,8 @@ validate route.
 ```
 
 `destination_read` is `not_requested` without `branch`; otherwise `read`, `timeout`,
-`unreachable`, `unauthorized`, `forbidden`, `nobranch`, `unconfigured` or `credentials`. When it is not `read` or
-`not_requested`, the findings include the existing `destination_schema_read_failed` finding.
+`unreachable`, `unauthorized`, `forbidden`, `nobranch`, `rejected`, `unconfigured` or `credentials`. When it is not
+`read` or `not_requested`, the findings include the existing `destination-schema-read-failed` finding.
 
 **Refusals**:
 
@@ -58,7 +58,8 @@ validate route.
 | 400 | `request`, reason `invalid_package` | `document` is not a YAML or JSON mapping with string keys, or is empty. |
 | 422 | `validation`, reason `v2_configuration` | `document` or `package` has no `configuration` key and has top-level `source` and `destination` keys. The message names `infrahub-sync configs convert`. |
 | 400 / 422 | as registration | Any refusal the registration gives for the same package, with the same status, code and reason (`config_routes.py`, `_call`). |
-| 413 | — | The request is larger than the service or a proxy in front of it accepts. |
+| 413 | — | Not sent by the Sync API, which sets no size limit on the request body. A proxy in front of it may answer 413; the web interface shows a message for that answer. |
+| 422 | `request-invalid` | The body is not valid JSON. Sent before the token check, as on every other route, and no destination read happens. |
 
 **Invariant**: for the same package, branch and destination state, `findings` equals the findings of
 validating the registered version (FR-002).

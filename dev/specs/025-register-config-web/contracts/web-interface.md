@@ -18,7 +18,7 @@ without a mouse.
 | More than one file | "Drop one package file." |
 | Empty, or not YAML or JSON (reason `invalid_package`) | "This file is not a YAML or JSON configuration package." |
 | v2 configuration (reason `v2_configuration`) | "This is a v2 configuration. Convert it with `infrahub-sync configs convert`, then drop the package here. Converting a v2 configuration in the web interface is planned for a later release." |
-| 413 | "The file is larger than the Sync API accepts." |
+| 413, answered by a proxy in front of the Sync API (the Sync API sets no size limit) | "The file is larger than the Sync API accepts." |
 | Any other refusal | The Sync API's message. |
 
 ## Review step content
@@ -35,7 +35,10 @@ without a mouse.
    - "Valid against branch B" when there are no findings;
    - the list of findings, otherwise;
    - "Could not validate: the destination cannot be reached" when `destination_read` is `timeout`
-     or `unreachable`;
+     or `unreachable`. Every other failure reason (`unauthorized`, `forbidden`, `nobranch`,
+     `rejected`, `unconfigured`, `credentials`) comes with a `destination-schema-read-failed`
+     finding and is shown in the list of findings, because the destination answered or the
+     package needs a change;
    - "Validating against branch B…" while the request runs, with Cancel available.
    The review step requests the largest findings page (256). When `total_findings` is larger, it
    adds "N more findings. Run `infrahub-sync configs check` to list them all."

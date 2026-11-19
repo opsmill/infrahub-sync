@@ -428,7 +428,7 @@ def test_an_unknown_destination_adapter_adds_no_schema_findings() -> None:
 # --- AR9: a failed schema read is a typed error finding -------------------------------
 
 
-@pytest.mark.parametrize("reason", ["timeout", "unauthorized", "unreachable"])
+@pytest.mark.parametrize("reason", ["timeout", "unauthorized", "unreachable", "rejected"])
 def test_a_failed_schema_read_is_an_error_finding_not_a_raise(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
     _inject(monkeypatch, _table_with_accessor(_raising_accessor(reason)))
 
@@ -440,7 +440,8 @@ def test_a_failed_schema_read_is_an_error_finding_not_a_raise(monkeypatch: pytes
 
 
 @pytest.mark.parametrize(
-    "reason", ["timeout", "unreachable", "unauthorized", "forbidden", "nobranch", "unconfigured", "credentials"]
+    "reason",
+    ["timeout", "unreachable", "unauthorized", "forbidden", "nobranch", "rejected", "unconfigured", "credentials"],
 )
 def test_a_failed_schema_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
     _inject(monkeypatch, _table_with_accessor(_raising_accessor(reason)))

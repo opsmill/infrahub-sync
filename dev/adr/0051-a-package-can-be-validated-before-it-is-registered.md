@@ -47,9 +47,10 @@ calls it with `infrahub-sync configs check PACKAGE`, and the Python client with
 - **Nothing is stored.** The route stores no version, records no audit event for a check that it
   accepts, and takes no `Idempotency-Key`.
 - **Administrator only.** The route refuses a token that is not an administrator token with
-  403 `forbidden`, before it parses the body or reads the destination, and records the refusal
+  403 `forbidden`, before it parses the package in the body or reads the destination, and records the refusal
   with `audit_refusal` and the operation `check-config-package`, as registration records
-  `register-config`. Reason: with a branch, the service sends its destination token to the URL
+  `register-config`. A body that is not valid JSON is refused with 422 `request-invalid` before the token check, as
+  on every other route of the Sync API, and no destination read happens. Reason: with a branch, the service sends its destination token to the URL
   that the package declares, so only the people who can register a package can choose that URL.
 - **The service parses the file.** The body holds exactly one of `package`, a JSON object as the
   registration routes take, or `document`, the text of a YAML or JSON file. The service parses
@@ -62,8 +63,8 @@ calls it with `infrahub-sync configs check PACKAGE`, and the Python client with
   message that names `infrahub-sync configs convert`.
 - **The destination read is a field.** The response returns `destination_read`: `not_requested`
   without a branch, `read`, or the reason the read failed (`timeout`, `unreachable`,
-  `unauthorized`, `forbidden`, `nobranch`, `unconfigured`, `credentials`). The existing
-  `destination_schema_read_failed` finding stays, because before this decision the reason was
+  `unauthorized`, `forbidden`, `nobranch`, `rejected`, `unconfigured`, `credentials`). The existing
+  `destination-schema-read-failed` finding stays, because before this decision the reason was
   only in its message text.
 - **`configs check` exits 1 on any finding** on the returned page, with or without `--branch`.
   `configs validate` keeps its rule: exit 1 only on an error finding, and only with `--branch`.
@@ -79,7 +80,8 @@ calls it with `infrahub-sync configs check PACKAGE`, and the Python client with
 - `yaml.safe_load` expands aliases, so a crafted `document` can use much memory. Only
   administrators reach the parser, and they can already register any package. The risk is
   accepted.
-- A request body larger than the service or a proxy in front of it accepts gets 413.
+- The Sync API sets no size limit on the request body. A proxy in front of it may answer 413,
+  and the web interface shows a message for that answer.
 
 ## Alternatives considered
 
