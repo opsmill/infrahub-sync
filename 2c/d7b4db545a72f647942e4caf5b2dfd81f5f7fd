@@ -1,0 +1,51 @@
+frontend/src/api/types.ts
+  s_eefe1fec4652ae::t_9c4cda05e5a857 71-76
+frontend/src/features/configurations/PackageReview.tsx
+  s_eefe1fec4652ae::t_f941111144b167 347-353
+  s_eefe1fec4652ae::t_a307cc4b8debd3 385-404
+  s_eefe1fec4652ae::t_2141901913bf3e 297-300
+  s_eefe1fec4652ae::t_0e862d013a43fe 81-82,88-91
+  s_eefe1fec4652ae::t_46cf4f0203454e 98-102
+  s_eefe1fec4652ae::t_7b8d918cd36895 3,7-14,20
+  s_eefe1fec4652ae::t_b8c9660240615b 63-64
+  s_eefe1fec4652ae::t_b4d1ceed091a0e 159-160,164-167
+  s_eefe1fec4652ae::t_3e3258248ab324 39
+  s_eefe1fec4652ae::t_6c4eaf7f7c5c03 31
+  s_eefe1fec4652ae::t_fc68d65cc3b30a 45-50
+  s_eefe1fec4652ae::t_60c8521e298b13 199-212,224,228,237-243
+  s_eefe1fec4652ae::t_7e015b7cbd8e96 275-280
+  s_eefe1fec4652ae::t_63f78b77bba614 328-329
+frontend/src/features/configurations/package-review.ts
+  s_eefe1fec4652ae::t_ae796989e55f31 83-87
+frontend/src/api/actions.ts
+  s_eefe1fec4652ae::t_ba35a3be05c954 57-66,73-84
+frontend/src/features/configurations/ConfigurationPage.tsx
+  s_eefe1fec4652ae::t_30ba748a92b60f 544
+frontend/src/api/queries.ts
+  s_eefe1fec4652ae::t_6eabecf9811299 55-58
+frontend/src/features/configurations/ConfigurationsPage.tsx
+  s_eefe1fec4652ae::t_42436bb38cf1d8 746-757
+  s_eefe1fec4652ae::t_584c863d263adb 523-527
+  s_eefe1fec4652ae::t_e416505870320a 2
+  s_eefe1fec4652ae::t_1db15aac053088 39-40
+  s_eefe1fec4652ae::t_4e29a8fe1920f1 625-634
+  s_eefe1fec4652ae::t_739972a02735a1 16
+dev/specs/025-register-config-web/tasks.md
+  s_eefe1fec4652ae::t_6ed58a98f776fd 88-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2cd7b4db545a72f647942e4caf5b2dfd81f5f7fd",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
