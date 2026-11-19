@@ -29,8 +29,8 @@ is [opsmill-implement-report.md](opsmill-implement-report.md).
 - **Tutorial (P4):** `docs/docs/tutorials/try-the-netbox-demo.mdx` covers the three ways and ends with a
   "Send feedback" section.
 - **Checks on the final tree:** unit tier 9003 passed; `invoke lint`, `ruff check .` and `docs.lint`
-  pass; `tests.check-310`, `docs.generate` and `docs.docusaurus` reran this morning (results in the
-  log).
+  pass. On 2026-11-19, `docs.generate` changed no file, `docs.docusaurus` built the site, and
+  `tests.check-310` passed all three Python 3.10 legs (6648 passed, 101 skipped, 2 xfailed).
 
 ## 2. Blocked
 

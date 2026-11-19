@@ -84,3 +84,6 @@ Run rules (from the maintainer, 2026-11-18 evening):
   `unchanged` v1. From the image `infrahub-sync:demo-024` at 13:59:44Z, with no checkout:
   `versioned` v3, 16 schema files. Then `down --volumes` and the image removed; no container or
   image of that project is left.
+- Final checks on the final tree (2026-11-19): `docs.generate` changed no file; `docs.docusaurus`
+  built the site; `tests.check-310` passed all three legs (6648 passed, 101 skipped, 2 xfailed).
+- Morning report written: `morning-report.md`.
