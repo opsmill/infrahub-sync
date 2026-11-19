@@ -185,3 +185,20 @@ def test_a_postgresql_store_created_before_the_mark_gains_the_table_at_start_up(
         assert _marks(reopened, created.config_id) == {"lookup": {1: False}, "list": {1: False}, "page": {1: False}}
     finally:
         schema.drop()
+
+
+def test_a_failed_mark_insert_leaves_no_version(tmp_path: Path) -> None:
+    """The mark row is written in the version's transaction, so a failed mark stores no version."""
+    database = tmp_path / "records.sqlite3"
+    projection = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
+    created = projection.create_configuration(package())
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            f"CREATE TRIGGER refuse_mark BEFORE INSERT ON {_MARK_TABLE} BEGIN SELECT RAISE(ABORT, 'mark refused'); END"
+        )
+
+    with pytest.raises(sqlite3.DatabaseError, match="mark refused"):
+        projection.add_configuration_version(created.config_id, _second_package(), registered_without_validation=True)
+
+    assert [version.registry_version for version in projection.list_configuration_versions(created.config_id)] == [1]
+    assert _marks(projection, created.config_id)["lookup"] == {1: False}
