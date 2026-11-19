@@ -110,11 +110,16 @@ class DestinationSchemaValidation:
     every read that ran succeeded or no read ran. The same failure still becomes a
     ``destination-schema-read-failed`` finding; this field lets a caller act on the reason
     without parsing finding text.
+
+    ``schema_read`` is ``True`` when the destination schema of the branch was read, and
+    ``False`` when no read ran (an unknown adapter or a non-declaring destination) or the
+    read failed.
     """
 
     findings: tuple[ValidationFinding, ...]
     schema_fingerprint: str | None
     read_failure_reason: str | None = None
+    schema_read: bool = False
 
 
 def resolve_declared_destination_branch(package: ConfigurationPackage) -> str:
@@ -364,6 +369,7 @@ def collect_destination_schema_findings(
         )
     fingerprint: str | None = None
     read_failure_reason: str | None = None
+    schema_read = False
     # The registration-time invariant on the seam makes the accessor and the declaration
     # one fact, so presence of the accessor is the declaration.
     accessor = capabilities.destination_schema_accessor
@@ -391,6 +397,7 @@ def collect_destination_schema_findings(
                 )
             )
         else:
+            schema_read = True
             try:
                 normalized = normalize_destination_schema(snapshot)
                 fingerprint = compute_consumed_schema_fingerprint(
@@ -420,4 +427,5 @@ def collect_destination_schema_findings(
         findings=sort_findings(findings),
         schema_fingerprint=fingerprint,
         read_failure_reason=read_failure_reason,
+        schema_read=schema_read and read_failure_reason is None,
     )

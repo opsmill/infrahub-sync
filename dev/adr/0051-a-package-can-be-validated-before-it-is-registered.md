@@ -63,7 +63,8 @@ calls it with `infrahub-sync configs check PACKAGE`, and the Python client with
   `source` and `destination` keys gets 422 `validation` with the reason `v2_configuration`, and a
   message that names `infrahub-sync configs convert`.
 - **The destination read is a field.** The response returns `destination_read`: `not_requested`
-  without a branch, `read`, or the reason the read failed (`timeout`, `unreachable`,
+  without a branch, `read`, `not_read` when the destination adapter is unknown or declares no
+  schema read, or the reason the read failed (`timeout`, `unreachable`,
   `unauthorized`, `forbidden`, `nobranch`, `rejected`, `unconfigured`, `credentials`). The existing
   `destination-schema-read-failed` finding stays, because before this decision the reason was
   only in its message text.
