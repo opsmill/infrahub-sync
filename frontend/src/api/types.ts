@@ -69,6 +69,8 @@ export interface RegisteredVersion {
     registry_version: number;
     package_checksum: string;
     created_at: string;
+    /** True when the version was registered while the destination could not be reached. */
+    registered_without_validation: boolean;
   };
   /** False when the package is the same as an existing version, which is returned instead. */
   created: boolean;

@@ -200,6 +200,8 @@ export function PackageReview({
       kind === "unchecked" ||
       (checkedBranch !== null && effectiveBranch !== checkedBranch));
   const comparisonReady = compared === null || (compared !== undefined && base.data !== undefined);
+  /** The configuration or its newest version could not be read, so nothing can be compared. */
+  const comparisonFailed = (!isNew && config.isError) || base.isError;
 
   const unchanged = outcome?.kind === "unchanged";
   const noAnswer = create.isError && isNoAnswer(create.error);
@@ -312,9 +314,11 @@ export function PackageReview({
   const unreachableWarning =
     kind === "unreachable" && !validating ? (
       <Notice tone="warning" role="note" title={MESSAGES.unreachable}>
-        {check.data?.findings.map((f) => (
-          <p key={`${f.location}:${f.message}`}>{f.message}</p>
-        ))}
+        {check.data?.findings
+          .filter((f) => f.severity === "error")
+          .map((f) => (
+            <p key={`${f.location}:${f.message}`}>{f.message}</p>
+          ))}
       </Notice>
     ) : undefined;
   const outcomeNotice = create.isError ? (
@@ -386,9 +390,13 @@ export function PackageReview({
             ? "Register is available once validation ends."
             : checkFailed
               ? "Validate again to continue."
-              : !comparisonReady
-                ? "Register is available once the newest version is read."
-                : "Fix the findings, then drop the package again."
+              : comparisonFailed
+                ? "The configuration could not be read. Cancel and drop the package again."
+                : !comparisonReady
+                  ? "Register is available once the newest version is read."
+                  : refusal
+                    ? "Change the validation branch to validate again."
+                    : "Fix the findings, then drop the package again."
       }
       dismissLabel={unchanged ? "Close" : "Cancel"}
       submitOnEnter={false}
@@ -427,6 +435,8 @@ export function PackageReview({
               </p>
             </Notice>
           )}
+
+          {!isNew && config.isError && <MutationError error={config.error} />}
 
           {typeof compared === "number" && (
             <section aria-labelledby="review-comparison" className="flex flex-col gap-2">
