@@ -24,6 +24,7 @@ from infrahub_sync.client.models import (
     EventRelatedResource,
     EventResource,
     OrchestrationSummary,
+    PackageCheckRequest,
     PublicRunResource,
     RunApprovalResource,
     RunResource,
@@ -785,3 +786,45 @@ def test_the_service_bounds_the_details_of_an_event_it_emits() -> None:
     assert details is not None
     assert "infrahub_message" not in details.model_dump()
     assert details.start_at == datetime(2026, 11, 18, 1, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({}, id="neither"),
+        pytest.param({"package": {"format_version": 1}, "document": "format_version: 1\n"}, id="both"),
+        pytest.param({"package": None, "document": None}, id="both-null"),
+    ],
+)
+def test_a_package_check_request_needs_exactly_one_of_package_and_document(fields: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PackageCheckRequest(**fields)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize(
+    "package",
+    [
+        pytest.param({"format_version": float("nan")}, id="nan"),
+        pytest.param({"values": (1, 2)}, id="tuple"),
+        pytest.param({"nested": {1: "integer key"}}, id="integer-key"),
+    ],
+)
+def test_a_package_check_request_keeps_the_json_native_package_rule(package: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PackageCheckRequest(package=package)
+    with pytest.raises(ValidationError):
+        ConfigMutationRequest(package=package)
+
+
+def test_a_package_check_request_serializes_only_the_field_it_carries() -> None:
+    assert PackageCheckRequest(package={"format_version": 1}).model_dump(mode="json") == {
+        "package": {"format_version": 1}
+    }
+    assert PackageCheckRequest(document=" format_version: 1\n").model_dump(mode="json") == {
+        "document": " format_version: 1\n"
+    }
+
+
+def test_a_package_check_request_refuses_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        PackageCheckRequest(package={"format_version": 1}, reason="no reason field")  # ty: ignore[unknown-argument]

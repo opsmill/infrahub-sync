@@ -59,6 +59,8 @@ from .models import (
     EventResource,
     ListPage,
     OrchestrationSummary,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanReportPageResource,
     PlanResource,
     PrincipalResource,
@@ -390,21 +392,34 @@ class SyncClient:  # pylint: disable=too-many-public-methods
 
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
-        self._offset(offset)
-        if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_LIMIT_ARG)
-        # The service refuses an empty name and one with surrounding whitespace (`parse_branch`).
-        if branch is not None and (type(branch) is not str or not branch.strip() or branch != branch.strip()):  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_BRANCH_ARG)
         return self._request_model(
             "validate_config",
             "POST",
             f"/configs/{config_id}/versions/{version}/validate",
             model=ValidationReportResource,
             success={200},
-            params={"offset": offset, "limit": limit}
-            if branch is None
-            else {"offset": offset, "limit": limit, "branch": branch},
+            params=self._validation_params(offset, limit, branch),
+            config_route=True,
+        )
+
+    def check_package(
+        self, request: PackageCheckRequest, *, offset: int = 0, limit: int = 256, branch: str | None = None
+    ) -> PackageCheckResource:
+        """Validate a package without registering it and return one findings page.
+
+        The service stores nothing. With ``branch``, it also reads the destination schema of that
+        Infrahub branch; ``destination_read`` in the result says whether the read succeeded.
+        An administrator token is required.
+        """
+
+        return self._request_model(
+            "check_package",
+            "POST",
+            "/configs/validate",
+            model=PackageCheckResource,
+            success={200},
+            body=request,
+            params=self._validation_params(offset, limit, branch),
             config_route=True,
         )
 
@@ -1525,6 +1540,21 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if not isinstance(value, datetime) or value.utcoffset() is None:
             raise ClientInputError(argument)
         return value.isoformat()
+
+    @classmethod
+    def _validation_params(cls, offset: int, limit: int, branch: str | None) -> dict[str, str | int]:
+        """Check and return the query parameters of a validation findings page."""
+        cls._offset(offset)
+        if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_LIMIT_ARG)
+        # The service refuses an empty name and one with surrounding whitespace (`parse_branch`).
+        if branch is not None and (type(branch) is not str or not branch.strip() or branch != branch.strip()):  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_BRANCH_ARG)
+        return (
+            {"offset": offset, "limit": limit}
+            if branch is None
+            else {"offset": offset, "limit": limit, "branch": branch}
+        )
 
     @staticmethod
     def _offset(offset: object) -> None:

@@ -41,6 +41,8 @@ from infrahub_sync.client import (
     CreateRunRequest,
     CreateScheduleRequest,
     NotSyncAPIError,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanResource,
     ProtocolError,
     RegisteredConfigurationResource,
@@ -640,6 +642,26 @@ def _echo_validation(resource: ValidationReportResource) -> None:
             ("next_offset", resource.next_offset),
         )
     )
+    _echo_findings(resource)
+
+
+def _echo_package_check(resource: PackageCheckResource) -> None:
+    """Print the check of an unregistered package as `configs validate` prints a version, with the read outcome."""
+    _echo_fields(
+        (
+            ("package_checksum", resource.package_checksum),
+            ("destination_read", resource.destination_read),
+            ("destination_schema_fingerprint", resource.destination_schema_fingerprint),
+            ("offset", resource.offset),
+            ("limit", resource.limit),
+            ("total_findings", resource.total_findings),
+            ("next_offset", resource.next_offset),
+        )
+    )
+    _echo_findings(resource)
+
+
+def _echo_findings(resource: ValidationReportResource | PackageCheckResource) -> None:
     for finding in resource.findings:
         typer.echo(
             _display(
@@ -901,6 +923,36 @@ def _with_live_schema(path: Path, result: ConversionResult) -> tuple[ConversionR
         _echo_lines(refusal_lines(path.name, filled.refusals), err=True)
         raise typer.Exit(1)
     return filled, filled.package
+
+
+@configs_app.command("check")
+def configs_check(
+    ctx: typer.Context,
+    package: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
+    *,
+    offset: int = typer.Option(0, "--offset", help="Finding offset."),
+    limit: int = typer.Option(256, "--limit", help="Maximum findings to return."),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help=(
+            "Also check the mapping, the import account's permissions and the workers' credential "
+            "variables against this Infrahub branch. destination_read says whether the service read "
+            "the branch's schema."
+        ),
+    ),
+) -> None:
+    """Validate a JSON or YAML configuration package without registering it.
+
+    Exits 1 when a finding is on the returned page; read every page with --offset to check them all.
+    """
+    with _client_errors():
+        request = cast("PackageCheckRequest", _request(PackageCheckRequest, package=_package(package)))
+        report = _client(ctx).check_package(request, offset=offset, limit=limit, branch=branch)
+        _echo_package_check(report)
+    # contracts/sync-api.md (spec 025): any finding on the returned page exits 1.
+    if report.findings:
+        raise typer.Exit(code=1)
 
 
 @configs_app.command("convert")
