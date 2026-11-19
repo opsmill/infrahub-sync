@@ -1,0 +1,46 @@
+docs/docs/compose-deployment.mdx
+  s_eefe1fec4652ae::t_12151ce2753888 583-587
+dev/specs/025-register-config-web/opsmill-implement-report.md
+  s_eefe1fec4652ae::t_4ab4d4c3f2e6d2 25-64,66
+  s_eefe1fec4652ae::t_e34972c82e3778 65
+docs/docs/running-a-sync.mdx
+  s_eefe1fec4652ae::t_911070b535c6cc 527-531
+dev/adr/0051-a-package-can-be-validated-before-it-is-registered.md
+  s_eefe1fec4652ae::t_e9ab7d53002046 5-7
+  s_eefe1fec4652ae::t_95bab21b69314b 96-143
+docs/docs/reference/sync-http-api.mdx
+  s_eefe1fec4652ae::t_171a1138af6321 575-577
+  s_eefe1fec4652ae::t_0fa6dba35935c5 467-474
+  s_eefe1fec4652ae::t_14992b69905088 477
+docs/docs/configuration-package.mdx
+  s_eefe1fec4652ae::t_3c7d8f0ba5de30 107-110
+  s_eefe1fec4652ae::t_a0d104ed97b42d 182-252
+dev/specs/025-register-config-web/tasks.md
+  s_eefe1fec4652ae::t_93fa237b7d34b8 136-140
+changelog/+register-config-web.added.md
+  s_0e1c2f6aef7464::t_4dd4b500392bf7 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "23244edca693edc4cdb31398442888cc4d89c8b2",
+  "prompts": {},
+  "sessions": {
+    "s_0e1c2f6aef7464": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac7e0fa4352d9a031",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
