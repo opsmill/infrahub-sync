@@ -866,7 +866,8 @@ def _worker_credential_findings(
 DESTINATION_READ_NOT_REQUESTED = "not_requested"
 DESTINATION_READ_OK = "read"
 # A branch was given, but the destination adapter is unknown or declares no schema read, so
-# nothing was read; a finding names the reason.
+# nothing was read; a finding names the reason. No current destination reaches this: the core
+# check refuses an unknown adapter and every adapter without a schema read as a destination.
 DESTINATION_READ_NOT_READ = "not_read"
 
 
