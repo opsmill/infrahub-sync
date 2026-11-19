@@ -112,8 +112,8 @@ only means no mark is recorded (FR-022).
 - [X] T029 [US4] In `infrahub_sync/product_store/configs.py`, pass `registered_without_validation` through `register` and `create_version`
 - [X] T030 [US4] In `infrahub_sync/service/config_routes.py` and `infrahub_sync/client/models.py`, add `registered_without_validation: bool = False` to `ConfigMutationRequest`, pass it to `routes.mutate` and through to the service, and add the field to every configuration version resource model; add the field to the request fingerprint in `ConfigurationRoutes.mutate` beside `package` and `reason`, so a key reused with a different value is refused as for a different reason; keep the fingerprint of a request without the field unchanged (omit the key when the value is `false`), so receipts stored before this change still match their retries
 - [X] T031 [US4] In `infrahub_sync/cli.py`, print `registered_without_validation` in `_echo_config_version_reference`; add no CLI flag to set it (the CLI user can run `configs check` and decide)
-- [ ] T032 [US4] Regenerate `frontend/src/api/types.generated.ts` as in T015
-- [ ] T033 [US4] In `PackageReview.tsx`, make "Register without validation" (added in T019) send `registered_without_validation: true`; in the version view (`frontend/src/features/configurations/detail-version-bar.tsx`), show "Registered without validation" for a marked version; run `cd frontend && pnpm check && pnpm typecheck`
+- [X] T032 [US4] Regenerate `frontend/src/api/types.generated.ts` as in T015
+- [X] T033 [US4] In `PackageReview.tsx`, make "Register without validation" (added in T019) send `registered_without_validation: true`; in the version view (`frontend/src/features/configurations/detail-version-bar.tsx`), show "Registered without validation" for a marked version; run `cd frontend && pnpm check && pnpm typecheck`
 - [X] T034 [US4] Run T026 and T027
 
 **Checkpoint**: quickstart Scenario 4 passes by hand.

@@ -11,7 +11,12 @@ import {
   useRegisterConfig,
 } from "#/api/actions";
 import { configQuery, configsNamedQuery, configVersionQuery } from "#/api/queries";
-import type { PackageCheck, RegisteredConfiguration, RegisteredVersion } from "#/api/types";
+import type {
+  ConfigMutationRequest,
+  PackageCheck,
+  RegisteredConfiguration,
+  RegisteredVersion,
+} from "#/api/types";
 import { CheckIcon } from "#/components/icons";
 import { CODE_CHIP, InlineCode, Notice } from "#/components/page";
 import { diffMappings, mappingEntries, removedEntries } from "#/domain/mapping";
@@ -52,7 +57,16 @@ export type ReviewTarget = { kind: "version"; configId: string } | { kind: "conf
 /** A branch typed in the field is checked once typing stops for this long. */
 const BRANCH_CHECK_DELAY_MS = 600;
 
-type Body = { package: Record<string, unknown>; reason: string | null };
+/**
+ * The request body. `registered_without_validation` is sent only as `true`, when Register runs
+ * while the destination cannot be reached (FR-021); otherwise it is left out. It is part of the
+ * locked body, so a retry sends the same request with the same idempotency key.
+ */
+type Body = {
+  package: Record<string, unknown>;
+  reason: string | null;
+  registered_without_validation?: true;
+};
 type Outcome =
   | { kind: "unchanged"; version: number }
   | { kind: "meanwhile"; version: number }
@@ -201,7 +215,16 @@ export function PackageReview({
     void navigate({ to: "/configs/$configId", params: { configId: id }, search: {} });
   };
 
-  const send = (body: Body) => {
+  const bodyFor = (declared: Record<string, unknown>): Body => ({
+    package: declared,
+    reason: reason.trim() || null,
+    ...(kind === "unreachable" ? { registered_without_validation: true } : {}),
+  });
+
+  const send = (sentBody: Body) => {
+    // The mark is left out unless it is true, so the body matches the generated type only by a
+    // cast; the Sync API reads a missing mark as false.
+    const body = sentBody as ConfigMutationRequest;
     if (configId === undefined) {
       registerConfig.mutate(
         { params: { header: { "Idempotency-Key": key } }, body },
@@ -236,7 +259,7 @@ export function PackageReview({
     setOutcome(undefined);
     if (configId === undefined) {
       // A new configuration has no newest version to read again.
-      const body: Body = { package: lastCheck.declared_content, reason: reason.trim() || null };
+      const body = bodyFor(lastCheck.declared_content);
       setSent(body);
       send(body);
       return;
@@ -260,7 +283,7 @@ export function PackageReview({
       runCheck(effectiveBranch);
       return;
     }
-    const body: Body = { package: lastCheck.declared_content, reason: reason.trim() || null };
+    const body = bodyFor(lastCheck.declared_content);
     setSent(body);
     send(body);
   };

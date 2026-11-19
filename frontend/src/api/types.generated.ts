@@ -1087,6 +1087,10 @@ export interface components {
         /**
          * ConfigMutationRequest
          * @description Submit a configuration package with an optional audit reason.
+         *
+         *     ``registered_without_validation`` marks the created version as registered without
+         *     validation. The web interface sets it; the CLI never does. A request without the mark
+         *     keeps today's body, so it is omitted when ``false``.
          */
         ConfigMutationRequest: {
             /** Package */
@@ -1095,6 +1099,11 @@ export interface components {
             };
             /** Reason */
             reason?: string | null;
+            /**
+             * Registered Without Validation
+             * @default false
+             */
+            registered_without_validation: boolean;
         };
         /**
          * ConfigurationPage
@@ -1161,6 +1170,11 @@ export interface components {
             registered_by?: string | null;
             /** Registration Reason */
             registration_reason?: string | null;
+            /**
+             * Registered Without Validation
+             * @default false
+             */
+            registered_without_validation: boolean;
             latest_run?: components["schemas"]["RunReference"] | null;
             latest_applied_run?: components["schemas"]["RunReference"] | null;
         } & {

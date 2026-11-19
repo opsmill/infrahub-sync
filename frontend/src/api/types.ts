@@ -14,6 +14,12 @@ export type PlanLastChange = Schemas["PlanLastChangeResource"];
 export type RunLogLine = Schemas["RunLogLine"];
 export type PackageCheck = Schemas["PackageCheckResource"];
 export type ValidationFinding = Schemas["ValidationFindingResource"];
+/**
+ * The body of `POST /configs` and `POST /configs/{config_id}/versions`. The generated type marks
+ * `registered_without_validation` as required because it has a default; the Sync API accepts the
+ * body without it.
+ */
+export type ConfigMutationRequest = Schemas["ConfigMutationRequest"];
 /** A source or destination as a registered package declares it. */
 export interface DeclaredAdapter {
   name: string;
