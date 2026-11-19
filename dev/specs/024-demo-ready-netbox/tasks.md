@@ -49,7 +49,7 @@ uv run invoke tests.tests-unit
 - [X] T013 [US1] Add the `dev.demo` task to `tasks/dev.py` per [contracts/dev-demo-task.md](contracts/dev-demo-task.md): start the `demo` preset; seed the `demo` dataset only when NetBox is new, otherwise say so, name the dataset when `tasks/netbox.py` can tell, and print `uv run invoke netbox.seed --dataset demo`; run `uv run infrahub-sync demo prepare --netbox-url http://netbox:8080 --infrahub-url http://infrahub-server:8000 --infrahub-address <published Infrahub address>` on the host with `INFRAHUB_API_TOKEN`, `INFRAHUB_SYNC_API_URL` and the Sync token in the environment; then print the web interface address (the Sync API address), which token to enter, the configuration ID and version, and the branch-create and plan commands
 - [X] T014 [US1] Verify research R-9: build the development image (`uv run invoke dev.build`) and check that `GET /` on the Sync API serves the web interface; if it does not, make `dev.demo` print the `dev.frontend` instruction instead of the root address, and record the result in `research.md` R-9
 - [X] T015 [US1] Register the new task wherever the repository lists tasks: `tests/test_task_inventory.py`, `tests/test_task_names_in_docs.py` expectations, the task reference in `docs/docs/development-stack.mdx`, and `AGENTS.md` "Invoke Tasks" (`dev.start` presets list and `dev.demo` shortcut)
-- [ ] T016 [US1] Run the phase verification commands; then run quickstart scenarios 1 and 2 if Docker is available, and record the elapsed time of scenario 1 and the plan counts in `dev/specs/024-demo-ready-netbox/opsmill-implement-report.md` evidence (if Docker is not available, say so there)
+- [X] T016 [US1] Run the phase verification commands; then run quickstart scenarios 1 and 2 if Docker is available, and record the elapsed time of scenario 1 and the plan counts in `dev/specs/024-demo-ready-netbox/opsmill-implement-report.md` evidence (if Docker is not available, say so there)
 
 **Checkpoint**: User Story 1 works on its own.
 
@@ -64,7 +64,7 @@ uv run invoke tests.tests-unit
 - [X] T019 [P] [US2] Write `tests/demo/test_wheel_assets.py`: build the wheel into `tmp_path` with `uv build --wheel` (mark it the way other build tests are marked, so the unit tier stays offline and fast) and assert it contains the 16 schema files and the package under `infrahub_sync/demo/assets/`, byte-identical to the sources
 - [X] T020 [P] [US2] Write `tests/image/test_demo_assets.py` following the existing `tests/image/` fixtures: in the built image, `infrahub-sync demo prepare --help` exits 0 and `python -c` resolving the assets returns 16 schema files and the package from the bundled path
 - [X] T021 [US2] Write the ADR `dev/adr/00NN-demo-assets-ship-in-the-wheel.md` (next free number; follow `dev/adr/README.md`; cite no internal sources): the decision of research R-1, the alternatives, and the consequence that the PyPI package carries the demo schema and package
-- [ ] T022 [US2] Run the phase verification commands; run quickstart scenarios 3 and 4 if Docker is available and record the result in the implement report
+- [X] T022 [US2] Run the phase verification commands; run quickstart scenarios 3 and 4 if Docker is available and record the result in the implement report
 
 **Checkpoint**: a Styrmin driver or a chart job can call `infrahub-sync demo prepare` from the image.
 

@@ -1,15 +1,15 @@
 # Implementation report: 024-demo-ready-netbox
 
-**Status**: INCOMPLETE. T016 and T022 are not done: `dev.demo` with NetBox and the schema conflict scenario were not run. `demo prepare` ran against a live stack, from the host and from the image (§3, §4).
+**Status**: DONE. All 29 tasks are done. Quickstart scenarios 1 to 4 ran on 2026-11-19 on isolated Compose projects (§3, §4). The apply and the web interface steps were not run (§3).
 
 - Spec directory: `dev/specs/024-demo-ready-netbox`
 - Branch: `024-demo-ready-netbox`, worktree `.worktrees/024-demo-ready-netbox`. Not pushed, no pull request.
 - Base commit: `4ce055ec`. Head commit: the commit that adds this report.
-- Wall-clock time: about 1 h 20 min, from 15:50Z to 17:15Z on 2026-11-18.
+- Wall-clock time: about 1 h 20 min, from 15:50Z to 17:15Z on 2026-11-18, then the live scenarios from 13:59Z to 14:26Z on 2026-11-19.
 
 ## 1. Summary
 
-- 27 of 29 tasks are done.
+- 29 of 29 tasks are done.
 - Unit tier: 9003 passed, 4 skipped, 2 xfailed (2026-11-18T17:11:55Z).
 - `invoke lint` exits 0, `ruff check .` passes, and `docs.lint` passes.
 - `tests.check-310` passed all three Python 3.10 legs.
@@ -20,19 +20,20 @@
 | Chunk | Tasks | ✅ / ⚠️ / ❌ | Commits | Flagged |
 | --- | --- | --- | --- | --- |
 | 1. Setup and the `demo prepare` command | T001–T010 | 10 / 0 / 0 | `d95ceefb` | `--reason` 409 on re-run; the contract said `--url`, the CLI option is `--api-url` |
-| 2. User Story 1: `demo` preset and `dev.demo` | T011–T016 | 5 / 1 / 0 | `8894a6ba`, `8640d3c1` | live scenarios not run; rebuilt the shared `infrahub-sync:dev` tag; `dev.demo` fetches the `frontend/vendor/infrahub` submodule |
-| 3. User Story 2: assets in the wheel and the image | T017–T022 | 5 / 1 / 0 | `7660164d` | ADR 0048; `.github/file-filters.yml` updated; `build_inputs_hash` does not hash the asset paths |
+| 2. User Story 1: `demo` preset and `dev.demo` | T011–T016 | 6 / 0 / 0 | `8894a6ba`, `8640d3c1`, `42e5e3f0` | live scenarios run on 2026-11-19 after the NetBox attach fix; rebuilt the shared `infrahub-sync:dev` tag; `dev.demo` fetches the `frontend/vendor/infrahub` submodule |
+| 3. User Story 2: assets in the wheel and the image | T017–T022 | 6 / 0 / 0 | `7660164d` | live scenarios run on 2026-11-19; ADR 0048; `.github/file-filters.yml` updated; `build_inputs_hash` does not hash the asset paths |
 | 4. User Stories 3 and 4: documentation | T023–T026 | 4 / 0 / 0 | `f25ee9d4`, `4d40963e` | `main` has no `ci-docker-image.yml`, so a dispatch uses `--ref feature/v3-develop`; Vale exceptions for `Kubernetes` and `Styrmin` |
 | Review fixes | review items 1–9 | 8 / 1 / 0 | `2f85d702`, `b95f236b` | item 9 finished by the orchestrator |
 | 5. Polish, done by the orchestrator | T027–T029 | 3 / 0 / 0 | `fb50811d` | `.yamllint.yml` now ignores `/.dev` |
 
 ## 3. Tasks not completed
 
-The live parts of T016 (quickstart scenarios 1 and 2) and T022 (scenarios 3 and 4) were not run.
+None. T016 and T022 were finished on 2026-11-19:
 
-- **Why:** this machine holds stopped Compose projects named `infrahub-sync-dev` and `infrahub-sync-netbox`, and this run did not create them. The NetBox tasks attach NetBox's network to the worker of the fixed project `infrahub-sync-dev` (`tasks/netbox.py:472` and `:747`). The NetBox project name is set in `development/netbox/netbox.env`. A live run would therefore change those stacks, and the clean-up tasks would delete their data.
-- **Run afterwards, on 2026-11-19:** `demo prepare` against a live Sync API and Infrahub on an isolated Compose project, `infrahub-sync-024`, with no NetBox and no invoke task. It ran from the host and from the image with no checkout. §4 has the results. This covers the command part of scenario 3, not `dev.demo`, not NetBox and not a plan.
-- **Still not known:** the elapsed time of SC-001 (15 minutes or less), the plan counts, and the schema conflict of scenario 4.
+- **First blocker:** the NetBox tasks attached NetBox's network to the worker of the fixed project `infrahub-sync-dev`, so a live run would have changed a stack this run did not create. Commit `42e5e3f0` passes the stack's resolved project to the NetBox attach instead, so a stack started under another project name attaches only its own worker.
+- **The run:** `dev.demo` ran with `COMPOSE_PROJECT_NAME=infrahub-sync-024`, its own ports and image tag, and a gitignored `development/netbox/netbox.local.env` that named the NetBox project `infrahub-sync-netbox-024` on port 28080. Both projects, the image and the file were removed afterwards.
+- **Proof that nothing else changed:** the containers, states and networks of `infrahub-sync-dev`, `infrahub-sync-netbox` and `infrahub-sync-021`, and the lists of Docker networks and volumes, were identical before and after the run.
+- **Not run:** the apply in scenario 1, because AGENTS.md requires human approval for an apply; and the web interface steps of the tutorial.
 - The appendix has the details from chunk 2.
 
 ## 4. Local-pass evidence
@@ -53,7 +54,12 @@ All runs are on macOS with Python 3.11.8 through `uv run`, from the worktree. Th
 | Python 3.10 legs | unit | `uv run invoke tests.check-310` | about 2026-11-18T16:58Z, before `b95f236b` | `.dev/check-310-venv` | `check-310 passed all three Python 3.10 legs` (6645 passed, 101 skipped) |
 | `demo prepare` from the host, four runs: first address; another reason; `http://netbox:8080`; first address again | e2e, manual | `uv run infrahub-sync demo prepare --netbox-url … --infrahub-url http://infrahub-server:8000 --infrahub-address http://127.0.0.1:28000 --reason … --json` | 2026-11-19T13:59:10Z to 13:59:38Z | Compose project `infrahub-sync-024`, profiles `sync` and `infrahub`, ports 28000/28001, image `infrahub-sync:demo-024`, removed afterwards | `"schema": "loaded"`, `"configuration": "registered"`, `"version": 1`; then `unchanged` v1; `versioned` v2; `unchanged` v1 |
 | `demo prepare` from the image, no checkout | e2e, manual | `docker run --rm --network infrahub-sync-024_default --entrypoint infrahub-sync infrahub-sync:demo-024 demo prepare --netbox-url https://netbox.example.test --infrahub-url http://infrahub-server:8000 --json` | 2026-11-19T13:59:44Z | same project | `"configuration": "versioned"`, `"schema_files": 16`, `"version": 3` |
-| Quickstart scenarios 1, 2 and 4 (`dev.demo` with NetBox, a re-run of it, a schema conflict) | e2e, manual | [quickstart.md](quickstart.md) | deferred: the NetBox tasks would touch Compose projects that are not ours (§3) | — | — |
+| Quickstart scenario 1: `dev.demo` from no stack and no NetBox, then a branch and a plan | e2e, manual | `time uv run invoke dev.demo`, then `infrahubctl branch create netbox-demo-1` and `uv run infrahub-sync plan --config-id 20261119T1418-52e9ccdf --version 1 --branch netbox-demo-1 --reason "demo"` | 2026-11-19T14:16:08Z to 14:19:07Z | projects `infrahub-sync-024` and `infrahub-sync-netbox-024`, image `infrahub-sync:demo-024` built by the run, Docker layer cache warm | `real 2m29.713s`; `schema: loaded`, `configuration: registered`, version 1; plan `operations: 1687`, `by_action: create=1687`, 20 kinds, `problems: 0` |
+| Quickstart scenario 2: `dev.demo` again | e2e, manual | `time uv run invoke dev.demo` | 2026-11-19T14:19:21Z | same projects | `real 0m7.441s`; `schema: unchanged`, `configuration: unchanged`, version 1 |
+| Quickstart scenario 3: the image on the stack's network, another NetBox address | e2e, manual | `docker run --rm --network infrahub-sync-024_default … infrahub-sync:demo-024 demo prepare --netbox-url https://demo.netbox.dev --infrahub-url http://infrahub-server:8000` | 2026-11-19T14:19:28Z | same projects | `configuration: versioned from-netbox, …, version 2`; no token in the output |
+| Quickstart scenario 4: a schema conflict on a new Infrahub | e2e, manual | load a node `ClusterGeneric` (the destination schema defines that kind as a generic), then `uv run infrahub-sync demo prepare … --reason conflict` | 2026-11-19T14:25:03Z | a new `infrahub-sync-024` stack without NetBox | exit 1; `ClusterGeneric already exist in the schema as a Node`; `configs list` empty |
+| The smoke schema of `dev.preview` next to the destination schema | e2e, manual | `infrahubctl schema load` of `examples/prefect_remote_run/schemas/infra_device.yml`, then `demo prepare` | 2026-11-19T14:22:07Z | a new `infrahub-sync-024` stack without NetBox | `schema: loaded`, `configuration: registered`: no conflict, so the quickstart now uses a conflicting schema |
+| `tests/dev_stack/test_netbox_presence.py::test_ensure_netbox_attaches_only_the_worker_of_the_given_project` (3 cases) and `tests/dev_stack/test_dev_tasks.py::test_a_preset_with_netbox_passes_the_stack_project_to_netbox` | unit | `uv run pytest -q -p no:randomly tests/dev_stack tests/test_netbox_tasks.py tests/test_task_inventory.py` | 2026-11-19T14:10Z | n/a | `392 passed, 24 skipped` |
 
 ## 5. Review findings
 
@@ -82,14 +88,15 @@ Four review agents covered code, error handling, tests, and comments with types.
 - `dev.demo` runs `demo prepare` on the host, because the development stack's source mount hides the bundled assets (critique E1).
 - The review ran before chunk 5, and the orchestrator did chunk 5 (a news fragment and the verification) itself.
 - Simplify review not run. It is advisory, it edits code, and the run was unattended.
-- Live scenarios skipped, on the advisor's ruling (see `overnight-log.md`).
+- Live scenarios first skipped on the advisor's ruling, then run on 2026-11-19 after the fix in `42e5e3f0` made every step use the isolated project (see `overnight-log.md`).
+- The apply in scenario 1 was not run: AGENTS.md requires human approval for an apply.
 - `.yamllint.yml` now ignores `/.dev`. Without that, the Python 3.10 check environment holds a copy of the bundled `package.yml` that fails yamllint.
 - Vale exceptions added for `Kubernetes` and `Styrmin`.
 
 ## 7. Suggested next steps
 
-1. Run quickstart scenarios 1 to 4 on a machine without the `infrahub-sync-dev` and `infrahub-sync-netbox` projects, or after their owner removes them. Record the time for SC-001 and the plan counts.
-2. Check which version the web interface's **Start run** uses after the addresses go A, then B, then A.
+1. Run the apply and the web interface steps of the tutorial once by hand. **Start run** plans the latest version (`frontend/src/features/configurations/ConfigurationPage.tsx`); the tutorial now says how to plan an earlier one.
+2. Time scenario 1 on a machine with an empty Docker cache. The 2 min 30 s here had the base images already pulled.
 3. Open a pull request into `feature/v3-develop` with the `opsmill-dev-pr` skill, then run `/speckit.opsmill.extract`.
 4. Dispatch a pre-release image (for example `3.0.0-rc.1`) as the publishing guide describes. Maintainer action.
 5. Start the Styrmin spec in `styrmin`: an `infrahub-sync` driver that calls `infrahub-sync demo prepare`, and a NetBox driver.

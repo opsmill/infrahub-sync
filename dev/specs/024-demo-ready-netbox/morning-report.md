@@ -7,8 +7,9 @@ is [opsmill-implement-report.md](opsmill-implement-report.md).
 ## 1. Done
 
 - **Way 1, try the demo from a clone (P1):** the `demo` preset and `uv run invoke dev.demo`, which starts
-  a local Infrahub and Sync, then runs `infrahub-sync demo prepare`. Tested against fakes in the unit
-  tier. `dev.demo` itself was not run on this machine (see "Not done").
+  a local Infrahub, Sync and NetBox with the `demo` dataset, then runs `infrahub-sync demo prepare`.
+  Run live on 2026-11-19 on isolated Compose projects: 2 min 30 s with a warm Docker cache, then a
+  plan of 1,687 creates across 20 kinds. A re-run took 7 s and changed nothing.
 - **Way 2a, a colleague's own NetBox and Infrahub (P2):** the command
   `infrahub-sync demo prepare --netbox-url … --infrahub-url …`. It loads the
   `traditional-infrastructure-sot` schema into Infrahub, then registers the NetBox package with both
@@ -19,6 +20,14 @@ is [opsmill-implement-report.md](opsmill-implement-report.md).
     as the data model states;
   - from the image with no checkout, the run loaded the 16 bundled schema files and gave
     `versioned` v3.
+- **Schema conflict:** against an Infrahub that holds a conflicting node, `demo prepare` stopped
+  with exit 1, named the conflict and registered nothing. The smoke schema of `dev.preview` does
+  not conflict, so the quickstart now uses a conflicting schema.
+- **Fix found by the live run:** the NetBox tasks attached the worker of the fixed
+  `infrahub-sync-dev` project, so a stack under another project name changed a stack it did not
+  own. Commit `42e5e3f0` fixes it, with tests.
+- **Web interface:** **Start run** plans the latest version (from the frontend source). The
+  tutorial now says how to plan an earlier version.
 - **Prerequisites of way 2b, a Styrmin demo:** the schema and the package ship inside the wheel and the
   image (ADR 0048, `dev/adr/0048-demo-assets-ship-in-the-wheel.md`), so a Styrmin driver can call
   `infrahub-sync demo prepare` from the published image. The Styrmin drivers themselves are not part
@@ -34,15 +43,10 @@ is [opsmill-implement-report.md](opsmill-implement-report.md).
 
 ## 2. Blocked
 
-1. **May the stopped `infrahub-sync-dev` and `infrahub-sync-netbox` Compose projects be removed?** They
-   were not created by this run. The NetBox tasks attach to the fixed `infrahub-sync-dev` worker
-   (`tasks/netbox.py:472`, `:747`), so `dev.demo` with NetBox cannot run without touching them.
-   Recommended: remove them yourself if they hold nothing you need, then run quickstart scenarios 1, 2
-   and 4 and record the time for SC-001.
-2. **Which channel receives the feedback?** The tutorial asks testers to use "the channel named in the
+1. **Which channel receives the feedback?** The tutorial asks testers to use "the channel named in the
    invitation". Recommended: an internal Slack channel, named in the invitation message, not a public
    GitHub issue, because feedback can name customers.
-3. **Where does the Styrmin work start?** Recommended: a new spec in the `styrmin` repository for an
+2. **Where does the Styrmin work start?** Recommended: a new spec in the `styrmin` repository for an
    `infrahub-sync` driver that runs `infrahub-sync demo prepare` and a NetBox driver. It needs the
    Helm chart from spec 018 and a pre-release image.
 
@@ -55,11 +59,14 @@ is [opsmill-implement-report.md](opsmill-implement-report.md).
    the docs and Python 3.10 checks, and try one live `demo prepare` run on an isolated project if the
    021 and 022 sessions agree. **Next:** both sessions agreed; the live run passed and the stack was
    removed.
+3. **Q:** may I fix the NetBox attach and run `dev.demo` on isolated projects? **A:** yes, with
+   read-only checks first, a before-and-after snapshot of the other projects, and no apply.
+   **Next:** fixed in `42e5e3f0`, ran scenarios 1 to 4; the snapshot matched after teardown.
 
 ## 4. Not done
 
-- `dev.demo` with NetBox, a plan from the demo, and the schema conflict scenario (T016, T022 live
-  parts), because of blocked item 1.
+- The apply in quickstart scenario 1: AGENTS.md requires human approval for an apply, so the plan
+  was created but not applied.
 - The web interface steps in the tutorial were written from the frontend source and not run.
 - The Styrmin drivers: out of scope for this repository.
 - The simplify review: it edits code and the run was unattended.
@@ -72,8 +79,13 @@ is [opsmill-implement-report.md](opsmill-implement-report.md).
   differ from the local one.
 - `main` has no `ci-docker-image.yml`. A pre-release dispatch uses `--ref feature/v3-develop`; a
   dispatch from another non-main branch worked on 2026-10-01, but this branch was not tried.
-- Which version the web interface's **Start run** uses after the addresses go A, B, A is not known.
-  The command returns v1 in that case, but the newest version is v2.
+- After the addresses go A, B, A, the command prints version 1, but **Start run** plans the latest
+  version, 2. The tutorial explains this; a colleague who skips that paragraph plans the wrong
+  NetBox address.
+- The 2 min 30 s of SC-001 had the base images already pulled. A first run on an empty Docker
+  cache takes longer.
+- The `infrahub-sync-dev` containers were removed by someone else since last night; its 8 volumes
+  and one `infrahub-sync-netbox` volume remain. This run did not touch them.
 - Chunk 2 rebuilt the shared `infrahub-sync:dev` image tag.
 - `tests/demo/test_wheel_assets.py` builds a wheel in the unit tier and may download build
   dependencies.

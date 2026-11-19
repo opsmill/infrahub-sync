@@ -1,0 +1,1 @@
+The local NetBox tasks now connect only the worker of the development stack that starts them. A stack started under another Compose project name no longer changes the networks of the default `infrahub-sync-dev` stack.

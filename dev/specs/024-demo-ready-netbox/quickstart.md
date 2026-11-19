@@ -53,8 +53,25 @@ Expected: `configuration: versioned`, version 2. No token in the output.
 
 ## Scenario 4: schema conflict (US2 scenario 4)
 
-Against an Infrahub that holds the smoke schema (`dev.preview`), run `demo prepare`. Expected: exit 1,
-the conflict named, no configuration registered.
+Against a new Infrahub that holds a node whose kind the destination schema defines as a generic,
+run `demo prepare`. For example, load this schema first:
+
+```yaml
+---
+version: "1.0"
+nodes:
+  - name: Generic
+    namespace: Cluster
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+```
+
+Expected: exit 1, the conflict named, no configuration registered.
+
+The smoke schema of `dev.preview` does not conflict: on 2026-11-19, `demo prepare` loaded the
+destination schema next to it and registered the configuration.
 
 ## Scenario 5: pre-release image (US3)
 

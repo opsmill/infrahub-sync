@@ -87,3 +87,24 @@ Run rules (from the maintainer, 2026-11-18 evening):
 - Final checks on the final tree (2026-11-19): `docs.generate` changed no file; `docs.docusaurus`
   built the site; `tests.check-310` passed all three legs (6648 passed, 101 skipped, 2 xfailed).
 - Morning report written: `morning-report.md`.
+
+## Follow-up on 2026-11-19 ("finish the missing steps where you do not need me")
+
+3. **Q:** may I change the NetBox tasks so that they attach the worker of the stack's own project,
+   then run `dev.demo` on isolated projects? **A:** yes: pass the project down instead of resolving
+   it in `tasks/netbox.py`; check every setting read-only first; snapshot the other projects and
+   compare after teardown; tell sessions 021 and 022 about the NetBox port; do not apply.
+   **Next:** commit `42e5e3f0`. Session 021 agreed; session 022 is no longer running. The
+   `infrahub-sync-dev` containers had been removed by someone else; their volumes remain and were
+   not touched.
+
+- Scenario 1: `dev.demo` in 2 min 30 s (14:16:08Z to 14:18:38Z, Docker cache warm), then a plan of
+  1,687 creates across 20 kinds by 14:19:07Z. No apply (AGENTS.md requires human approval).
+- Scenario 2: re-run in 7 s, `unchanged` and `unchanged`.
+- Scenario 3: from the image, `versioned` v2, no token in the output.
+- The smoke schema does not conflict with the destination schema; scenario 4 now uses a node
+  `ClusterGeneric`, and `demo prepare` stopped with exit 1, named the conflict, and registered nothing.
+- **Start run** in the web interface plans the latest version (frontend source); the tutorial now
+  says how to plan an earlier version.
+- Teardown: both projects, the image and `netbox.local.env` removed; the other projects' containers,
+  networks and the volume list are identical to the snapshot.
