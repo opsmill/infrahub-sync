@@ -1,0 +1,19 @@
+frontend/src/features/configurations/PackageReview.tsx
+  s_eefe1fec4652ae::t_552ba0dafc2079 241-250,269-275
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2f08a5bcc9a2e6c173d8409ddb04006c8b9285f",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
