@@ -1,7 +1,7 @@
 """HTTP-only adapter for the shared configuration application service."""
 
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from functools import wraps
 from hashlib import sha256
@@ -26,6 +26,7 @@ from infrahub_sync.client.models import (
     RegisteredVersionResource,
     ValidationReportResource,
 )
+from infrahub_sync.configuration import ValidationFinding
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.canonical import canonical_json_bytes
@@ -335,21 +336,12 @@ class ConfigurationRoutes:
         007 FR-034 to FR-036). Without it, validation judges declared content only, as before.
         """
 
-        options: dict[str, Any] = {}
-        if branch is not None:
-            options = {
-                "destination_schema": DestinationSchemaOptions(branch=branch),
-                "worker_liveness_seconds": self._worker_liveness_seconds,
-            }
         report = self._call(
             self._service.validate,
             config_id=config_id,
             registry_version=registry_version,
             secrets=self._secrets,
-            **options,
-        )
-        findings = tuple(
-            configs.redact_finding(finding, self._secrets) for finding in report.findings[offset : offset + limit]
+            **self._destination_options(branch),
         )
         return ValidationReportResource.model_validate(
             {
@@ -357,11 +349,7 @@ class ConfigurationRoutes:
                 "registry_version": report.registry_version,
                 "package_checksum": report.package_checksum,
                 "destination_schema_fingerprint": report.destination_schema_fingerprint,
-                "findings": tuple(finding.model_dump(mode="json") for finding in findings),
-                "offset": offset,
-                "limit": limit,
-                "total_findings": len(report.findings),
-                "next_offset": offset + len(findings) if offset + len(findings) < len(report.findings) else None,
+                **self._findings_page(report.findings, offset=offset, limit=limit),
             }
         )
 
@@ -388,15 +376,8 @@ class ConfigurationRoutes:
         content = _document_package(document) if document is not None else cast("dict[str, Any]", package)
         if _is_v2_configuration(content):
             raise ConfigurationAPIError(422, "validation", reason=V2_CONFIGURATION_REASON, proven_pre_effect=True)
-        options: dict[str, Any] = {}
-        if branch is not None:
-            options = {
-                "destination_schema": DestinationSchemaOptions(branch=branch),
-                "worker_liveness_seconds": self._worker_liveness_seconds,
-            }
-        checked = self._call(self._service.check_package, package=content, secrets=self._secrets, **options)
-        findings = tuple(
-            configs.redact_finding(finding, self._secrets) for finding in checked.findings[offset : offset + limit]
+        checked = self._call(
+            self._service.check_package, package=content, secrets=self._secrets, **self._destination_options(branch)
         )
         return PackageCheckResource.model_validate(
             {
@@ -405,13 +386,29 @@ class ConfigurationRoutes:
                 "declared_content": checked.declared_content,
                 "destination_read": checked.destination_read,
                 "destination_schema_fingerprint": checked.destination_schema_fingerprint,
-                "findings": tuple(finding.model_dump(mode="json") for finding in findings),
-                "offset": offset,
-                "limit": limit,
-                "total_findings": len(checked.findings),
-                "next_offset": offset + len(findings) if offset + len(findings) < len(checked.findings) else None,
+                **self._findings_page(checked.findings, offset=offset, limit=limit),
             }
         )
+
+    def _destination_options(self, branch: str | None) -> dict[str, Any]:
+        """Return the service arguments of the destination checks for ``branch``, or none without one."""
+        if branch is None:
+            return {}
+        return {
+            "destination_schema": DestinationSchemaOptions(branch=branch),
+            "worker_liveness_seconds": self._worker_liveness_seconds,
+        }
+
+    def _findings_page(self, findings: Sequence[ValidationFinding], *, offset: int, limit: int) -> dict[str, Any]:
+        """Return one page of ordered findings, redacted with this server's secrets, and its paging fields."""
+        page = tuple(configs.redact_finding(finding, self._secrets) for finding in findings[offset : offset + limit])
+        return {
+            "findings": tuple(finding.model_dump(mode="json") for finding in page),
+            "offset": offset,
+            "limit": limit,
+            "total_findings": len(findings),
+            "next_offset": offset + len(page) if offset + len(page) < len(findings) else None,
+        }
 
     @_provider_error_boundary
     def mutate(

@@ -30,6 +30,7 @@ import {
   declaredContent,
   defaultBranch,
   isAbort,
+  isAdministratorRefusal,
   isNoAnswer,
   MESSAGES,
   moreFindingsText,
@@ -322,7 +323,7 @@ export function PackageReview({
           registered.
         </p>
       </Notice>
-    ) : refusalMessage(create.error) === `${MESSAGES.administratorRequired}.` ? (
+    ) : isAdministratorRefusal(create.error) ? (
       <Notice tone="danger" role="alert" title={`${MESSAGES.administratorRequired}.`} />
     ) : (
       <MutationError error={create.error} />
@@ -470,7 +471,9 @@ export function PackageReview({
               id="review-branch"
               className={cn(INPUT, "font-mono")}
               value={branch}
-              readOnly={sent !== undefined || checkedBranch === null}
+              // Register reads the branch's check and the reason when it is pressed, so neither
+              // changes while the configuration is read again.
+              readOnly={sent !== undefined || checkedBranch === null || preparing}
               onChange={(e) => setBranch(e.target.value)}
               autoComplete="off"
               autoCapitalize="none"
@@ -496,7 +499,7 @@ export function PackageReview({
             value={reason}
             onChange={setReason}
             maxLength={REASON_MAX_LENGTH}
-            readOnly={sent !== undefined}
+            readOnly={sent !== undefined || preparing}
           />
         </>
       )}

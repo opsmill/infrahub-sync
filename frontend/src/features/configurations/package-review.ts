@@ -114,9 +114,13 @@ export function refusalMessage(error: unknown): string | undefined {
   if (reason === "invalid_package") return MESSAGES.invalidPackage;
   if (reason === "v2_configuration") return MESSAGES.v2Configuration;
   if (status === 413) return MESSAGES.tooLarge;
-  if (status === 403) return `${MESSAGES.administratorRequired}.`;
+  if (isAdministratorRefusal(error)) return `${MESSAGES.administratorRequired}.`;
   return message.charAt(0).toUpperCase() + message.slice(1);
 }
+
+/** True when the Sync API refused the request because the token is not an administrator's. */
+export const isAdministratorRefusal = (error: unknown): boolean =>
+  isEnvelope(error) && error.error.status === 403;
 
 /** True when a write got no answer, so the same request with the same key can be sent again. */
 export function isNoAnswer(error: unknown): boolean {
