@@ -5,13 +5,15 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import wraps
 from hashlib import sha256
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
+import yaml
 from fastapi import APIRouter, Depends, Query
 from fastapi import Path as APIPath
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 
 from infrahub_sync.client.models import (
     ConfigurationPage,
@@ -19,6 +21,7 @@ from infrahub_sync.client.models import (
     ConfigurationVersionPage,
     ConfigurationVersionResource,
     ConfigurationVersionSummaryResource,
+    PackageCheckResource,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ValidationReportResource,
@@ -60,6 +63,48 @@ from .service import REASON_REFUSED_MESSAGE, ServiceAPIError, is_free_text
 CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # Most findings one validation-report page returns, and the default page size.
 _MAX_VALIDATION_FINDINGS_PAGE = 256
+
+
+# The refusal of a document that is not a mapping with string keys (`POST /configs/validate`).
+INVALID_PACKAGE_REASON = "invalid_package"
+# The refusal of a v2 `config.yml` sent where a configuration package is expected.
+V2_CONFIGURATION_REASON = "v2_configuration"
+V2_CONFIGURATION_MESSAGE = (
+    "this is a v2 configuration, not a configuration package; "
+    "convert it with `infrahub-sync configs convert`, then check the package it writes"
+)
+
+
+class PackageCheckRequest(BaseModel):
+    """The body of `POST /configs/validate`: a package as JSON, or the text of a package file.
+
+    Exactly one field is set. The route checks that rule itself, so that breaking it is the
+    `request` refusal of the contract rather than a schema refusal, and so that it is checked
+    only after the caller is known to be an administrator.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
+    package: dict[str, Any] | None = None
+    document: str | None = None
+
+
+def _is_v2_configuration(package: Mapping[str, Any]) -> bool:
+    """Return whether a mapping is a v2 `config.yml` rather than a configuration package."""
+    return "configuration" not in package and "source" in package and "destination" in package
+
+
+def _document_package(document: str) -> dict[str, Any]:
+    """Parse a package file's text as the CLI does, refusing anything but a non-empty mapping.
+
+    The refusal is fixed text: the parser's error would repeat the document.
+    """
+    try:
+        value = yaml.safe_load(document)
+    except (yaml.YAMLError, ValueError, RecursionError):
+        raise ConfigurationAPIError(400, "request", reason=INVALID_PACKAGE_REASON, proven_pre_effect=True) from None
+    if type(value) is not dict or not value or not all(type(key) is str for key in value):  # pylint: disable=unidiomatic-typecheck
+        raise ConfigurationAPIError(400, "request", reason=INVALID_PACKAGE_REASON, proven_pre_effect=True)
+    return cast("dict[str, Any]", value)
 
 
 class ConfigurationAPIError(Exception):
@@ -300,6 +345,54 @@ class ConfigurationRoutes:
             }
         )
 
+    def check_package(
+        self,
+        *,
+        package: dict[str, Any] | None,
+        document: str | None,
+        offset: int = 0,
+        limit: int = _MAX_VALIDATION_FINDINGS_PAGE,
+        branch: str | None = None,
+    ) -> PackageCheckResource:
+        """Validate a package that is not registered and return the requested findings page.
+
+        Exactly one of ``package`` and ``document`` is set; ``document`` is the text of a
+        package file, YAML or JSON. Every refusal the registration gives for the same package
+        is given here. With ``branch``, the destination checks run as for :meth:`validate`, and
+        ``destination_read`` says whether the destination was read. Findings are redacted
+        with this server's secrets, as for :meth:`validate`. ``declared_content`` is returned
+        as the caller sent it, defaults filled, because its checksum is ``package_checksum``.
+        """
+        if (package is None) == (document is None):
+            raise ConfigurationAPIError(400, "request", proven_pre_effect=True)
+        content = _document_package(document) if document is not None else cast("dict[str, Any]", package)
+        if _is_v2_configuration(content):
+            raise ConfigurationAPIError(422, "validation", reason=V2_CONFIGURATION_REASON, proven_pre_effect=True)
+        options: dict[str, Any] = {}
+        if branch is not None:
+            options = {
+                "destination_schema": DestinationSchemaOptions(branch=branch),
+                "worker_liveness_seconds": self._worker_liveness_seconds,
+            }
+        checked = self._call(self._service.check_package, package=content, secrets=self._secrets, **options)
+        findings = tuple(
+            configs.redact_finding(finding, self._secrets) for finding in checked.findings[offset : offset + limit]
+        )
+        return PackageCheckResource.model_validate(
+            {
+                "package_checksum": checked.package_checksum,
+                "name": checked.name,
+                "declared_content": checked.declared_content,
+                "destination_read": checked.destination_read,
+                "destination_schema_fingerprint": checked.destination_schema_fingerprint,
+                "findings": tuple(finding.model_dump(mode="json") for finding in findings),
+                "offset": offset,
+                "limit": limit,
+                "total_findings": len(checked.findings),
+                "next_offset": offset + len(findings) if offset + len(findings) < len(checked.findings) else None,
+            }
+        )
+
     @_provider_error_boundary
     def mutate(
         self,
@@ -467,7 +560,7 @@ def _configuration_of(receipt: MutationReceipt, response: Mapping[str, Any] | No
 
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
-    """Create the seven authenticated configuration resources."""
+    """Create the eight authenticated configuration resources."""
     router = APIRouter()
     config_id_parameter = APIPath(pattern=CONFIG_ID_PATTERN)
     registry_version_parameter = APIPath()
@@ -495,6 +588,36 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
             reason=body.reason,
         )
         return JSONResponse(status_code=status, content=content)
+
+    def check_administrator(principal: Annotated[Principal, Depends(authenticate)]) -> Principal:
+        """Refuse a package check by a caller that is not an administrator.
+
+        A dependency, so the refusal comes before FastAPI validates the body and before any
+        parsing or destination read: with a branch, the check connects to the address the
+        package declares with the destination credential this server holds (critique E1).
+        """
+        if not principal.administrator:
+            routes.audit_refusal(principal.actor, "check-config-package", None)
+            raise ServiceAPIError(403, "forbidden", "administrator access is required")
+        return principal
+
+    # Registered before the `/configs/{config_id}` routes: `validate` is a valid configuration ID.
+    @router.post("/configs/validate")
+    def check_package(
+        body: PackageCheckRequest,
+        _principal: Annotated[Principal, Depends(check_administrator)],
+        offset: Annotated[str, page_offset] = "0",
+        limit: Annotated[str, page_limit] = str(_MAX_VALIDATION_FINDINGS_PAGE),
+        branch: Annotated[str | None, branch_parameter] = None,
+    ) -> PackageCheckResource:
+        """Validate a package without registering it; an administrator token is required."""
+        return routes.check_package(
+            package=body.package,
+            document=body.document,
+            offset=parse_bounded_integer(offset, minimum=0, maximum=MAX_REGISTRY_VERSION),
+            limit=parse_bounded_integer(limit, minimum=1, maximum=_MAX_VALIDATION_FINDINGS_PAGE),
+            branch=parse_branch(branch),
+        )
 
     @router.post("/configs/{config_id}/versions", status_code=201)
     def create_version(

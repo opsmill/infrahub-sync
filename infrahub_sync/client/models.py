@@ -1357,6 +1357,29 @@ class CreatedTokenResource(TokenResource):
     __str__ = __repr__
 
 
+class PackageCheckResource(_ResourceModel):
+    """Return the check of a package that is not registered, with one page of its findings.
+
+    ``package_checksum`` and ``declared_content`` are what registering the package would store.
+    ``destination_read`` is ``not_requested`` without a branch, ``read`` when the destination
+    schema was read, or the reason the read failed.
+    """
+
+    # Keys and values of the declared content are returned exactly, so registering the
+    # returned content gives the returned checksum.
+    model_config = ConfigDict(extra="allow", frozen=True, str_strip_whitespace=False)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    name: str | None = None
+    declared_content: dict[str, Any]
+    destination_read: str = Field(pattern=r"^[a-z][a-z_]*$", max_length=64)
+    destination_schema_fingerprint: str | None = None
+    findings: tuple[ValidationFindingResource, ...]
+    offset: int
+    limit: int
+    total_findings: int
+    next_offset: int | None
+
+
 class ErrorDetail(_ResourceModel):
     """Parse the public fields in a general API error."""
 

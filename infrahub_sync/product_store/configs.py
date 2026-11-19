@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # the service operations, their refusal vocabulary and the redaction of their output
 """The shared ``configs`` application service.
 
 This module owns validation invocation, finding ordering, store access, and record projection.
@@ -39,6 +40,7 @@ from infrahub_sync.configuration import (
     collect_findings,
     parse_configuration_package,
     sort_findings,
+    validate_package_credentials,
 )
 from infrahub_sync.configuration.models import (
     _MAX_FINDING_TEXT_LENGTH,
@@ -962,4 +964,65 @@ def validate(
         package_checksum=stored.package_checksum,
         findings=checks.findings,
         destination_schema_fingerprint=checks.schema_fingerprint,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PackageCheck:
+    """Every declared defect in one package that is not registered, in contract order.
+
+    ``package_checksum`` and ``declared_content`` are what the registration of the same
+    package would store, so the package that is checked is the package that is registered.
+    ``name`` is the configuration name the package declares, or ``None``.
+    ``destination_read`` is ``"not_requested"`` without a destination schema request,
+    ``"read"`` when the destination was read, or the reason the read failed.
+    """
+
+    package_checksum: str
+    name: str | None
+    declared_content: dict[str, Any]
+    findings: tuple[ValidationFinding, ...]
+    destination_schema_fingerprint: str | None
+    destination_read: str
+
+
+@_service_boundary
+def check_package(
+    *,
+    package: Mapping[str, Any],
+    projection: ProductProjection,
+    destination_schema: DestinationSchemaOptions | None = None,
+    secrets: Sequence[str] = (),
+    worker_liveness_seconds: float = DEFAULT_WORKER_LIVENESS_SECONDS,
+) -> PackageCheck:
+    """Validate a package without registering it, with the checks of :func:`validate`.
+
+    The package first passes the checks the registration runs before it stores anything, and
+    raises the same refusal: a store key, a structural error or a credential error. Then it
+    goes through the checks a registered version goes through, so the findings equal those of
+    validating the version the registration would create (spec 025 FR-002). Nothing is
+    stored. ``destination_schema``, ``secrets`` and ``worker_liveness_seconds`` mean what they
+    mean for :func:`validate`.
+    """
+    if destination_schema is not None:
+        _require_argument_type(destination_schema, name="destination_schema", expected=DestinationSchemaOptions)
+    parsed = _parse(package)
+    try:
+        validate_package_credentials(parsed)
+    except CredentialConfigurationError as exc:
+        raise _validation_refusal(exc, parsed) from None
+    checks = _check_parsed_package(
+        parsed,
+        destination_schema=destination_schema,
+        secrets=secrets,
+        projection=projection,
+        worker_liveness_seconds=worker_liveness_seconds,
+    )
+    return PackageCheck(
+        package_checksum=parsed.checksum(),
+        name=parsed.configuration.name or None,
+        declared_content=parsed.declared_content(),
+        findings=checks.findings,
+        destination_schema_fingerprint=checks.schema_fingerprint,
+        destination_read=checks.destination_read,
     )
