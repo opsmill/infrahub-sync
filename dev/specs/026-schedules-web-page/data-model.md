@@ -134,7 +134,7 @@ so the helper never rewrites an expression the person typed.
 
 | Value | Source | Shown as |
 | --- | --- | --- |
-| `starts` | `GET /schedules/next-starts` | Each time in the schedule's time zone with its offset (for example "Sun 29 Mar 2026, 03:00 CEST (+02:00)"), and the viewer's local time when the zones differ. |
+| `starts` | `POST /schedules/next-starts` | Each time in the schedule's time zone with its offset (for example "Sun 29 Mar 2026, 03:00 CEST (+02:00)"), and the viewer's local time when the zones differ. |
 | fewer than 5 starts | same | "No further start in the next 5 years." after the starts listed. |
 | `schedule-cron-invalid`, `schedule-timezone-invalid` | same | The Sync API message under the cron expression or the time zone. |
 | no answer | same | "The preview is not available. The Sync API checks the expression when you save." |

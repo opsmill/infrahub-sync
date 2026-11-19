@@ -45,7 +45,7 @@ Empty states:
 | `POST /schedules/{schedule_id}/change` | Change dialog. Sends only the fields that changed. |
 | `POST /schedules/{schedule_id}/delete` | Delete dialog, after confirmation. |
 | `POST /schedules/{schedule_id}/take-over` | Take-over dialog, after confirmation. Administrators only. |
-| `GET /schedules/next-starts?cron=…&timezone=…&count=5` | For an active schedule, its next five starts. |
+| `POST /schedules/next-starts` (`cron`, `timezone`, `count: 5`) | For an active schedule, its next five starts. |
 | `GET /events?related=schedule:<schedule_id>&order=desc&…` | The "History" section: first page on load and every 10 seconds (without `until`), older pages on demand (with `until`). See http-api.md. |
 
 Every `POST` sends `Idempotency-Key`. The key is kept while the dialog is open and its fields are
@@ -78,7 +78,7 @@ configuration and its latest version chosen).
 | --- | --- |
 | `GET /configs` | When no configuration is chosen, for the configuration choice. |
 | `GET /configs/{config_id}/versions` | When a configuration is chosen, for the version choice. |
-| `GET /schedules/next-starts?cron=…&timezone=…&count=5` | 400 ms after the cron expression or the time zone last changed, when the expression has five fields. Only the answer to the latest request is shown. |
+| `POST /schedules/next-starts` (`cron`, `timezone`, `count: 5`) | 400 ms after the cron expression or the time zone last changed, when the expression has five fields. Only the answer to the latest request is shown. |
 | `POST /schedules` | On save. A `201` answer opens `/schedules/$scheduleId` of the returned schedule. |
 | `GET /schedules?config_id=…&limit=1` | After a `503 orchestration-unavailable` refusal, whose body holds no schedule: finds the stored schedule and opens its page, which shows the task-manager warning. |
 

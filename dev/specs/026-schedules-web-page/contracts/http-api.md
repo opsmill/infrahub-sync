@@ -4,11 +4,16 @@ Paths are given without the `/api` prefix, as in `docs/docs/reference/sync-http-
 additions need a bearer token, store nothing and write no event. Errors use the existing error
 body.
 
-## `GET /schedules/next-starts` (FR-031)
+## `POST /schedules/next-starts` (FR-031)
 
 Returns the next start times of a cron expression in a time zone, as the scheduler computes them.
+It is a `POST` with a JSON body, not a `GET` with query values, because uvicorn's access log writes
+the path and its query string (for example `"GET /api/configs/… HTTP/1.1" 200`). A credential
+typed into the cron field by mistake would reach the log before the route refuses it, which spec
+021 FR-025 forbids. Like `POST /configs/{config_id}/versions/{registry_version}/validate`, it
+stores nothing and takes no `Idempotency-Key`.
 
-| Query | Required | Meaning |
+| Body field | Required | Meaning |
 | --- | --- | --- |
 | `cron` | yes | A cron expression with five fields. |
 | `timezone` | no, default `UTC` | A time zone name. |
@@ -40,13 +45,10 @@ Refusals:
 | --- | --- | --- |
 | 422 | `schedule-cron-invalid` | `schedule_cadence` raises `InvalidCadenceError` with the field `cron`. Same message as `POST /schedules`. |
 | 422 | `schedule-timezone-invalid` | `schedule_cadence` raises `InvalidCadenceError` with the field `timezone`. Same message as `POST /schedules`. |
-| 422 | `request-invalid` | `cron` is absent, or `count` is not an integer from 1 to 20. |
+| 422 | `request-invalid` | `cron` is absent, or `count` is not an integer from 1 to 20 (the request model's validation). |
 
 - No refusal of this route records an event. A refusal of `POST /schedules` records
   `infrahub_sync.schedule.refused`; this route is called while a person types, so it must not.
-- The route is declared before `GET /schedules/{schedule_id}` in
-  `infrahub_sync/service/schedule_routes.py`, so `next-starts` is never read as a schedule
-  identifier.
 - The values are checked for a known credential like every other request field; a credential is
   refused with `secret-parameter-refused` and is not repeated in the message.
 

@@ -156,7 +156,7 @@ Rejected: a second cron reading that can differ from the Sync API's.
 
 ## R12. Cadence preview route
 
-**Decision**: Add `GET /schedules/next-starts` (contracts/http-api.md) to
+**Decision**: Add `POST /schedules/next-starts` (contracts/http-api.md) to
 `infrahub_sync/service/schedule_routes.py`, with a method `next_starts(cron, timezone, count)` on
 `ScheduleService` in `infrahub_sync/service/schedules.py` that calls
 `schedule_cadence.starts_between(cron, timezone, now, now + 5 years, count)` with the service clock.
@@ -168,7 +168,10 @@ Query keyed by `cron` and `timezone`).
 
 **Rationale**: `schedule_cadence` uses Prefect's `CronSchedule`, the class Prefect's scheduler
 uses, including at daylight-saving changes. Any computation in the browser can disagree with the
-starts that happen. A `GET` needs no retry key: it stores nothing.
+starts that happen. The values travel in a JSON body, not in the query string, because uvicorn's
+access log writes the query string; a credential typed into the field by mistake must not reach a
+log (spec 021 FR-025). It takes no retry key because it stores nothing, like
+`POST /configs/{config_id}/versions/{registry_version}/validate`.
 
 **Alternatives considered**:
 
@@ -241,7 +244,7 @@ dependency. Browser tests would need a running Sync API and are not justified fo
 - `docs/docs/orchestration.mdx`: a section "Manage schedules in the web interface" after
   "Change, pause, resume, delete and take over a schedule", and a web interface column or line in
   "Check a schedule". Describe the cron helper and the history (FR-024).
-- `docs/docs/reference/sync-http-api.mdx`: the route `GET /schedules/next-starts` and the `order`
+- `docs/docs/reference/sync-http-api.mdx`: the route `POST /schedules/next-starts` and the `order`
   parameter in "List events" (`:806`).
 - `frontend/README.md:86-102`: add the schedules pages and the routes they call to the table of
   pages.

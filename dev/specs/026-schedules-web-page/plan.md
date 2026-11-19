@@ -12,7 +12,7 @@ starts and its event history, dialogs to create, change, pause, resume, delete a
 schedule with a cron helper and a preview of the next start times, a schedule filter and a
 "Scheduled" mark on runs, and a schedule line on the configuration page.
 
-The Sync API gets two read-only additions: `GET /schedules/next-starts`, which computes start
+The Sync API gets two read-only additions: `POST /schedules/next-starts`, which computes start
 times with the scheduler's own code (`schedule_cadence`), and an `order` parameter on
 `GET /events` for a newest-first history ([research R12, R13](research.md)). The pages reuse the
 runs pages' routing, polling, paging, retry keys and refusal display. The change form builds its
@@ -65,11 +65,11 @@ README and one CI step.
 | Principle | Check | Result |
 | --- | --- | --- |
 | I. Read-only and dry-run by default | The pages read by default. Every write is a button the person presses, with a confirmation for delete and take-over. Both API additions are read-only and store nothing. | Pass |
-| II. Sync idempotency and safety | Every `POST` sends an `Idempotency-Key` that stays the same across a retry (R4). The new route is a `GET`. | Pass |
+| II. Sync idempotency and safety | Every `POST` that writes sends an `Idempotency-Key` that stays the same across a retry (R4). The new route stores nothing and, like config validation, takes no key. | Pass |
 | III. Adapter symmetry and pattern consistency | No adapter change. The pages copy the runs pages' patterns (R2 to R5). The new route follows `schedule_routes.py`; `order` follows the existing query parsing of `GET /events`. | Pass |
 | IV. Type safety and explicit contracts | Requests and answers use the generated OpenAPI types, regenerated for the two additions. The new route has a response model. Unknown states, reasons and event types are shown as returned, not cast. | Pass |
 | V. Test discipline | pytest for the route and the order, including a daylight-saving case and "no event on refusal"; Vitest for the pure rules (R9); quickstart scenarios for the pages. | Pass |
-| VI. Security, secrets and input boundaries | The preview checks its values for a known credential like every request field. A `secret-parameter-refused` refusal is shown without the field value (R5). The Sync API enforces permissions; the page only hides what it would refuse. | Pass |
+| VI. Security, secrets and input boundaries | The preview takes its values in a body, so they never reach the access log, and checks its values for a known credential like every request field. A `secret-parameter-refused` refusal is shown without the field value (R5). The Sync API enforces permissions; the page only hides what it would refuse. | Pass |
 | VII. Simplicity and maintainability | No new runtime dependency; one development dependency (Vitest). No cron parser in the browser (R7, R12). | Pass |
 
 Re-check after Phase 1: the design adds one read-only route and one query parameter, no storage
@@ -100,7 +100,7 @@ dev/specs/026-schedules-web-page/
 ```text
 infrahub_sync/
 ├── service/
-│   ├── schedule_routes.py            # + GET /schedules/next-starts, before /schedules/{schedule_id}
+│   ├── schedule_routes.py            # + POST /schedules/next-starts (no retry key, as config validate)
 │   ├── schedules.py                  # + ScheduleService.next_starts (credential check of
 │   │                                 #   _refuse_secret_values, without recording an event)
 │   ├── app.py                        # + `order` on GET /events
