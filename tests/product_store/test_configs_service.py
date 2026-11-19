@@ -1786,14 +1786,15 @@ def test_check_package_reports_the_findings_validate_reports_after_registration(
         assert any(finding.code == "destination-schema-mismatch" for finding in checked.findings)
 
 
+@pytest.mark.parametrize("reason", ["unreachable", "rejected"])
 def test_check_package_reports_a_failed_destination_read_by_its_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str
 ) -> None:
     """A destination that cannot be read is a value of `destination_read`, not a refusal."""
 
     def accessor(_package: object, _branch: str) -> NoReturn:
         msg = "read failed"
-        raise DestinationSchemaReadError(msg, reason="unreachable")
+        raise DestinationSchemaReadError(msg, reason=reason)
 
     table = dict(BUILTIN_ADAPTER_CAPABILITIES)
     table["infrahub"] = replace(
@@ -1805,7 +1806,7 @@ def test_check_package_reports_a_failed_destination_read_by_its_reason(
         package=package_data(), projection=_store(tmp_path), destination_schema=DestinationSchemaOptions(branch="main")
     )
 
-    assert checked.destination_read == "unreachable"
+    assert checked.destination_read == reason
     assert checked.destination_schema_fingerprint is None
     assert "destination-schema-read-failed" in [finding.code for finding in checked.findings]
 

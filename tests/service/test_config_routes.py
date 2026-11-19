@@ -2032,6 +2032,7 @@ _READ_FAILURE_REASONS = (
     "unauthorized",
     "forbidden",
     "nobranch",
+    "rejected",
     "unconfigured",
     "credentials",
 )
