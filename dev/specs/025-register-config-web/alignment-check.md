@@ -16,7 +16,7 @@ the code or tighten security.
 
 | Severity | Category | Brief reference | Spec reference | Description |
 |---|---|---|---|---|
-| Minor | changed | FR-006: "list findings of lower severity" | FR-011, Key Entities | Every validation finding has the severity `error` (`validation.py`, line 169). "Valid" therefore means "no findings", and there is nothing of lower severity to list. |
+| Minor | changed | FR-006: "list findings of lower severity" | FR-011, Key Entities | Every validation finding has the severity `error` (`validation.py`, line 169). "Valid" therefore means "no findings", and there is nothing of lower severity to list. Corrected on 2026-11-19: findings can also have the severity `warning`, so the spec now follows the brief (decision D-10, research R4). |
 | Minor | added | (none) | FR-005, User Story 1 scenario 6 | The critique (E1) found that validating a package the caller sends would send the service's destination token to an address the caller chooses. The new route requires an administrator. The brief's edge case 1 already limits the web interface to administrators, so the operator notices no difference. |
 | Minor | added | Open question 2: "one spec or two?" | Decision D-9, User Story 1 | Not answered in the grilling session. The maintainer confirmed on 2026-11-19: one specification, delivered in two pull requests, User Story 1 first. |
 | Minor | added | "The CLI could also use the new route" (recommendation, not a requirement) | FR-006 | `infrahub-sync configs check` is a requirement. |
