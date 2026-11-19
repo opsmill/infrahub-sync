@@ -1,0 +1,34 @@
+tests/dev_stack/test_netbox_presence.py
+  s_531f0e8d1dd35e::t_ba8aef0b69ca5b 100-120,122,124-128
+  s_531f0e8d1dd35e::t_ba0c975be224c2 121,123
+tests/test_netbox_tasks.py
+  s_531f0e8d1dd35e::t_ba0c975be224c2 41
+tasks/netbox.py
+  s_531f0e8d1dd35e::t_e471a4121fdf4c 470-471,480,510,519-522
+  s_531f0e8d1dd35e::t_9192d8dbe8cdb5 472
+  s_531f0e8d1dd35e::t_3e5869abdcbadb 483,527,531,545
+tasks/dev.py
+  s_531f0e8d1dd35e::t_e471a4121fdf4c 874
+tests/dev_stack/test_netbox_network.py
+  s_531f0e8d1dd35e::t_ba0c975be224c2 191-195
+tests/dev_stack/test_dev_tasks.py
+  s_531f0e8d1dd35e::t_4fbd94b68ac9b3 13,978
+  s_531f0e8d1dd35e::t_82466c17245035 974-976
+  s_531f0e8d1dd35e::t_f752e5c4a94b30 967-973,977,979-980
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "42e5e3f0f96ff58b87470208d5e22d06c5ccb6d4",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
