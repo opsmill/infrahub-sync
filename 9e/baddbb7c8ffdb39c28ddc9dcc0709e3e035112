@@ -1,0 +1,31 @@
+docs/docs/tutorials/try-the-netbox-demo.mdx
+  s_531f0e8d1dd35e::t_fd0cce905819fa 8-9
+  s_531f0e8d1dd35e::t_c2a9039542393a 6-7
+  s_531f0e8d1dd35e::t_dab7c52de3dcc1 2-3,11,13-18,20-25,33-38,69-70,100-165,233-236,238-242,253-254,256,261
+docs/docs/development-stack.mdx
+  s_531f0e8d1dd35e::t_4da34806c67106 439-441
+docs/docs/quickstart-compose.mdx
+  s_531f0e8d1dd35e::t_34573c7b8fa1db 155-157
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_531f0e8d1dd35e::t_bfdbeb37a70c65 14-16
+docs/sidebars.ts
+  s_531f0e8d1dd35e::t_93d6764a9223d4 22
+examples/netbox_to_infrahub/README.md
+  s_531f0e8d1dd35e::t_2f47e7e645758a 15-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9ebaddbb7c8ffdb39c28ddc9dcc0709e3e035112",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
