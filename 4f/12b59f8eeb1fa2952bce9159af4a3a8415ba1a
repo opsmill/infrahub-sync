@@ -1,0 +1,37 @@
+dev/specs/025-register-config-web/spec.md
+  s_eefe1fec4652ae::t_0b49836e873197 352-354
+  s_eefe1fec4652ae::t_22cf6692fb3053 96-104
+  s_eefe1fec4652ae::t_9e205a011f46f7 305-308
+frontend/src/features/configurations/package-review.ts
+  s_eefe1fec4652ae::t_fc5edde5f41e0e 41-47,52-54,58-59,62-64,68-70
+  s_eefe1fec4652ae::t_95d7527fe91fda 71
+dev/specs/025-register-config-web/research.md
+  s_eefe1fec4652ae::t_22e4e62de5c845 62,65-73
+dev/specs/025-register-config-web/contracts/web-interface.md
+  s_eefe1fec4652ae::t_553c349d5a86a3 35-38
+docs/docs/configuration-package.mdx
+  s_eefe1fec4652ae::t_2b75a58281eeab 221-224
+frontend/src/features/configurations/PackageReview.tsx
+  s_eefe1fec4652ae::t_2e984ff2c6db5b 50
+  s_eefe1fec4652ae::t_f150cabb4a8019 564-566,568-584,595
+  s_eefe1fec4652ae::t_13a68b3ae72dda 604-617
+  s_eefe1fec4652ae::t_1c3ece375670d0 19
+dev/specs/025-register-config-web/alignment-check.md
+  s_eefe1fec4652ae::t_ec394a595a0eac 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f12b59f8eeb1fa2952bce9159af4a3a8415ba1a",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
