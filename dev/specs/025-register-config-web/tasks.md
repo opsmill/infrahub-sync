@@ -15,7 +15,7 @@ with the other `[P]` tasks of its phase (different files, no dependency on an un
 
 ## Phase 1: Setup
 
-- [ ] T001 Install the full development profile in the worktree with `uv sync --extra dev --extra prefect --extra service` and `cd frontend && pnpm install --frozen-lockfile`; confirm `uv run invoke lint` and `uv run invoke tests.tests-unit` pass before any change, and record any failure that exists on `feature/v3-develop` in `dev/specs/025-register-config-web/opsmill-implement-report.md` so it is not attributed to this feature
+- [X] T001 Install the full development profile in the worktree with `uv sync --extra dev --extra prefect --extra service` and `cd frontend && pnpm install --frozen-lockfile`; confirm `uv run invoke lint` and `uv run invoke tests.tests-unit` pass before any change, and record any failure that exists on `feature/v3-develop` in `dev/specs/025-register-config-web/opsmill-implement-report.md` so it is not attributed to this feature
 
 ---
 
