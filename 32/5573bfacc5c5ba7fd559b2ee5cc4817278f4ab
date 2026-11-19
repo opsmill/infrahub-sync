@@ -1,0 +1,65 @@
+frontend/src/api/types.generated.ts
+  s_1f476d0309de10::t_8c59320bdc49bd 321-326,328-329,332,334-339,341-347,350,352-359,361-366,367,370,374-379,381-386,389,404,407,411-416,418-423,424,427,431-436,438-443,444,447,451-456,458-466,469,471-476,884,887,893-895,1022,1025,1027-1028,1031-1033,1212,1376-1416,1776,1779,1789-1790,1795,1802-1803,1806,1812-1813,1816,3225,3232,3233-3234,3240-3246,3248-3285,3296-3314,3316,3326,3328-3330,3332-3333,3335-3338,3340-3377,3388-3406,3408,3414-3415,3417-3427,3429-3466,3477-3495,3497-3498,3500,3502-3504,3506-3512,3514-3551,3562-3580,3582,3589,3591,3593-3595,3597-3603,3605-3642,3653-3671,3673,3679,3681,3683-3685,3687-3693,3695-3732,3743-3761,3763,3769,3771,3773-3775,3777-3783,3785-3822,3833-3851,3853-3854,3858-3860,3945-3946,3958-3964,3966-4003,4005-4023
+docs/docs/kubernetes-deployment.mdx
+  s_29b17f91da9f30::t_91327e38b614e4 346
+dev/specs/021-scheduled-runs/spec.md
+  s_29b17f91da9f30::t_15046e512419c5 69
+dev/specs/archive/README.md
+  s_29b17f91da9f30::t_fc5d8c68cf56d2 43-48
+infrahub_sync/product_store/store.py
+  s_29b17f91da9f30::t_aede89d5fab28b 911,913
+  s_29b17f91da9f30::t_98827636157bc2 3340,3342,3348
+  s_29b17f91da9f30::t_9a0aecee46e66c 4488,4490,4497,4499,4503
+  s_29b17f91da9f30::t_a7b89d19587c1b 3519,3521
+  s_29b17f91da9f30::t_9a668f009ad61d 948,3476,3587
+dev/adr/0037-an-approval-is-a-record-on-the-run.md
+  s_29b17f91da9f30::t_7644a5e4ec94d1 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "325573bfacc5c5ba7fd559b2ee5cc4817278f4ab",
+  "prompts": {},
+  "sessions": {
+    "s_1f476d0309de10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9f84489118728054",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_51a1ff4fba6f16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab857d434c5733489",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_c8f61e9962d88a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5b67f5942e6db047",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
