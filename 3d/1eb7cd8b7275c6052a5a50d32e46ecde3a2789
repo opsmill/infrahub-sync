@@ -1,0 +1,34 @@
+dev/specs/024-demo-ready-netbox/quickstart.md
+  s_531f0e8d1dd35e::t_0aeaf3bacb6b56 56-74
+dev/specs/024-demo-ready-netbox/morning-report.md
+  s_531f0e8d1dd35e::t_a170bc497ed9cc 10-12,23-30,46,49,62-64,68-69,82-88
+docs/docs/tutorials/try-the-netbox-demo.mdx
+  s_531f0e8d1dd35e::t_c957016aa1e758 162-163
+  s_531f0e8d1dd35e::t_cd134131d0ee6a 160
+  s_531f0e8d1dd35e::t_f7b2dcc2b6a46f 161
+dev/specs/024-demo-ready-netbox/opsmill-implement-report.md
+  s_531f0e8d1dd35e::t_ad6dacd4d8469f 3,8,12,31,33-36,57-62,91-92,98-99
+  s_531f0e8d1dd35e::t_9b252b091e5be1 23-24
+dev/specs/024-demo-ready-netbox/overnight-log.md
+  s_531f0e8d1dd35e::t_1c9de0a905421a 90-110
+changelog/+netbox-attach-own-project.housekeeping.md
+  s_531f0e8d1dd35e::t_0f56b24192e58a 1
+dev/specs/024-demo-ready-netbox/tasks.md
+  s_531f0e8d1dd35e::t_3de80abe49bf24 52,67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d1eb7cd8b7275c6052a5a50d32e46ecde3a2789",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
