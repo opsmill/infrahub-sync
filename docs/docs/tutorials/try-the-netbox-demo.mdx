@@ -58,13 +58,13 @@ Plans do not need approval in the demo: approval is off, because how approval wo
    downloads the NetBox dataset. The task never plans or applies anything.
 
 3. Read the end of the output. It names the configuration ID and version, the address of the web
-   interface, the token to enter there, and the commands for a first plan:
+   interface, how to sign in there, and the commands for a first plan:
 
     ```text
      - [INFRAHUB-SYNC-DEV] schema: loaded
      - [INFRAHUB-SYNC-DEV] configuration: registered
      - [INFRAHUB-SYNC-DEV] Configuration  <config-id>, version <version>
-     - [INFRAHUB-SYNC-DEV] Web interface  http://127.0.0.1:8001  (token to enter: infrahub-sync-dev-token)
+     - [INFRAHUB-SYNC-DEV] Web interface  http://127.0.0.1:8001  (sign in as admin, with the password in ADMIN_ACCOUNT_PASSWORD, by default infrahub-sync-dev-password)
      - [INFRAHUB-SYNC-DEV] Sync API       http://127.0.0.1:8001
      - [INFRAHUB-SYNC-DEV] Next, a first plan on a new branch:
          export INFRAHUB_ADDRESS=http://127.0.0.1:8000 INFRAHUB_API_TOKEN=<Infrahub admin token>
@@ -78,9 +78,9 @@ Plans do not need approval in the demo: approval is off, because how approval wo
    `<from INFRAHUB_INITIAL_ADMIN_TOKEN>`: export the token you set in that variable. Use the
    values your output shows in the commands on this page.
 
-If you set the Sync API tokens yourself through `BEARER_TOKENS`, export
-`INFRAHUB_SYNC_API_TOKEN` with one of those tokens before you run `dev.demo`. The task does not
-print a token that you set.
+If you set the `admin` account's API token yourself through `ADMIN_ACCOUNT_TOKEN`, export
+`INFRAHUB_SYNC_API_TOKEN` with that token, or with another API token, before you run `dev.demo`.
+The task does not print a token or a password that you set.
 
 If the local NetBox already existed, the task keeps its data and prints the command that loads
 the `demo` dataset into it.
@@ -103,8 +103,9 @@ branch, such as `netbox-demo-2`, for the second import.
 
 ## Plan and apply from the web interface
 
-1. Open `http://127.0.0.1:8001`. On **Enter a Sync API token**, enter the token that `dev.demo`
-   printed.
+1. Open `http://127.0.0.1:8001`. On **Sign in to Infrahub Sync**, enter `admin` in
+   **Account name** and the password that `dev.demo` printed in **Password**, then select
+   **Sign in**.
 2. Open the `from-netbox` configuration, then select **Start run**.
 3. In **Destination branch**, enter `netbox-demo-1`. Under **What the run does**, select
    **Plan for review**, then select **Create plan**.

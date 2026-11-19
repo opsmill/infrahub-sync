@@ -12,8 +12,10 @@
      on the host from the source tree, against the Sync API's loopback address, with the stack's
      Infrahub admin token and Sync development token in the process environment. It does not run
      in the `sync-api` container, whose source mount hides the bundled assets (critique E1).
-  4. Prints: web interface address, Sync API address, which token to enter (never a token the user
-     set), the configuration ID, and the next commands:
+  4. Prints: web interface address, Sync API address, how to sign in as `admin` (the variable that
+     holds the password and its public default; never a token or a password the user set; changed
+     on 2026-11-19 after the rebase onto local accounts), the configuration ID, and the next
+     commands:
 
      ```text
      uv run infrahubctl branch create netbox-demo-1

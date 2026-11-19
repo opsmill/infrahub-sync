@@ -1280,9 +1280,9 @@ def dev_frontend(context: Context) -> None:
 def _demo_environment(settings: DevSettings) -> dict[str, str]:
     """The variables `infrahub-sync demo prepare` reads, for the stack's Infrahub and Sync API.
 
-    The Sync token is the development token when the Sync API accepts it. With tokens set
-    through BEARER_TOKENS, the command inherits INFRAHUB_SYNC_API_TOKEN from the shell, so
-    the token never passes through this task.
+    The Sync token is the development token when the `admin` account still has it. With a
+    token set through ADMIN_ACCOUNT_TOKEN, the command inherits INFRAHUB_SYNC_API_TOKEN from
+    the shell, so the token never passes through this task.
 
     Raises:
         DevStackError: when the Sync API does not accept the development token and the
@@ -1292,12 +1292,12 @@ def _demo_environment(settings: DevSettings) -> dict[str, str]:
         INFRAHUB_TOKEN_VARIABLE: settings.infrahub_admin_token,
         SYNC_URL_VARIABLE: settings.sync_api_url,
     }
-    if bearer_label(settings.bearer_tokens) == API_TOKEN:
+    if bearer_label(settings.admin_token) == API_TOKEN:
         environment[SYNC_TOKEN_VARIABLE] = API_TOKEN
     elif not os.environ.get(SYNC_TOKEN_VARIABLE):
         msg = (
-            f"the Sync API takes its tokens from BEARER_TOKENS; set {SYNC_TOKEN_VARIABLE} to one of them "
-            "before `uv run invoke dev.demo`"
+            f"the `admin` account's API token comes from ADMIN_ACCOUNT_TOKEN; set {SYNC_TOKEN_VARIABLE} "
+            "to that token, or to another API token, before `uv run invoke dev.demo`"
         )
         raise DevStackError(msg)
     return environment
@@ -1363,7 +1363,7 @@ def _prepare_demo(context: Context, settings: DevSettings, environment: Mapping[
 
 
 def _print_demo_next_steps(settings: DevSettings, prepared: Mapping[str, Any]) -> None:
-    sync_token = bearer_label(settings.bearer_tokens)
+    sync_token = bearer_label(settings.admin_token)
     if sync_token != API_TOKEN:
         sync_token = f"<{sync_token}>"
     config_id = shlex.quote(str(prepared["config_id"]))
@@ -1371,7 +1371,10 @@ def _print_demo_next_steps(settings: DevSettings, prepared: Mapping[str, Any]) -
     print(f" - [{NAMESPACE}] schema: {prepared.get('schema', 'unknown')}")
     print(f" - [{NAMESPACE}] configuration: {prepared.get('configuration', 'unknown')}")
     print(f" - [{NAMESPACE}] Configuration  {prepared['config_id']}, version {prepared['version']}")
-    print(f" - [{NAMESPACE}] Web interface  {settings.sync_api_url}  (token to enter: {sync_token})")
+    print(
+        f" - [{NAMESPACE}] Web interface  {settings.sync_api_url}  (sign in as admin, with the password in "
+        f"ADMIN_ACCOUNT_PASSWORD, by default {ADMIN_PASSWORD})"
+    )
     print(f" - [{NAMESPACE}] Sync API       {settings.sync_api_url}")
     print(f" - [{NAMESPACE}] Next, a first plan on a new branch:")
     print(

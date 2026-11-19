@@ -878,7 +878,8 @@ def test_dev_demo_prints_no_token_the_user_set(
         dev,
         "dev_settings",
         lambda *args, **kwargs: dataclasses.replace(
-            resolve(*args, **kwargs), bearer_tokens=json.dumps({"mine": {"token": sync_token}})
+            resolve(*args, **kwargs),
+            admin_token="an-admin-token-of-the-developer",  # noqa: S106 -- a test value
         ),
     )
 
@@ -894,7 +895,8 @@ def test_dev_demo_prints_no_token_the_user_set(
     assert CUSTOM_TOKEN not in output
     assert sync_token not in output
     assert dev.API_TOKEN not in output
-    assert "from BEARER_TOKENS" in output
+    assert "from ADMIN_ACCOUNT_TOKEN" in output
+    assert "an-admin-token-of-the-developer" not in output
     assert f"from {dev.INFRAHUB_ADMIN_TOKEN_VARIABLE}" in output
 
 
@@ -907,18 +909,17 @@ def test_dev_demo_prints_the_development_tokens_when_they_are_in_use(
     output = capsys.readouterr().out
     assert f"INFRAHUB_SYNC_API_TOKEN={dev.API_TOKEN}" in output
     assert f"INFRAHUB_API_TOKEN={ADMIN_TOKEN}" in output
+    assert f"sign in as admin, with the password in ADMIN_ACCOUNT_PASSWORD, by default {dev.ADMIN_PASSWORD}" in output
 
 
-def test_dev_demo_without_a_sync_token_for_bearer_tokens_stops_before_starting(
+def test_dev_demo_without_a_sync_token_for_an_admin_token_the_user_set_stops_before_starting(
     context: Context, fake: FakeDocker, demo: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     resolve = dev.dev_settings
     monkeypatch.setattr(
         dev,
         "dev_settings",
-        lambda *args, **kwargs: dataclasses.replace(
-            resolve(*args, **kwargs), bearer_tokens=json.dumps({"mine": {"token": CUSTOM_TOKEN}})
-        ),
+        lambda *args, **kwargs: dataclasses.replace(resolve(*args, **kwargs), admin_token=CUSTOM_TOKEN),
     )
 
     with pytest.raises(dev.DevStackError, match=dev.SYNC_TOKEN_VARIABLE):
