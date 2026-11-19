@@ -11,6 +11,7 @@ from threading import Event, Thread
 from typing import TYPE_CHECKING, cast
 
 import pytest
+import yaml
 
 pytest.importorskip("fastapi")
 
@@ -18,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from infrahub_sync.client import RegisteredConfigurationResource, RegisteredVersionResource
 from infrahub_sync.configuration import schema_validation
-from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationSchemaReadError
 from infrahub_sync.configuration.models import ValidationFinding
 from infrahub_sync.configuration.validation import collect_findings
 from infrahub_sync.product_store import (
@@ -47,6 +48,8 @@ OTHER_TOKEN = "reader-token-canary-0004"  # noqa: S105 - deliberate non-secret b
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from typing import NoReturn
+
+    import httpx
 
     from infrahub_sync.configuration.models import ConfigurationPackage
     from infrahub_sync.product_store.models import ConfigurationVersion
@@ -1832,3 +1835,271 @@ def test_reading_a_version_still_returns_its_declared_content(tmp_path: Path) ->
 
     assert response.status_code == 200, response.text
     assert response.json()["declared_content"]["configuration"]["name"] == "from-netbox"
+
+
+# Spec 025 User Story 1 (T006): `POST /configs/validate` checks a package without registering it.
+
+_EXAMPLES = Path(__file__).parents[2] / "examples"
+
+
+def _check(
+    client: TestClient, body: Mapping[str, object], token: str = ADMIN_TOKEN, params: Mapping[str, str] | None = None
+) -> httpx.Response:
+    return client.post(
+        "/configs/validate", json=body, params=params or {}, headers={"Authorization": f"Bearer {token}"}
+    )
+
+
+def test_an_administrator_checks_a_package_and_registers_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, projection = _event_client(tmp_path, monkeypatch)
+    data = _package_with_missing_kind_attribute_and_relationship()
+
+    response = _check(client, {"package": data})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    checked = package(data)
+    assert body["package_checksum"] == checked.checksum()
+    assert body["declared_content"] == checked.declared_content()
+    assert body["name"] == "from-netbox"
+    assert body["destination_read"] == "not_requested"
+    assert body["destination_schema_fingerprint"] is None
+    assert body["findings"] == [finding.model_dump(mode="json") for finding in collect_findings(checked)]
+    assert body["offset"] == 0
+    assert body["total_findings"] == len(body["findings"])
+    assert body["next_offset"] is None
+    assert projection.list_configuration_page().items == ()
+    assert projection.audit_events() == ()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        yaml.safe_dump(_package_with_missing_kind_attribute_and_relationship()),
+        json.dumps(_package_with_missing_kind_attribute_and_relationship()),
+    ],
+    ids=["yaml", "json"],
+)
+def test_an_administrator_checks_a_document_in_yaml_or_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, document: str
+) -> None:
+    client, _projection = _event_client(tmp_path, monkeypatch)
+    expected = _check(client, {"package": _package_with_missing_kind_attribute_and_relationship()}).json()
+
+    response = _check(client, {"document": document})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == expected
+
+
+def test_the_registered_example_package_document_is_checked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _projection = _event_client(tmp_path, monkeypatch)
+    document = (_EXAMPLES / "netbox_to_infrahub" / "package.yml").read_text(encoding="utf-8")
+
+    response = _check(client, {"document": document})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["package_checksum"] == package(yaml.safe_load(document)).checksum()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"package": package_data(), "document": "format_version: 1\n"}, {"package": None, "document": None}],
+    ids=["neither", "both", "both-null"],
+)
+def test_a_check_needs_exactly_one_of_package_and_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: dict[str, object]
+) -> None:
+    client, _projection = _event_client(tmp_path, monkeypatch)
+
+    response = _check(client, body)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["family"] == "request"
+    assert response.json()["error"].get("reason") is None
+
+
+@pytest.mark.parametrize(
+    "document",
+    ["", "   \n", "# only a comment\n", "- a\n- b\n", "just text", "42", "{1: 2}", "{}", "key: [unclosed"],
+    ids=["empty", "blank", "comment", "list", "scalar", "number", "integer-key", "empty-mapping", "invalid-yaml"],
+)
+def test_a_document_that_is_not_a_mapping_is_an_invalid_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, document: str
+) -> None:
+    client, _projection = _event_client(tmp_path, monkeypatch)
+
+    response = _check(client, {"document": document})
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("request", "invalid_package")
+
+
+@pytest.mark.parametrize("field", ["document", "package"])
+def test_a_v2_configuration_is_refused_with_the_conversion_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    client, _projection = _event_client(tmp_path, monkeypatch)
+    document = (_EXAMPLES / "netbox_to_infrahub" / "config.yml").read_text(encoding="utf-8")
+    body = {"document": document} if field == "document" else {"package": yaml.safe_load(document)}
+
+    response = _check(client, body)
+
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("validation", "v2_configuration")
+    assert "infrahub-sync configs convert" in error["message"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"package": _package_with_missing_kind_attribute_and_relationship()},
+        {"document": "not: [a package"},
+        {"package": package_data(), "document": "both"},
+        {},
+        {"package": "not a mapping", "undeclared": True},
+    ],
+    ids=["valid-package", "invalid-document", "both-fields", "neither-field", "schema-invalid"],
+)
+def test_a_check_by_a_non_administrator_is_refused_before_any_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: dict[str, object]
+) -> None:
+    """Critique E1: with a branch, the service sends its destination credential to the package's URL."""
+    branches = _spied_schema_reads(monkeypatch)
+    client, projection = _event_client(tmp_path, monkeypatch)
+
+    response = _check(client, body, token=OTHER_TOKEN, params={"branch": "main"})
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "forbidden"
+    assert branches == []
+    refusals = [event for event in projection.audit_events() if event.outcome.startswith("refused-")]
+    assert [(event.event_type, event.operation, event.outcome, event.config_id) for event in refusals] == [
+        ("infrahub_sync.config.refused", "check-config-package", "refused-authorization", None),
+    ]
+
+
+def test_a_check_without_a_token_is_refused_before_any_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    branches = _spied_schema_reads(monkeypatch)
+    client, _projection = _event_client(tmp_path, monkeypatch)
+
+    response = client.post("/configs/validate", json={"package": package_data()}, params={"branch": "main"})
+
+    assert response.status_code == 401, response.text
+    assert branches == []
+
+
+def test_a_check_with_a_branch_reads_that_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    branches = _spied_schema_reads(monkeypatch)
+    client, _projection = _event_client(tmp_path, monkeypatch)
+
+    response = _check(
+        client, {"package": _package_with_missing_kind_attribute_and_relationship()}, params={"branch": "review"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert branches == ["review"]
+    body = response.json()
+    assert body["destination_read"] == "read"
+    assert isinstance(body["destination_schema_fingerprint"], str)
+    assert "destination-schema-mismatch" in [finding["code"] for finding in body["findings"]]
+
+
+def test_a_check_finds_what_validating_the_registered_version_finds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-002, over HTTP: the check and the registered version's validation agree."""
+    _spied_schema_reads(monkeypatch)
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    data = _package_with_missing_kind_attribute_and_relationship()
+
+    checked = client.post("/configs/validate", json={"package": data}, params={"branch": "review"}).json()
+    config_id = _register(client, data, "check-then-register")
+    validated = client.post(f"/configs/{config_id}/versions/1/validate", params={"branch": "review"}).json()
+
+    assert checked["findings"] == validated["findings"]
+    assert checked["package_checksum"] == validated["package_checksum"]
+    assert checked["destination_schema_fingerprint"] == validated["destination_schema_fingerprint"]
+
+
+_READ_FAILURE_REASONS = (
+    "timeout",
+    "unreachable",
+    "unauthorized",
+    "forbidden",
+    "nobranch",
+    "unconfigured",
+    "credentials",
+)
+
+
+def _failing_schema_reads(monkeypatch: pytest.MonkeyPatch, reason: str, detail: str | None = None) -> None:
+    def accessor(_package: object, _branch: str) -> NoReturn:
+        msg = "the destination schema could not be read"
+        raise DestinationSchemaReadError(msg, reason=reason, detail=detail)
+
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(
+        table["infrahub"], destination_schema_accessor=accessor, destination_access_accessor=None
+    )
+    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
+
+
+@pytest.mark.parametrize("reason", _READ_FAILURE_REASONS)
+def test_a_failed_destination_read_is_returned_by_its_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    _failing_schema_reads(monkeypatch, reason)
+    client, _projection = _event_client(tmp_path, monkeypatch)
+
+    response = _check(client, {"package": package_data()}, params={"branch": "main"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["destination_read"] == reason
+    assert body["destination_schema_fingerprint"] is None
+    assert "destination-schema-read-failed" in [finding["code"] for finding in body["findings"]]
+
+
+def test_a_check_pages_findings_like_the_validation_of_a_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _spied_schema_reads(monkeypatch)
+    client, _projection = _event_client(tmp_path, monkeypatch)
+    body = {"package": _package_with_missing_kind_attribute_and_relationship()}
+    whole = _check(client, body, params={"branch": "review"}).json()
+    assert whole["total_findings"] >= 2
+
+    first = _check(client, body, params={"branch": "review", "limit": "1"}).json()
+    second = _check(client, body, params={"branch": "review", "offset": "1", "limit": "1"}).json()
+
+    assert first["findings"] == whole["findings"][:1]
+    assert first["next_offset"] == 1
+    assert second["findings"] == whole["findings"][1:2]
+    for params in ({"limit": "0"}, {"limit": "257"}, {"offset": "-1"}, {"branch": ""}, {"limit": "1.0"}):
+        assert _check(client, body, params=params).status_code == 422
+
+
+def test_a_check_discloses_no_collected_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A secret the service holds is redacted from every finding, wherever the text came from."""
+    _failing_schema_reads(monkeypatch, "unauthorized", detail=f"token {OTHER_TOKEN} was refused")
+    client, _projection = _event_client(tmp_path, monkeypatch)
+
+    response = _check(client, {"package": package_data()}, params={"branch": ADMIN_TOKEN})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["destination_read"] == "unauthorized"
+    assert ADMIN_TOKEN not in response.text
+    assert OTHER_TOKEN not in response.text
+
+
+def test_the_check_route_is_not_taken_for_a_configuration_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`validate` is a valid configuration ID; the check route is registered before the ID routes."""
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+
+    assert client.get("/configs/validate").status_code == 404
+    assert client.post("/configs/validate", json={"package": package_data()}).status_code == 200

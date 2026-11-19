@@ -11,6 +11,7 @@ import inspect
 import json
 import sqlite3
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -19,9 +20,17 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from pydantic import ValidationError
 
-from infrahub_sync.configuration import BUILTIN_ADAPTER_CAPABILITIES, ConfigurationPackage, ValidationFinding
+from infrahub_sync.configuration import (
+    BUILTIN_ADAPTER_CAPABILITIES,
+    ConfigurationPackage,
+    ValidationFinding,
+    schema_validation,
+)
+from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.configuration.models import safe_pointer_component
+from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.validation import collect_findings
+from infrahub_sync.configuration.worker_credentials import referenced_credential_variables
 from infrahub_sync.execution import MIN_SECRET_LENGTH, REDACTED, collect_secret_values
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
@@ -654,6 +663,7 @@ def test_every_public_service_operation_carries_the_error_boundary() -> None:
         "get_version",
         "list_configs",
         "list_versions",
+        "check_package",
         "register",
         "validate",
     }
@@ -1677,3 +1687,211 @@ def test_two_configurations_may_share_a_name_and_the_name_filter_returns_both(tm
     assert {item.config_id for item in page.items} == {first.configuration.config_id, second.configuration.config_id}
     assert all(item.name == "from-netbox" for item in page.items)
     assert page.has_more is False
+
+
+# Spec 025 User Story 1 (T005): `check_package` validates a package without registering it.
+
+_CHECK_SNAPSHOT: dict[str, Any] = {
+    "InfraDevice": {
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": {"kind": "Text", "optional": False, "default_value": None, "unique": True}},
+        "relationships": {},
+    },
+}
+
+
+def _inject_destination_schema(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace the destination schema read with a fixed snapshot; return the branches it is asked for."""
+    branches: list[str] = []
+
+    def accessor(_package: object, branch: str) -> Mapping[str, Any]:
+        branches.append(branch)
+        return _CHECK_SNAPSHOT
+
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(
+        table["infrahub"], destination_schema_accessor=accessor, destination_access_accessor=None
+    )
+    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
+    return branches
+
+
+def _clean_package_data() -> dict[str, Any]:
+    return package_data()
+
+
+def _warning_package_data() -> dict[str, Any]:
+    data = package_data()
+    data["omissions"] = [{"kind": "InfraDevice", "fields": ["serial_number"]}]
+    return data
+
+
+def _destination_mismatch_package_data() -> dict[str, Any]:
+    """A package that registers, but whose mapping names a field and a kind the snapshot lacks."""
+    data = package_data()
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "InfraDevice",
+            "mapping": "dcim.devices",
+            "identifiers": ["name"],
+            "fields": [{"name": "name", "mapping": "name"}, {"name": "serial", "mapping": "serial"}],
+        },
+        {"name": "InfraCircuit", "mapping": "circuits.circuits", "fields": [{"name": "cid", "mapping": "cid"}]},
+    ]
+    return data
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [_clean_package_data, _warning_package_data, _destination_mismatch_package_data],
+    ids=lambda b: b.__name__,
+)
+@pytest.mark.parametrize("with_destination", [False, True], ids=["declared-only", "destination-schema"])
+@pytest.mark.parametrize("worker_published", [False, True], ids=["no-worker", "worker"])
+def test_check_package_reports_the_findings_validate_reports_after_registration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    builder: Callable[[], dict[str, Any]],
+    *,
+    with_destination: bool,
+    worker_published: bool,
+) -> None:
+    """FR-002: the same package gives the same findings, in the same order, registered or not."""
+    branches = _inject_destination_schema(monkeypatch)
+    projection = _store(tmp_path)
+    data = builder()
+    if worker_published:
+        projection.publish_worker_environment(
+            "worker", [identifier for _name, identifier in referenced_credential_variables(package(data))]
+        )
+    destination_schema = DestinationSchemaOptions(branch="review") if with_destination else None
+
+    checked = configs_service.check_package(
+        package=builder(), projection=projection, destination_schema=destination_schema
+    )
+    registered = configs_service.register(package=builder(), projection=projection)
+    report = configs_service.validate(
+        config_id=registered.version.config_id,
+        registry_version=1,
+        projection=projection,
+        destination_schema=destination_schema,
+    )
+
+    assert checked.findings == report.findings
+    assert checked.destination_schema_fingerprint == report.destination_schema_fingerprint
+    assert checked.destination_read == ("read" if with_destination else "not_requested")
+    assert branches == (["review", "review"] if with_destination else [])
+    if builder is _destination_mismatch_package_data and with_destination:
+        assert any(finding.code == "destination-schema-mismatch" for finding in checked.findings)
+
+
+def test_check_package_reports_a_failed_destination_read_by_its_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A destination that cannot be read is a value of `destination_read`, not a refusal."""
+
+    def accessor(_package: object, _branch: str) -> NoReturn:
+        msg = "read failed"
+        raise DestinationSchemaReadError(msg, reason="unreachable")
+
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(
+        table["infrahub"], destination_schema_accessor=accessor, destination_access_accessor=None
+    )
+    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
+
+    checked = configs_service.check_package(
+        package=package_data(), projection=_store(tmp_path), destination_schema=DestinationSchemaOptions(branch="main")
+    )
+
+    assert checked.destination_read == "unreachable"
+    assert checked.destination_schema_fingerprint is None
+    assert "destination-schema-read-failed" in [finding.code for finding in checked.findings]
+
+
+def test_check_package_registers_nothing(tmp_path: Path) -> None:
+    projection = _store(tmp_path)
+    configs_service.register(package=package_data(), projection=projection)
+    before = projection.list_configuration_page()
+
+    configs_service.check_package(package=_renamed_package_data("not-registered"), projection=projection)
+
+    assert projection.list_configuration_page() == before
+    assert _registered_configuration_count(tmp_path / "product-cache") == 1
+
+
+def _store_key_package_data() -> dict[str, Any]:
+    data = package_data()
+    data["configuration"]["store"] = {"name": "redis"}
+    return data
+
+
+def _structural_package_data() -> dict[str, Any]:
+    return {"format_version": 99}
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [_store_key_package_data, _invalid_package_data, _structural_package_data],
+    ids=["store-key", "credential-error", "structural-error"],
+)
+def test_check_package_refuses_what_registration_refuses(tmp_path: Path, builder: Callable[[], dict[str, Any]]) -> None:
+    """Every refusal of the registration is the check's refusal too, with the same type and reason."""
+    projection = _store(tmp_path)
+
+    with pytest.raises(configs_service.ConfigsError) as registered:
+        configs_service.register(package=builder(), projection=projection)
+    with pytest.raises(configs_service.ConfigsError) as checked:
+        configs_service.check_package(package=builder(), projection=projection)
+
+    assert type(checked.value) is type(registered.value)
+    assert getattr(checked.value, "reason", None) == getattr(registered.value, "reason", None)
+    assert str(checked.value) == str(registered.value)
+    assert getattr(checked.value, "findings", None) == getattr(registered.value, "findings", None)
+    assert _registered_configuration_count(tmp_path / "product-cache") == 0
+
+
+@pytest.mark.parametrize("builder", [_clean_package_data, _warning_package_data], ids=lambda b: b.__name__)
+def test_check_package_returns_the_checksum_and_content_the_registration_stores(
+    tmp_path: Path, builder: Callable[[], dict[str, Any]]
+) -> None:
+    projection = _store(tmp_path)
+
+    checked = configs_service.check_package(package=builder(), projection=projection)
+    registered = configs_service.register(package=builder(), projection=projection)
+
+    stored = configs_service.get_version(
+        config_id=registered.version.config_id, registry_version=1, projection=projection
+    )
+    assert checked.package_checksum == stored.package_checksum
+    assert checked.declared_content == stored.declared_content
+    assert checked.name == registered.configuration.name
+
+
+@pytest.mark.parametrize("builder", [_clean_package_data, _warning_package_data], ids=lambda b: b.__name__)
+def test_registering_the_checked_content_gives_the_original_checksum(
+    tmp_path: Path, builder: Callable[[], dict[str, Any]]
+) -> None:
+    """Research R2: the web interface registers the `declared_content` the check returns."""
+    original_root = tmp_path / "original"
+    checked_root = tmp_path / "checked"
+    original_root.mkdir()
+    checked_root.mkdir()
+
+    checked = configs_service.check_package(package=builder(), projection=local_product_projection(original_root))
+    from_original = configs_service.register(package=builder(), projection=local_product_projection(original_root))
+    from_checked = configs_service.register(
+        package=json.loads(json.dumps(checked.declared_content)), projection=local_product_projection(checked_root)
+    )
+
+    assert from_checked.version.package_checksum == from_original.version.package_checksum == checked.package_checksum
+
+
+def test_check_package_refuses_a_wrong_typed_destination_option(tmp_path: Path) -> None:
+    with pytest.raises(configs_service.ConfigsRequestError):
+        configs_service.check_package(
+            package=package_data(),
+            projection=_store(tmp_path),
+            destination_schema=cast("Any", {"branch": "main"}),
+        )
