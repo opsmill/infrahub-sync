@@ -276,8 +276,11 @@ out of the stop reason `owner-not-found` without restoring the account.
 2. **Given** the administrator takes it over with a reason, **Then** they are the owner, the schedule
    is active, and its next runs record them as the account that started them. The confirmation
    states that last point before the take-over.
-3. **Given** an account that is not an administrator, **Then** "Take over" is not offered.
-4. **Given** an active schedule owned by another account, **Then** an administrator can take it
+3. **Given** the schedule writes to the default branch and the Sync API requires approval, **When**
+   the administrator takes it over, **Then** they are the owner, and the page shows the schedule
+   stopped with the reason `approval-required` and the action it needs.
+4. **Given** an account that is not an administrator, **Then** "Take over" is not offered.
+5. **Given** an active schedule owned by another account, **Then** an administrator can take it
    over as well.
 
 ---
