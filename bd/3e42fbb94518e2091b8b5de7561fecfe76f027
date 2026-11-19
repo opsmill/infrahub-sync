@@ -1,0 +1,32 @@
+tests/cli/test_login_commands.py
+  s_531f0e8d1dd35e::t_eaeae909737825 350-367
+  s_531f0e8d1dd35e::t_93975da631fe95 17
+dev/specs/024-demo-ready-netbox/contracts/dev-demo-task.md
+  s_531f0e8d1dd35e::t_3b700bee0c846d 15-18
+tasks/dev.py
+  s_531f0e8d1dd35e::t_af56b0c8afb3c2 1299-1300
+  s_531f0e8d1dd35e::t_90445d29fd28b0 1374-1377
+  s_531f0e8d1dd35e::t_83342e0e22af2b 1283-1285,1295,1366
+tests/dev_stack/test_dev_tasks.py
+  s_531f0e8d1dd35e::t_ba0f0419823058 881-882,922
+  s_531f0e8d1dd35e::t_1b509375c9b519 912
+  s_531f0e8d1dd35e::t_0d9bc2a7bd653f 898-899,915
+docs/docs/tutorials/try-the-netbox-demo.mdx
+  s_531f0e8d1dd35e::t_ae74ed0fa39936 61,67,81-83,106-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd3e42fbb94518e2091b8b5de7561fecfe76f027",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
