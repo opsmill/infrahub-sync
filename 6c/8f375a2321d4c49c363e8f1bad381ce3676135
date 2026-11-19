@@ -1,0 +1,42 @@
+frontend/src/api/actions.ts
+  s_eefe1fec4652ae::t_06299b32d4ae02 51-71
+frontend/src/features/configurations/PackageReview.tsx
+  s_eefe1fec4652ae::t_cc0e8bb635af1d 1-99,103-486
+  s_eefe1fec4652ae::t_84e6591a779b83 100-102
+frontend/src/features/configurations/detail-mapping.tsx
+  s_eefe1fec4652ae::t_159bc61460d6dd 154-155
+  s_eefe1fec4652ae::t_51e73809f2de46 44,51,57
+  s_eefe1fec4652ae::t_90c045b8f2128e 80
+frontend/src/features/runs/form.tsx
+  s_eefe1fec4652ae::t_9174f2298c150d 55-56,62-64,72-73
+frontend/src/api/types.ts
+  s_eefe1fec4652ae::t_226808e56b39b0 56-70
+  s_eefe1fec4652ae::t_8552ebcead9122 15-16
+frontend/src/features/configurations/package-review.ts
+  s_eefe1fec4652ae::t_893c6f8657c926 1-121
+frontend/src/features/configurations/PackageDropArea.tsx
+  s_eefe1fec4652ae::t_145120486a3811 1-118
+  s_eefe1fec4652ae::t_0acaf9352b9ed6 119-120
+dev/specs/025-register-config-web/tasks.md
+  s_eefe1fec4652ae::t_2f0e57b001b2df 69-76
+frontend/src/api/types.generated.ts
+  s_eefe1fec4652ae::t_9052d51f6565b7 248-267,903-955,1119-1159,1585-1603,2738-2774
+frontend/src/features/configurations/ConfigurationPage.tsx
+  s_eefe1fec4652ae::t_95ce2a10a2d58b 2,7,33-34,186-190,362-371,541-552
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c8f375a2321d4c49c363e8f1bad381ce3676135",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
