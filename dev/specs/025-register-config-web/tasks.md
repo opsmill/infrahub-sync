@@ -122,6 +122,17 @@ only means no mark is recorded (FR-022).
 
 ## Phase 7: Polish and cross-cutting
 
+The work ships in two pull requests (spec decision D-9, plan "Implementation order").
+- The first pull request holds Phases 1 to 3 and the User Story 1 part of T035 to T038:
+  - the ADR without the mark;
+  - the `configs check` documentation and the CLI reference;
+  - the fragment `changelog/+validate-config-package.added.md`.
+- The second pull request holds Phases 4 to 6 and the rest of Phase 7:
+  - the ADR section on the mark's table;
+  - the web interface documentation;
+  - the fragment `changelog/+register-config-web.added.md`;
+  - T039.
+
 - [ ] T035 [P] Write the ADR `dev/adr/0051-a-package-can-be-validated-before-it-is-registered.md` (take the next free number if 0051 is used when this merges) recording: validation of an unregistered package, the administrator rule and its reason (critique E1), server-side parsing of `document` (research R2), the mark stored in its own table (research R8); add it to `dev/adr/README.md`; cite no internal chat or tracker links
 - [ ] T036 [P] Update the user documentation: the configuration package page `docs/docs/configuration-package.mdx` (validating before registering, `configs check`, registering from the web interface, the mark); regenerate the CLI reference with `uv run invoke docs.generate`
 - [ ] T037 [P] Add the news fragment `changelog/+register-config-web.added.md` with `uv run --extra dev towncrier create -c "<one sentence>" +register-config-web.added.md`
@@ -148,9 +159,8 @@ only means no mark is recorded (FR-022).
 
 ## Implementation strategy
 
-1. Ship User Story 1 first: it gives CLI and script users a check before registration, and every
-   other story depends on it.
-2. Add User Story 2, the most frequent web interface journey.
-3. Add User Story 3.
-4. Add User Story 4 last; it is the only story that changes the store, and it can be left out
-   without changing the others.
+1. First pull request: User Story 1. It gives CLI and script users a check before registration,
+   and every other story depends on it.
+2. Second pull request: User Story 2, the most frequent web interface journey, then User Story 3,
+   then User Story 4. User Story 4 is the only story that changes the store; the maintainer
+   confirmed it is kept (spec decision D-8).

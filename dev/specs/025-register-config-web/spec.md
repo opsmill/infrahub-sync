@@ -88,6 +88,11 @@ Taken with the maintainer on 2026-11-18.
   and the version records that it was registered without validation.
 - **D-7, this feature targets the second alpha release of V3**, after the first alpha release and
   before 3.0. The maintainer builds it. The frontend team may rework the web interface part later.
+- **D-8, the "registered without validation" mark is kept** (User Story 4). The maintainer confirmed
+  this on 2026-11-19.
+- **D-9, one specification, delivered in two pull requests.** The first pull request holds User
+  Story 1 (the Sync API route and `configs check`). The second holds the web interface and the mark
+  (User Stories 2 to 4). The maintainer confirmed this on 2026-11-19.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -322,7 +327,7 @@ registered without validation.
 - **FR-021**: A registration made after an unreachable-destination result MUST be recorded on the
   version as registered without validation, and the Sync API and the web interface MUST show it on
   that version.
-- **FR-022**: Without User Story 4, a registration after an unreachable-destination result is still
+- **FR-022**: Until User Story 4 is built, a registration after an unreachable-destination result is still
   allowed (FR-020), and no mark is recorded.
 
 ### Key Entities
@@ -366,11 +371,10 @@ registered without validation.
   Infrahub later requires reviews to happen on a branch.
 - The Sync API stays the only authority on whether a package is valid. The web interface checks only
   that the file is one YAML or JSON document.
-- The maintainer agreed that an unreachable destination does not block registration (D-6). They
-  accepted the "registered without validation" mark with a short "I accept", which could have meant
-  keeping or dropping the mark. This specification keeps the mark alone in User Story 4, so it can
-  be left out without changing the other stories, and registration during an outage stays possible
-  either way.
+- The maintainer agreed that an unreachable destination does not block registration (D-6), and
+  confirmed that the version records it with the "registered without validation" mark (D-8). The
+  mark stays alone in User Story 4, which is built last. Until it is built, registration during an
+  outage is possible and records no mark (FR-022).
 - The person using the web interface has entered their own token (spec 017). The Sync API's existing
   administrator rule decides who can register. Spec 022 (local accounts, in progress on branch
   `022-local-accounts`) keeps the distinction between administrators and other accounts, so
