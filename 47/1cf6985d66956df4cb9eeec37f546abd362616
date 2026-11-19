@@ -1,0 +1,25 @@
+infrahub_sync/service/branch_review.py
+  s_29b17f91da9f30::t_edbee0a85ac388 255-256,259
+  s_29b17f91da9f30::t_f8682e240cd4c4 280-281,284
+  s_29b17f91da9f30::t_a2df545c9bad69 223-228,230-234
+tests/service/test_branch_review_operations.py
+  s_29b17f91da9f30::t_effc476cb2496c 298-319
+docs/docs/reference/sync-http-api.mdx
+  s_29b17f91da9f30::t_c2a73b8d818e48 1349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "471cf6985d66956df4cb9eeec37f546abd362616",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
