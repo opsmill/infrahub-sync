@@ -2,8 +2,9 @@
 
 **Status**: Accepted
 **Date**: 2026-11-19
-**Source**: `dev/specs/025-register-config-web/spec.md` (FR-001 to FR-006, decision D-9),
-`dev/specs/025-register-config-web/research.md` (R1, R2, R3, R10),
+**Source**: `dev/specs/025-register-config-web/spec.md` (FR-001 to FR-006, FR-020, FR-021,
+decisions D-8 and D-9),
+`dev/specs/025-register-config-web/research.md` (R1, R2, R3, R8, R10),
 `dev/specs/025-register-config-web/critiques/critique-20261118.md` (E1, E2)
 
 ## Context
@@ -92,3 +93,51 @@ calls it with `infrahub-sync configs check PACKAGE`, and the Python client with
   and a second parser can read a file differently from the CLI and the service.
 - **A second set of checks for unregistered packages.** Rejected: the findings of the two routes
   could differ for the same package.
+
+## The "registered without validation" mark
+
+When the check reports `destination_read` as `timeout` or `unreachable` and no finding other than
+`destination-schema-read-failed`, the web interface lets an administrator register the package
+anyway, with "Register without validation" (FR-020). The version records that it was registered
+that way (FR-021).
+
+### Decision
+
+- **The request states the mark.** `POST /configs` and `POST /configs/{config_id}/versions`
+  accept `registered_without_validation`, `false` by default. The Sync API records the value that
+  the request sends and does not check it against a validation result. The web interface sends
+  it as `true` only from "Register without validation". The CLI has no option to set it.
+- **The mark is stored in its own table.** A row in
+  `configuration_versions_unvalidated (config_id, registry_version)` marks a version. The primary
+  key is both columns, with a foreign key to `configuration_versions`. The store writes the row in
+  the transaction that inserts the version. Version resources return
+  `registered_without_validation`, `true` when the row exists.
+- **The table is created with `CREATE TABLE IF NOT EXISTS`.** The store creates its tables this
+  way at start-up and has no column migration (`_initialize` in
+  `infrahub_sync/product_store/store.py`). A database created before this change gains the empty
+  table at its next start-up, so its existing versions read as not marked.
+- **The mark joins the idempotency fingerprint only when it is `true`.** A key reused with a
+  different mark is refused with `idempotency-conflict`, as a key reused with a different reason
+  is. A request without the mark keeps the fingerprint that receipts stored before the mark
+  existed were given, so retries of those requests still replay.
+- **Only a created version is marked.** When the package is identical to the newest version
+  (`created: false`), the Sync API returns the existing version unchanged and ignores the mark.
+
+### Consequences
+
+- An operator who views a version in the web interface, in `configs show --version` or in a
+  registration response can tell that it was registered while the destination could not be
+  reached.
+- A version without the mark is not known to be validated. `configs register` and
+  `configs version` do not validate a package before registering it, and versions registered
+  before this change have no mark.
+
+### Alternative considered
+
+- **A `registered_without_validation` column in `configuration_versions`.** Rejected. A column
+  added to the `CREATE TABLE` statement does not reach a table that already exists, because
+  `CREATE TABLE IF NOT EXISTS` does not change it. On a database created by the first alpha
+  release, every registration would then fail with an unknown-column error. Spec 019 met the same
+  limit with its `plan_step` column, where the cost was only a missing timing. Adding a column
+  migration for SQLite and PostgreSQL would be the store's first, which is a larger change than
+  this mark needs.

@@ -133,11 +133,11 @@ The work ships in two pull requests (spec decision D-9, plan "Implementation ord
   - the fragment `changelog/+register-config-web.added.md`;
   - T039.
 
-- [ ] T035 [P] Write the ADR `dev/adr/0051-a-package-can-be-validated-before-it-is-registered.md` (take the next free number if 0051 is used when this merges) recording: validation of an unregistered package, the administrator rule and its reason (critique E1), server-side parsing of `document` (research R2), the mark stored in its own table (research R8); add it to `dev/adr/README.md`; cite no internal chat or tracker links
-- [ ] T036 [P] Update the user documentation: the configuration package page `docs/docs/configuration-package.mdx` (validating before registering, `configs check`, registering from the web interface, the mark); regenerate the CLI reference with `uv run invoke docs.generate`
-- [ ] T037 [P] Add the news fragment `changelog/+register-config-web.added.md` with `uv run --extra dev towncrier create -c "<one sentence>" +register-config-web.added.md`
-- [ ] T038 Run the full required workflow: `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, `uv run infrahub-sync --help`, `uv run infrahub-sync configs --help`, `uv run infrahub-sync runs --help`, `cd frontend && pnpm check && pnpm typecheck && pnpm build`
-- [ ] T039 Run the quickstart scenarios that the local environment allows ([quickstart.md](quickstart.md)) and record in `dev/specs/025-register-config-web/opsmill-implement-report.md` which ran and which could not
+- [X] T035 [P] Write the ADR `dev/adr/0051-a-package-can-be-validated-before-it-is-registered.md` (take the next free number if 0051 is used when this merges) recording: validation of an unregistered package, the administrator rule and its reason (critique E1), server-side parsing of `document` (research R2), the mark stored in its own table (research R8); add it to `dev/adr/README.md`; cite no internal chat or tracker links
+- [X] T036 [P] Update the user documentation: the configuration package page `docs/docs/configuration-package.mdx` (validating before registering, `configs check`, registering from the web interface, the mark); regenerate the CLI reference with `uv run invoke docs.generate`
+- [X] T037 [P] Add the news fragment `changelog/+register-config-web.added.md` with `uv run --extra dev towncrier create -c "<one sentence>" +register-config-web.added.md`
+- [X] T038 Run the full required workflow: `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, `uv run infrahub-sync --help`, `uv run infrahub-sync configs --help`, `uv run infrahub-sync runs --help`, `cd frontend && pnpm check && pnpm typecheck && pnpm build`
+- [X] T039 Run the quickstart scenarios that the local environment allows ([quickstart.md](quickstart.md)) and record in `dev/specs/025-register-config-web/opsmill-implement-report.md` which ran and which could not
 
 ---
 

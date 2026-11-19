@@ -579,9 +579,17 @@ optional. When present, it must be non-empty, and the service records it in the 
 When it is absent or `null`, the service records the request without a reason. For idempotency,
 an absent reason and a `null` reason are the same value, and both differ from any text.
 
+`POST /configs` and `POST /configs/{config_id}/versions` also accept
+`registered_without_validation`, `false` by default. When it is `true`, the service marks the
+created version as registered without validation. The service records the value that the request
+sends and does not check it. The web interface sends `true` when the destination could not be
+reached during validation; the CLI never sends it. For idempotency, an absent value and `false`
+are the same value, and both differ from `true`. When the package is identical to the newest
+version (`created: false`), the field is ignored and the existing version is returned unchanged.
+
 | Route | Behavior |
 | --- | --- |
-| `POST /configs` | Register a new configuration package as version 1. Administrator only. The response names the version by `config_id`, `registry_version`, `package_checksum` and `created_at`, without its package content. |
+| `POST /configs` | Register a new configuration package as version 1. Administrator only. The response names the version by `config_id`, `registry_version`, `package_checksum`, `created_at` and `registered_without_validation`, without its package content. |
 | `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The response names the version as `POST /configs` does, without its package content. |
 | `GET /me` | Return the actor that the bearer token authenticates as, its administrator flag, and whether the service requires approval. |
 | `GET /configs` | List registered configurations, newest first, one page at a time. Filter by exact `name`. |
@@ -708,8 +716,9 @@ in the same envelope:
   `config_id`, `name`, `latest_version` and `created_at`.
 - `GET /configs/{config_id}/versions` orders versions by `registry_version`, newest first. Each
   item carries `config_id`, `registry_version`, `package_checksum`, `created_at`,
-  `registered_by`, `registration_reason`, `latest_run` and `latest_applied_run`, and no
-  package content. `latest_run` is the version's newest run by `started_at`.
+  `registered_by`, `registration_reason`, `registered_without_validation`, `latest_run` and
+  `latest_applied_run`, and no package content. `registered_without_validation` is `true` for a
+  version registered with that field set to `true`, and `false` for every other version. `latest_run` is the version's newest run by `started_at`.
   `latest_applied_run` is the most recently applied run, ordered by the time its apply
   finished. An apply updates the plan run, so its `started_at` is the time the plan was
   created and its `finished_at` is the time the apply finished. Each run reference carries
