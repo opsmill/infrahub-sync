@@ -50,6 +50,7 @@ from infrahub_sync.configuration.models import (
 )
 from infrahub_sync.configuration.schema_validation import (
     DestinationSchemaOptions,
+    DestinationSchemaValidation,
     collect_destination_schema_findings,
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
@@ -861,9 +862,19 @@ def _worker_credential_findings(
     )
 
 
-# The two `destination_read` values that are not a read failure reason.
+# The three `destination_read` values that are not a read failure reason.
 DESTINATION_READ_NOT_REQUESTED = "not_requested"
 DESTINATION_READ_OK = "read"
+# A branch was given, but the destination adapter is unknown or declares no schema read, so
+# nothing was read; a finding names the reason.
+DESTINATION_READ_NOT_READ = "not_read"
+
+
+def _destination_read(schema_validation: DestinationSchemaValidation) -> str:
+    """Name what happened to the destination read of one check against a branch."""
+    if schema_validation.read_failure_reason is not None:
+        return schema_validation.read_failure_reason
+    return DESTINATION_READ_OK if schema_validation.schema_read else DESTINATION_READ_NOT_READ
 
 
 @dataclass(frozen=True, slots=True)
@@ -871,7 +882,8 @@ class _PackageChecks:
     """The result of every validation check on one parsed package.
 
     ``destination_read`` is ``"not_requested"`` when the caller asked for no destination
-    checks, ``"read"`` when no destination read failed, or the ``reason`` of the
+    checks, ``"read"`` when the destination schema of the branch was read, ``"not_read"``
+    when the destination adapter is unknown or declares no schema read, or the ``reason`` of the
     ``DestinationSchemaReadError`` a failed read raised (``timeout``, ``unreachable``,
     ``unauthorized``, ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured``,
     ``credentials``).
@@ -907,7 +919,7 @@ def _check_parsed_package(
     return _PackageChecks(
         findings=sort_findings((*findings, *schema_validation.findings, *_worker_credential_findings(parsed, held))),
         schema_fingerprint=schema_validation.schema_fingerprint,
-        destination_read=schema_validation.read_failure_reason or DESTINATION_READ_OK,
+        destination_read=_destination_read(schema_validation),
     )
 
 

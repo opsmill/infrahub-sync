@@ -1811,6 +1811,27 @@ def test_check_package_reports_a_failed_destination_read_by_its_reason(
     assert "destination-schema-read-failed" in [finding.code for finding in checked.findings]
 
 
+def test_check_package_reports_not_read_for_a_destination_without_a_schema_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A destination that declares no schema read is `not_read`, never `read`."""
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(
+        table["infrahub"],
+        destination_schema_validation=False,
+        destination_schema_accessor=None,
+        destination_access_accessor=None,
+    )
+    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
+
+    checked = configs_service.check_package(
+        package=package_data(), projection=_store(tmp_path), destination_schema=DestinationSchemaOptions(branch="main")
+    )
+
+    assert checked.destination_read == "not_read"
+    assert "destination-schema-validation-unsupported" in [finding.code for finding in checked.findings]
+
+
 def test_check_package_registers_nothing(tmp_path: Path) -> None:
     projection = _store(tmp_path)
     configs_service.register(package=package_data(), projection=projection)

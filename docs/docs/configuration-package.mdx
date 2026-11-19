@@ -162,6 +162,7 @@ for each finding on the page. Findings have the format described in
 | --- | --- |
 | `not_requested` | The command ran without `--branch`. |
 | `read` | The Sync API read the schema of the branch. |
+| `not_read` | The destination adapter is unknown or does not support a schema read, so the Sync API read nothing. A finding names the reason. |
 | `timeout`, `unreachable` | The Sync API could not reach the destination. |
 | `unauthorized`, `forbidden` | The destination refused the destination token. |
 | `nobranch` | The branch does not exist in the destination. |
@@ -169,7 +170,7 @@ for each finding on the page. Findings have the format described in
 | `unconfigured` | The package declares no destination URL. |
 | `credentials` | The destination token reference does not resolve in the service environment. |
 
-For every value other than `not_requested` and `read`, the findings also include a
+For every value other than `not_requested`, `read` and `not_read`, the findings also include a
 `destination-schema-read-failed` finding.
 
 The command exits 1 when an error finding is on the returned page, with or without `--branch`.

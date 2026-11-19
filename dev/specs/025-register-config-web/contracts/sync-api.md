@@ -46,9 +46,11 @@ validate route.
 }
 ```
 
-`destination_read` is `not_requested` without `branch`; otherwise `read`, `timeout`,
-`unreachable`, `unauthorized`, `forbidden`, `nobranch`, `rejected`, `unconfigured` or `credentials`. When it is not
-`read` or `not_requested`, the findings include the existing `destination-schema-read-failed` finding.
+`destination_read` is `not_requested` without `branch`; otherwise `read`, `not_read`, `timeout`,
+`unreachable`, `unauthorized`, `forbidden`, `nobranch`, `rejected`, `unconfigured` or `credentials`.
+`not_read` means the destination adapter is unknown or declares no schema read, so nothing was read;
+a finding names the reason. For the other values that are not `read` or `not_requested`, the
+findings include the existing `destination-schema-read-failed` finding.
 
 **Refusals**:
 

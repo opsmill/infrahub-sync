@@ -391,6 +391,7 @@ def test_an_explicit_request_against_a_non_declaring_destination_is_an_error_fin
         ("unsupported-destination-write", "/configuration/destination"),
     ]
     assert result.schema_fingerprint is None
+    assert result.schema_read is False
 
 
 def test_an_update_only_request_against_peeringmanager_is_refused_as_an_unsupported_write() -> None:
@@ -421,6 +422,7 @@ def test_an_unknown_destination_adapter_adds_no_schema_findings() -> None:
 
     assert result.findings == ()
     assert result.schema_fingerprint is None
+    assert result.schema_read is False
     assert ("missing-adapter", "/configuration/destination") in _codes_and_locations(core)
     assert ("undeclared-setting", "/configuration/source/settings/bogus_source") in _codes_and_locations(core)
 
@@ -449,6 +451,7 @@ def test_a_failed_schema_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch
     result = collect_destination_schema_findings(package(package_data()))
 
     assert result.read_failure_reason == reason
+    assert result.schema_read is False
     assert [finding.code for finding in result.findings] == ["destination-schema-read-failed"]
 
 
@@ -465,6 +468,7 @@ def test_a_failed_access_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch
     result = collect_destination_schema_findings(package(package_data()))
 
     assert result.read_failure_reason == "forbidden"
+    assert result.schema_read is False
     assert "destination-schema-read-failed" in [finding.code for finding in result.findings]
 
 
@@ -474,6 +478,7 @@ def test_a_successful_read_returns_no_read_failure_reason(monkeypatch: pytest.Mo
     result = collect_destination_schema_findings(package(package_data()))
 
     assert result.read_failure_reason is None
+    assert result.schema_read is True
 
 
 def test_a_failed_schema_read_does_not_suppress_the_write_operations_check(
