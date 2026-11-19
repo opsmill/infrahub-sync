@@ -72,7 +72,7 @@ scenario.
 
 | Scenario | Status | Reason | Unit tests that cover its steps |
 | --- | --- | --- | --- |
-| 1. Validate without registering | Not run | Needs a running Sync API and Infrahub. | `tests/service/test_config_routes.py`: `test_an_administrator_checks_a_package_and_registers_nothing`, `test_a_check_with_a_branch_reads_that_branch`, `test_a_check_finds_what_validating_the_registered_version_finds`. `tests/cli/test_client_commands.py`: `test_configs_check_sends_the_file_as_package_and_prints_the_report`, `test_configs_check_exits_1_when_the_page_has_a_finding`. |
+| 1. Validate without registering | Not run | Needs a running Sync API and Infrahub. | `tests/service/test_config_routes.py`: `test_an_administrator_checks_a_package_and_registers_nothing`, `test_a_check_with_a_branch_reads_that_branch`, `test_a_check_finds_what_validating_the_registered_version_finds`. `tests/cli/test_client_commands.py`: `test_configs_check_sends_the_file_as_package_and_prints_the_report`, `test_configs_check_exits_1_when_the_page_has_an_error_finding`. |
 | 2. Add a version from the web interface | Not run | Needs a browser, a running Sync API and Infrahub. | `tests/service/test_config_routes.py`: `test_an_administrator_checks_a_document_in_yaml_or_json`, `test_duplicate_configuration_version_checksum_returns_existing_version_without_a_second_write`. The web interface has no test runner (research R12); `pnpm check` and `pnpm typecheck` passed. |
 | 3. Register a new configuration | Not run | Needs a browser and a running Sync API. | `tests/service/test_config_routes.py`: `test_the_register_response_shows_the_checksum_and_no_declared_content`. The same-name warning is in the web interface only and has no automated test. |
 | 4. Destination unreachable | Not run | Needs a browser, and stopping Infrahub on a development stack. | `tests/service/test_config_routes.py`: `test_registration_accepts_the_mark_and_every_version_resource_returns_it`, `test_the_mark_defaults_to_false`, `test_an_identical_version_request_with_the_mark_returns_the_existing_version_unchanged`, `test_a_key_reused_with_a_different_mark_is_refused`, `test_an_unmarked_request_keeps_the_fingerprint_of_receipts_stored_before_the_mark`. `tests/product_store/test_configuration_unvalidated_mark.py`, including databases created before the mark. Its SQLite cases ran in this chunk (6 passed); its PostgreSQL cases skip without `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and were not run in this chunk. `tests/cli/test_client_commands.py`: `test_configs_version_prints_the_unvalidated_mark_and_never_sets_it`. |
@@ -114,8 +114,14 @@ Commands:
 - E: `uv run pytest -v -rs -p no:cacheprovider tests/product_store/test_configuration_unvalidated_mark.py tests/client/test_models.py::test_a_configuration_request_carries_the_unvalidated_mark_and_defaults_it_to_false tests/cli/test_client_commands.py::test_configs_version_prints_the_unvalidated_mark_and_never_sets_it tests/service/test_config_routes.py -k "unvalidated or mark or fingerprint or carries" -m "not slow or slow" --override-ini=addopts=`
 - F: `PRODUCT_STORE_TEST_POSTGRESQL_DSN=postgresql://postgres:<password>@127.0.0.1:55525/store uv run pytest -v -rs -p no:cacheprovider tests/product_store/test_configuration_unvalidated_mark.py -m "not slow or slow" --override-ini=addopts=`
 
+- G (after the code review fixes): `uv run pytest -v tests/cli/test_client_commands.py::test_configs_check_exits_1_when_the_page_has_an_error_finding tests/product_store/test_configs_service.py::test_check_package_reports_not_read_for_a_destination_without_a_schema_read tests/product_store/test_configuration_unvalidated_mark.py::test_a_failed_mark_insert_leaves_no_version tests/cli/test_client_commands.py::test_configs_versions_prints_latest_run_columns_and_pages tests/configuration/test_schema_validation.py`
+
 | Test | Type | Command | Passed at | Environment | Pass line |
 |---|---|---|---|---|---|
+| `tests/product_store/test_configs_service.py::test_check_package_reports_not_read_for_a_destination_without_a_schema_read` | unit | G | 2026-11-19T22:45:47Z | n/a | `PASSED` |
+| `tests/product_store/test_configuration_unvalidated_mark.py::test_a_failed_mark_insert_leaves_no_version` | unit | G | 2026-11-19T22:45:47Z | SQLite only | `PASSED` |
+| `tests/cli/test_client_commands.py::test_configs_versions_prints_latest_run_columns_and_pages` (now also checks the mark) | unit | G | 2026-11-19T22:45:47Z | n/a | `PASSED` |
+| `tests/configuration/test_schema_validation.py` (the gating and read-failure tests now also check `schema_read`) | unit | G | 2026-11-19T22:45:47Z | n/a | `PASSED` |
 | `tests/configuration/test_schema_validation.py::test_a_failed_schema_read_returns_its_reason` [timeout, unreachable, unauthorized, forbidden, nobranch, unconfigured, credentials; rejected added later] | unit | A; D for `[rejected]` | 2026-11-19T14:22:06Z; 15:38:10Z | n/a | `PASSED` |
 | `tests/configuration/test_schema_validation.py::test_a_failed_access_read_returns_its_reason` | unit | A | 2026-11-19T14:22:06Z | n/a | `PASSED` |
 | `tests/configuration/test_schema_validation.py::test_a_successful_read_returns_no_read_failure_reason` | unit | A | 2026-11-19T14:22:06Z | n/a | `PASSED` |
@@ -143,7 +149,7 @@ Commands:
 | `tests/service/test_config_routes.py::test_a_check_discloses_no_collected_secret` | unit | B | 2026-11-19T14:58:52Z | n/a | `PASSED` |
 | `tests/service/test_config_routes.py::test_the_check_route_is_not_taken_for_a_configuration_id` | unit | B | 2026-11-19T14:58:52Z | n/a | `PASSED` |
 | `tests/cli/test_client_commands.py::test_configs_check_sends_the_file_as_package_and_prints_the_report` | unit | C | 2026-11-19T15:14:00Z | n/a | `PASSED` |
-| `tests/cli/test_client_commands.py::test_configs_check_exits_1_when_the_page_has_a_finding` [no-findings, branch-no-findings, a-warning, an-error, branch-with-findings] | unit | C | 2026-11-19T15:14:00Z | n/a | `PASSED` |
+| `tests/cli/test_client_commands.py::test_configs_check_exits_1_when_the_page_has_an_error_finding` [no-findings, branch-no-findings, a-warning, branch-with-a-warning, an-error, branch-with-findings]; renamed from `..._has_a_finding` by `d38e7a0d` | unit | G | 2026-11-19T22:45:47Z | n/a | `PASSED` |
 | `tests/cli/test_client_commands.py::test_configs_check_refuses_an_unreadable_file_like_configs_register` [missing-file, invalid-yaml, not-a-mapping, not-utf-8] | unit | C | 2026-11-19T15:14:00Z | n/a | `PASSED` |
 | `tests/client/test_client.py::test_check_package_posts_exactly_one_field_without_an_idempotency_key` [package, document] | unit | C | 2026-11-19T15:14:00Z | n/a | `PASSED` |
 | `tests/client/test_client.py::test_check_package_without_a_branch_sends_no_branch` | unit | C | 2026-11-19T15:14:00Z | n/a | `PASSED` |
@@ -240,8 +246,8 @@ what is left for a decision.
 | `5c30db1e` | Locks the branch and reason fields while Register reads the configuration again; detects a 403 by its status code; the two validation routes share `_findings_page` and `_destination_options`. | Both: the `config_routes.py` part is the first, the web interface part the second. |
 | `4f12b59f` | The review step blocks registration only on an `error` finding and lists warnings (spec decision D-10, research R4 corrected). | Second; its spec, research and alignment-check changes are also on the first. |
 | `d38e7a0d` | `configs check` exits 1 only on an `error` finding. ADR 0051, the contract, the docs and the CLI reference follow. | First |
-| `e8fd98ea` | `destination_read` is `not_read`, not `read`, when the destination adapter is unknown or declares no schema read. | First |
-| `be569f84` | The generated API type comment for `destination_read` names `not_read`. | Second |
+| `e8fd98ea` | `destination_read` is `not_read`, not `read`, when the destination adapter is unknown or declares no schema read. No current destination reaches this: the Sync API refuses an unknown adapter and every adapter without a schema read as a destination before the check runs (checked for all eight such adapters). The user docs therefore do not list `not_read`; the contract and ADR say it guards an adapter added later. | First |
+| `be569f84` | The generated API type comment for `destination_read` names `not_read`. The comment was edited by hand: generating the file from the app in this environment also changes every 422 description from "Unprocessable Content" to "Unprocessable Entity", because the installed FastAPI version differs. | Second |
 | `fb0c3055` | The docs, ADR 0051 and FR-012 say `created: false` matches any stored version of the configuration, not only the newest. | Second |
 | `74715d03` | The review step shows why it cannot compare when the configuration cannot be read, says to change the branch after a refused branch check, and keeps warnings out of the "cannot be reached" notice. `RegisteredVersion` types the mark. | Second |
 | `f0bae654` | A test proves that a failed insert of the mark stores no version (SQLite). | Second |
@@ -326,3 +332,8 @@ On `025-register-config-web-us1` at `e64510cf`:
 - `uv run invoke docs.generate`: no change, so the CLI reference on that branch is current.
   `infrahub-sync configs --help`: pass.
 - `uv run invoke tests.tests-unit`: 9029 passed, 4 skipped, 383 deselected, 2 xfailed.
+
+After the verification above, `9e56c98b` (and `219de1f4` on `025-register-config-web-us1`)
+changed only text and one code comment: no current destination returns `not_read`, and the
+acceptance scenario and SC-002 state D-10. `uv run invoke docs.docusaurus` then passed on
+`025-register-config-web`, with no broken link.
