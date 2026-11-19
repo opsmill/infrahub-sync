@@ -238,7 +238,16 @@ export function PackageReview({
   const entries = mappingEntries(nextMappings, diff);
   const removed = removedEntries(baseMappings, diff);
 
-  const footer = create.isError ? (
+  // The unreachable warning stays next to Register whatever else the footer reports (FR-020).
+  const unreachableWarning =
+    kind === "unreachable" && !validating ? (
+      <Notice tone="warning" role="note" title={MESSAGES.unreachable}>
+        {check.data?.findings.map((f) => (
+          <p key={`${f.location}:${f.message}`}>{f.message}</p>
+        ))}
+      </Notice>
+    ) : undefined;
+  const outcomeNotice = create.isError ? (
     noAnswer ? (
       <Notice tone="danger" role="alert" title={MESSAGES.requestFailed}>
         <p>Retrying sends the same request. No second version is registered.</p>
@@ -256,13 +265,14 @@ export function PackageReview({
     </Notice>
   ) : outcome?.kind === "read-failed" ? (
     <MutationError error={outcome.error} />
-  ) : kind === "unreachable" && !validating ? (
-    <Notice tone="warning" role="note" title={MESSAGES.unreachable}>
-      {check.data?.findings.map((f) => (
-        <p key={`${f.location}:${f.message}`}>{f.message}</p>
-      ))}
-    </Notice>
   ) : undefined;
+  const footer =
+    outcomeNotice || unreachableWarning ? (
+      <div className="flex flex-col gap-2">
+        {outcomeNotice}
+        {unreachableWarning}
+      </div>
+    ) : undefined;
 
   return (
     <DialogFrame
