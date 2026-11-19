@@ -61,9 +61,26 @@ Run rules (from the maintainer, 2026-11-18 evening):
    tasks attach the fixed `infrahub-sync-dev` worker (`tasks/netbox.py:472`, `:747`), so the check
    failed and the live scenarios were skipped, as the answer requires.
 
+2. **Q:** is the run complete? **A:** not yet: write the morning report in the requested five
+   sections; check that `ci-docker-image.yml` can be dispatched from `feature/v3-develop`; rerun
+   `docs.generate`, `docs.docusaurus` and `tests.check-310` on the final tree; try one live run of
+   `demo prepare` by hand on an isolated Compose project (no NetBox, no invoke task) if sessions 021
+   and 022 agree, else skip. **Next:** `gh` shows `ci-docker-image.yml` is not registered from
+   `main`, but a `workflow_dispatch` run from branch `007-harbor-image-publishing` succeeded on
+   2026-10-01, so a dispatch with `--ref` works; ADR 0048 collides with no other worktree (022 uses
+   0049 and 0050); `in_sync()` is called as the SDK's own `wait_until_converged` calls it. Both
+   sessions agreed to a stack on project `infrahub-sync-024`, ports 28000, 28001, 24230, 25440,
+   29010, image `infrahub-sync:demo-024`; started it.
+
 - Fix subagent: items 1–8 ✅, item 9 ⚠️ finished by the orchestrator (stale `--url`, key and state
   wording in plan.md, research.md, data-model.md). Commits `2f85d702`, `b95f236b`.
 - Chunk 5 done by the orchestrator: news fragment, `/.dev` ignored in `.yamllint.yml`, full
   verification (unit tier 9003 passed at 17:11:55Z), no `Claude-Session` trailer, no token-like
   string in the diff, no change in `../styrmin` or `../infrahub-helm-sync-chart`. Commit `fb50811d`.
 - Report written: `opsmill-implement-report.md`, status INCOMPLETE (T016, T022 live parts).
+- Live run on project `infrahub-sync-024` (2026-11-19, no NetBox, no invoke task). `demo prepare`
+  from the host, four runs between 13:59:10Z and 13:59:38Z: `loaded`/`registered` v1; another
+  reason, `unchanged` v1; `http://netbox:8080`, `versioned` v2; back to the first address,
+  `unchanged` v1. From the image `infrahub-sync:demo-024` at 13:59:44Z, with no checkout:
+  `versioned` v3, 16 schema files. Then `down --volumes` and the image removed; no container or
+  image of that project is left.

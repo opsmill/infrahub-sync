@@ -1,6 +1,6 @@
 # Implementation report: 024-demo-ready-netbox
 
-**Status**: INCOMPLETE. T016 and T022 are not done: their live Docker scenarios were not run (§3).
+**Status**: INCOMPLETE. T016 and T022 are not done: `dev.demo` with NetBox and the schema conflict scenario were not run. `demo prepare` ran against a live stack, from the host and from the image (§3, §4).
 
 - Spec directory: `dev/specs/024-demo-ready-netbox`
 - Branch: `024-demo-ready-netbox`, worktree `.worktrees/024-demo-ready-netbox`. Not pushed, no pull request.
@@ -31,7 +31,8 @@
 The live parts of T016 (quickstart scenarios 1 and 2) and T022 (scenarios 3 and 4) were not run.
 
 - **Why:** this machine holds stopped Compose projects named `infrahub-sync-dev` and `infrahub-sync-netbox`, and this run did not create them. The NetBox tasks attach NetBox's network to the worker of the fixed project `infrahub-sync-dev` (`tasks/netbox.py:472` and `:747`). The NetBox project name is set in `development/netbox/netbox.env`. A live run would therefore change those stacks, and the clean-up tasks would delete their data.
-- **Unknown until they run:** the elapsed time of SC-001 (15 minutes or less), the plan counts, and the image path against a live Sync API.
+- **Run afterwards, on 2026-11-19:** `demo prepare` against a live Sync API and Infrahub on an isolated Compose project, `infrahub-sync-024`, with no NetBox and no invoke task. It ran from the host and from the image with no checkout. §4 has the results. This covers the command part of scenario 3, not `dev.demo`, not NetBox and not a plan.
+- **Still not known:** the elapsed time of SC-001 (15 minutes or less), the plan counts, and the schema conflict of scenario 4.
 - The appendix has the details from chunk 2.
 
 ## 4. Local-pass evidence
@@ -50,7 +51,9 @@ All runs are on macOS with Python 3.11.8 through `uv run`, from the worktree. Th
 | `tests/image/test_demo_assets.py` (2 tests) and `tests/image/test_build_context.py::test_the_build_context_holds_only_what_the_image_needs` | image (`docker` marker) | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=demo-024-test uv run pytest -m docker tests/image/test_demo_assets.py tests/image/test_build_context.py -v` | 2026-11-18T16:17:45Z | Docker 29.8.2, image `infrahub-sync:demo-024-test` | `3 passed in 3.49s` |
 | Whole unit tier on the final tree | unit | `uv run invoke tests.tests-unit` | 2026-11-18T17:11:55Z | n/a | `9003 passed, 4 skipped, 385 deselected, 2 xfailed` |
 | Python 3.10 legs | unit | `uv run invoke tests.check-310` | about 2026-11-18T16:58Z, before `b95f236b` | `.dev/check-310-venv` | `check-310 passed all three Python 3.10 legs` (6645 passed, 101 skipped) |
-| Quickstart scenarios 1–4 (`dev.demo`, a re-run, the image against a live stack, a schema conflict) | e2e, manual | [quickstart.md](quickstart.md) | deferred: they would touch Compose projects that are not ours (§3) | — | — |
+| `demo prepare` from the host, four runs: first address; another reason; `http://netbox:8080`; first address again | e2e, manual | `uv run infrahub-sync demo prepare --netbox-url … --infrahub-url http://infrahub-server:8000 --infrahub-address http://127.0.0.1:28000 --reason … --json` | 2026-11-19T13:59:10Z to 13:59:38Z | Compose project `infrahub-sync-024`, profiles `sync` and `infrahub`, ports 28000/28001, image `infrahub-sync:demo-024`, removed afterwards | `"schema": "loaded"`, `"configuration": "registered"`, `"version": 1`; then `unchanged` v1; `versioned` v2; `unchanged` v1 |
+| `demo prepare` from the image, no checkout | e2e, manual | `docker run --rm --network infrahub-sync-024_default --entrypoint infrahub-sync infrahub-sync:demo-024 demo prepare --netbox-url https://netbox.example.test --infrahub-url http://infrahub-server:8000 --json` | 2026-11-19T13:59:44Z | same project | `"configuration": "versioned"`, `"schema_files": 16`, `"version": 3` |
+| Quickstart scenarios 1, 2 and 4 (`dev.demo` with NetBox, a re-run of it, a schema conflict) | e2e, manual | [quickstart.md](quickstart.md) | deferred: the NetBox tasks would touch Compose projects that are not ours (§3) | — | — |
 
 ## 5. Review findings
 
