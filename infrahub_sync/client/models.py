@@ -275,8 +275,10 @@ class PackageCheckRequest(_RequestModel):
             raise ValueError(_PACKAGE_CHECK_FIELDS_MESSAGE)
         return self
 
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
     @model_serializer(mode="wrap")
-    def _omit_the_unset_field(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _omit_the_unset_field(self, handler: SerializerFunctionWrapHandler):
         return {key: value for key, value in handler(self).items() if value is not None}
 
 
