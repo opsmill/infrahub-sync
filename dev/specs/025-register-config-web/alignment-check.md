@@ -18,7 +18,7 @@ the code or tighten security.
 |---|---|---|---|---|
 | Minor | changed | FR-006: "list findings of lower severity" | FR-011, Key Entities | Every validation finding has the severity `error` (`validation.py`, line 169). "Valid" therefore means "no findings", and there is nothing of lower severity to list. |
 | Minor | added | (none) | FR-005, User Story 1 scenario 6 | The critique (E1) found that validating a package the caller sends would send the service's destination token to an address the caller chooses. The new route requires an administrator. The brief's edge case 1 already limits the web interface to administrators, so the operator notices no difference. |
-| Minor | added | Open question 2: "one spec or two?" | Input, User Story 1 | The maintainer did not answer. The specification is one document, with User Story 1 able to ship on its own, as the agent recommended. |
+| Minor | added | Open question 2: "one spec or two?" | Decision D-9, User Story 1 | Not answered in the grilling session. The maintainer confirmed on 2026-11-19: one specification, delivered in two pull requests, User Story 1 first. |
 | Minor | added | "The CLI could also use the new route" (recommendation, not a requirement) | FR-006 | `infrahub-sync configs check` is a requirement. |
 | Minor | added | (none) | FR-022, SC-005 | FR-022 states what happens when User Story 4 is left out. SC-005 adds a measurable check for findings parity. |
 | Minor | added | (none) | FR-007, FR-009 | From the critique: choose a file without dragging; a validating state with Cancel available; a note when findings exceed one page. |
@@ -27,5 +27,5 @@ the code or tighten security.
 
 ## Action
 
-Proceed. No remediation pass is needed. The maintainer should confirm the "registered without
-validation" mark (User Story 4), because the brief recorded an ambiguous answer.
+Proceed. No remediation pass is needed. On 2026-11-19 the maintainer confirmed that the
+"registered without validation" mark (User Story 4) is kept (decision D-8).

@@ -135,6 +135,12 @@ stays inside `frontend/src/features/configurations/`, next to the pages it chang
    without step 4, such a version carries no mark (FR-022).
 5. Docs, ADR, changelog fragment.
 
+Delivery (decision D-9): two pull requests into `feature/v3-develop`.
+- The first holds steps 1 and 2, with the ADR (without the mark), the `configs check`
+  documentation, the regenerated CLI reference and its own changelog fragment.
+- The second holds steps 3 and 4, with the ADR section on the mark's table, the web interface
+  documentation and its own changelog fragment.
+
 ## Risks
 
 - **Spec 022, local accounts, is in progress on branch `022-local-accounts`.** It replaces the
