@@ -243,9 +243,8 @@ A version registered with **Register without validation** carries a mark:
   validation", and the list of versions shows "registered without validation" next to the
   version number.
 - `configs show CONFIG_ID --version VERSION`, `configs versions CONFIG_ID`, `configs register`
-  and `configs version` print
-  `registered_without_validation: true`. For every other version they print
-  `registered_without_validation: false`.
+  and `configs version` print `registered_without_validation: true`. For every other version
+  they print `registered_without_validation: false`.
 
 The CLI never sets the mark. Run `configs validate CONFIG_ID VERSION --branch BRANCH` on a
 marked version once the destination can be reached.
