@@ -1,0 +1,30 @@
+dev/specs/025-register-config-web/contracts/sync-api.md
+  s_eefe1fec4652ae::t_619bce8e73e883 93-94
+docs/docs/configuration-package.mdx
+  s_eefe1fec4652ae::t_619bce8e73e883 175-177
+tests/cli/test_client_commands.py
+  s_eefe1fec4652ae::t_49891e7ac57b62 434
+  s_eefe1fec4652ae::t_876e5393986761 421-422,427
+dev/adr/0051-a-package-can-be-validated-before-it-is-registered.md
+  s_eefe1fec4652ae::t_619bce8e73e883 69-72,77
+infrahub_sync/cli.py
+  s_eefe1fec4652ae::t_5d7fa4afe98840 826-827,833-834
+docs/docs/reference/cli.mdx
+  s_eefe1fec4652ae::t_78b5cf0ecac930 343-344
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e11b6a08c1402cfed7ec253f4a9e4221613e0df8",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

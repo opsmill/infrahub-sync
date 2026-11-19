@@ -1,0 +1,36 @@
+dev/adr/0051-a-package-can-be-validated-before-it-is-registered.md
+  s_eefe1fec4652ae::t_222124ac2af4dd 65-66
+dev/specs/025-register-config-web/contracts/sync-api.md
+  s_eefe1fec4652ae::t_222124ac2af4dd 49-53
+docs/docs/configuration-package.mdx
+  s_eefe1fec4652ae::t_c14fd00b391e94 165,173
+tests/configuration/test_schema_validation.py
+  s_eefe1fec4652ae::t_42d97e1087aa93 394,425,454,471,481
+infrahub_sync/configuration/schema_validation.py
+  s_eefe1fec4652ae::t_c5708c53d9a6f8 113-116,122,372,400,430
+infrahub_sync/client/models.py
+  s_eefe1fec4652ae::t_222124ac2af4dd 1126-1127
+tests/product_store/test_configs_service.py
+  s_eefe1fec4652ae::t_29d7816b57e3cf 1817,1826-1827,1829-1834
+  s_eefe1fec4652ae::t_f7dc35cfaa5e36 1819-1824
+  s_eefe1fec4652ae::t_dffa9c385454f6 1814-1816,1818,1825,1828
+infrahub_sync/product_store/configs.py
+  s_eefe1fec4652ae::t_095367b6962270 53
+  s_eefe1fec4652ae::t_c5708c53d9a6f8 865,868-877,885-886,922
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "140fbad4fca3753f348bbb6b3954c934563b8927",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
