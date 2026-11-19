@@ -50,6 +50,7 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 * `configs`: Register and inspect configuration packages.
 * `runs`: Inspect service-owned runs.
 * `schedules`: Start `sync` runs of a configuration...
+* `demo`: Prepare a Sync deployment for the NetBox...
 * `tokens`: List, create and delete the API tokens of...
 * `accounts`: Manage local accounts.
 
@@ -895,6 +896,48 @@ $ infrahub-sync schedules take-over [OPTIONS] {SCHEDULE}
 
 * `--reason <str>`: Optional audit reason.
 * `--idempotency-key <str>`: Retry key.
+* `--help`: Show this message and exit.
+
+## `infrahub-sync demo`
+
+Prepare a Sync deployment for the NetBox demo.
+
+**Usage**:
+
+```console
+$ infrahub-sync demo [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `prepare`: Load the demo schema into Infrahub and...
+
+### `infrahub-sync demo prepare`
+
+Load the demo schema into Infrahub and register the NetBox configuration.
+
+Reads the Infrahub token from INFRAHUB_API_TOKEN. A second run with the same addresses changes nothing.
+
+It never plans, applies or approves.
+
+**Usage**:
+
+```console
+$ infrahub-sync demo prepare [OPTIONS]
+```
+
+**Options**:
+
+* `--netbox-url <str>`: NetBox address written into the package: the address the worker uses.  [required]
+* `--infrahub-url <str>`: Infrahub address written into the package: the address the worker uses.  [required]
+* `--infrahub-address <str>`: Infrahub address this command uses to load the schema. Defaults to --infrahub-url.
+* `--schema-timeout <float>`: Seconds to wait for Infrahub to apply the schema.  [default: 120.0]
+* `--reason <str>`: Optional audit reason for the registration.
+* `--json`: Print the result as one JSON object.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync tokens`
