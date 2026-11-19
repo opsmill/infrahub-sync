@@ -218,8 +218,10 @@ The review step then shows:
   validate again against another branch;
 - an optional reason, which the Sync API records with the version.
 
-**Register** is enabled only when the result is "Valid against branch B". When a finding is
-listed, an error or a warning, fix the package and drop it again. When the Sync API cannot
+**Register** is enabled only when the result is "Valid against branch B". Warnings are listed
+under that result and do not disable **Register**: for example, the Sync API reports a warning
+when no worker has published which credential variables it holds. When an error finding is
+listed, fix the package and drop it again. When the Sync API cannot
 reach the destination, the review step shows "Could not validate: the destination cannot be
 reached" and the button becomes **Register without validation**. When the check itself does not
 complete, the review step shows "Validation did not complete." and a **Validate again** button.

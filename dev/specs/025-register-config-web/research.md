@@ -59,12 +59,18 @@ repository at commit `87d5a47f`.
 - **Alternative rejected**: parse the reason from the finding message. Message text is not a
   contract.
 
-## R4. Validation findings have one severity
+## R4. Validation findings have two severities
 
 - **Finding**: `_finding` in [`validation.py`](../../../infrahub_sync/configuration/validation.py)
-  (line 169) accepts only `severity: Literal["error"]`.
-- **Decision**: "Valid" means the report has no findings. The spec's Key Entities section states
-  this.
+  (line 169) builds only `error` findings, but `ValidationFinding.severity` in
+  [`models.py`](../../../infrahub_sync/configuration/models.py) accepts `error` and `warning`.
+  `configuration/warnings.py` reports `intentional-omission` warnings, and
+  [`configs.py`](../../../infrahub_sync/product_store/configs.py) reports the
+  `worker-environment-unknown` warning while no worker has published its credential variables.
+  The first version of this note read only `validation.py` and concluded that every finding is an
+  error; the code review on 2026-11-19 found that this is wrong.
+- **Decision**: "Valid" means the report has no `error` finding. Warnings are listed and do not
+  block registration, and `configs check` exits 1 only on an `error` finding (spec decision D-10).
 
 ## R5. Comparing a dropped file with the newest version
 

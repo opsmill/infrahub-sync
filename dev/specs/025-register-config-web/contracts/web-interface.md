@@ -32,8 +32,10 @@ without a mouse.
 5. Comparison with version N (new version only), with the existing mapping comparison view.
 6. Credential references: the variable names only.
 7. Validation: branch field (default from the package, else `main`) and the result:
-   - "Valid against branch B" when there are no findings;
-   - the list of findings, otherwise;
+   - "Valid against branch B" when there is no `error` finding, with any `warning` findings listed
+     below it; a warning does not disable Register (spec decision D-10);
+   - the list of findings, with Register disabled, when there is an `error` finding or when
+     `total_findings` is larger than the page;
    - "Could not validate: the destination cannot be reached" when `destination_read` is `timeout`
      or `unreachable`. Every other failure reason (`unauthorized`, `forbidden`, `nobranch`,
      `rejected`, `unconfigured`, `credentials`) comes with a `destination-schema-read-failed`

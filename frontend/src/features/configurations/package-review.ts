@@ -38,25 +38,36 @@ export function defaultBranch(content: DeclaredContent): string {
 }
 
 /**
- * What a check allows.
- * - `valid`: the destination was read and there is no finding; Register is enabled.
- * - `unreachable`: the destination did not answer and no other finding was reported; Register
- *   without validation is enabled (FR-020).
- * - `findings`: at least one finding; Register is disabled (FR-011).
+ * What a check allows. Only an `error` finding blocks registration; a `warning` finding is listed
+ * and does not block (FR-011).
+ * - `valid`: the destination was read and there is no error finding; Register is enabled.
+ * - `unreachable`: the destination did not answer and no other error finding was reported;
+ *   Register without validation is enabled (FR-020).
+ * - `findings`: at least one error finding, or more findings than the page holds; Register is
+ *   disabled (FR-011).
  * - `unchecked`: the check ran without a branch, so the destination was not read.
  */
 export type ResultKind = "valid" | "findings" | "unreachable" | "unchecked";
 
+/** True when the page does not hold every finding, so an error finding may be on a later page. */
+const pageIncomplete = (check: PackageCheck) => check.total_findings > check.findings.length;
+
 export function resultKind(check: PackageCheck): ResultKind {
   if (UNREACHABLE_READS.has(check.destination_read)) {
     const onlyReadFailed =
-      check.total_findings === check.findings.length &&
-      check.findings.every((f) => f.code === READ_FAILED_CODE);
+      !pageIncomplete(check) &&
+      check.findings.every((f) => f.code === READ_FAILED_CODE || f.severity !== "error");
     return onlyReadFailed ? "unreachable" : "findings";
   }
-  if (check.total_findings > 0) return "findings";
+  if (pageIncomplete(check) || check.findings.some((f) => f.severity === "error")) {
+    return "findings";
+  }
   return check.destination_read === "read" ? "valid" : "unchecked";
 }
+
+/** The warning findings a check returned, which the review step lists without blocking. */
+export const warningFindings = (check: PackageCheck) =>
+  check.findings.filter((f) => f.severity === "warning");
 
 /** The variable names the package's credential references point to, without their values. */
 export function credentialVariables(content: DeclaredContent): string[] {

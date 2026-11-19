@@ -93,6 +93,15 @@ Taken with the maintainer on 2026-11-18.
 - **D-9, one specification, delivered in two pull requests.** The first pull request holds User
   Story 1 (the Sync API route and `configs check`). The second holds the web interface and the mark
   (User Stories 2 to 4). The maintainer confirmed this on 2026-11-19.
+- **D-10, only an `error` finding blocks registration.** A finding has the severity `error` or
+  `warning` ([`models.py`](../../../infrahub_sync/configuration/models.py), `ValidationFinding`).
+  Two warnings exist: `worker-environment-unknown`, returned by every check with a branch while no
+  worker has published its credential variables, and `intentional-omission`, returned for a package
+  that declares `omissions`. The grilling session decided that a package is valid "only when no
+  finding has `error` severity", and that lower-severity findings are listed. An earlier version of
+  this spec assumed every finding has the severity `error` (research R4), which is not true. This
+  decision was applied on 2026-11-19 after the code review, without a new confirmation from the
+  maintainer.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -293,8 +302,10 @@ registered without validation.
   When the report has more findings than one page holds, the review step MUST state how many more
   exist and name `infrahub-sync configs check` as the way to list them all.
 - **FR-010**: Operators MUST be able to change the validation branch, which validates again.
-- **FR-011**: The review step MUST show "Valid" only when validation returns no findings, and MUST
-  list every finding otherwise. Registering MUST NOT be possible while findings are listed.
+- **FR-011**: The review step MUST show "Valid" only when validation returns no finding with the
+  severity `error`, and MUST list every finding, including findings with the severity `warning`.
+  Registering MUST NOT be possible while an `error` finding is listed, or while the report has more
+  findings than the page holds. A `warning` finding does not block registration (decision D-10).
 - **FR-012**: After a successful registration, the web interface MUST open the page of the new
   version. When the Sync API reports that the package is identical to the newest version, the web
   interface MUST say that no new version was registered.
@@ -338,8 +349,9 @@ registered without validation.
 - **Configuration** and **configuration version** (existing): a configuration has an ID and a name;
   its versions are numbered, immutable and cannot be deleted. A version records the reason given at
   registration.
-- **Validation report** (existing): the findings for one package against the destination. Every
-  finding has the severity `error`. User Story 1 makes it available for a package that is not
+- **Validation report** (existing): the findings for one package against the destination. A
+  finding has the severity `error` or `warning`; only an `error` finding blocks registration
+  (D-10). User Story 1 makes it available for a package that is not
   registered.
 - **Registered without validation** (new, User Story 4): a mark on a configuration version, set only
   when the operator registered after validation could not reach the destination. A version

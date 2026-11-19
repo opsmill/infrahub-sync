@@ -16,6 +16,7 @@ import type {
   PackageCheck,
   RegisteredConfiguration,
   RegisteredVersion,
+  ValidationFinding,
 } from "#/api/types";
 import { CheckIcon } from "#/components/icons";
 import { CODE_CHIP, InlineCode, Notice } from "#/components/page";
@@ -46,6 +47,7 @@ import {
   unchangedText,
   validatingText,
   validText,
+  warningFindings,
 } from "./package-review";
 
 /**
@@ -559,15 +561,29 @@ function ValidationResult({
       <output className="block text-foreground-muted text-sm">{validatingText(branch)}</output>
     );
   }
-  if (kind === "valid") {
+  const warnings = warningFindings(check);
+  if (kind === "valid" || kind === "unreachable" || kind === "unchecked") {
+    // The unreachable destination is reported next to Register; warnings never block.
     return (
-      <output className="flex items-center gap-1.5 font-medium text-sm text-success">
-        <CheckIcon className="size-4 shrink-0" />
-        {validText(branch)}
-      </output>
+      <>
+        {kind === "valid" && (
+          <output className="flex items-center gap-1.5 font-medium text-sm text-success">
+            <CheckIcon className="size-4 shrink-0" />
+            {validText(branch)}
+          </output>
+        )}
+        {warnings.length > 0 && (
+          <Notice
+            tone="warning"
+            role="status"
+            title={`${plural(warnings.length, "warning", "warnings")} against branch ${branch}`}
+          >
+            <FindingList findings={warnings} />
+          </Notice>
+        )}
+      </>
     );
   }
-  // The unreachable destination is reported next to Register.
   if (kind !== "findings") return null;
   const more = moreFindingsText(check);
   return (
@@ -576,18 +592,26 @@ function ValidationResult({
       role="status"
       title={`${plural(check.total_findings, "finding", "findings")} against branch ${branch}`}
     >
-      <ul className="flex flex-col gap-1">
-        {check.findings.map((f) => (
-          <li key={`${f.code}:${f.location}:${f.message}`} className="[overflow-wrap:anywhere]">
-            {f.location && <code className={CODE_CHIP}>{f.location}</code>} {f.message}
-          </li>
-        ))}
-      </ul>
+      <FindingList findings={check.findings} />
       {more && (
         <p>
           <InlineCode text={more} />
         </p>
       )}
     </Notice>
+  );
+}
+
+/** One line per finding: its severity when it is a warning, its location and its message. */
+function FindingList({ findings }: { findings: readonly ValidationFinding[] }) {
+  return (
+    <ul className="flex flex-col gap-1">
+      {findings.map((f) => (
+        <li key={`${f.code}:${f.location}:${f.message}`} className="[overflow-wrap:anywhere]">
+          {f.severity === "warning" && <span className="font-medium">Warning: </span>}
+          {f.location && <code className={CODE_CHIP}>{f.location}</code>} {f.message}
+        </li>
+      ))}
+    </ul>
   );
 }
