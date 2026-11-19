@@ -23,6 +23,7 @@ infrahub_sync/cli.py
   s_531f0e8d1dd35e::t_ea1f5176a40ced 2852-2854
   s_531f0e8d1dd35e::t_3b468cab99d4f9 2830
   s_531f0e8d1dd35e::t_34752a7919e00e 81-82,157,161,2388-2389,2805-2829,2831-2851,2855-2881
+  s_531f0e8d1dd35e::t_c6b5acf1cb2fb8 2803-2804
 tests/cli/test_demo_prepare.py
   s_531f0e8d1dd35e::t_ee7744e02a63f5 1-113
 infrahub_sync/demo/__init__.py
