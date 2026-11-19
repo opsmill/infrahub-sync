@@ -1,0 +1,24 @@
+frontend/src/api/types.ts
+  s_eefe1fec4652ae::t_0cf388d9600bea 72-73
+frontend/src/features/configurations/PackageReview.tsx
+  s_eefe1fec4652ae::t_b9b50bc162216c 393-399
+  s_eefe1fec4652ae::t_57ebb81bc1031c 203-204
+  s_eefe1fec4652ae::t_9cf8f1e4e3c05d 439-440
+  s_eefe1fec4652ae::t_6f6d86ff784fc8 317-321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "74715d03bd9d471aa21c0b9ddb185e6886f78e0c",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
