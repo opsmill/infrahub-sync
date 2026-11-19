@@ -166,8 +166,9 @@ next version number.
    with version N, the credential references, the validation branch and "Valid".
 2. **Given** the review step shows "Valid", **When** the operator registers, **Then** version N+1 is
    created with the reason the operator entered, and the web interface opens its page.
-3. **Given** a package with validation findings, **When** the operator drops it, **Then** the review
-   step lists the findings and the operator cannot register it.
+3. **Given** a package with an `error` finding, **When** the operator drops it, **Then** the review
+   step lists the findings and the operator cannot register it. A package with only `warning`
+   findings lists them and can be registered (D-10).
 4. **Given** the review step is open, **When** the operator changes the validation branch, **Then**
    the review step validates again against the new branch and shows the new result.
 5. **Given** a package identical to version N, **When** the operator registers it, **Then** the web
@@ -368,7 +369,7 @@ registered without validation.
 - **SC-001**: An operator with an administrator token and a package file registers a new
   configuration, or a new version, from the web interface without opening a terminal, in under 2
   minutes from dropping the file to viewing the registered version.
-- **SC-002**: No version registered from the web interface has validation findings at the time of
+- **SC-002**: No version registered from the web interface has an `error` finding at the time of
   registration, except versions registered after the destination could not be reached. With User
   Story 4, every such version carries the mark.
 - **SC-003**: For every package in the acceptance test set, the comparison in the review step
