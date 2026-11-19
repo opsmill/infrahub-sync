@@ -2,9 +2,12 @@
 
 - Spec directory: `dev/specs/025-register-config-web`.
 - Branch: `025-register-config-web`, in the worktree `.worktrees/025-register-config-web`.
-- Base commit: `f35a59c8`. Head commit: the commit that adds this report.
-- The first pull request (User Story 1) ends at `869395e6`. The second pull request (User
-  Stories 2 to 4) is `869395e6..HEAD`.
+- Base commit: `f35a59c8`. Head commit: the commit that adds this report. The report was
+  committed first as `21a34ee6`; review fixes followed, listed in
+  [Code review fixes on 2026-11-19](#code-review-fixes-on-2026-11-19).
+- The first pull request (User Story 1) no longer ends cleanly at `869395e6`, because some review
+  fixes belong to it. The local branch `025-register-config-web-us1` holds `869395e6` plus those
+  fixes. The second pull request is the rest of `025-register-config-web`.
 - Result: all 39 tasks are done. Every new Python test passed locally, including the PostgreSQL
   cases. The web interface has no test runner, and the five quickstart scenarios were not run by
   hand.
@@ -217,6 +220,109 @@ work, and one on the second (`869395e6..HEAD`). Neither found a problem rated hi
 ## Suggested next steps
 
 1. Run quickstart scenarios 1 to 5 by hand against a development stack.
-2. Decide whether to fix the deferred findings, starting with the `created: false` wording and the
-   409 on Retry after a server error.
-3. Open the first pull request from `869395e6` into `feature/v3-develop`, then the second.
+2. Decide on the findings left for a decision, listed under
+   [Code review fixes on 2026-11-19](#code-review-fixes-on-2026-11-19). The `created: false`
+   wording, the `read` value without a read, the mark rollback test, the three web interface
+   findings and the type of `RegisteredVersion` in the table above are fixed there.
+3. Open the first pull request from `025-register-config-web-us1` into `feature/v3-develop`, then
+   the second.
+
+## Code review fixes on 2026-11-19
+
+A code review of the branch (`/code-review xhigh --fix`, 21 commits since `feature/v3-develop`)
+reported 14 findings. This section lists what changed after the report commit `21a34ee6`, and
+what is left for a decision.
+
+### Commits and the pull request each belongs to
+
+| Commit on `025-register-config-web` | Change | Pull request |
+|---|---|---|
+| `5c30db1e` | Locks the branch and reason fields while Register reads the configuration again; detects a 403 by its status code; the two validation routes share `_findings_page` and `_destination_options`. | Both: the `config_routes.py` part is the first, the web interface part the second. |
+| `4f12b59f` | The review step blocks registration only on an `error` finding and lists warnings (spec decision D-10, research R4 corrected). | Second; its spec, research and alignment-check changes are also on the first. |
+| `d38e7a0d` | `configs check` exits 1 only on an `error` finding. ADR 0051, the contract, the docs and the CLI reference follow. | First |
+| `e8fd98ea` | `destination_read` is `not_read`, not `read`, when the destination adapter is unknown or declares no schema read. | First |
+| `be569f84` | The generated API type comment for `destination_read` names `not_read`. | Second |
+| `fb0c3055` | The docs, ADR 0051 and FR-012 say `created: false` matches any stored version of the configuration, not only the newest. | Second |
+| `74715d03` | The review step shows why it cannot compare when the configuration cannot be read, says to change the branch after a refused branch check, and keeps warnings out of the "cannot be reached" notice. `RegisteredVersion` types the mark. | Second |
+| `f0bae654` | A test proves that a failed insert of the mark stores no version (SQLite). | Second |
+| `95b31331`, `62f16e66` | `configs versions` prints the mark. | Second |
+| `7702d117` | The review step lists only the credential variables that the configuration's settings use, with the `env` provider, as the Sync API's worker check does. | Second |
+| `0d882e01` | `PackageCheckRequest`'s serializer has no return annotation, so the model keeps its serialization schema. | First |
+
+The branch `025-register-config-web-us1` starts at `869395e6` and holds, in order: the
+`config_routes.py` part of `5c30db1e` (`7abfd283`), `d38e7a0d` (`e11b6a08`), `e8fd98ea`
+(`140fbad4`), `0d882e01` (`bad2d5c7`), and the spec part of `4f12b59f` (`e64510cf`). The commits
+applied without conflicts. To open the first pull request from it, rebase
+`025-register-config-web` onto it afterwards or merge it first; the second branch already
+contains the same changes.
+
+### Decision made without asking: only an error finding blocks registration
+
+The spec required "no findings" for "Valid", because research R4 read only `validation.py` and
+concluded that every finding is an error. `ValidationFinding.severity` also accepts `warning`, and
+two warnings exist:
+
+- `worker-environment-unknown`, returned by every check with a branch while no worker has
+  published its credential variables. With the old rule, nothing could be registered from the web
+  interface in that state, not even with "Register without validation".
+- `intentional-omission`, returned for a package that declares `omissions`. Such a package could
+  never be registered from the web interface, though `configs register` accepts it.
+
+The grilling brief says a package is valid "only when no finding has `error` severity", and that
+lower-severity findings are listed. The change follows that sentence. It also changes
+`configs check`: it now exits 1 only on an `error` finding, because ADR 0051 gave no reason for the
+stricter rule other than the same assumption. When the report has more findings than one page, the
+review step still blocks Register, because an error can be on a later page.
+
+### Findings left for a decision
+
+- **The registered checksum can differ from the checked one.** The browser reads
+  `declared_content` from the check as JSON and sends it back to register. A value such as `30.0`
+  comes back as `30`, so the stored checksum differs from the checksum of the same file registered
+  with the CLI, and `created: false` does not detect it. Integers above 2^53 also lose precision.
+  Options:
+  - register from the file text (`document`), as the check does, which needs a new field on the
+    registration routes;
+  - send `package_checksum` from the check and have the Sync API refuse a different checksum.
+- **A literal credential value gets a refusal with no location.** The check returns 422
+  `configs-validation` with "the configuration service refused the request", because `_call` drops
+  the findings that `_validation_refusal` collected. ADR 0051 accepts this. A fix returns those
+  findings in the refusal.
+- **YAML alias expansion.** A 408-byte file took 2.6 seconds to refuse, and each added level
+  multiplies the time by about nine. Only administrators reach the parser; ADR 0051 accepts it. A
+  fix needs a size or alias limit shared by the CLI and the Sync API.
+- **JSON indented with tabs is refused.** YAML does not allow tab indentation. The CLI has the same
+  gap. A fix tries `json.loads` before `yaml.safe_load` in both the CLI and the Sync API; ADR 0051
+  names `yaml.safe_load` as the one parser, so it needs an ADR change. A fix tried during the review
+  was reverted because it changed only the Sync API.
+- **Register after a definitive refusal.** After a 403 or 422 on Register, the request stays locked
+  and Register sends it again. FR-017 keeps one key per review step; deciding which refusals allow a
+  new key is a design decision.
+- **Two checks per dropped file.** The first check, without a branch, only reads the declared
+  branch; the second validates against it. Removing the first needs an API option that validates
+  against the declared branch.
+- **The check has no time limit in the browser.** The destination read uses the time limits from
+  the package's own settings, so a fixed browser limit could stop a check that would complete.
+  Cancel stays available.
+- **Retry after a server error gets 409.** This existed before this feature (see above).
+
+### Verification after the last commit
+
+On `025-register-config-web` at `0d882e01`:
+
+- `uv run invoke format`: no change. `uv run invoke lint`: exit 0 (28 `unused-ignore-comment`
+  warnings from ty, which do not fail the gate). `uv run ruff check .`: pass.
+- `uv run invoke tests.tests-unit`: 9046 passed, 4 skipped, 389 deselected, 2 xfailed.
+- `uv run invoke docs.generate`: no change. CLI `--help` for `infrahub-sync`, `configs` and `runs`:
+  pass.
+- Web interface: `tsc --noEmit`, `biome check src` and `vite build`: pass. There is no test runner;
+  `credentialVariables` was checked by hand in Node on a sample package.
+- PostgreSQL: not run again. No store query changed after the earlier PostgreSQL run; the new
+  rollback test runs on SQLite only.
+
+On `025-register-config-web-us1` at `e64510cf`:
+
+- `uv run invoke format`: no change. `uv run invoke lint`: exit 0. `uv run ruff check .`: pass.
+- `uv run invoke docs.generate`: no change, so the CLI reference on that branch is current.
+  `infrahub-sync configs --help`: pass.
+- `uv run invoke tests.tests-unit`: 9029 passed, 4 skipped, 383 deselected, 2 xfailed.
