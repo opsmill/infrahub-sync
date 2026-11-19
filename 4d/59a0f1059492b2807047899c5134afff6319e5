@@ -1,0 +1,31 @@
+development/docker-compose.yml
+  s_531f0e8d1dd35e::t_770dda8684b6db 8
+dev/specs/024-demo-ready-netbox/opsmill-implement-report.md
+  s_531f0e8d1dd35e::t_a1761919032729 19-22,60-64
+development/README.md
+  s_531f0e8d1dd35e::t_770dda8684b6db 17
+docs/docs/development/knowledge/repository-tour.md
+  s_531f0e8d1dd35e::t_770dda8684b6db 418
+docs/docs/development-stack.mdx
+  s_531f0e8d1dd35e::t_770dda8684b6db 332
+README.md
+  s_531f0e8d1dd35e::t_770dda8684b6db 85
+dev/specs/024-demo-ready-netbox/research.md
+  s_531f0e8d1dd35e::t_a1761919032729 105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d59a0f1059492b2807047899c5134afff6319e5",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

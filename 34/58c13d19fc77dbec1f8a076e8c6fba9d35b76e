@@ -1,0 +1,19 @@
+dev/specs/024-demo-ready-netbox/plan.md
+  s_531f0e8d1dd35e::t_ec107d91ece90b 49-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3458c13d19fc77dbec1f8a076e8c6fba9d35b76e",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

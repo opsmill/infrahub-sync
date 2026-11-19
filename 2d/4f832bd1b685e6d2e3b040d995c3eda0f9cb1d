@@ -1,0 +1,31 @@
+dev/specs/024-demo-ready-netbox/data-model.md
+  s_531f0e8d1dd35e::t_e794fe5e4ade83 1-33
+dev/specs/024-demo-ready-netbox/quickstart.md
+  s_531f0e8d1dd35e::t_224de14ed3fabe 1-61
+dev/specs/024-demo-ready-netbox/plan.md
+  s_531f0e8d1dd35e::t_eed13735c9b826 1,3,5,9-16,20-21,23-24,26,28-32,34,36,38-40,42-43,45,49-63,70-79,85-98,101-102,106-114,117-172,176
+  s_531f0e8d1dd35e::t_d834ad2f8bcae8 2,4,6-8,17-19,22,25,27,33,35,37,41,44,46-48,64-69,80-84,99-100,115-116,173-175
+  s_531f0e8d1dd35e::t_8c446a42f70555 103-105
+dev/specs/024-demo-ready-netbox/contracts/demo-prepare-cli.md
+  s_531f0e8d1dd35e::t_11f0948ef2b441 1-36
+dev/specs/024-demo-ready-netbox/contracts/dev-demo-task.md
+  s_531f0e8d1dd35e::t_4050b5d9abc3e4 1-21
+dev/specs/024-demo-ready-netbox/research.md
+  s_531f0e8d1dd35e::t_30a743bfb7f447 1-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2d4f832bd1b685e6d2e3b040d995c3eda0f9cb1d",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

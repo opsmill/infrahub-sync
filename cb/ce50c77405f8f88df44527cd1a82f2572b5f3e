@@ -1,0 +1,48 @@
+docs/docs/development-stack.mdx
+  s_531f0e8d1dd35e::t_80c72bd478743b 55,69-70,589,592
+tests/dev_stack/test_deps_mode.py
+  s_531f0e8d1dd35e::t_f4512220749b4f 504-516
+AGENTS.md
+  s_531f0e8d1dd35e::t_80c72bd478743b 213
+tasks/netbox.py
+  s_531f0e8d1dd35e::t_23426d28cd59e4 611-625
+tests/test_task_inventory.py
+  s_531f0e8d1dd35e::t_80c72bd478743b 35
+dev/specs/024-demo-ready-netbox/tasks.md
+  s_531f0e8d1dd35e::t_068785783f52fc 47-51
+dev/specs/024-demo-ready-netbox/opsmill-implement-report.md
+  s_531f0e8d1dd35e::t_161dfdf195b7e9 1-62
+tests/dev_stack/test_netbox_presence.py
+  s_531f0e8d1dd35e::t_0616637435fc85 116-135
+tasks/dev.py
+  s_531f0e8d1dd35e::t_5eaa33cfdecbee 1278-1399,1421
+  s_531f0e8d1dd35e::t_14939b52740ed7 9,17-19,26,74,77,85,192-198,215,217-218,241-247,330,770,873-874,1051-1055,1247-1253,1267
+tests/dev_stack/test_dev_tasks.py
+  s_531f0e8d1dd35e::t_9edacb3813edc6 24-31
+  s_531f0e8d1dd35e::t_20f3cb46cfd798 573
+  s_531f0e8d1dd35e::t_43c6febb0254b1 107-112,116,777,824,826,845,865,900,902,931,935,937,939
+  s_531f0e8d1dd35e::t_6f25cf05e921a7 846
+  s_531f0e8d1dd35e::t_f4512220749b4f 741-776,778-823,825,827-844,847-864,866-869,871-899,901,903-930,932-934,936,938,940-942
+  s_531f0e8d1dd35e::t_4fb44ab47ab5de 459
+  s_531f0e8d1dd35e::t_164d7595442be8 567
+  s_531f0e8d1dd35e::t_faa7c1beff61a8 89-91
+  s_531f0e8d1dd35e::t_0cf35c4a686395 870
+dev/specs/024-demo-ready-netbox/research.md
+  s_531f0e8d1dd35e::t_1cbef9772a1064 99-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cbce50c77405f8f88df44527cd1a82f2572b5f3e",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

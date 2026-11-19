@@ -1,0 +1,21 @@
+dev/specs/024-demo-ready-netbox/tasks.md
+  s_531f0e8d1dd35e::t_bb5d761101b2a0 1-106
+dev/specs/024-demo-ready-netbox/alignment-check.md
+  s_531f0e8d1dd35e::t_f5f5cfb91ab3c7 1-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9ab5b38a4090629f369fdbc355f472b6eeb7d01b",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
