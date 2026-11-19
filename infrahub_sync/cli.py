@@ -945,14 +945,15 @@ def configs_check(
 ) -> None:
     """Validate a JSON or YAML configuration package without registering it.
 
-    Exits 1 when a finding is on the returned page; read every page with --offset to check them all.
+    Exits 1 when an error finding is on the returned page; a warning does not change the exit code.
+    Read every page with --offset to check them all.
     """
     with _client_errors():
         request = cast("PackageCheckRequest", _request(PackageCheckRequest, package=_package(package)))
         report = _client(ctx).check_package(request, offset=offset, limit=limit, branch=branch)
         _echo_package_check(report)
-    # contracts/sync-api.md (spec 025): any finding on the returned page exits 1.
-    if report.findings:
+    # contracts/sync-api.md (spec 025, decision D-10): an error finding on the returned page exits 1.
+    if any(finding.severity == "error" for finding in report.findings):
         raise typer.Exit(code=1)
 
 

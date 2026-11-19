@@ -407,7 +407,8 @@ $ infrahub-sync configs validate [OPTIONS] {CONFIG} {version}
 
 Validate a JSON or YAML configuration package without registering it.
 
-Exits 1 when a finding is on the returned page; read every page with --offset to check them all.
+Exits 1 when an error finding is on the returned page; a warning does not change the exit code.
+Read every page with --offset to check them all.
 
 **Usage**:
 
