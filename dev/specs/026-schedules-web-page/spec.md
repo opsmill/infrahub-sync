@@ -11,7 +11,9 @@ the development stack: "let's build the spec to have the scheduler page in the U
 brief given with it: operators list schedules, view one schedule, create, change, pause, resume,
 delete and take over a schedule from the web interface, with the permissions that the Sync API
 enforces, and follow from a schedule to the runs it started. No change to the scheduling engine
-or to the Sync API, unless a gap blocks the page.
+or to the Sync API, unless a gap blocks the page. Spec 021 planned for this page: "The web interface
+shows schedules from the same Sync API. It is built separately and is not part of this
+specification."
 
 Sources:
 
@@ -252,9 +254,10 @@ schedule to it from the schedule page.
    stay in Infrahub.
 7. **Given** the owner turns on "write when records are left out", **Then** the page shows who
    turned it on and when, as the Sync API returns them.
-8. **Given** another account changed the schedule after the form opened, **When** the Sync API
-   refuses with `schedule-changed`, **Then** the form states that the schedule changed and offers
-   to reload it.
+8. **Given** another account changes the cron expression while the owner's change form is open,
+   **Then** the form states that the schedule changed since it opened and offers to reload it.
+   **When** the owner saves a change of the time zone only, **Then** the request holds only the
+   time zone, and the other account's cron expression is kept.
 
 ---
 
@@ -318,14 +321,15 @@ out of the stop reason `owner-not-found` without restoring the account.
 - **FR-001**: The web interface MUST have a "Schedules" entry in its main navigation for every
   signed-in account.
 - **FR-002**: The schedules list MUST show, for each schedule: name, configuration name, version,
-  state, cron expression, time zone, next start in the viewer's local time, and owner. It MUST
+  state, cron expression, time zone, next start, and owner. The next start MUST be shown in the
+  schedule's time zone, and also in the viewer's local time when the two differ. It MUST
   list schedules newest first and load further pages on demand.
 - **FR-003**: The schedules list MUST leave out deleted schedules by default, and MUST let the
   viewer filter by state, including "deleted", and by configuration.
 - **FR-004**: The schedule page MUST show every field of the schedule resource that a person can
   act on: name, configuration and version, newer version, cron expression, time zone, write
   target, "write when records are left out" with who set it and when, overlap policy, how late a
-  start may be, state, stop reason, owner, next start, waiting start, last run, count of failed
+  start may be, state, stop reason, owner, next start (as in FR-002), waiting start, last run, count of failed
   runs in a row, open review branch, created and updated times.
 - **FR-005**: For a stopped schedule, the schedule page MUST state the reason in words and the
   action it needs, with the same meaning as the CLI's text for each reason. A reason the web
@@ -362,8 +366,10 @@ out of the stop reason `owner-not-found` without restoring the account.
   filled in: the configuration's latest version, the browser's time zone, branch review, overlap
   policy "reject", a late start of at most one hour, and "write when records are left out" off.
 - **FR-018**: The change form MUST offer every setting that `POST /schedules/{schedule_id}/change`
-  accepts, filled in with the current values, and MUST send only the settings the person changed.
-  A form with no change MUST NOT send a request.
+  accepts, filled in with the values of the schedule when the form opened. It MUST send only the
+  settings whose value differs from those opening values, so a setting that another person
+  changed meanwhile, and that this person did not touch, is not sent back. A form with no change
+  MUST NOT send a request.
 - **FR-019**: The default-branch write target MUST be unavailable, with the reason, when the Sync
   API requires approval. "Write when records are left out" MUST be unavailable, with the reason,
   when the write target is branch review.
@@ -373,9 +379,13 @@ out of the stop reason `owner-not-found` without restoring the account.
 - **FR-021**: Retrying a create or an action after a network failure MUST NOT create two schedules
   or apply the action twice. The web interface MUST reuse the retry key of the attempt that failed.
 - **FR-022**: After an action, the page MUST show the schedule resource that the action returned,
-  including the new next start.
-- **FR-023**: A refusal with `schedule-changed` MUST offer to reload the schedule. Reloading MUST
-  discard the values entered in the form only after the person confirms.
+  including the new next start, and MUST announce the result to screen readers, for example
+  "Schedule paused".
+- **FR-023**: While the change form is open, when the schedule that the page reads differs from the
+  values the form opened with, the form MUST state "This schedule changed since you opened this
+  form" and offer to reload it. Reloading MUST discard the values entered only after the person
+  confirms. A refusal with `schedule-changed` (another writer changed the schedule during each of
+  three save attempts) MUST keep the values entered and say that the save can be sent again.
 
 #### Documentation
 

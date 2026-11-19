@@ -12,7 +12,10 @@ create, change, pause, resume, delete and take over a schedule, a schedule filte
 "Scheduled" mark on runs, and a schedule line on the configuration page. The Sync API does not
 change ([research R1](research.md#r1-whether-the-sync-api-covers-every-page)). The pages reuse
 the runs pages' routing, polling, paging, retry keys and refusal display. The permission rule,
-the state texts and the change request are pure functions with Vitest tests.
+the state texts and the change request are pure functions with Vitest tests. The change form
+builds its request against the values it opened with, because the Sync API has no version check
+on a change ([critique E1](critiques/critique-20261119.md)). Each action's result is announced in
+the existing live region (`components/announcer.tsx`).
 
 ## Technical Context
 

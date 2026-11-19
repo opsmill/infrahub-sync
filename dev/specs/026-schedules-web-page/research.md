@@ -66,7 +66,15 @@ resource into the cache of `scheduleQuery` with `setQueryData` before the invali
 **Rationale**: Pressing the button again after a lost answer resends the same key, so the Sync
 API returns the first answer instead of creating a second schedule (FR-021, SC-005). Writing the
 returned resource first means the page shows the state the action produced, even when a poll that
-started before the action answers later (FR-022).
+started before the action answers later (FR-022). After a refusal, the same `onSettled`
+invalidation reloads the schedule: a resume refused with `schedule-stopped` can store the
+schedule as stopped with a new reason, and the page then shows it.
+
+**Change form**: the dialog keeps the schedule's values from when it opened and builds the request
+with `changeRequest(opening, form)` in `domain/schedules.ts`. The Sync API has no version check on
+a change (`ChangeScheduleRequest` has no version field), so comparing with a later poll could send
+back a field that another person changed. A later poll that differs from the opening values shows
+a notice with a reload (FR-023).
 
 **Alternatives considered**: `sendSecret` (`actions.ts:99-110`), which keeps values out of the
 query cache. No schedule field is a secret, and a credential in a field is refused by the Sync API
@@ -78,6 +86,10 @@ with `secret-parameter-refused`, so `useMutation` is enough.
 with a title and a detail for each schedule refusal code. The forms map the codes listed in
 `data-model.md` ("Refusals mapped to a field") to the field they concern. Every other code is shown
 with `MutationError` (`features/runs/form.tsx:78-109`).
+
+`describeScheduleError` maps `forbidden` itself ("Only the owner of this schedule or an
+administrator can do this"). It falls back to `describeError` only for codes it does not know,
+because `ACTION_ERRORS.forbidden` (`queries.ts:304-307`) names "the actor that started this run".
 
 **Rationale**: `describeAccountError` is the precedent for a table per area. `describeError`
 already handles 401, no answer, timeouts and unknown codes.
@@ -103,7 +115,9 @@ answered, every action is shown as available and the Sync API decides, as `RunPa
   parse it. The Sync API checks it and its message is shown under the field.
 - The time zone is a `Select` filled from `Intl.supportedValuesOf("timeZone")`, with `UTC` added
   when missing. The browser's time zone (`Intl.DateTimeFormat().resolvedOptions().timeZone`) is
-  selected by default. When `supportedValuesOf` is not available, the field is a text field.
+  selected by default. When `supportedValuesOf` is not available, the field is a text field. The
+change form adds the schedule's stored time zone to the choices when the browser's list does not
+have it (an alias such as `Europe/Kiev`), so the stored value is never shown as empty.
 
 **Rationale**: The spec decides that the interface does not compute start times (Decision 3). The
 browser's list uses IANA names, which the Sync API's time zone check accepts. A name the Sync API
@@ -130,7 +144,8 @@ Rejected: a second cron reading that can differ from the Sync API's.
 ## R9. Tests
 
 **Decision**: Add Vitest to the frontend for the pure functions in `domain/schedules.ts`: the
-permission rule, the state and stop-reason texts, and the change request built from a form. Add
+permission rule, the state and stop-reason texts, and the change request built from the opening
+values and the form, including the case where a later read differs from the opening values. Add
 `pnpm test` to the `frontend-lint` job in `.github/workflows/workflow-linter.yml`. Check the pages
 by hand with `quickstart.md` against the development stack.
 

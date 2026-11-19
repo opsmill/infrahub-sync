@@ -73,7 +73,8 @@ configuration and its latest version chosen).
 | --- | --- |
 | `GET /configs` | When no configuration is chosen, for the configuration choice. |
 | `GET /configs/{config_id}/versions` | When a configuration is chosen, for the version choice. |
-| `POST /schedules` | On save. A `201` or `503 orchestration-unavailable` answer opens `/schedules/$scheduleId` of the stored schedule. |
+| `POST /schedules` | On save. A `201` answer opens `/schedules/$scheduleId` of the returned schedule. |
+| `GET /schedules?config_id=…&limit=1` | After a `503 orchestration-unavailable` refusal, whose body holds no schedule: finds the stored schedule and opens its page, which shows the task-manager warning. |
 
 ## Changes to existing pages
 

@@ -24,7 +24,7 @@ build. Field definitions are in the
 | `start_late_by_at_most_seconds` | "Start late by at most <duration>" | Null is shown as "not set". |
 | `state`, `state_reason` | State badge; for `stopped`, the stop panel (see below) | |
 | `owner` | Account name | Compared with the signed-in account's name (see "Permissions"). |
-| `next_start_at`, `waiting_start_at` | Local time with the time zone, and a relative time | `next_start_at` is null for a paused, stopped or deleted schedule. |
+| `next_start_at`, `waiting_start_at` | Time in the schedule's time zone, the viewer's local time when it differs, and a relative time | `next_start_at` is null for a paused, stopped or deleted schedule. |
 | `last_run_id` | Link to the run page, with the run's state badge | The run is read with the existing run query. |
 | `prefect_synced` | Warning when false (FR-006) | |
 | `consecutive_failures` | "Failed runs in a row: N" | |
@@ -104,9 +104,13 @@ Let `me` be the answer of `GET /me` and `s` the schedule.
 
 #### Change (`ChangeScheduleRequest`)
 
-The same fields except `name` and `config_id`, which are shown and cannot be changed. The form is
-filled in with the schedule's current values. The request holds only the fields whose value
-differs from the schedule's current value, plus `reason` when not empty. When only `reason` or
+The same fields except `name` and `config_id`, which are shown and cannot be changed. When the
+form opens, it keeps a copy of the schedule's values (the opening values) and fills the fields
+with them. The request holds only the fields whose value differs from the opening values, plus
+`reason` when not empty. The request is never computed against a schedule read after the form
+opened: a field that another person changed meanwhile, and that this person did not touch, would
+otherwise be sent back with the old value. When a later read of the schedule differs from the
+opening values, the form shows "This schedule changed since you opened this form" with a reload. When only `reason` or
 nothing would be sent, the form states "Nothing changed" and sends no request (FR-018).
 
 ### Refusals mapped to a field

@@ -49,6 +49,7 @@ All four exit 0.
 | 9 | Pause the schedule with a reason, then resume it. | "Paused" with no next start, then "Active" with a next start. |
 | 10 | Change the cron expression to `0 3 * * *` and the time zone. | The page shows the new values and the new next start. |
 | 11 | Open the change dialog and save without changing anything. | "Nothing changed"; no request is sent. |
+| 11a | Open the change dialog. In a terminal, run `uv run infrahub-sync schedules change <schedule> --cron "0 4 * * *"`. Wait 10 seconds, change only the time zone in the dialog and save. | The dialog states that the schedule changed since it opened. After the save, the cron expression is `0 4 * * *` and the time zone is the new one. |
 | 12 | Sign in as `operator` in a private window and open the schedule. | Change, pause, resume and delete are unavailable with the reason; "Take over" is not shown. |
 | 13 | As `operator`, create a schedule for another configuration, then, as `admin`, delete the `operator` account. Wait for the next start. | The schedule is stopped with `owner-not-found`, the owner shows `Deleted account <short identifier>`, and the page states the action it needs. |
 | 14 | As `admin`, take the schedule over. | The confirmation states that next runs record `admin`. The schedule is active, owned by `admin`. |
