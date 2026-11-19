@@ -12,7 +12,8 @@ export type Plan = Schemas["PlanResource"];
 export type PlanOperation = Schemas["PlanOperationResource"];
 export type PlanLastChange = Schemas["PlanLastChangeResource"];
 export type RunLogLine = Schemas["RunLogLine"];
-
+export type PackageCheck = Schemas["PackageCheckResource"];
+export type ValidationFinding = Schemas["ValidationFindingResource"];
 /** A source or destination as a registered package declares it. */
 export interface DeclaredAdapter {
   name: string;
@@ -50,6 +51,21 @@ export interface ConfigurationVersion {
     configuration: DeclaredConfiguration;
     credentials?: Record<string, { provider: string; identifier: string }>;
   };
+}
+
+/** A package as the store keeps it: `PackageCheck.declared_content`, typed as an open object. */
+export type DeclaredContent = ConfigurationVersion["declared_content"];
+
+/** `POST /configs/{config_id}/versions`; the OpenAPI document types its response as `unknown`. */
+export interface RegisteredVersion {
+  version: {
+    config_id: string;
+    registry_version: number;
+    package_checksum: string;
+    created_at: string;
+  };
+  /** False when the package is the same as an existing version, which is returned instead. */
+  created: boolean;
 }
 
 /** The error envelope every Sync API error uses. */

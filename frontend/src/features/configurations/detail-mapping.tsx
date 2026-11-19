@@ -41,19 +41,20 @@ export function ChangeBadge({ status }: { status: MappingChange["status"] }) {
 
 const isRemoved = (entry: MappingEntry) => entry.change?.status === "removed";
 
-/** A row that opens the mapping in the panel. A removed mapping is text only. */
+/** A row that opens the mapping in the panel. A removed mapping, or a row without a page, is text only. */
 function Row({
   configId,
   entry,
   open,
   children,
 }: {
-  configId: string;
+  configId?: string;
   entry: MappingEntry;
   open?: string;
   children: ReactNode;
 }) {
   if (isRemoved(entry)) return <div className={cn(ROW, "text-subtle")}>{children}</div>;
+  if (configId === undefined) return <div className={ROW}>{children}</div>;
   const selected = entry.key === open;
   return (
     <Link
@@ -76,7 +77,7 @@ function Groups({
   entries,
   open,
 }: {
-  configId: string;
+  configId?: string;
   entries: MappingEntry[];
   open?: string;
 }) {
@@ -150,7 +151,8 @@ export function MappingList({
   diff,
   open,
 }: {
-  configId: string;
+  /** The configuration whose page the rows open the panel on; without it, rows are text only. */
+  configId?: string;
   entries: MappingEntry[];
   /** The mappings of the version compared with that this version no longer has. */
   removed: MappingEntry[];

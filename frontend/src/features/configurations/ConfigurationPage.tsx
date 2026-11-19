@@ -1,9 +1,10 @@
 import { Button, buttonVariants, Card } from "@infrahub/ui";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { cn } from "tailwind-variants";
 
-import { describeError } from "#/api/queries";
+import { describeError, meQuery } from "#/api/queries";
 import { ChevronRightIcon, PlusIcon, STATE_TEXT, StateIcon } from "#/components/icons";
 import {
   Bar,
@@ -29,6 +30,8 @@ import { MappingList } from "./detail-mapping";
 import { MappingPanel } from "./detail-mapping-panel";
 import { MAPPING_SECTION_ID, Systems } from "./detail-systems";
 import { VersionBar } from "./detail-version-bar";
+import { PackageDropArea } from "./PackageDropArea";
+import { PackageReview } from "./PackageReview";
 
 /** The runs of the version shown before "Show all". */
 const RUNS_SHOWN = 5;
@@ -180,6 +183,11 @@ export function ConfigurationPage({
   const detail = useConfigurationDetail(configId, requestedVersion, compare);
   const [starting, setStarting] = useState<StartRunTarget | null>(null);
   const [allRuns, setAllRuns] = useState(false);
+  /** The text of the package file under review, and the refusal of the last one. */
+  const [dropped, setDropped] = useState<{ text: string; key: number }>();
+  const [dropMessage, setDropMessage] = useState<string>();
+  // Only an administrator token can register; the area stays disabled until `/me` answers.
+  const administrator = useQuery(meQuery()).data?.administrator === true;
   const { config, versions, version, runs, name, selected, latest, isLatest } = detail;
   const { source, destination, mappings, diff, runItems } = detail;
 
@@ -351,6 +359,16 @@ export function ConfigurationPage({
         />
       )}
 
+      <div className="mb-6">
+        <PackageDropArea
+          action="Add a version"
+          disabled={!administrator}
+          message={dropMessage}
+          onMessage={setDropMessage}
+          onFile={(text) => setDropped({ text, key: Date.now() })}
+        />
+      </div>
+
       {selected === undefined ? (
         versions.isPending ? (
           <Bar className="h-64 w-full rounded-2xl" />
@@ -520,6 +538,18 @@ export function ConfigurationPage({
         }
       />
       {starting && <StartRunDialog target={starting} onClose={() => setStarting(null)} />}
+      {dropped && (
+        <PackageReview
+          key={dropped.key}
+          target={{ configId }}
+          document={dropped.text}
+          onClose={() => setDropped(undefined)}
+          onRefused={(message) => {
+            setDropped(undefined);
+            setDropMessage(message);
+          }}
+        />
+      )}
     </>
   );
 }

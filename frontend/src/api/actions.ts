@@ -148,3 +148,24 @@ export const setAccountPassword = (name: string, newPassword: string, reason: st
       body: { new_password: newPassword, reason: optional(reason) },
     })
   );
+
+/** Checks a package that is not registered. It writes nothing, so nothing is read again. */
+export function useCheckPackage() {
+  return $api.useMutation("post", "/configs/validate");
+}
+
+/**
+ * Registers a package as the next version of a configuration. The caller passes the
+ * `Idempotency-Key` header and keeps it for the whole review, so a retry after a lost answer
+ * cannot register a second version.
+ */
+export function useCreateConfigVersion() {
+  const client = useQueryClient();
+  return $api.useMutation("post", "/configs/{config_id}/versions", {
+    onSuccess: () =>
+      client.invalidateQueries({
+        predicate: (query) =>
+          typeof query.queryKey[1] === "string" && query.queryKey[1].startsWith("/configs"),
+      }),
+  });
+}
