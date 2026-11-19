@@ -859,6 +859,55 @@ def _worker_credential_findings(
     )
 
 
+# The two `destination_read` values that are not a read failure reason.
+DESTINATION_READ_NOT_REQUESTED = "not_requested"
+DESTINATION_READ_OK = "read"
+
+
+@dataclass(frozen=True, slots=True)
+class _PackageChecks:
+    """The result of every validation check on one parsed package.
+
+    ``destination_read`` is ``"not_requested"`` when the caller asked for no destination
+    checks, ``"read"`` when no destination read failed, or the ``reason`` of the
+    ``DestinationSchemaReadError`` a failed read raised (``timeout``, ``unreachable``,
+    ``unauthorized``, ``forbidden``, ``nobranch``, ``unconfigured``, ``credentials``).
+    """
+
+    findings: tuple[ValidationFinding, ...]
+    schema_fingerprint: str | None
+    destination_read: str
+
+
+def _check_parsed_package(
+    parsed: ConfigurationPackage,
+    *,
+    destination_schema: DestinationSchemaOptions | None,
+    secrets: Sequence[str],
+    projection: ProductProjection,
+    worker_liveness_seconds: float,
+) -> _PackageChecks:
+    """Run every validation check on one parsed package, registered or not.
+
+    Registered-version validation and the check of an unregistered package both call this
+    function, so the two report the same findings in the same order for the same package.
+    """
+    findings = collect_findings(parsed, secrets)
+    if destination_schema is None:
+        return _PackageChecks(
+            findings=findings, schema_fingerprint=None, destination_read=DESTINATION_READ_NOT_REQUESTED
+        )
+    schema_validation = collect_destination_schema_findings(parsed, destination_schema)
+    observed_after = datetime.now(timezone.utc) - timedelta(seconds=worker_liveness_seconds)
+    live = projection.live_worker_environments(observed_after=observed_after)
+    held = frozenset(name for environment in live for name in environment.credential_names) if live else None
+    return _PackageChecks(
+        findings=sort_findings((*findings, *schema_validation.findings, *_worker_credential_findings(parsed, held))),
+        schema_fingerprint=schema_validation.schema_fingerprint,
+        destination_read=schema_validation.read_failure_reason or DESTINATION_READ_OK,
+    )
+
+
 @_service_boundary
 def validate(
     *,
@@ -900,19 +949,17 @@ def validate(
         msg = f"configuration {config_id!r} has no registered version {registry_version} ({lookup.reason})"
         raise ConfigsNotFoundError(msg)
     parsed = _parse(stored.declared_content, refuse_store=False)
-    findings = collect_findings(parsed, secrets)
-    fingerprint: str | None = None
-    if destination_schema is not None:
-        schema_validation = collect_destination_schema_findings(parsed, destination_schema)
-        observed_after = datetime.now(timezone.utc) - timedelta(seconds=worker_liveness_seconds)
-        live = projection.live_worker_environments(observed_after=observed_after)
-        held = frozenset(name for environment in live for name in environment.credential_names) if live else None
-        findings = sort_findings((*findings, *schema_validation.findings, *_worker_credential_findings(parsed, held)))
-        fingerprint = schema_validation.schema_fingerprint
+    checks = _check_parsed_package(
+        parsed,
+        destination_schema=destination_schema,
+        secrets=secrets,
+        projection=projection,
+        worker_liveness_seconds=worker_liveness_seconds,
+    )
     return ValidationReport(
         config_id=stored.config_id,
         registry_version=stored.registry_version,
         package_checksum=stored.package_checksum,
-        findings=findings,
-        destination_schema_fingerprint=fingerprint,
+        findings=checks.findings,
+        destination_schema_fingerprint=checks.schema_fingerprint,
     )
