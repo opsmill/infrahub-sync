@@ -1,0 +1,1 @@
+Operators can check a configuration package file for findings before they register it, with `infrahub-sync configs check` or `POST /api/configs/validate`; both need an administrator token and store nothing.

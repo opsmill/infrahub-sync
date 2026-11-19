@@ -114,7 +114,9 @@ the command prints the existing version and stores nothing.
 
 Registration checks the package before it stores anything. If the check fails, the command
 reports `code: configs-validation` and stores nothing. The response does not name the
-defect, and `configs validate` cannot check a package that was not stored. Compare the file
+defect, and `configs validate` cannot check a package that was not stored.
+[`configs check`](#check-a-package-before-registering-it) gives the same refusal for the same
+file, so it does not name the defect either. Compare the file
 with [Sync instance configuration](./reference/config.mdx) and the adapter page. Check
 these causes first:
 
@@ -122,6 +124,57 @@ these causes first:
 - A setting that the adapter does not accept.
 - A literal credential value instead of a `$credential` reference.
 - A URL setting that is not an absolute URL.
+
+## Check a package before registering it
+
+`configs check` runs the checks of `configs validate` on a package file that is not
+registered. The Sync API stores nothing and records nothing in the audit history for a check
+that it accepts.
+
+```bash
+infrahub-sync configs check package.yml
+infrahub-sync configs check package.yml --branch main
+```
+
+- The command needs an administrator token, as `configs register` does. The Sync API refuses
+  any other token with HTTP 403 and records the refused attempt in the audit history. With
+  `--branch`, the Sync API connects to the destination URL that the file declares and sends
+  the destination token that the service holds, so only an administrator can choose that URL.
+- The file is a YAML or JSON package. The CLI reads it and sends its content to the Sync API.
+- Without `--branch`, the command checks the declared content against the adapter
+  declarations of the Sync release that runs now. With `--branch`, it also checks the mapping,
+  the import account's permissions and the workers' credential variables against that
+  Infrahub branch, as `configs validate --branch` does.
+- For the same file, branch and destination state, the findings are the findings that
+  `configs validate` reports for the version that registering the file creates.
+- A file that registration refuses gets the same refusal, for example
+  `code: configs-validation`. A v2 `config.yml` is refused with a message that names
+  `infrahub-sync configs convert`; see [Convert a config.yml file](#convert-a-configyml-file).
+
+The command prints `package_checksum`, `destination_read`, `destination_schema_fingerprint`,
+the page fields `offset`, `limit`, `total_findings` and `next_offset`, and one `finding:` line
+for each finding on the page. Findings have the format described in
+[Validate a version](#validate-a-version).
+
+`destination_read` states whether the Sync API read the schema of the branch:
+
+| Value | Meaning |
+| --- | --- |
+| `not_requested` | The command ran without `--branch`. |
+| `read` | The Sync API read the schema of the branch. |
+| `timeout`, `unreachable` | The Sync API could not reach the destination. |
+| `unauthorized`, `forbidden` | The destination refused the destination token. |
+| `nobranch` | The branch does not exist in the destination. |
+| `unconfigured` | The package declares no destination URL. |
+| `credentials` | The destination token reference does not resolve in the service environment. |
+
+For every value other than `not_requested` and `read`, the findings also include a
+`destination_schema_read_failed` finding.
+
+The command exits 1 when any finding, an error or a warning, is on the returned page, with or
+without `--branch`. `configs validate` exits 1 only for an error finding, and only with
+`--branch`. The output is paged as the output of `configs validate` is; read every page with
+`--offset` to view all findings.
 
 ## Validate a version
 
@@ -133,8 +186,8 @@ findings after an upgrade.
 infrahub-sync configs validate <config-id> <version>
 ```
 
-The check reads only the declared content. It does not connect to the source or the
-destination, so it does not test URLs, tokens, or the destination schema.
+Without `--branch`, the check reads only the declared content. It does not connect to the
+source or the destination, so it does not test URLs, tokens, or the destination schema.
 
 Each finding has a `code`, a `severity` of `error` or `warning`, a `location` in the package
 as a JSON Pointer, and a message. The codes are listed in

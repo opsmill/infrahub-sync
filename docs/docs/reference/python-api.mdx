@@ -77,7 +77,9 @@ synchronizes nothing. For a complete package, see
 The client also exposes `create_config_version`, `list_configs`, `get_config`,
 `list_config_versions`, and `get_config_version`. Configuration list methods return the complete
 server response and do not expose pagination arguments. Validation exposes the server's finding
-page fields and preserves finding order.
+page fields and preserves finding order. `check_package` takes a `PackageCheckRequest` with
+`package` or `document` and validates a package that is not registered; it needs an
+administrator token.
 
 ## Create and inspect runs
 

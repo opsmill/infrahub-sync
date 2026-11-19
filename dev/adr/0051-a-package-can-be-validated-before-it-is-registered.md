@@ -1,0 +1,92 @@
+# 51. A package can be validated before it is registered
+
+**Status**: Accepted
+**Date**: 2026-11-19
+**Source**: `dev/specs/025-register-config-web/spec.md` (FR-001 to FR-006, decision D-9),
+`dev/specs/025-register-config-web/research.md` (R1, R2, R3, R10),
+`dev/specs/025-register-config-web/critiques/critique-20261118.md` (E1, E2)
+
+## Context
+
+Before this decision, an operator could validate only a registered version, with
+`POST /configs/{config_id}/versions/{registry_version}/validate` and `configs validate`. To learn
+whether a package file had findings, the operator registered it first, and every registration
+creates an immutable version. A registration that failed reported `configs-validation` and
+stored nothing, so no route could report findings for that file.
+
+Why validation accepted only a registered version is not known. No specification or decision
+record in this repository states a reason. The specification of the configuration registry that
+first defined validation is not in `dev/specs/archive/`, and spec 007 (FR-034 to FR-038) extends
+the route without saying anything on registered and unregistered packages.
+
+The code did not need a registered version. `validate` in
+`infrahub_sync/product_store/configs.py` read the stored version, parsed its declared content and
+ran every check on the parsed package. Only the report's `config_id`, `registry_version` and
+`package_checksum` came from the stored version.
+
+With a branch, validation builds an Infrahub client from the package's
+`destination.settings.url` and resolves the package's `token` credential reference from the
+service environment (`_resolved_client_settings` in
+`infrahub_sync/configuration/capabilities.py`). For a registered version this is safe, because
+only an administrator registers. For a package that the caller sends, the caller chooses the
+address that receives the service's destination token.
+
+## Decision
+
+The Sync API validates a package that is not registered, with `POST /configs/validate`. The CLI
+calls it with `infrahub-sync configs check PACKAGE`, and the Python client with
+`SyncClient.check_package`.
+
+- **One set of checks.** `_check_parsed_package` in `infrahub_sync/product_store/configs.py` runs
+  every check on one parsed package. `validate` calls it for a registered version and
+  `check_package` for a package that is not registered. For the same package, branch and
+  destination state, both return the same findings (FR-002).
+- **The refusals of registration.** Before the checks, `check_package` parses the package and
+  checks its credentials as registration does, and raises the same refusal with the same status,
+  code and reason.
+- **Nothing is stored.** The route stores no version, records no audit event for a check that it
+  accepts, and takes no `Idempotency-Key`.
+- **Administrator only.** The route refuses a token that is not an administrator token with
+  403 `forbidden`, before it parses the body or reads the destination, and records the refusal
+  with `audit_refusal` and the operation `check-config-package`, as registration records
+  `register-config`. Reason: with a branch, the service sends its destination token to the URL
+  that the package declares, so only the people who can register a package can choose that URL.
+- **The service parses the file.** The body holds exactly one of `package`, a JSON object as the
+  registration routes take, or `document`, the text of a YAML or JSON file. The service parses
+  `document` with `yaml.safe_load` (`_document_package` in
+  `infrahub_sync/service/config_routes.py`), the parser the CLI uses. The web interface has no
+  YAML parser, and one parser for the CLI, the service and the web interface keeps their results
+  equal. The response returns the parsed package as the store would keep it (`declared_content`).
+- **A v2 file gets a named refusal.** A body with no `configuration` key and with top-level
+  `source` and `destination` keys gets 422 `validation` with the reason `v2_configuration`, and a
+  message that names `infrahub-sync configs convert`.
+- **The destination read is a field.** The response returns `destination_read`: `not_requested`
+  without a branch, `read`, or the reason the read failed (`timeout`, `unreachable`,
+  `unauthorized`, `forbidden`, `nobranch`, `unconfigured`, `credentials`). The existing
+  `destination_schema_read_failed` finding stays, because before this decision the reason was
+  only in its message text.
+- **`configs check` exits 1 on any finding** on the returned page, with or without `--branch`.
+  `configs validate` keeps its rule: exit 1 only on an error finding, and only with `--branch`.
+
+## Consequences
+
+- An operator can view the findings of a package file before registering it, and register only a
+  file that has none.
+- A token that is not an administrator token can validate a registered version but cannot check an
+  unregistered package.
+- A file that registration refuses gets the same refusal from the check, so the check does not
+  name the defect behind a `configs-validation` refusal either.
+- `yaml.safe_load` expands aliases, so a crafted `document` can use much memory. Only
+  administrators reach the parser, and they can already register any package. The risk is
+  accepted.
+- A request body larger than the service or a proxy in front of it accepts gets 413.
+
+## Alternatives considered
+
+- **The access rule of the existing validate route, which accepts any authenticated token.**
+  Rejected: a token that is not an administrator token could declare its own destination URL and
+  receive the service's destination token.
+- **Parsing the file in the web interface.** Rejected: it adds a YAML parser to the web interface,
+  and a second parser can read a file differently from the CLI and the service.
+- **A second set of checks for unregistered packages.** Rejected: the findings of the two routes
+  could differ for the same package.
