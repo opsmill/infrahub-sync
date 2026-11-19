@@ -418,19 +418,20 @@ def test_configs_check_sends_the_file_as_package_and_prints_the_report(client: M
     [
         pytest.param((), (), 0, id="no-findings"),
         pytest.param(("--branch", "review"), (), 0, id="branch-no-findings"),
-        pytest.param((), ("warning",), 1, id="a-warning"),
+        pytest.param((), ("warning",), 0, id="a-warning"),
+        pytest.param(("--branch", "review"), ("warning",), 0, id="branch-with-a-warning"),
         pytest.param((), ("error",), 1, id="an-error"),
         pytest.param(("--branch", "review"), ("warning", "error"), 1, id="branch-with-findings"),
     ],
 )
-def test_configs_check_exits_1_when_the_page_has_a_finding(
+def test_configs_check_exits_1_when_the_page_has_an_error_finding(
     client: MagicMock,
     tmp_path: Path,
     arguments: tuple[str, ...],
     severities: tuple[Literal["error", "warning"], ...],
     exit_code: int,
 ) -> None:
-    """contracts/sync-api.md (CLI): the command exits 1 when the returned page has a finding."""
+    """contracts/sync-api.md (CLI): the command exits 1 when the returned page has an error finding."""
     package = tmp_path / "package.json"
     package.write_text('{"format_version": 1}', encoding="utf-8")
     client.check_package.return_value = _package_check(severities)

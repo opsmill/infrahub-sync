@@ -66,13 +66,15 @@ calls it with `infrahub-sync configs check PACKAGE`, and the Python client with
   `unauthorized`, `forbidden`, `nobranch`, `rejected`, `unconfigured`, `credentials`). The existing
   `destination-schema-read-failed` finding stays, because before this decision the reason was
   only in its message text.
-- **`configs check` exits 1 on any finding** on the returned page, with or without `--branch`.
-  `configs validate` keeps its rule: exit 1 only on an error finding, and only with `--branch`.
+- **`configs check` exits 1 on an error finding** on the returned page, with or without
+  `--branch`. A warning, such as the one reported while no worker has published its credential
+  variables, does not change the exit code. `configs validate` keeps its rule: exit 1 only on an
+  error finding, and only with `--branch`.
 
 ## Consequences
 
 - An operator can view the findings of a package file before registering it, and register only a
-  file that has none.
+  file that has no error finding. Warnings are listed and do not block registration.
 - A token that is not an administrator token can validate a registered version but cannot check an
   unregistered package.
 - A file that registration refuses gets the same refusal from the check, so the check does not
