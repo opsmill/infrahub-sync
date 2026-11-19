@@ -36,6 +36,7 @@ from infrahub_sync.service.orchestration import CancellationResult, Observation,
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.service.accounts import account_identifier, seed_accounts
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -55,7 +56,7 @@ _WORKER_ID = "0c6c1d8e-3f0a-4f1e-9b8d-6a0f2e4b7c91"
 _ORDINAL = count(1)
 
 
-class _RecordingOrchestration:
+class _RecordingOrchestration(NoDeploymentSchedules):
     """Records submissions and cancellations, so a test can show a withdrawal sends Prefect nothing."""
 
     def __init__(self) -> None:

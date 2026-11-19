@@ -42,6 +42,7 @@ from .models import (
     ArtifactContent,
     ArtifactListResource,
     CancelRunRequest,
+    ChangeScheduleRequest,
     ConfigErrorEnvelope,
     ConfigMutationRequest,
     ConfigurationPage,
@@ -51,6 +52,7 @@ from .models import (
     ConfigurationVersionSummaryResource,
     CreatedTokenResource,
     CreateRunRequest,
+    CreateScheduleRequest,
     DeletedAccountResource,
     ErrorEnvelope,
     EventPage,
@@ -68,6 +70,9 @@ from .models import (
     RunLogPage,
     RunPage,
     RunResource,
+    ScheduleActionRequest,
+    SchedulePage,
+    ScheduleResource,
     ServiceStatusResource,
     SessionResource,
     TokenResource,
@@ -113,6 +118,12 @@ _CLOSE = "close"
 _WAIT_FOR_RUN = "wait_for_run"
 _POLL_INTERVAL_ARG = "poll_interval"
 _STAGE_ARG = "stage"
+_LIST_SCHEDULES = "list_schedules"
+_SCHEDULE_ID_ARG = "schedule_id"
+_STATE_ARG = "state"
+_TRIGGER_TYPE_ARG = "trigger_type"
+# The trigger types a run records (`TriggerType` in models.py).
+_TRIGGER_TYPES = frozenset({"manual", "scheduled"})
 _PASSWORD_ARG = "password"
 _CURRENT_PASSWORD_ARG = "current_password"
 _NEW_PASSWORD_ARG = "new_password"
@@ -424,30 +435,165 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise ClientInputError(_REQUEST_ARG)
         return self.create_run(request, idempotency_key)
 
-    def list_runs(
+    def list_runs(  # pylint: disable=too-many-arguments
         self,
         config_id: str | None = None,
         registry_version: int | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        *,
+        trigger_type: str | None = None,
+        schedule_id: str | None = None,
     ) -> RunPage:
-        """Return one page of runs, newest first, optionally for one configuration or version."""
+        """Return one page of runs, newest first.
+
+        The filters are optional and every given one must match: one configuration or version,
+        the trigger type (``manual`` or ``scheduled``), or the schedule that started the run.
+        """
 
         params: dict[str, str | int] = {}
         if config_id is not None:
             params[_CONFIG_ID_ARG] = self._identifier(config_id, _CONFIG_ID_ARG)
         if registry_version is not None:
             params["registry_version"] = self._positive_integer(registry_version, "registry_version")
+        if trigger_type is not None:
+            if not isinstance(trigger_type, str) or trigger_type not in _TRIGGER_TYPES:
+                raise ClientInputError(_TRIGGER_TYPE_ARG)
+            params[_TRIGGER_TYPE_ARG] = trigger_type
+        if schedule_id is not None:
+            params[_SCHEDULE_ID_ARG] = self._identifier(schedule_id, _SCHEDULE_ID_ARG)
         params.update(self._page_params(limit, cursor))
         return self._request_model(_LIST_RUNS, "GET", "/runs", model=RunPage, success={200}, params=params)
 
     def iter_runs(
-        self, config_id: str | None = None, registry_version: int | None = None, limit: int | None = None
+        self,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+        limit: int | None = None,
+        *,
+        trigger_type: str | None = None,
+        schedule_id: str | None = None,
     ) -> Iterator[PublicRunResource]:
         """Yield every run that matches the filters, newest first, reading pages until ``next_cursor`` is null."""
 
         return self._iterate(
-            _LIST_RUNS, self.list_runs, config_id=config_id, registry_version=registry_version, limit=limit
+            _LIST_RUNS,
+            self.list_runs,
+            config_id=config_id,
+            registry_version=registry_version,
+            limit=limit,
+            trigger_type=trigger_type,
+            schedule_id=schedule_id,
+        )
+
+    def create_schedule(self, request: CreateScheduleRequest, idempotency_key: str) -> ScheduleResource:
+        """Create a schedule that starts a ``sync`` run of one configuration version on a cron cadence.
+
+        The Sync API validates the cron expression and the time zone. A ``503
+        orchestration-unavailable`` refusal means the schedule is stored but starts no run until
+        the Sync API hands it to the task manager.
+        """
+
+        return self._request_model(
+            "create_schedule",
+            "POST",
+            "/schedules",
+            model=ScheduleResource,
+            success={201},
+            body=request,
+            idempotency_key=idempotency_key,
+        )
+
+    def list_schedules(
+        self,
+        config_id: str | None = None,
+        state: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> SchedulePage:
+        """Return one page of schedules, newest first; without ``state``, deleted schedules are left out."""
+
+        params: dict[str, str | int] = {}
+        if config_id is not None:
+            params[_CONFIG_ID_ARG] = self._identifier(config_id, _CONFIG_ID_ARG)
+        if state is not None:
+            if not isinstance(state, str) or not state or state.strip() != state:
+                raise ClientInputError(_STATE_ARG)
+            params[_STATE_ARG] = state
+        params.update(self._page_params(limit, cursor))
+        return self._request_model(
+            _LIST_SCHEDULES, "GET", "/schedules", model=SchedulePage, success={200}, params=params
+        )
+
+    def iter_schedules(
+        self, config_id: str | None = None, state: str | None = None, limit: int | None = None
+    ) -> Iterator[ScheduleResource]:
+        """Yield every schedule that matches the filters, newest first, reading pages until ``next_cursor`` is null."""
+
+        return self._iterate(_LIST_SCHEDULES, self.list_schedules, config_id=config_id, state=state, limit=limit)
+
+    def get_schedule(self, schedule_id: str) -> ScheduleResource:
+        """Return one schedule, also a deleted schedule."""
+
+        schedule_id = self._identifier(schedule_id, _SCHEDULE_ID_ARG)
+        return self._request_model(
+            "get_schedule", "GET", f"/schedules/{schedule_id}", model=ScheduleResource, success={200}
+        )
+
+    def change_schedule(
+        self, schedule_id: str, request: ChangeScheduleRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Change one or more settings of a schedule; the answer holds the new ``next_start_at``."""
+
+        return self._schedule_action("change_schedule", schedule_id, "change", request, idempotency_key)
+
+    def pause_schedule(
+        self, schedule_id: str, request: ScheduleActionRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Pause a schedule: it starts no run until it is resumed."""
+
+        return self._schedule_action("pause_schedule", schedule_id, "pause", request, idempotency_key)
+
+    def resume_schedule(
+        self, schedule_id: str, request: ScheduleActionRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Make a paused schedule active, or a stopped schedule whose reason no longer holds."""
+
+        return self._schedule_action("resume_schedule", schedule_id, "resume", request, idempotency_key)
+
+    def delete_schedule(
+        self, schedule_id: str, request: ScheduleActionRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Delete a schedule; its record, its runs and its open proposed change are kept.
+
+        The answer's ``open_branch`` names the branch and the proposed change that stay in Infrahub.
+        """
+
+        return self._schedule_action("delete_schedule", schedule_id, "delete", request, idempotency_key)
+
+    def take_over_schedule(
+        self, schedule_id: str, request: ScheduleActionRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Make the calling administrator the owner of a schedule.
+
+        A schedule stopped because its owner's account is disabled or deleted becomes active. The Sync API
+        refuses a caller who is not an administrator with ``403 forbidden``.
+        """
+
+        return self._schedule_action("take_over_schedule", schedule_id, "take-over", request, idempotency_key)
+
+    def _schedule_action(
+        self, operation: str, schedule_id: str, suffix: str, request: BaseModel, idempotency_key: str
+    ) -> ScheduleResource:
+        schedule_id = self._identifier(schedule_id, _SCHEDULE_ID_ARG)
+        return self._request_model(
+            operation,
+            "POST",
+            f"/schedules/{schedule_id}/{suffix}",
+            model=ScheduleResource,
+            success={200},
+            body=request,
+            idempotency_key=idempotency_key,
         )
 
     def list_events(  # pylint: disable=too-many-arguments
@@ -465,8 +611,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         """Return one page of typed events, oldest first.
 
         Every given filter must match. ``event_types`` matches any of the types; ``related``
-        takes ``(kind, id)`` pairs, such as ``("account", "alice")``, and an event must name
-        each of them. ``since`` is inclusive and ``until`` exclusive; both need a timezone.
+        takes ``(kind, id)`` pairs, such as ``("account", "alice")`` or
+        ``("schedule", schedule_id)``, and an event must name each of them. ``since`` is inclusive and ``until`` exclusive; both need a timezone.
         """
 
         params: list[tuple[str, str | int]] = []

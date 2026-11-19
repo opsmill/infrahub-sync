@@ -23,12 +23,15 @@ from infrahub_sync.client.models import (
     ApproveRunRequest,
     ArtifactListResource,
     CancelRunRequest,
+    ChangeScheduleRequest,
     ConfigErrorDetail,
     ConfigErrorEnvelope,
     ConfigMutationRequest,
     CreateRunRequest,
+    CreateScheduleRequest,
     ErrorDetail,
     ErrorEnvelope,
+    EventDetailsResource,
     EventPage,
     EventPrimaryResource,
     EventRelatedResource,
@@ -47,6 +50,10 @@ from infrahub_sync.client.models import (
     RunLogPage,
     RunPage,
     RunResource,
+    ScheduleActionRequest,
+    ScheduleOpenBranchResource,
+    SchedulePage,
+    ScheduleResource,
     ServiceStatusResource,
     VerifyRunRequest,
     VersionResource,
@@ -65,12 +72,15 @@ __all__ = [
     "ApprovedRunResource",
     "ArtifactListResource",
     "CancelRunRequest",
+    "ChangeScheduleRequest",
     "ConfigErrorDetail",
     "ConfigErrorEnvelope",
     "ConfigMutationRequest",
     "CreateRunRequest",
+    "CreateScheduleRequest",
     "ErrorDetail",
     "ErrorEnvelope",
+    "EventDetailsResource",
     "EventPage",
     "EventPrimaryResource",
     "EventRelatedResource",
@@ -89,6 +99,10 @@ __all__ = [
     "RunLogPage",
     "RunPage",
     "RunResource",
+    "ScheduleActionRequest",
+    "ScheduleOpenBranchResource",
+    "SchedulePage",
+    "ScheduleResource",
     "ServiceStatusResource",
     "VerifyRunRequest",
     "VersionResource",
@@ -162,6 +176,8 @@ EmittedArtifactListResource = cast("type[ArtifactListResource]", bounded_emitted
 EmittedRunPage = cast("type[RunPage]", bounded_emitted_model(RunPage))
 EmittedEventPage = cast("type[EventPage]", bounded_emitted_model(EventPage))
 EmittedRunLogPage = cast("type[RunLogPage]", bounded_emitted_model(RunLogPage))
+EmittedScheduleResource = cast("type[ScheduleResource]", bounded_emitted_model(ScheduleResource))
+EmittedSchedulePage = cast("type[SchedulePage]", bounded_emitted_model(SchedulePage))
 
 # What the server builds out of data it did not write literally, and therefore what the
 # boundedness check in the test suite walks.
@@ -172,6 +188,8 @@ EMITTED_RESOURCES: tuple[type[BaseModel], ...] = (
     EmittedRunPage,
     EmittedEventPage,
     EmittedRunLogPage,
+    EmittedScheduleResource,
+    EmittedSchedulePage,
 )
 # The run resource declares its executions as bounded, so the projection has to build them
 # that way; a parent-class instance is not one of these.
@@ -240,7 +258,8 @@ def public_event_page(events: Iterable[AuditEvent], *, limit: int, offset: int, 
 
     Only the fields the event contract declares are copied: ``run_id``, ``config_id``,
     ``registry_version`` and ``branch`` reach the reader as the primary and related
-    resources, not as fields of their own.
+    resources, not as fields of their own. ``details`` holds the facts of an event of a
+    schedule, such as the start time (spec 021), and is ``None`` for an event that records none.
     """
     items = []
     for event in events:
@@ -256,6 +275,7 @@ def public_event_page(events: Iterable[AuditEvent], *, limit: int, offset: int, 
                 "reason": event.reason,
                 "primary_resource": None if primary is None else primary.model_dump(),
                 "related": tuple(resource.model_dump() for resource in event.related),
+                "details": None if event.details is None else event.details.model_dump(),
             }
         )
     return EmittedEventPage.model_validate({"items": items, "limit": limit, "offset": offset, "has_more": has_more})

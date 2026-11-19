@@ -113,3 +113,12 @@ def test_the_operator_sync_api_takes_its_prefect_ui_url_from_the_operator() -> N
     environment = _sync_api_environment(REPO_ROOT / "docker-compose.yml")
 
     assert environment["INFRAHUB_SYNC_PREFECT_UI_URL"] == "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"
+
+
+@pytest.mark.parametrize("path", [REPO_ROOT / "docker-compose.yml", COMPOSE_FILE], ids=["operator", "development"])
+def test_the_worker_reads_the_approval_setting_of_the_sync_api(path: Path) -> None:
+    """Research R6: the worker checks the approval setting before a scheduled run, so it needs the same value."""
+    services = yaml.safe_load(path.read_text(encoding="utf-8"))["services"]
+    api_value = services["sync-api"]["environment"]["INFRAHUB_SYNC_REQUIRE_APPROVAL"]
+
+    assert services["sync-worker"]["environment"].get("INFRAHUB_SYNC_REQUIRE_APPROVAL") == api_value

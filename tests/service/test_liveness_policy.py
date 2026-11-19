@@ -26,6 +26,7 @@ from infrahub_sync.service.orchestration import (
     RunLogRead,
     Submission,
 )
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -72,7 +73,7 @@ def test_admission_ttl_refuses_oversized_digits_with_fixed_unchained_error(
     assert caught.value.__cause__ is None
 
 
-class _Orchestration:
+class _Orchestration(NoDeploymentSchedules):
     def __init__(self, pool: PoolStatus, observation: Observation | None = None) -> None:
         self.pool = pool
         self.observation = observation or Observation(available=True, state="running")
@@ -383,7 +384,7 @@ def test_custom_named_terminal_prefect_states_interrupt_a_claimed_execution(
                 )
             ]
 
-        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301
             return []
 
     projection = local_product_projection(tmp_path)
@@ -555,6 +556,10 @@ def test_lifespan_continues_after_ordinary_failure_and_cancels_cleanly(tmp_path)
             del token
             return Resolution.accepted(Principal(actor="operator"))
 
+        @staticmethod
+        def principal_of(actor: str) -> Principal:
+            return Principal(actor=actor)
+
     projection = local_product_projection(tmp_path)
     reconciler = _Reconciler()
     app = create_app(
@@ -591,7 +596,7 @@ def test_pool_parsing_reports_a_ready_worker_when_freshness_is_exactly_at_the_bo
         async def read_workers_for_work_pool(self, _pool: str):
             return [self.worker]
 
-        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301 - protocol fake.
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301 - protocol fake.
             return []
 
     valid = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient(10))).pool_status("pool", now))
@@ -624,7 +629,7 @@ def test_pool_status_bounds_heartbeat_interval_to_the_usable_datetime_age(interv
                 )
             ]
 
-        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301
             return []
 
     from infrahub_sync.service.orchestration import PrefectOrchestration
@@ -649,7 +654,7 @@ def test_pool_status_accepts_only_the_pinned_worker_status_vocabulary(status: st
         async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
             return [SimpleNamespace(id=uuid4(), status=status, last_heartbeat_time=now, heartbeat_interval_seconds=10)]
 
-        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301
             return []
 
     from infrahub_sync.service.orchestration import PrefectOrchestration
@@ -666,7 +671,7 @@ def test_pool_status_malformed_status_makes_the_whole_snapshot_unavailable(statu
         async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
             return [SimpleNamespace(id=uuid4(), status=status, last_heartbeat_time=now, heartbeat_interval_seconds=10)]
 
-        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301
             return []
 
     from infrahub_sync.service.orchestration import PrefectOrchestration
@@ -684,7 +689,7 @@ def test_pool_status_rejects_non_list_scheduled_run_shapes(scheduled: object) ->
         async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
             return []
 
-        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301
             return scheduled
 
     from infrahub_sync.service.orchestration import PrefectOrchestration
@@ -702,7 +707,7 @@ def test_pool_status_rejects_non_list_worker_shapes(workers: object) -> None:
         async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
             return workers
 
-        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301
             return []
 
     from infrahub_sync.service.orchestration import PrefectOrchestration
@@ -718,7 +723,7 @@ def test_pool_status_maps_invalid_observation_time_to_unavailable() -> None:
         async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
             return []
 
-        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301
             return []
 
     from infrahub_sync.service.orchestration import PrefectOrchestration
@@ -754,7 +759,7 @@ def test_duplicate_worker_uuid_snapshot_is_unavailable_and_cannot_drive_reconcil
         async def read_workers_for_work_pool(_pool: str) -> list[SimpleNamespace]:
             return workers
 
-        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301
             return []
 
     snapshot = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status("pool", now))
@@ -984,6 +989,10 @@ def test_request_time_reconciliation_terminalizes_each_pending_link(tmp_path) ->
         def resolve(token: str) -> Resolution:
             del token
             return Resolution.accepted(Principal(actor="operator"))
+
+        @staticmethod
+        def principal_of(actor: str) -> Principal:
+            return Principal(actor=actor)
 
     app = create_app(RunService(projection, orchestration), _Resolver(), reconciler=reconciler)  # type: ignore[arg-type]
     response = TestClient(app).get("/runs/run-request-reconcile", headers={"Authorization": "Bearer token"})

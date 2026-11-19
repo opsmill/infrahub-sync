@@ -2,37 +2,323 @@
 title: Schedule sync runs
 ---
 
-The V3 CLI submits a run to a deployed Sync service and waits for its result. This release has no built-in scheduler, so schedule that CLI command with cron, CI, or a workflow tool.
+A schedule starts a `sync` run of one registered configuration version at the times of a cron
+expression, with nobody present. This page describes how a team creates a schedule, reviews what
+its runs write, and checks that the schedule still runs. The last part of the page describes how
+to start runs from cron, CI or another workflow tool instead.
 
-## Common orchestration options
+## How a schedule starts a run
 
-Any tool that can run a CLI command on a schedule and capture its output works. Pick whichever fits your existing operational model.
+A schedule names one configuration and one registered version of it, a cron expression with five
+fields and a time zone. The time zone is `UTC` when the request names none. The shortest cadence
+is one minute. A configuration has at most one schedule that is not deleted. To add a start time,
+change the cron expression of the existing schedule, for example from `0 2 * * *` to
+`0 2,14 * * *`.
+
+Prefect, the task manager of the Sync service, holds the cadence of each schedule and creates its
+flow runs. At each start time, a Sync worker checks the schedule and the runs in progress, then
+either creates a `sync` run or records why it created none. The Sync API takes no part in a start,
+so a start still runs while the Sync API is stopped. The Prefect server and a Sync worker must be
+running.
+
+A run that a schedule starts records:
+
+- `trigger_type: scheduled`, the `schedule_id` and the start time of the cadence in
+  `scheduled_start_at`;
+- the schedule's owner as its actor. The owner is the account that created the schedule, or the
+  administrator who took it over.
+
+A run that a person or another system starts records `trigger_type: manual`.
+
+When a start falls in an hour that a daylight-saving change removes or repeats in the schedule's
+time zone, the schedule starts at most one run for that start.
+
+## Create a schedule
+
+```bash
+infrahub-sync schedules create --name from-netbox-nightly --config from-netbox --version 3 \
+  --cron "0 2 * * *" --timezone Europe/Paris
+```
+
+The answer shows every field of the schedule, including `next_start_at`, the next start time in
+UTC. The Sync API refuses the request, and stores nothing, when:
+
+- the cron expression does not have five fields or is not valid (`schedule-cron-invalid`), or the
+  time zone is not known (`schedule-timezone-invalid`);
+- another schedule that is not deleted has the same name (`schedule-name-in-use`);
+- the configuration already has a schedule that is not deleted (`schedule-exists-for-configuration`).
+  The message names that schedule.
+
+When the Sync API stores the schedule but cannot reach Prefect, it answers
+`503 orchestration-unavailable`. The schedule starts no run until a later request on a schedule,
+or a restart of the Sync API, hands it to Prefect. Until then `schedules show` prints
+`warning: this schedule is not yet handed to the task manager`.
+
+The other settings of a schedule are:
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| Write target, `--write-to-default-branch` | `branch-review` or `default-branch` | `branch-review` |
+| Left-out setting, `--write-when-left-out` | on or off | off |
+| Overlap policy, `--overlap-policy` | `reject` or `queue` | `reject` |
+| How late a missed start may begin, `--start-late-by-at-most` | from `1m` to `7d` | `1h` |
+
+Without `--write-to-default-branch`, `schedules create` sends no write target and the Sync API
+uses `branch-review`. To change the write target of an existing schedule, run
+`infrahub-sync schedules change <schedule> --write-to-default-branch` or
+`infrahub-sync schedules change <schedule> --write-to-branch-review`. Through the HTTP API, send
+`write_target` in the body of `POST /schedules` or `POST /schedules/{schedule_id}/change`.
+
+## The two write targets
+
+### Branch review
+
+With the write target `branch-review`, each run writes to a new Infrahub branch and opens a
+proposed change from that branch to the default branch. The team reviews and merges the proposed
+change in Infrahub. Branch review works whether or not the Sync API requires approval, and its
+runs need no approval of a plan in Infrahub Sync.
+
+A run with branch review:
+
+1. Creates the branch `sync/<schedule name>-<YYYYMMDD>-<6 hexadecimal characters>` from the
+   default branch, with the date of the start time in UTC.
+2. Plans against that branch. When the plan has no change, the run deletes the branch and ends
+   with the outcome `no-change`. Infrahub then holds no branch and no proposed change of that run.
+3. Writes the plan to the branch. When the plan leaves out records, the run still writes the other
+   records: the proposed change is the review. The left-out setting does not apply.
+4. Opens the proposed change, titled `Scheduled sync <schedule name> <YYYY-MM-DD HH:MM> UTC`. Its
+   description names the run, the configuration and its version, and the counts of records to
+   create, to update and left out. When records were left out, it gives the command that lists
+   them: `infrahub-sync runs plan <run_id> --left-out`.
+5. Closes the schedule's earlier proposed change that is still open, with the comment
+   `Replaced by <proposed change> (run <run_id>)`, and deletes its branch. The team therefore has
+   one proposed change of the schedule to review, the newest.
+
+A failure in steps 4 or 5 does not change the result of the write. The run records the failure,
+and the next successful run of the schedule closes and deletes what is left.
+
+A schedule closes only the proposed changes and deletes only the branches that it created:
+
+- When a person approved a proposed change of the schedule and has not merged it, the schedule
+  starts no run. Each start is recorded as skipped with the outcome `skipped-approved-change-open`.
+  After a person merges or closes that proposed change, the next start runs.
+- A proposed change that a person merged, closed or deleted is never touched again, and neither
+  is its branch. A deleted proposed change is recorded with the outcome `kept-missing`.
+- When a run fails or is interrupted after it created its branch, the earlier proposed change
+  stays open. The next successful run deletes the branch of the failed run.
+
+**A person's edit on a schedule's branch is deleted by the next run.** When a person changes a
+value on the branch of an open proposed change and does not approve or merge it, the next run of
+the schedule closes that proposed change and deletes the branch with the edit. To keep an edit,
+approve the proposed change first, or make the edit on another branch.
+
+The Sync API refuses these requests for branch review:
+
+- A schedule for a configuration version that declares its own destination branch
+  (`schedule-branch-declared`), because a run of that version would write to the declared branch.
+- A verify, an apply or a resume of a run with branch review (`scheduled-run-not-appliable`). Its
+  plan and its results stay readable. The schedule's next run replaces it.
+
+What the destination needs for branch review:
+
+- The default branch of Infrahub is `main`. A run fails with
+  `destination_default_branch_not_main` otherwise.
+- The account of the worker's Infrahub token has the object permissions `create` on
+  `CoreProposedChange` and `CoreChangeComment`, and `update` on `CoreProposedChange`, for branches
+  other than the default branch. It needs the global permission `delete_branch` only for a branch
+  that another account created. These permissions come from the Infrahub source code. The branch
+  and proposed change requests were run against Infrahub 1.11.9 with an administrator account
+  only; an account limited to these permissions has not been tried.
+
+### The default branch
+
+With the write target `default-branch`, each run writes to the branch that a `sync` started by a
+person writes to for that version: the destination branch that the configuration declares, else
+`main`. Nobody reviews the run before it writes.
+
+The Sync API refuses this write target while it requires approval
+(`approval-required-for-schedule`); the message names `INFRAHUB_SYNC_REQUIRE_APPROVAL`. When the
+Sync API is restarted with approval required, it stops each schedule that writes to the default
+branch with the reason `approval-required`.
+
+The worker checks the same setting, from its own environment, before each scheduled run. When
+approval is required, a start of a schedule that writes to the default branch creates no run: it
+is recorded as `infrahub_sync.schedule.start_skipped` with the outcome
+`skipped-approval-required`, and the schedule stops with the reason `approval-required`. Set
+`INFRAHUB_SYNC_REQUIRE_APPROVAL` to the same value on the Sync API and on every worker; the
+Compose deployment does this.
+
+### The left-out setting
+
+The left-out setting decides what a run that writes to the default branch does when its plan
+leaves out records:
+
+- Off, the default: the run stops after the plan and writes nothing, as a `sync` that a person
+  starts does. Its outcome is `left-out-review-required`.
+- On: the run writes the other records.
+
+The setting applies only to the write target `default-branch`. The Sync API refuses to turn it on
+for branch review (`schedule-left-out-not-applicable`). The schedule records who turned the
+setting on and when, in `left_out_set_by` and `left_out_set_at`. Every scheduled run records the
+plan's count of records left out in `details.left_out` of its result event.
+
+Changing the write target to `default-branch`, or deleting the schedule, leaves the open proposed
+change and its branch in Infrahub. The answer names them in `open_branch`. Infrahub Sync does not
+close or delete them later: merge or close the proposed change in Infrahub.
+
+## When a run of the configuration is in progress
+
+The overlap policy applies when any run of the same configuration is in progress at a start time,
+whoever started it, including a person's `plan` or `verify`:
+
+- `reject` skips the start and records it as `infrahub_sync.schedule.start_skipped` with the
+  outcome `skipped-run-in-progress` and the identifier of the run in progress. A skipped start is
+  not a failure.
+- `queue` makes the start wait, and starts its run when the run in progress ends. At most one
+  start waits: a further start is skipped with the outcome `skipped-start-waiting`.
+
+## Missed starts
+
+A start is missed when the worker or the Prefect server was not running at its start time. When
+they run again, the worker handles the most recent missed start of each schedule:
+
+- When it is later than its start time by no more than the schedule's `--start-late-by-at-most`
+  duration (default one hour), one run starts, however many starts were missed.
+- Otherwise no run starts.
+
+A run that starts no more than five minutes after its start time counts as on time: it records no
+missed start. Every other missed start is recorded as `infrahub_sync.schedule.start_missed`, with
+the outcome `missed-started-late` when a late run started and `missed-skipped` when none did. The
+worker records missed starts when it handles the next flow run of the schedule: the waiting flow
+run of a missed start, as soon as the worker runs again, or otherwise the next start. When more
+than 500 starts of one schedule were missed, the 500 most recent are recorded one by one, and the
+older ones in one event that holds their count and their first and last start times. A paused or
+stopped schedule records no missed start. A late run follows the overlap policy like any other
+start.
+
+Before a start runs, the worker reads the schema of the configuration's destination. When
+Infrahub cannot be reached, answers with a server error or does not answer in time, for example
+because it is still starting after a maintenance, the start waits and the worker reads the schema
+again one minute later. The wait creates no run and does not count toward the five failed runs
+that stop a schedule. The start waits only as long as it can still run within its
+`--start-late-by-at-most` duration; after that its run starts and records the failure to reach
+Infrahub. A refused token, a missing permission or a missing branch does not make a start wait.
+The flow run of a waiting start shows the state `AwaitingRetry` in the Prefect interface.
+
+A late start can only run when Prefect created its flow run before the start time. Prefect creates
+the flow runs of each schedule ahead of time: at least the next three starts, and every start of
+the next hour. A start that passes while the Prefect server is stopped therefore keeps its flow run
+when the server returns, also after a restart of the whole Sync service. These cases leave a start
+with no flow run, so it does not run, and the worker records it as `missed-skipped` when it handles
+the next flow run of the schedule:
+
+- The Prefect server was stopped for longer than the starts it had created ahead, for example more
+  than an hour for a schedule that starts every minute. When it returns, Prefect creates flow runs
+  only for the start times that come after that moment.
+- The Sync API could not ask Prefect to create the flow runs after a create, change, pause, resume,
+  delete or take-over. Prefect then creates them at its next check, at most about one minute later,
+  and a start before that check has no flow run. The Sync API logs
+  `schedules.flow_runs_not_created`.
+- A schedule was deleted while the Sync worker was stopped. Prefect then deletes the flow runs that
+  wait for the worker, for every schedule of the Sync service, so the late run of each schedule
+  does not start.
+- Someone changed or deleted a schedule of the Sync service in the Prefect interface. Prefect then
+  deletes the future flow runs of every schedule and creates them again at its next check, at most
+  about one minute later.
+
+In these cases `next_start_at` can name a start that does not run.
+
+## A stopped schedule
+
+A schedule stops, and starts no run, for one of three reasons. `schedules show` prints the reason
+and the action it needs:
+
+| Reason | When | What to do |
+| --- | --- | --- |
+| `owner-not-found` | The owner's account is disabled or deleted, when the worker handles a start, when the Sync API starts, or when a resume finds it. | An administrator takes the schedule over with `infrahub-sync schedules take-over`, or enables the owner's account, and the schedule is resumed. A deleted account cannot be enabled again. |
+| `approval-required` | The schedule writes to the default branch and the Sync API requires approval, when the Sync API starts, when a resume finds it, or when the worker handles a start. | Change the write target to `branch-review` with `infrahub-sync schedules change <schedule> --write-to-branch-review`. The schedule is then active again. |
+| `repeated-failures` | Five runs in a row failed, were interrupted or ended ambiguous. | Check the last runs of the schedule, then resume it. |
+
+A run that succeeds or ends with no change sets the count of failed runs back to zero. A skipped
+or missed start, a run that a person cancelled and a run that stopped for a review of records left
+out do not change the count. A resume of a schedule stopped for another reason is refused with
+`schedule-stopped` while the reason still holds. A resume also checks the other reasons: when the
+owner's account is disabled or deleted, or the schedule writes to the default branch while approval is
+required, the resume of a paused schedule or of a schedule stopped for `repeated-failures` is
+refused with `schedule-stopped`, and the schedule stops with that reason. Otherwise a resume of a
+schedule stopped for `repeated-failures` succeeds and sets the count to zero.
+
+## Change, pause, resume, delete and take over a schedule
+
+| Command | Effect |
+| --- | --- |
+| `infrahub-sync schedules change <schedule>` | Changes the version, the cron expression, the time zone, the left-out setting, the overlap policy or the late-start duration. The schedule keeps its identifier and its events, and the answer shows the new `next_start_at`. |
+| `infrahub-sync schedules pause <schedule>` | Starts no run until the schedule is resumed. The schedule keeps its cadence and its settings. |
+| `infrahub-sync schedules resume <schedule>` | Makes a paused schedule active, or a stopped schedule whose reason no longer holds. |
+| `infrahub-sync schedules delete <schedule>` | Keeps the schedule's record and its runs, in the state `deleted`. A run in progress is not cancelled. Asks for confirmation unless `--yes` is given. |
+| `infrahub-sync schedules take-over <schedule>` | Makes the administrator who sends it the owner. A schedule stopped for `owner-not-found` becomes active, unless it writes to the default branch while the Sync API requires approval: it then stays stopped with the reason `approval-required`. |
+
+`<schedule>` is a schedule identifier or name; the identifier is tried first. Any authenticated
+actor can create a schedule. Only its owner or an administrator can change, pause, resume or
+delete it, and only an administrator can take it over.
+
+A schedule keeps running the version it names when a newer version of the configuration is
+registered. `schedules list` and `schedules show` then print
+`warning: a newer version of this configuration exists: <config_id> version <n>`.
+
+## Check a schedule
+
+Infrahub Sync sends no notification for a scheduled run: not when a run fails, not when a start
+is skipped or missed, and not when a schedule stops. Check the schedule with these commands, or
+connect a monitoring tool to the same Sync API routes:
+
+| To check | Command | Sync API route |
+| --- | --- | --- |
+| The state of every schedule and its next start | `infrahub-sync schedules list` | `GET /schedules` |
+| One schedule: its state, the reason of a stopped schedule, its last run and its count of failed runs in a row | `infrahub-sync schedules show <schedule>` | `GET /schedules/{schedule_id}` |
+| The last runs of a schedule | `infrahub-sync runs list --schedule <schedule>` | `GET /runs?schedule_id=<schedule_id>` |
+| The outcome of one run | `infrahub-sync runs show <run_id>` | `GET /runs/{run_id}` |
+| Skipped, missed and failed starts, proposed changes, and the events of the schedule's runs | `infrahub-sync events --schedule <schedule>` | `GET /events?related=schedule:<schedule_id>` |
+
+`schedules list` and `schedules show` write their warnings to standard error, for a stopped
+schedule, a newer version and a schedule not yet handed to Prefect. A warning does not change the
+exit code. The events of a schedule are listed in the
+[Sync HTTP API reference](./reference/sync-http-api.mdx#list-events).
+
+## Other ways to start runs on a cadence
+
+The V3 CLI submits a run to a deployed Sync service and waits for its result. Any tool that can
+run a CLI command on a schedule and capture its output can start that command. Such a run records
+`trigger_type: manual`, and the tool, not Infrahub Sync, decides when it runs.
 
 ### Cron
 
-The most direct option. A cron entry submits `infrahub-sync sync --config-id <id>
---version <version> --reason "scheduled sync"` on a defined schedule. Output and exit
-codes are captured by your normal cron logging.
+A cron entry submits `infrahub-sync sync --config-id <id> --version <version> --reason
+"scheduled sync"` at the times of the entry. Output and exit codes are captured by your normal
+cron logging.
 
 **When this works well:**
 
 - You already operate a cron host for scheduled jobs.
-- The sync is straightforward — one project, one schedule, no dependencies on other jobs.
-- Failure handling can be reactive (logs are reviewed when something looks off).
+- The sync is one project with one cadence and no dependencies on other jobs.
+- Someone reviews the logs regularly, and a failure can wait until that review.
 
-**Trade-offs:** No native retry on failure, no visibility beyond logs, no built-in alerting. For mission-critical syncs, wrap the cron entry in a script that handles retries and alerts.
+**Trade-offs:** No retry on failure, no record beyond the logs, no alerting. Wrap the cron entry in
+a script that handles retries and alerts when a missed sync matters.
 
-### CI jobs (GitHub Actions, GitLab CI, etc.)
+### CI jobs (GitHub Actions, GitLab CI, and others)
 
-Define the sync as a scheduled workflow in your CI system. CI provides run history, log retention, secret management, and notification on failure.
+Define the sync as a scheduled workflow in your CI system. CI provides run history, log retention,
+secret management, and notification on failure.
 
 **When this works well:**
 
 - You treat infrastructure data movement as part of your software delivery pipeline.
-- You want run history and structured failure notifications from tooling you already operate.
-- Sync project configurations live in a git repository alongside other infrastructure code.
+- You want run history and failure notifications from tooling you already operate.
+- Sync project configurations live in a git repository with other infrastructure code.
 
-**Trade-offs:** CI systems are designed for short-lived jobs. For very large or long-running syncs, watch out for job timeout limits.
+**Trade-offs:** CI systems are designed for short jobs. For large or long syncs, check the job
+timeout limits.
 
 ### Prefect
 
@@ -43,29 +329,31 @@ choose instead of Compose:
 - Install the `prefect` extra to serve one direct deployment that accepts read-only plan
   requests through Prefect's API, without the rest of the Sync service; it refuses
   `operation="sync"`. Use the Sync API for confirmed sync or reviewed-plan apply. Sync output
-  is forwarded into the flow-run log. This is a lighter-weight alternative to a full Compose
-  deployment when you only need to trigger plan requests through Prefect. See the
+  is forwarded into the flow-run log. This is a smaller alternative to a full Compose
+  deployment when you only need to start plan requests through Prefect. See the
   [Prefect remote run reference](./reference/prefect-remote-run.mdx) and
   `examples/prefect_remote_run/README.md` in the repository.
 - Install the `service` extra to run the Sync-owned authenticated HTTP API, durable records
-  and artifacts, reviewed-plan apply, idempotency, cancellation, and worker execution — the
-  same surface the [Compose deployment](./compose-deployment.mdx) runs its `sync-api` and
+  and artifacts, reviewed-plan apply, idempotency, cancellation, schedules, and worker execution —
+  the same surface the [Compose deployment](./compose-deployment.mdx) runs its `sync-api` and
   `sync-worker` services from. See the
   [Sync HTTP API reference](./reference/sync-http-api.mdx).
 
 **When this works well:**
 
 - You already use Prefect for other infrastructure or data workflows.
-- A sync needs to be triggered on demand from another system, over an API rather than a shell.
-- You want centralized observability across many sync projects.
+- Another system needs to start a sync over an API rather than a shell.
+- You want one place to observe many sync projects.
 
 **Trade-offs:** Prefect itself has to be operated. If you do not already run it, this adds
-operational surface area. The direct deployment runs and observes one plan; it does not add
-scheduling, retry, queue, or overlap policy.
+services to operate. The direct deployment runs and observes one plan; it has no schedule, retry,
+queue, or overlap policy.
 
-Use the Sync API for the supported worker-backed run lifecycle. For schedules, retry
-policies, triggers, or composing several syncs into a larger workflow, configure Prefect
-around either packaged surface or wrap the CLI in a flow you own.
+For retry policies, triggers, or several syncs composed into a larger workflow, configure Prefect
+around either packaged surface or wrap the CLI in a flow you own. Create a schedule of the Sync
+service with `infrahub-sync schedules create`, not in the Prefect UI: the Sync API creates and
+changes the Prefect schedule of each Sync schedule, and the worker refuses a flow run of the
+service deployment that carries neither a Sync run nor a Sync schedule.
 
 #### What a service flow run shows in Prefect
 
@@ -142,35 +430,40 @@ Any workflow engine that can run a CLI command works the same way as Prefect. Pi
 
 Some sync use cases are better started by an event than by a schedule. For example: "when a device is created in Infrahub, sync its details from the inventory system." An event handler that you run, such as a service that receives an Infrahub webhook, can start the run with the CLI or the [Sync HTTP API](./reference/sync-http-api.mdx).
 
-Event-driven sync is the exception, not the rule. Most data movement is well-served by a recurring schedule. Use event-driven patterns when the data volume is small, the freshness requirement is high, or the source system is itself event-driven.
+Use an event to start a run when the data volume is small, the data must be current within minutes, or the source system itself sends events. Most data movement needs only a recurring cadence.
 
 ## Choosing a cadence
 
-Match the cadence to the rate at which source data changes and your tolerance for staleness:
+Match the cadence to the rate at which source data changes and to how old the data in Infrahub may be:
 
-- **Every few minutes** — for high-change-rate sources that need near-real-time freshness. Verify the sync run completes faster than the cadence to avoid overlap.
+- **Every few minutes** — for sources that change often and must be current within minutes. Check that each run ends before the next start; otherwise the overlap policy skips or queues the start.
 - **Hourly** — a common default for active infrastructure data.
-- **Daily** — appropriate for slower-moving data or for syncs where the next run can absorb a missed one.
+- **Daily** — for data that changes slowly, or for syncs where the next run can write the changes of a missed one.
 - **On demand** — for migrations, audits, or one-off seeding rather than steady-state operation.
 
-Each run reads the source and the destination in full, then writes only the differences. A shorter cadence repeats that read more often, so check that each run finishes before the next one starts.
+Each run reads the source and the destination in full, then writes only the differences. A shorter cadence repeats that read more often, so check that each run finishes before the next one starts. A cadence that does not divide a day, such as every 5 hours written as `0 */5 * * *`, starts again at midnight and gives one shorter gap each day.
 
 ## Observability and failure handling
 
-Whatever scheduling tool you use, plan for these operational concerns:
+Whatever starts the runs, plan for these operational concerns:
 
 - **Logging.** Adapter and lifecycle logs come from the Sync worker that runs the request
   (`docker compose logs sync-worker` on a Compose deployment); the CLI itself reports
   the run ID, the final state, and the exit code. `infrahub-sync runs logs <run_id>` prints one
   run's lines and `infrahub-sync events --run-id <run_id>` prints what happened to it, both
-  through the Sync API. Forward the worker's logs to the logging system used by the scheduler.
-- **Failure detection.** The CLI returns a non-zero exit code on failure. Wire the scheduling tool to catch this and alert the appropriate channel.
+  through the Sync API. Forward the worker's logs to your logging system.
+- **Failure detection.** For a schedule, check the schedule as [Check a schedule](#check-a-schedule)
+  describes. When another tool starts the runs, the CLI returns a non-zero exit code on failure:
+  configure the tool to catch it and alert the right team.
 - **Failure recovery.** Inspect the run record and destination after a failed write, then
   calculate a fresh plan. A failed operation can have written part of its change, unless the
   run records that it wrote nothing; follow
   [When the outcome of a write is uncertain](./compose-deployment.mdx#when-the-outcome-of-a-write-is-uncertain).
-- **Run isolation.** Avoid overlapping runs of the same sync project. Set the cadence longer than the run time, or have the scheduler skip a run if the previous one is still active.
-- **Sync project versioning.** Keep the configuration package files in version control and register each change as a new version.
+- **Run isolation.** A schedule applies its overlap policy to every run of the configuration.
+  When another tool starts the runs, avoid overlapping runs of the same sync project: set the
+  cadence longer than the run time, or have the tool skip a run while the previous one is active.
+- **Sync project versioning.** Keep the configuration package files in version control and
+  register each change as a new version. Then change the schedule to the new version.
 
 ## Running Infrahub Sync in a container
 
@@ -187,15 +480,19 @@ package. `cli` receives only the Sync API URL and token.
 
 ## What this release does not include
 
-- **Built-in scheduler.** This release has no scheduler. Use one of the options above.
-- **Sync history dashboard.** The scheduling tool typically provides this — CI run history, Prefect UI, or aggregated logs.
-- **Built-in retry policies.** Configure retries in the scheduling tool. Treat write
-  retries according to the [documented recovery and convergence boundaries](./running-a-sync.mdx).
-- **Alerting on failure.** Configure alerts in the scheduling tool or log aggregator.
+- **Notifications.** Infrahub Sync sends no notification for a scheduled run. Check schedules as
+  [Check a schedule](#check-a-schedule) describes, or configure alerts in a monitoring tool or
+  log aggregator.
+- **Sync history dashboard.** Read run history with `infrahub-sync runs list`, or in the tool
+  that starts the runs: CI run history, the Prefect UI, or aggregated logs.
+- **Retry of a failed scheduled run.** A schedule does not run a failed start again; its next
+  start runs as usual. Treat write retries according to the
+  [documented recovery and convergence boundaries](./running-a-sync.mdx).
 
 ## Related
 
 - [Run a sync](./running-a-sync.mdx)
 - [Create a sync project](./creating-a-sync-project.mdx)
 - [CLI reference](./reference/cli.mdx)
+- [Sync HTTP API reference](./reference/sync-http-api.mdx)
 - [Migrate from NetBox or Nautobot](./migrating-from-netbox-or-nautobot.mdx)

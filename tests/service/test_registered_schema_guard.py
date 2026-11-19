@@ -601,6 +601,7 @@ def test_no_worker_parameter_offers_a_schema_override() -> None:
         "confirm_writes",
         "configuration_name",
         "confirm_left_out",
+        "schedule_id",
     )
 
 

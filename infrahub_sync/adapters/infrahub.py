@@ -86,6 +86,29 @@ def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[
     return url, settings.get("branch") or branch
 
 
+def infrahub_sdk_config(settings: Mapping[str, Any], *, url: str, token: str, branch: str) -> dict[str, Any]:
+    """The Infrahub SDK `Config` fields of a client of this destination, with `branch` as its default.
+
+    The destination adapter and the branch review operations of a scheduled run
+    (`infrahub_sync.service.branch_review`) build their clients from it, so both read the same
+    address, token and TLS setting.
+    """
+    sdk_config: dict[str, Any] = {
+        "address": url,
+        "timeout": 60,
+        "api_token": token,
+        "default_branch": branch,
+        "default_branch_from_git": False,
+    }
+    verify_ssl = settings.get("verify_ssl")
+    if verify_ssl is not None:
+        sdk_config["tls_insecure"] = not verify_ssl
+    if is_registered_context(settings):
+        # Direct use keeps the SDK's `INFRAHUB_*` fallbacks; a registered package does not.
+        sdk_config = pin_infrahub_sdk_authority(sdk_config)
+    return sdk_config
+
+
 # GraphQL filter kwarg for timestamp-based incremental queries.
 # Verified against a live Infrahub via __type introspection — every node
 # exposes the metadata-prefixed `node_metadata__updated_at__after` arg.
@@ -982,7 +1005,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         settings = adapter.settings or {}
         infrahub_url, infrahub_branch = resolved_endpoint(settings, branch)
         infrahub_token = select_runtime_credential(settings, "token", ("INFRAHUB_API_TOKEN",))
-        verify_ssl = settings.get("verify_ssl")
 
         if not infrahub_url or not infrahub_token:
             msg = "Both url and token must be specified!"
@@ -992,19 +1014,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         infrahub_branch = infrahub_branch or "main"
         self.destination_binding = DestinationBindingRecord(url=infrahub_url, branch=infrahub_branch)
 
-        sdk_config: dict[str, Any] = {
-            "address": infrahub_url,
-            "timeout": 60,
-            "api_token": infrahub_token,
-            "default_branch": infrahub_branch,
-            "default_branch_from_git": False,
-        }
-        if verify_ssl is not None:
-            sdk_config["tls_insecure"] = not verify_ssl
-        if is_registered_context(settings):
-            # Direct use keeps the SDK's `INFRAHUB_*` fallbacks; a registered package does not.
-            sdk_config = pin_infrahub_sdk_authority(sdk_config)
-
+        sdk_config = infrahub_sdk_config(settings, url=infrahub_url, token=infrahub_token, branch=infrahub_branch)
         self.client = InfrahubClientSync(address=infrahub_url, config=Config(**sdk_config))
 
         # Parsed here, resolved against the destination by `resolve_lineage` at the start of

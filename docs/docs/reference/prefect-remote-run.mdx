@@ -185,6 +185,9 @@ Concurrency guarantees for this direct deployment are limited to the per-configu
 lock on one runner host. A second run of the same configuration waits for that lock and
 fails if it times out. The deployment adds no queue or ordering policy beyond that lock.
 
+The direct deployment has no schedule. Schedules belong to the Sync service; see
+[Schedule sync runs](../orchestration.mdx).
+
 ## Related
 
 - Example walkthrough: `examples/prefect_remote_run/README.md`

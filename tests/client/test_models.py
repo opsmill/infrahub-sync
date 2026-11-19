@@ -14,8 +14,11 @@ from infrahub_sync.client.models import (
     ApplyRunRequest,
     ApproveRunRequest,
     CancelRunRequest,
+    ChangeScheduleRequest,
     ConfigMutationRequest,
     CreateRunRequest,
+    CreateScheduleRequest,
+    EventDetailsResource,
     EventPage,
     EventPrimaryResource,
     EventRelatedResource,
@@ -24,6 +27,10 @@ from infrahub_sync.client.models import (
     PublicRunResource,
     RunApprovalResource,
     RunResource,
+    ScheduleActionRequest,
+    ScheduleOpenBranchResource,
+    SchedulePage,
+    ScheduleResource,
     VerifyRunRequest,
 )
 from infrahub_sync.product_store.models import PrefectExecutionLink, ProductRun, RunApproval
@@ -155,6 +162,9 @@ _REQUEST_FIELDS: dict[type, dict[str, object]] = {
     ApproveRunRequest: {"expected_checksum": "a" * 64},
     CancelRunRequest: {},
     ConfigMutationRequest: {"package": {"format_version": 1}},
+    CreateScheduleRequest: {"name": "nightly", "config_id": "cfg", "registry_version": 1, "cron": "0 2 * * *"},
+    ChangeScheduleRequest: {"cron": "0 3 * * *"},
+    ScheduleActionRequest: {},
 }
 
 
@@ -323,3 +333,455 @@ def test_an_event_timestamp_requires_a_timezone() -> None:
                 "related": [],
             }
         )
+
+
+def test_a_run_resource_of_an_older_sync_api_reads_as_a_manual_run() -> None:
+    """A Sync API that predates schedules returns no trigger fields; the run then reads as manual."""
+    run = PublicRunResource.model_validate(_public_run())
+
+    assert run.trigger_type == "manual"
+    assert run.schedule_id is None
+    assert run.scheduled_start_at is None
+
+
+def test_a_run_resource_carries_the_schedule_and_the_start_time_of_a_scheduled_run() -> None:
+    run = PublicRunResource.model_validate(
+        _public_run(trigger_type="scheduled", schedule_id="s-" + "3f" * 16, scheduled_start_at="2026-11-18T01:00:00Z")
+    )
+
+    assert run.trigger_type == "scheduled"
+    assert run.schedule_id == "s-" + "3f" * 16
+    assert run.scheduled_start_at == datetime(2026, 11, 18, 1, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"trigger_type": "webhook"},
+        {"trigger_type": "scheduled", "schedule_id": "s-" + "3f" * 16, "scheduled_start_at": "2026-11-18T01:00:00"},
+        {"trigger_type": "scheduled", "schedule_id": "s-" + "3f" * 16},
+        {"trigger_type": "scheduled", "scheduled_start_at": "2026-11-18T01:00:00Z"},
+        {"trigger_type": "manual", "schedule_id": "s-" + "3f" * 16},
+        {"trigger_type": "manual", "scheduled_start_at": "2026-11-18T01:00:00Z"},
+    ],
+    ids=[
+        "unknown-trigger-type",
+        "naive-start-time",
+        "scheduled-without-start-time",
+        "scheduled-without-schedule",
+        "manual-with-schedule",
+        "manual-with-start-time",
+    ],
+)
+def test_an_invalid_trigger_field_of_a_run_is_refused(override: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PublicRunResource.model_validate(_public_run(**override))
+
+
+def _event(**extra: object) -> dict[str, object]:
+    return {
+        "event_id": "e-1",
+        "event_type": "infrahub_sync.schedule.start_missed",
+        "occurred_at": "2026-11-18T01:05:00Z",
+        "actor": "operator",
+        "operation": "schedule-start",
+        "outcome": "missed-skipped",
+        **extra,
+    }
+
+
+def test_an_event_without_details_reads_none() -> None:
+    assert EventResource.model_validate(_event()).details is None
+    assert EventResource.model_validate(_event(details=None)).details is None
+
+
+def test_an_event_carries_its_details() -> None:
+    event = EventResource.model_validate(
+        _event(
+            details={
+                "start_at": "2026-11-18T01:00:00Z",
+                "starts": 600,
+                "first_start_at": "2026-11-10T01:00:00Z",
+                "last_start_at": "2026-11-17T01:00:00Z",
+                "left_out": 3,
+                "branch": "sync/nightly-20261117-a1b2c3",
+                "proposed_change_id": "pc-1",
+                "replaced_run_id": "run-0",
+                "cause": "configuration-version-not-found",
+            }
+        )
+    )
+
+    details = event.details
+    assert isinstance(details, EventDetailsResource)
+    assert details.start_at == datetime(2026, 11, 18, 1, tzinfo=timezone.utc)
+    assert (details.starts, details.left_out) == (600, 3)
+    assert details.first_start_at == datetime(2026, 11, 10, 1, tzinfo=timezone.utc)
+    assert details.last_start_at == datetime(2026, 11, 17, 1, tzinfo=timezone.utc)
+    assert details.branch == "sync/nightly-20261117-a1b2c3"
+    assert (details.proposed_change_id, details.replaced_run_id) == ("pc-1", "run-0")
+    assert details.cause == "configuration-version-not-found"
+
+
+def test_the_details_of_an_event_declare_only_the_closed_keys() -> None:
+    assert set(EventDetailsResource.model_fields) == {
+        "start_at",
+        "starts",
+        "first_start_at",
+        "last_start_at",
+        "left_out",
+        "branch",
+        "proposed_change_id",
+        "replaced_run_id",
+        "cause",
+    }
+    assert EventDetailsResource().model_dump() == dict.fromkeys(EventDetailsResource.model_fields)
+
+
+@pytest.mark.parametrize(
+    "details",
+    [{"start_at": "2026-11-18T01:00:00"}, {"first_start_at": "2026-11-18T01:00:00"}, {"starts": -1}, {"left_out": -1}],
+    ids=["naive-start", "naive-first-start", "negative-starts", "negative-left-out"],
+)
+def test_invalid_details_of_an_event_are_refused(details: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        EventResource.model_validate(_event(details=details))
+
+
+def test_a_create_schedule_request_applies_the_defaults_of_the_contract() -> None:
+    request = CreateScheduleRequest(name="nightly", config_id="cfg", registry_version=3, cron="0 2 * * *")
+
+    assert request.model_dump(mode="json") == {
+        "name": "nightly",
+        "config_id": "cfg",
+        "registry_version": 3,
+        "cron": "0 2 * * *",
+        "timezone": "UTC",
+        "write_target": "branch-review",
+        "write_when_left_out": False,
+        "overlap_policy": "reject",
+        "start_late_by_at_most_seconds": None,
+        "reason": None,
+    }
+
+
+def test_a_create_schedule_request_accepts_every_setting_of_the_contract() -> None:
+    request = CreateScheduleRequest(
+        name="nightly",
+        config_id="cfg",
+        registry_version=3,
+        cron="0 2 * * *",
+        timezone="Europe/Paris",
+        write_target="default-branch",
+        write_when_left_out=True,
+        overlap_policy="queue",
+        start_late_by_at_most_seconds=604800,
+        reason="nightly import",
+    )
+
+    assert (request.write_target, request.overlap_policy) == ("default-branch", "queue")
+    assert request.write_when_left_out is True
+    assert request.start_late_by_at_most_seconds == 604800
+
+
+@pytest.mark.parametrize(
+    ("cron", "zone"),
+    [("not a cron expression", "UTC"), ("0 2 * * *", "Mars/Olympus"), ("", "")],
+    ids=["cron", "timezone", "empty"],
+)
+def test_a_schedule_request_does_not_validate_the_cron_expression_or_the_time_zone(cron: str, zone: str) -> None:
+    """The Sync API validates both, and answers with its own refusal codes."""
+    created = CreateScheduleRequest(name="nightly", config_id="cfg", registry_version=1, cron=cron, timezone=zone)
+    changed = ChangeScheduleRequest(cron=cron, timezone=zone)
+
+    assert (created.cron, created.timezone) == (cron, zone)
+    assert (changed.cron, changed.timezone) == (cron, zone)
+
+
+def test_a_create_schedule_request_accepts_left_out_writes_with_branch_review() -> None:
+    """The Sync API refuses this pair with `schedule-left-out-not-applicable`, not the model."""
+    request = CreateScheduleRequest(
+        name="nightly", config_id="cfg", registry_version=1, cron="0 2 * * *", write_when_left_out=True
+    )
+
+    assert (request.write_target, request.write_when_left_out) == ("branch-review", True)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"name": "not a name"},
+        {"config_id": "not a name"},
+        {"registry_version": 0},
+        {"registry_version": "3"},
+        {"registry_version": True},
+        {"write_target": "main"},
+        {"overlap_policy": "replace"},
+        {"write_when_left_out": "yes"},
+        {"start_late_by_at_most_seconds": 59},
+        {"start_late_by_at_most_seconds": 604801},
+        {"owner": "alice"},
+    ],
+    ids=lambda override: "-".join(f"{key}={value}" for key, value in override.items()),
+)
+def test_an_invalid_create_schedule_request_is_refused(override: dict[str, object]) -> None:
+    payload = {"name": "nightly", "config_id": "cfg", "registry_version": 1, "cron": "0 2 * * *", **override}
+
+    with pytest.raises(ValidationError):
+        CreateScheduleRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize("field", ["name", "config_id", "registry_version", "cron"])
+def test_a_create_schedule_request_requires_its_four_fields(field: str) -> None:
+    payload: dict[str, object] = {"name": "nightly", "config_id": "cfg", "registry_version": 1, "cron": "0 2 * * *"}
+    del payload[field]
+
+    with pytest.raises(ValidationError):
+        CreateScheduleRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"registry_version": 4},
+        {"cron": "0 3 * * *"},
+        {"timezone": "Europe/Paris"},
+        {"write_target": "default-branch"},
+        {"write_when_left_out": False},
+        {"overlap_policy": "queue"},
+        {"start_late_by_at_most_seconds": 60},
+    ],
+    ids=lambda change: next(iter(change)),
+)
+def test_a_change_schedule_request_keeps_every_field_it_does_not_name(change: dict[str, object]) -> None:
+    request = ChangeScheduleRequest.model_validate(change)
+
+    (field,) = change
+    assert getattr(request, field) == change[field]
+    assert request.model_dump(exclude={field, "reason"}) == dict.fromkeys(
+        set(ChangeScheduleRequest.model_fields) - {field, "reason"}
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"reason": "no change"},
+        {"cron": None},
+        {"name": "other", "cron": "0 3 * * *"},
+        {"config_id": "other", "cron": "0 3 * * *"},
+        {"owner": "alice", "cron": "0 3 * * *"},
+        {"registry_version": 0},
+        {"start_late_by_at_most_seconds": 59},
+    ],
+    ids=[
+        "empty",
+        "reason-only",
+        "null-only",
+        "names-name",
+        "names-config-id",
+        "names-owner",
+        "version-zero",
+        "late-start-too-short",
+    ],
+)
+def test_a_change_schedule_request_that_changes_nothing_or_names_a_fixed_field_is_refused(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        ChangeScheduleRequest.model_validate(payload)
+
+
+def test_a_schedule_action_request_holds_only_a_reason() -> None:
+    assert ScheduleActionRequest().model_dump(mode="json") == {"reason": None}
+    assert ScheduleActionRequest(reason="maintenance window").reason == "maintenance window"
+    with pytest.raises(ValidationError):
+        ScheduleActionRequest.model_validate({"state": "paused"})
+
+
+def _schedule(**extra: object) -> dict[str, object]:
+    return {
+        "schedule_id": "s-" + "3f" * 16,
+        "name": "from-netbox-nightly",
+        "config_id": "from-netbox",
+        "registry_version": 3,
+        "cron": "0 2 * * *",
+        "timezone": "Europe/Paris",
+        "write_target": "branch-review",
+        "write_when_left_out": False,
+        "left_out_set_by": None,
+        "left_out_set_at": None,
+        "overlap_policy": "reject",
+        "state": "active",
+        "state_reason": None,
+        "owner": "operator",
+        "next_start_at": "2026-11-18T01:00:00Z",
+        "last_run_id": None,
+        "prefect_synced": True,
+        "consecutive_failures": 0,
+        "open_branch": None,
+        "created_at": "2026-11-17T09:12:00Z",
+        "updated_at": "2026-11-17T09:12:00Z",
+        **extra,
+    }
+
+
+def test_a_schedule_resource_reads_without_the_fields_of_user_story_3() -> None:
+    """`newer_version`, `start_late_by_at_most_seconds` and `waiting_start_at` are absent before user story 3."""
+    schedule = ScheduleResource.model_validate(_schedule())
+
+    assert schedule.newer_version is None
+    assert schedule.start_late_by_at_most_seconds is None
+    assert schedule.waiting_start_at is None
+    assert schedule.next_start_at == datetime(2026, 11, 18, 1, tzinfo=timezone.utc)
+    assert schedule.created_at == datetime(2026, 11, 17, 9, 12, tzinfo=timezone.utc)
+    assert (schedule.prefect_synced, schedule.consecutive_failures) == (True, 0)
+    assert (schedule.state, schedule.state_reason, schedule.owner) == ("active", None, "operator")
+
+
+def test_a_schedule_resource_reads_every_field_of_the_contract() -> None:
+    schedule = ScheduleResource.model_validate(
+        _schedule(
+            newer_version=4,
+            start_late_by_at_most_seconds=3600,
+            waiting_start_at="2026-11-18T01:00:00Z",
+            write_target="default-branch",
+            write_when_left_out=True,
+            left_out_set_by="alice",
+            left_out_set_at="2026-11-17T10:00:00Z",
+            state="stopped",
+            state_reason="repeated-failures",
+            consecutive_failures=5,
+            prefect_synced=False,
+            last_run_id="run-9",
+            open_branch={
+                "run_id": "run-8",
+                "branch": "sync/from-netbox-nightly-20261117-a1b2c3",
+                "proposed_change_id": "pc-1",
+            },
+        )
+    )
+
+    assert (schedule.newer_version, schedule.start_late_by_at_most_seconds) == (4, 3600)
+    assert schedule.waiting_start_at == datetime(2026, 11, 18, 1, tzinfo=timezone.utc)
+    assert (schedule.left_out_set_by, schedule.left_out_set_at) == (
+        "alice",
+        datetime(2026, 11, 17, 10, tzinfo=timezone.utc),
+    )
+    assert (schedule.state, schedule.state_reason) == ("stopped", "repeated-failures")
+    assert (schedule.consecutive_failures, schedule.prefect_synced, schedule.last_run_id) == (5, False, "run-9")
+    assert schedule.open_branch == ScheduleOpenBranchResource(
+        run_id="run-8", branch="sync/from-netbox-nightly-20261117-a1b2c3", proposed_change_id="pc-1"
+    )
+
+
+def test_a_schedule_resource_declares_the_fields_of_the_contract() -> None:
+    assert set(ScheduleResource.model_fields) == {
+        "schedule_id",
+        "name",
+        "config_id",
+        "registry_version",
+        "newer_version",
+        "cron",
+        "timezone",
+        "write_target",
+        "write_when_left_out",
+        "left_out_set_by",
+        "left_out_set_at",
+        "overlap_policy",
+        "start_late_by_at_most_seconds",
+        "state",
+        "state_reason",
+        "owner",
+        "next_start_at",
+        "waiting_start_at",
+        "last_run_id",
+        "prefect_synced",
+        "consecutive_failures",
+        "open_branch",
+        "created_at",
+        "updated_at",
+    }
+
+
+def test_a_schedule_resource_reads_a_newer_sync_api() -> None:
+    """The client tolerates the fields, states and settings that a newer Sync API adds."""
+    schedule = ScheduleResource.model_validate(
+        _schedule(state="expired", write_target="named-branch", overlap_policy="replace", added_later=True)
+    )
+
+    assert (schedule.state, schedule.write_target, schedule.overlap_policy) == ("expired", "named-branch", "replace")
+
+
+@pytest.mark.parametrize("field", ["next_start_at", "waiting_start_at", "left_out_set_at", "created_at", "updated_at"])
+def test_a_schedule_timestamp_requires_a_timezone(field: str) -> None:
+    with pytest.raises(ValidationError, match="schedule timestamps must include a timezone"):
+        ScheduleResource.model_validate(_schedule(**{field: "2026-11-18T01:00:00"}))
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"registry_version": 0}, {"consecutive_failures": -1}, {"owner": ""}, {"schedule_id": ""}, {"state": ""}],
+    ids=["version-zero", "negative-failures", "empty-owner", "empty-identifier", "empty-state"],
+)
+def test_an_invalid_schedule_resource_is_refused(override: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        ScheduleResource.model_validate(_schedule(**override))
+
+
+def test_a_schedule_page_reads_its_items_and_its_cursor() -> None:
+    page = SchedulePage.model_validate({"items": [_schedule()], "next_cursor": "opaque"})
+    last = SchedulePage.model_validate({"items": []})
+
+    assert [item.name for item in page.items] == ["from-netbox-nightly"]
+    assert page.next_cursor == "opaque"
+    assert (last.items, last.next_cursor) == ((), None)
+
+
+def test_the_service_re_exports_the_schedule_models_and_bounds_what_it_emits() -> None:
+    from infrahub_sync.service import models as service_models
+
+    for name in (
+        "CreateScheduleRequest",
+        "ChangeScheduleRequest",
+        "ScheduleActionRequest",
+        "ScheduleResource",
+        "SchedulePage",
+    ):
+        assert name in service_models.__all__
+        assert getattr(service_models, name) is globals()[name]
+    emitted = service_models.EmittedScheduleResource
+    page = service_models.EmittedSchedulePage
+    assert issubclass(emitted, ScheduleResource)
+    assert issubclass(page, SchedulePage)
+    assert {emitted, page} <= set(service_models.EMITTED_RESOURCES)
+
+    schedule = emitted.model_validate(
+        _schedule(
+            prefect_schedule_id="internal",
+            open_branch={"run_id": "run-8", "branch": "sync/nightly", "proposed_change_id": None, "state": "open"},
+        )
+    )
+
+    assert "prefect_schedule_id" not in schedule.model_dump()
+    assert schedule.open_branch is not None
+    assert "state" not in schedule.open_branch.model_dump()
+
+
+def test_the_service_bounds_the_details_of_an_event_it_emits() -> None:
+    from infrahub_sync.service.models import EmittedEventPage
+
+    page = EmittedEventPage.model_validate(
+        {
+            "items": [_event(details={"start_at": "2026-11-18T01:00:00Z", "infrahub_message": "free text"})],
+            "limit": 50,
+            "offset": 0,
+            "has_more": False,
+        }
+    )
+
+    details = page.items[0].details
+    assert details is not None
+    assert "infrahub_message" not in details.model_dump()
+    assert details.start_at == datetime(2026, 11, 18, 1, tzinfo=timezone.utc)

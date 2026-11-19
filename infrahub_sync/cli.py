@@ -8,11 +8,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import unicodedata
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime
 from enum import Enum
 from functools import wraps
 from math import isfinite
@@ -31,11 +33,13 @@ from infrahub_sync.client import (
     ApplyRunRequest,
     ApproveRunRequest,
     CancelRunRequest,
+    ChangeScheduleRequest,
     ClientInputError,
     CompatibilityError,
     ConfigMutationRequest,
     ConfigsAPIError,
     CreateRunRequest,
+    CreateScheduleRequest,
     NotSyncAPIError,
     PlanResource,
     ProtocolError,
@@ -45,6 +49,8 @@ from infrahub_sync.client import (
     RunResource,
     RunTerminalError,
     RunWaitTimeoutError,
+    ScheduleActionRequest,
+    ScheduleResource,
     SyncClient,
     SyncClientError,
     TransportError,
@@ -56,6 +62,8 @@ from infrahub_sync.client.models import (
     MAX_FAILURE_CAUSE_TEXT,
     MAX_LIMIT,
     MAX_REPORT_LIMIT,
+    MAX_START_LATE_SECONDS,
+    MIN_START_LATE_SECONDS,
     RECOVERY_NEXT_ACTIONS,
     SCHEMA_CHANGED_NEXT_ACTION,
     ListPage,
@@ -112,6 +120,22 @@ _DIFF_DEPRECATION = "warning: 'diff' is deprecated, use 'plan'"
 _LIMIT_HELP = f"Items per page, 1-{MAX_LIMIT}. The server default applies when omitted."
 _ALL_HELP = "Read every page instead of only the first."
 _CONFIG_HELP = "Configuration ID or name. The ID is tried first, then the name."
+_SCHEDULE_HELP = "Schedule ID or name. The ID is tried first, then the name."
+_WRITE_WHEN_LEFT_OUT_HELP = (
+    "Turn on or off the left-out setting: when on, a run whose plan leaves out records writes the other records "
+    "instead of stopping after the plan. Applies only to a schedule that writes to the default branch; the Sync "
+    "API refuses it for branch review."
+)
+_WRITE_TO_DEFAULT_BRANCH_HELP = (
+    "Write each run to the branch that a sync run of the configuration writes to, with no proposed change. "
+    "Without this option each run writes to a new branch and opens a proposed change for review. A Sync API "
+    "that requires an approved plan refuses it."
+)
+_WRITE_TARGET_CHANGE_HELP = (
+    "Change where each run writes: to the branch that a sync run of the configuration writes to, or to a new "
+    "branch with a proposed change for review. A Sync API that requires an approved plan refuses the default "
+    "branch."
+)
 # Characters a terminal acts on or a reader cannot see: every code point in the Unicode
 # categories Cc (C0 and C1 controls, DEL), Cf (bidirectional overrides and isolates,
 # zero-width characters, direction marks, soft hyphen, tag characters), Zl and Zp (line
@@ -127,8 +151,10 @@ app = typer.Typer(
 )
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
 runs_app = typer.Typer(help="Inspect service-owned runs.")
+schedules_app = typer.Typer(help="Start `sync` runs of a configuration version on a cron cadence.")
 app.add_typer(configs_app, name="configs")
 app.add_typer(runs_app, name="runs")
+app.add_typer(schedules_app, name="schedules")
 
 
 class Verbosity(str, Enum):
@@ -1893,6 +1919,7 @@ def _run_row(run: PublicRunResource) -> str:
         run.run_id,
         configuration,
         run.destination_branch or "-",
+        run.trigger_type,
         run.phase,
         run.outcome or "-",
         run.actor or "-",
@@ -1901,27 +1928,48 @@ def _run_row(run: PublicRunResource) -> str:
     return _display("  ".join(columns))
 
 
+class TriggerTypeOption(str, Enum):
+    """The trigger types `runs list --trigger-type` filters on."""
+
+    MANUAL = "manual"
+    SCHEDULED = "scheduled"
+
+
 @runs_app.command("list")
-def runs_list(
+def runs_list(  # pylint: disable=too-many-arguments
     ctx: typer.Context,
+    *,
     config: str | None = typer.Option(None, "--config", "--config-id", help=_CONFIG_HELP),
     version: int | None = typer.Option(
         None, "--version", min=1, help="Only runs of this version; requires a configuration ID or name."
     ),
+    trigger_type: TriggerTypeOption | None = typer.Option(
+        None, "--trigger-type", help="Only runs that a person started (manual) or that a schedule started (scheduled)."
+    ),
+    schedule: str | None = typer.Option(None, "--schedule", help=f"Only runs this schedule started. {_SCHEDULE_HELP}"),
     limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
     all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
 ) -> None:
-    """List runs, newest first: run, configuration@version, branch, phase, outcome, actor, start time."""
+    """List runs, newest first: run, configuration@version, branch, trigger type, phase, outcome, actor, start time."""
     with _client_errors():
         if version is not None and config is None:
             raise ClientInputError(_VERSION_ARG)
         client = _client(ctx)
-        config_id = _config_id(ctx, config) if config is not None else None
+        filters: dict[str, Any] = {
+            "config_id": _config_id(ctx, config) if config is not None else None,
+            "registry_version": version,
+            "limit": limit,
+        }
+        # The schedule filters are sent only when given.
+        if trigger_type is not None:
+            filters["trigger_type"] = trigger_type.value
+        if schedule is not None:
+            filters["schedule_id"] = _resolve_schedule(client, schedule).schedule_id
         _echo_list(
             "runs",
             all_pages=all_pages,
-            every_item=lambda: client.iter_runs(config_id=config_id, registry_version=version, limit=limit),
-            first_page=lambda: client.list_runs(config_id=config_id, registry_version=version, limit=limit),
+            every_item=lambda: client.iter_runs(**filters),
+            first_page=lambda: client.list_runs(**filters),
             write=lambda runs: _echo_rows(runs, _run_row),
         )
 
@@ -2084,12 +2132,22 @@ def runs_show(
     and the recorded deletes between them; while a first apply or `sync` runs, none are uncertain. A `resume`
     line counts the creates and updates that resume wrote; the `written:` line of a failed write counts those of
     every execution of the run.
+    Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
+    scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
     _echo_run(resource)
     _echo_reads(resource)
     _echo_apply_progress(resource)
+    scheduled_start = resource.run.scheduled_start_at
+    _echo_fields(
+        (
+            ("trigger_type", resource.run.trigger_type),
+            ("schedule_id", resource.run.schedule_id),
+            ("scheduled_start_at", scheduled_start.isoformat() if scheduled_start is not None else None),
+        )
+    )
     # The latest execution of each stage; the orchestration list is in run order.
     latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
     # A failed stage's cause and next action, as the run's results recorded them (FR-002).
@@ -2249,24 +2307,43 @@ def runs_logs(
             raise typer.Exit(130) from None
 
 
+def _event_details(event: EventResource) -> str | None:
+    """Render the facts of an event as `key=value` pairs, or `None` when it records none."""
+    if event.details is None:
+        return None
+    pairs = []
+    for key, value in event.details.model_dump().items():
+        if value is not None:
+            pairs.append(f"{key}={value.isoformat() if isinstance(value, datetime) else value}")
+    return " ".join(pairs) or None
+
+
 def _event_row(event: EventResource) -> str:
     primary = event.primary_resource
-    return _row(
+    columns = [
         event.occurred_at.isoformat(),
         event.event_type,
         f"{primary.kind}:{primary.id}" if primary is not None else "-",
         event.actor,
         event.outcome,
-    )
+    ]
+    details = _event_details(event)
+    if details is not None:
+        columns.append(details)
+    return _row(*columns)
 
 
 @app.command("events")
 def events_cmd(
     ctx: typer.Context,
+    *,
     run_id: str | None = typer.Option(None, "--run-id", help="Only events about this run."),
     config: str | None = typer.Option(None, "--config-id", "--config", help=_CONFIG_HELP),
     event_types: list[str] | None = typer.Option(
         None, "--type", help="Only events of this type, such as infrahub_sync.run.planned. Repeat for several."
+    ),
+    schedule: str | None = typer.Option(
+        None, "--schedule", help=f"Only events that name this schedule. {_SCHEDULE_HELP}"
     ),
     follow: bool = typer.Option(
         False,  # noqa: FBT003
@@ -2274,13 +2351,19 @@ def events_cmd(
         help=f"Read new events every {DEFAULT_POLL_INTERVAL:g} seconds until interrupted.",
     ),
 ) -> None:
-    """List typed events, oldest first: time, type, resource, actor, outcome."""
+    """List typed events, oldest first: time, type, resource, actor, outcome, and the facts the event records."""
     with _client_errors():
         client = _client(ctx)
-        config_id = _config_id(ctx, config) if config is not None else None
-        types = tuple(event_types or ())
+        filters: dict[str, Any] = {
+            "run_id": run_id,
+            "config_id": _config_id(ctx, config) if config is not None else None,
+            "event_types": tuple(event_types or ()),
+        }
+        # The related-schedule filter is sent only when given.
+        if schedule is not None:
+            filters["related"] = (("schedule", _resolve_schedule(client, schedule).schedule_id),)
         if not follow:
-            _echo_rows(client.iter_events(run_id=run_id, config_id=config_id, event_types=types), _event_row)
+            _echo_rows(client.iter_events(**filters), _event_row)
             return
         # Events are listed oldest first and never removed, so the count printed so far is the
         # offset of the first event not yet printed. An event saved late with an earlier time
@@ -2288,7 +2371,7 @@ def events_cmd(
         offset = 0
         try:
             while True:
-                page = client.list_events(run_id=run_id, config_id=config_id, event_types=types, offset=offset)
+                page = client.list_events(**filters, offset=offset)
                 _echo_rows(page.items, _event_row)
                 offset += len(page.items)
                 if page.has_more:
@@ -2298,3 +2381,418 @@ def events_cmd(
                 sleep(DEFAULT_POLL_INTERVAL)
         except KeyboardInterrupt:
             raise typer.Exit(130) from None
+
+
+# The action each reason of a stopped schedule needs (data-model.md, state transitions).
+_STOPPED_ACTIONS = {
+    "owner-not-found": (
+        "an administrator takes the schedule over with `schedules take-over`, or enables the owner's account "
+        "and the schedule is resumed"
+    ),
+    "approval-required": (
+        "change the write target to branch review with `schedules change SCHEDULE --write-to-branch-review`; "
+        "the schedule is then active again"
+    ),
+    "repeated-failures": "check the last runs of the schedule, then resume it",
+}
+_REASON_HELP = "Optional audit reason."
+_IDEMPOTENCY_KEY_HELP = "Retry key."
+_OVERLAP_POLICY_HELP = (
+    "What a start does while a run of the configuration is in progress: reject skips the start, queue makes "
+    "one start wait and run when the run in progress ends."
+)
+_START_LATE_HELP_BASE = (
+    "How late the most recent start may begin after a time when the Sync service was not running, such as "
+    "30m or 2h (from 1m to 7d)."
+)
+_START_LATE_HELP = f"{_START_LATE_HELP_BASE} The Sync API uses 1h when the option is not given."
+_CHANGE_START_LATE_HELP = f"{_START_LATE_HELP_BASE} When the option is not given, the duration does not change."
+_DURATION = re.compile(r"(\d+)([smhd])")
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+class OverlapPolicyOption(str, Enum):
+    """The overlap policies of a schedule."""
+
+    REJECT = "reject"
+    QUEUE = "queue"
+
+
+def _start_late_seconds(value: str | None) -> int | None:
+    """Parse a duration such as `30m` or `2h` into seconds; the client sends seconds.
+
+    Raises:
+        typer.BadParameter: The value is not a whole number with one unit of `s`, `m`, `h` or `d`,
+            or it is outside one minute to seven days.
+    """
+    if value is None:
+        return None
+    match = _DURATION.fullmatch(value.strip())
+    if match is None:
+        msg = "give a whole number with one unit: s, m, h or d, such as 30m or 2h"
+        raise typer.BadParameter(msg)
+    seconds = int(match.group(1)) * _DURATION_UNITS[match.group(2)]
+    if not MIN_START_LATE_SECONDS <= seconds <= MAX_START_LATE_SECONDS:
+        msg = "the duration must be from 1m to 7d"
+        raise typer.BadParameter(msg)
+    return seconds
+
+
+def _resolve_schedule(client: SyncClient, value: str) -> ScheduleResource:
+    """Resolve a schedule identifier or name, trying the identifier first.
+
+    The name is matched among the schedules that are not deleted, where names are unique.
+    """
+    try:
+        return client.get_schedule(value)
+    except ClientInputError:
+        # The value cannot be an identifier, so it can only be a name.
+        pass
+    except APIError as error:
+        if not _is_not_found(error):
+            raise
+    matches = [schedule for schedule in client.iter_schedules() if schedule.name == value]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        typer.echo(_display(f"error: name '{value}' matches several schedules:"), err=True)
+        for match in matches:
+            typer.echo(_display(match.schedule_id), err=True)
+    else:
+        typer.echo(_display(f"error: no schedule has the id or name '{value}'"), err=True)
+    raise typer.Exit(2)
+
+
+def _time(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _echo_schedule(schedule: ScheduleResource) -> None:
+    """Print every field of a schedule, one `name: value` line each."""
+    open_branch = schedule.open_branch
+    fields: tuple[tuple[str, object], ...] = (
+        ("schedule_id", schedule.schedule_id),
+        ("name", schedule.name),
+        ("config_id", schedule.config_id),
+        ("registry_version", schedule.registry_version),
+        ("cron", schedule.cron),
+        ("timezone", schedule.timezone),
+        ("write_target", schedule.write_target),
+        ("write_when_left_out", schedule.write_when_left_out),
+        ("left_out_set_by", schedule.left_out_set_by),
+        ("left_out_set_at", _time(schedule.left_out_set_at)),
+        ("overlap_policy", schedule.overlap_policy),
+        ("state", schedule.state),
+        ("state_reason", schedule.state_reason),
+        ("owner", schedule.owner),
+        ("next_start_at", _time(schedule.next_start_at)),
+        ("last_run_id", schedule.last_run_id),
+        ("consecutive_failures", schedule.consecutive_failures),
+        ("prefect_synced", schedule.prefect_synced),
+        ("open_branch", open_branch.branch if open_branch is not None else None),
+        ("open_branch_run_id", open_branch.run_id if open_branch is not None else None),
+        ("open_proposed_change_id", open_branch.proposed_change_id if open_branch is not None else None),
+        ("created_at", schedule.created_at.isoformat()),
+        ("updated_at", schedule.updated_at.isoformat()),
+    )
+    # Fields that a Sync API without them does not return are printed only when it returns them.
+    optional: tuple[tuple[str, object], ...] = (
+        ("newer_version", schedule.newer_version),
+        ("start_late_by_at_most_seconds", schedule.start_late_by_at_most_seconds),
+        ("waiting_start_at", _time(schedule.waiting_start_at)),
+    )
+    _echo_fields((*fields, *((name, value) for name, value in optional if value is not None)))
+
+
+def _echo_schedule_warnings(schedule: ScheduleResource, *, name_it: bool = False) -> None:
+    """Write the warnings that apply to a schedule to standard error; they do not change the exit code."""
+    warnings: list[str] = []
+    if schedule.newer_version is not None:
+        warnings.append(
+            f"warning: a newer version of this configuration exists: {schedule.config_id} version "
+            f"{schedule.newer_version}"
+        )
+    if schedule.state == "stopped":
+        warnings.append(f"warning: this schedule is stopped: {schedule.state_reason or 'unknown'}")
+        action = _STOPPED_ACTIONS.get(schedule.state_reason or "")
+        if action is not None:
+            warnings.append(f"hint: {action}")
+    if not schedule.prefect_synced:
+        warnings.append("warning: this schedule is not yet handed to the task manager")
+    if warnings and name_it:
+        # In a list, the line before the warnings names the schedule they apply to.
+        warnings.insert(0, f"schedule: {schedule.schedule_id} {schedule.name}")
+    for line in warnings:
+        typer.echo(_display(line), err=True)
+
+
+def _schedule_row(schedule: ScheduleResource) -> str:
+    return _row(
+        schedule.schedule_id,
+        schedule.name,
+        f"{schedule.config_id}@{schedule.registry_version}",
+        schedule.state,
+        schedule.cron,
+        schedule.timezone,
+        _time(schedule.next_start_at) or "-",
+    )
+
+
+def _echo_schedule_rows(schedules: Iterable[ScheduleResource]) -> None:
+    for schedule in schedules:
+        typer.echo(_schedule_row(schedule))
+        _echo_schedule_warnings(schedule, name_it=True)
+
+
+@schedules_app.command("create")
+def schedules_create(  # pylint: disable=too-many-arguments
+    ctx: typer.Context,
+    *,
+    name: str = typer.Option(..., "--name", help="Schedule name, unique among the schedules that are not deleted."),
+    config: str = typer.Option(..., "--config", help=_CONFIG_HELP),
+    version: int = typer.Option(..., "--version", min=1, help="The configuration version each run synchronizes."),
+    cron: str = typer.Option(..., "--cron", help='Cron expression with five fields, such as "0 2 * * *".'),
+    timezone: str = typer.Option("UTC", "--timezone", help="Time zone of the cron expression, such as Europe/Paris."),
+    write_to_default_branch: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--write-to-default-branch",
+        help=_WRITE_TO_DEFAULT_BRANCH_HELP,
+    ),
+    write_when_left_out: bool | None = typer.Option(
+        None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
+    ),
+    overlap_policy: OverlapPolicyOption | None = typer.Option(None, "--overlap-policy", help=_OVERLAP_POLICY_HELP),
+    start_late_by_at_most: str | None = typer.Option(
+        None, "--start-late-by-at-most", callback=_start_late_seconds, help=_START_LATE_HELP
+    ),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Create a schedule that starts a `sync` run of one configuration version on a cron cadence.
+
+    By default each run writes to a new branch and opens a proposed change for review in Infrahub.
+    With `--write-to-default-branch`, each run writes to the branch that a `sync` run of the
+    configuration writes to; a Sync API that requires an approved plan refuses it. The Sync API
+    validates the cron expression and the time zone. The output shows the schedule with `next_start_at`.
+    """
+    with _client_errors():
+        client = _client(ctx)
+        config_id = _config_id(ctx, config)
+        # Sent only when given, so a request without the option keeps its body.
+        given: dict[str, object] = {
+            name: value
+            for name, value in (
+                ("write_target", "default-branch" if write_to_default_branch else None),
+                ("write_when_left_out", write_when_left_out),
+                ("overlap_policy", None if overlap_policy is None else overlap_policy.value),
+                # The callback has already turned the duration into seconds.
+                ("start_late_by_at_most_seconds", start_late_by_at_most),
+            )
+            if value is not None
+        }
+        request = cast(
+            "CreateScheduleRequest",
+            _request(
+                CreateScheduleRequest,
+                name=name,
+                config_id=config_id,
+                registry_version=version,
+                cron=cron,
+                timezone=timezone,
+                reason=reason,
+                **given,
+            ),
+        )
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        _echo_schedule(client.create_schedule(request, key))
+
+
+@schedules_app.command("list")
+def schedules_list(
+    ctx: typer.Context,
+    config: str | None = typer.Option(None, "--config", help=f"Only schedules of this configuration. {_CONFIG_HELP}"),
+    state: str | None = typer.Option(
+        None, "--state", help="Only schedules in this state: active, paused, stopped or deleted."
+    ),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
+    all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
+) -> None:
+    """List schedules, newest first: schedule, name, configuration@version, state, cron, time zone, next start.
+
+    Deleted schedules are left out unless `--state deleted` is given. A schedule that is stopped, or not yet
+    handed to the task manager, adds warning lines on standard error.
+    """
+    with _client_errors():
+        client = _client(ctx)
+        config_id = _config_id(ctx, config) if config is not None else None
+        _echo_list(
+            "schedules",
+            all_pages=all_pages,
+            every_item=lambda: client.iter_schedules(config_id=config_id, state=state, limit=limit),
+            first_page=lambda: client.list_schedules(config_id=config_id, state=state, limit=limit),
+            write=_echo_schedule_rows,
+        )
+
+
+@schedules_app.command("show")
+def schedules_show(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+) -> None:
+    """Show every field of a schedule: its state, the reason of a stopped schedule, its last run and the count of
+    consecutive failed runs. A stopped schedule adds a warning with the action its reason needs.
+    """
+    with _client_errors():
+        resource = _resolve_schedule(_client(ctx), schedule)
+    _echo_schedule(resource)
+    _echo_schedule_warnings(resource)
+
+
+@schedules_app.command("change")
+def schedules_change(  # pylint: disable=too-many-arguments
+    ctx: typer.Context,
+    *,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    version: int | None = typer.Option(None, "--version", min=1, help="The configuration version each run uses."),
+    cron: str | None = typer.Option(None, "--cron", help="New cron expression with five fields."),
+    timezone: str | None = typer.Option(None, "--timezone", help="New time zone of the cron expression."),
+    write_to_default_branch: bool | None = typer.Option(
+        None, "--write-to-default-branch/--write-to-branch-review", help=_WRITE_TARGET_CHANGE_HELP
+    ),
+    write_when_left_out: bool | None = typer.Option(
+        None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
+    ),
+    overlap_policy: OverlapPolicyOption | None = typer.Option(None, "--overlap-policy", help=_OVERLAP_POLICY_HELP),
+    start_late_by_at_most: str | None = typer.Option(
+        None, "--start-late-by-at-most", callback=_start_late_seconds, help=_CHANGE_START_LATE_HELP
+    ),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Change one or more settings of a schedule. The output shows the schedule with its new `next_start_at`."""
+    changes = {
+        "registry_version": version,
+        "cron": cron,
+        "timezone": timezone,
+        "write_target": None
+        if write_to_default_branch is None
+        else ("default-branch" if write_to_default_branch else "branch-review"),
+        "write_when_left_out": write_when_left_out,
+        "overlap_policy": None if overlap_policy is None else overlap_policy.value,
+        # The callback has already turned the duration into seconds.
+        "start_late_by_at_most_seconds": start_late_by_at_most,
+    }
+    if all(value is None for value in changes.values()):
+        typer.echo(
+            "error: schedules change needs at least one of --version, --cron, --timezone, "
+            "--write-to-default-branch or --write-to-branch-review, "
+            "--write-when-left-out or --no-write-when-left-out, --overlap-policy and --start-late-by-at-most",
+            err=True,
+        )
+        raise typer.Exit(2)
+    with _client_errors():
+        client = _client(ctx)
+        schedule_id = _resolve_schedule(client, schedule).schedule_id
+        request = cast(
+            "ChangeScheduleRequest",
+            _request(
+                ChangeScheduleRequest,
+                **{name: value for name, value in changes.items() if value is not None},
+                reason=reason,
+            ),
+        )
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        _echo_schedule(client.change_schedule(schedule_id, request, key))
+
+
+def _schedule_action(
+    ctx: typer.Context,
+    schedule: str,
+    method: str,
+    *,
+    reason: str | None,
+    idempotency_key: str | None,
+) -> ScheduleResource:
+    """Resolve the schedule, print the idempotency key, and send one pause, resume, delete or take-over."""
+    client = _client(ctx)
+    schedule_id = _resolve_schedule(client, schedule).schedule_id
+    request = cast("ScheduleActionRequest", _request(ScheduleActionRequest, reason=reason))
+    key = _idempotency_key(idempotency_key)
+    _echo_idempotency_key(key)
+    act = cast("Callable[[str, ScheduleActionRequest, str], ScheduleResource]", getattr(client, method))
+    resource = act(schedule_id, request, key)
+    _echo_schedule(resource)
+    return resource
+
+
+@schedules_app.command("pause")
+def schedules_pause(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Pause a schedule: it starts no run until it is resumed."""
+    with _client_errors():
+        _schedule_action(ctx, schedule, "pause_schedule", reason=reason, idempotency_key=idempotency_key)
+
+
+@schedules_app.command("resume")
+def schedules_resume(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Make a paused schedule active, or a stopped schedule whose reason no longer holds."""
+    with _client_errors():
+        _schedule_action(ctx, schedule, "resume_schedule", reason=reason, idempotency_key=idempotency_key)
+
+
+@schedules_app.command("delete")
+def schedules_delete(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+    yes: bool = typer.Option(False, "--yes", help="Delete without asking for confirmation."),  # noqa: FBT003
+) -> None:
+    """Delete a schedule. Its record and its runs are kept, and a run in progress is not cancelled.
+
+    The open branch and proposed change of the schedule stay in Infrahub; the output names them.
+    """
+    with _client_errors():
+        if not yes:
+            if not _stdin_is_interactive():
+                typer.echo("error: schedules delete needs --yes when standard input is not interactive", err=True)
+                raise typer.Exit(2)
+            if not typer.confirm(f"Delete schedule {_display(schedule)}? It starts no further run.", default=False):
+                typer.echo("not deleted", err=True)
+                raise typer.Exit(1)
+        resource = _schedule_action(ctx, schedule, "delete_schedule", reason=reason, idempotency_key=idempotency_key)
+    open_branch = resource.open_branch
+    if open_branch is not None:
+        kept = (
+            f"the branch {open_branch.branch} stays in Infrahub"
+            if open_branch.proposed_change_id is None
+            else f"the branch {open_branch.branch} and the proposed change {open_branch.proposed_change_id} "
+            "stay in Infrahub"
+        )
+        typer.echo(_display(kept))
+
+
+@schedules_app.command("take-over")
+def schedules_take_over(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Become the owner of a schedule; only an administrator may. Its runs then record you as their actor.
+
+    A schedule that stopped because its owner's account is disabled or deleted becomes active again.
+    """
+    with _client_errors():
+        _schedule_action(ctx, schedule, "take_over_schedule", reason=reason, idempotency_key=idempotency_key)

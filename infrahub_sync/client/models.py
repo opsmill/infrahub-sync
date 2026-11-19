@@ -34,6 +34,19 @@ MAX_FAILURE_CAUSE_TEXT = 1000
 # values a damaged or hand-edited artifact may hold.
 SCHEMA_CHANGED_NEXT_ACTION = "create and review a new plan before applying again"
 
+# What started a run: a request to `POST /runs`, or a schedule.
+TriggerType = Literal["manual", "scheduled"]
+
+# Where the runs of a schedule write: a branch with a proposed change for review, or the default branch.
+ScheduleWriteTarget = Literal["branch-review", "default-branch"]
+
+# What a schedule does with a start while a run of its configuration is in progress.
+ScheduleOverlapPolicy = Literal["reject", "queue"]
+
+# The range of `start_late_by_at_most_seconds`: from one minute to seven days.
+MIN_START_LATE_SECONDS = 60
+MAX_START_LATE_SECONDS = 604800
+
 # The recovery signal a refused registered plan carries.
 RecoveryAction = Literal["rebuild", "compatible_version"]
 
@@ -95,12 +108,17 @@ _EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"
 _ARTIFACT_KEY_MESSAGE = "artifact object and manifest keys must include the content digest"
 _BINDING_MESSAGE = "configuration binding must be all absent or all present"
 _FINISHED_RUN_MESSAGE = "a finished product record requires an outcome"
+_SCHEDULED_RUN_MESSAGE = "a scheduled run requires its schedule and its scheduled start time"
+_MANUAL_RUN_MESSAGE = "a manual run cannot name a schedule or a scheduled start time"
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
 _WORKER_STATUS_MESSAGE = "worker status is invalid"
 _ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
 _ARTIFACT_OWNER_MESSAGE = "every artifact reference must belong to the product record's run ID"
 _EXECUTION_IDS_MESSAGE = "execution IDs must be unique within a product record"
+_SCHEDULE_TIME_MESSAGE = "schedule timestamps must include a timezone"
+_SCHEDULE_CHANGE_MESSAGE = "a schedule change must name at least one setting to change"
+_EVENT_TIME_MESSAGE = "event timestamps must include a timezone"
 
 
 def _timezone(value: datetime | None, message: str) -> datetime | None:
@@ -229,6 +247,78 @@ class ConfigMutationRequest(_RequestModel):
         return value
 
 
+def _registry_version(value: object) -> int:
+    if type(value) is not int or not 1 <= value <= 2**63 - 1:  # pylint: disable=unidiomatic-typecheck
+        raise ValueError(_REGISTRY_VERSION_MESSAGE)
+    return value
+
+
+class CreateScheduleRequest(_RequestModel):
+    """Request a schedule that starts a `sync` run of one configuration version on a cron cadence.
+
+    `cron` and `timezone` are text that this model does not validate: the Sync API validates
+    both and answers `schedule-cron-invalid` or `schedule-timezone-invalid`. The Sync API also
+    decides which pairs of settings it accepts. `start_late_by_at_most_seconds` is `None` when
+    the request does not set it, and the Sync API then uses 3600.
+    """
+
+    name: str = Field(pattern=_IDENTIFIER_PATTERN)
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int
+    cron: str
+    timezone: str = "UTC"
+    write_target: ScheduleWriteTarget = "branch-review"
+    write_when_left_out: StrictBool = False
+    overlap_policy: ScheduleOverlapPolicy = "reject"
+    start_late_by_at_most_seconds: int | None = Field(
+        default=None, ge=MIN_START_LATE_SECONDS, le=MAX_START_LATE_SECONDS
+    )
+    reason: str | None = Field(default=None, min_length=1)
+
+    @field_validator("registry_version", mode="before")
+    @classmethod
+    def _require_registry_version(cls, value: object) -> int:
+        return _registry_version(value)
+
+
+class ChangeScheduleRequest(_RequestModel):
+    """Request a change of one or more settings of a schedule.
+
+    A setting that is `None` keeps its value. The request must name at least one setting. The
+    name, the configuration and the owner of a schedule cannot be changed, so the model refuses
+    them as unknown fields. `cron` and `timezone` are not validated here, as in
+    `CreateScheduleRequest`.
+    """
+
+    registry_version: int | None = None
+    cron: str | None = None
+    timezone: str | None = None
+    write_target: ScheduleWriteTarget | None = None
+    write_when_left_out: StrictBool | None = None
+    overlap_policy: ScheduleOverlapPolicy | None = None
+    start_late_by_at_most_seconds: int | None = Field(
+        default=None, ge=MIN_START_LATE_SECONDS, le=MAX_START_LATE_SECONDS
+    )
+    reason: str | None = Field(default=None, min_length=1)
+
+    @field_validator("registry_version", mode="before")
+    @classmethod
+    def _require_registry_version(cls, value: object) -> int | None:
+        return None if value is None else _registry_version(value)
+
+    @model_validator(mode="after")
+    def _require_a_change(self) -> ChangeScheduleRequest:
+        if all(getattr(self, name) is None for name in type(self).model_fields if name != "reason"):
+            raise ValueError(_SCHEDULE_CHANGE_MESSAGE)
+        return self
+
+
+class ScheduleActionRequest(_RequestModel):
+    """Request a pause, a resume, a deletion or a take-over of a schedule, with an optional reason."""
+
+    reason: str | None = Field(default=None, min_length=1)
+
+
 class ArtifactReferenceResource(_ResourceModel):
     """Describe one immutable run artifact."""
 
@@ -314,10 +404,17 @@ class PublicRunResource(_ResourceModel):
     # The run's one approval of its saved plan; ``None`` when the plan was never approved.
     # Approval is not a phase: an approved run stays in phase ``planned``.
     approval: RunApprovalResource | None = None
+    # What started the run. A Sync API that predates schedules returns none of the three
+    # fields, and the run then reads as a manual run.
+    trigger_type: TriggerType = "manual"
+    # The schedule that started the run, and the start time of its cadence, in UTC. Both are
+    # ``None`` for a manual run.
+    schedule_id: str | None = None
+    scheduled_start_at: datetime | None = None
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
 
-    @field_validator("started_at", "finished_at")
+    @field_validator("started_at", "finished_at", "scheduled_start_at")
     @classmethod
     def _require_timezone(cls, value: datetime | None) -> datetime | None:
         return _timezone(value, "product-record timestamps must include a timezone")
@@ -327,6 +424,11 @@ class PublicRunResource(_ResourceModel):
         binding = (self.config_id, self.registry_version, self.package_checksum)
         if any(value is None for value in binding) and any(value is not None for value in binding):
             raise ValueError(_BINDING_MESSAGE)
+        start = (self.schedule_id, self.scheduled_start_at)
+        if self.trigger_type == "scheduled" and any(value is None for value in start):
+            raise ValueError(_SCHEDULED_RUN_MESSAGE)
+        if self.trigger_type == "manual" and any(value is not None for value in start):
+            raise ValueError(_MANUAL_RUN_MESSAGE)
         if self.finished_at is not None and self.outcome is None:
             raise ValueError(_FINISHED_RUN_MESSAGE)
         artifact_ids = [reference.artifact_id for reference in self.artifact_refs]
@@ -628,6 +730,33 @@ class EventRelatedResource(_ResourceModel):
     id: str
 
 
+class EventDetailsResource(_ResourceModel):
+    """The facts of one event, under a closed set of keys. A key the event does not use is ``None``.
+
+    ``cause`` is a refusal code or a failure class, never free text from Infrahub.
+    """
+
+    # The start time of the cadence, on every event of a scheduled start.
+    start_at: datetime | None = None
+    # The count, the first and the last of the missed starts that one event records together.
+    starts: int | None = Field(default=None, ge=0)
+    first_start_at: datetime | None = None
+    last_start_at: datetime | None = None
+    # The plan's count of records left out, on the result event of a scheduled run.
+    left_out: int | None = Field(default=None, ge=0)
+    # The branch and the proposed change of a run with branch review.
+    branch: str | None = None
+    proposed_change_id: str | None = None
+    # The earlier run whose branch or proposed change was replaced.
+    replaced_run_id: str | None = None
+    cause: str | None = None
+
+    @field_validator("start_at", "first_start_at", "last_start_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _EVENT_TIME_MESSAGE)
+
+
 class EventResource(_ResourceModel):
     """One typed event: a Sync API decision or a stage result, with the resources it names."""
 
@@ -640,11 +769,14 @@ class EventResource(_ResourceModel):
     reason: str | None = None
     primary_resource: EventPrimaryResource | None = None
     related: tuple[EventRelatedResource, ...] = ()
+    # The facts of the event; ``None`` for an event that records none, and for a Sync API
+    # that predates schedules.
+    details: EventDetailsResource | None = None
 
     @field_validator("occurred_at")
     @classmethod
     def _require_timezone(cls, value: datetime) -> datetime | None:
-        return _timezone(value, "event timestamps must include a timezone")
+        return _timezone(value, _EVENT_TIME_MESSAGE)
 
 
 class EventPage(_ResourceModel):
@@ -654,6 +786,71 @@ class EventPage(_ResourceModel):
     limit: int = Field(ge=MIN_LIMIT, le=MAX_LIMIT)
     offset: int = Field(ge=0)
     has_more: bool
+
+
+class ScheduleOpenBranchResource(_ResourceModel):
+    """The most recent branch of a schedule that is open for review, with the run that wrote it."""
+
+    run_id: str = Field(min_length=1)
+    branch: str = Field(min_length=1)
+    # ``None`` when the run opened no proposed change.
+    proposed_change_id: str | None = None
+
+
+class ScheduleResource(_ResourceModel):
+    """Represent one schedule: its cadence, its settings, its state and its most recent run.
+
+    ``write_target``, ``overlap_policy``, ``state`` and ``state_reason`` are plain strings, so
+    the client still reads a value a newer Sync API adds. ``newer_version``,
+    ``start_late_by_at_most_seconds`` and ``waiting_start_at`` are ``None`` for a Sync API that
+    does not return them. All times are in UTC.
+    """
+
+    schedule_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    config_id: str = Field(min_length=1)
+    registry_version: int = Field(ge=1, le=2**63 - 1)
+    # The highest registered version of the configuration when it is higher than
+    # ``registry_version``.
+    newer_version: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    cron: str
+    timezone: str
+    write_target: str = Field(min_length=1)
+    write_when_left_out: bool
+    # The actor who last turned ``write_when_left_out`` on, and when.
+    left_out_set_by: str | None = None
+    left_out_set_at: datetime | None = None
+    overlap_policy: str = Field(min_length=1)
+    start_late_by_at_most_seconds: int | None = None
+    state: str = Field(min_length=1)
+    # Why a stopped schedule stopped; ``None`` in every other state.
+    state_reason: str | None = None
+    owner: str = Field(min_length=1)
+    # ``None`` when the schedule is not active.
+    next_start_at: datetime | None = None
+    # The start that waits for the run in progress to end.
+    waiting_start_at: datetime | None = None
+    # The schedule's most recent run; ``GET /runs/{run_id}`` holds its outcome.
+    last_run_id: str | None = None
+    # False while the task manager does not hold this schedule as it is stored.
+    prefect_synced: bool
+    # The count of failed runs in a row.
+    consecutive_failures: int = Field(ge=0)
+    open_branch: ScheduleOpenBranchResource | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("left_out_set_at", "next_start_at", "waiting_start_at", "created_at", "updated_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _SCHEDULE_TIME_MESSAGE)
+
+
+class SchedulePage(_ResourceModel):
+    """One page of the schedule list, newest first. ``next_cursor`` is ``None`` on the last page."""
+
+    items: tuple[ScheduleResource, ...]
+    next_cursor: str | None = None
 
 
 class RunLogLine(_ResourceModel):
@@ -829,9 +1026,20 @@ FailureType = Literal[
     "destination_peer_ambiguous",
     "lineage_refused",
     "destination_schema_unavailable",
+    "destination_default_branch_not_main",
+    "branch_list_failed",
+    "branch_create_failed",
+    "branch_delete_failed",
+    "proposed_change_open_failed",
+    "proposed_change_read_failed",
+    "proposed_change_close_failed",
     "internal_error",
 ]
-"""The failure type names a stage failure record holds (spec 007 data-model.md, FR-014)."""
+"""The failure type names a stage failure record holds (spec 007 data-model.md, FR-014).
+
+The seven names from `destination_default_branch_not_main` to `proposed_change_close_failed` are
+the failures of the branch review operations of a scheduled run (spec 021, research R15).
+"""
 
 FAILURE_TYPES: tuple[FailureType, ...] = get_args(FailureType)
 

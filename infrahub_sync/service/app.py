@@ -64,6 +64,8 @@ from .models import (
 )
 from .paging import InvalidCursorError
 from .presentation import AccountNameMiddleware, AccountReader
+from .schedule_routes import schedule_router
+from .schedules import ScheduleService
 from .service import MAX_EVENT_OFFSET, RunService, ServiceAPIError, parse_event_time
 from .settings import approval_required, validate_settings
 
@@ -310,13 +312,18 @@ def _include_routers(
     authenticate: Callable[..., Principal],
     idempotency_key: Callable[..., str],
     configuration_routes: ConfigurationRoutes | None,
+    *,
+    schedules: ScheduleService | None,
 ) -> None:
     """Add the routes built outside ``create_app``.
 
-    They are the configurations, the approval, the events, the run logs, the saved plan and the accounts.
+    They are the configurations, the schedules, the approval, the events, the run logs, the saved
+    plan and the accounts.
     """
     if configuration_routes is not None:
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
+    if schedules is not None:
+        application.include_router(schedule_router(schedules, authenticate, idempotency_key))
     application.include_router(approve_router(service, authenticate, idempotency_key))
     application.include_router(events_router(service, authenticate))
     application.include_router(run_logs_router(service, authenticate))
@@ -361,23 +368,14 @@ def _account_reader(service: RunService) -> AccountReader:
     return read_accounts
 
 
-def create_app(
-    service: RunService,
-    resolver: PrincipalResolver,
-    configuration_routes: ConfigurationRoutes | None = None,
-    reconciler: RunLivenessReconciler | None = None,
-) -> FastAPI:
-    """Create the service application from explicit providers.
-
-    Raises:
-        ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
-            is not accepted, so the service does not start.
-    """
-    validate_settings()
+def _lifespan(reconciler: RunLivenessReconciler | None, schedules: ScheduleService | None) -> Any:
+    """Return the lifespan of the application: the step of its start, then the liveness loop until it stops."""
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
         task = None
+        if schedules is not None:
+            await schedules.start()
         if reconciler is not None:
 
             async def reconcile_loop() -> None:
@@ -399,7 +397,32 @@ def create_app(
                 with suppress(CancelledError):
                     await task
 
-    application = FastAPI(title="Infrahub Sync API", version=installed_server_version(), lifespan=lifespan)
+    return lifespan
+
+
+def create_app(
+    service: RunService,
+    resolver: PrincipalResolver,
+    configuration_routes: ConfigurationRoutes | None = None,
+    reconciler: RunLivenessReconciler | None = None,
+    *,
+    schedules: ScheduleService | None = None,
+) -> FastAPI:
+    """Create the service application from explicit providers.
+
+    With ``schedules``, the application serves the schedule routes. When the API process starts,
+    it stops the schedules that can no longer run and makes the Prefect schedules match the stored
+    schedules, once (spec 021, research R6, R8 and R13).
+
+    Raises:
+        ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
+            is not accepted, so the service does not start.
+    """
+    validate_settings()
+
+    application = FastAPI(
+        title="Infrahub Sync API", version=installed_server_version(), lifespan=_lifespan(reconciler, schedules)
+    )
     authenticate = _authenticator(service, resolver)
 
     def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
@@ -500,21 +523,28 @@ def create_app(
         return JSONResponse(status_code=status, content=content)
 
     @application.get("/runs", responses=ERROR_RESPONSES)
-    def list_runs(
+    def list_runs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         _principal: Annotated[Principal, Depends(authenticate)],
         config_id: Annotated[str | None, Query(pattern=CONFIG_ID_PATTERN)] = None,
         registry_version: Annotated[str | None, Query()] = None,
+        trigger_type: Annotated[str | None, Query()] = None,
+        schedule_id: Annotated[str | None, Query()] = None,
         limit: Annotated[str | None, Query()] = None,
         cursor: Annotated[str | None, Query()] = None,
     ) -> RunPage:
-        """Return one page of runs, newest first, optionally for one configuration or version."""
+        """Return one page of runs, newest first, optionally for one configuration, version, trigger or schedule."""
         version = (
             None
             if registry_version is None
             else parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION)
         )
         return service.list_runs(
-            config_id=config_id, registry_version=version, cursor=cursor, limit=parse_page_limit(limit)
+            config_id=config_id,
+            registry_version=version,
+            trigger_type=trigger_type,
+            schedule_id=schedule_id,
+            cursor=cursor,
+            limit=parse_page_limit(limit),
         )
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
@@ -590,6 +620,6 @@ def create_app(
         status, content = await service.cancel_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    _include_routers(application, service, authenticate, idempotency_key, configuration_routes)
+    _include_routers(application, service, authenticate, idempotency_key, configuration_routes, schedules=schedules)
 
     return application

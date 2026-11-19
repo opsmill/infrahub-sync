@@ -368,6 +368,39 @@ parameter therefore never reaches the flow body.
   Sync API process configures none before uvicorn starts). Both use the standard `logging`
   module, not `structlog`, so the handlers that Prefect configures and pytest's `caplog`
   receive their lines.
+- **SQLAlchemy is held below 2.1 while the `prefect` pin is 3.8.6.** With SQLAlchemy 2.1, the
+  Prefect 3.8.6 scheduler service fails at each loop in `_insert_scheduled_flow_runs` with
+  `InvalidRequestError: Can't evaluate bulk DML statement`, so no deployment schedule creates a
+  flow run ([PrefectHQ/prefect#23199](https://github.com/PrefectHQ/prefect/issues/23199)). The
+  fix ([PrefectHQ/prefect#23201](https://github.com/PrefectHQ/prefect/pull/23201)) is first
+  released in Prefect 3.9.1. The `prefect` and `service` extras declare `sqlalchemy>=2.0,<2.1`.
+  Remove both lines when the `prefect` pin moves to 3.9.1 or later; that pin moves with the
+  `prefect-client` pin of `infrahub-testcontainers` (previous item).
+  `tests/service/test_prefect_scheduler_creates_flow_runs.py` fails with SQLAlchemy 2.1 and
+  passes with 2.0.
+- **A flow that must run again later cannot return a scheduled state under a worker.** A flow
+  that returns `AwaitingRetry` works when a test calls it with `return_state=True`. Under a
+  process worker, the child process then asks the engine for the flow's result, the engine raises
+  `UnfinishedRun` for a state that is not final, the process ends with status 1, and the runner
+  marks the flow run `Crashed`. `_run_again_later` in `service/flow.py` sets the state through
+  the Prefect client and raises `prefect.exceptions.Pause` with the stored state instead; the
+  process then ends with status 0 and the state stays as stored. A test of such a flow must call
+  it as the worker's process does. See
+  [ADR 0053](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0053-a-waiting-scheduled-start-ends-its-flow-run-with-the-pause-signal.md).
+- **Applying a deployment again keeps the schedules that have a slug.** `apply_deployments` of
+  the vendored package sends `schedules: []`, but Prefect's `PATCH /deployments/{id}` keeps the
+  existing schedules when each of them has a slug. The update still deletes the future flow runs
+  that have not run, and changes the deployment's `updated` time, so Prefect's 5-second scheduler
+  loop creates them again.
+- **Prefect's scheduler creates flow runs only from the moment its loop runs.** The main loop runs
+  every 60 seconds. Creating a deployment schedule does not change the deployment's `updated` time,
+  and a change or a deletion of one schedule deletes the future flow runs of every schedule of the
+  deployment that have not run. A start that comes before the next run of that loop then gets no
+  flow run.
+  `POST /deployments/{id}/schedule` with an empty body creates the flow runs of every active
+  schedule from the current time, with the idempotency key of the scheduler; the Sync API calls it
+  after it changes a Prefect schedule (`PrefectOrchestration.create_scheduled_runs`). See
+  [A scheduled run](sync-architecture.md#a-scheduled-run).
 
 ### Optional imports
 

@@ -23,10 +23,12 @@ _CLI_INVOCATION = (
     r"(?<![\w.-])(?:uv\s+run\s+)?infrahub-sync\s+"
     r"(?=(?:configs|runs|plan|verify|whoami|diff|sync|apply|generate|list)\b)"
 )
-# `configs list --name` filters configurations by name and is a current option. Every other
-# command lost `--name` when configurations moved to the registry, so only that one
-# invocation is exempt from the removed-option rule.
+# `configs list --name` filters configurations by name and is a current option, and
+# `schedules create --name` names a new schedule (spec 021). Every other command lost `--name`
+# when configurations moved to the registry, so only these two invocations and `login --name`
+# below are exempt from the removed-option rule.
 _CONFIGS_LIST = r"configs\s+list(?![\w-])"
+_SCHEDULES_CREATE = r"schedules\s+create(?![\w-])"
 # `diff` is a hidden, deprecated alias of `plan`; live docs teach `plan`.
 REMOVED_COMMAND = re.compile(
     rf"{_CLI_INVOCATION}(?:generate|list|diff)(?![\w-])"
@@ -36,11 +38,11 @@ REMOVED_COMMAND = re.compile(
 # `login --name` names the account to sign in as (spec 022) and is a current option too.
 _LOGIN = r"(?<![\w.-])infrahub-sync\s+login(?![\w-])"
 _VALID_NAME_OPTION = re.compile(
-    # A `configs list ... --name` or `login ... --name` invocation on one line, or the
-    # `configs list` or `login` section of the generated CLI reference, which lists `--name`
-    # as an option bullet.
-    rf"(?:{_CONFIGS_LIST}|{_LOGIN})[^\n]*?(?<![\w-])--name(?![\w-])"
-    r"|^#+ `infrahub-sync (?:configs list|login)`\n(?:(?!#)[^\n]*\n)*",
+    # A `configs list ... --name`, `schedules create ... --name` or `login ... --name` invocation
+    # on one line, or the section of one of these commands in the generated CLI reference, which
+    # lists `--name` as an option bullet.
+    rf"(?:{_CONFIGS_LIST}|{_SCHEDULES_CREATE}|{_LOGIN})[^\n]*?(?<![\w-])--name(?![\w-])"
+    r"|^#+ `infrahub-sync (?:configs list|schedules create|login)`\n(?:(?!#)[^\n]*\n)*",
     re.MULTILINE,
 )
 # `events --run-id` filters events by run (spec 012) and is a current option. The retired
@@ -79,6 +81,16 @@ CLI_CLIENT_PARITY = (
     ("whoami", "me", "GET /me"),
     ("apply RUN_ID", "apply", "POST /runs/{run_id}/apply"),
     ("apply RUN_ID failure evidence", "get_results", "GET /runs/{run_id}/results"),
+    ("schedules create", "create_schedule", "POST /schedules"),
+    ("schedules list", "list_schedules", "GET /schedules"),
+    ("schedules list --all", "iter_schedules", "GET /schedules"),
+    ("schedules show SCHEDULE", "get_schedule", "GET /schedules/{schedule_id}"),
+    ("schedules change SCHEDULE", "change_schedule", "POST /schedules/{schedule_id}/change"),
+    ("schedules pause SCHEDULE", "pause_schedule", "POST /schedules/{schedule_id}/pause"),
+    ("schedules resume SCHEDULE", "resume_schedule", "POST /schedules/{schedule_id}/resume"),
+    ("schedules delete SCHEDULE", "delete_schedule", "POST /schedules/{schedule_id}/delete"),
+    ("schedules take-over SCHEDULE", "take_over_schedule", "POST /schedules/{schedule_id}/take-over"),
+    ("events --schedule SCHEDULE", "iter_events", "GET /events"),
     ("login", "sign_in", "POST /auth/sign-in"),
     ("logout", "sign_out", "POST /auth/sign-out"),
     ("password", "change_password", "PUT /me/password"),
@@ -131,6 +143,16 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "me",
         "apply",
         "get_results",
+        "create_schedule",
+        "list_schedules",
+        "iter_schedules",
+        "get_schedule",
+        "change_schedule",
+        "pause_schedule",
+        "resume_schedule",
+        "delete_schedule",
+        "take_over_schedule",
+        "iter_events",
         "sign_in",
         "sign_out",
         "change_password",
@@ -156,6 +178,7 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
 
     assert "configs" in help_text
     assert "runs" in help_text
+    assert "schedules" in help_text
     assert "plan" in help_text
     assert "verify" in help_text
     assert "whoami" in help_text
@@ -202,6 +225,8 @@ def test_all_retired_local_execution_options_are_absent_from_live_command_help()
     assert "--kind" in _help("runs", "plan")
     for command in ("show", "results", "list", "artifacts", "cancel"):
         assert command in _help("runs"), f"`runs {command}` is absent from the group's help"
+    for command in ("create", "list", "show", "change", "pause", "resume", "delete", "take-over"):
+        assert command in _help("schedules"), f"`schedules {command}` is absent from the group's help"
 
 
 def test_cli_imports_only_the_shared_client_boundary() -> None:
@@ -277,6 +302,9 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         ("infrahub-sync configs show --name from-netbox", True, True),
         ("### `infrahub-sync configs show`\n\n* `--name <str>`: Removed.\n", False, True),
         ("infrahub-sync diff --config from-netbox --version 1", True, False),
+        ("infrahub-sync schedules create --name nightly --config from-netbox --version 3", False, False),
+        ("### `infrahub-sync schedules create`\n\n* `--name <str>`: Schedule name.\n", False, False),
+        ("### `infrahub-sync schedules show`\n\n* `--name <str>`: Removed.\n", False, True),
         ("infrahub-sync login --name admin", False, False),
         ("uv run infrahub-sync login --name admin", False, False),
         ("docker login registry.example.net --name builder", False, True),

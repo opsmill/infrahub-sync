@@ -81,6 +81,10 @@ class PrincipalResolver(Protocol):
 
     def resolve(self, token: str) -> Resolution: ...
 
+    def principal_of(self, actor: str) -> Principal | None:
+        """Return the principal of the account that ``actor`` identifies, or ``None`` when it cannot act."""
+        ...
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -145,6 +149,18 @@ class StoreAccountResolver:
                 session_id=resolved.credential_id if resolved.kind == "session" else None,
             )
         )
+
+    def principal_of(self, actor: str) -> Principal | None:
+        """Return the principal of the account with this identifier, or ``None``.
+
+        A schedule acts as its owner with no request, so no token or session is read. An unknown
+        identifier, a disabled account and a deleted account return ``None``, as ``resolve``
+        refuses their values. No result is cached.
+        """
+        account = self._projection.lookup_account(actor)
+        if account is None or account.disabled or account.deleted_at is not None:
+            return None
+        return Principal(actor=account.account_id, administrator=account.administrator, name=account.name)
 
 
 def apply_admin_account(projection: ProductProjection, settings: AdminAccountSettings) -> Account:

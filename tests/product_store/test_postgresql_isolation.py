@@ -172,9 +172,51 @@ def test_each_generated_schema_name_is_namespaced_and_unique() -> None:
 
 
 _RUN_DISCOVERY_COLUMNS = {
-    "product_runs": {"config_id", "registry_version", "package_checksum", "destination_branch"},
+    "product_runs": {
+        "config_id",
+        "registry_version",
+        "package_checksum",
+        "destination_branch",
+        "trigger_type",
+        "schedule_id",
+        "scheduled_start_at",
+    },
+    "audit_events": {"details"},
     "configuration_versions": {"registered_by", "registration_reason"},
     "configurations": {"name"},
+    "schedules": {
+        "schedule_id",
+        "name",
+        "config_id",
+        "registry_version",
+        "cron",
+        "timezone",
+        "write_target",
+        "write_when_left_out",
+        "left_out_set_by",
+        "left_out_set_at",
+        "overlap_policy",
+        "start_late_by_at_most_seconds",
+        "state",
+        "state_reason",
+        "owner",
+        "consecutive_failures",
+        "last_start_at",
+        "prefect_schedule_id",
+        "prefect_synced",
+        "waiting_start_at",
+        "created_at",
+        "updated_at",
+    },
+    "schedule_branches": {
+        "schedule_id",
+        "run_id",
+        "branch",
+        "proposed_change_id",
+        "state",
+        "replaced_by_run_id",
+        "created_at",
+    },
 }
 _RUN_DISCOVERY_INDEXES = {
     "product_runs_started": "(started_at, run_id)",
@@ -183,7 +225,12 @@ _RUN_DISCOVERY_INDEXES = {
     "product_runs_binding_applied": "(config_id, registry_version, finished_at, run_id) WHERE (phase = 'applied'::text)",
     "configurations_name": "(name)",
     "configurations_created": "(created_at, config_id)",
+    "product_runs_schedule_started": "(schedule_id, started_at, run_id)",
+    "product_runs_schedule_start": "(schedule_id, scheduled_start_at)",
+    "schedules_name_not_deleted": "(name) WHERE (state <> 'deleted'::text)",
+    "schedules_config_not_deleted": "(config_id) WHERE (state <> 'deleted'::text)",
 }
+_UNIQUE_SCHEDULE_INDEXES = ("product_runs_schedule_start", "schedules_name_not_deleted", "schedules_config_not_deleted")
 
 
 @pytest.mark.integration
@@ -229,7 +276,116 @@ def test_postgresql_start_up_creates_the_run_discovery_schema_once() -> None:
             assert expected <= columns[table], table
         for index, definition in _RUN_DISCOVERY_INDEXES.items():
             assert indexes[index].endswith(definition), indexes[index]
+        for index in _UNIQUE_SCHEDULE_INDEXES:
+            assert indexes[index].startswith("CREATE UNIQUE INDEX"), indexes[index]
         assert catalog() == created
+    finally:
+        schema.drop()
+
+
+_EARLIER_TABLES = {
+    "product_runs": (
+        "CREATE TABLE product_runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL)",
+        ("trigger_type", "schedule_id", "scheduled_start_at"),
+    ),
+    "audit_events": (
+        "CREATE TABLE audit_events (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)",
+        ("details",),
+    ),
+}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("table", sorted(_EARLIER_TABLES))
+def test_postgresql_start_up_refuses_a_database_of_an_earlier_build_and_creates_nothing(table: str) -> None:
+    """A real server: a table without the new columns stops start-up, and no table is added."""
+    schema = postgresql_isolation.isolated_schema(
+        postgresql_isolation.dsn_or_skip("the earlier-database refusal's PostgreSQL case")
+    )
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.product_store import EarlierProductDatabaseError
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.product_store.store import PostgreSQLRunStore
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    def connect() -> Any:  # noqa: ANN401 - the provider's own connection wrapper.
+        return PsycopgConnectionFactory(psycopg.connect)(schema.dsn)
+
+    def tables() -> set[str]:
+        with psycopg.connect(schema.dsn) as connection:
+            rows = connection.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"
+            ).fetchall()
+        return {str(row[0]) for row in rows}
+
+    statement, missing = _EARLIER_TABLES[table]
+    schema.create()
+    try:
+        with psycopg.connect(schema.dsn) as connection:
+            # As bytes: the driver types a text query as a literal, and this one is a module constant.
+            connection.execute(statement.encode())
+        with pytest.raises(EarlierProductDatabaseError) as refusal:
+            PostgreSQLRunStore(connect)
+
+        assert refusal.value.missing == {table: missing}
+        assert "Replace it with a new, empty database" in str(refusal.value)
+        assert tables() == {table}
+    finally:
+        schema.drop()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("resource_kind", "run_id", "accepted"),
+    [
+        pytest.param("schedule", None, True, id="schedule"),
+        pytest.param("schedule", "run-001", False, id="schedule-with-a-run"),
+        pytest.param("deployment", None, False, id="unknown-kind"),
+    ],
+)
+def test_postgresql_receipt_check_accepts_only_a_schedule_receipt_without_a_run(
+    resource_kind: str, run_id: str | None, *, accepted: bool
+) -> None:
+    """A real server: the ``CHECK`` constraint of ``mutation_receipts`` knows the kind ``schedule``."""
+    schema = postgresql_isolation.isolated_schema(
+        postgresql_isolation.dsn_or_skip("the schedule receipt constraint's PostgreSQL case")
+    )
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.product_store.store import PostgreSQLRunStore
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    def connect() -> Any:  # noqa: ANN401 - the provider's own connection wrapper.
+        return PsycopgConnectionFactory(psycopg.connect)(schema.dsn)
+
+    def insert(connection: Any) -> None:  # noqa: ANN401 - the driver's own connection.
+        connection.execute(
+            "INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation, request_fingerprint, "
+            "resource_kind, resource_id, run_id, state, created_at, updated_at) VALUES ('m-1', 'operator', "
+            "'digest', 'schedule-create', 'fingerprint', %s, 's-1', %s, 'reserved', 'now', 'now')",
+            (resource_kind, run_id),
+        )
+
+    schema.create()
+    try:
+        PostgreSQLRunStore(connect)
+        with psycopg.connect(schema.dsn) as connection:
+            if accepted:
+                insert(connection)
+            else:
+                with pytest.raises(psycopg.errors.CheckViolation):
+                    insert(connection)
+                connection.rollback()
     finally:
         schema.drop()
 

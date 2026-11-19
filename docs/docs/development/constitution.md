@@ -22,6 +22,15 @@ The non-mutating path is the default path, and applying changes is always a deli
 - `sync` and `apply` mutate a destination system and MUST require explicit user instruction,
   confirmed target servers, and human approval. They MUST NOT run as an implicit side
   effect of another command.
+- A schedule is the one case in which `sync` runs with no person present. Creating the schedule
+  is the explicit user instruction, and its configuration version names the target servers. The
+  human approval is one of:
+    - The merge, in Infrahub, of the proposed change that the scheduled run opens, when the run
+      writes to a review branch that `infrahub-sync` created for it. Nothing reaches the default
+      branch before that merge.
+    - The creation of the schedule, when the schedule writes to the default branch. That write
+      target MUST be an explicit choice in the request, and MUST be refused while the Sync API
+      requires an approved plan.
 - A `plan` SHOULD precede a `sync`: surface what would change before changing it.
 - New mutating behavior MUST ship behind explicit flags, never as implicit defaults.
 
@@ -204,4 +213,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.1.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-18
+**Version**: 1.2.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-18

@@ -381,7 +381,7 @@ def test_after_a_deletion_the_name_is_stored_only_in_typed_text_and_no_other_rec
 
 def test_the_search_reads_every_table_and_every_column_that_the_schema_declares() -> None:
     assert len(_TABLES) == _SCHEMA_TEXT.count("CREATE TABLE IF NOT EXISTS")
-    assert _COLUMNS["product_runs"][-1] == "approval_reason"
+    assert _COLUMNS["product_runs"][-1] == "scheduled_start_at"
     assert _COLUMNS["mutation_receipts"][-1] == "updated_at"
     assert "response_body" in _COLUMNS["mutation_receipts"]
     assert all(column in _COLUMNS[table] for table, column in _FREE_TEXT_COLUMNS)

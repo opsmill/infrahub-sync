@@ -42,7 +42,11 @@ from fastapi.testclient import TestClient
 from infrahub_sync.configuration import schema_validation
 from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
 from infrahub_sync.configuration.credentials import ENV_CREDENTIAL_PREFIX
-from infrahub_sync.product_store import ProductStoreProviderError, local_product_projection
+from infrahub_sync.product_store import (
+    EarlierProductDatabaseError,
+    ProductStoreProviderError,
+    local_product_projection,
+)
 from infrahub_sync.service import storage as service_storage
 from infrahub_sync.service import worker as service_worker
 from infrahub_sync.service.app import create_app
@@ -254,6 +258,28 @@ async def test_a_store_that_cannot_be_reached_does_not_stop_the_poll(
         await _poll(worker)
         await _poll(worker)
 
+    _assert_no_value(caplog.text)
+
+
+async def test_a_product_database_of_an_earlier_build_is_logged_as_an_error_that_says_to_replace_it(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The worker cannot use the database at all, so the line is an error and names what to do (spec 021, R12)."""
+
+    def earlier(*_args: object, **_kwargs: object) -> ProductProjection:
+        raise EarlierProductDatabaseError({"product_runs": ["trigger_type", "schedule_id"]})
+
+    monkeypatch.setattr(service_storage, "service_product_projection", earlier)
+    monkeypatch.setattr(service_worker, "service_product_projection", earlier, raising=False)
+    _set_worker_environment(monkeypatch, _WORKER_VARIABLES)
+
+    with caplog.at_level("DEBUG"):
+        await _poll(_worker())
+
+    errors = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert "table 'product_runs' lacks trigger_type, schedule_id" in errors[0].getMessage()
+    assert "Replace it with a new, empty database" in errors[0].getMessage()
     _assert_no_value(caplog.text)
 
 

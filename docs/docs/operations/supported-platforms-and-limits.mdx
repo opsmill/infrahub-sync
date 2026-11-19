@@ -52,8 +52,11 @@ measured, and they are not excluded.
   relationship in Infrahub directly.
 - There is no verified in-place upgrade, migration, rollback, backup, or restore
   procedure.
-- There is no built-in schedule. Start each run with the CLI or the Sync API, for
-  example from cron or a CI job.
+- A schedule starts runs with branch review, or writes to the branch that a `sync` of the
+  configuration writes to: the destination branch that the configuration declares, else the
+  default branch. The second write target needs a Sync API and workers that do not require
+  approval. Infrahub Sync sends no notification for a scheduled run. See
+  [Schedule sync runs](../orchestration.mdx).
 
 For the operating procedure of a release, including replacement with a fresh
 deployment, use the [Compose deployment guide](../compose-deployment) or the

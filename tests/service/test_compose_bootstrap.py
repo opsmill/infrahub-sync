@@ -339,7 +339,10 @@ def test_an_invalid_endpoint_stops_bootstrap_before_any_s3_request(
 
 
 def test_the_store_checks_run_in_order_before_the_work_pool(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Settings, then the bucket, then the create-only check, and only then Prefect."""
+    """Settings, then the bucket, then the create-only check, and only then Prefect.
+
+    The schedules of the deployment are handed to Prefect last, after the deployment is applied.
+    """
     events: list[str] = []
     monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
     monkeypatch.setattr(bootstrap, "check_store_settings", lambda *_arguments, **_settings: events.append("settings"))
@@ -350,14 +353,14 @@ def test_the_store_checks_run_in_order_before_the_work_pool(monkeypatch: pytest.
     monkeypatch.setattr(bootstrap, "service_product_projection", lambda: _projection(tmp_path))
 
     def finish(coroutine: Coroutine[object, object, bool]) -> bool:
+        events.append({"_converge_pool": "pool", "_match_schedules": "schedules"}[coroutine.__name__])
         coroutine.close()
-        events.append("pool")
         return False
 
     monkeypatch.setattr(bootstrap.asyncio, "run", finish)
 
     assert bootstrap.main() == 0
-    assert events == ["settings", "bucket", "create-only", "pool", "deployment"]
+    assert events == ["settings", "bucket", "create-only", "pool", "deployment", "schedules"]
 
 
 # ---------------------------------------------------------------------------

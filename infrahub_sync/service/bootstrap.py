@@ -2,8 +2,10 @@
 
 This is the one-off job a Compose deployment runs before its API and its worker
 start: the product schema, the artifact bucket, the Prefect process work pool,
-and the installed deployment. Everything here is safe to repeat — a second run
-observes what the first created and writes nothing.
+the installed deployment, and the Prefect schedule of each stored schedule, which the
+match step makes equal to the store. Everything here is safe to repeat — a second run
+observes what the first created and, apart from Prefect schedules that differ from the
+store, writes nothing.
 
 The bootstrap record is the last step: the Sync version and the work pool this run
 set up. The API and the worker read it when they start and refuse to start when it
@@ -39,11 +41,13 @@ from prefect.client.schemas.actions import WorkPoolCreate
 from prefect.exceptions import ObjectNotFound
 from prefect.workers.process import ProcessWorker
 
-from infrahub_sync.product_store import DuplicateArtifactError
+from infrahub_sync.product_store import DuplicateArtifactError, EarlierProductDatabaseError
 
 from .compatibility import installed_server_version
 from .deploy import WORK_POOL_ENV
 from .deploy import main as apply_deployment
+from .orchestration import PrefectOrchestration
+from .schedules import match_prefect_schedules
 from .storage import (
     S3_BUCKET_ENV,
     S3_ENDPOINT_ENV,
@@ -58,6 +62,8 @@ from .trust_store import TrustStoreError, install_custom_ca_bundle
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from infrahub_sync.product_store import ProductProjection
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +104,10 @@ OBJECT_STORE_ACCESS_REFUSED = "object-store-access-refused"
 OBJECT_STORE_UNSUPPORTED = "object-store-unsupported"
 OBJECT_STORE_SETTING_INVALID = "object-store-setting-invalid"
 BOOTSTRAP_RECORD_FAILED = "bootstrap-record-failed"
+# The product database was created by an earlier build. Infrahub Sync does not upgrade a product
+# database in place, so the database must be replaced with a new, empty one.
+PRODUCT_DATABASE_FROM_EARLIER_BUILD = "product-database-from-earlier-build"
+SCHEDULES_NOT_MATCHED = "schedules-not-matched"
 
 
 class BootstrapError(RuntimeError):
@@ -285,6 +295,12 @@ async def _converge_pool(name: str) -> bool:
         return await converge_work_pool(client, name)
 
 
+async def _match_schedules(projection: ProductProjection) -> None:
+    """Own one Prefect client for the step that gives the deployment its schedules again."""
+    async with get_client() as client:
+        await match_prefect_schedules(projection, PrefectOrchestration(client))
+
+
 def _s3_client(arguments: dict[str, Any]) -> Any:
     """Build the S3 client from checked arguments, naming only the setting botocore refuses.
 
@@ -306,6 +322,25 @@ def _s3_client(arguments: dict[str, Any]) -> Any:
         raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+
+
+def _restore_schedules(projection: ProductProjection) -> None:
+    """Create the Prefect schedule of every stored schedule again, or fail the bootstrap.
+
+    Applying the deployment sends an empty list of schedules. Prefect keeps the schedules when each
+    of them has a slug, and removes them all when one has none, for example a schedule added in the
+    Prefect interface. This step creates again what is missing, so a schedule keeps starting runs
+    after a bootstrap (spec 021, research R13).
+
+    Raises:
+        BootstrapError: ``schedules-not-matched`` when the store or the task manager fails.
+    """
+    try:
+        asyncio.run(_match_schedules(projection))
+    except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        # Only the class name: the text of a provider error can hold an address or a credential.
+        logger.error("%s: %s", SCHEDULES_NOT_MATCHED, type(error).__name__)  # noqa: TRY400 - the class only.
+        raise BootstrapError(SCHEDULES_NOT_MATCHED) from None
 
 
 def _converge() -> None:
@@ -351,8 +386,15 @@ def _converge() -> None:
     # is the schema step; the projection then writes the bootstrap record.
     try:
         projection = service_product_projection()
+    except EarlierProductDatabaseError as error:
+        # The message names the tables and their missing columns, never a value of the
+        # database, and says that the database must be replaced.
+        logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
+        raise BootstrapError(PRODUCT_DATABASE_FROM_EARLIER_BUILD) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(PRODUCT_STORE_UNAVAILABLE) from None
+
+    _restore_schedules(projection)
 
     # Last, so a record exists only once every step above has completed. The Sync API and the
     # worker refuse to start until it names their own version and work pool (spec 018 FR-007b).
@@ -366,6 +408,7 @@ def _converge() -> None:
     logger.info("work pool %s", "created" if created_pool else "present")
     logger.info("deployment applied")
     logger.info("product schema converged; the configuration registry is the operator's to fill")
+    logger.info("schedules handed to the task manager")
     logger.info("bootstrap recorded for Sync version %s and work pool %s", record.sync_version, record.work_pool)
 
 

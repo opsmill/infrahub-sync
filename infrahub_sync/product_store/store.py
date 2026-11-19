@@ -16,7 +16,7 @@ from math import isfinite
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -39,8 +39,11 @@ from infrahub_sync.product_store.bundle import (
 )
 from infrahub_sync.product_store.models import (
     DEFAULT_LIMIT,
+    MAX_CONSECUTIVE_FAILURES,
     RUN_ALREADY_CANCELLED_MESSAGE,
     RUN_CANCELLED_MESSAGE,
+    SCHEDULE_START_OPERATION,
+    SCHEDULE_STOPPED_EVENT_TYPE,
     Account,
     AccountSession,
     AccountToken,
@@ -50,6 +53,7 @@ from infrahub_sync.product_store.models import (
     AuditEvent,
     BaselineWriteback,
     BootstrapRecord,
+    BranchReviewOutcome,
     ConfigurationBaseline,
     ConfigurationPage,
     ConfigurationSummary,
@@ -65,11 +69,20 @@ from infrahub_sync.product_store.models import (
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
+    RelatedResource,
     ResolvedCredential,
     RunApproval,
     RunFilters,
     RunPage,
     RunReference,
+    ScheduleBranch,
+    ScheduleBranchState,
+    ScheduledStartDecision,
+    ScheduledStartResult,
+    ScheduledStartRun,
+    ScheduleFilters,
+    SchedulePage,
+    ScheduleRecord,
     SignInAttempt,
     WorkerEnvironment,
     already_approved_body,
@@ -90,7 +103,8 @@ CREATE TABLE IF NOT EXISTS product_runs (
     phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL,
     reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
     config_id TEXT, registry_version INTEGER, package_checksum TEXT, destination_branch TEXT,
-    approved_by TEXT, approved_at TEXT, approved_checksum TEXT, approval_reason TEXT
+    approved_by TEXT, approved_at TEXT, approved_checksum TEXT, approval_reason TEXT,
+    trigger_type TEXT NOT NULL DEFAULT 'manual', schedule_id TEXT, scheduled_start_at TEXT
 );
 CREATE TABLE IF NOT EXISTS artifact_refs (
     run_id TEXT NOT NULL, artifact_id TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL,
@@ -139,7 +153,7 @@ CREATE TABLE IF NOT EXISTS resume_admissions (
 CREATE TABLE IF NOT EXISTS audit_events (
     event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL,
     reason TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL,
-    event_type TEXT, config_id TEXT, registry_version INTEGER, branch TEXT
+    event_type TEXT, config_id TEXT, registry_version INTEGER, branch TEXT, details TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_events_run_created
     ON audit_events (run_id, created_at);
@@ -201,7 +215,37 @@ CREATE TABLE IF NOT EXISTS bootstrap_record (
     record_id INTEGER PRIMARY KEY CHECK (record_id = 1), sync_version TEXT NOT NULL,
     work_pool TEXT NOT NULL, completed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS schedules (
+    schedule_id TEXT PRIMARY KEY, name TEXT NOT NULL, config_id TEXT NOT NULL,
+    registry_version INTEGER NOT NULL, cron TEXT NOT NULL, timezone TEXT NOT NULL DEFAULT 'UTC',
+    write_target TEXT NOT NULL DEFAULT 'branch-review', write_when_left_out BOOLEAN NOT NULL DEFAULT FALSE,
+    left_out_set_by TEXT, left_out_set_at TEXT, overlap_policy TEXT NOT NULL DEFAULT 'reject',
+    start_late_by_at_most_seconds INTEGER NOT NULL DEFAULT 3600, state TEXT NOT NULL, state_reason TEXT,
+    owner TEXT NOT NULL, consecutive_failures INTEGER NOT NULL DEFAULT 0, last_start_at TEXT,
+    prefect_schedule_id TEXT, prefect_synced BOOLEAN NOT NULL DEFAULT FALSE, waiting_start_at TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS schedule_branches (
+    run_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, branch TEXT NOT NULL, proposed_change_id TEXT,
+    state TEXT NOT NULL, replaced_by_run_id TEXT, created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
+    FOREIGN KEY (schedule_id) REFERENCES schedules(schedule_id)
+);
 """
+# The columns that a build with schedules added to tables that already existed. The store
+# has no migration: a new column is part of its ``CREATE TABLE`` statement and reaches only a
+# new database. A database whose table lacks one of them was created by an earlier build, and
+# start-up refuses it before it creates anything (spec 021, research R12). The same refusal
+# covers the receipt ``CHECK`` constraint and triggers of an earlier build, which do not accept
+# the resource kind ``schedule`` and are never replaced.
+_COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD: dict[str, tuple[str, ...]] = {
+    "product_runs": ("trigger_type", "schedule_id", "scheduled_start_at"),
+    "audit_events": ("details",),
+}
+_SELECT_SQLITE_TABLE_COLUMNS = "SELECT name FROM pragma_table_info(?)"
+_SELECT_POSTGRESQL_TABLE_COLUMNS = (
+    "SELECT column_name FROM information_schema.columns WHERE table_name = ? AND table_schema = current_schema()"
+)
 # ``accounts_name_key`` is a plain unique index. SQLite and PostgreSQL both treat two empty
 # (NULL) values as different, so every deleted account can have an empty key while two accounts
 # cannot share a name.
@@ -252,6 +296,18 @@ _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "ON product_runs (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'",
     "CREATE INDEX IF NOT EXISTS configurations_name ON configurations (name)",
     "CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at, config_id)",
+    # The runs of one schedule, newest first (the ``schedule_id`` filter of the run list).
+    "CREATE INDEX IF NOT EXISTS product_runs_schedule_started ON product_runs (schedule_id, started_at, run_id)",
+)
+# One run for each start of a schedule: two flow runs of the same start cannot both create a
+# run (spec 021, research R2). A manual run holds NULL in both columns, and SQLite and
+# PostgreSQL both treat NULLs as distinct, so the index does not constrain manual runs. The two
+# partial indexes hold the rules of the schedule itself: a name is unique among schedules that
+# are not deleted, and a configuration has at most one schedule that is not deleted.
+_SCHEDULE_UNIQUE_INDEXES: tuple[str, ...] = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS product_runs_schedule_start ON product_runs (schedule_id, scheduled_start_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS schedules_name_not_deleted ON schedules (name) WHERE state <> 'deleted'",
+    "CREATE UNIQUE INDEX IF NOT EXISTS schedules_config_not_deleted ON schedules (config_id) WHERE state <> 'deleted'",
 )
 # The read state of each side of a plan or sync execution: one JSON document per side, so the
 # two read threads never write the same column (spec 013, research R3).
@@ -282,7 +338,7 @@ _SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES = (
 )
 _SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK = """NOT (
     (NEW.resource_kind = 'run' AND NEW.run_id IS NOT NULL AND NEW.prefect_key IS NOT NULL)
-    OR (NEW.resource_kind IN ('configuration', 'configuration-registry') AND NEW.run_id IS NULL
+    OR (NEW.resource_kind IN ('configuration', 'configuration-registry', 'schedule') AND NEW.run_id IS NULL
         AND NEW.prefect_key IS NULL AND NEW.target_run_id IS NULL AND NEW.flow_run_id IS NULL)
 )"""
 _SQLITE_MUTATION_RECEIPT_RESOURCE_INSERT_TRIGGER = f"""
@@ -300,7 +356,7 @@ BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent');
 _MUTATION_RECEIPT_RESOURCE_CONSTRAINT = "mutation_receipts_resource_consistent"
 _MUTATION_RECEIPT_RESOURCE_CHECK = (
     "(resource_kind = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL) OR "
-    "(resource_kind IN ('configuration', 'configuration-registry') AND run_id IS NULL "
+    "(resource_kind IN ('configuration', 'configuration-registry', 'schedule') AND run_id IS NULL "
     "AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)"
 )
 _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME = "product_runs_configuration_binding_insert"
@@ -497,11 +553,13 @@ _SELECT_NEXT_CONFIGURATION_VERSION = (
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
 registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results,
-reconciliation_required, destination_branch, approved_by, approved_at, approved_checksum, approval_reason)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+reconciliation_required, destination_branch, approved_by, approved_at, approved_checksum, approval_reason,
+trigger_type, schedule_id, scheduled_start_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _PRODUCT_RUN_COLUMNS = """run_id, operation, configuration_reference, actor, audit_links, started_at,
 finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required,
-destination_branch, approved_by, approved_at, approved_checksum, approval_reason"""
+destination_branch, approved_by, approved_at, approved_checksum, approval_reason, trigger_type, schedule_id,
+scheduled_start_at"""
 _SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHERE run_id = ?"  # noqa: S608 - module constants only.
 # The run list is assembled from these fixed fragments only; every value is a bound parameter.
 # The keyset predicate is the row comparison ``(started_at, run_id) < (?, ?)`` written out as an
@@ -509,6 +567,9 @@ _SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHE
 _SELECT_PRODUCT_RUN_LIST = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs"  # noqa: S608 - module constants only.
 _RUN_LIST_CONFIGURATION = "config_id = ?"
 _RUN_LIST_VERSION = "registry_version = ?"
+_RUN_LIST_TRIGGER_TYPE = "trigger_type = ?"
+_RUN_LIST_SCHEDULE = "schedule_id = ?"
+_RUN_LIST_SCHEDULED_START = "scheduled_start_at = ?"
 _RUN_LIST_AFTER = "(started_at < ? OR (started_at = ? AND run_id < ?))"
 _RUN_LIST_ORDER = " ORDER BY started_at DESC, run_id DESC LIMIT ?"
 _SELECT_AUDIT_LINKS_FOR_RUNS = (
@@ -570,10 +631,11 @@ request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, st
 created_at, updated_at FROM mutation_receipts WHERE run_id = ? AND flow_run_id = ? AND operation = ?
 ORDER BY created_at, receipt_id"""
 _INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at,
-event_type, config_id, registry_version, branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+event_type, config_id, registry_version, branch, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_AUDIT_EVENT_RESOURCE = "INSERT INTO audit_event_resources (event_id, kind, resource_id) VALUES (?, ?, ?)"
 _AUDIT_EVENT_COLUMNS = (
-    "event_id, run_id, actor, operation, reason, outcome, created_at, event_type, config_id, registry_version, branch"
+    "event_id, run_id, actor, operation, reason, outcome, created_at, event_type, config_id, registry_version, "
+    "branch, details"
 )
 _SELECT_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"  # noqa: S608
 _SELECT_ALL_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events ORDER BY created_at, event_id"  # noqa: S608
@@ -587,9 +649,116 @@ _EVENT_HAS_RESOURCE = (
 _EVENT_RESOURCE_BATCH = 500
 _SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"
 
+_SCHEDULE_COLUMNS = """schedule_id, name, config_id, registry_version, cron, timezone, write_target,
+write_when_left_out, left_out_set_by, left_out_set_at, overlap_policy, start_late_by_at_most_seconds, state,
+state_reason, owner, consecutive_failures, last_start_at, prefect_schedule_id, prefect_synced, waiting_start_at,
+created_at, updated_at"""
+_INSERT_SCHEDULE = (
+    "INSERT INTO schedules (" + _SCHEDULE_COLUMNS + ") VALUES (" + ", ".join("?" for _ in range(22)) + ")"  # noqa: S608 - module constants only.
+)
+_SELECT_SCHEDULE = "SELECT " + _SCHEDULE_COLUMNS + " FROM schedules WHERE schedule_id = ?"  # noqa: S608 - module constants only.
+# Takes the write lock of one schedule row before anything is read from it, the same
+# write-first pattern as the lock of a run row. Bound to the schedule ID.
+_LOCK_SCHEDULE = "UPDATE schedules SET schedule_id = schedule_id WHERE schedule_id = ?"
+# The schedule list is assembled from these fixed fragments; every value is bound. Newest
+# first, with ``schedule_id`` breaking equal creation times, keyset paged like the run list.
+_SELECT_SCHEDULE_LIST = "SELECT " + _SCHEDULE_COLUMNS + " FROM schedules"  # noqa: S608 - module constants only.
+_SCHEDULE_LIST_CONFIGURATION = "config_id = ?"
+_SCHEDULE_LIST_STATE = "state = ?"
+_SCHEDULE_LIST_NOT_DELETED = "state <> 'deleted'"
+_SCHEDULE_LIST_AFTER = "(created_at < ? OR (created_at = ? AND schedule_id < ?))"
+_SCHEDULE_LIST_ORDER = " ORDER BY created_at DESC, schedule_id DESC LIMIT ?"
+# What a change of a schedule writes. The admission of a start and the end of a scheduled run
+# own ``last_start_at``, ``waiting_start_at`` and ``consecutive_failures``; the count is
+# written here only to set it to zero.
+_UPDATE_SCHEDULE = """UPDATE schedules SET registry_version = ?, cron = ?, timezone = ?, write_target = ?,
+write_when_left_out = ?, left_out_set_by = ?, left_out_set_at = ?, overlap_policy = ?,
+start_late_by_at_most_seconds = ?, state = ?, state_reason = ?, owner = ?, consecutive_failures = ?,
+prefect_schedule_id = ?, prefect_synced = ?, updated_at = ? WHERE schedule_id = ?"""
+# The state a schedule may move to, by its stored state (spec 021 data-model.md). A deleted
+# schedule accepts no action. A paused schedule moves to `stopped` only when a resume finds a
+# reason that stops it, in one write with the event of the stop.
+_SCHEDULE_TRANSITIONS: dict[str, frozenset[str]] = {
+    "active": frozenset({"active", "paused", "stopped", "deleted"}),
+    "paused": frozenset({"paused", "active", "stopped", "deleted"}),
+    "stopped": frozenset({"stopped", "active", "deleted"}),
+}
+_SCHEDULE_FIXED_FIELDS = ("name", "config_id", "created_at")
+# The settings whose change ends the start that waits under the `queue` policy.
+_SCHEDULE_WAIT_FIELDS = ("cron", "timezone", "overlap_policy")
+
+
+def _ends_waiting_start(stored: ScheduleRecord, changed: ScheduleRecord) -> bool:
+    """Whether a change of a schedule ends its waiting start: it is no longer active, or its cadence or policy changed."""
+    if stored.waiting_start_at is None:
+        return False
+    return changed.state != "active" or any(
+        getattr(changed, field) != getattr(stored, field) for field in _SCHEDULE_WAIT_FIELDS
+    )
+
+
+_SCHEDULE_BRANCH_COLUMNS = "run_id, schedule_id, branch, proposed_change_id, state, replaced_by_run_id, created_at"
+_INSERT_SCHEDULE_BRANCH = (
+    "INSERT INTO schedule_branches (" + _SCHEDULE_BRANCH_COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?)"  # noqa: S608 - module constants only.
+)
+_SELECT_SCHEDULE_BRANCH = "SELECT " + _SCHEDULE_BRANCH_COLUMNS + " FROM schedule_branches WHERE run_id = ?"  # noqa: S608 - module constants only.
+_SELECT_SCHEDULE_BRANCHES = "SELECT " + _SCHEDULE_BRANCH_COLUMNS + " FROM schedule_branches WHERE schedule_id = ?"  # noqa: S608 - module constants only.
+_SCHEDULE_BRANCH_ORDER = " ORDER BY created_at, run_id"
+# The state a branch row may move to, by its stored state. ``removed``, ``replaced`` and
+# ``kept`` are final.
+_SCHEDULE_BRANCH_TRANSITIONS: dict[str, frozenset[str]] = {
+    "pending": frozenset({"pending", "open", "removed", "replaced", "kept"}),
+    "open": frozenset({"open", "replaced", "kept"}),
+}
+_SCHEDULE_BRANCH_FIXED_FIELDS = ("schedule_id", "branch", "created_at")
+_EARLIER_BRANCH_STATES: tuple[ScheduleBranchState, ...] = ("pending", "open")
+# The run of one start of a schedule. Bound to the schedule ID and the start time in UTC.
+_SELECT_RUN_OF_START = "SELECT run_id FROM product_runs WHERE schedule_id = ? AND scheduled_start_at = ?"
+# The schedule of a scheduled run whose ``sync`` execution ended. A stage that a person
+# starts on the run afterwards, such as an ``apply``, is not the end of the scheduled run.
+# Bound to the run ID twice and the flow run ID.
+_SELECT_SCHEDULE_OF_ENDED_SYNC = (
+    "SELECT schedule_id FROM product_runs WHERE run_id = ? AND trigger_type = 'scheduled' AND EXISTS "
+    "(SELECT 1 FROM prefect_executions WHERE prefect_executions.run_id = ? "
+    "AND prefect_executions.flow_run_id = ? AND prefect_executions.purpose = 'sync')"
+)
+# The newest run of a configuration that has an execution with no terminal verdict.
+_SELECT_RUN_WITH_OPEN_EXECUTION = (
+    "SELECT run_id FROM product_runs WHERE config_id = ? AND EXISTS (SELECT 1 FROM prefect_executions "
+    "WHERE prefect_executions.run_id = product_runs.run_id AND prefect_executions.terminal_at IS NULL) "
+    "ORDER BY started_at DESC, run_id DESC LIMIT 1"
+)
+# The unresolved receipts of a stage operation on the runs of a configuration, newest run
+# first. Built from ``_ARBITRATED_OPERATIONS``, bound after the configuration ID.
+_SELECT_UNRESOLVED_STAGE_RECEIPTS = (
+    "SELECT product_runs.run_id, mutation_receipts.created_at FROM mutation_receipts "  # noqa: S608 - placeholders only.
+    "JOIN product_runs ON product_runs.run_id = mutation_receipts.run_id "
+    "WHERE product_runs.config_id = ? AND mutation_receipts.state <> 'accepted' "
+    f"AND mutation_receipts.operation IN ({', '.join('?' for _ in _ARBITRATED_OPERATIONS)}) "
+    "ORDER BY product_runs.started_at DESC, product_runs.run_id DESC"
+)
+# The status of the receipt that the admission of a scheduled start writes already accepted.
+_SCHEDULED_START_STATUS = 202
+
 
 class DuplicateRunError(ValueError):
     """The requested stable Sync run ID already exists."""
+
+
+class EarlierProductDatabaseError(RuntimeError):
+    """The product database was created by an earlier build and lacks a column this build stores.
+
+    The message names the tables and their missing columns, and no value of the database.
+    """
+
+    def __init__(self, missing: Mapping[str, Sequence[str]]) -> None:
+        columns = "; ".join(f"table {table!r} lacks {', '.join(names)}" for table, names in missing.items())
+        super().__init__(
+            "The product database was created by an earlier build of Infrahub Sync and cannot be used: "
+            f"{columns}. Infrahub Sync does not upgrade a product database in place. Replace it with a new, "
+            "empty database, then start Infrahub Sync again."
+        )
+        self.missing = {table: tuple(names) for table, names in missing.items()}
 
 
 class ProductStoreProviderError(RuntimeError):
@@ -630,6 +799,49 @@ class ConfigurationVersionAllocationError(ValueError):
 
 class DuplicateConfigurationError(ValueError):
     """The generated configuration ID already exists."""
+
+
+class ScheduleNotFoundError(ValueError):
+    """Raised when no schedule, or no schedule branch, is stored under the given identifier."""
+
+
+class ScheduleNameInUseError(ValueError):
+    """Raised when a schedule that is not deleted already has the requested name."""
+
+
+class ScheduleExistsForConfigurationError(ValueError):
+    """Raised when the configuration already has a schedule that is not deleted.
+
+    ``schedule_id`` and ``name`` identify that schedule.
+    """
+
+    def __init__(self, *, config_id: str, schedule_id: str, name: str) -> None:
+        self.config_id = config_id
+        self.schedule_id = schedule_id
+        self.name = name
+        super().__init__(f"configuration {config_id!r} already has the schedule {name!r} ({schedule_id})")
+
+
+class ScheduleDeletedError(ValueError):
+    """Raised when a change is requested on a deleted schedule, which accepts no action."""
+
+
+class ScheduleTransitionError(ValueError):
+    """Raised when a schedule or a schedule branch is asked to move to a state it cannot reach."""
+
+
+class ScheduleChangedError(ValueError):
+    """Raised when a write was decided from a schedule that no longer matches the stored one.
+
+    Nothing is written. The caller reads the schedule again and decides again.
+    """
+
+
+class ScheduledStartAlreadyRecordedError(ValueError):
+    """Raised when a start that created no run is admitted again, or a start earlier than the last one.
+
+    The start was already recorded, as skipped or as missed, so nothing is written a second time.
+    """
 
 
 _DUPLICATE_CREDENTIAL_MESSAGE = "The store already holds this token or session"
@@ -727,6 +939,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
     ) -> bool: ...
 
     def request_execution_cancellation(
@@ -804,6 +1017,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         flow_run_id: str | None,
         updated_at: datetime,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
     ) -> MutationReceipt: ...
 
     def claim_mutation(self, receipt_id: str, *, updated_at: datetime) -> bool: ...
@@ -858,6 +1072,63 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def list_runs(
         self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
     ) -> RunPage: ...
+
+    def create_schedule(self, schedule: ScheduleRecord, *, events: Sequence[AuditEvent] = ()) -> None: ...
+
+    def lookup_schedule(self, schedule_id: str) -> LookupResult[ScheduleRecord]: ...
+
+    def list_schedules(
+        self, filters: ScheduleFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> SchedulePage: ...
+
+    def update_schedule(
+        self,
+        schedule: ScheduleRecord,
+        *,
+        expected_updated_at: datetime | None = None,
+        events: Sequence[AuditEvent] = (),
+    ) -> ScheduleRecord: ...
+
+    def record_schedule_prefect_sync(
+        self,
+        schedule_id: str,
+        *,
+        prefect_schedule_id: str | None,
+        synced: bool,
+        expected_updated_at: datetime | None = None,
+    ) -> bool: ...
+
+    def schedule_branches(
+        self, schedule_id: str, *, states: Sequence[ScheduleBranchState] = ()
+    ) -> tuple[ScheduleBranch, ...]: ...
+
+    def lookup_schedule_branch(self, run_id: str) -> LookupResult[ScheduleBranch]: ...
+
+    def update_schedule_branch(
+        self, branch: ScheduleBranch, *, events: Sequence[AuditEvent] = ()
+    ) -> ScheduleBranch: ...
+
+    def record_branch_review_outcome(
+        self,
+        outcome: BranchReviewOutcome,
+        *,
+        events: Sequence[AuditEvent] = (),
+        earlier_events: Mapping[str, Sequence[AuditEvent]] | None = None,
+    ) -> BranchReviewOutcome: ...
+
+    def admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        schedule_id: str,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
+    ) -> ScheduledStartResult: ...
+
+    def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None: ...
 
     def create_account(
         self,
@@ -1038,6 +1309,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 try:
                     if self._dialect == "postgresql":
                         cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
+                    # Before any statement: SQLite commits each DDL statement on its own, so
+                    # a later refusal would leave the new tables on the earlier database.
+                    self._refuse_earlier_database(cursor)
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
@@ -1061,10 +1335,28 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             finally:
                 connection.close()
 
+    def _refuse_earlier_database(self, cursor: _Cursor) -> None:
+        """Raise when a table of an earlier build lacks a column this build stores.
+
+        A table that does not exist yet has no column, and is created whole afterwards. The
+        column names are read from the catalog, so the check changes nothing and aborts no
+        transaction.
+        """
+        statement = _SELECT_SQLITE_TABLE_COLUMNS if self._dialect == "sqlite" else _SELECT_POSTGRESQL_TABLE_COLUMNS
+        missing: dict[str, tuple[str, ...]] = {}
+        for table, required in _COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD.items():
+            cursor.execute(self._sql(statement), (table,))
+            present = {str(row[0]) for row in cursor.fetchall()}
+            absent = tuple(column for column in required if column not in present)
+            if present and absent:
+                missing[table] = absent
+        if missing:
+            raise EarlierProductDatabaseError(missing)
+
     @staticmethod
     def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
-        """Create the indexes for listing runs and configurations."""
-        for statement in _RUN_LISTING_INDEXES:
+        """Create the indexes for listing runs and configurations, and the unique indexes of schedules."""
+        for statement in (*_RUN_LISTING_INDEXES, *_SCHEDULE_UNIQUE_INDEXES):
             cursor.execute(statement)
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
@@ -1200,6 +1492,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 run.reconciliation_required,
                 run.destination_branch,
                 *_approval_columns(run.approval),
+                run.trigger_type,
+                run.schedule_id,
+                # Stored as UTC: the unique index compares text, so one instant written
+                # with two offsets must be one value.
+                None if run.scheduled_start_at is None else _utc_iso(run.scheduled_start_at),
             ),
         )
 
@@ -1638,8 +1935,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
     ) -> bool:
-        """Commit one claimed worker verdict, its business writeback and its event together."""
+        """Commit one claimed worker verdict, its business writeback and its events together.
+
+        ``event`` and then each event of ``events`` are written in the transaction of the
+        verdict. The end of a scheduled run also updates its schedule's count of failed runs
+        in a row in that transaction (`_settle_scheduled_run_end`).
+        """
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1688,6 +1991,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     # the reviewed plan once (spec 007 FR-012, ADR 0020).
                     if _releases_write_admission(writeback, terminal_state, terminal_outcome):
                         cursor.execute(self._sql(_RELEASE_STOPPED_SYNC_ADMISSION), (run_id, run_id))
+                    self._settle_own_branch(cursor, run_id, writeback, terminal_state, terminal_outcome)
                 else:
                     cursor.execute(
                         self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
@@ -1728,8 +2032,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 self._settle_resume(
                     cursor, run_id, flow_run_id, terminal_state=terminal_state, terminal_outcome=terminal_outcome
                 )
-                if event is not None:
-                    self._insert_event(cursor, event)
+                self._settle_scheduled_run_end(
+                    cursor,
+                    run_id,
+                    flow_run_id,
+                    verdict=_scheduled_run_verdict(terminal_state, terminal_outcome, writeback),
+                    ended_at=terminal_at,
+                )
+                for item in _merged_events(event, events):
+                    self._insert_event(cursor, item)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -1740,6 +2051,25 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
+
+    def _settle_own_branch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        run_id: str,
+        writeback: ExecutionFinishWriteback,
+        terminal_state: str,
+        terminal_outcome: str,
+    ) -> None:
+        """Move the branch row of a run with branch review to ``removed`` when its committed result says so.
+
+        The first part of ``branch_review`` is saved with the stage result (spec 021,
+        data-model.md): a run whose plan held no operation deleted its own branch.
+        """
+        if _removed_own_branch(writeback, terminal_state, terminal_outcome):
+            cursor.execute(
+                self._sql("UPDATE schedule_branches SET state = 'removed' WHERE run_id = ? AND state = 'pending'"),
+                (run_id,),
+            )
 
     def _record_configuration_baseline(
         self,
@@ -1962,6 +2292,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
                     )
                     self._keep_interrupted_run_resumable(cursor, run_id)
+                    # A person asked to cancel the run, so this ambiguous end does not change
+                    # its schedule's count of failed runs.
+                    self._settle_scheduled_run_end(
+                        cursor, run_id, flow_run_id, verdict="unchanged", ended_at=acknowledged_at
+                    )
                     refusal = (
                         _cancellation_ambiguous_response(run_id, receipt_id)
                         if claimed_write
@@ -2038,6 +2373,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     (_utc_iso(terminal_at), run_id, flow_run_id),
                 )
                 self._keep_interrupted_run_resumable(cursor, run_id)
+                # A run that a person cancelled does not change its schedule's count of failed runs.
+                self._settle_scheduled_run_end(cursor, run_id, flow_run_id, verdict="unchanged", ended_at=terminal_at)
                 if event is not None:
                     self._insert_event(cursor, event)
                 connection.commit()
@@ -2106,6 +2443,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
                 )
                 self._keep_interrupted_run_resumable(cursor, run_id)
+                # The execution ended because a person asked to cancel it, whatever verdict the
+                # expired recovery left, so its schedule's count of failed runs does not change.
+                self._settle_scheduled_run_end(cursor, run_id, flow_run_id, verdict="unchanged", ended_at=terminal_at)
                 if not acknowledged:
                     receipt_id = str(row[2])
                     self._complete_receipt_row(
@@ -2258,6 +2598,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     terminal_outcome=terminal_outcome,
                 )
                 self._keep_interrupted_run_resumable(cursor, run_id)
+                self._settle_scheduled_run_end(
+                    cursor,
+                    run_id,
+                    flow_run_id,
+                    verdict=_scheduled_run_verdict(terminal_state, terminal_outcome),
+                    ended_at=terminal_at,
+                )
                 if event is not None:
                     self._insert_event(cursor, event)
                 connection.commit()
@@ -2270,6 +2617,60 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
+
+    def _settle_scheduled_run_end(
+        self,
+        cursor: _Cursor,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        verdict: _ScheduledRunVerdict,
+        ended_at: datetime,
+    ) -> None:
+        """Update a schedule's count of failed runs in a row when the ``sync`` of its run ends (FR-032).
+
+        Runs with the caller's cursor, so the count, the stop and its event are saved in the
+        transaction that saves the end of the run. ``succeeded`` sets the count to zero and
+        ``failed`` adds one; ``unchanged`` writes nothing. When the count reaches
+        ``MAX_CONSECUTIVE_FAILURES`` on an active schedule, the schedule moves to the state
+        ``stopped`` with the reason ``repeated-failures``, its Prefect schedule is marked as
+        not matching the record, and the event ``infrahub_sync.schedule.stopped`` names the
+        run. A paused schedule keeps its state. A run that no schedule started, and a stage
+        that a person starts on a scheduled run, change nothing.
+        """
+        if verdict == "unchanged":
+            return
+        cursor.execute(self._sql(_SELECT_SCHEDULE_OF_ENDED_SYNC), (run_id, run_id, flow_run_id))
+        row = cursor.fetchone()
+        if row is None:
+            return
+        schedule_id = str(row[0])
+        if verdict == "succeeded":
+            cursor.execute(
+                self._sql("UPDATE schedules SET consecutive_failures = 0 WHERE schedule_id = ? AND state <> 'deleted'"),
+                (schedule_id,),
+            )
+            return
+        cursor.execute(
+            self._sql(
+                "UPDATE schedules SET consecutive_failures = consecutive_failures + 1 "
+                "WHERE schedule_id = ? AND state <> 'deleted'"
+            ),
+            (schedule_id,),
+        )
+        cursor.execute(
+            self._sql(
+                "UPDATE schedules SET state = 'stopped', state_reason = 'repeated-failures', "
+                "prefect_synced = FALSE, waiting_start_at = NULL, updated_at = ? WHERE schedule_id = ? AND state = 'active' "
+                "AND consecutive_failures >= ?"
+            ),
+            (_utc_iso(ended_at), schedule_id, MAX_CONSECUTIVE_FAILURES),
+        )
+        if cursor.rowcount != 1:
+            return
+        schedule = self._read_schedule(cursor, schedule_id)
+        if schedule is not None:
+            self._insert_event(cursor, _schedule_stopped_event(schedule, run_id, ended_at))
 
     def reserve_mutation(
         self,
@@ -2755,7 +3156,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         flow_run_id: str | None,
         updated_at: datetime,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
     ) -> MutationReceipt:
+        """Complete a receipt with its stored answer; ``event`` and then ``events`` are saved with it."""
         with self._transaction() as cursor:
             cursor.execute(
                 self._sql(
@@ -2765,8 +3168,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 (response_status, _json(response_body), flow_run_id, updated_at.isoformat(), receipt_id),
             )
             completed = cursor.rowcount == 1
-            if completed and event is not None:
-                self._insert_event(cursor, event)
+            if completed:
+                for item in _merged_events(event, events):
+                    self._insert_event(cursor, item)
         receipt = self._lookup_mutation_by_id(receipt_id)
         if completed:
             return receipt
@@ -2867,6 +3271,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 event.config_id,
                 event.registry_version,
                 event.branch,
+                None if event.details is None else _json(event.details.model_dump(mode="json", exclude_none=True)),
             ),
         )
         for resource in event.related:
@@ -3228,6 +3633,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if filters.registry_version is not None:
             conditions.append(_RUN_LIST_VERSION)
             parameters.append(filters.registry_version)
+        if filters.trigger_type is not None:
+            conditions.append(_RUN_LIST_TRIGGER_TYPE)
+            parameters.append(filters.trigger_type)
+        if filters.schedule_id is not None:
+            conditions.append(_RUN_LIST_SCHEDULE)
+            parameters.append(filters.schedule_id)
+        if filters.scheduled_start_at is not None:
+            conditions.append(_RUN_LIST_SCHEDULED_START)
+            parameters.append(_utc_iso(filters.scheduled_start_at))
         if after is not None:
             conditions.append(_RUN_LIST_AFTER)
             parameters.extend(_keyset_parameters(after))
@@ -3243,6 +3657,626 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         rows, has_more = self._read_page(statement, parameters, limit, read_audit_links)
         return RunPage(items=tuple(_run_from_rows(row, (), (), audit_links[row[0]]) for row in rows), has_more=has_more)
+
+    def create_schedule(self, schedule: ScheduleRecord, *, events: Sequence[AuditEvent] = ()) -> None:
+        """Store a new schedule, in the state ``active``, and ``events`` in one transaction.
+
+        Raises:
+            ValueError: The schedule is not in the state ``active``.
+            ScheduleNameInUseError: A schedule that is not deleted has the name.
+            ScheduleExistsForConfigurationError: The configuration has a schedule that is not deleted.
+        """
+        if schedule.state != "active":
+            msg = "a schedule is created in the state active"
+            raise ValueError(msg)
+        try:
+            with self._transaction() as cursor:
+                self._refuse_schedule_conflict(cursor, schedule)
+                cursor.execute(self._sql(_INSERT_SCHEDULE), _schedule_values(schedule))
+                for event in events:
+                    self._insert_event(cursor, event)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # Synchronous DB-API drivers do not share an integrity-error base class. Two
+            # requests can both pass the check above; the unique indexes refuse the second,
+            # and the check on a new connection then names which rule it broke.
+            if not _is_unique_violation(exc):
+                raise
+            with self._reading() as cursor:
+                self._refuse_schedule_conflict(cursor, schedule)
+            raise
+
+    def _refuse_schedule_conflict(self, cursor: _Cursor, schedule: ScheduleRecord) -> None:
+        """Raise when another schedule that is not deleted has the name or the configuration."""
+        cursor.execute(
+            self._sql("SELECT 1 FROM schedules WHERE name = ? AND state <> 'deleted' AND schedule_id <> ?"),
+            (schedule.name, schedule.schedule_id),
+        )
+        if cursor.fetchone() is not None:
+            msg = f"a schedule that is not deleted already has the name {schedule.name!r}"
+            raise ScheduleNameInUseError(msg)
+        cursor.execute(
+            self._sql(
+                "SELECT schedule_id, name FROM schedules WHERE config_id = ? AND state <> 'deleted' "
+                "AND schedule_id <> ?"
+            ),
+            (schedule.config_id, schedule.schedule_id),
+        )
+        row = cursor.fetchone()
+        if row is not None:
+            raise ScheduleExistsForConfigurationError(
+                config_id=schedule.config_id, schedule_id=str(row[0]), name=str(row[1])
+            )
+
+    def _read_schedule(self, cursor: _Cursor, schedule_id: str) -> ScheduleRecord | None:
+        cursor.execute(self._sql(_SELECT_SCHEDULE), (schedule_id,))
+        row = cursor.fetchone()
+        return None if row is None else _schedule_from_row(row)
+
+    def _locked_schedule(self, cursor: _Cursor, schedule_id: str) -> ScheduleRecord:
+        """Lock one schedule row for the caller's transaction, then read it.
+
+        Raises:
+            ScheduleNotFoundError: No schedule has the identifier.
+        """
+        cursor.execute(self._sql(_LOCK_SCHEDULE), (schedule_id,))
+        schedule = self._read_schedule(cursor, schedule_id)
+        if schedule is None:
+            msg = f"schedule {schedule_id!r} is not stored"
+            raise ScheduleNotFoundError(msg)
+        return schedule
+
+    def lookup_schedule(self, schedule_id: str) -> LookupResult[ScheduleRecord]:
+        """Look up one schedule by its identifier; a deleted schedule is returned too."""
+        with self._reading() as cursor:
+            schedule = self._read_schedule(cursor, schedule_id)
+        if schedule is None:
+            return LookupResult(value=None, reason="schedule is not stored")
+        return LookupResult(value=schedule)
+
+    def list_schedules(
+        self, filters: ScheduleFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> SchedulePage:
+        """Return up to ``limit`` schedules matching ``filters``, newest first, after the ``after`` key.
+
+        Schedules are ordered by ``(created_at, schedule_id)`` descending; ``after`` is the last
+        key of the previous page. Without a state filter, deleted schedules are left out. The
+        query reads one row past the page to detect a further page.
+        """
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if filters.config_id is not None:
+            conditions.append(_SCHEDULE_LIST_CONFIGURATION)
+            parameters.append(filters.config_id)
+        if filters.state is None:
+            conditions.append(_SCHEDULE_LIST_NOT_DELETED)
+        else:
+            conditions.append(_SCHEDULE_LIST_STATE)
+            parameters.append(filters.state)
+        if after is not None:
+            conditions.append(_SCHEDULE_LIST_AFTER)
+            parameters.extend(_keyset_parameters(after))
+        statement = _filtered(_SELECT_SCHEDULE_LIST, conditions) + _SCHEDULE_LIST_ORDER
+        rows, has_more = self._read_page(statement, parameters, limit)
+        return SchedulePage(items=tuple(_schedule_from_row(row) for row in rows), has_more=has_more)
+
+    def update_schedule(
+        self,
+        schedule: ScheduleRecord,
+        *,
+        expected_updated_at: datetime | None = None,
+        events: Sequence[AuditEvent] = (),
+    ) -> ScheduleRecord:
+        """Save a change of a schedule's settings, state or owner, with ``events``, and return what is stored.
+
+        The row is locked first, so the checks and the update see one state. The change
+        writes the version, the cadence, the write settings, the state and its reason, the
+        owner, the Prefect schedule fields and ``updated_at``. It does not write
+        ``last_start_at`` or the count of failed runs, which the admission of a start and the
+        end of a run own; a schedule that leaves the reason ``repeated-failures``, by a resume
+        or by a stop with another reason, gets the count set to zero (FR-032). It clears ``waiting_start_at`` when the schedule leaves the
+        state ``active`` or its cadence or overlap policy changes: the waiting flow run then
+        creates no run, and the wait must not block the later starts.
+
+        Raises:
+            ScheduleNotFoundError: No schedule has the identifier.
+            ScheduleDeletedError: The stored schedule is deleted.
+            ScheduleChangedError: ``expected_updated_at`` is given and differs from the stored value.
+            ScheduleTransitionError: The stored state cannot move to the requested state.
+            ValueError: The change sets the name, the configuration or the creation time.
+        """
+        with self._transaction() as cursor:
+            stored = self._locked_schedule(cursor, schedule.schedule_id)
+            if stored.state == "deleted":
+                msg = f"schedule {schedule.schedule_id!r} is deleted and accepts no action"
+                raise ScheduleDeletedError(msg)
+            if expected_updated_at is not None and stored.updated_at != expected_updated_at:
+                msg = f"schedule {schedule.schedule_id!r} changed after it was read"
+                raise ScheduleChangedError(msg)
+            for field in _SCHEDULE_FIXED_FIELDS:
+                if getattr(schedule, field) != getattr(stored, field):
+                    msg = f"a change cannot set the {field} of a schedule"
+                    raise ValueError(msg)
+            if schedule.state not in _SCHEDULE_TRANSITIONS[stored.state]:
+                msg = f"a schedule in the state {stored.state!r} cannot move to the state {schedule.state!r}"
+                raise ScheduleTransitionError(msg)
+            # A schedule that leaves a stop for repeated failures counts its failed runs from zero
+            # again: when it is resumed, and when a resume stores another reason to stop it, so a
+            # later change that makes it active does not keep the old count.
+            resumed_after_failures = (
+                stored.state_reason == "repeated-failures" and schedule.state_reason != "repeated-failures"
+            )
+            cursor.execute(
+                self._sql(_UPDATE_SCHEDULE),
+                (
+                    schedule.registry_version,
+                    schedule.cron,
+                    schedule.timezone,
+                    schedule.write_target,
+                    schedule.write_when_left_out,
+                    schedule.left_out_set_by,
+                    None if schedule.left_out_set_at is None else _utc_iso(schedule.left_out_set_at),
+                    schedule.overlap_policy,
+                    schedule.start_late_by_at_most_seconds,
+                    schedule.state,
+                    schedule.state_reason,
+                    schedule.owner,
+                    0 if resumed_after_failures else stored.consecutive_failures,
+                    schedule.prefect_schedule_id,
+                    schedule.prefect_synced,
+                    _utc_iso(schedule.updated_at),
+                    schedule.schedule_id,
+                ),
+            )
+            if _ends_waiting_start(stored, schedule):
+                cursor.execute(
+                    self._sql("UPDATE schedules SET waiting_start_at = NULL WHERE schedule_id = ?"),
+                    (schedule.schedule_id,),
+                )
+            for event in events:
+                self._insert_event(cursor, event)
+            updated = self._read_schedule(cursor, schedule.schedule_id)
+        assert updated is not None
+        return updated
+
+    def record_schedule_prefect_sync(
+        self,
+        schedule_id: str,
+        *,
+        prefect_schedule_id: str | None,
+        synced: bool,
+        expected_updated_at: datetime | None = None,
+    ) -> bool:
+        """Record the Prefect schedule of a schedule and whether it matches the record.
+
+        Only these two fields are written, so a call made after a request to Prefect cannot
+        undo a change that was saved in between. With ``expected_updated_at``, nothing is
+        written when the stored schedule changed after it was read: the Prefect schedule was
+        made from the earlier record, so the change keeps ``prefect_synced`` as it saved it.
+        Returns whether a schedule was written.
+        """
+        if expected_updated_at is None:
+            return self._execution_update(
+                "UPDATE schedules SET prefect_schedule_id = ?, prefect_synced = ? WHERE schedule_id = ?",
+                (prefect_schedule_id, synced, schedule_id),
+            )
+        return self._execution_update(
+            "UPDATE schedules SET prefect_schedule_id = ?, prefect_synced = ? WHERE schedule_id = ? AND updated_at = ?",
+            (prefect_schedule_id, synced, schedule_id, _utc_iso(expected_updated_at)),
+        )
+
+    def _read_schedule_branches(
+        self, cursor: _Cursor, schedule_id: str, states: Sequence[ScheduleBranchState]
+    ) -> tuple[ScheduleBranch, ...]:
+        statement = _SELECT_SCHEDULE_BRANCHES
+        if states:
+            statement += f" AND state IN ({', '.join('?' for _ in states)})"
+        cursor.execute(self._sql(statement + _SCHEDULE_BRANCH_ORDER), (schedule_id, *states))
+        return tuple(_schedule_branch_from_row(row) for row in cursor.fetchall())
+
+    def schedule_branches(
+        self, schedule_id: str, *, states: Sequence[ScheduleBranchState] = ()
+    ) -> tuple[ScheduleBranch, ...]:
+        """Return the branch rows of a schedule, oldest first, optionally only those in ``states``."""
+        with self._reading() as cursor:
+            return self._read_schedule_branches(cursor, schedule_id, states)
+
+    def lookup_schedule_branch(self, run_id: str) -> LookupResult[ScheduleBranch]:
+        """Look up the branch row of one run with branch review."""
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_SCHEDULE_BRANCH), (run_id,))
+            row = cursor.fetchone()
+        if row is None:
+            return LookupResult(value=None, reason="the run has no schedule branch")
+        return LookupResult(value=_schedule_branch_from_row(row))
+
+    def update_schedule_branch(self, branch: ScheduleBranch, *, events: Sequence[AuditEvent] = ()) -> ScheduleBranch:
+        """Save the state, the proposed change and the replacing run of a branch row, with ``events``.
+
+        A row moves from ``pending`` to ``open``, ``removed``, ``replaced`` or ``kept``, and
+        from ``open`` to ``replaced`` or ``kept``. A row in a final state accepts no change.
+
+        Raises:
+            ScheduleNotFoundError: The run has no branch row.
+            ScheduleTransitionError: The stored state cannot move to the requested state.
+            ValueError: The change sets the schedule, the branch name or the creation time.
+        """
+        with self._transaction() as cursor:
+            cursor.execute(self._sql("UPDATE schedule_branches SET run_id = run_id WHERE run_id = ?"), (branch.run_id,))
+            cursor.execute(self._sql(_SELECT_SCHEDULE_BRANCH), (branch.run_id,))
+            row = cursor.fetchone()
+            if row is None:
+                msg = f"run {branch.run_id!r} has no schedule branch"
+                raise ScheduleNotFoundError(msg)
+            stored = _schedule_branch_from_row(row)
+            for field in _SCHEDULE_BRANCH_FIXED_FIELDS:
+                if getattr(branch, field) != getattr(stored, field):
+                    msg = f"a change cannot set the {field} of a schedule branch"
+                    raise ValueError(msg)
+            if branch.state not in _SCHEDULE_BRANCH_TRANSITIONS.get(stored.state, frozenset()):
+                msg = f"a schedule branch in the state {stored.state!r} cannot move to the state {branch.state!r}"
+                raise ScheduleTransitionError(msg)
+            cursor.execute(
+                self._sql(
+                    "UPDATE schedule_branches SET state = ?, proposed_change_id = ?, replaced_by_run_id = ? "
+                    "WHERE run_id = ?"
+                ),
+                (branch.state, branch.proposed_change_id, branch.replaced_by_run_id, branch.run_id),
+            )
+            for event in events:
+                self._insert_event(cursor, event)
+        return branch
+
+    def record_branch_review_outcome(
+        self,
+        outcome: BranchReviewOutcome,
+        *,
+        events: Sequence[AuditEvent] = (),
+        earlier_events: Mapping[str, Sequence[AuditEvent]] | None = None,
+    ) -> BranchReviewOutcome:
+        """Save the part of a run's ``branch_review`` that follows its write, in one transaction.
+
+        The run's own branch row moves from ``pending`` to ``open`` when the run opened its
+        proposed change; a row that another run already handled stays as it is. Each run of ``outcome.replaced`` moves to ``replaced`` and each run
+        of ``outcome.kept`` whose cause is ``merged`` or ``closed`` moves to ``kept``; a run
+        kept because it is ``approved`` stays ``open``. An earlier row that is no longer in
+        the state ``pending`` or ``open`` was handled by another run: it is left as it is,
+        left out of the saved outcome, and its events of ``earlier_events`` are not written.
+        The saved outcome is merged into ``branch_review`` of the run's results, and
+        ``events`` and the events of the handled earlier rows are written.
+
+        Raises:
+            ScheduleNotFoundError: The run has no branch row.
+        """
+        by_run = earlier_events or {}
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql("UPDATE schedule_branches SET run_id = run_id WHERE run_id = ?"), (outcome.run_id,)
+            )
+            cursor.execute(self._sql(_SELECT_SCHEDULE_BRANCH), (outcome.run_id,))
+            row = cursor.fetchone()
+            if row is None:
+                msg = f"run {outcome.run_id!r} has no schedule branch"
+                raise ScheduleNotFoundError(msg)
+            own = _schedule_branch_from_row(row)
+            if outcome.proposed_change_id is not None:
+                # A later run of the schedule may have replaced this run's `pending` row while
+                # the proposed change was opened (research R15); that row stays as it is.
+                cursor.execute(
+                    self._sql(
+                        "UPDATE schedule_branches SET state = 'open', proposed_change_id = ? "
+                        "WHERE run_id = ? AND state = 'pending'"
+                    ),
+                    (outcome.proposed_change_id, outcome.run_id),
+                )
+            handled: list[str] = []
+            replaced = [
+                earlier
+                for earlier in outcome.replaced
+                if self._settle_earlier_branch(cursor, own.schedule_id, earlier, "replaced", outcome.run_id)
+            ]
+            handled.extend(replaced)
+            kept = [
+                item
+                for item in outcome.kept
+                if self._settle_earlier_branch(
+                    cursor, own.schedule_id, item.run_id, "open" if item.cause == "approved" else "kept", None
+                )
+            ]
+            handled.extend(item.run_id for item in kept)
+            saved = outcome.model_copy(update={"replaced": tuple(replaced), "kept": tuple(kept)})
+            cursor.execute(self._sql("SELECT results FROM product_runs WHERE run_id = ?"), (outcome.run_id,))
+            results_row = cursor.fetchone()
+            current = {} if results_row is None else dict(_JSON_MAPPING_ADAPTER.validate_json(str(results_row[0])))
+            previous = current.get("branch_review")
+            entry = dict(previous) if isinstance(previous, Mapping) else {}
+            current["branch_review"] = {**entry, **saved.results_entry()}
+            cursor.execute(
+                self._sql("UPDATE product_runs SET results = ? WHERE run_id = ?"), (_json(current), outcome.run_id)
+            )
+            for event in (*events, *(item for run_id in handled for item in by_run.get(run_id, ()))):
+                self._insert_event(cursor, event)
+        return saved
+
+    def _settle_earlier_branch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        schedule_id: str,
+        run_id: str,
+        state: ScheduleBranchState,
+        replaced_by_run_id: str | None,
+    ) -> bool:
+        """Move an earlier branch row of the schedule to ``state``; return whether it was still pending or open."""
+        cursor.execute(
+            self._sql(
+                "UPDATE schedule_branches SET state = ?, replaced_by_run_id = ? "
+                "WHERE run_id = ? AND schedule_id = ? AND state IN ('pending', 'open')"
+            ),
+            (state, replaced_by_run_id, run_id, schedule_id),
+        )
+        return cursor.rowcount == 1
+
+    def _run_of_start(self, cursor: _Cursor, schedule_id: str, scheduled_start_at: datetime) -> str | None:
+        cursor.execute(self._sql(_SELECT_RUN_OF_START), (schedule_id, _utc_iso(scheduled_start_at)))
+        row = cursor.fetchone()
+        return None if row is None else str(row[0])
+
+    def admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        schedule_id: str,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
+    ) -> ScheduledStartResult:
+        """Write the decision on one start of a schedule in one transaction (spec 021, research R2).
+
+        The schedule row is locked first, so two admissions of one schedule run one after the
+        other. A schedule that is not ``active`` writes nothing and answers
+        ``schedule-not-active``. Otherwise the transaction moves the rows of
+        ``decision.kept_run_ids`` to the state ``kept``, writes the events of the decision, and
+        sets ``last_start_at`` to the start when it is later. A start queued under the ``queue``
+        policy becomes ``waiting_start_at``; any other decision on the waiting start clears it,
+        and that start is exempt from the check against ``last_start_at``. A decision with the
+        cause ``approval-required`` or ``owner-not-found`` also moves the schedule to the state
+        ``stopped`` with that reason. For a start that runs it also writes the run, its
+        receipt already accepted, its ``sync`` write admission, its one execution already
+        claimed by ``worker_id``, and a ``pending`` branch row for a run with branch review.
+        When ``receipt_age_limit`` is given, a start that runs checks again, in the transaction,
+        that no run of the configuration is in progress (`run_in_progress`). This finds a run that
+        a person started while the decision was made, which can take seconds when it reads
+        Infrahub. It does not close the race: a person's request takes no lock that this
+        transaction holds, so on PostgreSQL one that commits between this check and the commit
+        of the admission is not seen.
+
+        Raises:
+            ScheduleNotFoundError: No schedule has the identifier.
+            DuplicateRunError: The start already has a run; nothing is written.
+            ScheduledStartAlreadyRecordedError: The start is not later than ``last_start_at``,
+                is not the waiting start and has no run, so it was already recorded.
+            ScheduleChangedError: The decision was made from another ``last_start_at``,
+                ``waiting_start_at`` or ``updated_at``, its
+                run does not match the stored schedule, a kept run has no branch row in
+                the states ``pending`` and ``open``, or a run of the configuration started
+                after a decision to run.
+            ConfigurationNotFoundError: The schedule's configuration version is not registered.
+        """
+        try:
+            with self._transaction() as cursor:
+                return self._admit_scheduled_start(
+                    cursor,
+                    schedule_id,
+                    scheduled_start_at,
+                    flow_run_id,
+                    worker_id,
+                    now,
+                    decision,
+                    receipt_age_limit=receipt_age_limit,
+                )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # The unique index on the start is what refuses a second run if the check under
+            # the lock did not; DB-API drivers share no integrity-error base class.
+            if not _is_unique_violation(exc):
+                raise
+            with self._reading() as cursor:
+                existing = self._run_of_start(cursor, schedule_id, scheduled_start_at)
+            if existing is None:
+                raise
+            raise DuplicateRunError(_start_has_run_message(schedule_id, scheduled_start_at, existing)) from exc
+
+    def _admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        schedule_id: str,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
+    ) -> ScheduledStartResult:
+        schedule = self._locked_schedule(cursor, schedule_id)
+        if schedule.state != "active":
+            return ScheduledStartResult(started=False, cause="schedule-not-active", schedule=schedule)
+        existing = self._run_of_start(cursor, schedule_id, scheduled_start_at)
+        if existing is not None:
+            raise DuplicateRunError(_start_has_run_message(schedule_id, scheduled_start_at, existing))
+        # The start that waits under the `queue` policy was recorded when it was queued; its
+        # later admissions are the same start (research R7).
+        waiting = schedule.waiting_start_at is not None and scheduled_start_at == schedule.waiting_start_at
+        if not waiting and schedule.last_start_at is not None and scheduled_start_at <= schedule.last_start_at:
+            msg = (
+                f"the start {_utc_iso(scheduled_start_at)} of schedule {schedule_id!r} is not later than "
+                "its last recorded start"
+            )
+            raise ScheduledStartAlreadyRecordedError(msg)
+        _refuse_stale_decision(schedule, decision)
+        if isinstance(decision, ScheduledStartRun) and receipt_age_limit is not None:
+            self._refuse_run_started_since(cursor, schedule.config_id, now - receipt_age_limit)
+        for kept_run_id in decision.kept_run_ids:
+            cursor.execute(
+                self._sql(
+                    "UPDATE schedule_branches SET state = 'kept' WHERE run_id = ? AND schedule_id = ? "
+                    "AND state IN ('pending', 'open')"
+                ),
+                (kept_run_id, schedule_id),
+            )
+            if cursor.rowcount != 1:
+                msg = f"run {kept_run_id!r} has no pending or open branch of schedule {schedule_id!r}"
+                raise ScheduleChangedError(msg)
+        run_id: str | None = None
+        cause = None
+        if isinstance(decision, ScheduledStartRun):
+            run_id = decision.run.run_id
+            self._insert_scheduled_run(cursor, schedule, scheduled_start_at, flow_run_id, worker_id, now, decision)
+        else:
+            cause = decision.cause
+        for event in decision.events:
+            self._insert_event(cursor, event)
+        # A queued start waits; the waiting start's own admission ends the wait unless it is
+        # queued again. `last_start_at` never moves back to the waiting start.
+        if cause == "queued":
+            waiting_start_at: datetime | None = scheduled_start_at
+        elif waiting:
+            waiting_start_at = None
+        else:
+            waiting_start_at = schedule.waiting_start_at
+        last_start_at = (
+            scheduled_start_at if schedule.last_start_at is None else max(schedule.last_start_at, scheduled_start_at)
+        )
+        cursor.execute(
+            self._sql("UPDATE schedules SET last_start_at = ?, waiting_start_at = ? WHERE schedule_id = ?"),
+            (
+                _utc_iso(last_start_at),
+                None if waiting_start_at is None else _utc_iso(waiting_start_at),
+                schedule_id,
+            ),
+        )
+        self._stop_for_cause(cursor, schedule_id, cause, now)
+        stored = self._read_schedule(cursor, schedule_id)
+        assert stored is not None
+        earlier = self._read_schedule_branches(cursor, schedule_id, _EARLIER_BRANCH_STATES)
+        return ScheduledStartResult(
+            started=run_id is not None,
+            cause=cause,
+            run_id=run_id,
+            schedule=stored,
+            earlier_branches=tuple(branch for branch in earlier if branch.run_id != run_id),
+        )
+
+    def _refuse_run_started_since(self, cursor: _Cursor, config_id: str, oldest: datetime) -> None:
+        """Raise ``ScheduleChangedError`` when a run of the configuration is in progress.
+
+        The decision to run read the runs in progress outside the admission's transaction,
+        possibly seconds earlier while it read Infrahub: a run admitted since then makes the
+        caller decide again.
+        """
+        in_progress = self._run_in_progress(cursor, config_id, oldest)
+        if in_progress is not None:
+            msg = f"run {in_progress!r} of configuration {config_id!r} started after the decision to run"
+            raise ScheduleChangedError(msg)
+
+    def _stop_for_cause(self, cursor: _Cursor, schedule_id: str, cause: str | None, now: datetime) -> None:
+        """Stop the schedule when the cause of the decision is ``approval-required`` or ``owner-not-found``.
+
+        The worker found, when it admitted a start, that the schedule writes to the default
+        branch while the Sync API requires approval (research R6), or that the owner's account
+        is disabled or deleted. The stop is saved in the transaction of that admission, with the
+        events of the decision, and the cause is the reason. ``updated_at`` moves, so a request
+        of the Sync API made from the schedule as it was read is refused and reads it again.
+        Any other cause does nothing.
+        """
+        if cause not in {"approval-required", "owner-not-found"}:
+            return
+        cursor.execute(
+            self._sql(
+                "UPDATE schedules SET state = 'stopped', state_reason = ?, "
+                "prefect_synced = FALSE, waiting_start_at = NULL, updated_at = ? WHERE schedule_id = ?"
+            ),
+            (cause, _utc_iso(now), schedule_id),
+        )
+
+    def _insert_scheduled_run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        schedule: ScheduleRecord,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartRun,
+    ) -> None:
+        """Write the run of a start with its receipt, its write admission and its claimed execution."""
+        run = decision.run
+        from_schedule = (schedule.schedule_id, schedule.owner, schedule.config_id, schedule.registry_version)
+        if (
+            (run.schedule_id, run.actor, run.config_id, run.registry_version) != from_schedule
+            or run.scheduled_start_at != scheduled_start_at
+            or decision.branch_review is not (schedule.write_target == "branch-review")
+        ):
+            msg = f"the run of the start does not match the stored schedule {schedule.schedule_id!r}"
+            raise ScheduleChangedError(msg)
+        cursor.execute(
+            self._sql(
+                "SELECT package_checksum FROM configuration_versions WHERE config_id = ? AND registry_version = ?"
+            ),
+            (schedule.config_id, schedule.registry_version),
+        )
+        version = cursor.fetchone()
+        if version is None:
+            msg = f"configuration version {schedule.config_id}@{schedule.registry_version} is not registered"
+            raise ConfigurationNotFoundError(msg)
+        if str(version[0]) != run.package_checksum:
+            msg = f"the run of the start does not hold the package of {schedule.config_id}@{schedule.registry_version}"
+            raise ScheduleChangedError(msg)
+        receipt = _scheduled_start_receipt(run, flow_run_id, now)
+        self._insert_product_run_row(cursor, run)
+        cursor.execute(self._sql(_INSERT_MUTATION_RECEIPT), _receipt_values(receipt))
+        cursor.execute(
+            self._sql("INSERT INTO write_admissions (run_id, receipt_id, operation) VALUES (?, ?, ?)"),
+            (run.run_id, receipt.receipt_id, receipt.operation),
+        )
+        link = PrefectExecutionLink(
+            flow_run_id=flow_run_id,
+            purpose="sync",
+            attempt=1,
+            submitted_at=now,
+            claimed_at=now,
+            claiming_worker_id=worker_id,
+        )
+        self._insert_prefect_execution(cursor, run.run_id, link, 0, mutation_receipt_id=receipt.receipt_id)
+        if decision.branch_review:
+            cursor.execute(
+                self._sql(_INSERT_SCHEDULE_BRANCH),
+                (run.run_id, schedule.schedule_id, run.destination_branch, None, "pending", None, _utc_iso(now)),
+            )
+
+    def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None:
+        """Return the newest run of a configuration that is in progress, or ``None`` (research R7).
+
+        A run is in progress when one of its executions has no terminal verdict, or when it
+        has an unresolved receipt of a stage operation that was created less than
+        ``receipt_age_limit`` before ``now``. A run in phase ``planned`` that waits for a
+        person, an interrupted run and an abandoned execution all have a terminal verdict, so
+        they are not in progress. The receipt times are compared as times, not as text.
+        """
+        with self._reading() as cursor:
+            return self._run_in_progress(cursor, config_id, now - receipt_age_limit)
+
+    def _run_in_progress(self, cursor: _Cursor, config_id: str, oldest: datetime) -> str | None:
+        """`run_in_progress` with the caller's cursor; a receipt counts when created after ``oldest``."""
+        cursor.execute(self._sql(_SELECT_RUN_WITH_OPEN_EXECUTION), (config_id,))
+        row = cursor.fetchone()
+        if row is not None:
+            return str(row[0])
+        cursor.execute(self._sql(_SELECT_UNRESOLVED_STAGE_RECEIPTS), (config_id, *_ARBITRATED_OPERATIONS))
+        for run_id, created_at in cursor.fetchall():
+            if datetime.fromisoformat(str(created_at)) > oldest:
+                return str(run_id)
+        return None
 
     def create_account(
         self,
@@ -4042,9 +5076,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
         secrets: Sequence[str] = (),
     ) -> bool:
-        """Atomically commit one claimed verdict and its business writeback.
+        """Atomically commit one claimed verdict, its business writeback, ``event`` and then ``events``.
 
         A live worker that may already have reached the destination commits
         `interrupted` / `ambiguous`; the same transaction records that the run requires
@@ -4095,6 +5130,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             terminal_outcome=terminal_outcome,
             writeback=sanitized,
             event=_redacted_event(event, secrets),
+            events=tuple(_redact_event(item, secrets) for item in events),
         )
 
     def request_execution_cancellation(
@@ -4304,9 +5340,13 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         response_body: Mapping[str, Any],
         flow_run_id: str | None,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
         secrets: Sequence[str] = (),
     ) -> MutationReceipt:
-        """Persist the exact accepted HTTP response, Prefect identity and the decision's event together."""
+        """Persist the exact accepted HTTP response, Prefect identity and the decision's events together.
+
+        ``event`` and then each event of ``events`` are saved in the transaction of the answer.
+        """
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response_body), secrets))
         return self._records.complete_mutation(
             redact(receipt_id, secrets),
@@ -4315,6 +5355,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             flow_run_id=None if flow_run_id is None else redact(flow_run_id, secrets),
             updated_at=datetime.now(timezone.utc),
             event=_redacted_event(event, secrets),
+            events=tuple(_redact_event(item, secrets) for item in events),
         )
 
     def claim_mutation(self, receipt_id: str, *, secrets: Sequence[str] = ()) -> bool:
@@ -4418,6 +5459,175 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     ) -> RunPage:
         """Return one page of runs, newest first, without artifact references or execution links."""
         return self._records.list_runs(filters, after=after, limit=limit)
+
+    def create_schedule(
+        self, schedule: ScheduleRecord, *, events: Sequence[AuditEvent] = (), secrets: Sequence[str] = ()
+    ) -> None:
+        """Store a new active schedule and its secret-safe events in one transaction.
+
+        Raises:
+            ScheduleNameInUseError: A schedule that is not deleted has the name.
+            ScheduleExistsForConfigurationError: The configuration has a schedule that is not
+                deleted; the error holds its identifier and its name.
+        """
+        self._records.create_schedule(
+            _redacted_schedule(schedule, secrets), events=tuple(_redact_event(event, secrets) for event in events)
+        )
+
+    def lookup_schedule(self, schedule_id: str) -> LookupResult[ScheduleRecord]:
+        """Look up one schedule by its identifier; a deleted schedule is returned too."""
+        return self._records.lookup_schedule(schedule_id)
+
+    def list_schedules(
+        self, filters: ScheduleFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> SchedulePage:
+        """Return one page of schedules, newest first; without a state filter, deleted ones are left out."""
+        return self._records.list_schedules(filters, after=after, limit=limit)
+
+    def update_schedule(
+        self,
+        schedule: ScheduleRecord,
+        *,
+        expected_updated_at: datetime | None = None,
+        events: Sequence[AuditEvent] = (),
+        secrets: Sequence[str] = (),
+    ) -> ScheduleRecord:
+        """Save a change of a schedule with its secret-safe events, and return the stored schedule.
+
+        The change follows the state transitions of the schedule and cannot set its name, its
+        configuration or its creation time. ``expected_updated_at`` refuses a change that was
+        made from a schedule that changed since it was read. The store keeps
+        ``last_start_at``, ``waiting_start_at`` and the count of failed runs as they are stored.
+
+        Raises:
+            ScheduleNotFoundError, ScheduleDeletedError, ScheduleChangedError,
+            ScheduleTransitionError, ValueError: see `_RelationalRunStore.update_schedule`.
+        """
+        return self._records.update_schedule(
+            _redacted_schedule(schedule, secrets),
+            expected_updated_at=expected_updated_at,
+            events=tuple(_redact_event(event, secrets) for event in events),
+        )
+
+    def record_schedule_prefect_sync(
+        self,
+        schedule_id: str,
+        *,
+        prefect_schedule_id: str | None,
+        synced: bool,
+        expected_updated_at: datetime | None = None,
+    ) -> bool:
+        """Record a schedule's Prefect schedule and whether it matches the record; nothing else changes.
+
+        With ``expected_updated_at``, nothing is written when the schedule changed after it was read.
+        """
+        return self._records.record_schedule_prefect_sync(
+            schedule_id,
+            prefect_schedule_id=prefect_schedule_id,
+            synced=synced,
+            expected_updated_at=expected_updated_at,
+        )
+
+    def schedule_branches(
+        self, schedule_id: str, *, states: Sequence[ScheduleBranchState] = ()
+    ) -> tuple[ScheduleBranch, ...]:
+        """Return the branch rows of a schedule, oldest first, optionally only those in ``states``."""
+        return self._records.schedule_branches(schedule_id, states=states)
+
+    def lookup_schedule_branch(self, run_id: str) -> LookupResult[ScheduleBranch]:
+        """Look up the branch row of one run with branch review."""
+        return self._records.lookup_schedule_branch(run_id)
+
+    def update_schedule_branch(
+        self, branch: ScheduleBranch, *, events: Sequence[AuditEvent] = (), secrets: Sequence[str] = ()
+    ) -> ScheduleBranch:
+        """Save the state, the proposed change and the replacing run of a branch row, with its events.
+
+        Raises:
+            ScheduleNotFoundError, ScheduleTransitionError, ValueError: see
+            `_RelationalRunStore.update_schedule_branch`.
+        """
+        # Validated again, so a copy made with an update cannot store a row the model refuses.
+        checked = ScheduleBranch.model_validate(branch.model_dump())
+        return self._records.update_schedule_branch(
+            checked, events=tuple(_redact_event(event, secrets) for event in events)
+        )
+
+    def record_branch_review_outcome(
+        self,
+        outcome: BranchReviewOutcome,
+        *,
+        events: Sequence[AuditEvent] = (),
+        earlier_events: Mapping[str, Sequence[AuditEvent]] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> BranchReviewOutcome:
+        """Save the part of a run's ``branch_review`` that follows its write, with its events.
+
+        ``earlier_events`` holds, by earlier run, the events that are written only when that
+        run's branch row was still ``pending`` or ``open``. Returns the outcome as saved.
+
+        Raises:
+            ScheduleNotFoundError: The run has no branch row.
+        """
+        checked = BranchReviewOutcome.model_validate(outcome.model_dump())
+        return self._records.record_branch_review_outcome(
+            checked,
+            events=tuple(_redact_event(event, secrets) for event in events),
+            earlier_events={
+                run_id: tuple(_redact_event(event, secrets) for event in items)
+                for run_id, items in (earlier_events or {}).items()
+            },
+        )
+
+    def admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        schedule_id: str,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
+        secrets: Sequence[str] = (),
+    ) -> ScheduledStartResult:
+        """Write the worker's decision on one start of a schedule in one transaction.
+
+        A start that runs gets its run, its accepted receipt, its write admission, its
+        execution claimed by ``worker_id`` and its events; a start that does not run gets only
+        its events. Either way ``last_start_at`` of the schedule becomes the start. A schedule
+        that is not active writes nothing and answers ``schedule-not-active``. Only a canonical
+        Prefect worker UUID is accepted, as for `claim_execution`.
+
+        Raises:
+            DuplicateRunError: The start already has a run.
+            ScheduleNotFoundError, ScheduledStartAlreadyRecordedError, ScheduleChangedError,
+            ConfigurationNotFoundError: see `_RelationalRunStore.admit_scheduled_start`.
+        """
+        if not _is_canonical_uuid(worker_id):
+            raise ValueError(_INVALID_SERVICE_WORKER_ID)
+        _require_execution_timestamp(now)
+        _require_execution_timestamp(scheduled_start_at)
+        updates: dict[str, Any] = {"events": tuple(_redact_event(event, secrets) for event in decision.events)}
+        if isinstance(decision, ScheduledStartRun):
+            updates["run"] = _redacted_run(decision.run, secrets)
+        return self._records.admit_scheduled_start(
+            schedule_id,
+            scheduled_start_at,
+            flow_run_id,
+            worker_id,
+            now,
+            decision.model_copy(update=updates),
+            receipt_age_limit=receipt_age_limit,
+        )
+
+    def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None:
+        """Return the newest run of a configuration that is in progress, or ``None``.
+
+        In progress means an execution with no terminal verdict, or an unresolved receipt of
+        a stage operation created less than ``receipt_age_limit`` before ``now``.
+        """
+        return self._records.run_in_progress(config_id, now, receipt_age_limit)
 
     def create_account(
         self,
@@ -5254,6 +6464,9 @@ def _run_from_rows(
             "reconciliation_required": bool(row[14]),
             "destination_branch": row[15],
             "approval": RunApproval.from_columns(row[16], row[17], row[18], row[19]),
+            "trigger_type": row[20],
+            "schedule_id": row[21],
+            "scheduled_start_at": row[22],
             "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {
@@ -5283,6 +6496,175 @@ def _run_from_rows(
             ],
         }
     )
+
+
+_ScheduledRunVerdict = Literal["succeeded", "failed", "unchanged"]
+
+
+def _scheduled_run_verdict(
+    terminal_state: str, terminal_outcome: str, writeback: ExecutionWriteback | None = None
+) -> _ScheduledRunVerdict:
+    """Say how the end of an execution counts for its schedule's failed runs in a row (FR-032).
+
+    A run that ends as failed, interrupted or ambiguous counts as failed. A run that succeeds,
+    or that ends with no change, sets the count to zero. A run that stopped for a review of
+    records left out is a completed stage that gives back its write admission; it changes
+    nothing, and neither does a cancelled or an abandoned execution.
+    """
+    if (terminal_state, terminal_outcome) == ("completed", "succeeded"):
+        stopped_for_review = isinstance(writeback, ExecutionFinishWriteback) and writeback.release_write_admission
+        return "unchanged" if stopped_for_review else "succeeded"
+    if terminal_outcome in {"failed", "ambiguous"}:
+        return "failed"
+    return "unchanged"
+
+
+def _merged_events(event: AuditEvent | None, events: Sequence[AuditEvent]) -> tuple[AuditEvent, ...]:
+    """Return the single ``event`` of a call, if any, followed by its ``events``."""
+    return (*(() if event is None else (event,)), *events)
+
+
+def _schedule_values(schedule: ScheduleRecord) -> tuple[Any, ...]:
+    """Return the values of one schedule row, in the order of ``_SCHEDULE_COLUMNS``; times are in UTC."""
+
+    def when(value: datetime | None) -> str | None:
+        return None if value is None else _utc_iso(value)
+
+    return (
+        schedule.schedule_id,
+        schedule.name,
+        schedule.config_id,
+        schedule.registry_version,
+        schedule.cron,
+        schedule.timezone,
+        schedule.write_target,
+        schedule.write_when_left_out,
+        schedule.left_out_set_by,
+        when(schedule.left_out_set_at),
+        schedule.overlap_policy,
+        schedule.start_late_by_at_most_seconds,
+        schedule.state,
+        schedule.state_reason,
+        schedule.owner,
+        schedule.consecutive_failures,
+        when(schedule.last_start_at),
+        schedule.prefect_schedule_id,
+        schedule.prefect_synced,
+        when(schedule.waiting_start_at),
+        # Stored as UTC so that text order equals time order when schedules are listed.
+        _utc_iso(schedule.created_at),
+        _utc_iso(schedule.updated_at),
+    )
+
+
+_SCHEDULE_FIELDS = tuple(name.strip() for name in _SCHEDULE_COLUMNS.split(","))
+
+
+def _schedule_from_row(row: Sequence[Any]) -> ScheduleRecord:
+    return ScheduleRecord.model_validate(dict(zip(_SCHEDULE_FIELDS, row, strict=True)))
+
+
+def _schedule_branch_from_row(row: Sequence[Any]) -> ScheduleBranch:
+    return ScheduleBranch.model_validate(
+        {
+            "run_id": row[0],
+            "schedule_id": row[1],
+            "branch": row[2],
+            "proposed_change_id": row[3],
+            "state": row[4],
+            "replaced_by_run_id": row[5],
+            "created_at": row[6],
+        }
+    )
+
+
+def _start_has_run_message(schedule_id: str, scheduled_start_at: datetime, run_id: str) -> str:
+    return f"the start {_utc_iso(scheduled_start_at)} of schedule {schedule_id!r} already has the Sync run {run_id!r}"
+
+
+def _refuse_stale_decision(schedule: ScheduleRecord, decision: ScheduledStartDecision) -> None:
+    """Raise `ScheduleChangedError` when a decision on a start was made from another state of the schedule.
+
+    The decision names the ``last_start_at`` and ``waiting_start_at`` it was made from, so no
+    missed start is recorded twice, and the ``updated_at``, so a change of the cadence, the
+    left-out setting or the overlap policy saved after the read is not admitted under the
+    earlier settings. The caller decides again from the stored schedule.
+    """
+    if (decision.last_start_at, decision.waiting_start_at) != (schedule.last_start_at, schedule.waiting_start_at):
+        msg = f"schedule {schedule.schedule_id!r} recorded another start after the decision was made"
+        raise ScheduleChangedError(msg)
+    if decision.schedule_updated_at is not None and decision.schedule_updated_at != schedule.updated_at:
+        msg = f"schedule {schedule.schedule_id!r} changed after the decision was made"
+        raise ScheduleChangedError(msg)
+
+
+def _scheduled_start_receipt(run: ProductRun, flow_run_id: str, now: datetime) -> MutationReceipt:
+    """Build the receipt of a scheduled run, already accepted (spec 021 data-model.md).
+
+    The key digest and the request fingerprint come from the schedule and the start time
+    only, so a second attempt of one start builds the same key.
+    """
+    assert run.schedule_id is not None
+    assert run.scheduled_start_at is not None
+    assert run.actor is not None
+    start = _utc_iso(run.scheduled_start_at)
+    receipt_id = f"m-{uuid4().hex}"
+    identity = {"schedule_id": run.schedule_id, "scheduled_start_at": start}
+    return MutationReceipt(
+        receipt_id=receipt_id,
+        actor=run.actor,
+        key_digest=sha256(f"schedule:{run.schedule_id}:{start}".encode()).hexdigest(),
+        operation="sync",
+        request_fingerprint=sha256(canonical_json_bytes(identity)).hexdigest(),
+        reason=None,
+        resource_id=run.run_id,
+        run_id=run.run_id,
+        prefect_key=sha256(f"infrahub-sync:{receipt_id}".encode()).hexdigest(),
+        state="accepted",
+        response_status=_SCHEDULED_START_STATUS,
+        response_body={"run": {"run_id": run.run_id}, **identity},
+        flow_run_id=flow_run_id,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _schedule_stopped_event(schedule: ScheduleRecord, run_id: str, created_at: datetime) -> AuditEvent:
+    """Build the event of a schedule that stopped because its fifth run in a row failed.
+
+    The event names the run, the owner's account, the configuration, its version and the
+    schedule, as every schedule event does (spec 021 contracts/events.md).
+    """
+    return AuditEvent(
+        event_id=f"a-{uuid4().hex}",
+        run_id=run_id,
+        actor=schedule.owner,
+        operation=SCHEDULE_START_OPERATION,
+        reason=None,
+        outcome="repeated-failures",
+        created_at=created_at,
+        event_type=SCHEDULE_STOPPED_EVENT_TYPE,
+        config_id=schedule.config_id,
+        registry_version=schedule.registry_version,
+        related=(
+            RelatedResource(kind="account", id=schedule.owner),
+            RelatedResource(kind="config", id=schedule.config_id),
+            RelatedResource(kind="config_version", id=f"{schedule.config_id}@{schedule.registry_version}"),
+            RelatedResource(kind="schedule", id=schedule.schedule_id),
+        ),
+    )
+
+
+def _redacted_schedule(schedule: ScheduleRecord, secrets: Sequence[str]) -> ScheduleRecord:
+    """Return ``schedule`` with every configured secret removed from the text a caller supplies."""
+    values = schedule.model_dump()
+    if secrets:
+        for field in ("name", "cron", "timezone", "owner", "left_out_set_by"):
+            if values[field] is not None:
+                values[field] = redact(values[field], secrets)
+    # Validated again also with no secret, so a copy made with an update cannot store a record
+    # that the model refuses.
+    return ScheduleRecord.model_validate(values)
 
 
 def _receipt_values(receipt: MutationReceipt) -> tuple[Any, ...]:
@@ -5345,6 +6727,16 @@ def _releases_write_admission(writeback: ExecutionFinishWriteback, terminal_stat
         and writeback.phase == "planned"
         and not writeback.summary.get("applied_operations")
         and not writeback.results.get("applied_operations")
+    )
+
+
+def _removed_own_branch(writeback: ExecutionFinishWriteback, terminal_state: str, terminal_outcome: str) -> bool:
+    """Answer whether a succeeded finish writeback says that a run with branch review deleted its branch."""
+    entry = writeback.results.get("branch_review")
+    return (
+        (terminal_state, terminal_outcome) == ("completed", "succeeded")
+        and isinstance(entry, Mapping)
+        and entry.get("branch_state") == "removed"
     )
 
 
@@ -5435,17 +6827,26 @@ def _cancellation_unconfirmed_response(run_id: str, receipt_id: str) -> dict[str
 # Redacting them could only break their validation: a secret such as `infrahub` would turn the
 # event type into text the type pattern refuses, and fail the decision the event is saved with.
 _EVENT_FIXED_FIELDS = frozenset({"event_id", "event_type", "created_at", "registry_version"})
+# The text keys of an event's ``details`` that are redacted. Its start times, its counts and
+# the run it names are computed by Sync, and redacting one could only break its validation.
+_EVENT_DETAILS_TEXT_KEYS = frozenset({"branch", "proposed_change_id", "cause"})
 
 
 def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
     """Return ``event`` with every configured secret removed from its caller-supplied values."""
     ordered = redaction_order(secrets)
-    return AuditEvent.model_validate(
-        {
-            name: value if name in _EVENT_FIXED_FIELDS else _redact_ordered_value(value, ordered, numbers=False)
-            for name, value in event.model_dump(mode="json").items()
+    values = event.model_dump(mode="json")
+    details = values.pop("details")
+    redacted = {
+        name: value if name in _EVENT_FIXED_FIELDS else _redact_ordered_value(value, ordered, numbers=False)
+        for name, value in values.items()
+    }
+    if details is not None:
+        redacted["details"] = {
+            key: _redact_ordered_value(value, ordered, numbers=False) if key in _EVENT_DETAILS_TEXT_KEYS else value
+            for key, value in details.items()
         }
-    )
+    return AuditEvent.model_validate(redacted)
 
 
 def _redacted_event(event: AuditEvent | None, secrets: Sequence[str]) -> AuditEvent | None:
@@ -5467,6 +6868,7 @@ def _audit_from_row(row: Sequence[Any], related: Sequence[tuple[str, str]] = ())
             "registry_version": row[9],
             "branch": row[10],
             "related": tuple({"kind": kind, "id": resource_id} for kind, resource_id in related),
+            "details": None if row[11] is None else json.loads(row[11]),
         }
     )
 

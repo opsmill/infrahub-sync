@@ -16,7 +16,8 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 ### Orientation
 
 - [Sync architecture](sync-architecture.md) — service components, the registered-run
-  lifecycle, durable records and deployment limits.
+  lifecycle, scheduled runs and the starts that wait or get no flow run, durable records and
+  deployment limits.
 - [Repository tour](repository-tour.md) — the modules for CLI requests, service execution,
   plans, storage and adapters, with a trace from the HTTP client to worker operations.
 
@@ -66,7 +67,8 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 - [The shared execution surface](execution-surface.md) — service and direct Prefect
   callers, plan/verify/apply inputs and return types, failure handling and filesystem locks.
 - [Prefect orchestration](orchestration-prefect.md) — registered service execution and
-  direct read-only planning, with their inputs, results and optional dependencies.
+  direct read-only planning, with their inputs, results and optional dependencies, and the
+  Prefect behaviors that schedules depend on.
 
 ### Repository workflow
 

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from infrahub_sync.product_store import Account
 
 # The keys whose string value names an account, at any depth of a body.
-ACCOUNT_FIELDS = frozenset({"actor", "approved_by", "registered_by"})
+ACCOUNT_FIELDS = frozenset({"actor", "approved_by", "registered_by", "owner", "left_out_set_by"})
 # The key that holds the related resources of an event, and the kind of an entry that names an account.
 RELATED_KEY = "related"
 # The key that holds the resource an event is about.
@@ -66,7 +66,7 @@ def account_identifiers(body: Any) -> set[str]:
 def present_accounts(body: Any, read_accounts: AccountReader) -> Any:
     """Return the body with each account identifier replaced by the display name of its account.
 
-    Only the string value of `actor`, `approved_by` or `registered_by`, and the `id` of a related
+    Only the string value of a key of `ACCOUNT_FIELDS`, and the `id` of a related
     resource or of a primary resource of kind `account`, is replaced, and only when it has the
     form of an account identifier. An identifier that no account has is left as it is. The accounts are read with
     one call; a body that holds no identifier is returned as it is, with no call.

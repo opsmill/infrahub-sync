@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import subprocess  # noqa: S404 - fixed argv probe in a fresh interpreter, the point of the test
+import sys
 from pathlib import Path
 
 import pytest
@@ -62,6 +64,34 @@ def test_list_page_models_and_principal_are_public() -> None:
         "PrincipalResource",
         "RunReference",
     } <= set(client_package.__all__)
+
+
+def test_schedule_models_are_public() -> None:
+    assert {
+        "CreateScheduleRequest",
+        "ChangeScheduleRequest",
+        "ScheduleActionRequest",
+        "ScheduleResource",
+        "ScheduleOpenBranchResource",
+        "SchedulePage",
+        "EventDetailsResource",
+    } <= set(client_package.__all__)
+
+
+def test_client_package_imports_without_prefect() -> None:
+    """A fresh interpreter imports the client and its schedule models, and `prefect` is not loaded."""
+    probe = (
+        "import sys\n"
+        "import infrahub_sync.client as client\n"
+        "from infrahub_sync.client.models import CreateScheduleRequest, SchedulePage, ScheduleResource\n"
+        "assert client.ScheduleResource is ScheduleResource\n"
+        "loaded = sorted(name for name in sys.modules if name.partition('.')[0] in {'prefect', 'fastapi'})\n"
+        "assert not loaded, loaded\n"
+    )
+
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=False, cwd=ROOT)  # noqa: S603
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_client_exposes_page_and_iteration_methods() -> None:

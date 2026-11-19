@@ -26,6 +26,7 @@ from infrahub_sync.service.orchestration import (
 )
 from infrahub_sync.service.service import RunService
 from tests.service.accounts import seed_accounts
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -47,7 +48,7 @@ def _log(log_id: str, flow_run_id: str, seconds: int, message: str, level: int =
     )
 
 
-class _FakeOrchestration:
+class _FakeOrchestration(NoDeploymentSchedules):
     """Hold fixed Prefect log lines; ``mode`` makes the log expired or unreachable."""
 
     def __init__(self) -> None:

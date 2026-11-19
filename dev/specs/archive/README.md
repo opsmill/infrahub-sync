@@ -46,5 +46,13 @@ written before that date use the earlier numbers.
 A spec created after 2026-11-15 keeps the number it was created with. Its number can be the same
 as an earlier number in the table above, and it names a different spec:
 
+- `021-scheduled-runs` was created on 2026-11-17. It is not spec 015, whose earlier number was
+  021.
+
+## Specs numbered after the renumbering
+
+A spec created after 2026-11-15 keeps the number it was created with. Its number can be the same
+as an earlier number in the table above, and it names a different spec:
+
 - `022-local-accounts` was created on 2026-11-17. It is not spec 016, whose earlier number
   was 022.

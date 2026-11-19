@@ -588,7 +588,7 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `GET /configs/{config_id}/versions` | List a configuration's version summaries, newest first, one page at a time. |
 | `GET /configs/{config_id}/versions/{registry_version}` | Return one registered version, with its package content. |
 | `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. With `branch=<name>`, also check the mapping, the import account's permissions and the named `source` and `owner` against that Infrahub branch, and check that a live worker holds a variable of each `$credential` name. It checks names only, not whether a credential's value is accepted. |
-| `GET /runs` | List runs, newest first, one page at a time. Filter by `config_id` and `registry_version`. |
+| `GET /runs` | List runs, newest first, one page at a time. Filter by `config_id`, `registry_version`, `trigger_type` and `schedule_id`. |
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
 | `GET /runs/{run_id}` | Return the durable product record, with current linked Prefect detail for non-terminal executions. |
 | `GET /runs/{run_id}/plan` | Return retained saved-plan review data. |
@@ -599,7 +599,15 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `GET /runs/{run_id}/artifacts` | List immutable run-owned artifact references. |
 | `GET /runs/{run_id}/artifacts/{artifact_id}` | Return verified artifact bytes with their media type and `Digest` header. |
 | `GET /runs/{run_id}/logs` | Return the log lines that Sync wrote during the run's stages, oldest first, one page at a time. |
-| `GET /events` | List typed events about runs and configurations, oldest first, one page at a time. |
+| `GET /events` | List typed events about runs, configurations and schedules, oldest first, one page at a time. |
+| `POST /schedules` | Create a schedule that starts a `sync` run of one configuration version on a cron cadence; see [Schedules](#schedules). |
+| `GET /schedules` | List schedules, newest first, one page at a time. Filter by `config_id` and `state`. |
+| `GET /schedules/{schedule_id}` | Return one schedule, also a deleted one. |
+| `POST /schedules/{schedule_id}/change` | Change one or more settings of a schedule. Owner or administrator only. |
+| `POST /schedules/{schedule_id}/pause` | Pause a schedule. Owner or administrator only. |
+| `POST /schedules/{schedule_id}/resume` | Make a paused schedule active, or a stopped schedule whose reason no longer holds. Owner or administrator only. |
+| `POST /schedules/{schedule_id}/delete` | Delete a schedule and keep its record. Owner or administrator only. |
+| `POST /schedules/{schedule_id}/take-over` | Make the calling administrator the owner of a schedule. Administrator only. |
 | `POST /runs/{run_id}/verify` | Accept a verification that runs every pre-write check of `apply` against the destination, except the left-out confirmation, writes nothing, and does not change the run's phase. |
 | `POST /runs/{run_id}/approve` | Record approval of the run's saved plan for the exact retained checksum. Writes nothing and submits no execution. |
 | `POST /runs/{run_id}/apply` | Accept a confirmed apply for the exact retained reviewed checksum. |
@@ -641,6 +649,20 @@ lists their identifiers.
 | `infrahub-sync events` | `GET /events` |
 | `infrahub-sync runs cancel RUN_ID` | `POST /runs/{run_id}/cancel` |
 | `infrahub-sync whoami` | `GET /me` |
+| `infrahub-sync runs list --trigger-type TYPE --schedule SCHEDULE` | `GET /runs?trigger_type=TYPE&schedule_id=SCHEDULE_ID` |
+| `infrahub-sync events --schedule SCHEDULE` | `GET /events?related=schedule:SCHEDULE_ID` |
+| `infrahub-sync schedules create` | `POST /schedules` |
+| `infrahub-sync schedules list` | `GET /schedules` |
+| `infrahub-sync schedules show SCHEDULE` | `GET /schedules/{schedule_id}` |
+| `infrahub-sync schedules change SCHEDULE` | `POST /schedules/{schedule_id}/change` |
+| `infrahub-sync schedules pause SCHEDULE` | `POST /schedules/{schedule_id}/pause` |
+| `infrahub-sync schedules resume SCHEDULE` | `POST /schedules/{schedule_id}/resume` |
+| `infrahub-sync schedules delete SCHEDULE` | `POST /schedules/{schedule_id}/delete` |
+| `infrahub-sync schedules take-over SCHEDULE` | `POST /schedules/{schedule_id}/take-over` |
+
+A `SCHEDULE` value in the CLI is a `schedule_id` or a schedule name. The CLI reads
+`GET /schedules/{schedule_id}` first and, when no schedule has that identifier, looks the value
+up as the name of a schedule that is not deleted.
 
 The `diff` command is a hidden, deprecated alias of `plan`. It calls the same action and
 prints a deprecation warning to standard error.
@@ -660,6 +682,8 @@ in the same envelope:
 | `cursor` | all three lists | The `next_cursor` of the previous page, sent with the same filters. A cursor that does not decode, or that was issued for another list or for other filters, returns `422 invalid-cursor`. |
 | `config_id` | `GET /runs` | Only runs of this configuration. A malformed configuration ID returns `422 request-invalid`; an unknown configuration returns `404 configuration-not-found`. |
 | `registry_version` | `GET /runs` | Only runs of this configuration version. Requires `config_id`, otherwise `422 request-invalid`. An unknown version returns `404 configuration-version-not-found`. |
+| `trigger_type` | `GET /runs` | Only runs that a person or another system started (`manual`) or that a schedule started (`scheduled`). Another value returns `422 request-invalid`. |
+| `schedule_id` | `GET /runs` | Only runs that this schedule started. A malformed identifier returns `422 request-invalid`; an unknown schedule returns an empty list. |
 | `name` | `GET /configs` | Only configurations with exactly this name. |
 
 `next_cursor` is `null` on the last page. The lists return no total count.
@@ -671,6 +695,11 @@ in the same envelope:
   `null` for runs created before the field existed. Without filters, the list also includes
   legacy runs that have no `config_id`. `approval` is the run's approval, or `null` when the
   run has none; see [Approve the reviewed plan](#approve-the-reviewed-plan).
+  `trigger_type` is `scheduled` for a run that a schedule started, with its `schedule_id` and
+  `scheduled_start_at`, the start time of the cadence in UTC. It is `manual` for every other run,
+  and `schedule_id` and `scheduled_start_at` are then `null`. A scheduled run records the
+  schedule's owner as its `actor`; its `started_at` is later than `scheduled_start_at` when the
+  run started late or waited for another run.
 - `GET /configs` orders configurations by `created_at`, newest first. Each item carries
   `config_id`, `name`, `latest_version` and `created_at`.
 - `GET /configs/{config_id}/versions` orders versions by `registry_version`, newest first. Each
@@ -776,8 +805,9 @@ it cannot be reached, the route returns `503 log-unavailable`; `GET /runs/{run_i
 
 ### List events
 
-`GET /events` lists what happened to runs and configurations: each decision the Sync API made
-on a request, and each stage result the worker recorded. An event is saved in the same
+`GET /events` lists what happened to runs, configurations and schedules: each decision the Sync
+API made on a request, each stage result the worker recorded, and each decision the worker made
+on a start of a schedule. An event is saved in the same
 database transaction as the decision or result it records, so neither is saved without the
 other. An event that records a refusal is saved on its own.
 
@@ -786,7 +816,7 @@ other. An event that records a refusal is saved on its own.
 | `run_id` | Only events about this run. |
 | `config_id` | Only events about this configuration, or that name it as a related resource. |
 | `event_type` | Only events of this type. Repeat it for several types. |
-| `related` | Only events with this related resource, written `<kind>:<id>`, for example `account:alice` or `branch:main`. Repeat it for several. |
+| `related` | Only events with this related resource, written `<kind>:<id>`, for example `account:alice`, `branch:main` or `schedule:<schedule_id>`. Repeat it for several. |
 | `since` | Only events at or after this time. A date and time with a time zone. |
 | `until` | Only events before this time. A date and time with a time zone. |
 | `limit` | Events per page, from 1 to 200. Defaults to 50. |
@@ -825,10 +855,25 @@ this way can skip one event or read one event twice.
 }
 ```
 
-`primary_resource` is the run or the configuration that the event is about. It is `null`
-when the event names neither a run nor a configuration. `related` holds
-the actor's account and, when they are known, the configuration, its version and the
-destination branch. The event types are:
+`primary_resource` is the run that the event is about, else the schedule, else the
+configuration. It is `null` when the event names none of them. `related` holds
+the actor's account and, when they are known, the configuration, its version, the
+destination branch and the schedule. Every event of a run that a schedule started names that
+schedule, so `related=schedule:<schedule_id>` returns the history of a schedule and of its runs.
+
+An event can also hold `details`, the facts of the event, under a closed set of keys. A key
+that the event does not use is `null`, and an event that records no fact has `details: null`:
+
+| Key | Holds | Used by |
+| --- | --- | --- |
+| `start_at` | The start time of the cadence. | Every event of one start of a schedule. The one event that records the older missed starts and `infrahub_sync.schedule.stopped` do not hold it. |
+| `starts`, `first_start_at`, `last_start_at` | The count, the first and the last of the missed starts. | The one event that records the missed starts older than the 500 most recent. |
+| `left_out` | The plan's count of records left out. | `infrahub_sync.run.synced` and `infrahub_sync.run.failed` of a scheduled run. |
+| `branch`, `proposed_change_id` | The branch and the proposed change of a run with branch review. | The events of a proposed change. |
+| `replaced_run_id` | The earlier run whose proposed change or branch was replaced. | `infrahub_sync.schedule.proposed_change_replaced`. |
+| `cause` | A refusal code or a failure class, never text from Infrahub. | `start_failed` and `proposed_change_failed`. |
+
+The event types are:
 
 | Event type | Recorded when |
 | --- | --- |
@@ -847,6 +892,22 @@ destination branch. The event types are:
 | `infrahub_sync.config.version_registered` | A new version of a configuration was registered. |
 | `infrahub_sync.config.version_retrieved` | A version request had the same content as an existing version of the configuration, and the Sync API returned that version with status 200. No version was created. |
 | `infrahub_sync.config.refused`, `.replayed`, `.unavailable` | The same decisions as for a run, on a configuration request. |
+| `infrahub_sync.schedule.created`, `.changed`, `.paused`, `.resumed`, `.deleted`, `.taken_over` | The Sync API accepted a request on a schedule. `operation` is `schedule-create`, `schedule-change`, `schedule-pause`, `schedule-resume`, `schedule-delete` or `schedule-take-over`. |
+| `infrahub_sync.schedule.refused`, `.replayed` | The Sync API refused a request on a schedule, or a retry with the same idempotency key received the stored answer. `outcome` names the cause of a refusal. |
+| `infrahub_sync.schedule.start_skipped` | A start created no run, because a run of the configuration was in progress, a proposed change of the schedule was approved and not merged, another start was waiting, the schedule writes to the default branch while the worker's `INFRAHUB_SYNC_REQUIRE_APPROVAL` is on, or the owner's account is disabled or deleted. `outcome` is `skipped-run-in-progress`, `skipped-approved-change-open`, `skipped-start-waiting`, `skipped-approval-required` or `skipped-owner-not-found`; `run_id` names the run in progress, or the run that opened the approved proposed change. After `skipped-approval-required` or `skipped-owner-not-found`, the schedule is stopped. |
+| `infrahub_sync.schedule.start_queued` | A start waits for the run in progress to end, under the `queue` policy. `outcome` is `queued`. |
+| `infrahub_sync.schedule.start_missed` | A start passed while the worker or the task manager was not running. `outcome` is `missed-started-late` when a late run started, with its `run_id`, and `missed-skipped` otherwise. |
+| `infrahub_sync.schedule.start_failed` | A start created no run, for example because the configuration version can no longer be run. `outcome` is `failed` and `details.cause` holds the reason. |
+| `infrahub_sync.schedule.stopped` | A schedule moved to the state `stopped`. `outcome` is the reason: `owner-not-found`, `approval-required` or `repeated-failures`. Recorded when the Sync API starts, by a resume or a take-over that found the reason, by the worker when it handles a start of a schedule that writes to the default branch while approval is required or whose owner's account is disabled or deleted, or with the end of the fifth failed run in a row, whose `run_id` it names. |
+| `infrahub_sync.schedule.proposed_change_opened` | A run with branch review opened its proposed change. `outcome` is `opened`. |
+| `infrahub_sync.schedule.proposed_change_replaced` | A run closed an earlier proposed change of the schedule, or deleted an earlier branch that had none. One event for each. `outcome` is `replaced`. |
+| `infrahub_sync.schedule.proposed_change_kept` | An earlier proposed change was left in place because a person merged, closed, deleted or approved it. `outcome` is `kept-merged`, `kept-closed`, `kept-missing` or `kept-approved`. |
+| `infrahub_sync.schedule.proposed_change_failed` | Opening the proposed change, or replacing an earlier one, failed. `outcome` is `failed` and `details.cause` holds the failure class. The result of the write does not change. |
+
+A start that creates a run on time records no schedule event: the run's own events name the
+schedule. The actor of an event of a start or of a proposed change is the schedule's owner. No
+event holds a credential, source data, or text from Infrahub other than identifiers and branch
+names.
 
 A request refused for a missing or invalid token is not an event, and `GET /events` never
 returns it.
@@ -880,6 +941,10 @@ is `null` or absent:
     - the checks of a saved plan: `verification_failed`, `apply_refused`;
     - a `sync` that stopped after its plan for a review of the left-out records:
       `left_out_review_required`;
+    - the branch and the proposed change of a scheduled run that writes to a branch for review:
+      `destination_default_branch_not_main`, `branch_list_failed`, `branch_create_failed`,
+      `branch_delete_failed`, `proposed_change_open_failed`, `proposed_change_read_failed`,
+      `proposed_change_close_failed`;
     - any other error: `internal_error`.
 - `system`: `{"role": "source" or "destination", "adapter": <name>}`.
 - `error_code`, `node_kind`, `attribute` and `infrahub_message`: Infrahub's error code, node
@@ -1261,6 +1326,13 @@ those and `false`, `0`, `no` or `off` stops the service at startup.
 - `POST /runs` with `operation: sync`: `409 approval-required-for-sync`, before the run record
   is created. The message says to run `plan`, `approve` and `apply` instead. `operation: plan`
   is not affected.
+- `POST /schedules`, or `POST /schedules/{schedule_id}/change`, with `write_target:
+  default-branch`: `409 approval-required-for-schedule`. The message names
+  `INFRAHUB_SYNC_REQUIRE_APPROVAL`. A schedule with branch review is not affected: its runs write
+  to a branch that Sync created for the run, and need no approval.
+
+When the service starts with the setting on, it stops each active schedule that writes to the
+default branch, with the reason `approval-required`; see [Schedules](#schedules).
 
 The apply refusals are evaluated after authorization and idempotency replay, and before the
 mutation receipt is reserved. The service reads the setting for each request. When the
@@ -1285,6 +1357,122 @@ required `Idempotency-Key`. After authorization and a replay of the same key:
 
 After a withdrawal, `approve` and `apply` refuse the run with `409 run-cancelled`. Create a new
 plan run to try again.
+
+### Schedules
+
+A schedule starts a `sync` run of one configuration version on a cron cadence, with the
+schedule's owner as the run's actor. [Schedule sync runs](../orchestration.mdx) describes how a
+team uses it. Both write targets are turned on in this build: the default `branch-review`, and
+`default-branch` on a Sync API that does not require approval.
+
+`POST /schedules` takes these fields:
+
+| Field | Required | Default | Rule |
+| --- | --- | --- | --- |
+| `name` | yes | | Unique among the schedules that are not deleted. |
+| `config_id`, `registry_version` | yes | | A registered configuration version. A configuration has at most one schedule that is not deleted. |
+| `cron` | yes | | A cron expression with five fields. |
+| `timezone` | no | `UTC` | A time zone name, such as `Europe/Paris`. |
+| `write_target` | no | `branch-review` | `branch-review` or `default-branch`. |
+| `write_when_left_out` | no | `false` | `true` is accepted only with `default-branch`. |
+| `overlap_policy` | no | `reject` | `reject` or `queue`. |
+| `start_late_by_at_most_seconds` | no | `3600` | From 60 to 604800. |
+| `reason` | no | | |
+
+`POST /schedules/{schedule_id}/change` takes the same fields except `name` and `config_id`, and
+at least one of them. A field that is absent keeps its value. `pause`, `resume`, `delete` and
+`take-over` take only an optional `reason`. A pause of a paused schedule, a resume of an active
+schedule and a second deletion answer `200` and change nothing.
+
+Each route answers with the schedule resource:
+
+```json
+{
+  "schedule_id": "s-3f2a9c0d1e2b4a5c6d7e8f9a0b1c2d3e",
+  "name": "from-netbox-nightly",
+  "config_id": "from-netbox",
+  "registry_version": 3,
+  "newer_version": null,
+  "cron": "0 2 * * *",
+  "timezone": "Europe/Paris",
+  "write_target": "branch-review",
+  "write_when_left_out": false,
+  "left_out_set_by": null,
+  "left_out_set_at": null,
+  "overlap_policy": "reject",
+  "start_late_by_at_most_seconds": 3600,
+  "state": "active",
+  "state_reason": null,
+  "owner": "operator",
+  "next_start_at": "2026-11-18T01:00:00Z",
+  "waiting_start_at": null,
+  "last_run_id": null,
+  "prefect_synced": true,
+  "consecutive_failures": 0,
+  "open_branch": null,
+  "created_at": "2026-11-17T09:12:00Z",
+  "updated_at": "2026-11-17T09:12:00Z"
+}
+```
+
+- `newer_version` is the highest registered version of the configuration when it is higher than
+  `registry_version`, else `null`. The schedule still runs `registry_version`.
+- `left_out_set_by` and `left_out_set_at` name the actor who last turned `write_when_left_out`
+  on, and when.
+- `state` is `active`, `paused`, `stopped` or `deleted`. `state_reason` is `owner-not-found`,
+  `approval-required` or `repeated-failures` for a stopped schedule, else `null`.
+- `next_start_at` is computed from `cron` and `timezone` each time the schedule is returned. It
+  is `null` when the schedule is not active.
+- `waiting_start_at` is the start that waits for a run in progress, under the `queue` policy.
+- `last_run_id` is the schedule's most recent run. `GET /runs/{run_id}` holds its outcome.
+- `prefect_synced` is `false` while the task manager does not hold the schedule as it is stored.
+- `consecutive_failures` is the count of runs in a row that failed, were interrupted or ended
+  ambiguous. At 5, the schedule stops with the reason `repeated-failures`.
+- `open_branch` is the schedule's most recent branch whose proposed change is open, with
+  `run_id`, `branch` and `proposed_change_id`, else `null`. A deletion, or a change of the write
+  target to `default-branch`, leaves that branch and proposed change in Infrahub and names them
+  here.
+- All times are in UTC.
+
+`GET /schedules` lists schedules newest first, by `created_at`, in the envelope of
+[List runs and configurations](#list-runs-and-configurations), with `limit` and `cursor`. Filter by
+`config_id` and by `state`; without `state`, deleted schedules are left out. An unknown state
+returns `422 request-invalid`. `GET /schedules/{schedule_id}` also returns a deleted schedule.
+
+The schedule routes answer these refusals:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 403 | `forbidden` | The caller is neither the owner nor an administrator, or is not an administrator for a take-over. |
+| 404 | `schedule-not-found` | No schedule has that identifier. |
+| 404 | `configuration-version-not-found` | The configuration or the version is not registered. |
+| 409 | `schedule-name-in-use` | A schedule that is not deleted has that name. |
+| 409 | `schedule-exists-for-configuration` | The configuration already has a schedule that is not deleted. The message names it. |
+| 409 | `approval-required-for-schedule` | `write_target` is `default-branch` and the Sync API requires approval. |
+| 409 | `schedule-branch-declared` | `write_target` is `branch-review` and the configuration version declares its own destination branch. |
+| 409 | `schedule-deleted` | A change, pause, resume or take-over of a deleted schedule. |
+| 409 | `schedule-stopped` | A resume of a stopped schedule whose reason still holds, or of a paused or stopped schedule that the resume stopped for another reason. The message names the reason and the action it needs. |
+| 409 | `schedule-changed` | Another request changed the schedule during each of three attempts to save this one. Send the request again. |
+| 409 | `idempotency-conflict`, `idempotency-in-progress` | As for the other routes; see [Idempotency and retries](#idempotency-and-retries). |
+| 422 | `schedule-cron-invalid` | The cron expression is not valid or does not have five fields. |
+| 422 | `schedule-timezone-invalid` | The time zone name is not known. |
+| 422 | `schedule-left-out-not-applicable` | `write_when_left_out` is `true` and `write_target` is `branch-review`. |
+| 422 | `schedule-setting-not-available` | The write target is not turned on in this build. |
+| 422 | `secret-parameter-refused` | A request field holds a credential. |
+| 422 | `request-invalid` | The body does not match the schema, names `name`, `config_id` or `owner` in a change, or changes nothing. |
+| 503 | `configuration-version-invalid` | The registered configuration version cannot be read. |
+| 503 | `orchestration-unavailable` | The schedule is stored, and either the task manager could not be reached or the product database failed while the schedule was handed to the task manager; the message says which. When the task manager could not be reached, the schedule starts no run until a later request on a schedule, or a restart of the Sync API, hands it over. When the product database failed, the task manager may already hold the schedule and start its runs, but the stored schedule does not record the handover; a later request on a schedule, or a restart of the Sync API, records it. |
+
+A resume of a paused schedule, or of a stopped schedule whose reason no longer holds (also
+`repeated-failures`), whose owner's account is disabled or deleted, or that writes to the default branch
+while the service requires approval, stores the schedule as stopped with that reason and answers
+`409 schedule-stopped`. A take-over of a schedule stopped for
+`owner-not-found` makes it active, unless it writes to the default branch while the service
+requires approval: it then stays stopped with the reason `approval-required`.
+
+`POST /runs/{run_id}/verify`, `/apply` and `/resume` refuse a scheduled run with branch review
+with `409 scheduled-run-not-appliable`. The schedule's next run replaces it. Its plan and its
+results stay readable.
 
 ## Idempotency and retries
 
@@ -1391,9 +1579,9 @@ of `already-approved`. Other errors have no `details` field.
 | Status | Meaning |
 | --- | --- |
 | `401` | Missing or invalid authentication. |
-| `403` | The actor does not own the mutation and is not an administrator. |
-| `404` | The Sync run or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
-| `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). For approval: a run that cannot be approved (`run-not-approvable`), a plan whose checksum is unconfirmed (`plan-checksum-unverified`), a checksum that differs from the plan's (`checksum-mismatch`), or a second approval (`already-approved`). When the service requires approval: an apply without an approval (`approval-required`) or with a different checksum (`approval-checksum-mismatch`), or a `sync` (`approval-required-for-sync`). For a cancelled run: an `approve` or `apply` (`run-cancelled`), or a second cancel (`run-already-cancelled`). |
+| `403` | The actor does not own the mutation or the schedule and is not an administrator. |
+| `404` | The Sync run, schedule (`schedule-not-found`) or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
+| `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). For approval: a run that cannot be approved (`run-not-approvable`), a plan whose checksum is unconfirmed (`plan-checksum-unverified`), a checksum that differs from the plan's (`checksum-mismatch`), or a second approval (`already-approved`). When the service requires approval: an apply without an approval (`approval-required`) or with a different checksum (`approval-checksum-mismatch`), or a `sync` (`approval-required-for-sync`). For a cancelled run: an `approve` or `apply` (`run-cancelled`), or a second cancel (`run-already-cancelled`). A verify, apply or resume of a scheduled run with branch review (`scheduled-run-not-appliable`). The refusals of a schedule request are listed in [Schedules](#schedules). |
 | `410` | The retained plan or artifact has expired, or the orchestrator no longer holds a flow run whose log `GET /runs/{run_id}/logs` reads (`log-expired`). |
 | `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved, or the orchestrator cannot be reached to read a run's log (`log-unavailable`). For the account routes: a password check or hash that waited more than 5 seconds for a place, or for another check of the same account name (`sign-in-busy`). |
@@ -1402,8 +1590,8 @@ Error messages name "the orchestrator", not Prefect, and never hold its address.
 
 Prefect detail can expire or become unavailable while the durable Sync record, results,
 and published artifacts remain readable. Cancellation never deletes the product record or
-its execution history. The API does not add a Sync-owned queue, retry policy, scheduler,
-recovery state machine, or overlap policy.
+its execution history. The API adds no retry policy and no recovery state machine. A schedule
+has its own overlap policy, which applies only to its starts; see [Schedules](#schedules).
 
 ## Related
 
