@@ -103,6 +103,7 @@ REASON_MAX_LENGTH = 512
 # apply: no space, so a name differs from every placeholder and is safe in a URL path.
 ACCOUNT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$"
 _JSON_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
+_PACKAGE_CHECK_FIELDS_MESSAGE = "exactly one of package and document is required"
 _ARTIFACT_TIME_MESSAGE = "artifact-reference timestamps must include a timezone"
 _EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"
 _ARTIFACT_KEY_MESSAGE = "artifact object and manifest keys must include the content digest"
@@ -209,6 +210,30 @@ class ResumeRunRequest(_RequestModel):
     reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
+def _json_native_package(value: dict[str, Any]) -> dict[str, Any]:
+    """Refuse a package that is not recursively exact JSON-native: what the service hashes."""
+
+    def visit(item: object) -> None:
+        item_type = type(item)
+        if item_type is dict:
+            for key, child in cast("dict[object, object]", item).items():
+                if type(key) is not str:  # pylint: disable=unidiomatic-typecheck
+                    raise ValueError(_JSON_PACKAGE_MESSAGE)
+                visit(child)
+            return
+        if item_type is list:
+            for child in cast("list[object]", item):
+                visit(child)
+            return
+        if item_type is float and not isfinite(cast("float", item)):
+            raise ValueError(_JSON_PACKAGE_MESSAGE)
+        if item_type not in {str, int, float, bool, type(None)}:
+            raise ValueError(_JSON_PACKAGE_MESSAGE)
+
+    visit(value)
+    return value
+
+
 class ConfigMutationRequest(_RequestModel):
     """Submit a configuration package with an optional audit reason."""
 
@@ -226,25 +251,33 @@ class ConfigMutationRequest(_RequestModel):
     @field_validator("package")
     @classmethod
     def _require_json_package(cls, value: dict[str, Any]) -> dict[str, Any]:
-        def visit(item: object) -> None:
-            item_type = type(item)
-            if item_type is dict:
-                for key, child in cast("dict[object, object]", item).items():
-                    if type(key) is not str:  # pylint: disable=unidiomatic-typecheck
-                        raise ValueError(_JSON_PACKAGE_MESSAGE)
-                    visit(child)
-                return
-            if item_type is list:
-                for child in cast("list[object]", item):
-                    visit(child)
-                return
-            if item_type is float and not isfinite(cast("float", item)):
-                raise ValueError(_JSON_PACKAGE_MESSAGE)
-            if item_type not in {str, int, float, bool, type(None)}:
-                raise ValueError(_JSON_PACKAGE_MESSAGE)
+        return _json_native_package(value)
 
-        visit(value)
-        return value
+
+class PackageCheckRequest(_RequestModel):
+    """Submit a package to check without registering it: as JSON, or as the text of a package file.
+
+    Exactly one of ``package`` and ``document`` is set, and only that field is sent.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
+    package: dict[str, Any] | None = None
+    document: str | None = None
+
+    @field_validator("package")
+    @classmethod
+    def _require_json_package(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return None if value is None else _json_native_package(value)
+
+    @model_validator(mode="after")
+    def _require_exactly_one(self) -> PackageCheckRequest:
+        if (self.package is None) == (self.document is None):
+            raise ValueError(_PACKAGE_CHECK_FIELDS_MESSAGE)
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_the_unset_field(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        return {key: value for key, value in handler(self).items() if value is not None}
 
 
 def _registry_version(value: object) -> int:

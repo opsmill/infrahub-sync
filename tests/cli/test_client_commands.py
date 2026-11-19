@@ -41,6 +41,8 @@ from infrahub_sync.client import (
     EventPrimaryResource,
     EventResource,
     OrchestrationSummary,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanLastChangeResource,
     PlanOperationResource,
     PlanResource,
@@ -362,6 +364,119 @@ def test_configs_validate_exits_1_on_an_error_finding_only_with_a_branch(
 
     assert result.exit_code == exit_code, result.output
     assert "code=finding" in result.output
+
+
+def _package_check(
+    severities: tuple[Literal["error", "warning"], ...] = (), destination_read: str = "not_requested"
+) -> PackageCheckResource:
+    return PackageCheckResource(
+        package_checksum=CHECKSUM,
+        name="edge-sync",
+        declared_content={"format_version": 1, "configuration": {"name": "edge-sync"}},
+        destination_read=destination_read,
+        destination_schema_fingerprint=None if destination_read != "read" else "f" * 64,
+        findings=tuple(
+            ValidationFindingResource(
+                code=f"finding-{index}", severity=severity, location="/a", message=f"finding {index}"
+            )
+            for index, severity in enumerate(severities)
+        ),
+        offset=2,
+        limit=3,
+        total_findings=len(severities),
+        next_offset=None,
+    )
+
+
+def test_configs_check_sends_the_file_as_package_and_prints_the_report(client: MagicMock, tmp_path: Path) -> None:
+    """contracts/sync-api.md (CLI, FR-006): the report of `configs validate`, plus `destination_read`."""
+    package = tmp_path / "package.yaml"
+    package.write_text("format_version: 1\nconfiguration:\n  name: edge-sync\n", encoding="utf-8")
+    client.check_package.return_value = _package_check(("warning", "error"), destination_read="read")
+
+    result = _invoke(client, "configs", "check", str(package), "--branch", "review", "--offset", "2", "--limit", "3")
+
+    (request,) = client.check_package.call_args.args
+    assert request == PackageCheckRequest(package={"format_version": 1, "configuration": {"name": "edge-sync"}})
+    assert client.check_package.call_args.kwargs == {"offset": 2, "limit": 3, "branch": "review"}
+    for line in (
+        f"package_checksum: {CHECKSUM}",
+        f"destination_schema_fingerprint: {'f' * 64}",
+        "destination_read: read",
+        "offset: 2",
+        "limit: 3",
+        "total_findings: 2",
+        "next_offset: <none>",
+    ):
+        assert line in result.output
+    assert result.output.index("code=finding-0") < result.output.index("code=finding-1")
+    client.register_config.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "severities", "exit_code"),
+    [
+        pytest.param((), (), 0, id="no-findings"),
+        pytest.param(("--branch", "review"), (), 0, id="branch-no-findings"),
+        pytest.param((), ("warning",), 1, id="a-warning"),
+        pytest.param((), ("error",), 1, id="an-error"),
+        pytest.param(("--branch", "review"), ("warning", "error"), 1, id="branch-with-findings"),
+    ],
+)
+def test_configs_check_exits_1_when_the_page_has_a_finding(
+    client: MagicMock,
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+    severities: tuple[Literal["error", "warning"], ...],
+    exit_code: int,
+) -> None:
+    """contracts/sync-api.md (CLI): the command exits 1 when the returned page has a finding."""
+    package = tmp_path / "package.json"
+    package.write_text('{"format_version": 1}', encoding="utf-8")
+    client.check_package.return_value = _package_check(severities)
+
+    result = _invoke(client, "configs", "check", str(package), *arguments)
+
+    assert result.exit_code == exit_code, result.output
+    assert "destination_read: not_requested" in result.output
+    assert client.check_package.call_args.kwargs["branch"] == (arguments[1] if arguments else None)
+
+
+def _error_lines(output: str) -> list[str]:
+    """The error a command prints, without the lines that name the command and the retry key `configs register` prints first."""
+    # Rich colors the usage hint when the terminal allows it; compare the text only.
+    return [
+        line
+        for line in re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", output).splitlines()
+        if line.strip() and not line.startswith(("idempotency_key:", "Try '")) and "Usage:" not in line
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(None, id="missing-file"),
+        pytest.param("format_version: [1\n", id="invalid-yaml"),
+        pytest.param("- a list\n", id="not-a-mapping"),
+        pytest.param(b"\xff\xfe", id="not-utf-8"),
+    ],
+)
+def test_configs_check_refuses_an_unreadable_file_like_configs_register(
+    client: MagicMock, tmp_path: Path, content: str | bytes | None
+) -> None:
+    package = tmp_path / "package.yaml"
+    if isinstance(content, bytes):
+        package.write_bytes(content)
+    elif content is not None:
+        package.write_text(content, encoding="utf-8")
+
+    checked = _invoke(client, "configs", "check", str(package))
+    registered = _invoke(client, "configs", "register", str(package))
+
+    assert checked.exit_code == registered.exit_code != 0
+    assert _error_lines(checked.output) == _error_lines(registered.output) != []
+    client.check_package.assert_not_called()
+    client.register_config.assert_not_called()
 
 
 def test_plan_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:

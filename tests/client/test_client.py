@@ -29,6 +29,8 @@ from infrahub_sync.client import (
     EventPage,
     EventResource,
     NotSyncAPIError,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanReportPageResource,
     PrincipalResource,
     ProtocolError,
@@ -1261,3 +1263,110 @@ def test_validate_config_refuses_a_branch_with_surrounding_whitespace(branch: st
     with pytest.raises(ClientInputError):
         client.validate_config("cfg", 1, branch=branch)
     assert requests == []
+
+
+def _package_check(**extra: object) -> dict[str, object]:
+    return {
+        "package_checksum": "b" * 64,
+        "name": "edge-sync",
+        "declared_content": {"format_version": 1, "configuration": {"name": "edge-sync"}},
+        "destination_read": "not_requested",
+        "destination_schema_fingerprint": None,
+        "offset": 0,
+        "limit": 256,
+        "total_findings": 1,
+        "next_offset": None,
+        "findings": [{"code": "finding", "severity": "warning", "location": "/a", "message": "a finding"}],
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("request_fields", "body"),
+    [
+        pytest.param(
+            {"package": {"format_version": 1, "configuration": {"name": "edge-sync"}}},
+            {"package": {"format_version": 1, "configuration": {"name": "edge-sync"}}},
+            id="package",
+        ),
+        pytest.param(
+            {"document": "format_version: 1\nconfiguration:\n  name: edge-sync\n"},
+            {"document": "format_version: 1\nconfiguration:\n  name: edge-sync\n"},
+            id="document",
+        ),
+    ],
+)
+def test_check_package_posts_exactly_one_field_without_an_idempotency_key(
+    request_fields: dict[str, object], body: dict[str, object]
+) -> None:
+    """contracts/sync-api.md: `POST /api/configs/validate` takes one of `package` and `document`."""
+    requests: list[httpx.Request] = []
+    client = _list_client({None: _package_check(destination_read="read")}, requests)
+
+    report = client.check_package(
+        PackageCheckRequest.model_validate(request_fields), offset=2, limit=3, branch="review"
+    )
+
+    (request,) = requests
+    assert (request.method, request.url.path) == ("POST", "/api/configs/validate")
+    assert dict(request.url.params) == {"offset": "2", "limit": "3", "branch": "review"}
+    assert json.loads(request.content) == body
+    assert "Idempotency-Key" not in request.headers
+    assert request.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert isinstance(report, PackageCheckResource)
+    assert report.destination_read == "read"
+    assert [finding.code for finding in report.findings] == ["finding"]
+
+
+def test_check_package_without_a_branch_sends_no_branch() -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({None: _package_check()}, requests)
+
+    client.check_package(PackageCheckRequest(package={"format_version": 1}))
+
+    assert dict(requests[0].url.params) == {"offset": "0", "limit": "256"}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"offset": -1}, id="negative-offset"),
+        pytest.param({"limit": 0}, id="zero-limit"),
+        pytest.param({"limit": 257}, id="limit-over-256"),
+        pytest.param({"branch": " main"}, id="untrimmed-branch"),
+        pytest.param({"branch": ""}, id="empty-branch"),
+    ],
+)
+def test_check_package_refuses_bad_page_or_branch_arguments_before_sending(arguments: dict[str, object]) -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({}, requests)
+
+    with pytest.raises(ClientInputError):
+        client.check_package(PackageCheckRequest(package={"format_version": 1}), **arguments)  # ty: ignore[invalid-argument-type]
+    assert requests == []
+
+
+def test_check_package_v2_refusal_is_a_configs_api_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            422,
+            json={
+                "error": {
+                    "code": "validation",
+                    "message": "run infrahub-sync configs convert",
+                    "status": 422,
+                    "family": "validation",
+                    "reason": "v2_configuration",
+                }
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ConfigsAPIError) as raised:
+        client.check_package(PackageCheckRequest(document="source: {}\ndestination: {}\n"))
+
+    assert raised.value.status == 422
+    assert raised.value.reason == "v2_configuration"
