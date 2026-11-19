@@ -281,6 +281,7 @@ $ infrahub-sync configs [OPTIONS] COMMAND [ARGS]...
 * `show`: Show a configuration or one of its versions.
 * `versions`: List a configuration&#x27;s versions, newest...
 * `validate`: Validate a registered configuration version.
+* `check`: Validate a JSON or YAML configuration...
 * `convert`: Convert a v1 or v2 config.yml into a V3...
 
 ### `infrahub-sync configs register`
@@ -400,6 +401,29 @@ $ infrahub-sync configs validate [OPTIONS] {CONFIG} {version}
 * `--offset <int>`: Finding offset.  [default: 0]
 * `--limit <int>`: Maximum findings to return.  [default: 256]
 * `--branch <str>`: Also check the mapping, the import account&#x27;s permissions and the workers&#x27; credential variables against this Infrahub branch. Exits 1 when a finding on the returned page is an error; read every page with --offset to check them all.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync configs check`
+
+Validate a JSON or YAML configuration package without registering it.
+
+Exits 1 when a finding is on the returned page; read every page with --offset to check them all.
+
+**Usage**:
+
+```console
+$ infrahub-sync configs check [OPTIONS] {package}
+```
+
+**Arguments**:
+
+* `package`: [required]
+
+**Options**:
+
+* `--offset <int>`: Finding offset.  [default: 0]
+* `--limit <int>`: Maximum findings to return.  [default: 256]
+* `--branch <str>`: Also check the mapping, the import account&#x27;s permissions and the workers&#x27; credential variables against this Infrahub branch. destination_read says whether the service read the branch&#x27;s schema.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs convert`
