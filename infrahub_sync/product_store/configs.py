@@ -682,6 +682,7 @@ def register(
     projection: ProductProjection,
     actor: str | None = None,
     reason: str | None = None,
+    registered_without_validation: bool = False,
     secrets: Sequence[str] = (),
 ) -> RegisteredConfiguration:
     """Register a brand-new declared configuration and return it with its first version.
@@ -692,11 +693,17 @@ def register(
     :func:`validate`. The caller supplies the durable-store :class:`ProductProjection`
     through ``projection``. ``actor`` and ``reason`` are recorded on the first version as
     who registered it and why, with every value in ``secrets`` redacted.
+    ``registered_without_validation`` marks the first version as registered without
+    validation; only the web interface's "Register without validation" sets it.
     """
     parsed = _parse(package)
     try:
         version = projection.create_configuration(
-            parsed, registered_by=actor, registration_reason=reason, secrets=secrets
+            parsed,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
+            secrets=secrets,
         )
     except CredentialConfigurationError as exc:
         raise _validation_refusal(exc, parsed) from None
@@ -717,6 +724,7 @@ def create_version(
     projection: ProductProjection,
     actor: str | None = None,
     reason: str | None = None,
+    registered_without_validation: bool = False,
     secrets: Sequence[str] = (),
 ) -> RegisteredVersion:
     """Add one version to an existing configuration, or return the identical stored one.
@@ -724,13 +732,19 @@ def create_version(
     ``package`` is declared JSON-native content; a prebuilt package instance is refused
     (:func:`_parse`). The caller supplies the durable-store :class:`ProductProjection`
     through ``projection``. ``actor`` and ``reason`` are recorded on a created version, with
-    every value in ``secrets`` redacted; an identical stored version keeps its own.
+    every value in ``secrets`` redacted, and ``registered_without_validation`` marks it; an
+    identical stored version keeps its own values.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     parsed = _parse(package)
     try:
         version, created = projection.add_configuration_version(
-            config_id, parsed, registered_by=actor, registration_reason=reason, secrets=secrets
+            config_id,
+            parsed,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
+            secrets=secrets,
         )
     except CredentialConfigurationError as exc:
         raise _validation_refusal(exc, parsed) from None

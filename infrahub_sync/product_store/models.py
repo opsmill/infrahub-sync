@@ -696,6 +696,8 @@ class ConfigurationVersionSummary(BaseModel):
     # before the store recorded them.
     registered_by: str | None = None
     registration_reason: str | None = None
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
     latest_run: RunReference | None = None
     latest_applied_run: RunReference | None = None
 
@@ -722,6 +724,8 @@ class ConfigurationVersion(BaseModel):
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     declared_content: dict[str, Any]
     created_at: datetime
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
 
     @field_validator("created_at")
     @classmethod

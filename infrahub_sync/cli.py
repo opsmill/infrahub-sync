@@ -609,6 +609,7 @@ def _echo_config_version_reference(
             ("registry_version", resource.registry_version),
             ("package_checksum", resource.package_checksum),
             ("created_at", resource.created_at.isoformat()),
+            ("registered_without_validation", resource.registered_without_validation),
         )
     )
 

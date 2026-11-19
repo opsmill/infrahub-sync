@@ -301,6 +301,23 @@ def test_configs_version_generates_and_discloses_retry_key(client: MagicMock, tm
     assert "created: true" in result.output
 
 
+def test_configs_version_prints_the_unvalidated_mark_and_never_sets_it(client: MagicMock, tmp_path: Path) -> None:
+    """Only the web interface marks a version; the CLI shows the mark it reads back (spec 025, US4)."""
+    package = tmp_path / "package.json"
+    package.write_text('{"name": "edge-sync"}', encoding="utf-8")
+    client.get_config_version.return_value = _version().model_copy(update={"registered_without_validation": True})
+
+    registered = _invoke(client, "configs", "version", "edge-sync", str(package))
+    shown = _invoke(client, "configs", "show", "edge-sync", "--version", "1")
+
+    assert registered.exit_code == 0, registered.output
+    assert shown.exit_code == 0, shown.output
+    _config_id, request, _key = client.create_config_version.call_args.args
+    assert request.registered_without_validation is False
+    assert "registered_without_validation: false" in registered.output
+    assert "registered_without_validation: true" in shown.output
+
+
 def test_configuration_reads_and_validation_keep_machine_fields_and_finding_order(client: MagicMock) -> None:
     listed = _invoke(client, "configs", "list")
     summary = _invoke(client, "configs", "show", "edge-sync")

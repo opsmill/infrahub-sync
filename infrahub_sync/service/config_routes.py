@@ -212,24 +212,43 @@ class ConfigurationRoutes:
             raise ConfigurationAPIError(503, "configs") from None
 
     def register(
-        self, package: dict[str, Any], *, actor: str | None = None, reason: str | None = None
+        self,
+        package: dict[str, Any],
+        *,
+        actor: str | None = None,
+        reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> RegisteredConfigurationResource:
         """Register a package and return its configuration and first version.
 
         ``actor`` and ``reason`` are recorded on the first version, with this server's
-        secrets redacted.
+        secrets redacted; ``registered_without_validation`` marks it.
         """
 
-        result = self._call(self._service.register, package=package, actor=actor, reason=reason, secrets=self._secrets)
+        result = self._call(
+            self._service.register,
+            package=package,
+            actor=actor,
+            reason=reason,
+            registered_without_validation=registered_without_validation,
+            secrets=self._secrets,
+        )
         return RegisteredConfigurationResource.model_validate(result, from_attributes=True)
 
     def create_version(
-        self, config_id: str, package: dict[str, Any], *, actor: str | None = None, reason: str | None = None
+        self,
+        config_id: str,
+        package: dict[str, Any],
+        *,
+        actor: str | None = None,
+        reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> RegisteredVersionResource:
         """Create or retrieve an identical registered configuration version.
 
         ``actor`` and ``reason`` are recorded on a created version, with this server's
-        secrets redacted.
+        secrets redacted; ``registered_without_validation`` marks it. An identical stored
+        version keeps its own values.
         """
 
         result = self._call(
@@ -238,6 +257,7 @@ class ConfigurationRoutes:
             package=package,
             actor=actor,
             reason=reason,
+            registered_without_validation=registered_without_validation,
             secrets=self._secrets,
         )
         return RegisteredVersionResource.model_validate(result, from_attributes=True)
@@ -404,25 +424,31 @@ class ConfigurationRoutes:
         resource_id: str,
         package: dict[str, Any],
         reason: str | None,
+        registered_without_validation: bool = False,
     ) -> tuple[int, dict[str, Any]]:
-        """Persist one configuration mutation response and replay it exactly."""
+        """Persist one configuration mutation response and replay it exactly.
+
+        A key reused with a different ``registered_without_validation`` is refused as for a
+        different reason. The fingerprint carries the mark only when it is ``true``, so an
+        unmarked request keeps the fingerprint that receipts stored before the mark existed
+        were given, and their retries still replay.
+        """
         now = datetime.now(timezone.utc)
+        fingerprinted: dict[str, Any] = {
+            "resource_kind": resource_kind,
+            "resource_id": resource_id,
+            "operation": operation,
+            "package": package,
+            "reason": reason,
+        }
+        if registered_without_validation:
+            fingerprinted["registered_without_validation"] = True
         receipt = MutationReceipt(
             receipt_id=f"m-{uuid4().hex}",
             actor=actor,
             key_digest=sha256(idempotency_key.encode()).hexdigest(),
             operation=operation,
-            request_fingerprint=sha256(
-                canonical_json_bytes(
-                    {
-                        "resource_kind": resource_kind,
-                        "resource_id": resource_id,
-                        "operation": operation,
-                        "package": package,
-                        "reason": reason,
-                    }
-                )
-            ).hexdigest(),
+            request_fingerprint=sha256(canonical_json_bytes(fingerprinted)).hexdigest(),
             reason=reason,
             resource_kind=resource_kind,
             resource_id=resource_id,
@@ -452,11 +478,19 @@ class ConfigurationRoutes:
             raise ServiceAPIError(409, "idempotency-in-progress", "the matching request is still being processed")
         try:
             if operation == "register-config":
-                result = self.register(package, actor=actor, reason=reason)
+                result = self.register(
+                    package, actor=actor, reason=reason, registered_without_validation=registered_without_validation
+                )
                 response_status = 201
                 event_type = CONFIG_REGISTERED
             else:
-                result = self.create_version(resource_id, package, actor=actor, reason=reason)
+                result = self.create_version(
+                    resource_id,
+                    package,
+                    actor=actor,
+                    reason=reason,
+                    registered_without_validation=registered_without_validation,
+                )
                 response_status = 201 if result.created else 200
                 event_type = CONFIG_VERSION_REGISTERED if result.created else CONFIG_VERSION_RETRIEVED
         except ConfigurationAPIError as error:
@@ -586,6 +620,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
             resource_id="configs",
             package=body.package,
             reason=body.reason,
+            registered_without_validation=body.registered_without_validation,
         )
         return JSONResponse(status_code=status, content=content)
 
@@ -638,6 +673,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
             resource_id=config_id,
             package=body.package,
             reason=body.reason,
+            registered_without_validation=body.registered_without_validation,
         )
         return JSONResponse(status_code=status, content=content)
 

@@ -22,6 +22,7 @@ from infrahub_sync.configuration import schema_validation
 from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationSchemaReadError
 from infrahub_sync.configuration.models import ValidationFinding
 from infrahub_sync.configuration.validation import collect_findings
+from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     ConfigurationPage,
     PrimaryResource,
@@ -2104,3 +2105,130 @@ def test_the_check_route_is_not_taken_for_a_configuration_id(tmp_path: Path, mon
 
     assert client.get("/configs/validate").status_code == 404
     assert client.post("/configs/validate", json={"package": package_data()}).status_code == 200
+
+
+# The "registered without validation" mark (spec 025, User Story 4).
+
+
+def _version_marks(client: TestClient, config_id: str) -> dict[str, dict[int, bool]]:
+    """Return each version's mark from the version list and from each version's own resource."""
+    listed = client.get(f"/configs/{config_id}/versions").json()["items"]
+    single: dict[int, bool] = {}
+    for item in listed:
+        response = client.get(f"/configs/{config_id}/versions/{item['registry_version']}")
+        assert response.status_code == 200, response.text
+        single[item["registry_version"]] = response.json()["registered_without_validation"]
+    return {"list": {item["registry_version"]: item["registered_without_validation"] for item in listed}, "get": single}
+
+
+def test_registration_accepts_the_mark_and_every_version_resource_returns_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+
+    registered = client.post(
+        "/configs",
+        headers={"Idempotency-Key": "register-unvalidated"},
+        json={"package": package_data(), "registered_without_validation": True},
+    )
+    assert registered.status_code == 201, registered.text
+    config_id = registered.json()["configuration"]["config_id"]
+    added = client.post(
+        f"/configs/{config_id}/versions",
+        headers={"Idempotency-Key": "version-unvalidated"},
+        json={"package": _named_package("second", "https://second.netbox.test"), "registered_without_validation": True},
+    )
+
+    assert added.status_code == 201, added.text
+    assert registered.json()["version"]["registered_without_validation"] is True
+    assert added.json()["version"]["registered_without_validation"] is True
+    assert _version_marks(client, config_id) == {"list": {1: True, 2: True}, "get": {1: True, 2: True}}
+
+
+def test_the_mark_defaults_to_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+
+    config_id = _register(client, package_data(), "register-validated")
+    added = client.post(
+        f"/configs/{config_id}/versions",
+        headers={"Idempotency-Key": "version-validated"},
+        json={"package": _named_package("second", "https://second.netbox.test")},
+    )
+
+    assert added.status_code == 201, added.text
+    assert added.json()["version"]["registered_without_validation"] is False
+    assert _version_marks(client, config_id) == {"list": {1: False, 2: False}, "get": {1: False, 2: False}}
+
+
+def test_an_identical_version_request_with_the_mark_returns_the_existing_version_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    config_id = _register(client, package_data(), "register-validated")
+
+    again = client.post(
+        f"/configs/{config_id}/versions",
+        headers={"Idempotency-Key": "identical-unvalidated"},
+        json={"package": package_data(), "registered_without_validation": True},
+    )
+
+    assert again.status_code == 200, again.text
+    assert again.json()["created"] is False
+    assert again.json()["version"]["registered_without_validation"] is False
+    assert _version_marks(client, config_id) == {"list": {1: False}, "get": {1: False}}
+
+
+@pytest.mark.parametrize(
+    ("first_mark", "retry_mark"),
+    [
+        pytest.param({"registered_without_validation": True}, {}, id="true-then-absent"),
+        pytest.param({}, {"registered_without_validation": True}, id="absent-then-true"),
+        pytest.param(
+            {"registered_without_validation": False}, {"registered_without_validation": True}, id="false-then-true"
+        ),
+    ],
+)
+def test_a_key_reused_with_a_different_mark_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_mark: dict[str, object], retry_mark: dict[str, object]
+) -> None:
+    client, projection = _discovery_client(tmp_path, monkeypatch)
+    headers = {"Idempotency-Key": "register-mark-conflict"}
+
+    first = client.post("/configs", headers=headers, json={"package": package_data(), **first_mark})
+    retry = client.post("/configs", headers=headers, json={"package": package_data(), **retry_mark})
+
+    assert first.status_code == 201, first.text
+    assert retry.status_code == 409, retry.text
+    assert retry.json()["error"]["code"] == "idempotency-conflict"
+    assert len(projection.list_configurations()) == 1
+
+
+@pytest.mark.parametrize(
+    "body_mark",
+    [pytest.param({}, id="absent"), pytest.param({"registered_without_validation": False}, id="explicit-false")],
+)
+def test_an_unmarked_request_keeps_the_fingerprint_of_receipts_stored_before_the_mark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body_mark: dict[str, object]
+) -> None:
+    """A receipt stored by an earlier build fingerprinted five keys; an unmarked retry must still match it."""
+    client, projection = _discovery_client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/configs", headers={"Idempotency-Key": "pre-mark-receipt"}, json={"package": package_data(), **body_mark}
+    )
+
+    assert response.status_code == 201, response.text
+    receipt = projection.lookup_mutation("admin", sha256(b"pre-mark-receipt").hexdigest()).value
+    assert receipt is not None
+    pre_mark_fingerprint = sha256(
+        canonical_json_bytes(
+            {
+                "resource_kind": "configuration-registry",
+                "resource_id": "configs",
+                "operation": "register-config",
+                "package": package_data(),
+                "reason": None,
+            }
+        )
+    ).hexdigest()
+    assert receipt.request_fingerprint == pre_mark_fingerprint

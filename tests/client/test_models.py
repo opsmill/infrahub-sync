@@ -205,6 +205,23 @@ def test_a_valid_configuration_reason_is_kept_unchanged() -> None:
     assert request.reason == "register inventory"
 
 
+def test_a_configuration_request_carries_the_unvalidated_mark_and_defaults_it_to_false() -> None:
+    """The web interface sets the mark when it registers without validation (spec 025, US4)."""
+    default = ConfigMutationRequest(package={"format_version": 1})
+    marked = ConfigMutationRequest(package={"format_version": 1}, registered_without_validation=True)
+
+    assert default.registered_without_validation is False
+    # An unmarked request keeps the body a Sync API without the field accepts.
+    assert "registered_without_validation" not in default.model_dump(mode="json")
+    assert marked.model_dump(mode="json")["registered_without_validation"] is True
+    assert (
+        ConfigMutationRequest.model_validate({"package": {"format_version": 1}, "registered_without_validation": True})
+        == marked
+    )
+    with pytest.raises(ValidationError):
+        ConfigMutationRequest(package={"format_version": 1}, registered_without_validation="yes")  # ty: ignore[invalid-argument-type]
+
+
 def _public_run(**extra: object) -> dict[str, object]:
     return {
         "run_id": "run-1",

@@ -235,11 +235,17 @@ def _json_native_package(value: dict[str, Any]) -> dict[str, Any]:
 
 
 class ConfigMutationRequest(_RequestModel):
-    """Submit a configuration package with an optional audit reason."""
+    """Submit a configuration package with an optional audit reason.
+
+    ``registered_without_validation`` marks the created version as registered without
+    validation. The web interface sets it; the CLI never does. A request without the mark
+    keeps today's body, so it is omitted when ``false``.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
     package: dict[str, Any]
     reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
+    registered_without_validation: StrictBool = False
 
     @field_validator("reason")
     @classmethod
@@ -252,6 +258,15 @@ class ConfigMutationRequest(_RequestModel):
     @classmethod
     def _require_json_package(cls, value: dict[str, Any]) -> dict[str, Any]:
         return _json_native_package(value)
+
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
+    @model_serializer(mode="wrap")
+    def _omit_an_unset_mark(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if not self.registered_without_validation:
+            data.pop("registered_without_validation", None)
+        return data
 
 
 class PackageCheckRequest(_RequestModel):
@@ -1238,6 +1253,8 @@ class ConfigurationVersionSummaryResource(_ResourceModel):
     # ``None`` for versions registered before the server recorded who registered them and why.
     registered_by: str | None = None
     registration_reason: str | None = None
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
     latest_run: RunReference | None = None
     latest_applied_run: RunReference | None = None
 
@@ -1264,6 +1281,8 @@ class ConfigurationVersionResource(_ResourceModel):
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     declared_content: dict[str, Any]
     created_at: datetime
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
 
     @field_validator("created_at")
     @classmethod
@@ -1285,6 +1304,8 @@ class ConfigurationVersionReferenceResource(_ResourceModel):
     registry_version: int = Field(ge=1)
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     created_at: datetime
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
 
     @field_validator("created_at")
     @classmethod
