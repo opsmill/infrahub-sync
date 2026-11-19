@@ -1,0 +1,35 @@
+dev/adr/0051-a-package-can-be-validated-before-it-is-registered.md
+  s_eefe1fec4652ae::t_346970686bd0bd 1-92
+docs/docs/configuration-package.mdx
+  s_eefe1fec4652ae::t_8c0c39471675bb 189-190
+  s_eefe1fec4652ae::t_f298c898ddf024 128-178
+  s_eefe1fec4652ae::t_0af583475c20f5 117-119
+docs/docs/reference/sync-http-api.mdx
+  s_eefe1fec4652ae::t_38f659fde4df85 460-462
+  s_eefe1fec4652ae::t_4e7ecd592ee6c2 477
+  s_eefe1fec4652ae::t_fef314306a54c6 513-514
+docs/docs/reference/python-api.mdx
+  s_eefe1fec4652ae::t_9033e34d9b8e69 80-82
+dev/adr/README.md
+  s_eefe1fec4652ae::t_fdfce2921a9bee 147-150
+changelog/+validate-config-package.added.md
+  s_eefe1fec4652ae::t_ea6f18073b79e9 1
+docs/docs/reference/cli.mdx
+  s_eefe1fec4652ae::t_9476ef2c52925c 217,339-361
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a52a79ef9f739a85041420efd06ec5d7fcb0d6ca",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
