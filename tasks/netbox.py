@@ -467,9 +467,9 @@ def local_package_text(shipped: str, netbox: str, infrahub: str) -> str:
         raise NetboxError(str(error)) from error
 
 
-def _ready(context: Context, values: dict[str, str]) -> None:
-    """Connect the dev stack's worker, if it exists, then print the URL and token banner."""
-    worker_attached = attach_dev_worker(context, values)
+def _ready(context: Context, values: dict[str, str], project: str = DEV_STACK_PROJECT) -> None:
+    """Connect the worker of the dev stack's project, if it exists, then print the URL and token banner."""
+    worker_attached = attach_dev_worker(context, values, project)
     print(f" - [{NAMESPACE}] NetBox ready")
     print(f"     URL:   {netbox_url(values)}")
     if worker_attached:
@@ -477,10 +477,10 @@ def _ready(context: Context, values: dict[str, str]) -> None:
     print(f"     Token: {netbox_token(values)}")
 
 
-def _start_netbox(context: Context, values: dict[str, str]) -> None:
+def _start_netbox(context: Context, values: dict[str, str], project: str = DEV_STACK_PROJECT) -> None:
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
-    _ready(context, values)
+    _ready(context, values, project)
 
 
 def netbox_state(context: Context, values: dict[str, str]) -> Literal["absent", "stopped", "running"]:
@@ -507,7 +507,7 @@ def netbox_state(context: Context, values: dict[str, str]) -> Literal["absent", 
     return "absent"
 
 
-def ensure_netbox(context: Context, values: dict[str, str]) -> None:
+def ensure_netbox(context: Context, values: dict[str, str], project: str = DEV_STACK_PROJECT) -> None:
     """Make the local NetBox run for the development stack, without replacing data it holds.
 
     A running NetBox is left as it is. A stopped NetBox, or one whose data volume remains,
@@ -516,15 +516,19 @@ def ensure_netbox(context: Context, values: dict[str, str]) -> None:
     and NetBox starts against the restored data instead of migrating an empty database. When
     that restore fails, the NetBox it created is removed with its volumes, so the next start
     restores again instead of starting a partial database.
+
+    `project` names the development stack whose worker joins NetBox's network. The caller
+    passes its resolved project, so a stack started under another project name never
+    attaches the worker of the default `infrahub-sync-dev` project.
     """
     state = netbox_state(context, values)
     if state == "running":
         print(f" - [{NAMESPACE}] NetBox already runs; its data is kept")
-        _ready(context, values)
+        _ready(context, values, project)
         return
     if state == "stopped":
         print(f" - [{NAMESPACE}] Starting the existing local NetBox; its data is kept")
-        _start_netbox(context, values)
+        _start_netbox(context, values, project)
         return
     print(f" - [{NAMESPACE}] No local NetBox exists; creating one with the {DEMO_DATASET!r} dataset")
     sql_file = fetch_demo_sql()
@@ -538,7 +542,7 @@ def ensure_netbox(context: Context, values: dict[str, str]) -> None:
             # next start read NetBox as stopped and start it on a partial database, so remove it.
             print(f" - [{NAMESPACE}] The restore failed; removing the partial local NetBox")
             _compose(context, "down --volumes", values)
-    _ready(context, values)
+    _ready(context, values, project)
 
 
 @task(name="start")

@@ -38,7 +38,7 @@ REQUIRED_VALUES = {
 def isolated_tier_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Isolate generated tier files and suppress live worker connections."""
     monkeypatch.setattr(netbox, "STATE_DIR", tmp_path / "state")
-    monkeypatch.setattr(netbox, "attach_dev_worker", lambda _context, _values: False)
+    monkeypatch.setattr(netbox, "attach_dev_worker", lambda _context, _values, _project=netbox.DEV_STACK_PROJECT: False)
     monkeypatch.setattr(netbox, "detach_dev_worker", lambda _context, _values: None)
 
 

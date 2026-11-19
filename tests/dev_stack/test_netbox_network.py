@@ -188,7 +188,11 @@ def test_netbox_start_connects_the_worker_once_netbox_is_ready(
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: VALUES)
     monkeypatch.setattr(netbox, "_compose", lambda *_args: events.append("compose"))
     monkeypatch.setattr(netbox, "_wait_for_http", lambda *_args: events.append("wait"))
-    monkeypatch.setattr(netbox, "attach_dev_worker", lambda _context, _values: events.append("attach") or True)
+    monkeypatch.setattr(
+        netbox,
+        "attach_dev_worker",
+        lambda _context, _values, _project=netbox.DEV_STACK_PROJECT: events.append("attach") or True,
+    )
 
     cast("Task", netbox.start).body(Context())
 

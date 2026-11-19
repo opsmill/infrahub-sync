@@ -868,7 +868,7 @@ def _seed_settings(context: Context) -> DevSettings:
 def _start_netbox(context: Context, settings: DevSettings) -> None:
     """Make the local NetBox run when the preset includes it, before the worker is created."""
     if settings.preset.netbox:
-        ensure_netbox(context, load_netbox_env())
+        ensure_netbox(context, load_netbox_env(), settings.project)
 
 
 def _seed_preview(context: Context, settings: DevSettings) -> None:

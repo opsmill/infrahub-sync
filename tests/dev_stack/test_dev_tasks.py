@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from contextlib import nullcontext
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -954,3 +955,17 @@ def test_dev_demo_shows_the_last_lines_of_a_preparation_that_printed_no_json_obj
     assert "warning: printed instead" in str(raised.value)
     assert "line two" in str(raised.value)
     assert "line one" not in str(raised.value)
+
+
+def test_a_preset_with_netbox_passes_the_stack_project_to_netbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NetBox attaches the worker of the stack's resolved project, not the default `infrahub-sync-dev`."""
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(dev, "load_netbox_env", lambda: {"COMPOSE_PROJECT_NAME": "netbox-dev"})
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *args: calls.append(args[1:]))
+    settings = cast(
+        "dev.DevSettings", SimpleNamespace(preset=SimpleNamespace(netbox=True), project="infrahub-sync-024")
+    )
+
+    dev._start_netbox(Context(), settings)
+
+    assert calls == [({"COMPOSE_PROJECT_NAME": "netbox-dev"}, "infrahub-sync-024")]
