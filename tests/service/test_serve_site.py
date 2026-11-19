@@ -84,7 +84,8 @@ def test_build_service_serves_the_web_interface_named_by_the_environment(
 def test_build_service_passes_the_schedule_service_factory_to_the_api(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": "serve-site-token-0003", "administrator": True}}))
+    monkeypatch.setenv(ADMIN_ACCOUNT_PASSWORD_ENV, "serve-site-password-0003")
+    monkeypatch.delenv(ADMIN_ACCOUNT_TOKEN_ENV, raising=False)
     monkeypatch.delenv(WEB_DIRECTORY_ENV, raising=False)
     monkeypatch.delenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", raising=False)
     monkeypatch.setattr(serve, "create_site", lambda api, _directory: api)

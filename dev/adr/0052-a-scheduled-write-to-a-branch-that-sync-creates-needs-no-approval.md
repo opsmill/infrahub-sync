@@ -13,7 +13,7 @@ Amends [ADR 0037](0037-an-approval-is-a-record-on-the-run.md).
 refuse a `sync` (`409 approval-required-for-sync`), and states that only the Sync API checks the
 approval, when it admits a request.
 
-A scheduled run is a `sync` with no person present to approve its plan. Version 1.1.0 of the
+A scheduled run is a `sync` with no person present to approve its plan. Version 1.2.0 of the
 constitution (principle I) accepts one of two human approvals for it:
 
 - the merge, in Infrahub, of the proposed change that the run opens, when the run writes to a

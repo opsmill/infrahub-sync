@@ -155,6 +155,12 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0053 — A scheduled start that waits stores its Prefect state and ends its flow run with the `Pause` signal](0053-a-waiting-scheduled-start-ends-its-flow-run-with-the-pause-signal.md)
   — why a start that waits for a running run or for its destination sets `AwaitingRetry` itself
   and raises `Pause`, and why returning the state fails under a process worker.
+- [0049 — Sign-in uses local accounts in the product store, and the environment defines the `admin` account](0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md)
+  — why accounts with passwords, API tokens and sessions replace the tokens of the environment,
+  why `admin` follows its variables at each start, and why the old variable is removed at once.
+- [0050 — A record holds an account identifier, and a deletion empties the account row](0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md)
+  — why records hold `acct_` identifiers that one middleware shows as names, and why a deletion
+  changes no past record.
 
 ## Related
 

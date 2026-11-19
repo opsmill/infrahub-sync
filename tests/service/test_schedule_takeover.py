@@ -1,13 +1,12 @@
 """Taking over a schedule, and the report of a newer configuration version (spec 021, user story 3).
 
-Scenario 7: an administrator takes over a schedule that stopped because its owner's actor no
-longer exists, and the next start produces a run of the administrator. Scenario 6: the schedule
+Scenario 7: an administrator takes over a schedule that stopped because its owner's account is
+disabled, and the next start produces a run of the administrator. Scenario 6: the schedule
 reports a newer registered version and still runs its own (FR-007, FR-026).
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -21,13 +20,11 @@ pytest.importorskip("fastapi")
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.product_store import ExecutionFinishWriteback, ProductRun, RunFilters
 from infrahub_sync.service import flow as service_flow
-from infrahub_sync.service.auth import PRINCIPALS_ENV
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.service.schedule_fixtures import (
     ADMIN_TOKEN,
     OTHER_TOKEN,
     OWNER_TOKEN,
-    PRINCIPALS,
     WORKER_ID,
     ScheduleApi,
     package,
@@ -38,7 +35,6 @@ from tests.service.schedule_fixtures import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-WITHOUT_OWNER = {name: entry for name, entry in PRINCIPALS.items() if name != "owner"}
 TAKEN_OVER = "infrahub_sync.schedule.taken_over"
 
 
@@ -47,9 +43,9 @@ def _api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ScheduleApi:
     return schedule_api(monkeypatch, tmp_path)
 
 
-def _restart(api: ScheduleApi, monkeypatch: pytest.MonkeyPatch, principals: dict[str, dict[str, Any]]) -> ScheduleApi:
-    """Start a new API process with another set of actors, and run the step of its start."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps(principals))
+def _restart_without_owner(api: ScheduleApi) -> ScheduleApi:
+    """Disable the owner's account, start a new API process and run the step of its start."""
+    api.disable("owner")
     again = restarted(api)
     with again.client:
         pass
@@ -95,7 +91,7 @@ def test_an_administrator_takes_over_a_stopped_schedule_and_the_next_start_runs(
 ) -> None:
     """Scenario 7."""
     schedule_id = api.create(write_target="default-branch")["schedule_id"]
-    again = _restart(api, monkeypatch, WITHOUT_OWNER)
+    again = _restart_without_owner(api)
     assert again.stored(schedule_id).state_reason == "owner-not-found"
 
     response = again.post(schedule_id, "take-over", ADMIN_TOKEN, reason="the owner left the team")
@@ -109,7 +105,7 @@ def test_an_administrator_takes_over_a_stopped_schedule_and_the_next_start_runs(
     assert len(events) == 1
     (event,) = events
     assert (event.actor, event.operation, event.outcome, event.reason) == (
-        "admin",
+        again.account_id("admin"),
         "schedule-take-over",
         "accepted",
         "the owner left the team",
@@ -120,7 +116,7 @@ def test_an_administrator_takes_over_a_stopped_schedule_and_the_next_start_runs(
 
     assert isinstance(result, dict)
     (run,) = _runs(again, schedule_id)
-    assert run.actor == "admin"
+    assert run.actor == again.account_id("admin")
 
 
 def test_a_take_over_keeps_a_default_branch_schedule_stopped_while_approval_is_required(
@@ -128,7 +124,7 @@ def test_a_take_over_keeps_a_default_branch_schedule_stopped_while_approval_is_r
 ) -> None:
     """FR-002: the schedule could write to the default branch with no approved plan; it stays stopped."""
     schedule_id = api.create(write_target="default-branch")["schedule_id"]
-    again = _restart(api, monkeypatch, WITHOUT_OWNER)
+    again = _restart_without_owner(api)
     assert again.stored(schedule_id).state_reason == "owner-not-found"
     monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
 
@@ -142,7 +138,7 @@ def test_a_take_over_keeps_a_default_branch_schedule_stopped_while_approval_is_r
         event for event in again.projection.audit_events() if event.event_type == "infrahub_sync.schedule.stopped"
     ]
     assert [(event.actor, event.operation, event.outcome) for event in stopped[1:]] == [
-        ("admin", "schedule-take-over", "approval-required")
+        (again.account_id("admin"), "schedule-take-over", "approval-required")
     ]
     assert TAKEN_OVER in again.event_types()
 
@@ -154,7 +150,7 @@ def test_a_take_over_of_an_active_schedule_changes_only_the_owner(api: ScheduleA
 
     assert response.status_code == 200, response.text
     stored = api.stored(schedule_id)
-    assert (stored.owner, stored.state, stored.state_reason) == ("admin", "active", None)
+    assert (stored.owner, stored.state, stored.state_reason) == (api.account_id("admin"), "active", None)
 
 
 def test_a_take_over_leaves_a_schedule_stopped_for_another_reason_stopped(api: ScheduleApi) -> None:
@@ -181,7 +177,7 @@ def test_a_caller_who_is_not_an_administrator_is_refused(api: ScheduleApi, token
 
     assert response.status_code == 403, response.text
     assert response.json()["error"]["code"] == "forbidden"
-    assert api.stored(schedule_id).owner == "owner"
+    assert api.stored(schedule_id).owner == api.account_id("owner")
     refused = api.projection.audit_events()[-1]
     assert (refused.event_type, refused.operation, refused.outcome) == (
         "infrahub_sync.schedule.refused",

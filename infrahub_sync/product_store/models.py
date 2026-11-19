@@ -771,7 +771,7 @@ RunPage: TypeAlias = StorePage[ProductRun]
 
 
 # An event's dotted type, ``infrahub_sync.<resource>.<action>`` (spec 012, FR-012).
-EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|schedule)\.[a-z_]+$"
+EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|schedule|account)\.[a-z_]+$"
 # The kinds of resource an event names besides its primary resource, in the order an event lists them.
 RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "schedule", "branch"]
 _RELATED_KIND_ORDER: dict[str, int] = {"account": 0, "config": 1, "config_version": 2, "schedule": 3, "branch": 4}
@@ -1218,6 +1218,9 @@ ScheduledStartNotRunCause: TypeAlias = Literal[
     # The worker's own check of research R6: the schedule writes to the default branch while the
     # Sync API requires approval. The admission also stops the schedule with this reason.
     "approval-required",
+    # The owner's account is disabled or deleted, so no run can act as the owner. The admission
+    # also stops the schedule with this reason.
+    "owner-not-found",
 ]
 
 

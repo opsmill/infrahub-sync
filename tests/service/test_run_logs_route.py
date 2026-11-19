@@ -25,6 +25,7 @@ from infrahub_sync.service.orchestration import (
     Submission,
 )
 from infrahub_sync.service.service import RunService
+from tests.service.accounts import seed_accounts
 from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:

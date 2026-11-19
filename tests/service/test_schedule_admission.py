@@ -29,6 +29,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service import schedule_admission
+from infrahub_sync.service.events import ACCOUNT_DELETED, account_event
 from infrahub_sync.service.schedule_admission import MISSED_STARTS_RECORDED_ONE_BY_ONE
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.service.schedule_fixtures import OWNER_TOKEN, WORKER_ID, ScheduleApi, headers, package, schedule_api
@@ -69,7 +70,7 @@ def _schedule(
                 "timezone": "UTC",
                 "write_target": write_target,
                 "state": "active",
-                "owner": "owner",
+                "owner": api.account_id("owner"),
                 "created_at": created,
                 "updated_at": created,
             }
@@ -156,7 +157,7 @@ def test_a_scheduled_flow_run_creates_one_run_of_the_owner_for_the_version(
     (run,) = _runs(api, schedule_id)
     assert run.run_id == result["run_id"]
     assert (run.trigger_type, run.schedule_id, run.scheduled_start_at) == ("scheduled", schedule_id, T0)
-    assert run.actor == "owner"
+    assert run.actor == api.account_id("owner")
     assert (run.config_id, run.registry_version, run.operation) == (api.config_id, 1, "sync")
     assert run.started_at == T0 + ON_TIME
     (accepted,) = [event for event in _events(api, "infrahub_sync.run.accepted") if event.run_id == run.run_id]
@@ -280,7 +281,11 @@ def test_reject_skips_the_start_and_names_the_run_in_progress(
     assert _completed(state)
     assert _runs(api, schedule_id) == []
     (skipped,) = _events(api, "infrahub_sync.schedule.start_skipped")
-    assert (skipped.run_id, skipped.outcome, skipped.actor) == (in_progress, "skipped-run-in-progress", "owner")
+    assert (skipped.run_id, skipped.outcome, skipped.actor) == (
+        in_progress,
+        "skipped-run-in-progress",
+        api.account_id("owner"),
+    )
     assert skipped.details is not None
     assert skipped.details.start_at == T0
 
@@ -516,6 +521,42 @@ def test_a_resume_of_a_stopped_schedule_sets_the_count_to_zero(
     assert (stored.state, stored.consecutive_failures) == ("active", 0)
 
 
+def _delete_account(api: ScheduleApi, name: str) -> None:
+    """Delete the account with this name, as an administrator does while the Sync API runs."""
+    account_id = api.account_id(name)
+    event = account_event(ACCOUNT_DELETED, actor=api.account_id("admin"), account_id=account_id, operation="delete")
+    assert api.projection.delete_account(account_id, event=event) is not None
+
+
+@pytest.mark.parametrize("change", ["disable", "delete"])
+def test_the_worker_stops_a_schedule_whose_owner_cannot_act(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, change: str
+) -> None:
+    """An administrator disables or deletes the owner's account while the Sync API runs: no run acts as the owner."""
+    schedule_id = _schedule(api)
+    owner_id = api.account_id("owner")
+    if change == "disable":
+        api.disable("owner")
+    else:
+        _delete_account(api, "owner")
+    executed: list[str] = []
+
+    def execute(run_id: str, stage: str, *_args: object, **_kwargs: object) -> tuple[dict[str, Any], Any]:
+        executed.append(run_id)
+        return _succeeded()(run_id, stage)
+
+    state = _start(monkeypatch, api, schedule_id, T0, execute=execute)
+
+    assert _completed(state)
+    assert (executed, _runs(api, schedule_id)) == ([], [])
+    stored = api.stored(schedule_id)
+    assert (stored.state, stored.state_reason, stored.prefect_synced) == ("stopped", "owner-not-found", False)
+    (skipped,) = _events(api, "infrahub_sync.schedule.start_skipped")
+    assert (skipped.outcome, skipped.run_id, skipped.actor) == ("skipped-owner-not-found", None, owner_id)
+    (stopped,) = _events(api, "infrahub_sync.schedule.stopped")
+    assert (stopped.outcome, stopped.operation, stopped.actor) == ("owner-not-found", "schedule-start", owner_id)
+
+
 def test_the_worker_stops_a_default_branch_schedule_while_approval_is_required(
     monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
 ) -> None:
@@ -535,9 +576,17 @@ def test_the_worker_stops_a_default_branch_schedule_while_approval_is_required(
     stored = api.stored(schedule_id)
     assert (stored.state, stored.state_reason, stored.prefect_synced) == ("stopped", "approval-required", False)
     (skipped,) = _events(api, "infrahub_sync.schedule.start_skipped")
-    assert (skipped.outcome, skipped.run_id, skipped.actor) == ("skipped-approval-required", None, "owner")
+    assert (skipped.outcome, skipped.run_id, skipped.actor) == (
+        "skipped-approval-required",
+        None,
+        api.account_id("owner"),
+    )
     (stopped,) = _events(api, "infrahub_sync.schedule.stopped")
-    assert (stopped.outcome, stopped.operation, stopped.actor) == ("approval-required", "schedule-start", "owner")
+    assert (stopped.outcome, stopped.operation, stopped.actor) == (
+        "approval-required",
+        "schedule-start",
+        api.account_id("owner"),
+    )
 
 
 def test_the_worker_runs_a_branch_review_schedule_while_approval_is_required(

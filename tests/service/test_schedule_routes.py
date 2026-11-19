@@ -229,7 +229,7 @@ def test_the_stored_schedule_holds_the_request_and_no_token(api: ScheduleApi) ->
 
     assert (stored.name, stored.owner, stored.cron, stored.timezone) == (
         "from-netbox-nightly",
-        "owner",
+        api.account_id("owner"),
         "0 2 * * *",
         "Europe/Paris",
     )
@@ -677,9 +677,9 @@ def test_each_accepted_request_writes_the_event_of_its_operation(api: ScheduleAp
         ("infrahub_sync.schedule.deleted", "schedule-delete", "accepted"),
     ]
     first = events[0]
-    assert (first.actor, first.reason, first.run_id) == ("owner", "nightly import", None)
+    assert (first.actor, first.reason, first.run_id) == (api.account_id("owner"), "nightly import", None)
     assert {(resource.kind, resource.id) for resource in first.related} == {
-        ("account", "owner"),
+        ("account", api.account_id("owner")),
         ("config", api.config_id),
         ("config_version", f"{api.config_id}@1"),
         ("schedule", schedule_id),
@@ -714,10 +714,10 @@ def test_each_refused_request_writes_one_refused_event(api: ScheduleApi) -> None
     refused = [event for event in api.projection.audit_events() if event.event_type == "infrahub_sync.schedule.refused"]
 
     assert [(event.operation, event.outcome, event.actor) for event in refused] == [
-        ("schedule-create", "refused-schedule-exists-for-configuration", "owner"),
-        ("schedule-create", "refused-schedule-cron-invalid", "owner"),
-        ("schedule-pause", "refused-authorization", "other"),
-        ("schedule-pause", "refused-schedule-not-found", "owner"),
+        ("schedule-create", "refused-schedule-exists-for-configuration", api.account_id("owner")),
+        ("schedule-create", "refused-schedule-cron-invalid", api.account_id("owner")),
+        ("schedule-pause", "refused-authorization", api.account_id("other")),
+        ("schedule-pause", "refused-schedule-not-found", api.account_id("owner")),
     ]
     assert api.event_types().count("infrahub_sync.schedule.created") == 1
 
@@ -735,18 +735,20 @@ def test_a_replayed_request_writes_one_replayed_event(api: ScheduleApi) -> None:
 # ---------------------------------------------------------------------------
 # Credentials (FR-025)
 # ---------------------------------------------------------------------------
+# The token of `admin` that the environment defines is the one token value the Sync API lists as a
+# secret; the store holds every other token as a digest.
 
 
 def test_a_credential_in_a_reason_reaches_no_record_no_event_and_no_answer(api: ScheduleApi) -> None:
     created = api.client.post(
-        "/schedules", json=api.body(reason=f"token is {OTHER_TOKEN}"), headers=headers(key="with-a-canary")
+        "/schedules", json=api.body(reason=f"token is {ADMIN_TOKEN}"), headers=headers(key="with-a-canary")
     )
     assert created.status_code == 201, created.text
     schedule_id = created.json()["schedule_id"]
-    paused = api.post(schedule_id, "pause", reason=f"paused with {OTHER_TOKEN}")
+    paused = api.post(schedule_id, "pause", reason=f"paused with {ADMIN_TOKEN}")
     refused = api.post(schedule_id, "pause", OTHER_TOKEN, reason=f"refused with {ADMIN_TOKEN}")
     replayed = api.client.post(
-        "/schedules", json=api.body(reason=f"token is {OTHER_TOKEN}"), headers=headers(key="with-a-canary")
+        "/schedules", json=api.body(reason=f"token is {ADMIN_TOKEN}"), headers=headers(key="with-a-canary")
     )
 
     answers = created.text + paused.text + refused.text + replayed.text
@@ -759,12 +761,12 @@ def test_a_credential_in_a_reason_reaches_no_record_no_event_and_no_answer(api: 
 
 @pytest.mark.parametrize("field", ["cron", "timezone", "name", "config_id"])
 def test_a_credential_in_a_setting_is_refused_and_not_stored(api: ScheduleApi, field: str) -> None:
-    response = api.client.post("/schedules", json=api.body(**{field: OTHER_TOKEN}), headers=headers())
+    response = api.client.post("/schedules", json=api.body(**{field: ADMIN_TOKEN}), headers=headers())
 
     assert response.status_code == 422, response.text
     assert _error(response)["code"] == "secret-parameter-refused"
-    assert OTHER_TOKEN not in response.text
-    assert OTHER_TOKEN not in api.stored_text()
+    assert ADMIN_TOKEN not in response.text
+    assert ADMIN_TOKEN not in api.stored_text()
     refused = api.projection.audit_events()[-1]
     assert (refused.event_type, refused.outcome) == ("infrahub_sync.schedule.refused", "refused-secret-parameter")
     assert refused.config_id is None

@@ -94,7 +94,8 @@ _MatchFailure = Literal["orchestration", "product-store"]
 # What a stopped schedule needs before a resume is accepted, by the reason it stopped for.
 _RESUME_ACTIONS: Final = {
     "owner-not-found": (
-        "the owner's actor does not exist on this Sync API; add the actor to the Sync API again and restart it"
+        "the owner's account is disabled or deleted; enable the account, or have an administrator take the "
+        "schedule over"
     ),
     "approval-required": (
         f"this Sync API requires approval ({REQUIRE_APPROVAL_ENV}) and the schedule writes to the default "
@@ -528,7 +529,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
 
         A resume of an active schedule changes nothing. A stopped schedule whose stored reason
         still holds stays as it is, and the resume is refused. Otherwise, a paused or stopped
-        schedule whose owner's actor no longer exists, or that writes to the default branch
+        schedule whose owner's account is disabled or deleted, or that writes to the default branch
         while the Sync API requires approval, cannot run: the resume stores it in the state
         ``stopped`` with that reason and its ``schedule.stopped`` event, in one write, and is
         refused. A schedule that stopped for ``repeated-failures`` becomes active only when no
@@ -581,7 +582,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     ) -> tuple[int, dict[str, Any]]:
         """Make the calling administrator the owner of a schedule (FR-026).
 
-        A schedule stopped because its owner's actor does not exist becomes active, unless it
+        A schedule stopped because its owner's account is disabled or deleted becomes active, unless it
         writes to the default branch while the Sync API requires approval: it then stays stopped
         with the reason ``approval-required``, as the start of the API process would stop it, and
         the ``schedule.stopped`` event records the new reason. A schedule stopped for another
@@ -663,8 +664,8 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     async def start(self) -> None:
         """Run the step of the start of the API process; it never stops the process from starting.
 
-        The step stops each active schedule whose owner's actor no longer exists on the Sync
-        API, or that writes to the default branch while the Sync API requires approval, and
+        The step stops each active schedule whose owner's account is disabled or deleted, or
+        that writes to the default branch while the Sync API requires approval, and
         writes the event of each stop. It then makes the Prefect schedules match the stored
         schedules. When Prefect or the product store fails, the failure is logged and the
         schedules that Prefect does not hold keep ``prefect_synced`` false.

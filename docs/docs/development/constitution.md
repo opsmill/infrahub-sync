@@ -213,4 +213,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.1.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-17
+**Version**: 1.2.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-18

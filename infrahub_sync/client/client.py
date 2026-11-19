@@ -53,6 +53,7 @@ from .models import (
     CreatedTokenResource,
     CreateRunRequest,
     CreateScheduleRequest,
+    DeletedAccountResource,
     ErrorEnvelope,
     EventPage,
     EventResource,
@@ -123,6 +124,20 @@ _STATE_ARG = "state"
 _TRIGGER_TYPE_ARG = "trigger_type"
 # The trigger types a run records (`TriggerType` in models.py).
 _TRIGGER_TYPES = frozenset({"manual", "scheduled"})
+_PASSWORD_ARG = "password"
+_CURRENT_PASSWORD_ARG = "current_password"
+_NEW_PASSWORD_ARG = "new_password"
+_REASON_ARG = "reason"
+_STATE_ARG = "state"
+_ADMINISTRATOR_ARG = "administrator"
+_DISABLED_ARG = "disabled"
+_EXPIRES_AT_ARG = "expires_at"
+_TOKEN_ID_ARG = "token_id"
+_ACCOUNT_STATES = frozenset({"active", "disabled", "all"})
+# The rule of an account name, as the Sync API applies it. A name that matches is safe in a URL path.
+_ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
+# The value a client built by `SyncClient.without_token` holds in place of a token. It is never sent.
+_NO_TOKEN = "-"
 
 
 class SyncClient:  # pylint: disable=too-many-public-methods
@@ -561,7 +576,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     ) -> ScheduleResource:
         """Make the calling administrator the owner of a schedule.
 
-        A schedule stopped because its owner's actor no longer exists becomes active. The Sync API
+        A schedule stopped because its owner's account is disabled or deleted becomes active. The Sync API
         refuses a caller who is not an administrator with ``403 forbidden``.
         """
 

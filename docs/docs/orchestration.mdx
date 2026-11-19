@@ -25,7 +25,8 @@ A run that a schedule starts records:
 
 - `trigger_type: scheduled`, the `schedule_id` and the start time of the cadence in
   `scheduled_start_at`;
-- the schedule's owner as its actor. The owner is the actor who created the schedule.
+- the schedule's owner as its actor. The owner is the account that created the schedule, or the
+  administrator who took it over.
 
 A run that a person or another system starts records `trigger_type: manual`.
 
@@ -234,7 +235,7 @@ and the action it needs:
 
 | Reason | When | What to do |
 | --- | --- | --- |
-| `owner-not-found` | The owner's actor no longer exists on the Sync API when the Sync API starts. | An administrator takes the schedule over with `infrahub-sync schedules take-over`, or the owner's actor is restored and the schedule is resumed. |
+| `owner-not-found` | The owner's account is disabled or deleted, when the worker handles a start, when the Sync API starts, or when a resume finds it. | An administrator takes the schedule over with `infrahub-sync schedules take-over`, or enables the owner's account, and the schedule is resumed. A deleted account cannot be enabled again. |
 | `approval-required` | The schedule writes to the default branch and the Sync API requires approval, when the Sync API starts, when a resume finds it, or when the worker handles a start. | Change the write target to `branch-review` with `infrahub-sync schedules change <schedule> --write-to-branch-review`. The schedule is then active again. |
 | `repeated-failures` | Five runs in a row failed, were interrupted or ended ambiguous. | Check the last runs of the schedule, then resume it. |
 
@@ -242,7 +243,7 @@ A run that succeeds or ends with no change sets the count of failed runs back to
 or missed start, a run that a person cancelled and a run that stopped for a review of records left
 out do not change the count. A resume of a schedule stopped for another reason is refused with
 `schedule-stopped` while the reason still holds. A resume also checks the other reasons: when the
-owner's actor no longer exists, or the schedule writes to the default branch while approval is
+owner's account is disabled or deleted, or the schedule writes to the default branch while approval is
 required, the resume of a paused schedule or of a schedule stopped for `repeated-failures` is
 refused with `schedule-stopped`, and the schedule stops with that reason. Otherwise a resume of a
 schedule stopped for `repeated-failures` succeeds and sets the count to zero.

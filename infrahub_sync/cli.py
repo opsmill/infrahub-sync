@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unicodedata
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from enum import Enum
 from functools import wraps
@@ -2385,8 +2386,8 @@ def events_cmd(
 # The action each reason of a stopped schedule needs (data-model.md, state transitions).
 _STOPPED_ACTIONS = {
     "owner-not-found": (
-        "an administrator takes the schedule over with `schedules take-over`, or the owner's actor is restored "
-        "on the Sync API and the schedule is resumed"
+        "an administrator takes the schedule over with `schedules take-over`, or enables the owner's account "
+        "and the schedule is resumed"
     ),
     "approval-required": (
         "change the write target to branch review with `schedules change SCHEDULE --write-to-branch-review`; "
@@ -2791,7 +2792,7 @@ def schedules_take_over(
 ) -> None:
     """Become the owner of a schedule; only an administrator may. Its runs then record you as their actor.
 
-    A schedule that stopped because its owner's actor no longer exists becomes active again.
+    A schedule that stopped because its owner's account is disabled or deleted becomes active again.
     """
     with _client_errors():
         _schedule_action(ctx, schedule, "take_over_schedule", reason=reason, idempotency_key=idempotency_key)

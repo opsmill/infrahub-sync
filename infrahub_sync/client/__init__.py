@@ -111,6 +111,7 @@ __all__ = [
     "ConfigurationVersionSummaryResource",
     "CreateRunRequest",
     "CreateScheduleRequest",
+    "CreatedTokenResource",
     "EventDetailsResource",
     "EventPage",
     "EventPrimaryResource",

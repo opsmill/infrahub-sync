@@ -19,6 +19,7 @@ from infrahub_sync.product_store.bundle import (
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.models import EMITTED_RESOURCES, EmittedArtifactListResource
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:

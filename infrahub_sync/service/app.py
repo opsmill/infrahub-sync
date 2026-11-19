@@ -63,6 +63,7 @@ from .models import (
     VersionResource,
 )
 from .paging import InvalidCursorError
+from .presentation import AccountNameMiddleware, AccountReader
 from .schedule_routes import schedule_router
 from .schedules import ScheduleService
 from .service import MAX_EVENT_OFFSET, RunService, ServiceAPIError, parse_event_time
@@ -316,7 +317,8 @@ def _include_routers(
 ) -> None:
     """Add the routes built outside ``create_app``.
 
-    They are the routes of configurations, schedules, approval, events, run logs and the saved plan.
+    They are the configurations, the schedules, the approval, the events, the run logs, the saved
+    plan and the accounts.
     """
     if configuration_routes is not None:
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
@@ -421,21 +423,7 @@ def create_app(
     application = FastAPI(
         title="Infrahub Sync API", version=installed_server_version(), lifespan=_lifespan(reconciler, schedules)
     )
-    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
-
-    def authenticate(
-        request: Request,
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
-    ) -> Principal:
-        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
-        if not token:
-            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        principal = resolver.resolve(token)
-        if principal is None:
-            service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        return principal
+    authenticate = _authenticator(service, resolver)
 
     def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
         if value is None or not value.strip():

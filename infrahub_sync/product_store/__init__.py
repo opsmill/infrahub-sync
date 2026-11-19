@@ -12,6 +12,9 @@ from infrahub_sync.product_store.models import (
     MAX_CONSECUTIVE_FAILURES,
     SCHEDULE_START_OPERATION,
     SCHEDULE_STOPPED_EVENT_TYPE,
+    Account,
+    AccountSession,
+    AccountToken,
     ApplyProgress,
     ApplyProgressSave,
     ArtifactReference,
@@ -50,6 +53,7 @@ from infrahub_sync.product_store.models import (
     ScheduleFilters,
     SchedulePage,
     ScheduleRecord,
+    SignInAttempt,
     WorkerEnvironment,
 )
 from infrahub_sync.product_store.store import (
@@ -156,6 +160,8 @@ __all__ = (
     "ScheduledStartNotRun",
     "ScheduledStartResult",
     "ScheduledStartRun",
+    "SignInAttempt",
+    "SignInAttemptsFullError",
     "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",

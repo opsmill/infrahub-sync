@@ -165,13 +165,16 @@ records why a run with branch review needs no Sync approval.
   false, and the request answers `503 orchestration-unavailable`. The step runs again on each
   schedule request, at the start of the API process (`ScheduleService.start`) and in the
   bootstrap job.
-- **The API process checks what the worker cannot.** At start-up, `ScheduleService.start` stops
-  each active schedule whose owner's actor no longer exists, or that writes to the default
-  branch while `INFRAHUB_SYNC_REQUIRE_APPROVAL` is on, and writes the `schedule.stopped` event.
-  The worker has no API token and cannot check the owner's actor. It does read
-  `INFRAHUB_SYNC_REQUIRE_APPROVAL` from its own environment: `decide_start` refuses a start of a
-  schedule that writes to the default branch while it is on, and the admission stops the schedule
-  with the reason `approval-required` (research R6 of spec 021). When the stop step of
+- **The API process and the worker both check the owner and the approval setting.** At
+  start-up, `ScheduleService.start` stops each active schedule whose owner's account is disabled
+  or deleted (`StoreAccountResolver.principal_of`), or that writes to the default branch while
+  `INFRAHUB_SYNC_REQUIRE_APPROVAL` is on, and writes the `schedule.stopped` event. An
+  administrator can disable or delete an account while the Sync API runs, so `decide_start` reads
+  the owner's account in the product store before each start too: a disabled or deleted owner
+  creates no run, and the admission stops the schedule with the reason `owner-not-found`. The
+  worker reads `INFRAHUB_SYNC_REQUIRE_APPROVAL` from its own environment: `decide_start` refuses
+  a start of a schedule that writes to the default branch while it is on, and the admission stops
+  the schedule with the reason `approval-required` (research R6 of spec 021). When the stop step of
   `ScheduleService.start` fails on a store error, it is tried three times, then logged.
 - **The worker admits the start.** A flow run that carries `schedule_id` and no `run_id` takes
   the second way into `service_sync_run` (`service/flow.py`). The flow refuses it unless Prefect's

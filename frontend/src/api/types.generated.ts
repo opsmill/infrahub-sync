@@ -1026,6 +1026,18 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * ChangePasswordRequest
+         * @description The current password of the caller and the password that replaces it.
+         */
+        ChangePasswordRequest: {
+            /** Current Password */
+            current_password: string;
+            /** New Password */
+            new_password: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
          * ChangeScheduleRequest
          * @description Request a change of one or more settings of a schedule.
          *
@@ -1222,6 +1234,47 @@ export interface components {
             start_late_by_at_most_seconds?: number | null;
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * CreateTokenRequest
+         * @description The name of a new API token and, when it has one, its expiry date with a time zone.
+         */
+        CreateTokenRequest: {
+            /** Name */
+            name: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * CreatedTokenResource
+         * @description The answer of the creation of an API token: the token and its value, returned this once.
+         */
+        CreatedTokenResource: {
+            /** Token Id */
+            token_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Last Used At */
+            last_used_at?: string | null;
+            /** Token */
+            token: string;
+        };
+        /**
+         * DeletedAccountResource
+         * @description The answer of a deletion: what every record of the account displays from now on.
+         */
+        DeletedAccountResource: {
+            /** Placeholder */
+            placeholder: string;
         };
         /**
          * ErrorDetail
@@ -3584,7 +3637,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3664,7 +3717,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3740,7 +3793,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3822,7 +3875,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3904,7 +3957,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3986,7 +4039,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4068,7 +4121,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4150,7 +4203,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;

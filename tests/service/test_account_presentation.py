@@ -33,8 +33,10 @@ from infrahub_sync.service.config_routes import ConfigurationRoutes
 from infrahub_sync.service.credentials import digest, new_api_token
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.presentation import ACCOUNT_FIELDS, RELATED_KEY, account_identifiers, present_accounts
+from infrahub_sync.service.schedules import ScheduleService
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.configuration.validation_packages import package_data
+from tests.service.schedule_fixtures import FakeOrchestration
 from tests.service.test_approval import _RecordingOrchestration
 
 if TYPE_CHECKING:
@@ -213,11 +215,11 @@ def _api_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Api:
         return read_accounts(account_ids)
 
     monkeypatch.setattr(service, "read_accounts", recorded)
-    application = create_app(
-        service,
-        StoreAccountResolver(store, idle_seconds=600),
-        ConfigurationRoutes(product_projection=store),
+    resolver = StoreAccountResolver(store, idle_seconds=600)
+    schedules = ScheduleService(
+        store, FakeOrchestration(), resolver, delivered_write_targets=("branch-review", "default-branch")
     )
+    application = create_app(service, resolver, ConfigurationRoutes(product_projection=store), schedules=schedules)
     return _Api(
         client=TestClient(application),
         store=store,
@@ -376,6 +378,35 @@ def _resume_answers(api: _Api) -> list[Response]:
         return [api.client.get(f"/runs/{_RUN_ID}", headers=api.owner_headers)]
 
 
+def _schedule_answers(api: _Api) -> list[Response]:
+    """Return the answers of a schedule that the owner created and the administrator changed."""
+    config_id = _register(api).json()["configuration"]["config_id"]
+    created = api.client.post(
+        "/schedules",
+        headers={**api.owner_headers, "Idempotency-Key": "schedule-1"},
+        json={
+            "name": "nightly",
+            "config_id": config_id,
+            "registry_version": 1,
+            "cron": "0 2 * * *",
+            "timezone": "UTC",
+            "write_target": "default-branch",
+        },
+    )
+    schedule_id = created.json()["schedule_id"]
+    changed = api.client.post(
+        f"/schedules/{schedule_id}/change",
+        headers={**api.administrator_headers, "Idempotency-Key": "schedule-2"},
+        json={"write_when_left_out": True},
+    )
+    return [
+        created,
+        changed,
+        api.client.get(f"/schedules/{schedule_id}", headers=api.owner_headers),
+        api.client.get("/schedules", headers=api.owner_headers),
+    ]
+
+
 # One entry per response model that declares an account field: the routes that answer with it.
 _ANSWERS: dict[str, Callable[[_Api], list[Response]]] = {
     "PublicRunResource.actor": _run_answers,
@@ -388,7 +419,13 @@ _ANSWERS: dict[str, Callable[[_Api], list[Response]]] = {
     "EventResource.actor": _event_answers,
     "EventResource.related": _event_answers,
     "ConfigurationVersionSummaryResource.registered_by": _version_answers,
+    "ScheduleResource.owner": _schedule_answers,
+    "ScheduleResource.left_out_set_by": _schedule_answers,
+    # The copy of `ScheduleResource` that the service emits.
+    "EmittedScheduleResource.left_out_set_by": _schedule_answers,
 }
+# Fields whose key is an account field of the presentation but whose value is not an account.
+_NOT_ACCOUNTS = frozenset({"PlanLineageResource.owner"})  # A node of the destination, by kind and name.
 
 
 def _account_fields() -> list[str]:
@@ -399,14 +436,14 @@ def _account_fields() -> list[str]:
             if issubclass(model, BaseModel) and not name.endswith("Request"):
                 own = vars(model).get("__annotations__", {})
                 declared.update(f"{name}.{key}" for key in own if key in ACCOUNT_FIELDS or key == RELATED_KEY)
-    return sorted(declared)
+    return sorted(declared - _NOT_ACCOUNTS)
 
 
 def test_every_response_model_with_an_account_field_has_a_route_case() -> None:
     declared = _account_fields()
 
     assert declared == sorted(_ANSWERS), (
-        "a response model declares `actor`, `approved_by`, `registered_by` or `related`; "
+        "a response model declares a key of `ACCOUNT_FIELDS` or `related`; "
         "add the routes that answer with it to _ANSWERS, or remove the entry of a model that is gone"
     )
 

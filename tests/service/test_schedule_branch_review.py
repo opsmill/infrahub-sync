@@ -67,7 +67,7 @@ def _schedule(api: ScheduleApi, config_id: str | None = None) -> ScheduleRecord:
             "timezone": "UTC",
             "write_target": "branch-review",
             "state": "active",
-            "owner": "owner",
+            "owner": api.account_id("owner"),
             "created_at": created,
             "updated_at": created,
         }
@@ -533,7 +533,12 @@ def test_the_proposed_change_is_opened_after_the_write_is_committed(
     assert row is not None
     assert (row.state, row.proposed_change_id) == ("open", change_id)
     (opened,) = _events(api, "proposed_change_opened")
-    assert (opened.run_id, opened.outcome, opened.operation, opened.actor) == (run.run_id, "opened", "sync", "owner")
+    assert (opened.run_id, opened.outcome, opened.operation, opened.actor) == (
+        run.run_id,
+        "opened",
+        "sync",
+        api.account_id("owner"),
+    )
     assert opened.details is not None
     assert (opened.details.branch, opened.details.proposed_change_id) == (row.branch, change_id)
 

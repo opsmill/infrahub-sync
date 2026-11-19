@@ -31,6 +31,7 @@ from infrahub_sync.service.orchestration import CancellationResult, Observation,
 from infrahub_sync.service.schedule_admission import admit_scheduled_start
 from infrahub_sync.service.schedule_cadence import next_start
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.service.accounts import seed_accounts
 from tests.service.schedule_fixtures import OWNER_TOKEN as SCHEDULE_OWNER_TOKEN
 from tests.service.schedule_fixtures import WORKER_ID as SCHEDULE_WORKER_ID
 from tests.service.schedule_fixtures import NoDeploymentSchedules, schedule_api

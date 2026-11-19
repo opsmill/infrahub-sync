@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -21,7 +20,8 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+from infrahub_sync.service.auth import ADMIN_ACCOUNT_NAME, StoreAccountResolver
+from infrahub_sync.service.credentials import digest
 from infrahub_sync.service.orchestration import (
     CancellationResult,
     DeploymentSchedule,
@@ -34,9 +34,10 @@ from infrahub_sync.service.orchestration import (
 )
 from infrahub_sync.service.schedules import ScheduleService
 from infrahub_sync.service.service import RunService
+from tests.service.accounts import IDLE_SECONDS, TOKEN_NAME, AccountSpec, seed_accounts
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Collection, Mapping, Sequence
     from pathlib import Path
 
     import pytest
@@ -45,7 +46,9 @@ if TYPE_CHECKING:
 OWNER_TOKEN = "schedule-owner-token-canary-0001"  # noqa: S105 - deliberate non-secret boundary canary.
 OTHER_TOKEN = "schedule-other-token-canary-0002"  # noqa: S105 - deliberate non-secret boundary canary.
 ADMIN_TOKEN = "schedule-admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
-PRINCIPALS: dict[str, dict[str, Any]] = {
+# The accounts of the schedule tests, by name; each test store holds them with these API tokens.
+# The token of `admin` is the one that the environment defines, so the Sync API lists it as a secret.
+ACCOUNTS: Mapping[str, AccountSpec] = {
     "owner": {"token": OWNER_TOKEN},
     "other": {"token": OTHER_TOKEN},
     "admin": {"token": ADMIN_TOKEN, "administrator": True},
@@ -225,6 +228,25 @@ class ScheduleApi:
         assert response.status_code == 200, response.text
         return response.json()
 
+    def account_id(self, name: str) -> str:
+        """Return the identifier that the store records for the account with this name."""
+        account = self.projection.lookup_account_by_name(name)
+        assert account is not None, name
+        return account.account_id
+
+    def disable(self, name: str) -> None:
+        """Disable the account with this name, as an administrator does while the Sync API runs."""
+        assert self.projection.disable_account(self.account_id(name))
+
+    def enable(self, name: str) -> None:
+        """Enable the account with this name again, with its API token of ``ACCOUNTS``.
+
+        A disabled account loses its tokens, so the token is created again.
+        """
+        account_id = self.account_id(name)
+        assert self.projection.enable_account(account_id)
+        self.projection.create_account_token(account_id, name=TOKEN_NAME, digest=digest(ACCOUNTS[name]["token"]))
+
     def stored(self, schedule_id: str) -> ScheduleRecord:
         """Return the stored record of a schedule."""
         record = self.projection.lookup_schedule(schedule_id).value
@@ -289,7 +311,7 @@ def schedule_api(
     tmp_path: Path,
     *,
     delivered: Collection[str] = BOTH_WRITE_TARGETS,
-    principals: dict[str, dict[str, Any]] | None = None,
+    accounts: Mapping[str, AccountSpec] = ACCOUNTS,
 ) -> ScheduleApi:
     """Build a Sync API with one registered configuration and the given set of delivered write targets.
 
@@ -297,8 +319,8 @@ def schedule_api(
     (FR-035) is replaced, so no test reads a destination unless it asks for that check.
     """
     monkeypatch.setattr(service_flow, "_destination_not_ready", lambda *_args: None)
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps(PRINCIPALS if principals is None else principals))
     projection = local_product_projection(tmp_path.resolve())
+    seed_accounts(projection, accounts, environment_token=ADMIN_ACCOUNT_NAME in accounts)
     config_id = projection.create_configuration(package()).config_id
     return restarted(ScheduleApi(projection, FakeOrchestration(), None, None, None, config_id), delivered=delivered)  # ty: ignore[invalid-argument-type]
 
@@ -308,7 +330,7 @@ def restarted(api: ScheduleApi, *, delivered: Collection[str] = BOTH_WRITE_TARGE
 
     The lifespan of the application has not run; a test runs it with ``with api.client:``.
     """
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = StoreAccountResolver(api.projection, idle_seconds=IDLE_SECONDS, admin_token=ADMIN_TOKEN)
     schedules = ScheduleService(
         api.projection,
         api.orchestration,

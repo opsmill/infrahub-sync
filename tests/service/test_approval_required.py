@@ -24,6 +24,7 @@ from infrahub_sync.service.models import PlanOperationResource, PlanResource, Pl
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV, approval_required, validate_settings
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:

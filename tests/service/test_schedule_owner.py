@@ -1,8 +1,10 @@
-"""The owner of a schedule and the start of the API process (spec 021, scenarios 14 and 15, research R8)."""
+"""The owner of a schedule and the start of the API process (spec 021, scenarios 14 and 15, research R8).
+
+The owner is an account of the product store. A test disables it to make the owner unable to act.
+"""
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from typing import TYPE_CHECKING
 
@@ -11,14 +13,17 @@ import pytest
 pytest.importorskip("prefect")
 pytest.importorskip("fastapi")
 
-from infrahub_sync.service.auth import PRINCIPALS_ENV
+from infrahub_sync.service.auth import Principal, StoreAccountResolver
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
-from tests.service.schedule_fixtures import ADMIN_TOKEN, PRINCIPALS, ScheduleApi, restarted, schedule_api
+from tests.service.accounts import IDLE_SECONDS
+from tests.service.schedule_fixtures import ADMIN_TOKEN, ScheduleApi, restarted, schedule_api
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-WITHOUT_OWNER = {name: entry for name, entry in PRINCIPALS.items() if name != "owner"}
+# Whether the owner's account is enabled when the API process starts again.
+WITH_OWNER = True
+WITHOUT_OWNER = False
 
 
 @pytest.fixture(name="api")
@@ -26,11 +31,12 @@ def _api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ScheduleApi:
     return schedule_api(monkeypatch, tmp_path)
 
 
-def _restart(
-    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch, principals: dict[str, dict[str, object]]
-) -> ScheduleApi:
-    """Start a new API process with another set of actors, and run the step of its start."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps(principals))
+def _restart(api: ScheduleApi, _monkeypatch: pytest.MonkeyPatch, owner_enabled: bool) -> ScheduleApi:  # noqa: FBT001
+    """Enable or disable the owner's account, start a new API process and run the step of its start."""
+    owner = api.projection.lookup_account(api.account_id("owner"))
+    assert owner is not None
+    if owner.disabled == owner_enabled:
+        (api.enable if owner_enabled else api.disable)("owner")
     again = restarted(api)
     with again.client:
         pass
@@ -46,7 +52,11 @@ def test_a_start_of_the_api_stops_a_schedule_whose_owner_is_gone(
     again = _restart(api, monkeypatch, WITHOUT_OWNER)
 
     stored = again.stored(schedule_id)
-    assert (stored.state, stored.state_reason, stored.owner) == ("stopped", "owner-not-found", "owner")
+    assert (stored.state, stored.state_reason, stored.owner) == (
+        "stopped",
+        "owner-not-found",
+        again.account_id("owner"),
+    )
     assert again.orchestration.by_slug(schedule_id).active is False
     assert stored.prefect_synced is True
     stopped = [
@@ -55,7 +65,7 @@ def test_a_start_of_the_api_stops_a_schedule_whose_owner_is_gone(
     assert len(stopped) == 1
     event = stopped[0]
     assert (event.actor, event.operation, event.outcome, event.reason) == (
-        "owner",
+        again.account_id("owner"),
         "schedule-start",
         "owner-not-found",
         None,
@@ -90,7 +100,7 @@ def test_a_start_leaves_a_schedule_whose_owner_exists_and_a_paused_schedule(
 ) -> None:
     kept = api.create()["schedule_id"]
 
-    again = _restart(api, monkeypatch, PRINCIPALS)
+    again = _restart(api, monkeypatch, WITH_OWNER)
 
     assert again.stored(kept).state == "active"
     assert again.post(kept, "pause").status_code == 200
@@ -130,15 +140,19 @@ def test_a_resume_of_a_paused_schedule_whose_owner_is_gone_stops_it(
     error = response.json()["error"]
     assert error["code"] == "schedule-stopped"
     assert "owner-not-found" in error["message"]
-    assert "add the actor to the Sync API again" in error["message"]
+    assert "enable the account" in error["message"]
     stored = again.stored(schedule_id)
-    assert (stored.state, stored.state_reason, stored.owner) == ("stopped", "owner-not-found", "owner")
+    assert (stored.state, stored.state_reason, stored.owner) == (
+        "stopped",
+        "owner-not-found",
+        again.account_id("owner"),
+    )
     assert again.orchestration.by_slug(schedule_id).active is False
     stopped = [
         event for event in again.projection.audit_events() if event.event_type == "infrahub_sync.schedule.stopped"
     ]
     assert [(event.actor, event.operation, event.outcome, event.reason) for event in stopped] == [
-        ("admin", "schedule-resume", "owner-not-found", None)
+        (again.account_id("admin"), "schedule-resume", "owner-not-found", None)
     ]
     assert ("schedule", schedule_id) in {(resource.kind, resource.id) for resource in stopped[0].related}
     refused = again.projection.audit_events()[-1]
@@ -165,7 +179,7 @@ def test_a_resume_of_a_paused_schedule_whose_owner_exists_makes_it_active(
 ) -> None:
     schedule_id = api.create()["schedule_id"]
     assert api.post(schedule_id, "pause").status_code == 200
-    again = _restart(api, monkeypatch, PRINCIPALS)
+    again = _restart(api, monkeypatch, WITH_OWNER)
 
     response = again.post(schedule_id, "resume")
 
@@ -178,7 +192,7 @@ def test_a_resume_succeeds_when_the_owner_exists_again(api: ScheduleApi, monkeyp
     schedule_id = api.create()["schedule_id"]
     again = _restart(api, monkeypatch, WITHOUT_OWNER)
 
-    again = _restart(again, monkeypatch, PRINCIPALS)
+    again = _restart(again, monkeypatch, WITH_OWNER)
     assert again.stored(schedule_id).state == "stopped"
     response = again.post(schedule_id, "resume")
 
@@ -204,7 +218,7 @@ def test_a_resume_after_repeated_failures_always_succeeds_and_clears_the_count(
         )
         connection.commit()
     assert api.stored(schedule_id).consecutive_failures == 5
-    again = _restart(api, monkeypatch, PRINCIPALS)
+    again = _restart(api, monkeypatch, WITH_OWNER)
     assert again.orchestration.by_slug(schedule_id).active is False
     assert again.stored(schedule_id).prefect_synced is True
 
@@ -220,12 +234,12 @@ def test_a_resume_after_repeated_failures_always_succeeds_and_clears_the_count(
 def test_a_resume_after_the_owner_returns_checks_approval_too(
     api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """FR-002: the owner's actor exists again, but the schedule writes to the default branch while approval is on."""
+    """FR-002: the owner's account is enabled again, but the schedule writes to the default branch while approval is on."""
     schedule_id = api.create(write_target="default-branch")["schedule_id"]
     stopped = _restart(api, monkeypatch, WITHOUT_OWNER)
     assert stopped.stored(schedule_id).state_reason == "owner-not-found"
     monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
-    again = _restart(api, monkeypatch, PRINCIPALS)
+    again = _restart(api, monkeypatch, WITH_OWNER)
 
     response = again.post(schedule_id, "resume")
 
@@ -241,3 +255,17 @@ def test_a_resume_after_the_owner_returns_checks_approval_too(
         ("schedule-start", "owner-not-found"),
         ("schedule-resume", "approval-required"),
     ]
+
+
+def test_the_owner_lookup_returns_an_enabled_account_only(api: ScheduleApi) -> None:
+    """The check of the owner reads the account in the store; it never reads a token."""
+    resolver = StoreAccountResolver(api.projection, idle_seconds=IDLE_SECONDS)
+    owner_id = api.account_id("owner")
+
+    principal = resolver.principal_of(owner_id)
+
+    assert principal == Principal(actor=owner_id, administrator=False, name="owner")
+    assert resolver.principal_of("acct_" + "0" * 32) is None
+    assert resolver.principal_of("owner") is None
+    api.disable("owner")
+    assert resolver.principal_of(owner_id) is None

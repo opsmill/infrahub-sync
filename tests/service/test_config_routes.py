@@ -38,6 +38,7 @@ from infrahub_sync.service.orchestration import CancellationResult, Observation,
 from infrahub_sync.service.serve import build_app
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from tests.configuration.validation_packages import package, package_data
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.

@@ -66,7 +66,7 @@ def _schedule(api: ScheduleApi, *, write_when_left_out: bool) -> None:
                 "left_out_set_by": "owner" if write_when_left_out else None,
                 "left_out_set_at": created if write_when_left_out else None,
                 "state": "active",
-                "owner": "owner",
+                "owner": api.account_id("owner"),
                 "created_at": created,
                 "updated_at": created,
             }
@@ -199,7 +199,7 @@ def test_a_run_with_branch_review_records_the_count_in_its_result_and_its_event(
                 "timezone": "UTC",
                 "write_target": "branch-review",
                 "state": "active",
-                "owner": "owner",
+                "owner": api.account_id("owner"),
                 "created_at": T0 - timedelta(minutes=30),
                 "updated_at": T0 - timedelta(minutes=30),
             }

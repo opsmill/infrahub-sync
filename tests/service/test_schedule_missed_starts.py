@@ -71,7 +71,7 @@ def _schedule(
                 "overlap_policy": overlap_policy,
                 "start_late_by_at_most_seconds": late_limit,
                 "state": "active",
-                "owner": "owner",
+                "owner": api.account_id("owner"),
                 "created_at": CREATED,
                 "updated_at": CREATED,
             }

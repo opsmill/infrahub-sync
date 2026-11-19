@@ -247,7 +247,8 @@ def decide_start(  # noqa: PLR0911  # pylint: disable=too-many-arguments,too-man
     """Decide whether the start of an active schedule runs, with the events of the decision.
 
     In order: the starts of the cadence that passed with no flow run are recorded as missed; a
-    schedule that writes to the default branch while the Sync API requires approval
+    schedule whose owner's account is disabled or deleted creates no run and is stopped with the
+    reason ``owner-not-found``; a schedule that writes to the default branch while the Sync API requires approval
     (``INFRAHUB_SYNC_REQUIRE_APPROVAL`` in the worker's environment) creates no run and is
     stopped with the reason ``approval-required`` (research R6); a
     start that is not the most recent start of the cadence, or that is later than the
@@ -281,23 +282,18 @@ def decide_start(  # noqa: PLR0911  # pylint: disable=too-many-arguments,too-man
             }
         )
 
+    owner = projection.lookup_account(schedule.owner)
+    if owner is None or owner.disabled or owner.deleted_at is not None:
+        # An administrator can disable or delete the owner's account while the Sync API runs.
+        # The start then runs as no one: it creates no run and the admission stops the schedule.
+        events.append(_start_event(schedule, SCHEDULE_START_SKIPPED, "skipped-owner-not-found", start, now))
+        return not_run("owner-not-found", _stopped_event(schedule, "owner-not-found", now))
     if schedule.write_target == "default-branch" and approval_required():
         # The worker's own check of research R6, so that no gap in the checks of the Sync API
         # lets a schedule write to the default branch with no approved plan (FR-002). The
         # admission stops the schedule in the transaction that records the start.
         events.append(_start_event(schedule, SCHEDULE_START_SKIPPED, "skipped-approval-required", start, now))
-        stopped = schedule_event(
-            event_type=SCHEDULE_STOPPED,
-            actor=schedule.owner,
-            operation=SCHEDULE_START,
-            reason=None,
-            outcome="approval-required",
-            schedule_id=schedule.schedule_id,
-            config_id=schedule.config_id,
-            registry_version=schedule.registry_version,
-            created_at=now,
-        )
-        return not_run("approval-required", stopped)
+        return not_run("approval-required", _stopped_event(schedule, "approval-required", now))
     late = now - start
     if not waiting and (
         _later_start_passed(schedule, start, now) or late > timedelta(seconds=schedule.start_late_by_at_most_seconds)
@@ -392,6 +388,21 @@ def decide_start(  # noqa: PLR0911  # pylint: disable=too-many-arguments,too-man
         schedule_updated_at=schedule.updated_at,
         events=(*events, *started_late, *kept_events, accepted),
         kept_run_ids=tuple(kept_run_ids),
+    )
+
+
+def _stopped_event(schedule: ScheduleRecord, reason: str, now: datetime) -> AuditEvent:
+    """Build the ``schedule.stopped`` event of an admission that stops the schedule for ``reason``."""
+    return schedule_event(
+        event_type=SCHEDULE_STOPPED,
+        actor=schedule.owner,
+        operation=SCHEDULE_START,
+        reason=None,
+        outcome=reason,
+        schedule_id=schedule.schedule_id,
+        config_id=schedule.config_id,
+        registry_version=schedule.registry_version,
+        created_at=now,
     )
 
 

@@ -106,9 +106,9 @@ def test_after_the_bootstrap_job_every_stored_schedule_has_its_prefect_schedule_
 def test_the_bootstrap_job_stops_no_schedule_and_writes_no_event(
     api: ScheduleApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only the API process knows its actors and its approval setting, so only it stops a schedule."""
+    """Only the API process stops a schedule, even one whose owner's account is disabled."""
     schedule_id = api.create()["schedule_id"]
-    monkeypatch.delenv("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS")
+    api.disable("owner")
     events = len(api.projection.audit_events())
     _bootstrap(api, monkeypatch)
 

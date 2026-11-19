@@ -25,8 +25,8 @@ _CLI_INVOCATION = (
 )
 # `configs list --name` filters configurations by name and is a current option, and
 # `schedules create --name` names a new schedule (spec 021). Every other command lost `--name`
-# when configurations moved to the registry, so only these two invocations are exempt from the
-# removed-option rule.
+# when configurations moved to the registry, so only these two invocations and `login --name`
+# below are exempt from the removed-option rule.
 _CONFIGS_LIST = r"configs\s+list(?![\w-])"
 _SCHEDULES_CREATE = r"schedules\s+create(?![\w-])"
 # `diff` is a hidden, deprecated alias of `plan`; live docs teach `plan`.
@@ -38,11 +38,11 @@ REMOVED_COMMAND = re.compile(
 # `login --name` names the account to sign in as (spec 022) and is a current option too.
 _LOGIN = r"(?<![\w.-])infrahub-sync\s+login(?![\w-])"
 _VALID_NAME_OPTION = re.compile(
-    # A `configs list ... --name` or `schedules create ... --name` invocation on one line, or the
-    # section of either command in the generated CLI reference, which lists `--name` as an
-    # option bullet.
-    rf"(?:{_CONFIGS_LIST}|{_SCHEDULES_CREATE})[^\n]*?(?<![\w-])--name(?![\w-])"
-    r"|^#+ `infrahub-sync (?:configs list|schedules create)`\n(?:(?!#)[^\n]*\n)*",
+    # A `configs list ... --name`, `schedules create ... --name` or `login ... --name` invocation
+    # on one line, or the section of one of these commands in the generated CLI reference, which
+    # lists `--name` as an option bullet.
+    rf"(?:{_CONFIGS_LIST}|{_SCHEDULES_CREATE}|{_LOGIN})[^\n]*?(?<![\w-])--name(?![\w-])"
+    r"|^#+ `infrahub-sync (?:configs list|schedules create|login)`\n(?:(?!#)[^\n]*\n)*",
     re.MULTILINE,
 )
 # `events --run-id` filters events by run (spec 012) and is a current option. The retired
@@ -91,6 +91,22 @@ CLI_CLIENT_PARITY = (
     ("schedules delete SCHEDULE", "delete_schedule", "POST /schedules/{schedule_id}/delete"),
     ("schedules take-over SCHEDULE", "take_over_schedule", "POST /schedules/{schedule_id}/take-over"),
     ("events --schedule SCHEDULE", "iter_events", "GET /events"),
+    ("login", "sign_in", "POST /auth/sign-in"),
+    ("logout", "sign_out", "POST /auth/sign-out"),
+    ("password", "change_password", "PUT /me/password"),
+    ("tokens list", "list_tokens", "GET /me/tokens"),
+    ("tokens create NAME", "create_token", "POST /me/tokens"),
+    ("tokens delete TOKEN_ID", "delete_token", "DELETE /me/tokens/{token_id}"),
+    ("accounts list", "list_accounts", "GET /accounts"),
+    ("accounts create NAME", "create_account", "POST /accounts"),
+    ("accounts set-password NAME", "set_account_password", "PUT /accounts/{name}/password"),
+    ("accounts unlock NAME", "unlock_account", "POST /accounts/{name}/unlock"),
+    ("accounts disable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
+    ("accounts enable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
+    ("accounts set-level NAME", "set_account_level", "PATCH /accounts/{name}"),
+    ("accounts delete NAME", "delete_account", "DELETE /accounts/{name}"),
+    ("accounts tokens NAME", "list_account_tokens", "GET /accounts/{name}/tokens"),
+    ("accounts delete-token NAME TOKEN_ID", "delete_account_token", "DELETE /accounts/{name}/tokens/{token_id}"),
 )
 
 
@@ -137,6 +153,22 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "delete_schedule",
         "take_over_schedule",
         "iter_events",
+        "sign_in",
+        "sign_out",
+        "change_password",
+        "list_tokens",
+        "create_token",
+        "delete_token",
+        "list_accounts",
+        "create_account",
+        "set_account_password",
+        "unlock_account",
+        "set_account_disabled",
+        "set_account_disabled",
+        "set_account_level",
+        "delete_account",
+        "list_account_tokens",
+        "delete_account_token",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 
@@ -273,6 +305,11 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         ("infrahub-sync schedules create --name nightly --config from-netbox --version 3", False, False),
         ("### `infrahub-sync schedules create`\n\n* `--name <str>`: Schedule name.\n", False, False),
         ("### `infrahub-sync schedules show`\n\n* `--name <str>`: Removed.\n", False, True),
+        ("infrahub-sync login --name admin", False, False),
+        ("uv run infrahub-sync login --name admin", False, False),
+        ("docker login registry.example.net --name builder", False, True),
+        ("### `infrahub-sync login`\n\n* `--name <str>`: Account name.\n", False, False),
+        ("### `infrahub-sync logout`\n\n* `--name <str>`: Not an option.\n", False, True),
     ],
 )
 def test_removed_command_rule_exempts_only_configs_list_and_login_name(

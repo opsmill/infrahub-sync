@@ -132,7 +132,7 @@ def test_a_restart_with_approval_turned_on_stops_a_default_branch_schedule(
         event for event in again.projection.audit_events() if event.event_type == "infrahub_sync.schedule.stopped"
     ]
     assert [(event.actor, event.operation, event.outcome) for event in stopped] == [
-        ("owner", "schedule-start", "approval-required")
+        (api.account_id("owner"), "schedule-start", "approval-required")
     ]
 
 
@@ -181,7 +181,7 @@ def test_a_resume_of_a_paused_default_branch_schedule_while_approval_is_required
         event for event in again.projection.audit_events() if event.event_type == "infrahub_sync.schedule.stopped"
     ]
     assert [(event.actor, event.operation, event.outcome) for event in stopped] == [
-        ("owner", "schedule-resume", "approval-required")
+        (api.account_id("owner"), "schedule-resume", "approval-required")
     ]
     changed = again.post(schedule_id, "change", write_target="branch-review")
     assert changed.status_code == 200, changed.text
@@ -242,7 +242,7 @@ def test_a_resume_after_repeated_failures_while_approval_is_required_stops_the_s
     assert api.orchestration.by_slug(schedule_id).active is False
     stopped = [event for event in api.projection.audit_events() if event.event_type == "infrahub_sync.schedule.stopped"]
     assert [(event.actor, event.operation, event.outcome) for event in stopped] == [
-        ("owner", "schedule-resume", "approval-required")
+        (api.account_id("owner"), "schedule-resume", "approval-required")
     ]
     again = api.post(schedule_id, "resume")
     assert again.status_code == 409, again.text

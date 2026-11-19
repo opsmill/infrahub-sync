@@ -63,8 +63,13 @@ The worker has no API token. It cannot ask the Sync API to create a run.
 - No periodic task runs in the API process, and two API processes need no rule between them. A
   restart of the Sync API does not lose a start, because the API process takes no part in a start.
 - The run record still exists before any work. The worker writes it, not the Sync API.
-- What the worker cannot check, the API process checks when it starts: whether the owner's actor
-  still exists. A schedule whose owner's actor no longer exists is stopped then.
+- The owner is a local account of the product store
+  ([ADR 0049](0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md)). An
+  administrator can disable or delete it while the Sync API runs, so the worker reads the owner's
+  account before each admission: a start of a schedule whose owner's account is disabled or
+  deleted creates no run, and the admission stops the schedule with the reason
+  `owner-not-found`. The API process makes the same check when it starts and when a schedule is
+  resumed.
 - The bootstrap job keeps the Prefect schedules. It applies the deployment with an empty list of
   schedules, but Prefect keeps the existing schedules when each of them has a slug. The match step
   of the bootstrap job therefore repairs differences only.

@@ -139,6 +139,8 @@ EXPECTED_PUBLIC_NAMES = {
     "ScheduledStartNotRun",
     "ScheduledStartResult",
     "ScheduledStartRun",
+    "SignInAttempt",
+    "SignInAttemptsFullError",
     "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",
