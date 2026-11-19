@@ -228,8 +228,9 @@ reached" and the button becomes **Register without validation**. When the check 
 complete, the review step shows "Validation did not complete." and a **Validate again** button.
 
 After a registration, the web interface opens the configuration's page at the new version.
-When the package is the same as the newest version, the review step shows "This package is the
-same as version N. No new version was registered." When the request does not complete, select
+When the package is the same as a version already stored for the configuration, not only the
+newest one, the review step shows "This package is the same as version N. No new version was
+registered." When the request does not complete, select
 **Retry**. The retry sends the same request with the same retry key, so the Sync API stores the
 version at most once; see [Retry keys](#retry-keys). The reason cannot be changed after the
 first attempt, because the Sync API refuses a retry key reused with a different request.

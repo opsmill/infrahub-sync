@@ -584,8 +584,9 @@ an absent reason and a `null` reason are the same value, and both differ from an
 created version as registered without validation. The service records the value that the request
 sends and does not check it. The web interface sends `true` when the destination could not be
 reached during validation; the CLI never sends it. For idempotency, an absent value and `false`
-are the same value, and both differ from `true`. When the package is identical to the newest
-version (`created: false`), the field is ignored and the existing version is returned unchanged.
+are the same value, and both differ from `true`. When the package is identical to a version
+already stored for the configuration (`created: false`), the field is ignored and that version is
+returned unchanged.
 
 | Route | Behavior |
 | --- | --- |

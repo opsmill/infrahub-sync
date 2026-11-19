@@ -123,8 +123,9 @@ that way (FR-021).
   different mark is refused with `idempotency-conflict`, as a key reused with a different reason
   is. A request without the mark keeps the fingerprint that receipts stored before the mark
   existed were given, so retries of those requests still replay.
-- **Only a created version is marked.** When the package is identical to the newest version
-  (`created: false`), the Sync API returns the existing version unchanged and ignores the mark.
+- **Only a created version is marked.** When the package is identical to a version already
+  stored for the configuration (`created: false`), the Sync API returns that version unchanged and
+  ignores the mark.
 
 ### Consequences
 

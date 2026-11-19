@@ -307,8 +307,9 @@ registered without validation.
   Registering MUST NOT be possible while an `error` finding is listed, or while the report has more
   findings than the page holds. A `warning` finding does not block registration (decision D-10).
 - **FR-012**: After a successful registration, the web interface MUST open the page of the new
-  version. When the Sync API reports that the package is identical to the newest version, the web
-  interface MUST say that no new version was registered.
+  version. When the Sync API reports that the package is identical to a version already stored for
+  the configuration (`created: false`), the web interface MUST say that no new version was
+  registered.
 - **FR-013**: For a new configuration whose name is already in use, the review step MUST warn and
   offer to open the existing configuration instead, without refusing the registration.
 - **FR-014**: For a new version that changes the configuration name, the review step MUST state the
