@@ -2,8 +2,11 @@
 
 ## Source
 
-The inline brief given to the preparation pipeline on 2026-11-19, after the maintainer's request
-"let's build the spec to have the scheduler page in the UI as well". No URL was given.
+- The inline brief given to the preparation pipeline on 2026-11-19, after the maintainer's request
+  "let's build the spec to have the scheduler page in the UI as well". No URL was given.
+- The maintainer's review of the first version, on 2026-11-19: "I think we need to preview start
+  time and to have some kind of helper for the cron notation, from memory gitlab or GitHub did
+  that. We need the schedule event history."
 
 ## Verdict
 
@@ -11,19 +14,22 @@ The inline brief given to the preparation pipeline on 2026-11-19, after the main
 
 ## Findings
 
-| Severity | Category | Brief reference | Spec reference | Description |
+| Severity | Category | Source reference | Spec reference | Description |
 | --- | --- | --- | --- | --- |
-| Minor | added | "follow from a schedule to the runs it started" | FR-011, User Story 4 scenario 1 | The spec adds a schedule line and a "Create schedule" button on the configuration page. The brief does not ask for it. It follows from "a configuration has at most one schedule" and is recorded as Decision 1. |
-| Minor | added | (none) | plan.md, research R9; tasks T001, T002 | Vitest and a `pnpm test` CI step are added to the frontend. This is a test tool, not a requirement; it follows constitution principle V. |
-| Minor | added | (none) | FR-024; task T032 | The user guide `docs/docs/orchestration.mdx` gets a section on the web interface. Required by `AGENTS.md` for user-visible changes. |
-| None | covered | List, view (state, cron cadence, time zone, next start, owner, last run, consecutive failures, stop reason and the action it needs) | User Story 1; FR-002 to FR-007 | Every field the brief names is in FR-004 and the stop panel of FR-005. |
-| None | covered | Create, change, pause, resume, delete, take over | User Stories 3 to 6; FR-012 to FR-023 | All six actions. |
-| None | covered | Same permissions as the Sync API (owner versus administrator) | FR-012 to FR-014; data-model "Permissions" | Matches FR-012 and FR-026 of spec 021. |
-| None | covered | Follow from a schedule to its runs (`trigger_type`, `schedule_id`) | User Story 2; FR-008 to FR-010 | Both directions. |
-| None | covered | Reuse the spec 021 HTTP contract and the frontend patterns; account naming rule | research R1 to R5; FR-007; contracts/web-pages.md | No new route; account names only. |
-| None | covered | Out of scope: changes to the scheduling engine or the API unless a gap blocks the page | Out of Scope; Decision 6; research R1 | No API change was needed. |
+| Minor | changed | Brief: "Out of scope: changes to the scheduling engine or the API unless a gap blocks the page" | Decision 6; FR-031, FR-032 | Two Sync API additions. Both are needed by the review's requests: the preview must use the scheduler's code (a browser computation can disagree at a daylight-saving change), and the history must be read newest first. This matches the brief's exception "unless a gap blocks the page". |
+| Minor | added | (none) | FR-011, User Story 4 scenario 1 | A schedule line and "Create schedule" on the configuration page; recorded as Decision 1. |
+| Minor | added | (none) | plan.md, research R9; tasks T001, T002 | Vitest and a `pnpm test` CI step for the frontend; a test tool, not a requirement. |
+| Minor | added | (none) | FR-024; tasks T042, T043 | User guide and API reference updates, required by `AGENTS.md` for user-visible changes. |
+| None | covered | Review: "preview start time" | User Story 4 scenarios 9 to 13; FR-028 to FR-031; FR-030 on the schedule page | Five next starts, from the Sync API, before saving and on the schedule page. |
+| None | covered | Review: "some kind of helper for the cron notation, from memory gitlab or GitHub did that" | Decision 3; FR-025 to FR-027; research R7 | Common cadence forms that build the expression, labelled fields for a custom expression. GitLab's pipeline schedules were the reference; GitHub was not checked. |
+| None | covered | Review: "We need the schedule event history" | User Story 7; FR-033, FR-034 | Newest first, with a switch for run events. |
+| None | covered | Brief: list, view (state, cron cadence, time zone, next start, owner, last run, consecutive failures, stop reason and the action it needs) | User Story 1; FR-002 to FR-007 | |
+| None | covered | Brief: create, change, pause, resume, delete, take over | User Stories 3 to 6; FR-012 to FR-023 | |
+| None | covered | Brief: same permissions as the Sync API | FR-012 to FR-014 | |
+| None | covered | Brief: follow from a schedule to its runs | User Story 2; FR-008 to FR-010 | |
+| None | covered | Brief: reuse the HTTP contract and frontend patterns; account naming rule | research R1 to R5; FR-007 | |
 
 ## Action
 
-Proceed. The added items are small and documented as decisions; none changes a requirement of the
-brief. No remediation pass was run.
+Proceed. The API additions are the gap the brief allowed for, and the review asked for the
+features that need them. No remediation pass was run.
