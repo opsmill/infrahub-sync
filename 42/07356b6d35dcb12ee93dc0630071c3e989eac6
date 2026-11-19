@@ -7,6 +7,7 @@ infrahub_sync/demo/__init__.py
   s_531f0e8d1dd35e::t_a55f98766b0d09 9-11
 infrahub_sync/cli.py
   s_531f0e8d1dd35e::t_8c527dba3569c1 438-445,2812,2868-2872,2890-2893,2895-2897
+  s_531f0e8d1dd35e::t_2d4a9dcdba7b1d 2894
 dev/specs/024-demo-ready-netbox/contracts/demo-prepare-cli.md
   s_531f0e8d1dd35e::t_8828b3995561ce 4,17-18,23-37
 infrahub_sync/demo/prepare.py
