@@ -160,13 +160,25 @@ The command refuses an address that carries a user name or a password (`user:pas
 exits with code 2. When Infrahub has not applied the schema within `--schema-timeout` seconds
 (120 by default), it stops before it registers anything; run it again with a larger value.
 
-Continue at [Create a branch for the import](#create-a-branch-for-the-import), with your
-Infrahub and Sync API addresses in place of the local ones.
+Continue at [Create a branch for the import](#create-a-branch-for-the-import), with the
+configuration ID and version that the command printed.
 
 ## Create a branch for the import
 
 Infrahub holds the imported data on a branch, so `main` does not change until you merge it.
-Run the `export` lines from the output of `dev.demo`, then create the branch:
+Set the addresses and tokens that the commands on this page read:
+
+- For the local demo, run the `export` lines from the output of `dev.demo`.
+- For a Sync service you already run, export your own values:
+
+    ```bash
+    export INFRAHUB_ADDRESS=<Infrahub address this machine uses>
+    export INFRAHUB_API_TOKEN=<Infrahub API token>
+    export INFRAHUB_SYNC_API_URL=<Sync API address>
+    export INFRAHUB_SYNC_API_TOKEN=<Sync API token>
+    ```
+
+Then create the branch:
 
 ```bash
 uv run infrahubctl branch create netbox-demo-1
@@ -181,9 +193,10 @@ branch, such as `netbox-demo-2`, for the second import.
 
 ## Plan and apply from the web interface
 
-1. Open `http://127.0.0.1:8001`. On **Sign in to Infrahub Sync**, enter `admin` in
-   **Account name** and the password that `dev.demo` printed in **Password**, then select
-   **Sign in**.
+1. Open the Sync web interface: `http://127.0.0.1:8001` for the local demo, or your Sync API
+   address. On **Sign in to Infrahub Sync**, enter an account name and its password, then
+   select **Sign in**. For the local demo, the account is `admin` and the password is the one
+   in `ADMIN_ACCOUNT_PASSWORD`, by default `infrahub-sync-dev-password`.
 2. Open the `from-netbox` configuration, then select **Start run**.
 3. In **Destination branch**, enter `netbox-demo-1`. Under **What the run does**, select
    **Plan for review**, then select **Create plan**.
@@ -225,8 +238,8 @@ creates.
 
 ## View the imported data in Infrahub
 
-Open `http://127.0.0.1:8000`, log in with `admin` and `infrahub`, and select the `netbox-demo-1`
-branch to view the imported nodes.
+Open Infrahub and select the `netbox-demo-1` branch to view the imported nodes. For the local
+demo, Infrahub is at `http://127.0.0.1:8000`, and you log in with `admin` and `infrahub`.
 
 ## Run the demo again
 
