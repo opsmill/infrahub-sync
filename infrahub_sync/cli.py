@@ -941,7 +941,7 @@ def configs_check(
         "--branch",
         help=(
             "Also check the mapping, the import account's permissions and the workers' credential "
-            "variables against this Infrahub branch. destination_read says whether the service read "
+            "variables against this Infrahub branch. `destination_read` says whether the service read "
             "the branch's schema."
         ),
     ),
