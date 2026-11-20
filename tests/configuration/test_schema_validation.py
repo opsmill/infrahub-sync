@@ -456,6 +456,8 @@ def test_a_failed_schema_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch
 
 
 def test_a_failed_access_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The schema was read and fingerprinted, but `schema_read` covers the access read too."""
+
     def failing_access(package_: ConfigurationPackage, branch: str) -> DestinationAccess:
         del package_
         msg = f"access read failed for branch {branch!r}"
@@ -469,6 +471,7 @@ def test_a_failed_access_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch
 
     assert result.read_failure_reason == "forbidden"
     assert result.schema_read is False
+    assert result.schema_fingerprint is not None
     assert "destination-schema-read-failed" in [finding.code for finding in result.findings]
 
 

@@ -111,9 +111,12 @@ class DestinationSchemaValidation:
     ``destination-schema-read-failed`` finding; this field lets a caller act on the reason
     without parsing finding text.
 
-    ``schema_read`` is ``True`` when the destination schema of the branch was read, and
-    ``False`` when no read ran (an unknown adapter or a non-declaring destination) or the
-    read failed.
+    ``schema_read`` is ``True`` when the destination schema of the branch was read and the
+    import account's access read that follows it succeeded or did not run. It is ``False``
+    when no read ran (an unknown adapter or a non-declaring destination), when the schema
+    read failed, or when the access read failed. In the last case the schema was read, so
+    ``schema_fingerprint`` can be set, and ``read_failure_reason`` holds the access read's
+    reason.
     """
 
     findings: tuple[ValidationFinding, ...]
