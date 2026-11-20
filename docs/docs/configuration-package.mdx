@@ -104,8 +104,10 @@ infrahub-sync configs version <config-id> package.yml --reason "update the devic
 - Each run names one registered version by `config_id` and version number. No run command
   takes a file path.
 
-Both commands print the version's `config_id`, `registry_version`, `package_checksum` and
-`created_at`. They do not print the package content in the registration response. Read it with
+Both commands print the version's `config_id`, `registry_version`, `package_checksum`,
+`created_at` and `registered_without_validation`; see
+[Versions registered without validation](#versions-registered-without-validation). They do not
+print the package content in the registration response. Read it with
 `configs show CONFIG_ID --version VERSION`. `configs version` also prints `created`. It is `false`
 when the submitted content matches an existing version of that configuration. In that case
 the command prints the existing version and stores nothing.
@@ -178,6 +180,80 @@ names the `--offset` of the page where it is.
 A warning does not change the exit code. `configs validate` exits 1 only for an error finding,
 and only with `--branch`. The output is paged as the output of `configs validate` is; read every page with
 `--offset` to view all findings.
+
+## Register a package from the web interface
+
+The web interface checks a package file as `configs check --branch` does, shows the result,
+and registers the package only when you select **Register**. See
+[Open the web interface](./compose-deployment.mdx#open-the-web-interface) to sign in.
+
+- To register a new configuration, drop the package file on the area **Register a
+  configuration** of the Configurations page.
+- To add a version to a configuration, drop the file on the area **Add a version** of that
+  configuration's page.
+
+Both areas also have a **choose a file** button, which opens the browser's file dialog. With a
+token that is not an administrator token, both areas are disabled and show "Registering needs
+an administrator token".
+
+The web interface refuses some files before it opens the review step:
+
+- More than one file: "Drop one package file."
+- An empty file, or a file that is not YAML or JSON: "This file is not a YAML or JSON
+  configuration package."
+- A v2 `config.yml`: a message that names `infrahub-sync configs convert`. Convert the file,
+  then drop the package; see [Convert a config.yml file](#convert-a-configyml-file).
+- A file that a proxy in front of the Sync API refuses as too large: "The file is larger than
+  the Sync API accepts."
+
+The review step then shows:
+
+- the configuration name, the source adapter and the destination adapter;
+- for a new version, the changes to the mappings compared with the newest version, and a
+  message when the version renames the configuration;
+- for a new configuration, a warning when a configuration with the same name exists, with a
+  link to add a version to it instead;
+- the names of the environment variables that the credential references point to, without
+  their values;
+- the validation result against the branch in the **Validation branch** field. The field
+  defaults to the destination's `branch` setting in the package, or to `main`. Change it to
+  validate again against another branch;
+- an optional reason, which the Sync API records with the version.
+
+**Register** is enabled only when the result is "Valid against branch B". Warnings are listed
+under that result and do not disable **Register**: for example, the Sync API reports a warning
+when no worker has published which credential variables it holds. When an error finding is
+listed, fix the package and drop it again. When the Sync API cannot
+reach the destination, the review step shows "Could not validate: the destination cannot be
+reached" and the button becomes **Register without validation**. When the check itself does not
+complete, the review step shows "Validation did not complete." and a **Validate again** button.
+
+After a registration, the web interface opens the configuration's page at the new version.
+When the package is the same as a version already stored for the configuration, not only the
+newest one, the review step shows "This package is the same as version N. No new version was
+registered." When the request does not complete, select
+**Retry**. The retry sends the same request with the same retry key, so the Sync API stores the
+version at most once; see [Retry keys](#retry-keys). The reason cannot be changed after the
+first attempt, because the Sync API refuses a retry key reused with a different request.
+
+### Versions registered without validation
+
+A version registered with **Register without validation** carries a mark:
+
+- In the web interface, the version bar of the configuration's page shows "Registered without
+  validation", and the list of versions shows "registered without validation" next to the
+  version number.
+- `configs show CONFIG_ID --version VERSION`, `configs versions CONFIG_ID`, `configs register`
+  and `configs version` print `registered_without_validation: true`. For every other version
+  they print `registered_without_validation: false`.
+
+The CLI never sets the mark. Run `configs validate CONFIG_ID VERSION --branch BRANCH` on a
+marked version once the destination can be reached.
+
+A version without the mark is not known to be validated. `configs register` and
+`configs version` do not check a package against the destination before they register it,
+and versions registered before the mark existed have no mark. Run `configs validate` with
+`--branch` to check any version.
 
 ## Validate a version
 

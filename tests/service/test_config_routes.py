@@ -23,6 +23,7 @@ from infrahub_sync.configuration import schema_validation
 from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationSchemaReadError
 from infrahub_sync.configuration.models import ValidationFinding
 from infrahub_sync.configuration.validation import collect_findings
+from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     ConfigurationPage,
     PrimaryResource,
@@ -2134,3 +2135,279 @@ def test_the_check_route_is_not_taken_for_a_configuration_id(tmp_path: Path) -> 
 
     assert client.get("/configs/validate").status_code == 404
     assert client.post("/configs/validate", json={"package": package_data()}).status_code == 200
+
+
+# The "registered without validation" mark (spec 025, User Story 4).
+
+
+def _version_marks(client: TestClient, config_id: str) -> dict[str, dict[int, bool]]:
+    """Return each version's mark from the version list and from each version's own resource."""
+    listed = client.get(f"/configs/{config_id}/versions").json()["items"]
+    single: dict[int, bool] = {}
+    for item in listed:
+        response = client.get(f"/configs/{config_id}/versions/{item['registry_version']}")
+        assert response.status_code == 200, response.text
+        single[item["registry_version"]] = response.json()["registered_without_validation"]
+    return {"list": {item["registry_version"]: item["registered_without_validation"] for item in listed}, "get": single}
+
+
+def test_registration_accepts_the_mark_and_every_version_resource_returns_it(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
+
+    registered = client.post(
+        "/configs",
+        headers={"Idempotency-Key": "register-unvalidated"},
+        json={"package": package_data(), "registered_without_validation": True},
+    )
+    assert registered.status_code == 201, registered.text
+    config_id = registered.json()["configuration"]["config_id"]
+    added = client.post(
+        f"/configs/{config_id}/versions",
+        headers={"Idempotency-Key": "version-unvalidated"},
+        json={"package": _named_package("second", "https://second.netbox.test"), "registered_without_validation": True},
+    )
+
+    assert added.status_code == 201, added.text
+    assert registered.json()["version"]["registered_without_validation"] is True
+    assert added.json()["version"]["registered_without_validation"] is True
+    assert _version_marks(client, config_id) == {"list": {1: True, 2: True}, "get": {1: True, 2: True}}
+
+
+def test_the_mark_defaults_to_false(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
+
+    config_id = _register(client, package_data(), "register-validated")
+    added = client.post(
+        f"/configs/{config_id}/versions",
+        headers={"Idempotency-Key": "version-validated"},
+        json={"package": _named_package("second", "https://second.netbox.test")},
+    )
+
+    assert added.status_code == 201, added.text
+    assert added.json()["version"]["registered_without_validation"] is False
+    assert _version_marks(client, config_id) == {"list": {1: False, 2: False}, "get": {1: False, 2: False}}
+
+
+def test_an_identical_version_request_with_the_mark_returns_the_existing_version_unchanged(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
+    config_id = _register(client, package_data(), "register-validated")
+
+    again = client.post(
+        f"/configs/{config_id}/versions",
+        headers={"Idempotency-Key": "identical-unvalidated"},
+        json={"package": package_data(), "registered_without_validation": True},
+    )
+
+    assert again.status_code == 200, again.text
+    assert again.json()["created"] is False
+    assert again.json()["version"]["registered_without_validation"] is False
+    assert _version_marks(client, config_id) == {"list": {1: False}, "get": {1: False}}
+
+
+@pytest.mark.parametrize(
+    ("first_mark", "retry_mark"),
+    [
+        pytest.param({"registered_without_validation": True}, {}, id="true-then-absent"),
+        pytest.param({}, {"registered_without_validation": True}, id="absent-then-true"),
+        pytest.param(
+            {"registered_without_validation": False}, {"registered_without_validation": True}, id="false-then-true"
+        ),
+    ],
+)
+def test_a_key_reused_with_a_different_mark_is_refused(
+    tmp_path: Path, first_mark: dict[str, object], retry_mark: dict[str, object]
+) -> None:
+    client, projection = _discovery_client(tmp_path)
+    headers = {"Idempotency-Key": "register-mark-conflict"}
+
+    first = client.post("/configs", headers=headers, json={"package": package_data(), **first_mark})
+    retry = client.post("/configs", headers=headers, json={"package": package_data(), **retry_mark})
+
+    assert first.status_code == 201, first.text
+    assert retry.status_code == 409, retry.text
+    assert retry.json()["error"]["code"] == "idempotency-conflict"
+    assert len(projection.list_configurations()) == 1
+
+
+@pytest.mark.parametrize(
+    "body_mark",
+    [pytest.param({}, id="absent"), pytest.param({"registered_without_validation": False}, id="explicit-false")],
+)
+def test_an_unmarked_request_keeps_the_fingerprint_of_receipts_stored_before_the_mark(
+    tmp_path: Path, body_mark: dict[str, object]
+) -> None:
+    """A receipt stored by an earlier build fingerprinted five keys; an unmarked retry must still match it."""
+    client, projection = _discovery_client(tmp_path)
+
+    response = client.post(
+        "/configs", headers={"Idempotency-Key": "pre-mark-receipt"}, json={"package": package_data(), **body_mark}
+    )
+
+    assert response.status_code == 201, response.text
+    admin = projection.lookup_account_by_name("admin")
+    assert admin is not None
+    receipt = projection.lookup_mutation(admin.account_id, sha256(b"pre-mark-receipt").hexdigest()).value
+    assert receipt is not None
+    pre_mark_fingerprint = sha256(
+        canonical_json_bytes(
+            {
+                "resource_kind": "configuration-registry",
+                "resource_id": "configs",
+                "operation": "register-config",
+                "package": package_data(),
+                "reason": None,
+            }
+        )
+    ).hexdigest()
+    assert receipt.request_fingerprint == pre_mark_fingerprint
+
+
+# Registering from the text of a package file (spec 025, decision D-12).
+
+# More than 2**53, so a JavaScript number cannot hold it exactly.
+_LARGE_INTEGER = 2**60 + 1
+
+
+def _document_with_numbers(name: str, timeout: float = 30.0) -> str:
+    """Return a YAML package whose Prometheus source has the `timeout` setting ``timeout``.
+
+    The package checks accept any number for that setting.
+    """
+    data = package_data()
+    data["configuration"]["name"] = name
+    data["configuration"]["source"]["name"] = "prometheus"
+    data["configuration"]["source"]["settings"]["timeout"] = timeout
+    return yaml.safe_dump(data)
+
+
+def _register_document(client: TestClient, route: str, body: Mapping[str, object], key: str) -> httpx.Response:
+    """Send ``body`` to the registration route: a new configuration, or a version of a registered one."""
+    if route == "register":
+        return client.post("/configs", headers={"Idempotency-Key": key}, json=body)
+    config_id = _register(client, package_data(), f"{key}-first")
+    return client.post(f"/configs/{config_id}/versions", headers={"Idempotency-Key": key}, json=body)
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+@pytest.mark.parametrize("timeout", [30.0, _LARGE_INTEGER], ids=["zero-fraction-float", "large-integer"])
+def test_a_document_is_registered_with_the_numbers_and_checksum_the_check_gave(
+    tmp_path: Path, route: str, timeout: float
+) -> None:
+    client, _projection = _discovery_client(tmp_path)
+    document = _document_with_numbers("numbers", timeout)
+    checked = _check(client, {"document": document})
+    assert checked.status_code == 200, checked.text
+
+    response = _register_document(client, route, {"document": document, "reason": "from the file"}, "document")
+
+    assert response.status_code == 201, response.text
+    version = response.json()["version"]
+    assert version["package_checksum"] == checked.json()["package_checksum"]
+    stored = client.get(f"/configs/{version['config_id']}/versions/{version['registry_version']}")
+    stored_timeout = stored.json()["declared_content"]["configuration"]["source"]["settings"]["timeout"]
+    # `30.0 == 30` in Python, so the type is compared too.
+    assert (type(stored_timeout), stored_timeout) == (type(timeout), timeout)
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"package": package_data(), "document": yaml.safe_dump(package_data())}, {"package": None, "document": None}],
+    ids=["neither", "both", "both-null"],
+)
+def test_a_registration_needs_exactly_one_of_package_and_document(
+    tmp_path: Path, route: str, body: dict[str, object]
+) -> None:
+    client, projection = _discovery_client(tmp_path)
+
+    response = _register_document(client, route, body, "exactly-one")
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["family"] == "request"
+    assert response.json()["error"].get("reason") is None
+    assert len(projection.list_configurations()) == (0 if route == "register" else 1)
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+@pytest.mark.parametrize(
+    "document",
+    ["", "- a\n- b\n", "{1: 2}", "key: [unclosed", _alias_expansion_document()],
+    ids=["empty", "list", "integer-key", "invalid-yaml", "alias-expansion"],
+)
+def test_a_registered_document_that_is_not_a_package_is_an_invalid_package(
+    tmp_path: Path, route: str, document: str
+) -> None:
+    client, projection = _discovery_client(tmp_path)
+
+    response = _register_document(client, route, {"document": document}, "invalid-document")
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("request", "invalid_package")
+    assert len(projection.list_configurations()) == (0 if route == "register" else 1)
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+def test_a_registered_v2_document_is_refused_with_the_conversion_command(tmp_path: Path, route: str) -> None:
+    client, _projection = _discovery_client(tmp_path)
+    document = (_EXAMPLES / "netbox_to_infrahub" / "config.yml").read_text(encoding="utf-8")
+
+    response = _register_document(client, route, {"document": document}, "v2-document")
+
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("validation", "v2_configuration")
+    assert "infrahub-sync configs convert" in error["message"]
+
+
+def test_a_refused_document_retried_with_its_key_is_refused_again_not_held(tmp_path: Path) -> None:
+    """A refused document does not hold its key, as for a refused package: the same text is refused again."""
+    client, _projection = _discovery_client(tmp_path)
+    headers = {"Idempotency-Key": "refused-document"}
+
+    refused = client.post("/configs", headers=headers, json={"document": "key: [unclosed"})
+    retried = client.post("/configs", headers=headers, json={"document": "key: [unclosed"})
+
+    assert refused.status_code == 400, refused.text
+    assert (retried.status_code, retried.json()) == (refused.status_code, refused.json())
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+def test_a_document_retried_with_its_key_replays_and_a_different_body_conflicts(tmp_path: Path, route: str) -> None:
+    client, projection = _discovery_client(tmp_path)
+    document = _document_with_numbers("retried")
+    body = {"document": document, "reason": "retry"}
+
+    first = _register_document(client, route, body, "document-retry")
+    path = "/configs" if route == "register" else f"/configs/{first.json()['version']['config_id']}/versions"
+    headers = {"Idempotency-Key": "document-retry"}
+    replay = client.post(path, headers=headers, json=body)
+    # The same package, sent as different text or as JSON, is a different request.
+    reformatted = client.post(path, headers=headers, json={**body, "document": f"# comment\n{document}"})
+    as_package = client.post(path, headers=headers, json={"package": yaml.safe_load(document), "reason": "retry"})
+
+    assert first.status_code == 201, first.text
+    assert (replay.status_code, replay.json()) == (first.status_code, first.json())
+    for conflict in (reformatted, as_package):
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["error"]["code"] == "idempotency-conflict"
+    assert len(projection.list_configurations()) == 1
+
+
+@pytest.mark.parametrize("route", ["check", "register", "version"])
+def test_a_document_with_a_lone_surrogate_is_an_invalid_package_on_every_route(tmp_path: Path, route: str) -> None:
+    """JSON can carry a lone surrogate; it is refused as text, not as a failure of the fingerprint."""
+    client, _projection = _discovery_client(tmp_path)
+    content = b'{"document": "format_version: 1\\nname: \\ud800\\n"}'
+    if route == "check":
+        response = client.post("/configs/validate", content=content, headers={"Content-Type": "application/json"})
+    else:
+        path = "/configs"
+        if route == "version":
+            path = f"/configs/{_register(client, package_data(), 'surrogate-first')}/versions"
+        headers = {"Content-Type": "application/json", "Idempotency-Key": "surrogate"}
+        response = client.post(path, content=content, headers=headers)
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("request", "invalid_package")

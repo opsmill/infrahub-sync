@@ -531,6 +531,11 @@ created most recently, shown with its start time (`started_at`). `latest_applied
 run applied most recently, which can be an older plan that you applied after a newer one. It
 is shown with the time its apply finished (`finished_at`).
 
+The list does not show whether a version was registered without validation. Run
+`infrahub-sync configs show CONFIG_ID --version VERSION` and read
+`registered_without_validation`; see
+[Versions registered without validation](./configuration-package.mdx#versions-registered-without-validation).
+
 `runs artifacts RUN_ID` lists the files that the service kept for a run.
 `runs cancel RUN_ID` cancels a run's stage that is still running, or withdraws a finished
 plan; see [Withdraw a plan](#withdraw-a-plan). It asks for confirmation, or refuses when it

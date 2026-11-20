@@ -596,6 +596,7 @@ def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) 
             ("created_at", resource.created_at.isoformat()),
             ("registered_by", resource.registered_by),
             ("registration_reason", resource.registration_reason),
+            ("registered_without_validation", resource.registered_without_validation),
             ("latest_run", _run_reference(resource.latest_run)),
             ("latest_applied_run", _run_reference(resource.latest_applied_run, applied=True)),
         )
@@ -611,6 +612,7 @@ def _echo_config_version_reference(
             ("registry_version", resource.registry_version),
             ("package_checksum", resource.package_checksum),
             ("created_at", resource.created_at.isoformat()),
+            ("registered_without_validation", resource.registered_without_validation),
         )
     )
 

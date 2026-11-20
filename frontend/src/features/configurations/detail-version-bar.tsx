@@ -9,20 +9,30 @@ import { fmt, plural } from "#/domain/run-state";
 
 import type { ConfigurationDetail } from "./detail";
 
-/** The registration reason shows in the list, not in the closed control. */
-const TRIGGER = cn(FOCUS, "tabular-nums [&_[data-reason]]:hidden");
+/** The registration reason and the mark show in the list, not in the closed control. */
+const TRIGGER = cn(FOCUS, "tabular-nums [&_[data-list-only]]:hidden");
 
-/** One version in a list: its number, and why it was registered when the package says so. */
+/**
+ * One version in a list: its number, whether it was registered without validation, and why it
+ * was registered when the package says so.
+ */
 function VersionOption({ detail, version }: { detail: ConfigurationDetail; version: number }) {
-  const reason = detail.summaries.find((v) => v.registry_version === version)?.registration_reason;
+  const summary = detail.summaries.find((v) => v.registry_version === version);
+  const reason = summary?.registration_reason;
   return (
     <span className="flex max-w-80 flex-col">
       <span>
         Version {version}
         {version === detail.latest && <span className="text-subtle"> · latest</span>}
+        {summary?.registered_without_validation && (
+          <span data-list-only="" className="text-warning">
+            {" "}
+            · registered without validation
+          </span>
+        )}
       </span>
       {reason && (
-        <span data-reason="" className="text-pretty text-subtle text-xs">
+        <span data-list-only="" className="text-pretty text-subtle text-xs">
           {reason}
         </span>
       )}
@@ -193,6 +203,12 @@ export function VersionBar({ detail }: { detail: ConfigurationDetail }) {
             Registered{summary.registered_by && ` by ${summary.registered_by}`}{" "}
             <When iso={summary.created_at} />
           </span>
+        )}
+        {summary?.registered_without_validation && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="text-warning">Registered without validation</span>
+          </>
         )}
       </p>
       <div aria-live="polite" className="flex flex-col items-end gap-1.5">

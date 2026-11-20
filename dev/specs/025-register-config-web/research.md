@@ -30,7 +30,8 @@ repository at commit `87d5a47f`.
   do) or `document` (the file's text, YAML or JSON). The service parses `document` with
   `yaml.safe_load`, the same parser as the CLI. The response returns the package exactly as the
   store would keep it (`declared_content`). The web interface registers that object, not the raw
-  file.
+  file. Replaced by spec decision D-12 on 2026-11-20: the web interface registers the file's text
+  as `document`, because the browser's JSON serialization of `declared_content` changes numbers.
 - **Reason**: no new frontend dependency; one parser for CLI, service and web interface; and the
   comparison in the review step uses the same normalized content the store keeps, which satisfies
   SC-003 by construction (see R5).

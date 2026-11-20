@@ -301,6 +301,23 @@ def test_configs_version_generates_and_discloses_retry_key(client: MagicMock, tm
     assert "created: true" in result.output
 
 
+def test_configs_version_prints_the_unvalidated_mark_and_never_sets_it(client: MagicMock, tmp_path: Path) -> None:
+    """Only the web interface marks a version; the CLI shows the mark it reads back (spec 025, US4)."""
+    package = tmp_path / "package.json"
+    package.write_text('{"name": "edge-sync"}', encoding="utf-8")
+    client.get_config_version.return_value = _version().model_copy(update={"registered_without_validation": True})
+
+    registered = _invoke(client, "configs", "version", "edge-sync", str(package))
+    shown = _invoke(client, "configs", "show", "edge-sync", "--version", "1")
+
+    assert registered.exit_code == 0, registered.output
+    assert shown.exit_code == 0, shown.output
+    _config_id, request, _key = client.create_config_version.call_args.args
+    assert request.registered_without_validation is False
+    assert "registered_without_validation: false" in registered.output
+    assert "registered_without_validation: true" in shown.output
+
+
 def test_configuration_reads_and_validation_keep_machine_fields_and_finding_order(client: MagicMock) -> None:
     listed = _invoke(client, "configs", "list")
     summary = _invoke(client, "configs", "show", "edge-sync")
@@ -2317,7 +2334,11 @@ def test_configs_versions_prints_latest_run_columns_and_pages(client: MagicMock)
     applied_at = NOW + timedelta(hours=1)
     applied = RunReference(run_id="run-1", phase="applied", outcome="succeeded", started_at=NOW, finished_at=applied_at)
     registered = _version_summary(2, latest_run=latest, latest_applied_run=applied).model_copy(
-        update={"registered_by": "admin@example.com", "registration_reason": "first import"}
+        update={
+            "registered_by": "admin@example.com",
+            "registration_reason": "first import",
+            "registered_without_validation": True,
+        }
     )
     client.list_config_versions.return_value = ConfigurationVersionPage(
         items=(registered, _version_summary(1)),
@@ -2332,6 +2353,8 @@ def test_configs_versions_prints_latest_run_columns_and_pages(client: MagicMock)
     assert "registered_by: admin@example.com" in lines
     assert "registration_reason: first import" in lines
     assert "registered_by: <none>" in lines
+    assert "registered_without_validation: true" in lines
+    assert "registered_without_validation: false" in lines
     assert f"latest_run: run-2 phase=planned outcome=- started_at={NOW.isoformat()}" in lines
     # The applied run shows when its apply finished, not when its plan was created.
     assert f"latest_applied_run: run-1 phase=applied outcome=succeeded finished_at={applied_at.isoformat()}" in lines

@@ -29,6 +29,7 @@ import { MappingList } from "./detail-mapping";
 import { MappingPanel } from "./detail-mapping-panel";
 import { MAPPING_SECTION_ID, Systems } from "./detail-systems";
 import { VersionBar } from "./detail-version-bar";
+import { PackageRegistration } from "./PackageReview";
 
 /** The runs of the version shown before "Show all". */
 const RUNS_SHOWN = 5;
@@ -350,6 +351,8 @@ export function ConfigurationPage({
           }}
         />
       )}
+
+      <PackageRegistration action="Add a version" target={{ kind: "version", configId }} />
 
       {selected === undefined ? (
         versions.isPending ? (

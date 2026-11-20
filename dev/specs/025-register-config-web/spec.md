@@ -111,6 +111,14 @@ Taken with the maintainer on 2026-11-18.
   The grilling session of 2026-11-18 had decided the opposite, under the earlier rule. The
   maintainer confirmed the new rule for this feature on 2026-11-20. "Version N was registered
   meanwhile" now names the account when the Sync API returns one.
+- **D-12, the web interface registers the file's text.** The review step checks the text of the
+  dropped file: `POST /configs/validate` receives it as `document` and parses it on the server.
+  Register sent `package`, the `declared_content` of that check after the browser parsed and
+  serialized it again. JavaScript writes `30.0` as `30` and changes integers above 2^53, so the
+  registered package and its checksum could differ from the package that was checked. `POST /configs`
+  and `POST /configs/{config_id}/versions` now accept `document` as the check route does, and the
+  web interface registers with the text it checked. The CLI still sends `package`. The maintainer
+  decided this on 2026-11-20 after the code review.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -317,8 +325,9 @@ registered without validation.
   Registering MUST NOT be possible while an `error` finding is listed, or while the report has more
   findings than the page holds. A `warning` finding does not block registration (decision D-10).
 - **FR-012**: After a successful registration, the web interface MUST open the page of the new
-  version. When the Sync API reports that the package is identical to the newest version, the web
-  interface MUST say that no new version was registered.
+  version. When the Sync API reports that the package is identical to a version already stored for
+  the configuration (`created: false`), the web interface MUST say that no new version was
+  registered.
 - **FR-013**: For a new configuration whose name is already in use, the review step MUST warn and
   offer to open the existing configuration instead, without refusing the registration.
 - **FR-014**: For a new version that changes the configuration name, the review step MUST state the
