@@ -58,7 +58,7 @@ findings include the existing `destination-schema-read-failed` finding.
 | Status | Code | When |
 |---|---|---|
 | 400 | `request` | Both or neither of `package` and `document`. |
-| 400 | `request`, reason `invalid_package` | `document` is not a YAML or JSON mapping with string keys, or is empty. |
+| 400 | `request`, reason `invalid_package` | `document` is not a YAML or JSON mapping with string keys, is empty, or holds more than 1,000,000 values once its YAML aliases are expanded. |
 | 422 | `validation`, reason `v2_configuration` | `document` or `package` has no `configuration` key and has top-level `source` and `destination` keys. The message names `infrahub-sync configs convert`. |
 | 400 / 422 | as registration | Any refusal the registration gives for the same package, with the same status, code and reason (`config_routes.py`, `_call`). |
 | 413 | — | Not sent by the Sync API, which sets no size limit on the request body. A proxy in front of it may answer 413; the web interface shows a message for that answer. |

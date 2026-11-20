@@ -447,7 +447,9 @@ def _request(model: type[Any], **values: object) -> Any:
 def _package(path: Path) -> dict[str, Any]:
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError):
+    # `ValueError` covers a decode error and a date the YAML parser cannot build, such as
+    # `2024-13-45`; the Sync API refuses the same document as `invalid_package`.
+    except (OSError, ValueError, RecursionError, yaml.YAMLError):
         raise ClientInputError(_PACKAGE_ARG) from None
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise ClientInputError(_PACKAGE_ARG)
