@@ -203,6 +203,8 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
   only for credentials that the run's package version names.
   - Verification: request a value for a finished run, for another run, and for a credential the package
     does not name. Each request is refused.
+  - The Sync API MAY also use a value inside its own process, when it reads the destination schema to
+    validate a package. It MUST NOT return that value in a response.
 - **FR-005**: The worker route MUST refuse every account session and every account API token, including
   an administrator's.
   - Verification: call the route with an administrator token and expect a refusal.
@@ -239,10 +241,13 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
     `credential:` in each adapter block, and lists the credentials to create.
 - **FR-020**: Each adapter block (source or destination) MAY name one stored credential with
   `credential: <name>`. The adapter MUST take from it the fields its authentication method needs.
-  Pointing a block to a different credential MUST require registering a new package version. Changing a
-  value MUST NOT.
+  The package's `store` block, which can hold a username and a password for the incremental store, MUST
+  name a stored credential in the same way. Pointing a block to a different credential MUST require
+  registering a new package version. Changing a value MUST NOT.
 - **FR-021**: The `env` provider, the `credentials` block and `$credential` references MUST be removed,
-  with no migration path. Registration MUST refuse a package that uses them.
+  with no migration path. Registration MUST refuse a package that uses them. A run of a version that
+  was registered before this change and still uses them MUST be refused before it starts, with a cause
+  that says to register a new version that names stored credentials.
 - **FR-022**: Workers MUST stop publishing the names of their credential variables, and branch validation
   MUST stop reporting `credential-not-set-in-worker` and `worker-environment-unknown`.
 - **FR-023**: Every v3 package example in `examples/` MUST name stored credentials and MUST NOT contain a
@@ -252,7 +257,8 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
 
 - **FR-024**: The Compose deployment and the Helm chart MUST take the encryption key and the worker token,
   and MUST no longer take `INFRAHUB_SYNC_CREDENTIAL_*` variables, `worker.credentials` or
-  `credentials.infrahubApiToken`.
+  `credentials.infrahubApiToken`. The Helm chart is in the `opsmill/infrahub-helm` repository, so its
+  change is a separate pull request there.
 - **FR-025**: The deployment documentation MUST say that changing the encryption key is not supported in
   this version, and that losing it means re-entering every credential.
 - **FR-026**: Principle VI of the constitution MUST be amended to allow values that are encrypted in the
@@ -313,6 +319,11 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
 - **The direct Prefect flow is not affected.** It runs v2 configuration files from a directory with the
   serving process's own environment variables, not registered packages, so it never used the `env`
   provider.
+- **A credential is not bound to an address.** A package names a credential and declares the address
+  of its source and destination, so a package sends the value to the address it declares. Only
+  administrators can register a package or a version, and they can already change every credential,
+  so this gives them no new power. A test checks that a non-administrator cannot register a package
+  that names a credential.
 - **A later version will replace the administrator / non-administrator split with roles**: managing
   accounts, managing credentials, and running syncs. FR-015 prepares for it.
 
