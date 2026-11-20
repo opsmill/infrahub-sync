@@ -52,7 +52,7 @@ server and the Sync services:
 | `sync` (default) | Nothing. The worker syncs into an Infrahub you already run, by default one on your machine at port 8000. | `uv run invoke dev.start` |
 | `infrahub` | A local Infrahub, which `dev.seed` and `dev.smoke` write to. | `uv run invoke dev.infrahub` or `uv run invoke dev.start --preset infrahub` |
 | `preview` | A local Infrahub and the local NetBox, and the smoke dataset loaded into that Infrahub. One command from a fresh clone to a stack you can try. | `uv run invoke dev.preview` or `uv run invoke dev.start --preset preview` |
-| `demo` | A local Infrahub and the local NetBox with the `demo` dataset. Nothing is written into Infrahub. `dev.demo` also loads the NetBox demo's schema and registers its configuration. | `uv run invoke dev.demo` or `uv run invoke dev.start --preset demo` |
+| `demo` | A local Infrahub and the local NetBox. A NetBox that does not exist yet gets the `demo` dataset. Nothing is written into Infrahub. `dev.demo` also loads the NetBox demo's schema and registers its configuration. | `uv run invoke dev.demo` or `uv run invoke dev.start --preset demo` |
 
 `dev.deps` takes the same `--preset` option. To use one preset for every task in a shell,
 export `INFRAHUB_SYNC_DEV_PRESET`, for example `export INFRAHUB_SYNC_DEV_PRESET=infrahub`.

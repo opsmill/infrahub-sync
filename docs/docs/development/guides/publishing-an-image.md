@@ -16,7 +16,7 @@ signs the image and attaches its bill of materials.
 
 Dispatch the workflow when someone needs an image that no release provides:
 
-- a pre-release image for testers, under a tag such as `3.0.0a6-rc1`;
+- a pre-release image for testers, under a tag such as `3.0.0a6`;
 - an image of a branch head, so a reviewer can run a change before it merges;
 - a build-only run, with `publish` off, to check that a commit still builds and
   passes the smoke test on both platforms.
@@ -95,15 +95,16 @@ A pre-release image of Sync 3.x, for testers before the 3.x release, comes from
 `feature/v3-develop`. Change three things in the worked example:
 
 - Build the head of `feature/v3-develop`: `SHA=$(git rev-parse origin/feature/v3-develop)`.
-- Use a pre-release tag such as `3.0.0-rc.1` in `tags`, in the
-  `org.opencontainers.image.version` label and in `version`.
+- Use a pre-release tag in the PEP 440 form of the package version, such as
+  `3.0.0a6`, in `tags`, in the `org.opencontainers.image.version` label and in
+  `version`.
 - Pass `--ref feature/v3-develop` to `gh workflow run`. `main` does not hold
   `ci-docker-image.yml` yet, so the workflow definition must come from a branch
   that holds it.
 
 The run builds `linux/amd64` and `linux/arm64`, signs the image and attaches
 its bills of materials, as a release does. Testers pull it as
-`registry.opsmill.io/opsmill/infrahub-sync:3.0.0-rc.1`. The image gets no
+`registry.opsmill.io/opsmill/infrahub-sync:3.0.0a6`. The image gets no
 `latest` or `stable` tag: the workflow pushes only the tags you list, and no
 workflow in this repository adds a `stable` tag.
 
