@@ -1,0 +1,42 @@
+changelog/+account-menu-sign-in-layout.changed.md
+  s_96e7da84a768b3::t_47214666cd0d91 1
+docs/docs/development-stack.mdx
+  s_96e7da84a768b3::t_5f43fc13d6213c 286-287
+frontend/src/components/mark.tsx
+  s_96e7da84a768b3::t_ed20a2f371d2ed 1-20
+frontend/src/components/sign-in.tsx
+  s_96e7da84a768b3::t_1a276116a7827d 5,55-60,67-69,108-110
+frontend/src/routes/__root.tsx
+  s_96e7da84a768b3::t_9f3d03e003aeab 282-284,286,288,292-300,304,308-313,322-331,333-334,338,342-344
+  s_96e7da84a768b3::t_3438bd8ac15bb2 522
+  s_96e7da84a768b3::t_e1063b2f3bb52b 316-321
+  s_96e7da84a768b3::t_c1086b746b0026 19
+  s_96e7da84a768b3::t_a45e1a5feda338 278-280
+  s_96e7da84a768b3::t_1a7c28f08b4803 335-337,339-341
+  s_96e7da84a768b3::t_eaa94fd833e642 1-10
+  s_96e7da84a768b3::t_581cdbaba96978 30
+docs/docs/compose-deployment.mdx
+  s_96e7da84a768b3::t_5f43fc13d6213c 661-662
+docs/docs/development/knowledge/local-accounts.md
+  s_96e7da84a768b3::t_5f43fc13d6213c 243-244
+docs/docs/guides/accounts.mdx
+  s_96e7da84a768b3::t_5f43fc13d6213c 77,85,96
+frontend/README.md
+  s_96e7da84a768b3::t_dd52da5b1ec5a6 57-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48453b7942318c116f9175ff936abb23993d701a",
+  "prompts": {},
+  "sessions": {
+    "s_96e7da84a768b3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98af3fed-dca0-41ea-9583-e70acccb3424",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
