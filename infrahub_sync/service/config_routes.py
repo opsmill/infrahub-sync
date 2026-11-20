@@ -1,7 +1,7 @@
 """HTTP-only adapter for the shared configuration application service."""
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from functools import wraps
 from hashlib import sha256
@@ -23,8 +23,10 @@ from infrahub_sync.client.models import (
     RegisteredVersionResource,
     ValidationReportResource,
 )
+from infrahub_sync.configuration.credential_admission import STORED_CREDENTIAL_CODES
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
+from infrahub_sync.execution import registered_secret_values
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     MutationReceipt,
@@ -137,6 +139,9 @@ class ConfigurationRoutes:
         self._projection = product_projection
         self._service = service
         self._secrets = secrets
+        # Reads the fields of a stored credential for the destination schema read of `validate`;
+        # the application sets it, with its encryption key (spec 027, FR-004).
+        self._credential_values: Callable[[str], Mapping[str, str]] | None = None
         # How recently a worker must have published its credential variable names to count as
         # live: the service liveness rule, from the same setting `serve` reads.
         self._worker_liveness_seconds = (
@@ -147,6 +152,15 @@ class ConfigurationRoutes:
             else worker_liveness_seconds
         )
 
+    def read_stored_credentials_with(self, credential_values: Callable[[str], Mapping[str, str]]) -> None:
+        """Set the function that reads the fields of a stored credential for the destination schema read.
+
+        ``validate`` with a branch reads the destination schema. When the destination names a
+        stored credential, the read takes its token from this function, which decrypts it
+        inside the request. Without it, that read becomes one finding and sends no request.
+        """
+        self._credential_values = credential_values
+
     def _call(self, operation: Any, **kwargs: Any) -> Any:
         """Translate configuration service refusals into fixed API classifications."""
         try:
@@ -156,7 +170,10 @@ class ConfigurationRoutes:
             if error_type is self._service.ConfigsRequestError:
                 raise ConfigurationAPIError(400, "request", proven_pre_effect=True) from None
             if error_type is self._service.ConfigsValidationError:
-                reason = UNSUPPORTED_STORE_REASON if error.reason == UNSUPPORTED_STORE_REASON else None
+                # The fixed reasons a refusal may name: the unsupported store, and the codes of
+                # a named stored credential that cannot serve its block (spec 027, FR-008).
+                named = error.reason == UNSUPPORTED_STORE_REASON or error.reason in STORED_CREDENTIAL_CODES
+                reason = error.reason if named else None
                 raise ConfigurationAPIError(422, "validation", reason=reason, proven_pre_effect=True) from None
             if error_type is self._service.ConfigsNotFoundError:
                 raise ConfigurationAPIError(404, "not-found", reason=error.reason, proven_pre_effect=True) from None
@@ -265,6 +282,9 @@ class ConfigurationRoutes:
         whole before the diagnostic bounds cut it, and the same set is applied again to every
         finding on the returned page.
 
+        With ``branch``, a destination that names a stored credential is read with its token,
+        decrypted inside this request and returned in no finding (spec 027, FR-004).
+
         With ``branch``, the destination checks run against that Infrahub branch and the
         package's credential references are compared with what the live workers hold (spec
         007 FR-034 to FR-036). Without it, validation judges declared content only, as before.
@@ -273,7 +293,9 @@ class ConfigurationRoutes:
         options: dict[str, Any] = {}
         if branch is not None:
             options = {
-                "destination_schema": DestinationSchemaOptions(branch=branch),
+                "destination_schema": DestinationSchemaOptions(
+                    branch=branch, credential_values=self._credential_values
+                ),
                 "worker_liveness_seconds": self._worker_liveness_seconds,
             }
         report = self._call(
@@ -283,8 +305,11 @@ class ConfigurationRoutes:
             secrets=self._secrets,
             **options,
         )
+        # A token decrypted for the destination read is in the registry of this request: it is
+        # redacted from every finding with the secrets of the server.
+        secrets = (*self._secrets, *registered_secret_values())
         findings = tuple(
-            configs.redact_finding(finding, self._secrets) for finding in report.findings[offset : offset + limit]
+            configs.redact_finding(finding, secrets) for finding in report.findings[offset : offset + limit]
         )
         return ValidationReportResource.model_validate(
             {

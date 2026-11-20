@@ -45,7 +45,11 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from infrahub_sync.client.models import DEFAULT_LIMIT
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
-from infrahub_sync.configuration.capabilities import UnknownCredentialMethodError, credential_field_map
+from infrahub_sync.configuration.capabilities import (
+    DestinationSchemaReadError,
+    UnknownCredentialMethodError,
+    credential_field_map,
+)
 from infrahub_sync.execution import LiveSecretValues, register_secret_values
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -725,6 +729,60 @@ class CredentialActions:
         assert completed.response_status is not None
         assert completed.response_body is not None
         return completed.response_status, completed.response_body
+
+
+_UNREADABLE_FOR_SCHEMA_READ: Final = "the stored credential of the destination cannot be read"
+
+
+def destination_credential_values(
+    service: RunService, cipher: CredentialCipher | None
+) -> Callable[[str], dict[str, str]]:
+    """Return the function that reads the fields of a stored credential for the destination schema read.
+
+    The Sync API reads the destination schema when it validates a registered version with a
+    branch. A destination that names a stored credential needs its token for that read (spec
+    027, FR-004). The function decrypts the current revision in the process of the Sync API.
+    ``CredentialCipher.decrypt`` adds each value to the redaction registry of the request
+    before it returns it, so the function must run inside a request. The values go to the read
+    and into no answer.
+
+    The function raises ``DestinationSchemaReadError`` with the reason ``credentials`` when no
+    key is configured, the credential does not exist, or its value cannot be decrypted with
+    the current key. Validation reports that as a finding, not as a server error.
+    """
+
+    def decrypted(name: str) -> dict[str, str] | str:
+        """Return the fields of the current revision, or the cause that it cannot be read."""
+        if cipher is None:
+            return "key-not-configured"
+        projection = service.accounts.projection
+        credential = projection.lookup_stored_credential(name)
+        stored = (
+            None
+            if credential is None
+            else projection.lookup_stored_credential_revision(credential.credential_id, credential.current_revision)
+        )
+        if credential is None or stored is None:
+            return "credential-not-found"
+        try:
+            return cipher.decrypt(
+                credential.credential_id,
+                stored.revision,
+                key_id=stored.key_id,
+                nonce=stored.nonce,
+                ciphertext=stored.ciphertext,
+            )
+        except CredentialDecryptionError as error:
+            return error.reason
+
+    def read(name: str) -> dict[str, str]:
+        values = decrypted(name)
+        if isinstance(values, str):
+            logger.warning("credential.unreadable_for_schema_read", name=name, cause=values)
+            raise DestinationSchemaReadError(_UNREADABLE_FOR_SCHEMA_READ, reason="credentials")
+        return values
+
+    return read
 
 
 def _execution_in_progress(run: ProductRun, flow_run_id: str) -> PrefectExecutionLink:

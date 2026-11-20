@@ -167,7 +167,10 @@ def build_client(settings: Mapping[str, Any], branch: str) -> InfrahubClientSync
     """An Infrahub client of the destination, with `branch` as its default branch.
 
     It reads the address and the token as the destination adapter does, and reads nothing from
-    Infrahub, so `branch` need not exist yet. A missing address or token raises
+    Infrahub, so `branch` need not exist yet. `settings` are the resolved destination settings of
+    the run: for a destination that names a stored credential, their token is the value that the
+    Sync API released to the stage execution (spec 027), and no worker variable is read. A
+    missing address or token raises
     `CredentialConfigurationError`, which the failure record classes as `credential_missing`.
     """
     url, _declared_branch = resolved_endpoint(settings, branch)

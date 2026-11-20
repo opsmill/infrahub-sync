@@ -40,8 +40,10 @@ thing that may perform I/O.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING, Any, cast
 
 from infrahub_sync import requested_destination_write_operations
@@ -53,7 +55,14 @@ from infrahub_sync.runtime_schema import (
     normalize_destination_schema,
 )
 
-from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationAccessAccessor, DestinationSchemaReadError
+from .capabilities import (
+    BUILTIN_ADAPTER_CAPABILITIES,
+    DestinationAccessAccessor,
+    DestinationSchemaReadError,
+    UnknownCredentialMethodError,
+    credential_field_map,
+    destination_token,
+)
 from .models import ValidationFinding, sort_findings
 from .runtime import effective_destination_branch
 from .validation import _finding_message
@@ -89,9 +98,19 @@ class DestinationSchemaOptions:
     behavior byte-identical, with zero schema reads. ``branch`` is the Infrahub branch the
     team names (`configs validate --branch`, spec 007 FR-034); ``None`` reads the package's
     declared destination branch.
+
+    ``credential_values`` reads the fields of a stored credential by its name, for a
+    destination block that names one (spec 027, FR-004). The Sync API passes a function that
+    decrypts the current revision inside the request and adds each value to the request's
+    redaction registry. It raises :class:`DestinationSchemaReadError` with the reason
+    ``credentials`` when the credential cannot be read. Without it, the read of such a
+    destination becomes one ``destination-schema-read-failed`` finding and sends no request.
     """
 
     branch: str | None = None
+    credential_values: Callable[[str], Mapping[str, str]] | None = dataclass_field(
+        default=None, repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,6 +340,40 @@ def _access_findings(
     return findings
 
 
+def _given(token: str | None) -> AbstractContextManager[None]:
+    """Give the destination reads the token of the named stored credential; nothing when none is named."""
+    return nullcontext() if token is None else destination_token(token)
+
+
+def _stored_destination_token(package: ConfigurationPackage, options: DestinationSchemaOptions | None) -> str | None:
+    """Return the token of the stored credential that the destination names, or ``None`` when it names none.
+
+    The fields of the
+    credential are read through ``options.credential_values``, and the field that the
+    adapter's field map puts into the ``token`` setting is the token.
+
+    Raises:
+        DestinationSchemaReadError: reason ``credentials``. No function reads stored
+            credentials here, the credential cannot be read, or it holds no token field.
+    """
+    destination = package.configuration.destination
+    if destination.credential is None:
+        return None
+    reader = None if options is None else options.credential_values
+    if reader is None:
+        msg = "the stored credential of the destination cannot be read here"
+        raise DestinationSchemaReadError(msg, reason="credentials")
+    try:
+        stored_field = credential_field_map(destination.name, destination.settings or {}).settings.get("token")
+    except UnknownCredentialMethodError:
+        stored_field = None
+    token = reader(destination.credential).get(stored_field) if stored_field is not None else None
+    if not token:
+        msg = "the stored credential of the destination holds no token"
+        raise DestinationSchemaReadError(msg, reason="credentials")
+    return token
+
+
 def collect_destination_schema_findings(
     package: ConfigurationPackage, options: DestinationSchemaOptions | None = None
 ) -> DestinationSchemaValidation:
@@ -370,7 +423,9 @@ def collect_destination_schema_findings(
             options.branch if options is not None and options.branch else resolve_declared_destination_branch(package)
         )
         try:
-            snapshot = accessor(package, branch)
+            token = _stored_destination_token(package, options)
+            with _given(token):
+                snapshot = accessor(package, branch)
         except DestinationSchemaReadError as exc:
             findings.append(
                 _finding(
@@ -401,5 +456,6 @@ def collect_destination_schema_findings(
                     )
                 )
             findings.extend(_schema_content_findings(package, snapshot))
-            findings.extend(_access_findings(package, capabilities.destination_access_accessor, branch))
+            with _given(token):
+                findings.extend(_access_findings(package, capabilities.destination_access_accessor, branch))
     return DestinationSchemaValidation(findings=sort_findings(findings), schema_fingerprint=fingerprint)

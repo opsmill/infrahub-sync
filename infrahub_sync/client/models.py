@@ -1023,6 +1023,7 @@ FailureType = Literal[
     "record_load_failed",
     "transform_failed",
     "credential_missing",
+    "credential_unavailable",
     "verification_failed",
     "apply_refused",
     "left_out_review_required",
@@ -1043,6 +1044,9 @@ FailureType = Literal[
 
 The seven names from `destination_default_branch_not_main` to `proposed_change_close_failed` are
 the failures of the branch review operations of a scheduled run (spec 021, research R15).
+
+`credential_unavailable` is a stage that could not get the stored credential values of its run
+from the Sync API (spec 027, FR-019): the cause says which of the reasons applies.
 """
 
 FAILURE_TYPES: tuple[FailureType, ...] = get_args(FailureType)

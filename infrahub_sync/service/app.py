@@ -40,7 +40,7 @@ from .config_routes import (
     parse_bounded_integer,
     parse_page_limit,
 )
-from .credential_actions import CredentialActions
+from .credential_actions import CredentialActions, destination_credential_values
 from .credential_crypto import CredentialCipher
 from .credential_routes import credential_router
 from .events import ACCOUNT_REFUSED
@@ -329,6 +329,10 @@ def _include_routers(
     plan, the accounts and the stored credentials.
     """
     if configuration_routes is not None:
+        if isinstance(configuration_routes, ConfigurationRoutes):
+            # `validate` reads the destination schema with the token of a stored credential,
+            # decrypted in this process and returned nowhere (spec 027, FR-004).
+            configuration_routes.read_stored_credentials_with(destination_credential_values(service, credential_cipher))
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
     if schedules is not None:
         application.include_router(schedule_router(schedules, authenticate, idempotency_key))

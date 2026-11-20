@@ -121,6 +121,15 @@ class Released:
         with sqlite3.connect(databases[0]) as connection:
             return connection.execute(statement, values).fetchall()
 
+    def delete_credential(self, name: str) -> None:
+        """Remove a credential after a run was accepted: registration and run start refuse a missing one."""
+        self.execute(
+            "DELETE FROM stored_credential_revisions WHERE credential_id IN "
+            "(SELECT credential_id FROM stored_credentials WHERE name = ?)",
+            (name,),
+        )
+        self.execute("DELETE FROM stored_credentials WHERE name = ?", (name,))
+
     def dump(self) -> str:
         databases = sorted(self._tmp_path.rglob("*.sqlite3"))
         with sqlite3.connect(databases[0]) as connection:
@@ -207,8 +216,9 @@ def test_a_stage_receives_only_the_blocks_it_needs(released: Released, stage: st
 
 
 def test_a_stage_that_does_not_need_the_source_is_not_refused_for_its_credential(released: Released) -> None:
-    create_stored_credential(released.api.store, DESTINATION_CREDENTIAL, {"token": DESTINATION_TOKEN})
+    released.store_credentials()
     run_id, flow_run_id = released.run(stage="apply")
+    released.delete_credential(SOURCE_CREDENTIAL)
 
     response = released.release(run_id, flow_run_id)
 
@@ -388,8 +398,9 @@ def test_a_credential_name_that_equals_a_released_value_stays_intact(released: R
 
 
 def test_a_missing_credential_is_refused_and_names_the_block(released: Released) -> None:
-    create_stored_credential(released.api.store, DESTINATION_CREDENTIAL, {"token": DESTINATION_TOKEN})
+    released.store_credentials()
     run_id, flow_run_id = released.run()
+    released.delete_credential(SOURCE_CREDENTIAL)
 
     error = _refused(released.release(run_id, flow_run_id), 422, "credential-not-found")
 
@@ -399,11 +410,12 @@ def test_a_missing_credential_is_refused_and_names_the_block(released: Released)
 
 
 def test_a_credential_without_a_needed_field_is_refused_and_names_the_fields(released: Released) -> None:
-    create_stored_credential(released.api.store, DESTINATION_CREDENTIAL, {"token": DESTINATION_TOKEN})
+    released.store_credentials()
+    run_id, flow_run_id = released.run()
+    # The value changed after the run was accepted: the credential now holds no token.
     create_stored_credential(
         released.api.store, SOURCE_CREDENTIAL, {"username": "released-marker-user", "password": SOURCE_TOKEN}
     )
-    run_id, flow_run_id = released.run()
 
     error = _refused(released.release(run_id, flow_run_id), 422, "credential-field-missing")
 

@@ -22,6 +22,11 @@ from pydantic import TypeAdapter, ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
+from infrahub_sync.configuration.credential_admission import (
+    StoredCredentialCheckError,
+    named_credentials,
+    stored_credential_findings,
+)
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redact_ordered, redaction_order
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import accounts as account_statements
@@ -3494,6 +3499,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         try:
             cursor = connection.cursor()
             try:
+                self._require_named_credentials(cursor, package)
                 cursor.execute(self._sql(_INSERT_CONFIGURATION), (config_id, version.created_at.isoformat()))
                 self._insert_configuration_version_row(
                     cursor,
@@ -3502,6 +3508,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     registered_by=registered_by,
                     registration_reason=registration_reason,
                 )
+                self._insert_version_credentials(cursor, version, package)
                 connection.commit()
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 # DB-API drivers do not share an integrity-error base class;
@@ -3516,6 +3523,37 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
         return version
+
+    def _require_named_credentials(self, cursor: _Cursor, package: ConfigurationPackage) -> None:
+        """Lock the stored credentials the package names and check that each one can serve its block.
+
+        Runs first in the transaction that registers the version. The rows stay locked until
+        that transaction ends, so no deletion and no value change of a named credential
+        commits between this check and the version (spec 027, research R8, critique E4).
+
+        Raises:
+            StoredCredentialCheckError: a named credential does not exist, or does not hold a
+                field its block needs. Nothing was written.
+        """
+        named = named_credentials(package)
+        if not named:
+            return
+        held = credential_statements.lock_and_read_fields(cursor, self._sql, tuple(named.values()))
+        findings = stored_credential_findings(package, held.get)
+        if findings:
+            raise StoredCredentialCheckError(findings)
+
+    def _insert_version_credentials(
+        self, cursor: _Cursor, version: ConfigurationVersion, package: ConfigurationPackage
+    ) -> None:
+        """Record the credential each block of the version names, in the transaction that inserts it."""
+        credential_statements.write_version_credentials(
+            cursor,
+            self._sql,
+            config_id=version.config_id,
+            registry_version=version.registry_version,
+            credentials=named_credentials(package),
+        )
 
     def _insert_configuration_version_row(
         self,
@@ -3570,6 +3608,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             try:
                 cursor = connection.cursor()
                 try:
+                    self._require_named_credentials(cursor, package)
                     cursor.execute(self._sql(_SELECT_NEXT_CONFIGURATION_VERSION), (config_id,))
                     next_row = cursor.fetchone()
                     next_version = int(next_row[0]) if next_row is not None else 1
@@ -3587,6 +3626,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         registered_by=registered_by,
                         registration_reason=registration_reason,
                     )
+                    self._insert_version_credentials(cursor, version, package)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # DB-API drivers do not share an integrity-error base class;

@@ -934,7 +934,8 @@ is `null` or absent:
 - `failure_type`: one of these types, grouped by what failed:
     - a credential or the connection to a source or the destination: `system_unreachable`,
       `system_timeout`, `token_rejected`, `permission_missing`, `tls_certificate_rejected`,
-      `credential_missing`;
+      `credential_missing`, `credential_unavailable` (the stage could not get the stored credentials of
+      its run from the Sync API);
     - reading a source record: `record_load_failed`, `transform_failed`;
     - the destination's answer: `destination_rejected_write`, `destination_peer_missing`,
       `destination_peer_ambiguous`, `lineage_refused`, `destination_schema_unavailable`;

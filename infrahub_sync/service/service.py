@@ -23,6 +23,12 @@ from pydantic import ValidationError
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResource, PlanStepPart, PlanStepTimings
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration.credential_admission import (
+    CREDENTIAL_BLOCKS,
+    STAGE_CREDENTIAL_BLOCKS,
+    StoredCredentialFinding,
+    stored_credential_findings,
+)
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.configuration.validation import credential_namespace_finding
@@ -440,7 +446,9 @@ class RunService:
             self._require_matching_receipt(existing, receipt)
             if existing.state == "accepted":
                 return await self._resume_or_replay(existing, {}, principal, request.reason)
-        package, package_checksum = self._registered_configuration(request.config_id, request.registry_version)
+        package, package_checksum = self._registered_configuration(
+            request.config_id, request.registry_version, stage=request.operation
+        )
         sync_name = package.configuration.name
         # The worker resolves the branch it plans and writes against through the same function,
         # so the stored branch is the saved plan's destination branch.
@@ -516,9 +524,20 @@ class RunService:
         return await self._submit(reserved, parameters, principal, request.reason)
 
     def _registered_configuration(
-        self, config_id: str, registry_version: int, *, expected_checksum: str | None = None
+        self, config_id: str, registry_version: int, *, stage: str, expected_checksum: str | None = None
     ) -> tuple[ConfigurationPackage, str]:
-        """Read the immutable registered package before allocating any run-side state."""
+        """Read the immutable registered package before allocating any run-side state.
+
+        ``stage`` is the operation that is about to start. The stored credentials that the
+        blocks of that stage name must exist and hold the fields the blocks need, because a
+        credential can be deleted or changed after registration (spec 027, FR-008).
+
+        Raises:
+            ServiceAPIError: ``404`` for a version that does not exist, ``503`` for one that
+                cannot be read, and ``422`` for an unsupported store, a credential identifier
+                outside the namespace, ``credential-not-found``, ``credential-field-missing``
+                and ``credential-method-unknown``. No refusal holds a value.
+        """
         stored = self._projection.lookup_configuration_version(config_id, registry_version).value
         if stored is None:
             raise self._error(
@@ -544,7 +563,28 @@ class RunService:
                     f"{finding.message}; register a new version with prefixed identifiers "
                     "and recreate saved plans against it",
                 )
+        refused = self._stored_credential_refusal(package, stage)
+        if refused is not None:
+            raise self._error(422, refused.code, refused.message, details=refused.details())
         return package, stored.package_checksum
+
+    def _stored_credential_refusal(self, package: ConfigurationPackage, stage: str) -> StoredCredentialFinding | None:
+        """Return why a named stored credential cannot serve a block of the stage, or ``None``.
+
+        Only the blocks the stage connects to are checked, as the worker route releases only
+        those: an apply, a resume and a verify are not refused for the credential of the
+        source. An approval is checked as the apply it precedes. One indexed read for each
+        named credential, and no value.
+        """
+
+        def stored_fields(name: str) -> tuple[str, ...] | None:
+            credential = self._projection.lookup_stored_credential(name)
+            return None if credential is None else tuple(credential.fields)
+
+        findings = stored_credential_findings(
+            package, stored_fields, blocks=STAGE_CREDENTIAL_BLOCKS.get(stage, CREDENTIAL_BLOCKS)
+        )
+        return findings[0] if findings else None
 
     async def verify_run(
         self, run_id: str, request: VerifyRunRequest, principal: Principal, idempotency_key: str
@@ -568,7 +608,7 @@ class RunService:
         )
         if existing is not None:
             return await self._resume_or_replay(existing, parameters, principal, request.reason)
-        self._require_supported_run_configuration(run)
+        self._require_supported_run_configuration(run, "verify")
         if not run.reconciliation_required or run_has_saved_plan(run):
             # A run that requires reconciliation but saved no plan, a `sync` stopped while it
             # was still planning, keeps its write admission, so the reservation refuses it with
@@ -629,7 +669,7 @@ class RunService:
         self._refuse_cancelled(run, principal, "apply", request.reason)
         if approval_required():
             self._require_matching_approval(run, request, principal)
-        self._require_supported_run_configuration(run)
+        self._require_supported_run_configuration(run, "apply")
         plan = self._plan(run_id)
         if not plan.checksum_ok or plan.checksum != request.expected_checksum:
             raise self._refusal(
@@ -714,7 +754,7 @@ class RunService:
             )
         if approval_required():
             self._require_matching_approval(run, request, principal, operation=operation)
-        self._require_supported_run_configuration(run)
+        self._require_supported_run_configuration(run, operation)
         try:
             plan = self._plan(run_id)
         except ServiceAPIError:
@@ -919,6 +959,7 @@ class RunService:
             return self._stored_response(existing)
         self._refuse_cancelled(run, principal, "approve", request.reason)
         self._require_approvable(run, principal, request.reason)
+        self._require_stored_credentials_for_approval(run, principal, request.reason)
         try:
             plan = self._plan(run_id)
         except ServiceAPIError:
@@ -993,6 +1034,32 @@ class RunService:
             outcome = "refused-not-approvable"
         self._audit(run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome=outcome)
         return status, content
+
+    def _require_stored_credentials_for_approval(
+        self, run: ProductRun, principal: Principal, reason: str | None
+    ) -> None:
+        """Refuse an approval when the apply it precedes would be refused for a stored credential (FR-008).
+
+        The refusal is recorded, as every refused approval is. A version that cannot be read
+        is left to the plan lookup that follows, and to the apply.
+        """
+        binding = run.configuration_binding
+        if binding is None:
+            return
+        stored = self._projection.lookup_configuration_version(binding[0], binding[1]).value
+        if stored is None:
+            return
+        try:
+            package = parse_configuration_package(stored.declared_content)
+        except ConfigurationPackageParseError:
+            return
+        refused = self._stored_credential_refusal(package, "approve")
+        if refused is None:
+            return
+        self._audit(
+            run.run_id, actor=principal.actor, operation="approve", reason=reason, outcome=f"refused-{refused.code}"
+        )
+        raise self._error(422, refused.code, refused.message, run_id=run.run_id, details=refused.details())
 
     def _require_approvable(self, run: ProductRun, principal: Principal, reason: str | None) -> None:
         """Refuse a run that is still running a stage, or that is neither planned nor resumable.
@@ -1827,11 +1894,11 @@ class RunService:
         self._require_matching_receipt(existing, requested)
         return existing
 
-    def _require_supported_run_configuration(self, run: ProductRun) -> None:
-        """Validate the immutable binding before submitting another execution."""
+    def _require_supported_run_configuration(self, run: ProductRun, stage: str) -> None:
+        """Validate the immutable binding, and the stored credentials of ``stage``, before another execution."""
         binding = run.configuration_binding
         if binding is not None:
-            self._registered_configuration(binding[0], binding[1], expected_checksum=binding[2])
+            self._registered_configuration(binding[0], binding[1], stage=stage, expected_checksum=binding[2])
 
     async def _resume_or_replay(
         self,
@@ -1853,7 +1920,7 @@ class RunService:
             )
             return self._stored_response(receipt)
         assert receipt.run_id is not None
-        self._require_supported_run_configuration(self._required_run(receipt.run_id))
+        self._require_supported_run_configuration(self._required_run(receipt.run_id), receipt.operation)
         return await self._submit(receipt, parameters, principal, reason)
 
     @staticmethod

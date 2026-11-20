@@ -12,7 +12,7 @@ import os
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, NoReturn
@@ -32,7 +32,12 @@ from pydantic_core import to_json
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
-from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
+from infrahub_sync.configuration.capabilities import DestinationSchemaReadError, destination_token
+from infrahub_sync.configuration.credential_admission import (
+    CREDENTIAL_BLOCKS,
+    STAGE_CREDENTIAL_BLOCKS,
+    named_credentials,
+)
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.configuration.runtime import effective_destination_branch, resolve_runtime_instance
 from infrahub_sync.configuration.storage import (
@@ -112,6 +117,7 @@ from .checkpoints import (
     publish_plan_checkpoint,
     rehydrate_plan_checkpoint,
 )
+from .credential_client import ReleasedBlock, release_run_credentials
 from .events import (
     SCHEDULE_PROPOSED_CHANGE_FAILED,
     SCHEDULE_PROPOSED_CHANGE_KEPT,
@@ -148,6 +154,10 @@ _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
 _REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
 _REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not match run binding"
 _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
+_STAGE_CREDENTIALS_REQUIRED = "the stage of a configuration that names a stored credential needs its execution"
+# The failure class of a read that needs a stored credential before the run exists: see
+# `_destination_settings`.
+_CREDENTIAL_UNAVAILABLE = "credential_unavailable"
 # The outcome of a `sync` that stopped after a plan that leaves out records (spec 007 FR-012).
 LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
 # How long a start that waits under the `queue` policy waits before its flow run checks again
@@ -660,6 +670,35 @@ class _ScheduledRun:
     left_out: int | None = None
 
 
+@dataclass
+class _RunCredentials:
+    """The stored credential values that the Sync API released to one stage execution (spec 027).
+
+    The worker asks once, the first time the stage resolves a configuration that names a
+    stored credential, and after it claimed the execution: the worker route answers only a
+    claimed execution that has not ended. Every later resolution of the stage reuses the
+    answer, so one stage execution writes one release event. The flow owns the object beside
+    its write tracker, so the values outlive the stage for the steps that follow it.
+
+    The client adds every value to the redaction registry of the run before it returns it.
+    """
+
+    run_id: str
+    flow_run_id: str
+    _released: dict[str, ReleasedBlock] | None = field(default=None, repr=False)
+
+    def values(self) -> dict[str, dict[str, str]]:
+        """Return the released fields of each block that the stage needs and that names a credential.
+
+        Raises:
+            CredentialUnavailableError: the Sync API could not be reached, or it refused.
+            CredentialSettingsError: the worker's variables for the Sync API break a rule.
+        """
+        if self._released is None:
+            self._released = release_run_credentials(self.run_id, self.flow_run_id)
+        return {block: dict(released.fields) for block, released in self._released.items()}
+
+
 @dataclass(frozen=True)
 class _Execution:  # pylint: disable=too-many-instance-attributes
     """The execution this flow run holds, and the run values that its stage takes.
@@ -836,7 +875,14 @@ def _destination_not_ready(
     try:
         package = parse_configuration_package(stored.declared_content)
         branch = effective_destination_branch(package.configuration.destination.settings, None)
-        runtime_schema_worker.read_destination_schema_snapshot(package, branch)
+        if package.configuration.destination.credential is None:
+            runtime_schema_worker.read_destination_schema_snapshot(package, branch)
+        else:
+            # No run exists yet, so the Sync API releases no value (spec 027, FR-004). The read
+            # goes without a token: it still shows whether the destination answers, and a
+            # refusal for the missing token is no reason to wait.
+            with destination_token(None):
+                runtime_schema_worker.read_destination_schema_snapshot(package, branch)
     except DestinationSchemaReadError as exc:
         return exc.reason if exc.reason in _NOT_READY_REASONS else None
     except (ConfigurationPackageParseError, RuntimeSchemaError):
@@ -859,12 +905,23 @@ def _stopped_by_approval(schedule: ScheduleRecord) -> bool:
 
 
 def _destination_settings(projection: ProductProjection, schedule: ScheduleRecord) -> Mapping[str, Any]:
-    """The destination settings of the schedule's version, with its credentials resolved, and no source."""
+    """The destination settings of the schedule's version, with its credentials resolved, and no source.
+
+    Raises:
+        EarlierProposedChangesUnreadableError: the version is not found, or its destination
+            names a stored credential (cause ``credential_unavailable``).
+    """
     stored = projection.lookup_configuration_version(schedule.config_id, schedule.registry_version).value
     if stored is None:
         cause = "configuration-version-not-found"
         raise EarlierProposedChangesUnreadableError(cause)
     package = parse_configuration_package(stored.declared_content)
+    if package.configuration.destination.credential is not None:
+        # The Sync API releases a value only to a claimed execution of a run (spec 027, FR-004),
+        # and this read comes before the admission creates the run. The start fails with this
+        # cause; it never skips the read, because a new run could then replace a proposed
+        # change that a person approved.
+        raise EarlierProposedChangesUnreadableError(_CREDENTIAL_UNAVAILABLE)
     instance = resolve_runtime_instance(
         package, directory=_NO_CONFIGURATION_DIRECTORY, resolve_source_credentials=False
     )
@@ -905,8 +962,13 @@ def _worker_execution_context(
     stage: str,
     build_models: bool = True,
     model_scope: RuntimeModelScope | None = None,
+    credentials: _RunCredentials | None = None,
 ) -> tuple[ProductProjection, Any, str]:
     """Load the durable run and resolve the runtime of its registered configuration.
+
+    When a block that the stage connects to names a stored credential, the values come from
+    `credentials`, which asks the Sync API once for the stage execution (spec 027, research
+    R6). A configuration that names none makes no request and reads no worker variable.
 
     A stored run that names no registered configuration is refused with the same fixed text
     as worker parameters that carry no binding, before the two are compared.
@@ -940,10 +1002,17 @@ def _worker_execution_context(
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
     # A saved-plan apply, a resume and a verify construct the destination only, so they
     # resolve no source credential (spec 016 FR-010: a resume never reads the source).
+    released: dict[str, Mapping[str, Mapping[str, str]]] = {}
+    if named_credentials(package, STAGE_CREDENTIAL_BLOCKS.get(stage, CREDENTIAL_BLOCKS)):
+        if credentials is None:
+            raise ValueError(_STAGE_CREDENTIALS_REQUIRED)
+        released["released"] = credentials.values()
     instance = resolve_runtime_instance(
         package,
         directory=_NO_CONFIGURATION_DIRECTORY,
         resolve_source_credentials=stage not in ("apply", "resume", "verify"),
+        # Passed only for a configuration that names a stored credential.
+        **released,
     )
     instance._configuration_binding = binding
     scope = model_scope if model_scope is not None else STAGE_RUNTIME_MODEL_SCOPE.get(stage)
@@ -975,6 +1044,7 @@ def _check_destination(  # pylint: disable=too-many-arguments
     projection: ProductProjection,
     scratch: StageScratch,
     report: dict[str, Any] | None = None,
+    credentials: _RunCredentials | None = None,
 ) -> tuple[PreWriteCheck, ...]:
     """Run, against the destination, every pre-write check a saved-plan apply runs, and write nothing.
 
@@ -1002,6 +1072,7 @@ def _check_destination(  # pylint: disable=too-many-arguments
         run_branch=branch,
         stage="verify",
         model_scope="destination",
+        credentials=credentials,
     )
     _require_planned_schema(run_id=run_id, manifest=manifest, models=destination_instance._runtime_models)
     applier = PlanApplier.open_existing(destination_instance, run_id=run_id, branch=branch, base_directory=scratch.root)
@@ -1109,8 +1180,14 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     plan_step: StorePlanStepObserver | None = None,
     branch_review: _BranchReview | None = None,
     scheduled: _ScheduledRun | None = None,
+    credentials: _RunCredentials | None = None,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary.
+
+    `credentials` holds the stored credential values of this stage execution; one is made
+    when the caller passes none. The stage asks the Sync API for them once, when it first
+    resolves its configuration, and only when a block it connects to names a stored
+    credential (spec 027, research R6).
 
     A `plan` or `sync` stage records both sides as `waiting` as soon as it starts, before the
     live schema read and before a `sync` waits for its write guard, so a stage that fails
@@ -1145,6 +1222,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         plan_step = plan_step or StorePlanStepObserver(projection, run_id, flow_run_id)
         plan_step.begin()
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
+    credentials = credentials or _RunCredentials(run_id, flow_run_id)
     if (branch_review is not None or scheduled is not None) and stage != "sync":
         msg = f"branch review and a scheduled run apply only to the stage sync, not {stage}"
         raise ValueError(msg)
@@ -1163,6 +1241,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         run_branch=branch,
         stage=stage,
         build_models=stage not in _WRITE_STAGES,
+        credentials=credentials,
     )
 
     # Merged, never replaced: the list is the run's redaction registry, and it can already hold
@@ -1223,6 +1302,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             projection=projection,
             scratch=scratch,
             report=destination_report,
+            credentials=credentials,
         )
         result = {
             "run_id": run_id,
@@ -1265,6 +1345,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 projection=projection,
                 run_branch=branch,
                 stage=stage,
+                credentials=credentials,
             )
             _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
             # Read under the guard, so no other write of this configuration moves it; the same
@@ -1322,6 +1403,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 projection=projection,
                 run_branch=branch,
                 stage=stage,
+                credentials=credentials,
             )
             run_directory = scratch.run_directory(instance.name, run_id)
             saved = _plan(
@@ -1998,6 +2080,9 @@ def _service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many
     # Owned here rather than by the stage, so the failure boundary can read it however the
     # stage ended.
     tracker = WriteDispatchTracker()
+    # Owned here, as `tracker` is: the stored credential values of this stage execution, asked
+    # from the Sync API once, inside the stage, after the claim above.
+    credentials = _RunCredentials(run_id, flow_run_id)
     # Owned here, as `tracker` is, so the failure boundary can store the part that was running
     # before it commits the verdict, after which the store refuses the write (research R13).
     plan_step = StorePlanStepObserver(projection, run_id, flow_run_id) if stage in ("plan", "sync") else None
@@ -2027,6 +2112,7 @@ def _service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many
                 plan_step=plan_step,
                 branch_review=execution.branch_review,
                 scheduled=execution.scheduled,
+                credentials=credentials,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc

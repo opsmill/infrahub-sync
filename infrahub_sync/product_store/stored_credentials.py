@@ -401,6 +401,22 @@ def read_revision(cursor: _Cursor, sql: Sql, credential_id: str, revision: int) 
     return None if row is None else _revision_from_row(row)
 
 
+def lock_and_read_fields(cursor: _Cursor, sql: Sql, names: Collection[str]) -> dict[str, tuple[str, ...] | None]:
+    """Lock these credentials until the transaction ends, and return the field names each one holds.
+
+    A name that no credential has maps to ``None``. The lock is the one a value change and a
+    deletion take, so a registration that passed its check cannot commit beside a deletion of a
+    credential it names (critique E4). The names are locked in sorted order, so two
+    registrations cannot wait for each other.
+    """
+    held: dict[str, tuple[str, ...] | None] = {}
+    for name in sorted(set(names)):
+        cursor.execute(sql(_LOCK_CREDENTIAL_BY_NAME), (name,))
+        credential = read_credential_by_name(cursor, sql, name)
+        held[name] = None if credential is None else tuple(credential.fields)
+    return held
+
+
 def write_version_credentials(
     cursor: _Cursor,
     sql: Sql,

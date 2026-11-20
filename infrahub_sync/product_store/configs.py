@@ -40,6 +40,10 @@ from infrahub_sync.configuration import (
     parse_configuration_package,
     sort_findings,
 )
+from infrahub_sync.configuration.credential_admission import (
+    StoredCredentialCheckError,
+    stored_credential_findings,
+)
 from infrahub_sync.configuration.models import (
     _MAX_FINDING_TEXT_LENGTH,
     _POINTER_CHARACTER_ESCAPES,
@@ -670,7 +674,15 @@ def _validation_refusal(exc: CredentialConfigurationError, package: Configuratio
     The store raises on the first defect because registration must reject before it persists.
     Collecting here is what makes the same package report N findings rather than one.
     """
-    return ConfigsValidationError(str(exc), findings=collect_findings(package))
+    findings = collect_findings(package)
+    if isinstance(exc, StoredCredentialCheckError):
+        # The declared content cannot show these: they come from the store, read inside the
+        # registration's transaction. The reason is the code of the first one.
+        stored = tuple(item.finding for item in exc.findings)
+        return ConfigsValidationError(
+            str(exc), findings=sort_findings((*findings, *stored)), reason=exc.findings[0].code
+        )
+    return ConfigsValidationError(str(exc), findings=findings)
 
 
 @_service_boundary
@@ -859,6 +871,18 @@ def _worker_credential_findings(
     )
 
 
+def _stored_credential_findings(
+    package: ConfigurationPackage, projection: ProductProjection
+) -> tuple[ValidationFinding, ...]:
+    """Report each block whose named stored credential is missing or lacks a field, as the store holds it now."""
+
+    def stored_fields(name: str) -> tuple[str, ...] | None:
+        credential = projection.lookup_stored_credential(name)
+        return None if credential is None else tuple(credential.fields)
+
+    return tuple(item.finding for item in stored_credential_findings(package, stored_fields))
+
+
 @_service_boundary
 def validate(
     *,
@@ -886,6 +910,10 @@ def validate(
     records the judged snapshot's fingerprint. The caller supplies the durable-store
     :class:`ProductProjection` through ``projection``.
 
+    Every call also reports each block whose named stored credential does not exist now, or
+    lacks a field the block needs (``credential-not-found``, ``credential-field-missing``;
+    spec 027, FR-008): one indexed read for each named credential, and no value.
+
     The same opt-in compares the package's `$credential` references with the variable names
     the live workers published to ``projection`` (spec 007 FR-035): a worker is live while its
     last publication is no older than ``worker_liveness_seconds``.
@@ -900,7 +928,7 @@ def validate(
         msg = f"configuration {config_id!r} has no registered version {registry_version} ({lookup.reason})"
         raise ConfigsNotFoundError(msg)
     parsed = _parse(stored.declared_content, refuse_store=False)
-    findings = collect_findings(parsed, secrets)
+    findings = sort_findings((*collect_findings(parsed, secrets), *_stored_credential_findings(parsed, projection)))
     fingerprint: str | None = None
     if destination_schema is not None:
         schema_validation = collect_destination_schema_findings(parsed, destination_schema)

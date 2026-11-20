@@ -61,6 +61,8 @@ from infrahub_sync.service.branch_review import (
     ProposedChangeOpenFailedError,
     ProposedChangeReadFailedError,
 )
+from infrahub_sync.service.credential_client import CredentialUnavailableError
+from infrahub_sync.service.settings import WORKER_API_URL_ENV, WORKER_TOKEN_ENV, CredentialSettingsError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -258,6 +260,9 @@ class _Classified:
 _TYPED_ERRORS: tuple[tuple[tuple[type[BaseException], ...], FailureType], ...] = (
     (LINEAGE_REFUSALS, "lineage_refused"),
     ((DestinationSchemaUnavailableError,), "destination_schema_unavailable"),
+    # A stage that could not get the stored credential values of its run (spec 027, FR-019). A
+    # worker whose variables for the Sync API are unset or not accepted cannot ask at all.
+    ((CredentialUnavailableError, CredentialSettingsError), "credential_unavailable"),
     ((CredentialConfigurationError,), "credential_missing"),
     ((LeftOutConfirmationRequiredError, PlanFormatApplyUnsupportedError), "apply_refused"),
     ((PlanVerificationError, PlanSchemaChangedError), "verification_failed"),
@@ -425,6 +430,7 @@ _RESUMABLE_TYPES = frozenset(
         "permission_missing",
         "tls_certificate_rejected",
         "credential_missing",
+        "credential_unavailable",
     }
 )
 # The failure types whose fix is in a source record or a transform: a new plan is needed even on
@@ -506,12 +512,78 @@ _TEMPLATES: dict[str, Callable[[dict[str, Any], str, str], _Template]] = {
 }
 
 
-def _templates(fields: dict[str, Any], *, resumable: bool = False) -> _Template:
+_ENCRYPTION_KEY_ENV = "INFRAHUB_SYNC_ENCRYPTION_KEY"
+_WORKER_VARIABLES_CAUSE = (
+    f"The worker cannot ask the Sync API for the stored credentials of the run: its variables "
+    f"{WORKER_API_URL_ENV} and {WORKER_TOKEN_ENV} are not set or not accepted"
+)
+_WORKER_VARIABLES_NEXT_ACTION = (
+    f"Set {WORKER_API_URL_ENV} to the address of the Sync API and {WORKER_TOKEN_ENV} to the worker token "
+    f"on every worker, {_PLAN_AGAIN}"
+)
+
+
+def _credential_unavailable_template(link: BaseException | None) -> _Template:
+    """The cause and the next action of a stage that could not get its stored credential values.
+
+    One text for each reason of `CredentialUnavailableError` (spec 027, FR-019). The block,
+    the credential name, the field names and the refusal code come from the typed attributes
+    of the error, which keeps them only when they have the form of one; no text of the error
+    or of an answer is used. A missing credential names the command that creates it and says
+    that an administrator runs it (critique P5).
+    """
+    if not isinstance(link, CredentialUnavailableError):
+        # `CredentialSettingsError`: the worker's own variables, checked before any request.
+        return _WORKER_VARIABLES_CAUSE, _WORKER_VARIABLES_NEXT_ACTION
+    name = link.name or "that the configuration names"
+    block = f"the {link.block} block" if link.block else "the configuration"
+    create = f"`infrahub-sync credentials create {link.name}`" if link.name else "`infrahub-sync credentials create`"
+    change = f"`infrahub-sync credentials set {link.name}`" if link.name else "`infrahub-sync credentials set`"
+    fields = f"the fields {', '.join(link.fields)}" if link.fields else "a field"
+    code = f" ({link.code})" if link.code else ""
+    templates: dict[str, _Template] = {
+        "api-unreachable": (
+            "The worker could not reach the Sync API to get the stored credentials of the run",
+            f"Check that the Sync API answers at the address in {WORKER_API_URL_ENV} of the worker, {_PLAN_AGAIN}",
+        ),
+        "worker-token-refused": (
+            "The Sync API refused the worker token, so the worker did not get the stored credentials of the run",
+            f"Set {WORKER_TOKEN_ENV} to the same value on the Sync API and on every worker, {_PLAN_AGAIN}",
+        ),
+        "credential-missing": (
+            f"The stored credential {name} that {block} names does not exist",
+            f"Ask an administrator to create it with {create}, {_PLAN_AGAIN}",
+        ),
+        "credential-field-missing": (
+            f"The stored credential {name} does not hold {fields} that {block} needs",
+            f"Ask an administrator to set its value with {change}, {_PLAN_AGAIN}",
+        ),
+        "credential-undecryptable": (
+            f"The Sync API cannot decrypt the stored credential {name} with its current key",
+            f"Check {_ENCRYPTION_KEY_ENV} of the Sync API, or ask an administrator to set the value again "
+            f"with {change}, {_PLAN_AGAIN}",
+        ),
+    }
+    # `release-refused`, and any reason a later client adds: the refusal names its own code.
+    refused: _Template = (
+        f"The Sync API refused to release the stored credentials of the run{code}",
+        f"Check the log of the Sync API for the refusal, {_PLAN_AGAIN}",
+    )
+    return templates.get(link.reason, refused)
+
+
+def _templates(fields: dict[str, Any], *, resumable: bool = False, link: BaseException | None = None) -> _Template:
     """The cause and the next action of one failure type, from fixed templates over recorded fields.
 
     On a resumable run, the next action of a system or credential failure ends with `verify`
-    and `runs resume` instead of a new plan.
+    and `runs resume` instead of a new plan. `link` is the error that decided the failure
+    type: `credential_unavailable` writes its texts from the reason that error holds.
     """
+    if fields["failure_type"] == "credential_unavailable":
+        cause, next_action = _credential_unavailable_template(link)
+        if resumable and next_action is not None:
+            next_action = next_action.removesuffix(_PLAN_AGAIN) + _VERIFY_AND_RESUME
+        return cause, next_action
     template = _TEMPLATES.get(fields["failure_type"])
     if template is None:
         return None, None
@@ -592,7 +664,7 @@ def failure_record(
         "record": _record_reference(link),
         "field": field_name,
     }
-    cause, next_action = _templates(fields, resumable=resumable)
+    cause, next_action = _templates(fields, resumable=resumable, link=link)
     recorded = dict(fields)
     if cause:
         recorded["cause"] = _recordable(cause, secrets)
