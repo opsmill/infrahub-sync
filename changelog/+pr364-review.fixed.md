@@ -1,1 +1,0 @@
-Updating an Infrahub node no longer fetches the schema from Infrahub, and the release pull request exemption from the bump-label check now requires the title to name the same version as its `release/<version>` branch.

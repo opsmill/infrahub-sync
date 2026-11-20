@@ -252,7 +252,11 @@ def test_only_shared_client_constructs_sync_api_http_requests() -> None:
         if "httpx.Client(" in source or "httpx.AsyncClient(" in source:
             constructors.append(path.relative_to(ROOT))
 
-    assert constructors == [Path("infrahub_sync/client/client.py")]
+    # The Microsoft Graph adapter reads its own source API, not the Sync API.
+    assert sorted(constructors) == [
+        Path("infrahub_sync/adapters/msgraphsync.py"),
+        Path("infrahub_sync/client/client.py"),
+    ]
 
 
 def test_live_docs_and_examples_close_removed_cli_paths() -> None:

@@ -194,6 +194,7 @@ Apply never executes those deletes.
 | Peering Manager | Peering Manager → Infrahub |
 | Prometheus | Prometheus → Infrahub |
 | Slurp'it | Slurp'it → Infrahub |
+| Webex | Webex → Infrahub |
 | Generic REST API | external system → Infrahub |
 
 The IP Fabric and Slurp'it adapters need a worker image that installs their SDKs. The

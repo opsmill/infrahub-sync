@@ -1482,12 +1482,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             self._peer_unique_ids[cache_key] = None
             raise err
 
+        # Conversion runs before model_loader filters and transforms records. Only the
+        # loader may add models to the DiffSync store, so excluded peers stay excluded.
         unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
-        try:
-            peer_item = self.store.get(model=peer_kind, identifier=unique_id)
-        except ObjectNotFound:
-            peer_item = peer_model(**peer_data)
-            self.update_or_add_model_instance(peer_item)
 
         # Identifier-only hydration is deliberately adapter-local: inserting its
         # narrow result into the shared SDK store can replace a fuller node that
@@ -1500,8 +1497,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             identifiers=identifiers,
             fallback_node=None if hydrated else peer_node,
         )
-        resolved_unique_id = peer_item.get_unique_id()
-        self._peer_unique_ids[cache_key] = resolved_unique_id
+        self._peer_unique_ids[cache_key] = unique_id
         if verified_null_identifiers:
             logger.warning(
                 "Resolved peer %s[%s] with verified null attribute identifier(s): %s",
@@ -1509,7 +1505,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 peer_id,
                 sorted(verified_null_identifiers),
             )
-        return resolved_unique_id
+        return unique_id
 
     def _reconcile_peer_sdk_alias(
         self,
