@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Final, Literal
 from uuid import uuid4
@@ -42,7 +42,7 @@ from infrahub_sync.product_store.models import DEFAULT_START_LATE_SECONDS, SCHED
 
 from . import schedule_cadence
 from .events import SCHEDULE_START, SCHEDULE_STOPPED, schedule_decision_type, schedule_event
-from .models import EmittedSchedulePage, EmittedScheduleResource
+from .models import EmittedSchedulePage, EmittedScheduleResource, ScheduleNextStarts
 from .orchestration import (
     DeploymentSchedule,
     ObservedDeploymentSchedule,
@@ -57,7 +57,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
 
     from .auth import Principal, PrincipalResolver
-    from .models import ChangeScheduleRequest, CreateScheduleRequest, ScheduleActionRequest
+    from .models import (
+        ChangeScheduleRequest,
+        CreateScheduleRequest,
+        ScheduleActionRequest,
+        ScheduleNextStartsRequest,
+    )
 
 __all__ = ["ScheduleService", "match_prefect_schedules"]
 
@@ -105,6 +110,19 @@ _RESUME_ACTIONS: Final = {
 
 # The reasons for which the Sync API stops a schedule that cannot run.
 _StopReason = Literal["owner-not-found", "approval-required"]
+
+# How far ahead `POST /schedules/next-starts` searches for start times: five years.
+NEXT_STARTS_SEARCH_WINDOW: Final = timedelta(days=5 * 366)
+
+
+def _secret_message(name: str) -> str:
+    """Return the refusal message of a request value that holds a credential; it never quotes the value."""
+    return f"{name} must not hold a credential"
+
+
+def _cadence_code(error: schedule_cadence.InvalidCadenceError) -> str:
+    """Return the error code that names the refused value of a cadence."""
+    return "schedule-cron-invalid" if error.field == "cron" else "schedule-timezone-invalid"
 
 
 class _StopRequiredError(Exception):
@@ -371,6 +389,32 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             }
         )
         return emitted.model_dump(mode="json")
+
+    def next_starts(self, request: ScheduleNextStartsRequest) -> dict[str, Any]:
+        """Return the next start times of a cadence, as the scheduler computes them (spec 026, FR-031).
+
+        The search ends five years after the service clock's time. Nothing is stored and no
+        event is recorded, also on a refusal: a person calls this while typing a cadence.
+
+        Raises:
+            ServiceAPIError: ``422 secret-parameter-refused`` when ``cron`` or ``timezone`` holds a
+                known credential, ``422 schedule-cron-invalid`` or ``422 schedule-timezone-invalid``
+                with the message of ``POST /schedules``.
+        """
+        # Checked before the cadence: the cadence messages quote the expression.
+        name = self._secret_value_name(cron=request.cron, timezone=request.timezone)
+        if name is not None:
+            raise self._error(422, "secret-parameter-refused", _secret_message(name))
+        now = self._clock()
+        searched_until = now + NEXT_STARTS_SEARCH_WINDOW
+        try:
+            starts = schedule_cadence.starts_between(request.cron, request.timezone, now, searched_until, request.count)
+        except schedule_cadence.InvalidCadenceError as error:
+            raise self._error(422, _cadence_code(error), error.reason) from None
+        answer = ScheduleNextStarts(
+            cron=request.cron, timezone=request.timezone, starts=starts, searched_until=searched_until
+        )
+        return answer.model_dump(mode="json")
 
     # ------------------------------------------------------------------
     # Requests
@@ -1041,16 +1085,19 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     # The checks of a create and of a change
     # ------------------------------------------------------------------
 
-    def _refuse_secret_values(self, context: _Request, **values: str | None) -> None:
+    def _secret_value_name(self, **values: str | None) -> str | None:
+        """Return the name of the first value that holds a known credential, or ``None``."""
         for name, value in values.items():
             if value is not None and redact(value, self._secrets) != value:
-                raise self._refusal(
-                    context,
-                    422,
-                    "secret-parameter-refused",
-                    f"{name} must not hold a credential",
-                    outcome="refused-secret-parameter",
-                )
+                return name
+        return None
+
+    def _refuse_secret_values(self, context: _Request, **values: str | None) -> None:
+        name = self._secret_value_name(**values)
+        if name is not None:
+            raise self._refusal(
+                context, 422, "secret-parameter-refused", _secret_message(name), outcome="refused-secret-parameter"
+            )
 
     def _declared_branch(self, context: _Request, config_id: str, registry_version: int) -> str | None:
         """Return the destination branch that the configuration version declares, or ``None``.
@@ -1080,8 +1127,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         try:
             schedule_cadence.validate(cron, timezone_name)
         except schedule_cadence.InvalidCadenceError as error:
-            code = "schedule-cron-invalid" if error.field == "cron" else "schedule-timezone-invalid"
-            raise self._refusal(context, 422, code, error.reason) from None
+            raise self._refusal(context, 422, _cadence_code(error), error.reason) from None
 
     def _require_approval_allows(self, context: _Request, *, write_target: str) -> None:
         """Refuse the write target `default-branch` while the Sync API requires an approved plan."""

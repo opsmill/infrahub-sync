@@ -361,6 +361,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/schedules/next-starts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Schedule Next Starts
+         * @description Return the next start times of a cron expression in a time zone; stores nothing and records no event.
+         *
+         *     The values travel in the body, not in the query string, so a credential typed by mistake
+         *     never reaches the access log. It takes no ``Idempotency-Key``.
+         */
+        post: operations["schedule_next_starts_schedules_next_starts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/schedules/{schedule_id}": {
         parameters: {
             query?: never;
@@ -510,7 +533,7 @@ export interface paths {
         };
         /**
          * List Events
-         * @description Return one page of typed events, oldest first, that match every given filter.
+         * @description Return one page of typed events that match every given filter, oldest first or, for ``desc``, newest first.
          */
         get: operations["list_events_events_get"];
         put?: never;
@@ -2131,6 +2154,49 @@ export interface components {
         ScheduleActionRequest: {
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * ScheduleNextStarts
+         * @description The next start times of a cadence, in UTC and in increasing order.
+         *
+         *     ``starts`` holds fewer times than requested when the cadence has fewer starts before
+         *     ``searched_until``.
+         */
+        ScheduleNextStarts: {
+            /** Cron */
+            cron: string;
+            /** Timezone */
+            timezone: string;
+            /** Starts */
+            starts: string[];
+            /**
+             * Searched Until
+             * Format: date-time
+             */
+            searched_until: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleNextStartsRequest
+         * @description Request the next start times of a cron expression in a time zone, before a schedule is saved.
+         *
+         *     `cron` and `timezone` are not validated here, as in `CreateScheduleRequest`: the Sync API
+         *     answers `schedule-cron-invalid` or `schedule-timezone-invalid`.
+         */
+        ScheduleNextStartsRequest: {
+            /** Cron */
+            cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            timezone: string;
+            /**
+             * Count
+             * @default 5
+             */
+            count: number;
         };
         /**
          * ScheduleOpenBranchResource
@@ -3889,6 +3955,84 @@ export interface operations {
             };
         };
     };
+    schedule_next_starts_schedules_next_starts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleNextStartsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleNextStarts"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_schedule_schedules__schedule_id__get: {
         parameters: {
             query?: never;
@@ -4477,6 +4621,7 @@ export interface operations {
                 until?: string | null;
                 limit?: string | null;
                 offset?: string | null;
+                order?: "asc" | "desc";
             };
             header?: never;
             path?: never;

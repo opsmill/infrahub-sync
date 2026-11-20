@@ -106,6 +106,7 @@ EXPECTED_PUBLIC_NAMES = {
     "EarlierProductDatabaseError",
     "EventDetails",
     "EventFilters",
+    "EventOrder",
     "EventPage",
     "ExecutionFinishWriteback",
     "ExecutionMergeWriteback",

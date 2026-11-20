@@ -61,6 +61,7 @@ from infrahub_sync.product_store.models import (
     ConfigurationVersionPage,
     ConfigurationVersionSummary,
     EventFilters,
+    EventOrder,
     EventPage,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
@@ -667,6 +668,11 @@ _EVENT_HAS_RESOURCE = (
     "EXISTS (SELECT 1 FROM audit_event_resources AS resource WHERE resource.event_id = audit_events.event_id "
     "AND resource.kind = ? AND resource.resource_id = ?)"
 )
+# The fixed ORDER BY clause of an event list, by its order; no caller text reaches the statement.
+_EVENT_ORDER_CLAUSES: dict[str, str] = {
+    "asc": "ORDER BY created_at, event_id",
+    "desc": "ORDER BY created_at DESC, event_id DESC",
+}
 # Event IDs read per related-resource query, well under SQLite's bound-parameter limit.
 _EVENT_RESOURCE_BATCH = 500
 _SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"
@@ -1050,7 +1056,9 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
 
-    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage: ...
+    def list_events(
+        self, filters: EventFilters, *, limit: int, offset: int, order: EventOrder = "asc"
+    ) -> EventPage: ...
 
     def configuration_exists(self, config_id: str) -> bool: ...
 
@@ -3327,10 +3335,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             resources = self._read_event_resources(cursor, rows)
         return tuple(_audit_from_row(row, resources[str(row[0])]) for row in rows)
 
-    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage:
-        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``, oldest first.
+    def list_events(self, filters: EventFilters, *, limit: int, offset: int, order: EventOrder = "asc") -> EventPage:
+        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``.
 
-        Events are ordered by ``created_at`` and then ``event_id``. An event without a type,
+        Events are ordered by ``created_at`` and then ``event_id``: oldest first for ``asc``,
+        newest first, both descending, for ``desc``. An event without a type,
         a request refused for a missing or invalid token, is never listed (research R6).
 
         Raises:
@@ -3361,7 +3370,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             parameters.append(_utc_iso(filters.until))
         statement = (
             f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE {' AND '.join(conditions)} "  # noqa: S608
-            "ORDER BY created_at, event_id LIMIT ? OFFSET ?"
+            f"{_EVENT_ORDER_CLAUSES[order]} LIMIT ? OFFSET ?"
         )
         resources: dict[str, list[tuple[str, str]]] = {}
 
@@ -5411,13 +5420,15 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return all audit evidence, optionally narrowed to one Sync run."""
         return self._records.audit_events(run_id)
 
-    def list_events(self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> EventPage:
-        """Return one page of typed events matching ``filters``, oldest first.
+    def list_events(
+        self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0, order: EventOrder = "asc"
+    ) -> EventPage:
+        """Return one page of typed events matching ``filters``, oldest first, or newest first for ``desc``.
 
         Raises:
             ValueError: ``limit`` is less than 1 or ``offset`` is negative.
         """
-        return self._records.list_events(filters, limit=limit, offset=offset)
+        return self._records.list_events(filters, limit=limit, offset=offset, order=order)
 
     def create_configuration(
         self,

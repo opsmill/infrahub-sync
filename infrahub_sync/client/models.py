@@ -13,6 +13,7 @@ from pydantic import (
     Field,
     SerializerFunctionWrapHandler,
     StrictBool,
+    StrictInt,
     StringConstraints,
     ValidationError,
     field_validator,
@@ -46,6 +47,10 @@ ScheduleOverlapPolicy = Literal["reject", "queue"]
 # The range of `start_late_by_at_most_seconds`: from one minute to seven days.
 MIN_START_LATE_SECONDS = 60
 MAX_START_LATE_SECONDS = 604800
+
+# The count of start times that `POST /schedules/next-starts` returns by default, and its largest count.
+DEFAULT_NEXT_STARTS = 5
+MAX_NEXT_STARTS = 20
 
 # The recovery signal a refused registered plan carries.
 RecoveryAction = Literal["rebuild", "compatible_version"]
@@ -912,6 +917,38 @@ class SchedulePage(_ResourceModel):
 
     items: tuple[ScheduleResource, ...]
     next_cursor: str | None = None
+
+
+class ScheduleNextStartsRequest(_RequestModel):
+    """Request the next start times of a cron expression in a time zone, before a schedule is saved.
+
+    `cron` and `timezone` are not validated here, as in `CreateScheduleRequest`: the Sync API
+    answers `schedule-cron-invalid` or `schedule-timezone-invalid`.
+    """
+
+    cron: str
+    timezone: str = "UTC"
+    count: StrictInt = Field(default=DEFAULT_NEXT_STARTS, ge=1, le=MAX_NEXT_STARTS)
+
+
+class ScheduleNextStarts(_ResourceModel):
+    """The next start times of a cadence, in UTC and in increasing order.
+
+    ``starts`` holds fewer times than requested when the cadence has fewer starts before
+    ``searched_until``.
+    """
+
+    cron: str
+    timezone: str
+    starts: tuple[datetime, ...]
+    searched_until: datetime
+
+    @field_validator("starts", "searched_until")
+    @classmethod
+    def _require_timezone(cls, value: tuple[datetime, ...] | datetime) -> tuple[datetime, ...] | datetime:
+        for item in value if isinstance(value, tuple) else (value,):
+            _timezone(item, _SCHEDULE_TIME_MESSAGE)
+        return value
 
 
 class RunLogLine(_ResourceModel):

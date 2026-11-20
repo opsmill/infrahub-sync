@@ -919,6 +919,9 @@ class EventFilters(BaseModel):
 # One page of events, oldest first.
 EventPage: TypeAlias = StorePage[AuditEvent]
 
+# The order of an event list: ``asc`` oldest first, ``desc`` newest first; both by ``created_at`` then ``event_id``.
+EventOrder: TypeAlias = Literal["asc", "desc"]
+
 ACCOUNT_ID_PATTERN = r"^acct_[0-9a-f]{32}$"
 _ACCOUNT_SHORT_ID_PATTERN = r"^[0-9a-f]{8}$"
 _ACCOUNT_NAME_MAX_LENGTH = 64

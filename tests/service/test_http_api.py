@@ -3006,6 +3006,7 @@ def test_the_client_keeps_a_plan_step_part_and_field_from_a_newer_server() -> No
 _SCHEDULE_OPERATIONS = {
     ("/schedules", "post"),
     ("/schedules", "get"),
+    ("/schedules/next-starts", "post"),
     ("/schedules/{schedule_id}", "get"),
     ("/schedules/{schedule_id}/change", "post"),
     ("/schedules/{schedule_id}/pause", "post"),

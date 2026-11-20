@@ -12,6 +12,8 @@ from .models import (
     CreateScheduleRequest,
     ErrorEnvelope,
     ScheduleActionRequest,
+    ScheduleNextStarts,
+    ScheduleNextStartsRequest,
     SchedulePage,
     ScheduleResource,
 )
@@ -23,7 +25,7 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 
 def schedule_router(service: ScheduleService, authenticate: Any, idempotency_key: Any) -> APIRouter:
-    """Create the authenticated schedule routes: create, list, view, change, pause, resume, delete and take over.
+    """Create the authenticated schedule routes: preview the start times, create, list, view, change, pause, resume, delete and take over.
 
     Every answer is built by the service and returned as it is.
     """
@@ -38,6 +40,17 @@ def schedule_router(service: ScheduleService, authenticate: Any, idempotency_key
         """Create a schedule that starts a ``sync`` run of one configuration version on a cron cadence."""
         status, content = await service.create(body, principal, key)
         return JSONResponse(status_code=status, content=content)
+
+    @router.post("/schedules/next-starts", response_model=ScheduleNextStarts, responses=_ERROR_RESPONSES)
+    def schedule_next_starts(
+        body: ScheduleNextStartsRequest, _principal: Annotated[Principal, Depends(authenticate)]
+    ) -> JSONResponse:
+        """Return the next start times of a cron expression in a time zone; stores nothing and records no event.
+
+        The values travel in the body, not in the query string, so a credential typed by mistake
+        never reaches the access log. It takes no ``Idempotency-Key``.
+        """
+        return JSONResponse(content=service.next_starts(body))
 
     @router.get("/schedules", response_model=SchedulePage, responses=_ERROR_RESPONSES)
     def list_schedules(
