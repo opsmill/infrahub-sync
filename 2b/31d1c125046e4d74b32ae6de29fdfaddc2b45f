@@ -1,0 +1,38 @@
+dev/specs/027-stored-credentials/critiques/critique-20261120.md
+  s_58b527396c8cb5::t_8ed99199d6939e 1-146
+dev/specs/027-stored-credentials/contracts/environment.md
+  s_58b527396c8cb5::t_e60e829736798b 8-9
+dev/specs/027-stored-credentials/data-model.md
+  s_58b527396c8cb5::t_21ad9c69ae72da 65
+dev/specs/027-stored-credentials/research.md
+  s_58b527396c8cb5::t_3c2d312d34bd29 155-157
+  s_58b527396c8cb5::t_86cec71e87b1c3 177-192
+  s_58b527396c8cb5::t_e4860343a50fc8 267-278
+  s_58b527396c8cb5::t_1b337a03d29a70 229-233
+  s_58b527396c8cb5::t_71f32bee343813 136-139
+  s_58b527396c8cb5::t_89c8866fe1b7df 163-166
+dev/specs/027-stored-credentials/plan.md
+  s_58b527396c8cb5::t_d1a049ca476e64 120
+  s_58b527396c8cb5::t_290b3fedfb1c3b 42-48
+  s_58b527396c8cb5::t_ac04f21a53848b 56-57
+  s_58b527396c8cb5::t_570d4bfdc88837 70-75
+  s_58b527396c8cb5::t_a7887e20d79d6c 116
+dev/specs/027-stored-credentials/contracts/http-api.md
+  s_58b527396c8cb5::t_14896e96e21a9e 87-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2b31d1c125046e4d74b32ae6de29fdfaddc2b45f",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
