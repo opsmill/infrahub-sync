@@ -5,6 +5,7 @@ import {
   useIdempotencyKey,
   usePauseSchedule,
   useResumeSchedule,
+  useTakeOverSchedule,
 } from "#/api/actions";
 import { describeScheduleError } from "#/api/queries";
 import type { Schedule } from "#/api/types";
@@ -45,6 +46,7 @@ function ScheduleActionDialog({
   pendingLabel,
   done,
   danger = false,
+  submitOnEnter = !danger,
   request,
   onClose,
 }: {
@@ -56,6 +58,8 @@ function ScheduleActionDialog({
   /** Read to screen readers after a success. */
   done: string;
   danger?: boolean;
+  /** Enter submits the dialog; off for a danger action and for a confirmation that must be read. */
+  submitOnEnter?: boolean;
   request: ActionRequest;
   onClose: () => void;
 }) {
@@ -83,7 +87,7 @@ function ScheduleActionDialog({
       isPending={request.isPending}
       dismissLabel={danger ? "Keep schedule" : "Cancel"}
       autoFocusDismiss={danger}
-      submitOnEnter={!danger}
+      submitOnEnter={submitOnEnter}
       onSubmit={() =>
         request.send(key, reason.trim() || null, () => {
           onClose();
@@ -184,6 +188,34 @@ export function DeleteScheduleDialog({ schedule, onClose }: DialogProps) {
         isPending: remove.isPending,
         error: remove.error,
         reset: remove.reset,
+      }}
+      onClose={onClose}
+    />
+  );
+}
+
+/**
+ * Take over a schedule (FR-014, FR-016). The answer is the schedule after the take-over, which the
+ * page shows: it can be stopped with `approval-required` when the schedule writes to the default
+ * branch and the Sync API requires approval.
+ */
+export function TakeOverScheduleDialog({ schedule, onClose }: DialogProps) {
+  const takeOver = useTakeOverSchedule();
+  return (
+    <ScheduleActionDialog
+      id="take-over-schedule-reason"
+      title="Take over this schedule"
+      description="You become the owner of this schedule. Its next runs record you as the account that started them."
+      submitLabel="Take over schedule"
+      pendingLabel="Taking over the schedule"
+      done="You own this schedule"
+      submitOnEnter={false}
+      request={{
+        send: (key, reason, onSuccess) =>
+          takeOver.mutate({ params: path(schedule, key), body: { reason } }, { onSuccess }),
+        isPending: takeOver.isPending,
+        error: takeOver.error,
+        reset: takeOver.reset,
       }}
       onClose={onClose}
     />

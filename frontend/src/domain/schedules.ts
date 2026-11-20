@@ -21,8 +21,9 @@ export const OWNER_ONLY_TEXT = "Only the owner of this schedule or an administra
 
 /**
  * What the signed-in account can do with a schedule (data-model "Permissions").
- * While `me` is undefined (`GET /me` has not answered), every action the state allows is shown
- * and available, and the Sync API decides.
+ * While `me` is undefined (`GET /me` has not answered), every owner action the state allows is
+ * shown and available, and the Sync API decides. Take-over is shown only once `me` names an
+ * administrator who does not own the schedule (FR-014).
  */
 export function scheduleActions(
   me: Principal | undefined,
@@ -37,7 +38,7 @@ export function scheduleActions(
       ? { shown: true, available: true }
       : { shown: true, available: false, unavailableReason: OWNER_ONLY_TEXT };
   };
-  const takeOver = live && (me === undefined || (me.administrator && !isOwner));
+  const takeOver = live && me !== undefined && me.administrator && !isOwner;
   return {
     change: ownerAction(live),
     pause: ownerAction(schedule.state === "active"),

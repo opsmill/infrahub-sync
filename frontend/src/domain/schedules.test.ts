@@ -70,7 +70,7 @@ describe("scheduleActions", () => {
     ["other account sees pause, unavailable", OTHER, {}, "pause", true, false],
     ["other account sees no take-over", OTHER, {}, "take-over", false, false],
     ["me undefined: change available", undefined, {}, "change", true, true],
-    ["me undefined: take-over available", undefined, {}, "take-over", true, true],
+    ["me undefined: no take-over", undefined, {}, "take-over", false, false],
     ["me undefined: pause available when active", undefined, {}, "pause", true, true],
     ["me undefined: resume hidden when active", undefined, {}, "resume", false, false],
     ["deleted: no change", ADMIN, { state: "deleted" }, "change", false, false],

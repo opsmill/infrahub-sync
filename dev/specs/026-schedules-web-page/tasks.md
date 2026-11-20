@@ -176,8 +176,8 @@ and actions every story uses.
 
 **Independent Test**: Quickstart scenarios 13 and 14.
 
-- [ ] T040 [US6] Add `TakeOverScheduleDialog` to `ScheduleActionDialogs.tsx`: `DialogFrame` with `submitOnEnter={false}`, `ReasonField`, retry key, description "You become the owner of this schedule. Its next runs record you as the account that started them." On success, close and `announce("You own this schedule")`; the page shows the returned state, which can be stopped with `approval-required`.
-- [ ] T041 [US6] In `SchedulePage.tsx`, show "Take over" when `scheduleActions` marks it shown, in the header and in the stop panel for `owner-not-found`.
+- [X] T040 [US6] Add `TakeOverScheduleDialog` to `ScheduleActionDialogs.tsx`: `DialogFrame` with `submitOnEnter={false}`, `ReasonField`, retry key, description "You become the owner of this schedule. Its next runs record you as the account that started them." On success, close and `announce("You own this schedule")`; the page shows the returned state, which can be stopped with `approval-required`.
+- [X] T041 [US6] In `SchedulePage.tsx`, show "Take over" when `scheduleActions` marks it shown, in the header and in the stop panel for `owner-not-found`.
 
 **Checkpoint**: All seven stories work.
 

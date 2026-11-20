@@ -43,6 +43,7 @@ import {
   DeleteScheduleDialog,
   PauseScheduleDialog,
   ResumeScheduleDialog,
+  TakeOverScheduleDialog,
 } from "./ScheduleActionDialogs";
 import { ScheduleFormDialog } from "./ScheduleFormDialog";
 import { ScheduleHistory } from "./ScheduleHistory";
@@ -185,7 +186,7 @@ function Cadence({ cron }: { cron: string }) {
 }
 
 /** The actions of the header that this page performs with a dialog. */
-type PageAction = "change" | "pause" | "resume" | "delete";
+type PageAction = "change" | "pause" | "resume" | "take-over" | "delete";
 
 /** The dialog open on the page; "change-version" is the change form with the newest version filled in. */
 type PageDialog = PageAction | "change-version";
@@ -198,6 +199,7 @@ const ACTION_BUTTONS: {
   { action: "change", label: "Change", variant: "outline" },
   { action: "pause", label: "Pause", variant: "outline" },
   { action: "resume", label: "Resume", variant: "outline" },
+  { action: "take-over", label: "Take over", variant: "outline" },
   { action: "delete", label: "Delete", variant: "danger-outline" },
 ];
 
@@ -348,7 +350,6 @@ export function SchedulePage({
               </li>
             </ul>
           </div>
-          {/* The take-over action is added here (spec 026, T041). */}
           <HeaderActions access={access} onOpen={setDialog} />
         </div>
       </header>
@@ -368,6 +369,13 @@ export function SchedulePage({
                   </Button>
                 ),
               }),
+            ...(access["take-over"].available && {
+              "take-over": (
+                <Button variant="outline" size="sm" onPress={() => setDialog("take-over")}>
+                  Take over
+                </Button>
+              ),
+            }),
             ...(access.change.available && {
               change: (
                 <Button variant="outline" size="sm" onPress={() => setDialog("change")}>
@@ -499,6 +507,9 @@ export function SchedulePage({
       )}
       {dialog === "pause" && <PauseScheduleDialog schedule={schedule} onClose={closeDialog} />}
       {dialog === "resume" && <ResumeScheduleDialog schedule={schedule} onClose={closeDialog} />}
+      {dialog === "take-over" && (
+        <TakeOverScheduleDialog schedule={schedule} onClose={closeDialog} />
+      )}
       {dialog === "delete" && <DeleteScheduleDialog schedule={schedule} onClose={closeDialog} />}
     </>
   );
