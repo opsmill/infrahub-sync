@@ -494,20 +494,15 @@ class ConfigurationRoutes:
         if (package is None) == (document is None):
             raise ConfigurationAPIError(400, "request", proven_pre_effect=True)
         now = datetime.now(timezone.utc)
-        fingerprinted: dict[str, Any] = {
-            "resource_kind": resource_kind,
-            "resource_id": resource_id,
-            "operation": operation,
-            "reason": reason,
-        }
-        if document is None:
-            fingerprinted["package"] = package
-        else:
-            # A digest, not the text: canonical JSON cannot encode a lone surrogate, which the
-            # parser then refuses as `invalid_package`, as the check route does.
-            fingerprinted["document_sha256"] = sha256(document.encode("utf-8", "surrogatepass")).hexdigest()
-        if registered_without_validation:
-            fingerprinted["registered_without_validation"] = True
+        fingerprinted = _mutation_fingerprint(
+            resource_kind=resource_kind,
+            resource_id=resource_id,
+            operation=operation,
+            reason=reason,
+            package=package,
+            document=document,
+            registered_without_validation=registered_without_validation,
+        )
         receipt = MutationReceipt(
             receipt_id=f"m-{uuid4().hex}",
             actor=actor,
@@ -647,6 +642,38 @@ class ConfigurationRoutes:
     def _store_projection(self) -> ProductProjection:
         """Return the injected durable projection this server writes receipts and audit to."""
         return self._projection
+
+
+def _mutation_fingerprint(
+    *,
+    resource_kind: str,
+    resource_id: str,
+    operation: str,
+    reason: str | None,
+    package: dict[str, Any] | None,
+    document: str | None,
+    registered_without_validation: bool,
+) -> dict[str, Any]:
+    """Return the values a configuration mutation's request fingerprint digests.
+
+    A document is fingerprinted by a digest of its text, and the mark only when it is ``true``,
+    so a package request without the mark keeps the fingerprint it had before either existed.
+    """
+    fingerprinted: dict[str, Any] = {
+        "resource_kind": resource_kind,
+        "resource_id": resource_id,
+        "operation": operation,
+        "reason": reason,
+    }
+    if document is None:
+        fingerprinted["package"] = package
+    else:
+        # A digest, not the text: canonical JSON cannot encode a lone surrogate, which the
+        # parser then refuses as `invalid_package`, as the check route does.
+        fingerprinted["document_sha256"] = sha256(document.encode("utf-8", "surrogatepass")).hexdigest()
+    if registered_without_validation:
+        fingerprinted["registered_without_validation"] = True
+    return fingerprinted
 
 
 def _configuration_of(receipt: MutationReceipt, response: Mapping[str, Any] | None) -> tuple[str | None, int | None]:
