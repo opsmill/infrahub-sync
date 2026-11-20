@@ -10,13 +10,15 @@ import {
 } from "@infrahub/ui";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useMemo, useRef } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 
 import { configsQuery, describeError, schedulePagesQuery } from "#/api/queries";
+import { PlusIcon } from "#/components/icons";
 import { Bar, EmptyPanel, ErrorPanel, SectionHeading, StaleNotice } from "#/components/page";
 import { fmt } from "#/domain/run-state";
 import { useDocumentTitle } from "#/lib/title";
 
+import { ScheduleFormDialog } from "./ScheduleFormDialog";
 import { SchedulesTable, SchedulesTableSkeleton } from "./SchedulesTable";
 
 export const SCHEDULE_STATES = ["active", "paused", "stopped", "deleted"] as const;
@@ -65,6 +67,14 @@ export function SchedulesPage({ state, config }: SchedulesSearch) {
 
   const schedules = useInfiniteQuery(schedulePagesQuery({ state, config }));
   const configs = useQuery(configsQuery());
+  const [creating, setCreating] = useState(false);
+  const noConfig = configs.data !== undefined && configs.data.items.length === 0;
+  const createButton = (variant: "primary" | "outline") => (
+    <Button variant={variant} size="sm" className={TOUCH} onPress={() => setCreating(true)}>
+      <PlusIcon />
+      Create schedule
+    </Button>
+  );
 
   const listed = useMemo(
     () => schedules.data?.pages.flatMap((p) => p.items) ?? [],
@@ -118,11 +128,9 @@ export function SchedulesPage({ state, config }: SchedulesSearch) {
       </EmptyPanel>
     );
   } else if (listed.length === 0) {
-    // "Create schedule" joins this empty state with the create dialog (spec 026, T037).
-    const noConfig = configs.data !== undefined && configs.data.items.length === 0;
     body = (
       <EmptyPanel title="No schedule exists.">
-        {noConfig && (
+        {noConfig ? (
           <>
             <p className="max-w-[52ch] text-pretty text-foreground-muted">
               Register a configuration first, then create its schedule.
@@ -134,6 +142,8 @@ export function SchedulesPage({ state, config }: SchedulesSearch) {
               View configurations
             </Link>
           </>
+        ) : (
+          createButton("outline")
         )}
       </EmptyPanel>
     );
@@ -182,12 +192,18 @@ export function SchedulesPage({ state, config }: SchedulesSearch) {
 
   return (
     <>
-      <header className="flex flex-col gap-1.5 pt-8 pb-6">
-        <h1 className="text-balance font-semibold text-2xl tracking-tight">Schedules</h1>
-        <p className="text-pretty text-foreground-muted">
-          The schedules that start runs of a configuration, newest first.
-        </p>
+      <header className="flex flex-col items-start gap-4 pt-8 pb-6 sm:flex-row sm:justify-between">
+        <div className="flex flex-col gap-1.5">
+          <h1 className="text-balance font-semibold text-2xl tracking-tight">Schedules</h1>
+          <p className="text-pretty text-foreground-muted">
+            The schedules that start runs of a configuration, newest first.
+          </p>
+        </div>
+        {!noConfig && createButton("primary")}
       </header>
+      {creating && (
+        <ScheduleFormDialog target={{ mode: "create" }} onClose={() => setCreating(false)} />
+      )}
       {schedules.isRefetchError && (
         <StaleNotice
           error={schedules.error}
