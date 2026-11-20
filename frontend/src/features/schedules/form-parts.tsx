@@ -1,4 +1,13 @@
-import { Label, Select, SelectItem, SelectList, SelectTrigger } from "@infrahub/ui";
+import {
+  Autocomplete,
+  Label,
+  ListBox,
+  Popover,
+  Select,
+  SelectItem,
+  SelectList,
+  SelectTrigger,
+} from "@infrahub/ui";
 import type { ReactNode } from "react";
 import { cn } from "tailwind-variants";
 
@@ -11,7 +20,16 @@ export interface SelectOption<K extends string | number> {
   detail?: string;
 }
 
-/** A labelled select of the schedule form; the value is one of the options' `id`. */
+const LIST_CLASS = "max-h-80 max-w-[min(32rem,calc(100vw-2rem))] bg-content";
+
+/** The text a searchable list matches, case-insensitively, against what the person types. */
+const optionText = (o: SelectOption<string | number>) =>
+  o.detail ? `${o.label} ${o.detail}` : o.label;
+
+/**
+ * A labelled select; the value is one of the options' `id`. A searchable select opens with a
+ * search field that narrows the list to the options containing the typed text.
+ */
 export function FormSelect<K extends string | number>({
   label,
   value,
@@ -22,6 +40,9 @@ export function FormSelect<K extends string | number>({
   describedBy,
   isInvalid,
   className,
+  labelClassName = "font-medium text-foreground text-sm",
+  searchable,
+  noMatch = "No match",
 }: {
   label: ReactNode;
   value: K | undefined;
@@ -32,7 +53,23 @@ export function FormSelect<K extends string | number>({
   describedBy?: string;
   isInvalid?: boolean;
   className?: string;
+  labelClassName?: string;
+  searchable?: boolean;
+  /** The text of a searchable list when no option contains the typed text. */
+  noMatch?: string;
 }) {
+  const items = options.map((o) => (
+    <SelectItem key={String(o.id)} id={o.id} textValue={optionText(o)}>
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate">{o.label}</span>
+        {o.detail && (
+          <span className="truncate font-mono text-subtle text-xs in-[button]:hidden">
+            {o.detail}
+          </span>
+        )}
+      </span>
+    </SelectItem>
+  ));
   return (
     <Select
       className={cn("flex min-w-0 flex-col gap-1.5", className)}
@@ -46,25 +83,21 @@ export function FormSelect<K extends string | number>({
         if (option) onChange(option.id);
       }}
     >
-      <Label className="font-medium text-foreground text-sm">{label}</Label>
+      <Label className={labelClassName}>{label}</Label>
       <SelectTrigger size="md" />
-      <SelectList
-        width="min-trigger"
-        className="max-h-80 max-w-[min(32rem,calc(100vw-2rem))] bg-content"
-      >
-        {options.map((o) => (
-          <SelectItem key={String(o.id)} id={o.id} textValue={o.label}>
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate">{o.label}</span>
-              {o.detail && (
-                <span className="truncate font-mono text-subtle text-xs in-[button]:hidden">
-                  {o.detail}
-                </span>
-              )}
-            </span>
-          </SelectItem>
-        ))}
-      </SelectList>
+      {searchable ? (
+        <Popover width="min-trigger" className={LIST_CLASS}>
+          <Autocomplete>
+            <ListBox selectionMode="single" className="max-h-72" emptyMessage={noMatch}>
+              {items}
+            </ListBox>
+          </Autocomplete>
+        </Popover>
+      ) : (
+        <SelectList width="min-trigger" className={LIST_CLASS}>
+          {items}
+        </SelectList>
+      )}
     </Select>
   );
 }

@@ -19,6 +19,7 @@ import {
   describeScheduleError,
   runPagesQuery,
   runQuery,
+  schedulePagesQuery,
   scheduleQuery,
 } from "#/api/queries";
 import type { Run, RunResource } from "#/api/types";
@@ -32,10 +33,12 @@ import {
   StaleNotice,
 } from "#/components/page";
 import { fmt, type ListRunState, listRunStates } from "#/domain/run-state";
+import { FormSelect } from "#/features/schedules/form-parts";
 import { useNow } from "#/lib/time";
 import { useDocumentTitle } from "#/lib/title";
 
 import { RunsTable, RunsTableSkeleton } from "./RunsTable";
+import { scheduleChoices } from "./schedule-choices";
 
 export const FILTER_IDS = ["all", "action", "running", "failed", "applied"] as const;
 export type FilterId = (typeof FILTER_IDS)[number];
@@ -57,6 +60,7 @@ const FILTERS: { id: FilterId; label: string; test: (run: Run, s: ListRunState) 
 ];
 
 const ALL_CONFIGS = "__all__";
+const ALL_SCHEDULES = "__all__";
 
 const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`;
 
@@ -418,6 +422,13 @@ export function RunsPage({ q, show = "all", config, schedule }: RunsSearch) {
               configs={configs.data?.items ?? []}
               onChange={(id) => setSearch({ config: id, show: undefined })}
             />
+            <ScheduleSelect
+              value={schedule}
+              config={config}
+              selected={scheduleRead.data}
+              configNames={configNames}
+              onChange={(id) => setSearch({ schedule: id, show: undefined })}
+            />
             <SearchField
               value={q ?? ""}
               onChange={(v) => setSearch({ q: v || undefined })}
@@ -523,10 +534,69 @@ function ToolbarSkeleton() {
   return (
     <div className="flex flex-wrap items-end gap-3" aria-hidden="true">
       {field("w-full sm:w-64")}
+      {field("w-full sm:w-64")}
       <Bar className="h-10 w-full sm:w-80" />
       <Bar className="mb-0.5 hidden h-9 w-[440px] sm:block xl:ml-auto" />
       {field("w-full sm:hidden")}
     </div>
+  );
+}
+
+/** Every page of a schedule list, read one after the other. */
+function useAllSchedules(filters: { state?: string; config?: string }) {
+  const pages = useInfiniteQuery(schedulePagesQuery(filters));
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = pages;
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  return pages;
+}
+
+/**
+ * The schedule filter: a searchable list of the schedules, of the configuration filter's
+ * configuration when it is set. Choosing one sets the `schedule` search parameter.
+ */
+function ScheduleSelect({
+  value,
+  config,
+  selected,
+  configNames,
+  onChange,
+}: {
+  value?: string;
+  config?: string;
+  /** The schedule of the address as `GET /schedules/{schedule_id}` answered it. */
+  selected?: { schedule_id: string; name: string; config_id: string; state: string };
+  configNames: ReadonlyMap<string, string>;
+  onChange: (id: string | undefined) => void;
+}) {
+  const live = useAllSchedules({ config });
+  const deleted = useAllSchedules({ state: "deleted", config });
+  const options = useMemo(
+    () => [
+      { id: ALL_SCHEDULES, label: "All schedules" },
+      ...scheduleChoices({
+        live: live.data?.pages.flatMap((p) => p.items) ?? [],
+        deleted: deleted.data?.pages.flatMap((p) => p.items) ?? [],
+        selected: selected?.schedule_id === value ? selected : undefined,
+        configNames,
+      }),
+    ],
+    [live.data, deleted.data, selected, value, configNames]
+  );
+  const known = !value || options.some((o) => o.id === value);
+  return (
+    <FormSelect
+      label="Schedule"
+      labelClassName="text-subtle text-xs"
+      className="w-full sm:w-64"
+      value={known ? (value ?? ALL_SCHEDULES) : undefined}
+      placeholder="The schedule in the address"
+      options={options}
+      searchable
+      noMatch="No schedule matches"
+      onChange={(id) => onChange(id === ALL_SCHEDULES ? undefined : id)}
+    />
   );
 }
 

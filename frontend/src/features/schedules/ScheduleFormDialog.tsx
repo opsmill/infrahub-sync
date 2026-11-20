@@ -38,6 +38,7 @@ import {
 } from "#/features/runs/form";
 
 import { CadenceField, useCadencePreview } from "./CadenceField";
+import { configChoices } from "./config-choices";
 import { FieldMessage, FormSelect, RefusalText } from "./form-parts";
 import {
   type FieldRefusal,
@@ -185,6 +186,8 @@ export function ScheduleFormDialog({
     [versions.data]
   );
   const summary = configs.data?.items.find((c) => c.config_id === configId);
+  const configOptions = useMemo(() => configChoices(configs.data?.items ?? []), [configs.data]);
+  const zoneOptions = useMemo(() => zones?.map((z) => ({ id: z, label: z })), [zones]);
   const newestVersion =
     numbers[0] ??
     (target.mode === "create" ? target.config?.latestVersion : undefined) ??
@@ -485,11 +488,9 @@ export function ScheduleFormDialog({
             label="Configuration"
             placeholder={configs.isPending ? "Loading configurations…" : "Choose a configuration"}
             value={chosenConfig}
-            options={(configs.data?.items ?? []).map((c) => ({
-              id: c.config_id,
-              label: c.name ?? c.config_id,
-              detail: c.name && c.name !== c.config_id ? c.config_id : undefined,
-            }))}
+            options={configOptions}
+            searchable
+            noMatch="No configuration matches"
             onChange={(v) => {
               setChosenConfig(v);
               set({ registry_version: undefined });
@@ -563,7 +564,9 @@ export function ScheduleFormDialog({
             label="Time zone"
             className="sm:w-80"
             value={form.timezone}
-            options={zones.map((z) => ({ id: z, label: z }))}
+            options={zoneOptions ?? []}
+            searchable
+            noMatch="No time zone matches"
             onChange={(timezone) => set({ timezone })}
             isInvalid={Boolean(timezoneRefusal || refusalFor("timezone"))}
             describedBy={zoneDescribedBy}
