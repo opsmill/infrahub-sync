@@ -183,6 +183,16 @@ and actions every story uses.
 
 ---
 
+## Phase 9b: Changes from the maintainer's test of the pages (2026-11-20)
+
+**Goal**: FR-035 to FR-037, from the maintainer's test at http://localhost:5180.
+
+- [ ] T049 [US4] In `features/schedules/ScheduleFormDialog.tsx`, label each configuration choice with its name and latest registered version ("<name>, version <n>", from the configuration summary of `configsQuery()`), and show the configuration identifier only when two configurations share a name (FR-035). Put the labelling rule in a pure function with a Vitest test.
+- [ ] T050 [US4] Make the configuration choice and the time zone choice of the schedule form searchable (FR-036): use the `Autocomplete` (or a combo box) that `@infrahub/ui` exports (`frontend/vendor/infrahub/frontend/packages/ui/src/index.ts`), keep the visible label, the refusal under the field, `isInvalid` and `aria-describedby`, and the text field fallback when the browser cannot list its time zones. Filter by a case-insensitive "contains" match.
+- [ ] T051 [US2] In `features/runs/RunsPage.tsx`, add a searchable schedule filter next to `ConfigSelect` (FR-037): the schedules from `schedulePagesQuery` (not deleted ones first, deleted ones marked), by name; choosing one sets the `schedule` search parameter; the existing "Schedule: <name>" filter and its remove button stay. With a configuration filter set, offer only that configuration's schedules.
+
+---
+
 ## Phase 10: Polish and cross-cutting concerns
 
 - [ ] T042 [P] In `docs/docs/orchestration.mdx`, add "Manage schedules in the web interface" after "Change, pause, resume, delete and take over a schedule" (`:251`): where "Schedules" is, what the list and the schedule page show, the actions and who may take them, the cadence helper and the preview, the history, the configuration page line, and the "Scheduled" mark and filter on runs. Add a web interface line to the table in "Check a schedule" (`:275-281`), and the history as a way to see skipped and missed starts.

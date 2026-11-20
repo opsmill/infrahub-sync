@@ -534,6 +534,17 @@ run of the same configuration is in progress, then open the schedule page.
   all events" that adds the events of the schedule's runs and the repeated requests. Loading older events MUST NOT show an event twice
   when newer events were recorded after the first page was read.
 
+#### Changes from the maintainer's test of the pages (2026-11-20)
+
+- **FR-035**: In the schedule form, each configuration choice MUST show the configuration's name
+  and its latest registered version ("from-netbox, version 3"), not the configuration identifier.
+  The identifier MUST be shown only when two configurations have the same name.
+- **FR-036**: The configuration choice and the time zone choice of the schedule form MUST let the
+  person type to narrow the list (a searchable list), and MUST keep keyboard use and labels.
+- **FR-037**: The runs list MUST offer a schedule filter next to the configuration filter: a
+  searchable list of the schedules by name, which sets the same `schedule` search parameter as the
+  link from a schedule page, and a way to remove it.
+
 #### Documentation
 
 - **FR-024**: The user documentation for schedules MUST describe where schedules are found in the
