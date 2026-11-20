@@ -26,12 +26,13 @@ Answer `200`:
   "cron": "0 2 * * *",
   "timezone": "Europe/Paris",
   "starts": ["2026-11-20T01:00:00Z", "2026-11-21T01:00:00Z"],
-  "searched_until": "2031-11-19T21:40:00Z"
+  "searched_until": "2031-11-23T21:40:00Z"
 }
 ```
 
 - `starts` are in UTC, in increasing order, later than the time of the request. They are computed
-  with `schedule_cadence.starts_between(cron, timezone, now, now + 5 years, count)`, the module
+  with `schedule_cadence.starts_between(cron, timezone, now, now + 1830 days, count)` (five years of 366 days,
+  `NEXT_STARTS_SEARCH_WINDOW`; the example answers a request made at 2026-11-19T21:40:00Z), the module
   that computes a schedule's `next_start_at`.
 - `starts` holds fewer than `count` times when the expression has fewer starts before
   `searched_until`, for example `0 0 29 2 *`. The web interface then states that there is no
@@ -64,12 +65,21 @@ Every other parameter is unchanged. A value of `order` other than `asc` or `desc
 The web interface reads the history of a schedule with:
 
 ```text
-GET /events?related=schedule:<schedule_id>&order=desc&until=<time of the first read>&limit=50&offset=<n>
+GET /events?related=schedule:<schedule_id>&order=desc&limit=50&offset=0
+GET /events?related=schedule:<schedule_id>&order=desc&until=<until>&limit=50&offset=<n>
 ```
 
-`until` is fixed to the time of the first read, so events recorded later do not shift the offset
-of older pages (FR-034). The newest events are read again with a request without `until`, and
-added above the list when their `event_id` is not shown yet.
+The first page is read without `until`. Every older page sends `until` set to one millisecond after
+the `occurred_at` of the first page's newest event (`occurred_at` is the stored `created_at`, and
+the store keeps `created_at < until`). Every event of the first page is then before `until`, and
+an event recorded later is after it, so events recorded later do not shift the offset of older
+pages (FR-034). The time comes from the stored events, not from the browser's clock, which can
+differ from the Sync API's clock. `occurred_at` is cut to milliseconds before the millisecond is
+added, so `until` is still later than the event. The newest events are read again with a request
+without `until`, and added above the list when their `event_id` is not shown yet. The list shows
+each `event_id` once, also when two pages repeat an event; the offset counts every event the pages
+returned. When the newest read has `has_more` and none of its events is shown, the pages are read
+again, which moves `until` forward, so no event is left out between the newest read and the pages.
 
 Without "Show all events", the request adds `event_type=<type>` for each schedule event type
 of the spec 021 events contract except `infrahub_sync.schedule.replayed`. With it, the request has

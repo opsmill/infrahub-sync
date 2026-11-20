@@ -138,10 +138,11 @@ describe("scheduleEventsQuery", () => {
 
   const requestOf = async (
     includeAll: boolean,
-    pageParam: { offset: number; until: string | null }
+    pageParam: { offset: number; until: string | null },
+    items: unknown[] = []
   ): Promise<{ path: string; query: Record<string, unknown>; page: ScheduleEventPage }> => {
     const get = vi.spyOn(fetchClient, "GET").mockResolvedValue({
-      data: { items: [], limit: 50, offset: 0, has_more: false },
+      data: { items, limit: 50, offset: 0, has_more: items.length > 0 },
       error: undefined,
       response: new Response(),
     } as never);
@@ -179,12 +180,24 @@ describe("scheduleEventsQuery", () => {
     });
   });
 
-  it("the first page fixes until to the time of its read and returns it", async () => {
-    const before = Date.now();
-    const { query, page } = await requestOf(false, { offset: 0, until: null });
-    expect(query.until).toBe(page.until);
-    expect(Date.parse(page.until)).toBeGreaterThanOrEqual(before);
-    expect(Date.parse(page.until)).toBeLessThanOrEqual(Date.now());
+  it("the first page is read without until and fixes it after its newest event", async () => {
+    const newestEvent = { event_id: "e-2", occurred_at: "2026-11-20T10:00:00.123456Z" };
+    const { query, page } = await requestOf(false, { offset: 0, until: null }, [newestEvent]);
+    expect(query).not.toHaveProperty("until");
+    expect(page.until).toBe("2026-11-20T10:00:00.124Z");
+  });
+
+  it("an older page keeps the until of the first page", async () => {
+    const until = "2026-11-20T10:00:00.124Z";
+    const { page } = await requestOf(false, { offset: 50, until }, [
+      { event_id: "e-1", occurred_at: "2026-11-20T09:00:00Z" },
+    ]);
+    expect(page.until).toBe(until);
+  });
+
+  it("an empty first page has no until", async () => {
+    const { page } = await requestOf(false, { offset: 0, until: null });
+    expect(page.until).toBeNull();
   });
 
   it("the default history types leave out the replayed event", () => {

@@ -228,6 +228,8 @@ export function changeRequest(
   const request: ChangeScheduleRequest = {};
   for (const field of FORM_FIELDS) {
     if (form[field] === opening[field] || form[field] === null) continue;
+    // A custom expression is sent trimmed, as on create; spaces alone are not a change.
+    if (field === "cron" && form.cron.trim() === opening.cron.trim()) continue;
     switch (field) {
       case "write_target":
         request.write_target = asWriteTarget(form.write_target);
@@ -239,7 +241,7 @@ export function changeRequest(
         request.registry_version = form.registry_version;
         break;
       case "cron":
-        request.cron = form.cron;
+        request.cron = form.cron.trim();
         break;
       case "timezone":
         request.timezone = form.timezone;

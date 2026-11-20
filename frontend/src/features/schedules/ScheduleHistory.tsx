@@ -1,14 +1,26 @@
 import { Button, Card, Checkbox, Spinner } from "@infrahub/ui";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useMemo, useRef } from "react";
+import { type ReactNode, useEffect, useMemo, useRef } from "react";
 import { cn } from "tailwind-variants";
 
 import { describeError, scheduleEventsQuery, scheduleNewestEventsQuery } from "#/api/queries";
 import type { SyncEvent } from "#/api/types";
-import { Bar, EmptyPanel, ErrorPanel, FOCUS_INSET, SectionHeading } from "#/components/page";
+import {
+  Bar,
+  EmptyPanel,
+  ErrorPanel,
+  FOCUS_INSET,
+  SectionHeading,
+  StaleNotice,
+} from "#/components/page";
 import { When } from "#/components/run-status";
-import { eventRunId, eventText, withNewestEvents } from "#/domain/schedule-events";
+import {
+  eventRunId,
+  eventText,
+  historyNeedsReread,
+  withNewestEvents,
+} from "#/domain/schedule-events";
 import { LINK } from "#/features/runs/form";
 import { formatAbsolute } from "#/lib/time";
 
@@ -17,9 +29,11 @@ const TOUCH = "pointer-coarse:h-11";
 
 /**
  * The "History" section of a schedule page (spec 026 User Story 7): the schedule's events, newest
- * first, 50 at a time. The pages share the `until` of the first read; the newest events are read
- * again every 10 seconds without `until` and the ones not listed yet are added above the list
- * (contracts/http-api.md). "Show all events" is kept in the search parameter `events=all`. The
+ * first, 50 at a time. The older pages use the `until` taken from the first page's newest event;
+ * the newest events are read again every 10 seconds without `until` and the ones not listed yet
+ * are added above the list, each event once (contracts/http-api.md). When more new events arrive
+ * than one read returns and none of them is listed, the pages are read again, so no event is left
+ * out between them. A failed read of the newest events shows the stale notice. "Show all events" is kept in the search parameter `events=all`. The
  * section stays for a deleted schedule. An entry names the account as the Sync API returns it.
  */
 export function ScheduleHistory({
@@ -37,14 +51,22 @@ export function ScheduleHistory({
     enabled: history.isSuccess,
   });
 
+  const pages = useMemo(() => history.data?.pages.map((page) => page.items) ?? [], [history.data]);
   const entries = useMemo(
-    () =>
-      withNewestEvents(
-        newest.data?.items ?? [],
-        history.data?.pages.flatMap((page) => page.items) ?? []
-      ),
-    [newest.data, history.data]
+    () => withNewestEvents(newest.data?.items ?? [], pages),
+    [newest.data, pages]
   );
+
+  // Checked once per answer of the newest read, and not while the pages are read, so a stream of
+  // new events cannot start one read of the pages after another.
+  const latest = useRef({ pages, history });
+  latest.current = { pages, history };
+  const newestData = newest.data;
+  useEffect(() => {
+    const { pages: listed, history: read } = latest.current;
+    if (!newestData || read.isFetching) return;
+    if (historyNeedsReread(newestData, listed)) void read.refetch();
+  }, [newestData]);
   const listRef = useRef<HTMLOListElement>(null);
 
   const setIncludeAll = (value: boolean) =>
@@ -120,6 +142,13 @@ export function ScheduleHistory({
       >
         Newest first
       </SectionHeading>
+      {newest.isError && history.data && (
+        <StaleNotice
+          error={newest.error}
+          updatedAt={newest.dataUpdatedAt || history.dataUpdatedAt}
+          onRetry={() => newest.refetch()}
+        />
+      )}
       {body}
     </section>
   );

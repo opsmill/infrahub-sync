@@ -6,6 +6,8 @@ import {
   DEFAULT_HISTORY_EVENT_TYPES,
   eventRunId,
   eventText,
+  historyNeedsReread,
+  untilAfter,
   withNewestEvents,
 } from "./schedule-events";
 
@@ -294,20 +296,70 @@ describe("withNewestEvents", () => {
 
   it("adds the events not listed yet above the list, newest first", () => {
     const newest = [event({ event_id: "e-5" }), event({ event_id: "e-4" }), ...listed.slice(0, 2)];
-    expect(ids(withNewestEvents(newest, listed))).toEqual(["e-5", "e-4", "e-3", "e-2", "e-1"]);
+    expect(ids(withNewestEvents(newest, [listed]))).toEqual(["e-5", "e-4", "e-3", "e-2", "e-1"]);
   });
 
-  it("returns the listed entries unchanged when every newest event is listed", () => {
-    expect(withNewestEvents(listed.slice(0, 2), listed)).toBe(listed);
+  it("returns the listed entries in order when every newest event is listed", () => {
+    expect(ids(withNewestEvents(listed.slice(0, 2), [listed]))).toEqual(["e-3", "e-2", "e-1"]);
   });
 
   it("does not list an event twice when the list already holds it", () => {
     const newest = [event({ event_id: "e-4" }), event({ event_id: "e-1" })];
-    expect(ids(withNewestEvents(newest, listed))).toEqual(["e-4", "e-3", "e-2", "e-1"]);
+    expect(ids(withNewestEvents(newest, [listed]))).toEqual(["e-4", "e-3", "e-2", "e-1"]);
+  });
+
+  it("shows an event once when two loaded pages overlap", () => {
+    const first = [event({ event_id: "e-5" }), event({ event_id: "e-4" })];
+    const second = [event({ event_id: "e-4" }), event({ event_id: "e-3" })];
+    const newest = [event({ event_id: "e-6" }), event({ event_id: "e-5" })];
+    expect(ids(withNewestEvents(newest, [first, second]))).toEqual(["e-6", "e-5", "e-4", "e-3"]);
   });
 
   it("shows the newest events when nothing is listed", () => {
     const newest = [event({ event_id: "e-1" })];
     expect(ids(withNewestEvents(newest, []))).toEqual(["e-1"]);
+  });
+});
+
+describe("untilAfter", () => {
+  it("is one millisecond after the newest event", () => {
+    expect(untilAfter(event({ occurred_at: "2026-11-20T10:00:00Z" }))).toBe(
+      "2026-11-20T10:00:00.001Z"
+    );
+  });
+
+  it("cuts microseconds to milliseconds, so the result is still after the event", () => {
+    expect(untilAfter(event({ occurred_at: "2026-11-20T10:00:00.123999Z" }))).toBe(
+      "2026-11-20T10:00:00.124Z"
+    );
+  });
+
+  it("is null without an event", () => {
+    expect(untilAfter(undefined)).toBeNull();
+  });
+});
+
+describe("historyNeedsReread", () => {
+  const pages = [[event({ event_id: "e-2" }), event({ event_id: "e-1" })]];
+
+  it("is true when more events exist than the newest read holds and none is listed", () => {
+    const newest = {
+      items: [event({ event_id: "e-9" }), event({ event_id: "e-8" })],
+      has_more: true,
+    };
+    expect(historyNeedsReread(newest, pages)).toBe(true);
+  });
+
+  it("is false when the newest read reaches a listed event", () => {
+    const newest = {
+      items: [event({ event_id: "e-3" }), event({ event_id: "e-2" })],
+      has_more: true,
+    };
+    expect(historyNeedsReread(newest, pages)).toBe(false);
+  });
+
+  it("is false when the newest read holds every event", () => {
+    const newest = { items: [event({ event_id: "e-9" })], has_more: false };
+    expect(historyNeedsReread(newest, pages)).toBe(false);
   });
 });

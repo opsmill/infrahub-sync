@@ -111,7 +111,8 @@ _RESUME_ACTIONS: Final = {
 # The reasons for which the Sync API stops a schedule that cannot run.
 _StopReason = Literal["owner-not-found", "approval-required"]
 
-# How far ahead `POST /schedules/next-starts` searches for start times: five years.
+# How far ahead `POST /schedules/next-starts` searches for start times: 1830 days, five years of
+# 366 days, so the search covers at least five calendar years.
 NEXT_STARTS_SEARCH_WINDOW: Final = timedelta(days=5 * 366)
 
 
@@ -393,7 +394,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     def next_starts(self, request: ScheduleNextStartsRequest) -> dict[str, Any]:
         """Return the next start times of a cadence, as the scheduler computes them (spec 026, FR-031).
 
-        The search ends five years after the service clock's time. Nothing is stored and no
+        The search ends 1830 days (``NEXT_STARTS_SEARCH_WINDOW``) after the service clock's time. Nothing is stored and no
         event is recorded, also on a refusal: a person calls this while typing a cadence.
 
         Raises:

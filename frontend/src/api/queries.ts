@@ -1,7 +1,7 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 import { cronFields } from "#/domain/cadence";
-import { DEFAULT_HISTORY_EVENT_TYPES } from "#/domain/schedule-events";
+import { DEFAULT_HISTORY_EVENT_TYPES, untilAfter } from "#/domain/schedule-events";
 
 import { $api, fetchClient } from "./client";
 import { isEnvelope, isTimeout, SyncApiUnavailable } from "./errors";
@@ -309,7 +309,8 @@ export const configScheduleQuery = (configId: string) =>
 /**
  * The next start times of a cron expression in a time zone, as the scheduler computes them. The
  * values travel in a JSON body so that they never reach an access log. A refusal is shown as it
- * is, so it is not retried; nothing is asked while the expression does not have five fields.
+ * is, so it is not retried; nothing is asked while the expression does not have five fields or the
+ * time zone is empty (the form asks for a time zone itself).
  */
 export const nextStartsQuery = (cron: string, timezone: string, count: number) =>
   queryOptions({
@@ -324,14 +325,17 @@ export const nextStartsQuery = (cron: string, timezone: string, count: number) =
     },
     staleTime: 60_000,
     retry: false,
-    enabled: cronFields(cron) !== null,
+    enabled: cronFields(cron) !== null && timezone.trim() !== "",
   });
 
 /** The number of history entries read at a time. */
 const EVENT_PAGE_LIMIT = 50;
 
-/** One page of a schedule's history, with the `until` time every page of the list uses. */
-export type ScheduleEventPage = EventPage & { until: string };
+/**
+ * One page of a schedule's history, with the `until` every older page of the list uses; `null`
+ * when the first page is empty.
+ */
+export type ScheduleEventPage = EventPage & { until: string | null };
 
 type ScheduleEventPageParam = { offset: number; until: string | null };
 
@@ -339,7 +343,7 @@ type ScheduleEventPageParam = { offset: number; until: string | null };
 async function readScheduleEvents(
   scheduleId: string,
   includeAll: boolean,
-  { offset, until, signal }: { offset: number; until?: string; signal: AbortSignal }
+  { offset, until, signal }: { offset: number; until?: string | null; signal: AbortSignal }
 ): Promise<EventPage> {
   const { data, error } = await fetchClient.GET("/events", {
     params: {
@@ -359,10 +363,12 @@ async function readScheduleEvents(
 }
 
 /**
- * The history of a schedule, newest first, 50 entries at a time. The first page fixes `until` to
- * the time it is read and every older page uses that time, so events recorded later do not shift
- * the offsets of older pages. Unless `includeAll`, only the schedule event types are asked for.
- * Events recorded after `until` come from `scheduleNewestEventsQuery`.
+ * The history of a schedule, newest first, 50 entries at a time. The first page is read without
+ * `until`; every older page uses `until` set to one millisecond after the newest event of the first
+ * page (`untilAfter`), so events recorded later do not shift the offsets of older pages. The time
+ * comes from the events the Sync API returned, not from the browser's clock. Unless `includeAll`,
+ * only the schedule event types are asked for. Events recorded after `until` come from
+ * `scheduleNewestEventsQuery`.
  */
 export const scheduleEventsQuery = (
   scheduleId: string,
@@ -372,14 +378,14 @@ export const scheduleEventsQuery = (
     queryKey: ["get", "/events", "schedule", { scheduleId, includeAll }],
     initialPageParam: { offset: 0, until: null } as ScheduleEventPageParam,
     queryFn: async ({ pageParam, signal }): Promise<ScheduleEventPage> => {
-      const until = pageParam.until ?? new Date().toISOString();
       const data = await readScheduleEvents(scheduleId, includeAll, {
         offset: pageParam.offset,
-        until,
+        until: pageParam.until,
         signal,
       });
-      return { ...data, until };
+      return { ...data, until: pageParam.until ?? untilAfter(data.items[0]) };
     },
+    // The offset counts every event the pages returned, repeats included, so no event is skipped.
     getNextPageParam: (last, pages): ScheduleEventPageParam | undefined =>
       last.has_more
         ? {

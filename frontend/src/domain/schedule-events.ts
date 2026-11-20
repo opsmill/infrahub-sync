@@ -154,11 +154,52 @@ export function eventRunId(event: SyncEvent): string | undefined {
 
 /**
  * The history as shown: the newest events read without `until` that are not listed yet, above the
- * listed pages, in the order the Sync API returned them (contracts/http-api.md). The listed pages
- * keep their order, so the offsets of older pages do not move.
+ * listed pages, in the order the Sync API returned them (contracts/http-api.md). Each event is shown
+ * once (FR-034): an event that a page repeats, for example because an event was saved between two
+ * reads, is shown where it first appears. Only the shown list leaves repeats out; the offsets of
+ * older pages count every event the pages returned, so no older event is skipped.
  */
-export function withNewestEvents(newest: readonly SyncEvent[], listed: SyncEvent[]): SyncEvent[] {
-  const shown = new Set(listed.map((event) => event.event_id));
-  const added = newest.filter((event) => !shown.has(event.event_id));
-  return added.length ? [...added, ...listed] : listed;
+export function withNewestEvents(
+  newest: readonly SyncEvent[],
+  pages: readonly (readonly SyncEvent[])[]
+): SyncEvent[] {
+  const shown = new Set<string>();
+  const once = (event: SyncEvent) => {
+    if (shown.has(event.event_id)) return false;
+    shown.add(event.event_id);
+    return true;
+  };
+  const entries = pages.flat().filter(once);
+  const added = newest.filter(once);
+  return [...added, ...entries];
+}
+
+/**
+ * The `until` that the pages of a history use: one millisecond after the newest event of the first
+ * page, read without `until`. The store keeps `created_at < until`, so every event of the first page
+ * is kept and an event saved after that read is left out; no clock of the browser or of a proxy is
+ * involved. `occurred_at` can hold microseconds, which `Date.parse` does not read the same way in
+ * every browser, so the fraction is cut to milliseconds first; the result is still later than the
+ * event. `null` when the first page is empty: no older page is read then.
+ */
+export function untilAfter(newestEvent: SyncEvent | undefined): string | null {
+  if (!newestEvent) return null;
+  const iso = newestEvent.occurred_at.replace(/(\.\d{3})\d+/, "$1");
+  const time = Date.parse(iso);
+  if (Number.isNaN(time)) return null;
+  return new Date(time + 1).toISOString();
+}
+
+/**
+ * True when the newest events read without `until` may leave a gap above the listed pages: the
+ * Sync API holds more events than the newest read returned, and none of them is listed. The events
+ * between are then shown nowhere, so the pages must be read again, which moves `until` forward.
+ */
+export function historyNeedsReread(
+  newest: { items: readonly SyncEvent[]; has_more: boolean },
+  pages: readonly (readonly SyncEvent[])[]
+): boolean {
+  if (!newest.has_more) return false;
+  const listed = new Set(pages.flat().map((event) => event.event_id));
+  return !newest.items.some((event) => listed.has(event.event_id));
 }

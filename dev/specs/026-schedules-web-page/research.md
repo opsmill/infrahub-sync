@@ -188,8 +188,9 @@ log (spec 021 FR-025). It takes no retry key because it stores nothing, like
 (`infrahub_sync/service/service.py:1511`) to `ProductStore.list_events`
 (`infrahub_sync/product_store/store.py:3306`), which uses `ORDER BY created_at DESC, event_id DESC`
 for `desc`. The protocol at `store.py:1031` and every implementation of it get the parameter with
-the default `asc`. The schedule page fixes `until` to the time of its first read, so older pages
-do not shift when new events arrive (contracts/http-api.md).
+the default `asc`. The schedule page fixes `until` to one millisecond after the newest event of
+its first page, not to the browser's clock, so older pages do not shift when new events arrive
+(contracts/http-api.md).
 
 **Rationale**: The events are listed oldest first, paged by offset. A schedule that starts every 5
 minutes records about 860 events a day with its run events. Showing the newest events would mean

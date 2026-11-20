@@ -852,12 +852,16 @@ the later events down by one, so a reader that pages this way can skip one event
 event twice.
 
 With `order=desc`, a new event takes the first position and moves every older event down by one.
-To read older pages without reading an event twice, send `until` set to the time of the first
-read with every page, and read the newest events again with a request without `until`. The
-schedule page of the web interface reads a schedule's history this way:
+To read older pages without reading an event twice, read the first page without `until`, then
+send with every older page `until` set to just after the `occurred_at` of the first page's newest
+event, and read the newest events again with a request without `until`. `until` keeps only events
+saved before it, so take it from an event the Sync API returned rather than from the reader's
+clock, which can differ from the Sync API's clock. The schedule page of the web interface reads a
+schedule's history this way, with `until` one millisecond after that event:
 
 ```text
-GET /events?related=schedule:<schedule_id>&order=desc&until=<time of the first read>&limit=50&offset=<n>
+GET /events?related=schedule:<schedule_id>&order=desc&limit=50&offset=0
+GET /events?related=schedule:<schedule_id>&order=desc&until=<until>&limit=50&offset=<n>
 ```
 
 ```json
@@ -1521,12 +1525,13 @@ typed into a field by mistake does not reach the access log.
   "cron": "0 2 * * *",
   "timezone": "Europe/Paris",
   "starts": ["2026-11-20T01:00:00Z", "2026-11-21T01:00:00Z"],
-  "searched_until": "2031-11-19T21:40:00Z"
+  "searched_until": "2031-11-23T21:40:00Z"
 }
 ```
 
 - `starts` are in UTC, in increasing order, and later than the time of the request.
-- The search ends five years after the time of the request, at `searched_until`. `starts` holds
+- The search ends 1830 days (five years of 366 days) after the time of the request, at
+  `searched_until`. The example answers a request made at 2026-11-19T21:40:00Z. `starts` holds
   fewer than `count` times when the expression has fewer starts before then, for example
   `0 0 29 2 *`.
 - An expression that has no start at all, for example `0 0 30 2 *`, is refused with

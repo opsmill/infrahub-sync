@@ -197,6 +197,8 @@ describe("changeRequest", () => {
     ["no change", {}, "", null],
     ["reason only", {}, "because", null],
     ["one field", { cron: "0 3 * * *" }, "", { cron: "0 3 * * *" }],
+    ["a custom expression is sent trimmed", { cron: "  0 3 * * * " }, "", { cron: "0 3 * * *" }],
+    ["spaces around the expression alone are no change", { cron: ` ${opening.cron} ` }, "", null],
     [
       "one field and a reason",
       { overlap_policy: "queue" },
