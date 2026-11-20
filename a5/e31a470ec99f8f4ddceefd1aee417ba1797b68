@@ -1,0 +1,33 @@
+dev/specs/027-stored-credentials/tasks.md
+  s_d8ee5e53f8a662::t_7af64c37bcff2c 118
+examples/aci_to_infrahub/config.yml
+  s_d8ee5e53f8a662::t_56efb74d3b2031 10,18
+examples/aci_to_infrahub/package.yml
+  s_d8ee5e53f8a662::t_bc5533f06dce2c 7-13,16,24
+examples/netbox_to_infrahub/config.yml
+  s_d8ee5e53f8a662::t_f9963599f8e5a7 37,43,47-55
+examples/netbox_to_infrahub/package.yml
+  s_d8ee5e53f8a662::t_d6fba14f95c82f 38,44,47-56
+examples/slurpit_to_infrahub/config.yml
+  s_d8ee5e53f8a662::t_9d96e9d1dab350 5-9,15,21
+examples/slurpit_to_infrahub/package.yml
+  s_d8ee5e53f8a662::t_81c913f831d152 7,13,17-23
+tasks/bench.py
+  s_d8ee5e53f8a662::t_a7fe6b2b75f798 407-409
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5e31a470ec99f8f4ddceefd1aee417ba1797b68",
+  "prompts": {},
+  "sessions": {
+    "s_d8ee5e53f8a662": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8071f84596fd2be5",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
