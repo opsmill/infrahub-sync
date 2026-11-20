@@ -314,7 +314,8 @@ def test_the_event_is_written_with_the_credential(projection: ProductProjection)
 
 
 def test_the_credentials_a_version_names_are_recorded_with_the_version(projection: ProductProjection) -> None:
-    version = projection.create_configuration(_configuration_package())
+    # The test records the names itself, so the package names no stored credential.
+    version = projection.create_configuration(_configuration_package(credentials=False))
 
     projection.record_version_credentials(
         version.config_id,
@@ -330,7 +331,8 @@ def test_the_credentials_a_version_names_are_recorded_with_the_version(projectio
 
 
 def test_a_version_credential_name_outside_the_pattern_is_refused(projection: ProductProjection) -> None:
-    version = projection.create_configuration(_configuration_package())
+    # The test records the names itself, so the package names no stored credential.
+    version = projection.create_configuration(_configuration_package(credentials=False))
 
     with pytest.raises(StoredCredentialInvalidError):
         projection.record_version_credentials(version.config_id, version.registry_version, {"source": "NetBox"})

@@ -21,6 +21,14 @@ key, and returns the stored credential, which holds no value::
 
 A second call with the same name writes the next revision with the whole new set of fields.
 
+`create_stored_credential_names` writes credentials whose value no test reads, with fixed bytes
+in place of the encrypted value. It needs no `service` extra, so a test of the base install can
+use it to register a package that names stored credentials::
+
+    from tests.helpers.stored_credentials import create_stored_credential_names
+
+    create_stored_credential_names(projection, "netbox-token", "infrahub-token")
+
 The `stored_credentials` fixture does the same for several credentials. A fixture of a helper
 module is not found by pytest on its own: import it in the test module or in a `conftest.py` of
 the tests that use it. Do not import it in `tests/conftest.py`: this module needs the `service`
@@ -126,6 +134,31 @@ def create_stored_credential(
             name=name, description=description, fields=tuple(fields), encrypt=encrypt, actor=actor
         )
     return projection.change_stored_credential_value(name=name, fields=tuple(fields), encrypt=encrypt, actor=actor)
+
+
+def _fixed_bytes(credential_id: str, revision: int) -> tuple[str, bytes, bytes]:
+    """Return fixed bytes in place of an encrypted value: no test reads the value back."""
+    del credential_id, revision
+    return "0123456789abcdef", bytes(range(12)), b"\x00" * 32
+
+
+def create_stored_credential_names(
+    projection: ProductProjection,
+    *names: str,
+    fields: tuple[str, ...] = ("token",),
+    actor: str = TEST_CREDENTIAL_ACTOR,
+) -> None:
+    """Write a credential with these fields for each name that the store does not hold yet.
+
+    The store holds fixed bytes instead of an encrypted value, so this function needs no
+    `service` extra, and the value cannot be decrypted. Use it for a test that only needs the
+    credentials to exist, for example to register a package that names them.
+    """
+    for name in names:
+        if projection.lookup_stored_credential(name) is None:
+            projection.create_stored_credential(
+                name=name, description="", fields=fields, encrypt=_fixed_bytes, actor=actor
+            )
 
 
 def decrypt_stored_credential(projection: ProductProjection, name: str, revision: int | None = None) -> dict[str, str]:

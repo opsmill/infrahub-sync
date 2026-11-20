@@ -26,7 +26,14 @@ from infrahub_sync.execution import MIN_SECRET_LENGTH, REDACTED, collect_secret_
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.product_store import store as product_store_store
-from tests.configuration.validation_packages import package, package_data
+from tests.configuration.validation_packages import (
+    DESTINATION_CREDENTIAL,
+    SOURCE_CREDENTIAL,
+    credential_package_data,
+    package,
+    package_data,
+)
+from tests.helpers.stored_credentials import create_stored_credential_names
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,7 +46,10 @@ if TYPE_CHECKING:
 def _store(tmp_path: Path) -> ProductProjection:
     root = tmp_path / "product-cache"
     root.mkdir()
-    return local_product_projection(root)
+    projection = local_product_projection(root)
+    # The store holds the two credentials that the shared package names, so registration accepts it.
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    return projection
 
 
 def _registered_configuration_count(root: Path) -> int:
@@ -61,7 +71,7 @@ def _registered_configuration_count(root: Path) -> int:
 
 def _invalid_package_data() -> dict[str, Any]:
     """Return a package with two independent, unrelated defects."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["settings"]["url"] = "netbox.example.test"
     data["configuration"]["destination"]["settings"]["bogus_dest"] = "x"
     return data
@@ -70,7 +80,7 @@ def _invalid_package_data() -> dict[str, Any]:
 def test_register_returns_the_configuration_and_its_first_version(tmp_path: Path) -> None:
     projection = _store(tmp_path)
 
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
 
     assert registered.version.registry_version == 1
     assert registered.configuration.config_id == registered.version.config_id
@@ -98,9 +108,9 @@ def test_a_warning_only_package_registers_and_reports_its_warnings(tmp_path: Pat
     # Errors prevent execution; warnings do not. A package whose only findings are
     # warnings registers, versions, and validates error-free through the whole service.
     projection = _store(tmp_path)
-    data = package_data()
+    data = credential_package_data()
     data["omissions"] = [{"kind": "InfraDevice", "fields": ["serial_number"]}]
-    changed = package_data()
+    changed = credential_package_data()
     changed["omissions"] = [{"kind": "InfraDevice"}]
 
     registered = configs_service.register(package=data, projection=projection)
@@ -124,11 +134,11 @@ def test_a_warning_only_package_registers_and_reports_its_warnings(tmp_path: Pat
 
 def test_create_version_is_idempotent_for_an_identical_package(tmp_path: Path) -> None:
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
 
     repeated = configs_service.create_version(
         config_id=registered.version.config_id,
-        package=package_data(),
+        package=credential_package_data(),
         projection=projection,
     )
 
@@ -138,8 +148,8 @@ def test_create_version_is_idempotent_for_an_identical_package(tmp_path: Path) -
 
 def test_create_version_allocates_the_next_ordinal_for_new_content(tmp_path: Path) -> None:
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
-    changed = package_data()
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
+    changed = credential_package_data()
     changed["configuration"]["source"]["settings"]["url"] = "https://second.netbox.test"
 
     added = configs_service.create_version(
@@ -156,7 +166,7 @@ def test_create_version_refuses_an_unregistered_configuration(tmp_path: Path) ->
     with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
         configs_service.create_version(
             config_id="20260808T1200-aaaaaaaa",
-            package=package_data(),
+            package=credential_package_data(),
             projection=_store(tmp_path),
         )
 
@@ -167,7 +177,7 @@ def test_validate_reports_every_defect_of_a_registered_version_in_sorted_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
     # A registered package was valid when it was registered; re-validating it against a
     # different adapter set is the whole reason this surface exists.
     monkeypatch.setattr("infrahub_sync.configuration.validation.BUILTIN_ADAPTER_CAPABILITIES", {})
@@ -187,7 +197,7 @@ def test_validate_reports_every_defect_of_a_registered_version_in_sorted_order(
 
 def test_validate_reports_no_findings_for_a_still_valid_version(tmp_path: Path) -> None:
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
 
     report = configs_service.validate(
         config_id=registered.version.config_id,
@@ -201,7 +211,7 @@ def test_validate_reports_no_findings_for_a_still_valid_version(tmp_path: Path) 
 
 def test_validate_refuses_an_unregistered_version(tmp_path: Path) -> None:
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
 
     with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
         configs_service.validate(
@@ -266,7 +276,7 @@ def _register_out_of_order(projection: ProductProjection, monkeypatch: pytest.Mo
     monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: next(ids))
     monkeypatch.setattr(product_store_store, "datetime", SimpleNamespace(now=lambda tz: next(clock)))  # noqa: ARG005
     for _ in _OUT_OF_ORDER_REGISTRATIONS:
-        configs_service.register(package=package_data(), projection=projection)
+        configs_service.register(package=credential_package_data(), projection=projection)
 
 
 def test_list_configs_returns_every_configuration_newest_first_with_a_config_id_tiebreak(
@@ -295,15 +305,15 @@ def test_get_config_and_list_versions_return_one_configurations_own_records(tmp_
     would be caught leaking its rows.
     """
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
-    changed = package_data()
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
+    changed = credential_package_data()
     changed["configuration"]["source"]["settings"]["url"] = "https://second.netbox.test"
     added = configs_service.create_version(
         config_id=registered.version.config_id,
         package=changed,
         projection=projection,
     )
-    unrelated = configs_service.register(package=package_data(), projection=projection)
+    unrelated = configs_service.register(package=credential_package_data(), projection=projection)
 
     summary = configs_service.get_config(
         config_id=registered.version.config_id,
@@ -345,7 +355,7 @@ def test_get_version_on_a_missing_version_is_distinct_from_a_missing_configurati
     values -- what service-boundary later maps to two different status codes.
     """
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
 
     with pytest.raises(configs_service.ConfigsNotFoundError) as missing_version:
         configs_service.get_version(
@@ -401,7 +411,7 @@ def test_a_read_of_a_missing_configuration_refuses_rather_than_answering_empty(
 def test_get_version_round_trips_the_registered_content_and_checksum(tmp_path: Path) -> None:
     """A read returns exactly what registration reported -- field equality, not "no error"."""
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
 
     stored = configs_service.get_version(
         config_id=registered.version.config_id,
@@ -439,7 +449,7 @@ _WRONG_TYPED_CALLS: tuple[tuple[str, Callable[[ProductProjection], object]], ...
         "create-version-config-id",
         lambda projection: configs_service.create_version(
             config_id=_WRONG_TYPED_VALUE,
-            package=package_data(),
+            package=credential_package_data(),
             projection=projection,
         ),
     ),
@@ -550,12 +560,12 @@ def _corrupt_registry(tmp_path: Path) -> ProductProjection:
 
 
 _ENTRY_POINTS: tuple[tuple[str, Callable[[ProductProjection], object]], ...] = (
-    ("register", lambda projection: configs_service.register(package=package_data(), projection=projection)),
+    ("register", lambda projection: configs_service.register(package=credential_package_data(), projection=projection)),
     (
         "create_version",
         lambda projection: configs_service.create_version(
             config_id="c",
-            package=package_data(),
+            package=credential_package_data(),
             projection=projection,
         ),
     ),
@@ -601,7 +611,7 @@ def test_a_failing_text_helper_leaves_a_public_operation_inside_the_declared_voc
     monkeypatch.setattr(configs_service, "parse_configuration_package", _raise_unforeseen)
 
     with pytest.raises(configs_service.ConfigsError) as raised:
-        configs_service.register(package=package_data(), projection=_store(tmp_path))
+        configs_service.register(package=credential_package_data(), projection=_store(tmp_path))
 
     assert raised.value.family in _DECLARED_FAMILIES
     # The documented default: neither the caller's input nor the store, and it says so rather
@@ -627,7 +637,7 @@ def test_an_interrupt_is_not_caught_by_the_error_boundary() -> None:
     # Ctrl-C and SystemExit, which is the decision the run boundary already made explicitly,
     # and nothing else here would notice.
     with pytest.raises(KeyboardInterrupt):
-        configs_service.register(package=package_data(), projection=cast("Any", _InterruptingProjection()))
+        configs_service.register(package=credential_package_data(), projection=cast("Any", _InterruptingProjection()))
 
 
 def _public_service_functions() -> dict[str, Any]:
@@ -1079,7 +1089,7 @@ _TRUNCATION_MARKER_CHARACTER = "\u2026"
 
 def _two_truncated_pointers() -> tuple[ValidationFinding, ValidationFinding]:
     """Two findings whose declared keys differ only past the 64-character component bound."""
-    data = package_data()
+    data = credential_package_data()
     shared = "k" * 70
     data["configuration"]["source"]["settings"][f"{shared}a"] = 1
     data["configuration"]["source"]["settings"][f"{shared}b"] = 1
@@ -1150,9 +1160,9 @@ class _HostileDeclaredContent(ConfigurationPackage):
 
 def _prebuilt_instances() -> tuple[tuple[str, ConfigurationPackage], ...]:
     return (
-        ("exact-class", ConfigurationPackage.model_validate(package_data())),
-        ("subclass", _HostileDeclaredContent.model_validate(package_data())),
-        ("model-construct", ConfigurationPackage.model_construct(**package_data())),
+        ("exact-class", ConfigurationPackage.model_validate(credential_package_data())),
+        ("subclass", _HostileDeclaredContent.model_validate(credential_package_data())),
+        ("model-construct", ConfigurationPackage.model_construct(**credential_package_data())),
     )
 
 
@@ -1174,7 +1184,7 @@ def test_register_refuses_a_prebuilt_package_instance(tmp_path: Path, instance: 
 @pytest.mark.parametrize("instance", [pytest.param(instance, id=name) for name, instance in _prebuilt_instances()])
 def test_create_version_refuses_a_prebuilt_package_instance(tmp_path: Path, instance: ConfigurationPackage) -> None:
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
     prebuilt = cast("Any", instance)
 
     with pytest.raises(configs_service.ConfigsRequestError, match="must be a JSON-native dict"):
@@ -1196,7 +1206,7 @@ def test_a_hostile_declared_content_override_cannot_reach_the_store(tmp_path: Pa
     the caller's own input, and nothing is written.
     """
     projection = _store(tmp_path)
-    hostile = cast("Any", _HostileDeclaredContent.model_validate(package_data()))
+    hostile = cast("Any", _HostileDeclaredContent.model_validate(credential_package_data()))
 
     with pytest.raises(configs_service.ConfigsRequestError):
         configs_service.register(package=hostile, projection=projection)
@@ -1282,15 +1292,15 @@ class _ProtocolRecordingPackage:
 
 
 def _package_with_leaf(leaf: object) -> dict[str, Any]:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["settings"]["marker"] = leaf
     return data
 
 
 def _non_json_native_packages() -> tuple[tuple[str, object], ...]:
     return (
-        ("mapping-subclass", _MappingSubclassPackage(package_data())),
-        ("dict-subclass", _DictSubclassPackage(package_data())),
+        ("mapping-subclass", _MappingSubclassPackage(credential_package_data())),
+        ("dict-subclass", _DictSubclassPackage(credential_package_data())),
         ("raising-class", _RaisingClassPackage()),
         ("nested-set", _package_with_leaf({"a"})),
         ("nested-decimal", _package_with_leaf(Decimal(1))),
@@ -1313,7 +1323,7 @@ def test_only_recursively_exact_json_data_enters_the_write_boundary(tmp_path: Pa
 
 
 def test_an_exact_dict_package_is_the_accepted_domain(tmp_path: Path) -> None:
-    registered = configs_service.register(package=package_data(), projection=_store(tmp_path))
+    registered = configs_service.register(package=credential_package_data(), projection=_store(tmp_path))
 
     assert registered.version.registry_version == 1
 
@@ -1534,7 +1544,7 @@ def test_an_out_of_domain_registry_version_is_the_callers_input(
     tmp_path: Path, operation: str, registry_version: object
 ) -> None:
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
     call = getattr(configs_service, operation)
 
     with pytest.raises(configs_service.ConfigsRequestError) as raised:
@@ -1551,7 +1561,7 @@ def test_the_domain_maximum_is_still_the_stores_own_answer(tmp_path: Path) -> No
     # The property's upper edge from the inside: 2**63 - 1 is the last version the
     # registry could ever allocate, so it reaches the store and is its own not-found.
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
 
     with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
         configs_service.get_version(
@@ -1567,7 +1577,7 @@ def test_a_large_valid_registry_version_is_still_the_stores_own_answer(tmp_path:
     # The guard checks the domain and nothing else: a well-formed version the registry has
     # not allocated is still absence, reported by the store's own not-found.
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
 
     with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
         configs_service.get_version(
@@ -1595,9 +1605,9 @@ class _ProviderFailureProjection:
 @pytest.mark.parametrize(
     "operation",
     [
-        lambda projection: configs_service.register(package=package_data(), projection=projection),
+        lambda projection: configs_service.register(package=credential_package_data(), projection=projection),
         lambda projection: configs_service.create_version(
-            config_id="config-001", package=package_data(), projection=projection
+            config_id="config-001", package=credential_package_data(), projection=projection
         ),
         lambda projection: configs_service.list_configs(projection=projection),
         lambda projection: configs_service.get_config(config_id="config-001", projection=projection),
@@ -1624,7 +1634,7 @@ def test_exact_provider_errors_are_storage_but_unmarked_errors_are_internal(
 
 
 def _renamed_package_data(name: str) -> dict[str, Any]:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["name"] = name
     return data
 
@@ -1633,7 +1643,7 @@ def test_registration_records_the_registering_actor_and_reason_on_each_version(t
     projection = _store(tmp_path)
 
     registered = configs_service.register(
-        package=package_data(), projection=projection, actor="admin@example.com", reason="first import"
+        package=credential_package_data(), projection=projection, actor="admin@example.com", reason="first import"
     )
     config_id = registered.configuration.config_id
     configs_service.create_version(
@@ -1650,7 +1660,7 @@ def test_registration_records_the_registering_actor_and_reason_on_each_version(t
 
 def test_configuration_name_follows_the_latest_registered_version(tmp_path: Path) -> None:
     projection = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), projection=projection)
+    registered = configs_service.register(package=credential_package_data(), projection=projection)
     config_id = registered.configuration.config_id
 
     assert (registered.configuration.name, registered.configuration.latest_version) == ("from-netbox", 1)
@@ -1658,7 +1668,9 @@ def test_configuration_name_follows_the_latest_registered_version(tmp_path: Path
     configs_service.create_version(config_id=config_id, package=_renamed_package_data("renamed"), projection=projection)
     # Submitting version 1's package again returns version 1 and creates nothing, so the
     # latest version, and therefore the name, does not change.
-    replayed = configs_service.create_version(config_id=config_id, package=package_data(), projection=projection)
+    replayed = configs_service.create_version(
+        config_id=config_id, package=credential_package_data(), projection=projection
+    )
 
     summary = configs_service.get_config(config_id=config_id, projection=projection)
     assert replayed.created is False
@@ -1667,8 +1679,8 @@ def test_configuration_name_follows_the_latest_registered_version(tmp_path: Path
 
 def test_two_configurations_may_share_a_name_and_the_name_filter_returns_both(tmp_path: Path) -> None:
     projection = _store(tmp_path)
-    first = configs_service.register(package=package_data(), projection=projection)
-    second = configs_service.register(package=package_data(), projection=projection)
+    first = configs_service.register(package=credential_package_data(), projection=projection)
+    second = configs_service.register(package=credential_package_data(), projection=projection)
     configs_service.register(package=_renamed_package_data("other"), projection=projection)
 
     page = configs_service.list_configs(projection=projection, name="from-netbox")
