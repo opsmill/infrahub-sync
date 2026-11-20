@@ -1,0 +1,21 @@
+dev/specs/027-stored-credentials/checklists/requirements.md
+  s_58b527396c8cb5::t_37cf9aa5943be7 1-40
+dev/specs/027-stored-credentials/spec.md
+  s_58b527396c8cb5::t_d67d70e8783df4 1-347
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9810140caab341bf4c0a31d46011314e4c3a9520",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
