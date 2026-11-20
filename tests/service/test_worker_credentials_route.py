@@ -363,6 +363,30 @@ def test_the_event_of_a_release_of_one_credential_names_its_revision(released: R
     assert event.details.revision == 1
 
 
+def test_a_credential_name_that_equals_a_released_value_stays_intact(released: Released) -> None:
+    """A released value is in the redaction registry of the request; a name equal to it is still recorded."""
+    create_stored_credential(released.api.store, SOURCE_CREDENTIAL, {"token": DESTINATION_CREDENTIAL})
+    create_stored_credential(released.api.store, DESTINATION_CREDENTIAL, {"token": SOURCE_CREDENTIAL})
+    run_id, flow_run_id = released.run()
+
+    with capture_logs() as logs:
+        response = released.release(run_id, flow_run_id)
+
+    assert response.status_code == 200
+    assert response.json()["blocks"]["source"]["name"] == SOURCE_CREDENTIAL
+    assert sorted(use.credential_name for use in released.api.store.credential_uses(run_id)) == [
+        DESTINATION_CREDENTIAL,
+        SOURCE_CREDENTIAL,
+    ]
+    (event,) = released.released_events()
+    assert sorted(item.id for item in event.related if item.kind == "credential") == [
+        DESTINATION_CREDENTIAL,
+        SOURCE_CREDENTIAL,
+    ]
+    (line,) = [line for line in logs if line["event"] == "credential.released"]
+    assert [entry["name"] for entry in line["credentials"]] == [DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL]
+
+
 def test_a_missing_credential_is_refused_and_names_the_block(released: Released) -> None:
     create_stored_credential(released.api.store, DESTINATION_CREDENTIAL, {"token": DESTINATION_TOKEN})
     run_id, flow_run_id = released.run()
@@ -419,7 +443,9 @@ def test_the_route_answers_503_when_no_key_is_configured(tmp_path: Path, monkeyp
     _refused(without_key.release(run_id, flow_run_id), 503, "credential-key-not-configured")
 
 
-@pytest.mark.parametrize("presented", ["admin-token", "administrator-token", "administrator-session", "account-token"])
+@pytest.mark.parametrize(
+    "presented", ["admin-token", "administrator-token", "administrator-session", "account-token", "account-session"]
+)
 def test_every_account_but_the_worker_is_forbidden(released: Released, presented: str) -> None:
     released.store_credentials()
     run_id, flow_run_id = released.run()
@@ -429,6 +455,7 @@ def test_every_account_but_the_worker_is_forbidden(released: Released, presented
         "administrator-token": lambda: api.token_headers("root"),
         "administrator-session": lambda: api.session_headers("root"),
         "account-token": lambda: api.token_headers("alice"),
+        "account-session": lambda: api.session_headers("alice"),
     }[presented]()
 
     _refused(released.release(run_id, flow_run_id, headers=headers), 403, "forbidden")

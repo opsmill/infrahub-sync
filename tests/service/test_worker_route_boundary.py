@@ -12,9 +12,9 @@ Exempt routes, which read no bearer value at all, so no account is refused on th
 - ``POST /auth/sign-in``: it takes a name and a password, not a token; the ``worker`` account is
   refused there by ``tests/service/test_worker_account.py``.
 
-The worker routes (``/worker/...``) do not exist yet; the refusal of other accounts on them is
-tested with the route (spec 027, T022). ``require_worker`` is tested here on a route added for the
-test.
+The refusal of other accounts on the worker route (``/worker/runs/{run_id}/credentials``) is
+tested with the route, in ``tests/service/test_worker_credentials_route.py``. ``require_worker``
+is tested here on a route added for the test.
 """
 
 from __future__ import annotations
