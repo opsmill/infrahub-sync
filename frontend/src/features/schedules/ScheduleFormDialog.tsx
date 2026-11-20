@@ -173,7 +173,7 @@ export function ScheduleFormDialog({
   const me = useQuery(meQuery()).data;
   const approvalRequired = me?.approval_required === true;
   const browserZone = useMemo(browserTimeZone, []);
-  const storedZone = changing?.timezone;
+  const storedZone = opening?.timezone;
   const zones = useMemo(
     () => timeZoneChoices(storedZone ?? browserZone),
     [storedZone, browserZone]
