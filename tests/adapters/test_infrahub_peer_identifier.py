@@ -1,6 +1,7 @@
 """Unit tests for InfrahubAdapter._resolve_peer_unique_id error and skip paths.
 
 The full adapter touches an Infrahub server, so these tests build a minimal
+<<<<<<< HEAD
 stand-in adapter that reuses the real helper. The focused cases cover:
 
 - Rich errors for missing peer identifier keys.
@@ -11,6 +12,19 @@ stand-in adapter that reuses the real helper. The focused cases cover:
 - Propagation of unexpected hydration errors.
 - Rich errors after incomplete hydration.
 - Unique ID resolution for complete peers.
+=======
+stand-in adapter that reuses the real helper. We only care about four things:
+
+  1. Missing peer identifier keys raise PeerIdentifierError with rich context.
+  2. continue_on_error=True logs a warning and returns None instead of raising.
+  3. Successful path returns the peer's unique_id.
+  4. A peer that is not in the DiffSync store yet resolves without loading it,
+     and a peer that is already there is left untouched.
+
+The stand-in adapter keeps DiffSync's real LocalStore, which raises
+ObjectNotFound for a missing object. The fake store previously returned None
+and hid the original load failure.
+>>>>>>> origin/main
 """
 
 from __future__ import annotations
@@ -20,11 +34,20 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+<<<<<<< HEAD
 from diffsync.exceptions import ObjectNotFound
 from infrahub_sdk.exceptions import NodeNotFoundError
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError, resolve_peer_node
+=======
+from diffsync import DiffSyncModel
+from diffsync.exceptions import ObjectNotFound
+from diffsync.store.local import LocalStore
+
+from infrahub_sync import DiffSyncModelMixin, SchemaMappingFilter, SchemaMappingModel, SyncAdapter, SyncConfig
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
+>>>>>>> origin/main
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -147,6 +170,7 @@ class _FakeClient:
         get_error: Exception | None = None,
     ) -> None:
         self.store = _FakeStore()
+<<<<<<< HEAD
         self.rehydrated_peer = rehydrated_peer
         self.raise_not_found = raise_not_found
         self.get_error = get_error
@@ -159,20 +183,28 @@ class _FakeClient:
         if self.raise_not_found:
             raise NodeNotFoundError(identifier={"id": [str(kwargs["id"])]})
         return self.rehydrated_peer
+=======
+        self.nodes: list[SimpleNamespace] = []
+
+    def all(self, *, kind: str, include: list[str], populate_store: bool) -> list[SimpleNamespace]:
+        assert kind == "LocationGeneric"
+        assert isinstance(include, list)
+        assert populate_store
+        return self.nodes
+>>>>>>> origin/main
 
 
-class _FakePeerModel:
+class _FakePeerModel(DiffSyncModelMixin, DiffSyncModel):
+    _modelname = "LocationGeneric"
     _identifiers = ("name", "organization")
 
-    def __init__(self, **kwargs: object) -> None:
-        self._kwargs = kwargs
+    name: str
+    organization: str
+    parent: str | None = None
 
     @classmethod
-    def create_unique_id(cls, **kwargs: object) -> str:
-        return "|".join(str(kwargs[k]) for k in cls._identifiers)
-
-    def get_unique_id(self) -> str:
-        return type(self).create_unique_id(**self._kwargs)
+    def create_unique_id(cls, **identifiers: object) -> str:
+        return "|".join(str(identifiers[k]) for k in cls._identifiers)
 
 
 class _FakeLagModel(_FakePeerModel):
@@ -186,6 +218,7 @@ class _FakeDeviceModel(_FakePeerModel):
 class _Harness(InfrahubAdapter):
     """Skip the heavy __init__ that needs a real Infrahub server."""
 
+<<<<<<< HEAD
     client: _FakeClient
     schema: dict[str, SimpleNamespace]
 
@@ -225,8 +258,24 @@ class _Harness(InfrahubAdapter):
         *,
         mapped: dict[str, Any] | None = None,  # noqa: ARG002 — matches the production signature
     ) -> dict[str, Any]:
+=======
+    def __init__(self, *, continue_on_error: bool = False) -> None:  # pylint: disable=super-init-not-called
+        # bypass the parent chain entirely
+        self.fake_client = _FakeClient()
+        self.client = self.fake_client
+        self.store = LocalStore(adapter=self)
+        self.continue_on_error = continue_on_error
+        # Register the fake peer model under its kind so getattr(self, kind) works.
+        self.LocationGeneric = _FakePeerModel
+
+    def infrahub_node_to_diffsync(self, node: object) -> dict[str, Any]:
+>>>>>>> origin/main
         # Return whatever fake data the test attached to the node.
-        return dict(node._fake_diffsync_data)  # ty: ignore[unresolved-attribute]
+        data = dict(node._fake_diffsync_data)  # ty: ignore[unresolved-attribute]
+        peer = getattr(node, "_peer", None)
+        if peer is not None:
+            data["parent"] = self._resolve_peer_unique_id(parent_node=node, rel_name="parent", peer_node=peer)  # ty: ignore[invalid-argument-type]
+        return data
 
 
 class _RelationshipHarness(InfrahubAdapter):
@@ -952,6 +1001,7 @@ def test_complete_peer_returns_unique_id() -> None:
     result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
 
     assert result == "dc-east|acme"
+<<<<<<< HEAD
     assert not harness.client.get_calls
     assert harness.client.store.get(kind="LocationGeneric", key="peer-id") is peer
     assert harness.client.store.get(kind="LocationGeneric", key="dc-east|acme") is peer
@@ -1071,3 +1121,87 @@ def test_complete_peer_adds_identity_alias_without_replacing_uuid_entry() -> Non
         == "dc-east|acme"
     )
     assert len(harness.client.store.set_calls) == set_call_count
+=======
+
+
+def test_peer_not_in_store_resolves_without_adding() -> None:
+    """The parent of a node in a tree of one kind is not loaded yet when the node is converted.
+
+    model_loader converts every node of a kind before it adds them to the store, so
+    the parent must resolve without a store lookup or premature insertion.
+    """
+    harness = _Harness()
+    child = _make_node("LocationGeneric", "child-id", {})
+    peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east", "organization": "acme"})
+
+    result = harness._resolve_peer_unique_id(parent_node=child, rel_name="parent", peer_node=peer)  # ty: ignore[invalid-argument-type]
+
+    assert result == "dc-east|acme"
+    with pytest.raises(ObjectNotFound):
+        harness.store.get(model="LocationGeneric", identifier="dc-east|acme")
+    assert harness.fake_client.store.get(model="LocationGeneric", identifier="dc-east|acme") is None
+
+
+def test_peer_already_in_store_is_reused() -> None:
+    harness = _Harness()
+    existing = _FakePeerModel(name="dc-east", organization="acme")
+    harness.store.add(obj=existing)
+    parent = _make_node("InfraDevice", "parent-id", {})
+    peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east", "organization": "acme"})
+
+    result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
+
+    assert result == "dc-east|acme"
+    assert harness.store.get(model="LocationGeneric", identifier="dc-east|acme") is existing
+    assert harness.fake_client.store.get(model="LocationGeneric", identifier="dc-east|acme") is None
+
+
+def test_model_loader_does_not_add_filtered_peer() -> None:
+    harness = _Harness()
+    harness.config = SyncConfig(
+        name="filtered-tree",
+        source=SyncAdapter(name="infrahub"),
+        destination=SyncAdapter(name="netbox"),
+        schema_mapping=[
+            SchemaMappingModel(
+                name="LocationGeneric",
+                filters=[SchemaMappingFilter(field="name", operation="!=", value="parent")],
+            )
+        ],
+    )
+    parent = _make_node("LocationGeneric", "parent-id", {"name": "parent", "organization": "acme"})
+    child = _make_node("LocationGeneric", "child-id", {"name": "child", "organization": "acme"})
+    child._peer = parent
+    harness.fake_client.nodes = [child, parent]
+
+    harness.model_loader(model_name="LocationGeneric", model=_FakePeerModel)
+
+    stored_child = harness.store.get(model="LocationGeneric", identifier="child|acme")
+    assert isinstance(stored_child, _FakePeerModel)
+    assert stored_child.parent == "parent|acme"
+    with pytest.raises(ObjectNotFound):
+        harness.store.get(model="LocationGeneric", identifier="parent|acme")
+
+
+def test_model_loader_adds_parent_in_unfiltered_tree() -> None:
+    harness = _Harness()
+    harness.config = SyncConfig(
+        name="unfiltered-tree",
+        source=SyncAdapter(name="infrahub"),
+        destination=SyncAdapter(name="netbox"),
+        schema_mapping=[SchemaMappingModel(name="LocationGeneric")],
+    )
+    parent = _make_node("LocationGeneric", "parent-id", {"name": "parent", "organization": "acme"})
+    child = _make_node("LocationGeneric", "child-id", {"name": "child", "organization": "acme"})
+    child._peer = parent
+    harness.fake_client.nodes = [child, parent]
+
+    harness.model_loader(model_name="LocationGeneric", model=_FakePeerModel)
+
+    stored_child = harness.store.get(model="LocationGeneric", identifier="child|acme")
+    stored_parent = harness.store.get(model="LocationGeneric", identifier="parent|acme")
+    assert isinstance(stored_child, _FakePeerModel)
+    assert isinstance(stored_parent, _FakePeerModel)
+    assert stored_child.parent == "parent|acme"
+    assert stored_parent.name == "parent"
+>>>>>>> origin/main

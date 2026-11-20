@@ -40,6 +40,7 @@ matching schema sub-hash. No product code writes the cursor sidecar there either
 every resource still falls back to a full extraction on that path too, one resource at a
 time, instead of reading only what changed.
 
+<<<<<<< HEAD
 ## What a saved plan records about deletes
 
 Timestamp-based incremental extraction can miss deleted source rows, so a plan records
@@ -47,6 +48,24 @@ whether its deletes were derived from a fully enumerated source and destination.
 side did not run a full extract, the saved plan reports `delete_operations_computed:
 false`, and `runs plan` discloses that the review may omit destination deletes. A run that
 extracted both sides in full records `true`.
+=======
+1. A prior run exists under `.infrahub-sync-cache/<sync_name>/` with
+   `run.json` status `applied`. A `diff` run has status `dry-run` and is
+   never used as the baseline.
+2. `schema-sub-hash.txt` from that run matches the current schema
+   mapping + destination schema. Any mapping change forces a full
+   extract.
+3. The adapter declares a non-NONE cursor tier for the resource
+   (`cursor_tier_for(<resource>)` — see adapter docs).
+4. The run counter has not hit the configured cadence (default: every
+   10 runs, configurable via `incremental.full_resync_every` in
+   `config.yml`).
+
+If any condition fails the engine falls back to the full extract path
+for that side / resource and logs an `Incremental disabled: ...` reason.
+Missing per-resource cursors and unsupported cursor tiers include the side
+and resource in the message.
+>>>>>>> origin/main
 
 Current timestamp-capable adapters include NetBox, Nautobot, and Infrahub. Other adapters
 use full extraction unless their capability contract says otherwise.

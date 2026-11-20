@@ -602,6 +602,7 @@ class Potenda:
         for resource in adapter.top_level:
             tier_supported = adapter.cursor_tier_for(resource)  # ty: ignore[unresolved-attribute]
             cursor = cursors.get(resource)
+<<<<<<< HEAD
             model_cls = models[resource]
             cached = (prev_run / side / f"{resource}.parquet").is_file()
             if (
@@ -612,6 +613,14 @@ class Potenda:
                 or resource not in next_cursors
             ):
                 logger.info("Incremental: no safe cursor or snapshot for %s; loading in full", resource)
+=======
+            model_cls = getattr(adapter, resource, None)
+            if model_cls is None:
+                continue
+            if cursor is None or tier_supported is CursorTier.NONE:
+                reason = "cursor tier NONE" if tier_supported is CursorTier.NONE else "no cursor in prior run"
+                logger.info("Incremental disabled: %s (side=%s, resource=%s)", reason, side, resource)
+>>>>>>> origin/main
                 adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
                 full_resources.add(resource)
                 continue

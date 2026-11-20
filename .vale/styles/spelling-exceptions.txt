@@ -10,7 +10,12 @@ artifact_name
 async
 Authentik
 boolean
+<<<<<<< HEAD
 callables
+=======
+booleans
+Booleans
+>>>>>>> origin/main
 check_definitions
 class_name
 CloudFormation
@@ -103,6 +108,7 @@ Nornir
 npm
 nullable
 o'brian
+OAuth
 Observium
 openconfig
 opentelemetry
@@ -155,6 +161,7 @@ vendoring
 Version Control
 VRFs
 walkthrough
+Webex
 runbook
 runbooks
 Splunk
@@ -171,6 +178,7 @@ Yaml
 yamllint
 ty
 formatters
+<<<<<<< HEAD
 Potenda
 autocommit
 pooler
@@ -234,3 +242,7 @@ unkeyed
 unredacted
 untyped
 writability
+=======
+Entra
+OData
+>>>>>>> origin/main

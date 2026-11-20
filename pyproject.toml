@@ -1,6 +1,10 @@
 [project]
 name = "infrahub-sync"
+<<<<<<< HEAD
 version = "3.0.0a5"
+=======
+version = "2.1.0"
+>>>>>>> origin/main
 description = "Infrahub-Sync is a versatile Python package that synchronizes data between a source and a destination system"
 authors = [{ name = "OpsMill", email = "info@opsmill.com" }]
 readme = "README.md"
@@ -15,7 +19,11 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+<<<<<<< HEAD
     "infrahub-sdk>=1.18,<2",
+=======
+    "infrahub-sdk[all]==1.24.0",
+>>>>>>> origin/main
     "structlog>=25.1,<27.0",
     "typing-extensions>=4.4",
     "httpx>=0.27,<1",
@@ -292,6 +300,7 @@ exclude = [
     "build",
     "dist",
     "examples",
+<<<<<<< HEAD
     # Vendored byte-identical upstream code and its upstream tests; the freeze rule in
     # opsmill_prefect_extras/VENDORED.md forbids local rewrites, so Ruff must not
     # reformat or lint them to this repository's profile. ty still checks the vendored
@@ -301,6 +310,9 @@ exclude = [
     # The opsmill/infrahub submodule that holds the design system; upstream code,
     # linted and formatted in its own repository.
     "frontend/vendor",
+=======
+    ".specify",
+>>>>>>> origin/main
 ]
 
 
@@ -442,6 +454,7 @@ max-complexity = 33
 [tool.ty]
 
 [tool.ty.src]
+<<<<<<< HEAD
 # tests/vendored_prefect_extras is frozen byte-identical upstream test code (see
 # opsmill_prefect_extras/VENDORED.md) and is not held to this repository's checks;
 # the vendored package itself stays type-checked. Configured here so every ty
@@ -449,6 +462,9 @@ max-complexity = 33
 # frontend/vendor is the opsmill/infrahub submodule that holds the design system;
 # upstream code, checked in its own repository.
 exclude = ["examples/**", "tests/vendored_prefect_extras/**", "frontend/vendor/**"]
+=======
+exclude = ["examples/**", ".specify/**"]
+>>>>>>> origin/main
 
 [tool.ty.environment]
 python-version = "3.10"

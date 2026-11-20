@@ -90,6 +90,7 @@ infrahub-sync/
 └─ .github/workflows/            # CI
 ```
 
+<<<<<<< HEAD
 [`development/knowledge/repository-tour.md`](docs/docs/development/knowledge/repository-tour.md) is the
 canonical inventory of `infrahub_sync/`. It maps every current package — the CLI and its HTTP
 client, configuration admission, the service and worker, runtime schema, execution, plans,
@@ -98,6 +99,9 @@ and dependency graphs — and separates registered V3 execution from development
 historical material. Read it rather than inferring the layout from the tree above.
 
 Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`.
+=======
+Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `webex`, `genericrestapi`, `msgraphsync`.
+>>>>>>> origin/main
 
 ## CLI Commands
 

@@ -22,6 +22,7 @@ Each adapter handles two responsibilities for its target system: **communication
 | Cisco ACI | Cisco ACI → Infrahub | Syncing data from Cisco ACI fabrics into Infrahub |
 | Peering Manager | Peering Manager → Infrahub | Syncing peering data from Peering Manager into Infrahub |
 | Prometheus | Prometheus → Infrahub | Pulling target or metric metadata from Prometheus into Infrahub |
+<<<<<<< HEAD
 | Generic REST API | external system → Infrahub | A source with a REST/JSON API that follows supported request and response patterns |
 
 No pre-built adapter exists yet for PeeringDB, LibreNMS, Observium, or Device42. Each of those
@@ -34,6 +35,14 @@ matching directory under [`examples/`](https://github.com/opsmill/infrahub-sync/
 | LibreNMS | LibreNMS → Infrahub | [`examples/librenms_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/librenms_to_infrahub) |
 | Observium | Observium → Infrahub | [`examples/observium_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/observium_to_infrahub) |
 | Device42 | Device42 → Infrahub | [`examples/device42_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/device42_to_infrahub) |
+=======
+| LibreNMS | LibreNMS → Infrahub | Syncing device inventory and metadata from LibreNMS into Infrahub |
+| Observium | Observium → Infrahub | Syncing device inventory and metadata from Observium into Infrahub |
+| Device42 | Device42 → Infrahub | Syncing IT asset and dependency data from Device42 into Infrahub |
+| Microsoft Graph | Microsoft Entra ID (through Microsoft Graph) → Infrahub | Syncing users, groups and group membership from Microsoft Entra ID into Infrahub |
+| Webex | Webex → Infrahub | Syncing Webex locations, workspaces and devices into Infrahub |
+| Generic REST API | external system → Infrahub | Any external system with a REST/JSON API and no dedicated adapter |
+>>>>>>> origin/main
 
 For per-adapter details — connection parameters, supported models, known limitations — see the individual adapter pages in the Adapters sidebar.
 

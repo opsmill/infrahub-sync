@@ -256,6 +256,7 @@ def _refuse_stale_destination_id(exc: GraphQLError, *, operation: PlannedOperati
 
     Returns without raising for anything else, leaving the caller to re-raise the original.
     """
+<<<<<<< HEAD
     if operation.destination_id is None:
         return
     proven_not_found = any(
@@ -271,6 +272,83 @@ def _refuse_stale_destination_id(exc: GraphQLError, *, operation: PlannedOperati
         "nothing."
     )
     raise StaleDestinationIdError(msg) from exc
+=======
+    for attr_name, attr_value in attrs.items():
+        if attr_name in node_schema.attribute_names:
+            attr = getattr(node, attr_name)
+            attr.value = attr_value
+            if source:
+                attr.source = NodeProperty(data=source)
+            if owner:
+                attr.owner = NodeProperty(data=owner)
+
+        if attr_name in node_schema.relationship_names:
+            for rel_schema in node_schema.relationships:
+                peer_schema = schemas.get(rel_schema.peer)
+                if attr_name != rel_schema.name or peer_schema is None:
+                    continue
+
+                if rel_schema.cardinality == "one":
+                    if attr_value:
+                        peer_node = resolve_peer_node(
+                            key=attr_value,
+                            rel_schema=rel_schema,
+                            peer_schema=peer_schema,
+                            store=client.store,
+                            client=client,
+                            fallback=False,
+                            schemas=schemas,
+                        )
+                        if not peer_node:
+                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
+                            continue
+                        # Keep the peer object so the SDK can detect resource pools
+                        # and generate a ``from_pool`` allocation when required.
+                        setattr(node, attr_name, peer_node)
+                        relationship: RelatedNodeSync = getattr(node, attr_name)
+                        if source:
+                            relationship.source = source
+                        if owner:
+                            relationship.owner = owner
+                    else:
+                        # TODO: delete the old relationship data ?
+                        pass
+
+                elif rel_schema.cardinality == "many":
+                    attr_manager: RelationshipManagerSync = getattr(node, attr_name)
+                    if not attr_manager.initialized:
+                        attr_manager.fetch()
+                    existing_peer_ids = attr_manager.peer_ids
+                    new_peer_ids = []
+                    unresolved_peer = False
+
+                    for value in list(attr_value):
+                        peer_node = resolve_peer_node(
+                            key=value,
+                            rel_schema=rel_schema,
+                            peer_schema=peer_schema,
+                            store=client.store,
+                            client=client,
+                            fallback=False,
+                            schemas=schemas,
+                        )
+                        if peer_node:
+                            new_peer_ids.append(peer_node.id)
+                        else:
+                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, value)
+                            unresolved_peer = True
+
+                    _, existing_only, new_only = compare_lists(existing_peer_ids, new_peer_ids)
+
+                    if not unresolved_peer:
+                        for existing_id in existing_only:
+                            attr_manager.remove(existing_id)
+
+                    for new_id in new_only:
+                        attr_manager.add(_relationship_input_data(new_id, source, owner))
+
+    return node
+>>>>>>> origin/main
 
 
 # An Infrahub schema component path — a human-friendly-ID or uniqueness-constraint entry —
@@ -1482,12 +1560,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             self._peer_unique_ids[cache_key] = None
             raise err
 
+<<<<<<< HEAD
         unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
         try:
             peer_item = self.store.get(model=peer_kind, identifier=unique_id)
         except ObjectNotFound:
             peer_item = peer_model(**peer_data)
             self.update_or_add_model_instance(peer_item)
+=======
+        # Conversion runs before model_loader filters and transforms records. Only the
+        # loader may add models to the DiffSync store, so excluded peers stay excluded.
+        return peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
+>>>>>>> origin/main
 
         # Identifier-only hydration is deliberately adapter-local: inserting its
         # narrow result into the shared SDK store can replace a fuller node that

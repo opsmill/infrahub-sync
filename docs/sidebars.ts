@@ -54,6 +54,7 @@ const sidebars: SidebarsConfig = {
         'adapters/choosing-an-adapter',
         'adapters/aci',
         'adapters/device42',
+        'adapters/msgraphsync',
         'adapters/genericrestapi',
         'adapters/infrahub',
         'adapters/ipfabric',
@@ -66,6 +67,7 @@ const sidebars: SidebarsConfig = {
         'adapters/peeringdb',
         'adapters/prometheus',
         'adapters/slurpit',
+        'adapters/webex',
       ],
     },
     {
@@ -166,6 +168,7 @@ const sidebars: SidebarsConfig = {
             slug: 'release-notes/infrahub-sync',
           },
           items: [
+            'release-notes/infrahub-sync/release-2_1_0',
             'release-notes/infrahub-sync/release-2_0_1',
             'release-notes/infrahub-sync/release-2_0_0',
             'release-notes/infrahub-sync/release-1_6_0',
