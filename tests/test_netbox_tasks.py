@@ -38,7 +38,7 @@ REQUIRED_VALUES = {
 def isolated_tier_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Isolate generated tier files and suppress live worker connections."""
     monkeypatch.setattr(netbox, "STATE_DIR", tmp_path / "state")
-    monkeypatch.setattr(netbox, "attach_dev_worker", lambda _context, _values: False)
+    monkeypatch.setattr(netbox, "attach_dev_worker", lambda _context, _values, _project=netbox.DEV_STACK_PROJECT: False)
     monkeypatch.setattr(netbox, "detach_dev_worker", lambda _context, _values: None)
 
 
@@ -438,34 +438,24 @@ def test_prepare_restore_sql_refuses_a_dump_without_exactly_one_search_path_line
         netbox.prepare_restore_sql(sql_file, tmp_path / "demo.restore.sql")
 
 
-def test_local_package_text_replaces_only_the_two_urls() -> None:
+def test_local_package_text_writes_both_urls_through_the_shared_rewrite() -> None:
+    """The rewrite cases live in `tests/demo/test_package.py`; the task keeps its own error."""
     shipped = netbox.SHIPPED_PACKAGE.read_text(encoding="utf-8")
 
-    local = netbox.local_package_text(shipped, "http://localhost:8082", "http://localhost:8080")
+    local = yaml.safe_load(netbox.local_package_text(shipped, "http://localhost:8082", "http://localhost:8080"))
 
-    shipped_package = yaml.safe_load(shipped)
-    local_package = yaml.safe_load(local)
-    assert local_package["configuration"]["source"]["settings"]["url"] == "http://localhost:8082"
-    assert local_package["configuration"]["destination"]["settings"]["url"] == "http://localhost:8080"
-    local_package["configuration"]["source"]["settings"]["url"] = netbox.SHIPPED_NETBOX_URL
-    local_package["configuration"]["destination"]["settings"]["url"] = netbox.SHIPPED_INFRAHUB_URL
-    assert local_package == shipped_package
-    assert len(local.splitlines()) == len(shipped.splitlines())
-
-
-def test_local_package_text_accepts_a_netbox_url_equal_to_the_shipped_infrahub_url() -> None:
-    """A local NetBox on port 8000 must not make the shipped Infrahub line count twice."""
-    shipped = netbox.SHIPPED_PACKAGE.read_text(encoding="utf-8")
-
-    local = yaml.safe_load(netbox.local_package_text(shipped, netbox.SHIPPED_INFRAHUB_URL, "http://localhost:8080"))
-
-    assert local["configuration"]["source"]["settings"]["url"] == netbox.SHIPPED_INFRAHUB_URL
+    assert local["configuration"]["source"]["settings"]["url"] == "http://localhost:8082"
     assert local["configuration"]["destination"]["settings"]["url"] == "http://localhost:8080"
 
 
 def test_local_package_text_refuses_a_package_without_the_public_demo_url() -> None:
-    with pytest.raises(netbox.NetboxError, match="exactly once, found 0"):
+    """The task still raises `NetboxError`, naming the shipped package as before the move."""
+    with pytest.raises(netbox.NetboxError) as raised:
         netbox.local_package_text('url: "http://localhost:8000"\n', "http://localhost:8082", "http://localhost:8080")
+
+    assert str(raised.value) == (
+        f"{netbox.SHIPPED_PACKAGE} must contain 'url: \"https://demo.netbox.dev\"' exactly once, found 0"
+    )
 
 
 def test_demo_package_writes_the_local_copy(

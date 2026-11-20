@@ -1,0 +1,1 @@
+Added `infrahub-sync demo prepare`, which loads the NetBox demo's destination schema into an Infrahub and registers the NetBox package for a Sync deployment, and the `dev.demo` task, which prepares a local NetBox demo with one command.

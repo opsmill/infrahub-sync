@@ -32,6 +32,7 @@ REQUIRED = {
     "dev.start",
     "dev.infrahub",
     "dev.preview",
+    "dev.demo",
     "dev.deps",
     "dev.api",
     "dev.worker",

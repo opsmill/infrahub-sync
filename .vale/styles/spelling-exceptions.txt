@@ -129,6 +129,7 @@ sandboxed
 schema_mapping
 sdk
 Slurp'it
+Styrmin
 subcommand
 subnet
 template_path

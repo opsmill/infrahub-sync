@@ -10,6 +10,10 @@
 !LICENSE.txt
 !infrahub_sync
 !opsmill_prefect_extras
+# The NetBox demo's schema and package, which the wheel carries; only these two
+# paths, not the `examples` and `tests` trees around them.
+!examples/netbox_to_infrahub/package.yml
+!tests/data/nightly_schema/traditional-infrastructure-sot
 # The web interface's build inputs, path by path: `!frontend` alone would admit the
 # whole 122 MB opsmill/infrahub submodule and a local `node_modules`.
 !frontend/.npmrc
