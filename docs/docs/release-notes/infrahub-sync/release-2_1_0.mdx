@@ -46,7 +46,7 @@ Compare the locations, workspaces and devices registered in Webex with your sour
 - Read any other Webex JSON API resource by adding it to the configuration. The adapter follows Webex pagination until no next page remains.
 - Set `max_retry_delay` (default 300 seconds) to cap the wait between retries. When Webex returns a `Retry-After` longer than `max_retry_delay`, the run stops instead of waiting.
 
-See the [Webex adapter](../../adapters/webex.mdx) page for the required scopes and every setting. ([#401](https://github.com/opsmill/infrahub-sync/pull/401))
+See the [Webex adapter](https://github.com/opsmill/infrahub-sync/blob/main/docs/docs/adapters/webex.mdx) page for the required scopes and every setting. ([#401](https://github.com/opsmill/infrahub-sync/pull/401))
 
 ## Load directory users and groups into Infrahub
 
@@ -58,7 +58,7 @@ Read the users, groups and group membership of a Microsoft Entra ID tenant throu
 - Choose `membership: direct` (default) or `membership: transitive` to decide which group members are read.
 - Start from the [example project](https://github.com/opsmill/infrahub-sync/tree/main/examples/msgraphsync_to_infrahub).
 
-See the [Microsoft Graph adapter](../../adapters/msgraphsync.mdx) page for the application permissions and settings. ([#396](https://github.com/opsmill/infrahub-sync/pull/396))
+See the [Microsoft Graph adapter](https://github.com/opsmill/infrahub-sync/blob/main/docs/docs/adapters/msgraphsync.mdx) page for the application permissions and settings. ([#396](https://github.com/opsmill/infrahub-sync/pull/396))
 
 ## Bug fixes
 

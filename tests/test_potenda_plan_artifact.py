@@ -1373,7 +1373,9 @@ ADAPTERS_DIR = Path(__file__).resolve().parent.parent / "infrahub_sync" / "adapt
 
 # `rest_api_client.py` is a shared HTTP helper and `utils.py` a shared value helper;
 # neither is an adapter.
-NON_ADAPTER_MODULES = frozenset({"__init__", "endpoint_records", "references", "rest_api_client", "utils"})
+NON_ADAPTER_MODULES = frozenset(
+    {"__init__", "endpoint_records", "references", "rest_api_client", "utils", "webex_client"}
+)
 
 
 def manifest_path(potenda: Potenda) -> Path:
@@ -2009,14 +2011,14 @@ def test_a_delete_whose_nested_peer_is_ambiguous_destination_side_fails_the_comm
 
 
 def test_only_the_infrahub_adapter_exposes_a_schema_attribute() -> None:
-    """V38, asserted rather than assumed: the guard covers eight adapters, not a fake."""
+    """V38, asserted rather than assumed: the guard covers ten adapters, not a fake."""
     modules = sorted(path.stem for path in ADAPTERS_DIR.glob("*.py") if path.stem not in NON_ADAPTER_MODULES)
     exposing = [
         module for module in modules if "self.schema" in (ADAPTERS_DIR / f"{module}.py").read_text(encoding="utf-8")
     ]
 
     assert exposing == ["infrahub"]
-    assert len(modules) - len(exposing) == 8, f"expected eight schema-less adapters, found {modules}"
+    assert len(modules) - len(exposing) == 10, f"expected ten schema-less adapters, found {modules}"
 
 
 def test_the_plan_run_succeeds_end_to_end_against_a_destination_with_no_schema(
