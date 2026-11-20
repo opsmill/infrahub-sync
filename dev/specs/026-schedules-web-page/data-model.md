@@ -92,8 +92,8 @@ Let `me` be the answer of `GET /me` and `s` the schedule.
 | Field | Input | Filled in with | Rule in the form |
 | --- | --- | --- | --- |
 | `name` | Text | Empty | Required. |
-| `config_id` | Configuration choice | The configuration of the page the form was opened from | Required. |
-| `registry_version` | Version choice | The configuration's latest version | Required. |
+| `config_id` | Configuration and version choice (one choice); text when the configuration is fixed | The configuration of the page the form was opened from | Required. |
+| `registry_version` | Part of the configuration and version choice; a version choice when the configuration is fixed | None when the configuration is chosen; the configuration's latest version when it is fixed | Required. |
 | `cron` | Text | Empty | Required; the Sync API checks it. |
 | `timezone` | Time zone choice | The browser's time zone, or `UTC` when the browser does not give one | |
 | `write_target` | Choice | `branch-review` | `default-branch` unavailable when `me.approval_required`. |

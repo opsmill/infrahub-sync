@@ -76,8 +76,8 @@ configuration and its latest version chosen).
 
 | Sync API call | When |
 | --- | --- |
-| `GET /configs` | When no configuration is chosen, for the configuration choice. |
-| `GET /configs/{config_id}/versions` | When a configuration is chosen, for the version choice. |
+| `GET /configs` | When the form opens without a configuration, for the configuration and version choice. The latest version number gives every version, because the Sync API numbers versions from 1 and never removes one. |
+| `GET /configs/{config_id}/versions` | When the configuration is fixed, for the version choice. |
 | `POST /schedules/next-starts` (`cron`, `timezone`, `count: 5`) | 400 ms after the cron expression or the time zone last changed, when the expression has five fields. Only the answer to the latest request is shown. |
 | `POST /schedules` | On save. A `201` answer opens `/schedules/$scheduleId` of the returned schedule. |
 | `GET /schedules?config_id=…&limit=1` | After a `503 orchestration-unavailable` refusal, whose body holds no schedule: finds the stored schedule and opens its page, which shows the task-manager warning. |

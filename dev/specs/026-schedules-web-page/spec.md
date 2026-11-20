@@ -536,9 +536,13 @@ run of the same configuration is in progress, then open the schedule page.
 
 #### Changes from the maintainer's test of the pages (2026-11-20)
 
-- **FR-035**: In the schedule form, each configuration choice MUST show the configuration's name
-  and its latest registered version ("from-netbox, version 3"), not the configuration identifier.
-  The identifier MUST be shown only when two configurations have the same name.
+- **FR-035**: When the schedule form is opened without a configuration, one choice MUST hold the
+  configuration and its version: one entry per registered version, "from-netbox, version 3, the
+  latest", "from-netbox, version 2", and no separate version choice. An entry MUST NOT show the
+  configuration identifier, except when two configurations have the same name. When the form is
+  opened from a configuration's page, or to change a schedule, the configuration is fixed and the
+  form keeps a version choice. (Changed on 2026-11-20 after the maintainer's second test: the
+  first form showed the version in the configuration choice and again in a version choice.)
 - **FR-036**: The configuration choice and the time zone choice of the schedule form MUST let the
   person type to narrow the list (a searchable list), and MUST keep keyboard use and labels.
 - **FR-037**: The runs list MUST offer a schedule filter next to the configuration filter: a

@@ -38,7 +38,7 @@ import {
 } from "#/features/runs/form";
 
 import { CadenceField, useCadencePreview } from "./CadenceField";
-import { configChoices } from "./config-choices";
+import { configVersionChoices, configVersionKey, parseConfigVersionKey } from "./config-choices";
 import { FieldMessage, FormSelect, RefusalText } from "./form-parts";
 import {
   type FieldRefusal,
@@ -164,7 +164,11 @@ export function ScheduleFormDialog({
 
   const configId = fixedConfig?.configId ?? chosenConfig;
   const configs = useQuery({ ...configsQuery(), enabled: !fixedConfig });
-  const versions = useQuery({ ...versionsQuery(configId ?? ""), enabled: Boolean(configId) });
+  // A fixed configuration has its own version choice; otherwise one choice holds both.
+  const versions = useQuery({
+    ...versionsQuery(fixedConfig?.configId ?? ""),
+    enabled: Boolean(fixedConfig?.configId),
+  });
   // The page reads the schedule every 10 seconds; the form compares that read with its opening values.
   const polled = useQuery({
     ...scheduleQuery(changing?.schedule_id ?? ""),
@@ -186,7 +190,10 @@ export function ScheduleFormDialog({
     [versions.data]
   );
   const summary = configs.data?.items.find((c) => c.config_id === configId);
-  const configOptions = useMemo(() => configChoices(configs.data?.items ?? []), [configs.data]);
+  const configOptions = useMemo(
+    () => configVersionChoices(configs.data?.items ?? []),
+    [configs.data]
+  );
   const zoneOptions = useMemo(() => zones?.map((z) => ({ id: z, label: z })), [zones]);
   const newestVersion =
     numbers[0] ??
@@ -258,7 +265,7 @@ export function ScheduleFormDialog({
       : !changing && !nameAccepted(name)
         ? "Change the name: it has a character the Sync API does not accept."
         : !configId
-          ? "Choose a configuration."
+          ? "Choose a configuration version."
           : version === undefined
             ? versions.isPending
               ? "Loading the versions of this configuration."
@@ -485,18 +492,33 @@ export function ScheduleFormDialog({
           </>
         ) : (
           <FormSelect
-            label="Configuration"
-            placeholder={configs.isPending ? "Loading configurations…" : "Choose a configuration"}
-            value={chosenConfig}
+            label="Configuration and version"
+            placeholder={
+              configs.isPending ? "Loading configurations…" : "Choose a configuration version"
+            }
+            value={
+              chosenConfig && form.registry_version !== undefined
+                ? configVersionKey(chosenConfig, form.registry_version)
+                : undefined
+            }
             options={configOptions}
             searchable
-            noMatch="No configuration matches"
-            onChange={(v) => {
-              setChosenConfig(v);
-              set({ registry_version: undefined });
+            noMatch="No configuration version matches"
+            onChange={(key) => {
+              const chosen = parseConfigVersionKey(key);
+              if (!chosen) return;
+              setChosenConfig(chosen.configId);
+              set({ registry_version: chosen.version });
             }}
-            isInvalid={Boolean(refusalFor("config_id"))}
-            describedBy={refusalFor("config_id") ? errorId("config_id") : undefined}
+            isInvalid={Boolean(refusalFor("config_id") || refusalFor("registry_version"))}
+            describedBy={
+              [
+                refusalFor("config_id") && errorId("config_id"),
+                refusalFor("registry_version") && errorId("registry_version"),
+              ]
+                .filter(Boolean)
+                .join(" ") || undefined
+            }
           />
         )}
         {!fixedConfig && configs.data?.items.length === 0 && (
@@ -508,6 +530,7 @@ export function ScheduleFormDialog({
         {!fixedConfig && configs.isError && !configs.data && (
           <p className="text-pretty text-danger text-xs">The configurations could not be loaded.</p>
         )}
+        {!fixedConfig && refusalBelow("registry_version")}
         {refusalBelow(
           "config_id",
           configId && (
@@ -525,7 +548,7 @@ export function ScheduleFormDialog({
         )}
       </div>
 
-      {configId && (
+      {fixedConfig && (
         <div className="flex flex-col gap-1.5">
           <FormSelect
             label="Version"
