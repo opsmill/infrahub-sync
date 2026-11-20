@@ -7,21 +7,17 @@ name: from-cisco-aci
 # in the environment take precedence over the settings below.
 source:
   name: aci
+  credential: apic-account
   settings:
     url: "https://apic.example.com"
-    username:
-      $credential: apic-username
-    password:
-      $credential: apic-password
     api_endpoint: "api"
     verify: true
 
 destination:
   name: infrahub
+  credential: infrahub-token
   settings:
     url: "http://localhost:8000"
-    token:
-      $credential: infrahub-token
 
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:

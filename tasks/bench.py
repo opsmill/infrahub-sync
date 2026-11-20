@@ -404,8 +404,9 @@ def v2_inputs(stack: CellStack, directory: Path) -> tuple[Path, dict[str, str]]:
     config_dir.mkdir(exist_ok=True)
     config = stack.package(worker=False)["configuration"]
     # Only transport/credential settings are runtime-specific; mapping entries are copied unchanged.
-    config["source"]["settings"].pop("token")
-    config["destination"]["settings"].pop("token")
+    # The shipped package names a stored credential in each block; a v2 release has no such key.
+    config["source"].pop("credential")
+    config["destination"].pop("credential")
     (config_dir / "config.yml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     env = release_environment(directory) | {
         "NETBOX_TOKEN": netbox.netbox_token(stack.netbox_env),
