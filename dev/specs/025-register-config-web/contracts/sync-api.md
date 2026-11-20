@@ -80,6 +80,31 @@ Default `false`. It is part of the request fingerprint that the idempotency chec
 newest version (`created: false`), the field is ignored and the existing version is returned as it
 is.
 
+## `POST /api/configs` and `POST /api/configs/{config_id}/versions` (changed, decision D-12)
+
+The request body holds exactly one of `package`, a JSON object as before, and `document`, the text
+of a YAML or JSON package file:
+
+```json
+{"document": "format_version: 1\nconfiguration:\n  name: netbox-to-infrahub\n  ...\n", "reason": "Add the VLAN mapping"}
+```
+
+The Sync API parses `document` as `POST /api/configs/validate` does (`config_routes.py`,
+`_document_package`), so for the same text the registered version's `package_checksum` equals the
+check's `package_checksum`. The web interface sends `document`; the CLI sends `package`. A request
+with only `package` has the same body and the same request fingerprint as before.
+
+| Status | `family` | When |
+|---|---|---|
+| 400 | `request` | Both or neither of `package` and `document`. Checked after the administrator check and the `reason` check. |
+| 400 | `request`, reason `invalid_package` | `document` is not a YAML or JSON mapping with string keys, is empty, or holds more than 1,000,000 values once its YAML aliases are expanded. |
+| 422 | `validation`, reason `v2_configuration` | `document` has no `configuration` key and has top-level `source` and `destination` keys. A `package` gets the refusals it got before. |
+
+**Idempotency**: the request fingerprint holds the text of `document` instead of `package`. A retry
+with the same key and the same text replays the stored response. The same key with different text,
+or with the same package sent as `package`, gets 409 `idempotency-conflict`. A refused `document`
+releases the key, as a refused `package` does.
+
 ## Configuration version resources (changed, User Story 4)
 
 Every response that carries a configuration version (registration, `GET` of a version, the version

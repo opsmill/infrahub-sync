@@ -48,6 +48,10 @@ without a mouse.
 9. Register and Cancel. Register is enabled only when the result is "Valid", or when the
    destination cannot be reached; in that case its label is "Register without validation"
    (FR-020). With User Story 4, that registration also sends `registered_without_validation: true`.
+   Register sends `document`, the exact text of the dropped file that the review step checked, never
+   the `declared_content` of the check: a browser that parses and serializes a package again
+   changes its numbers (`30.0` becomes `30`, integers above 2^53 lose precision), and so its
+   checksum (spec D-12).
 10. When the validation request fails (no answer, or an error that is not a refusal of the
     package): "Validation did not complete." with "Validate again"; Register stays disabled.
 

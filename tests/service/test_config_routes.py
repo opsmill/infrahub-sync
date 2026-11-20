@@ -2260,3 +2260,135 @@ def test_an_unmarked_request_keeps_the_fingerprint_of_receipts_stored_before_the
         )
     ).hexdigest()
     assert receipt.request_fingerprint == pre_mark_fingerprint
+
+
+# Registering from the text of a package file (spec 025, decision D-12).
+
+# More than 2**53, so a JavaScript number cannot hold it exactly.
+_LARGE_INTEGER = 2**60 + 1
+
+
+def _document_with_numbers(name: str, timeout: float = 30.0) -> str:
+    """Return a YAML package whose Prometheus source has the `timeout` setting ``timeout``.
+
+    The package checks accept any number for that setting.
+    """
+    data = package_data()
+    data["configuration"]["name"] = name
+    data["configuration"]["source"]["name"] = "prometheus"
+    data["configuration"]["source"]["settings"]["timeout"] = timeout
+    return yaml.safe_dump(data)
+
+
+def _register_document(client: TestClient, route: str, body: Mapping[str, object], key: str) -> httpx.Response:
+    """Send ``body`` to the registration route: a new configuration, or a version of a registered one."""
+    if route == "register":
+        return client.post("/configs", headers={"Idempotency-Key": key}, json=body)
+    config_id = _register(client, package_data(), f"{key}-first")
+    return client.post(f"/configs/{config_id}/versions", headers={"Idempotency-Key": key}, json=body)
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+@pytest.mark.parametrize("timeout", [30.0, _LARGE_INTEGER], ids=["zero-fraction-float", "large-integer"])
+def test_a_document_is_registered_with_the_numbers_and_checksum_the_check_gave(
+    tmp_path: Path, route: str, timeout: float
+) -> None:
+    client, _projection = _discovery_client(tmp_path)
+    document = _document_with_numbers("numbers", timeout)
+    checked = _check(client, {"document": document})
+    assert checked.status_code == 200, checked.text
+
+    response = _register_document(client, route, {"document": document, "reason": "from the file"}, "document")
+
+    assert response.status_code == 201, response.text
+    version = response.json()["version"]
+    assert version["package_checksum"] == checked.json()["package_checksum"]
+    stored = client.get(f"/configs/{version['config_id']}/versions/{version['registry_version']}")
+    stored_timeout = stored.json()["declared_content"]["configuration"]["source"]["settings"]["timeout"]
+    # `30.0 == 30` in Python, so the type is compared too.
+    assert (type(stored_timeout), stored_timeout) == (type(timeout), timeout)
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"package": package_data(), "document": yaml.safe_dump(package_data())}, {"package": None, "document": None}],
+    ids=["neither", "both", "both-null"],
+)
+def test_a_registration_needs_exactly_one_of_package_and_document(
+    tmp_path: Path, route: str, body: dict[str, object]
+) -> None:
+    client, projection = _discovery_client(tmp_path)
+
+    response = _register_document(client, route, body, "exactly-one")
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["family"] == "request"
+    assert response.json()["error"].get("reason") is None
+    assert len(projection.list_configurations()) == (0 if route == "register" else 1)
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+@pytest.mark.parametrize(
+    "document",
+    ["", "- a\n- b\n", "{1: 2}", "key: [unclosed", _alias_expansion_document()],
+    ids=["empty", "list", "integer-key", "invalid-yaml", "alias-expansion"],
+)
+def test_a_registered_document_that_is_not_a_package_is_an_invalid_package(
+    tmp_path: Path, route: str, document: str
+) -> None:
+    client, projection = _discovery_client(tmp_path)
+
+    response = _register_document(client, route, {"document": document}, "invalid-document")
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("request", "invalid_package")
+    assert len(projection.list_configurations()) == (0 if route == "register" else 1)
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+def test_a_registered_v2_document_is_refused_with_the_conversion_command(tmp_path: Path, route: str) -> None:
+    client, _projection = _discovery_client(tmp_path)
+    document = (_EXAMPLES / "netbox_to_infrahub" / "config.yml").read_text(encoding="utf-8")
+
+    response = _register_document(client, route, {"document": document}, "v2-document")
+
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("validation", "v2_configuration")
+    assert "infrahub-sync configs convert" in error["message"]
+
+
+def test_a_refused_document_retried_with_its_key_is_refused_again_not_held(tmp_path: Path) -> None:
+    """The refusal releases the key, as for a refused package, so the retry is not `idempotency-in-progress`."""
+    client, _projection = _discovery_client(tmp_path)
+    headers = {"Idempotency-Key": "refused-document"}
+
+    refused = client.post("/configs", headers=headers, json={"document": "key: [unclosed"})
+    retried = client.post("/configs", headers=headers, json={"document": "key: [unclosed"})
+
+    assert refused.status_code == 400, refused.text
+    assert (retried.status_code, retried.json()) == (refused.status_code, refused.json())
+
+
+@pytest.mark.parametrize("route", ["register", "version"])
+def test_a_document_retried_with_its_key_replays_and_a_different_body_conflicts(tmp_path: Path, route: str) -> None:
+    client, projection = _discovery_client(tmp_path)
+    document = _document_with_numbers("retried")
+    body = {"document": document, "reason": "retry"}
+
+    first = _register_document(client, route, body, "document-retry")
+    path = "/configs" if route == "register" else f"/configs/{first.json()['version']['config_id']}/versions"
+    headers = {"Idempotency-Key": "document-retry"}
+    replay = client.post(path, headers=headers, json=body)
+    # The same package, sent as different text or as JSON, is a different request.
+    reformatted = client.post(path, headers=headers, json={**body, "document": f"# comment\n{document}"})
+    as_package = client.post(path, headers=headers, json={"package": yaml.safe_load(document), "reason": "retry"})
+
+    assert first.status_code == 201, first.text
+    assert (replay.status_code, replay.json()) == (first.status_code, first.json())
+    for conflict in (reformatted, as_package):
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["error"]["code"] == "idempotency-conflict"
+    assert len(projection.list_configurations()) == 1

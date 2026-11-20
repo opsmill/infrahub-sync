@@ -72,12 +72,15 @@ export type ReviewTarget = { kind: "version"; configId: string } | { kind: "conf
 const BRANCH_CHECK_DELAY_MS = 600;
 
 /**
- * The request body. `registered_without_validation` is sent only as `true`, when Register runs
- * while the destination cannot be reached (FR-021); otherwise it is left out. It is part of the
- * locked body, so a retry sends the same request with the same idempotency key.
+ * The request body. `document` is the text of the dropped file that the review step checked, so
+ * the Sync API stores what it checked: a package parsed and serialized again by the browser can
+ * have different numbers (`30.0` becomes `30`) and so a different checksum (spec D-12).
+ * `registered_without_validation` is sent only as `true`, when Register runs while the
+ * destination cannot be reached (FR-021); otherwise it is left out. It is part of the locked
+ * body, so a retry sends the same request with the same idempotency key.
  */
 type Body = {
-  package: Record<string, unknown>;
+  document: string;
   reason: string | null;
   registered_without_validation?: true;
 };
@@ -239,15 +242,15 @@ export function PackageReview({
     void navigate({ to: "/configs/$configId", params: { configId: id }, search: {} });
   };
 
-  const bodyFor = (declared: Record<string, unknown>): Body => ({
-    package: declared,
+  const bodyFor = (): Body => ({
+    document,
     reason: reason.trim() || null,
     ...(kind === "unreachable" ? { registered_without_validation: true } : {}),
   });
 
   const send = (sentBody: Body) => {
-    // The mark is left out unless it is true, so the body matches the generated type only by a
-    // cast; the Sync API reads a missing mark as false.
+    // The mark is left out unless it is true, and `package` is not sent, so the body matches the
+    // generated type only by a cast; the Sync API reads a missing mark as false.
     const body = sentBody as ConfigMutationRequest;
     if (configId === undefined) {
       registerConfig.mutate(
@@ -283,7 +286,7 @@ export function PackageReview({
     setOutcome(undefined);
     if (configId === undefined) {
       // A new configuration has no newest version to read again.
-      const body = bodyFor(lastCheck.declared_content);
+      const body = bodyFor();
       setSent(body);
       send(body);
       return;
@@ -315,7 +318,7 @@ export function PackageReview({
       setCompared(latest);
       return;
     }
-    const body = bodyFor(lastCheck.declared_content);
+    const body = bodyFor();
     setSent(body);
     send(body);
   };

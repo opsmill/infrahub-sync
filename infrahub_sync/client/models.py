@@ -237,13 +237,21 @@ def _json_native_package(value: dict[str, Any]) -> dict[str, Any]:
 class ConfigMutationRequest(_RequestModel):
     """Submit a configuration package with an optional audit reason.
 
+    The package is ``package``, as JSON, or ``document``, the text of a package file, YAML or
+    JSON, which the Sync API parses as `POST /configs/validate` does. The web interface sends
+    ``document``, because a browser that parses and serializes the file again can change its
+    numbers; the CLI sends ``package``. Exactly one is set. The Sync API checks that rule
+    itself, after the administrator check, so this model shared with it does not; the field
+    that is not set is omitted.
+
     ``registered_without_validation`` marks the created version as registered without
     validation. The web interface sets it; the CLI never does. A request without the mark
     keeps today's body, so it is omitted when ``false``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
-    package: dict[str, Any]
+    package: dict[str, Any] | None = None
+    document: str | None = None
     reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
     registered_without_validation: StrictBool = False
 
@@ -256,14 +264,17 @@ class ConfigMutationRequest(_RequestModel):
 
     @field_validator("package")
     @classmethod
-    def _require_json_package(cls, value: dict[str, Any]) -> dict[str, Any]:
-        return _json_native_package(value)
+    def _require_json_package(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return None if value is None else _json_native_package(value)
 
     # No return annotation on purpose: with one, Pydantic replaces the model's serialization
     # JSON schema (and so the OpenAPI document) with a bare object.
     @model_serializer(mode="wrap")
-    def _omit_an_unset_mark(self, handler: SerializerFunctionWrapHandler):
+    def _omit_unset_fields(self, handler: SerializerFunctionWrapHandler):
         data = handler(self)
+        for field in ("package", "document"):
+            if data.get(field) is None:
+                data.pop(field, None)
         if not self.registered_without_validation:
             data.pop("registered_without_validation", None)
         return data
@@ -1425,7 +1436,9 @@ class PackageCheckResource(_ResourceModel):
     """
 
     # Keys and values of the declared content are returned exactly, so registering the
-    # returned content gives the returned checksum.
+    # returned content from Python gives the returned checksum. A browser that parses and
+    # serializes it again can change its numbers (`30.0` becomes `30`, integers above 2**53
+    # lose precision), so the web interface registers the file's text as `document` instead.
     model_config = ConfigDict(extra="allow", frozen=True, str_strip_whitespace=False)
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     name: str | None = None

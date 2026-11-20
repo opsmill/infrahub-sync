@@ -1088,15 +1088,24 @@ export interface components {
          * ConfigMutationRequest
          * @description Submit a configuration package with an optional audit reason.
          *
+         *     The package is ``package``, as JSON, or ``document``, the text of a package file, YAML or
+         *     JSON, which the Sync API parses as `POST /configs/validate` does. The web interface sends
+         *     ``document``, because a browser that parses and serializes the file again can change its
+         *     numbers; the CLI sends ``package``. Exactly one is set. The Sync API checks that rule
+         *     itself, after the administrator check, so this model shared with it does not; the field
+         *     that is not set is omitted.
+         *
          *     ``registered_without_validation`` marks the created version as registered without
          *     validation. The web interface sets it; the CLI never does. A request without the mark
          *     keeps today's body, so it is omitted when ``false``.
          */
         ConfigMutationRequest: {
             /** Package */
-            package: {
+            package?: {
                 [key: string]: unknown;
-            };
+            } | null;
+            /** Document */
+            document?: string | null;
             /** Reason */
             reason?: string | null;
             /**

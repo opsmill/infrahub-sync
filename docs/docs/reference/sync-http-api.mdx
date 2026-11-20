@@ -590,8 +590,8 @@ returned unchanged.
 
 | Route | Behavior |
 | --- | --- |
-| `POST /configs` | Register a new configuration package as version 1. Administrator only. The response names the version by `config_id`, `registry_version`, `package_checksum`, `created_at` and `registered_without_validation`, without its package content. |
-| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The response names the version as `POST /configs` does, without its package content. |
+| `POST /configs` | Register a new configuration package as version 1. Administrator only. The body holds exactly one of `package`, a JSON object, or `document`, the text of a YAML or JSON file, which the service parses and refuses as `POST /configs/validate` does: 400 `request` with the reason `invalid_package`, or 422 `validation` with the reason `v2_configuration`. Both or neither gets 400 `request`. The CLI sends `package`; the web interface sends `document`, so the stored package and its checksum are those of the file that was checked. For idempotency, a `document` is compared as text, and it differs from any `package`. The response names the version by `config_id`, `registry_version`, `package_checksum`, `created_at` and `registered_without_validation`, without its package content. |
+| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The body holds `package` or `document` as for `POST /configs`. The response names the version as `POST /configs` does, without its package content. |
 | `GET /me` | Return the actor that the bearer token authenticates as, its administrator flag, and whether the service requires approval. |
 | `GET /configs` | List registered configurations, newest first, one page at a time. Filter by exact `name`. |
 | `GET /configs/{config_id}` | Return one registered configuration's summary, with its `name` and `latest_version`. |

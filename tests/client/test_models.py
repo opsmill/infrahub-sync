@@ -222,6 +222,33 @@ def test_a_configuration_request_carries_the_unvalidated_mark_and_defaults_it_to
         ConfigMutationRequest(package={"format_version": 1}, registered_without_validation="yes")  # ty: ignore[invalid-argument-type]
 
 
+def test_a_configuration_request_with_a_package_keeps_its_body() -> None:
+    """The CLI sends `package`; the body has no `document` key, so a Sync API without it accepts it."""
+    request = ConfigMutationRequest(package={"format_version": 1}, reason="register inventory")
+
+    assert request.model_dump(mode="json") == {"package": {"format_version": 1}, "reason": "register inventory"}
+
+
+def test_a_configuration_request_sends_the_text_of_a_package_file_unchanged() -> None:
+    """The web interface sends the file's text (spec 025, D-12); whitespace and numbers are kept."""
+    document = "  format_version: 1\nconfiguration:\n  timeout: 30.0\n"
+
+    request = ConfigMutationRequest(document=document, registered_without_validation=True)
+
+    assert request.model_dump(mode="json") == {
+        "document": document,
+        "reason": None,
+        "registered_without_validation": True,
+    }
+
+
+def test_the_configuration_request_leaves_the_exactly_one_rule_to_the_sync_api() -> None:
+    """The model is shared with the Sync API, which refuses both or neither with `400 request`."""
+    assert ConfigMutationRequest().model_dump(mode="json") == {"reason": None}
+    both = ConfigMutationRequest(package={"format_version": 1}, document="format_version: 1\n")
+    assert set(both.model_dump(mode="json")) == {"package", "document", "reason"}
+
+
 def _public_run(**extra: object) -> dict[str, object]:
     return {
         "run_id": "run-1",
