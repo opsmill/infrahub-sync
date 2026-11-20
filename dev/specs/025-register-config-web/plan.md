@@ -37,8 +37,9 @@ new dependency.
 validate route takes for the same package and branch; no added network round trip beyond one
 validation and one latest-version read.
 
-**Constraints**: no secret value in any response, finding or log (FR-005, spec 007 FR-038); no user
-or actor named in the web interface (`AGENTS.md`, "Sync frontend"); no new dependency.
+**Constraints**: no secret value in any response, finding or log (FR-005, spec 007 FR-038); an account
+named in the web interface only by the name the Sync API returns (`AGENTS.md`, "Sync frontend",
+spec D-11); no new dependency.
 
 **Scale/Scope**: one package per drop; packages of the size the CLI already registers.
 

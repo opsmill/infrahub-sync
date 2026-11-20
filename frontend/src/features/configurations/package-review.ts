@@ -133,8 +133,11 @@ export const unchangedText = (version: number) =>
 export const sameAsNewestText = (version: number) =>
   `This package is the same as version ${version}. Registering it would add no version.`;
 
-export const registeredMeanwhileText = (version: number) =>
-  `Version ${version} was registered meanwhile.`;
+/** Names the account that registered the version when the Sync API returns it (AGENTS.md, "Sync frontend"). */
+export const registeredMeanwhileText = (version: number, registeredBy?: string | null) =>
+  registeredBy
+    ? `Version ${version} was registered meanwhile by ${registeredBy}.`
+    : `Version ${version} was registered meanwhile.`;
 
 /** True for a request the review step aborted itself, such as a check replaced by a newer one. */
 export const isAbort = (error: unknown): boolean =>

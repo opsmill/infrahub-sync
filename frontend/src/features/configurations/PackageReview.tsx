@@ -352,7 +352,14 @@ export function PackageReview({
   ) : sameAsNewest && typeof compared === "number" ? (
     <Notice role="status" title={sameAsNewestText(compared)} />
   ) : outcome?.kind === "meanwhile" ? (
-    <Notice tone="warning" role="alert" title={registeredMeanwhileText(outcome.version)}>
+    <Notice
+      tone="warning"
+      role="alert"
+      title={registeredMeanwhileText(
+        outcome.version,
+        base.data?.registry_version === outcome.version ? base.data.registered_by : undefined
+      )}
+    >
       <p>The comparison below is with version {outcome.version} now.</p>
     </Notice>
   ) : outcome?.kind === "read-failed" ? (

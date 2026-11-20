@@ -30,7 +30,9 @@ Sources:
   converts to a package on the team's own machine.
 - [Spec 017](../017-serve-web-interface/spec.md): the web interface is served by the Sync service and
   each person enters their own token.
-- [`AGENTS.md`](../../../AGENTS.md), section "Sync frontend": the web interface never names a user.
+- [`AGENTS.md`](../../../AGENTS.md), section "Sync frontend": the web interface names the account
+  where it explains who acted, such as the account that registered a version, with the name the
+  Sync API returns, and never shows an account identifier.
 
 ## Background
 
@@ -102,6 +104,13 @@ Taken with the maintainer on 2026-11-18.
   this spec assumed every finding has the severity `error` (research R4), which is not true. This
   decision was applied on 2026-11-19 after the code review, without a new confirmation from the
   maintainer.
+- **D-11, the web interface names the account that registered a version.** Local accounts
+  (pull request #436 into `feature/v3-develop`) changed the "Sync frontend" rule of
+  [`AGENTS.md`](../../../AGENTS.md): the web interface names the account where it explains who
+  acted, including the account that registered a version, and shows the name the Sync API returns.
+  The grilling session of 2026-11-18 had decided the opposite, under the earlier rule. The
+  maintainer confirmed the new rule for this feature on 2026-11-20. "Version N was registered
+  meanwhile" now names the account when the Sync API returns one.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -253,8 +262,8 @@ registered without validation.
   idempotency key, so it cannot create two versions.
 - **A version registered by another session while the review step is open**: before registering, the
   web interface checks that the newest version is still the one it compared with. If not, it states
-  "Version N+1 was registered meanwhile" and reloads the comparison before allowing registration. The
-  message never names who registered it.
+  "Version N+1 was registered meanwhile by <account>" and reloads the comparison before allowing
+  registration. The account is the name the Sync API returns for that version (D-11).
 - **A raw file compared with a stored version**: the store fills in default values when it keeps a
   package. The comparison in the review step MUST be computed so that it matches the comparison
   shown after registration (SC-003).
@@ -331,7 +340,8 @@ registered without validation.
   offer to validate again.
 - **FR-018**: Before registering a version, the web interface MUST check that the newest version is
   still the one the review step compared with, and reload the comparison when it is not.
-- **FR-019**: The review step and the messages that follow it MUST NOT name a user or an actor.
+- **FR-019**: When the review step says who acted, it MUST name the account with the name the Sync
+  API returns, and MUST NOT show an account identifier (D-11).
 
 - **FR-020**: When FR-001 reports an unreachable destination, the review step MUST allow
   registration, with the warning shown next to Register (D-6).
