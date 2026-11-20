@@ -115,6 +115,8 @@ OWNER_SCOPE_NOTICE = "The owner setting applies only to values this run creates.
 NOT_RECORDED = "not recorded"
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
+# The client operation that `configs check` reports when the Sync API breaks the paging contract.
+_CHECK_PACKAGE = "check_package"
 _KIND_ARG = "kind"
 _TYPE_ARG = "type"
 _VERSION_ARG = "version"
@@ -959,9 +961,13 @@ def configs_check(
         _echo_package_check(report)
         # contracts/sync-api.md (spec 025, decision D-10): an error finding exits 1, on whichever
         # page it is, so `configs check pkg && configs register pkg` never registers one.
-        page = report
+        page, page_offset = report, offset
         while not _has_error_finding(page) and page.next_offset is not None:
-            page = client.check_package(request, offset=page.next_offset, limit=limit, branch=branch)
+            # A `next_offset` that does not move forward would read the same page forever.
+            if page.next_offset <= page_offset:
+                raise ProtocolError(_CHECK_PACKAGE)
+            page_offset = page.next_offset
+            page = client.check_package(request, offset=page_offset, limit=limit, branch=branch)
     if _has_error_finding(page):
         if page is not report:
             typer.echo(f"error findings start on a later page: run again with --offset {page.offset}", err=True)

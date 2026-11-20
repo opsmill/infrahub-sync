@@ -509,6 +509,29 @@ def test_configs_check_exits_1_when_a_later_page_has_an_error_finding(
     assert ("run again with --offset" in result.output) is (exit_code == 1)
 
 
+@pytest.mark.parametrize(
+    "pages",
+    [
+        pytest.param([_check_page(("warning",), 0, 0)], id="same-offset"),
+        pytest.param([_check_page(("warning",), 0, 2), _check_page(("warning",), 2, 1)], id="backwards"),
+    ],
+)
+def test_configs_check_refuses_a_next_offset_that_does_not_move_forward(
+    client: MagicMock, tmp_path: Path, pages: list[PackageCheckResource]
+) -> None:
+    """A `next_offset` at or before the page just read is a protocol error, not an endless loop."""
+    package = tmp_path / "package.json"
+    package.write_text('{"format_version": 1}', encoding="utf-8")
+    client.check_package.side_effect = pages
+
+    result = _invoke(client, "configs", "check", str(package), "--limit", "1")
+
+    assert result.exit_code == 1, result.output
+    assert "error: protocol" in result.output
+    assert "operation: check_package" in result.output
+    assert client.check_package.call_count == len(pages)
+
+
 def _error_lines(output: str) -> list[str]:
     """The error a command prints, without the lines that name the command and the retry key `configs register` prints first."""
     # Rich colors the usage hint when the terminal allows it; compare the text only.
