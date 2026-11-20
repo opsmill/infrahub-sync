@@ -1,7 +1,14 @@
 import type { SyncEvent } from "#/api/types";
 import { formatAbsolute } from "#/lib/time";
 
-import { MAX_CONSECUTIVE_FAILURES, stopReasonText } from "./schedules";
+import { cadenceWords, formFromCron } from "./cadence";
+import {
+  lateStartLabel,
+  MAX_CONSECUTIVE_FAILURES,
+  overlapPolicyLabel,
+  stopReasonText,
+  writeTargetLabel,
+} from "./schedules";
 
 const SCHEDULE = "infrahub_sync.schedule.";
 
@@ -89,6 +96,71 @@ const STOP_REASONS = new Set(["owner-not-found", "approval-required", "repeated-
 export interface EventText {
   text: string;
   detail?: string;
+  /** One line per setting that a change altered, for `infrahub_sync.schedule.changed`. */
+  changes?: string[];
+}
+
+/** One entry of `details.changes`: a setting and its stored value before and after the change. */
+export type SettingChange = NonNullable<NonNullable<SyncEvent["details"]>["changes"]>[number];
+
+const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+
+/** A cadence in words, as the settings show it; the expression itself when it has no words. */
+function cadenceText(cron: string): string {
+  const words = cadenceWords(formFromCron(cron));
+  // The note on months without the day is left out: the line compares two cadences.
+  return words === null ? cron : lowerFirst(words.split(". ")[0]);
+}
+
+/** How a history line writes each setting: its label and its value in words. */
+const SETTING_TEXTS: Record<string, { label: string; value: (value: never) => string }> = {
+  cron: { label: "Cadence", value: cadenceText },
+  timezone: { label: "Time zone", value: (zone: string) => zone },
+  write_target: {
+    label: "Write target",
+    value: (target: string) => lowerFirst(writeTargetLabel(target)),
+  },
+  write_when_left_out: {
+    label: "Records left out",
+    value: (written: boolean) => (written ? "written" : "not written"),
+  },
+  overlap_policy: {
+    label: "When a run is in progress",
+    value: (policy: string) => lowerFirst(overlapPolicyLabel(policy)),
+  },
+  start_late_by_at_most_seconds: {
+    label: "Start late by at most",
+    value: (seconds: number) => lateStartLabel(seconds),
+  },
+};
+
+const SETTING_VALUE_TYPES: Record<string, "string" | "number" | "boolean"> = {
+  registry_version: "number",
+  cron: "string",
+  timezone: "string",
+  write_target: "string",
+  write_when_left_out: "boolean",
+  overlap_policy: "string",
+  start_late_by_at_most_seconds: "number",
+};
+
+/**
+ * A changed setting in words, such as "Version 2 → 3" or "Start late by at most: 30 minutes →
+ * 45 minutes". A setting or a value this page does not know is shown as returned.
+ */
+export function settingChangeText(change: SettingChange): string {
+  const known =
+    typeof change.before === SETTING_VALUE_TYPES[change.field] &&
+    typeof change.after === SETTING_VALUE_TYPES[change.field];
+  if (known && change.field === "registry_version") {
+    return `Version ${change.before} → ${change.after}`;
+  }
+  const texts = lookup(SETTING_TEXTS, change.field);
+  if (known && texts !== undefined) {
+    const value = texts.value as (value: SettingChange["before"]) => string;
+    return `${texts.label}: ${value(change.before)} → ${value(change.after)}`;
+  }
+  return `${change.field}: ${String(change.before)} → ${String(change.after)}`;
 }
 
 const lookup = <T>(table: Record<string, T>, key: string): T | undefined =>
@@ -134,13 +206,23 @@ export function eventText(
     text = `${event.event_type}: ${event.outcome}`;
   }
 
+  let changes: string[] | undefined;
+  if (event.event_type === `${SCHEDULE}changed` && details?.changes) {
+    // An event recorded before the changes were recorded has no list, and reads "Settings changed" only.
+    changes = details.changes.map(settingChangeText);
+    if (changes.length === 0)
+      detailParts.push("No setting changed: each value sent was already set");
+  }
   if (details?.cause && CAUSE_TYPES.has(event.event_type)) detailParts.push(details.cause);
   if (event.event_type === "infrahub_sync.run.synced" && details?.left_out != null) {
     detailParts.push(
       `${details.left_out} ${details.left_out === 1 ? "record" : "records"} left out`
     );
   }
-  return detailParts.length ? { text, detail: detailParts.join(". ") } : { text };
+  const result: EventText = detailParts.length
+    ? { text, detail: detailParts.join(". ") }
+    : { text };
+  return changes?.length ? { ...result, changes } : result;
 }
 
 /**

@@ -154,9 +154,12 @@ export function ScheduleHistory({
   );
 }
 
-/** One event: its time, what happened, the account, the reason and the run it names. */
+/**
+ * One event: its time, what happened, the settings a change altered, the account, the reason and
+ * the run it names.
+ */
 function HistoryEntry({ event }: { event: SyncEvent }) {
-  const { text, detail } = eventText(event);
+  const { text, detail, changes } = eventText(event);
   const runId = eventRunId(event);
   return (
     <li
@@ -167,6 +170,15 @@ function HistoryEntry({ event }: { event: SyncEvent }) {
       <p className="text-pretty font-medium text-foreground [overflow-wrap:anywhere]">{text}</p>
       {detail && (
         <p className="text-pretty text-foreground-muted [overflow-wrap:anywhere]">{detail}</p>
+      )}
+      {changes && (
+        <ul aria-label="Changed settings" className="flex flex-col gap-0.5 text-foreground-muted">
+          {changes.map((line) => (
+            <li key={line} className="text-pretty [overflow-wrap:anywhere]">
+              {line}
+            </li>
+          ))}
+        </ul>
       )}
       {event.reason && (
         <p className="text-pretty text-foreground-muted [overflow-wrap:anywhere]">

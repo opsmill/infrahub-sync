@@ -224,6 +224,96 @@ describe("eventText", () => {
   });
 });
 
+describe("eventText of a change", () => {
+  const changed = (details: SyncEvent["details"]) =>
+    eventText(
+      event({
+        event_type: `${S}changed`,
+        operation: "schedule-change",
+        outcome: "accepted",
+        details,
+      }),
+      at
+    );
+
+  it("reads 'Settings changed' only for an event recorded without the changes", () => {
+    expect(changed(null)).toEqual({ text: "Settings changed" });
+    expect(changed(undefined)).toEqual({ text: "Settings changed" });
+    expect(changed({ start_at: null, changes: null })).toEqual({ text: "Settings changed" });
+  });
+
+  it("says that no value changed when the list is empty", () => {
+    expect(changed({ changes: [] })).toEqual({
+      text: "Settings changed",
+      detail: "No setting changed: each value sent was already set",
+    });
+  });
+
+  it("writes one line per changed setting, in the order recorded", () => {
+    expect(
+      changed({
+        changes: [
+          { field: "registry_version", before: 2, after: 3 },
+          { field: "cron", before: "30 6 * * *", after: "0 2 * * *" },
+          { field: "timezone", before: "Europe/Paris", after: "UTC" },
+          { field: "write_target", before: "branch-review", after: "default-branch" },
+          { field: "write_when_left_out", before: false, after: true },
+          { field: "overlap_policy", before: "reject", after: "queue" },
+          { field: "start_late_by_at_most_seconds", before: 1800, after: 2700 },
+        ],
+      })
+    ).toEqual({
+      text: "Settings changed",
+      changes: [
+        "Version 2 → 3",
+        "Cadence: every day at 06:30 → every day at 02:00",
+        "Time zone: Europe/Paris → UTC",
+        "Write target: branch review → default branch",
+        "Records left out: not written → written",
+        "When a run is in progress: skip the start → wait for it",
+        "Start late by at most: 30 minutes → 45 minutes",
+      ],
+    });
+  });
+
+  it.each([
+    [
+      "a custom cadence as its expression",
+      { field: "cron", before: "0 2 * * *", after: "*/7 3 * * *" },
+      "Cadence: every day at 02:00 → */7 3 * * *",
+    ],
+    [
+      "a monthly cadence without its note on short months",
+      { field: "cron", before: "0 2 31 * *", after: "0 2 1 * *" },
+      "Cadence: every month on day 31 at 02:00 → every month on day 1 at 02:00",
+    ],
+    [
+      "an unknown setting as returned",
+      { field: "colour", before: "red", after: "blue" },
+      "colour: red → blue",
+    ],
+    [
+      "a value of an unexpected type as returned",
+      { field: "start_late_by_at_most_seconds", before: "soon", after: 60 },
+      "start_late_by_at_most_seconds: soon → 60",
+    ],
+  ])("writes %s", (_name, change, line) => {
+    expect(changed({ changes: [change] }).changes).toEqual([line]);
+  });
+
+  it("does not read changes on another event type", () => {
+    expect(
+      eventText(
+        event({
+          event_type: `${S}paused`,
+          details: { changes: [{ field: "cron", before: "0 2 * * *", after: "0 3 * * *" }] },
+        }),
+        at
+      )
+    ).toEqual({ text: "Paused" });
+  });
+});
+
 describe("eventRunId", () => {
   it("reads the run from the primary resource", () => {
     expect(
