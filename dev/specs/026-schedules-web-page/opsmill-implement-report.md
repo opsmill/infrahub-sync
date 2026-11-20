@@ -1,7 +1,8 @@
 # Implementation report: Manage schedules from the web interface
 
-**Status**: INCOMPLETE. 49 of 51 tasks are done. T009 and T048 are partly done, because the
-development stack was not available to this branch (see "Tasks not completed").
+**Status**: INCOMPLETE. 50 of 51 tasks are done. T048 is partly done: the start-time previews
+were checked against the Sync API, and the pages still need a check in a browser (see "Tasks not
+completed").
 
 - **Spec directory**: `dev/specs/026-schedules-web-page`
 - **Branch**: `026-schedules-web-page`
@@ -30,14 +31,18 @@ development stack was not available to this branch (see "Tasks not completed").
 
 ## Tasks not completed
 
-- **T009**, partly done.
-  - Why: the running development stack mounts the main checkout's source, so it was not restarted from this worktree.
-  - What was done instead: `types.generated.ts` was generated from this branch's `build_app().openapi()`. The same method on the base commit reproduces the committed file exactly.
-  - What remains: regenerate the types from a Sync API running this branch.
-- **T048**, not run.
-  - Why: the quickstart scenarios need the development stack, which was stopped during the run (no `infrahub-sync-dev` container). This run did not stop it.
-  - What was tested instead: the maintainer tested the first pages by hand at <http://localhost:5180> before the stack stopped, and their feedback became T049-T051.
-  - What remains: run quickstart.md after `uv run invoke dev.start`.
+- **T009**, done after the run, on 2026-11-20. After the development stack was started again, the types
+  were generated from this branch's Sync API on port 8012. The generated file is identical to the
+  committed one.
+- **T048**, partly done.
+  - Checked on 2026-11-20 against this branch's Sync API, with the `from-netbox` configuration
+    registered: the start-time previews of scenarios 5a, 5b, 5d, 5e and 5f return the expected
+    starts or the expected refusal.
+  - Scenario 5e of quickstart.md said that a refused preview records an event. The preview
+    records no event (contracts/http-api.md), so the scenario was corrected.
+  - What remains: the scenarios in a browser. Infrahub was not running, so scenarios 6, 7, 19
+    and 20, which need a run, cannot run until a local Infrahub with the schema library is
+    started.
 
 ## Local-pass evidence
 

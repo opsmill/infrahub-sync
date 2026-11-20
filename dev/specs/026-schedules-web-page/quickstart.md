@@ -50,7 +50,7 @@ All commands exit 0.
 | 5b3 | Open the create form with a browser set to `Europe/Paris`. | The time zone is `Europe/Paris`, with the notice that the CLI fills in UTC. |
 | 5c | Choose "Custom" and type `*/15 9-17 * * 1-5`. | Each field is labelled; within a second of the last key press the preview shows five starts. |
 | 5d | Type `0 0 29 2 *`. Then type `0 0 30 2 *`. | One or two starts on 29 February and "No further start in the next 5 years."; then the Sync API's message "has no start time" under the field. |
-| 5e | Type `61 * * * *`. | The Sync API's message under the field, before saving. The history of no schedule gains a "refused" event. |
+| 5e | Type `61 * * * *`. | The Sync API's message under the field, before saving. The preview records no event. |
 | 5f | Type `30 2 28 3 *` with the time zone `Europe/Paris`. 02:30 on 28 March 2027 falls in the hour that the daylight-saving change removes. | The first start shown is the one Prefect computes for that date. Save; the schedule's next start equals the first preview start. |
 | 6 | Wait for the schedule to start a run. Open the runs list. | The run has the "Scheduled" mark, linking to the schedule. |
 | 7 | Open the run. | "Started by schedule <name>, scheduled for <time>". |
