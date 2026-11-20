@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { scheduleChoices } from "./schedule-choices";
+import { scheduleChoices, scheduleFilterText } from "./schedule-choices";
 
 const NAMES = new Map([
   ["c-netbox", "from-netbox"],
@@ -64,5 +64,15 @@ describe("scheduleChoices", () => {
       { id: "s-9", label, detail: undefined },
       { id: "s-1", label: "hourly", detail: undefined },
     ]);
+  });
+});
+
+describe("scheduleFilterText", () => {
+  it.each([
+    [{ pending: true, notFound: false }, "Loading the schedule"],
+    [{ pending: false, notFound: true }, "Schedule not found"],
+    [{ pending: false, notFound: false }, "Schedule could not be read"],
+  ])("says %o as %s, never the schedule identifier", (read, text) => {
+    expect(scheduleFilterText(read)).toBe(text);
   });
 });

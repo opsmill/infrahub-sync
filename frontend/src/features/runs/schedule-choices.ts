@@ -52,3 +52,14 @@ export function scheduleChoices({
     detail: (counts.get(label) ?? 0) > 1 ? configNames.get(schedule.config_id) : undefined,
   }));
 }
+
+/**
+ * The text of the runs list's active schedule filter when its link cannot name the schedule: while
+ * `GET /schedules/{schedule_id}` loads, when the Sync API has no such schedule, or when the read
+ * failed. The schedule identifier is never shown as text (FR-007, SC-006).
+ */
+export function scheduleFilterText(read: { pending: boolean; notFound: boolean }): string {
+  if (read.pending) return "Loading the schedule";
+  if (read.notFound) return "Schedule not found";
+  return "Schedule could not be read";
+}

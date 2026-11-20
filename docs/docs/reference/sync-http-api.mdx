@@ -837,13 +837,27 @@ other. An event that records a refusal is saved on its own.
 | `until` | Only events before this time. A date and time with a time zone. |
 | `limit` | Events per page, from 1 to 200. Defaults to 50. |
 | `offset` | The number of matching events to skip. Defaults to 0. |
+| `order` | `asc`, the default, lists events oldest first. `desc` lists them newest first. |
 
 A value outside these rules returns `422 request-invalid`. Events are ordered by
-`occurred_at`, then `event_id`, oldest first. To read new events, send `offset` equal to the
-number of events already read; `infrahub-sync events --follow` reads every 2 seconds this way
-until you stop it. An event saved late with an earlier `occurred_at` than events already read
-takes a position among them and moves the later events down by one, so a reader that pages
-this way can skip one event or read one event twice.
+`occurred_at`, then `event_id`: both ascending with `order=asc` or without `order`, both
+descending with `order=desc`. A request without `order` gets the same answer as before `order`
+existed.
+
+With `order=asc`, read new events by sending `offset` equal to the number of events already read;
+`infrahub-sync events --follow` reads every 2 seconds this way until you stop it. An event saved
+late with an earlier `occurred_at` than events already read takes a position among them and moves
+the later events down by one, so a reader that pages this way can skip one event or read one
+event twice.
+
+With `order=desc`, a new event takes the first position and moves every older event down by one.
+To read older pages without reading an event twice, send `until` set to the time of the first
+read with every page, and read the newest events again with a request without `until`. The
+schedule page of the web interface reads a schedule's history this way:
+
+```text
+GET /events?related=schedule:<schedule_id>&order=desc&until=<time of the first read>&limit=50&offset=<n>
+```
 
 ```json
 {
@@ -1485,6 +1499,48 @@ while the service requires approval, stores the schedule as stopped with that re
 `409 schedule-stopped`. A take-over of a schedule stopped for
 `owner-not-found` makes it active, unless it writes to the default branch while the service
 requires approval: it then stays stopped with the reason `approval-required`.
+
+#### Next start times of a cron expression
+
+`POST /schedules/next-starts` returns the next start times of a cron expression in a time zone,
+computed by the code that computes a schedule's `next_start_at`. The schedule forms of the web
+interface call it while a person types a cadence. Any authenticated account can call it. It
+stores nothing, records no event, also when it refuses a request, and takes no
+`Idempotency-Key`. The values travel in a JSON body, not in the query string, so a credential
+typed into a field by mistake does not reach the access log.
+
+| Field | Required | Default | Rule |
+| --- | --- | --- | --- |
+| `cron` | yes | | A cron expression with five fields. |
+| `timezone` | no | `UTC` | A time zone name, such as `Europe/Paris`. |
+| `count` | no | `5` | The number of start times, from 1 to 20. |
+
+```json
+{
+  "cron": "0 2 * * *",
+  "timezone": "Europe/Paris",
+  "starts": ["2026-11-20T01:00:00Z", "2026-11-21T01:00:00Z"],
+  "searched_until": "2031-11-19T21:40:00Z"
+}
+```
+
+- `starts` are in UTC, in increasing order, and later than the time of the request.
+- The search ends five years after the time of the request, at `searched_until`. `starts` holds
+  fewer than `count` times when the expression has fewer starts before then, for example
+  `0 0 29 2 *`.
+- An expression that has no start at all, for example `0 0 30 2 *`, is refused with
+  `422 schedule-cron-invalid`, as `POST /schedules` refuses it.
+
+The route answers these refusals:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 422 | `schedule-cron-invalid` | The cron expression is not valid, does not have five fields or has no start. Same message as `POST /schedules`. |
+| 422 | `schedule-timezone-invalid` | The time zone name is not known. Same message as `POST /schedules`. |
+| 422 | `secret-parameter-refused` | `cron` or `timezone` holds a credential. The message names the field and does not repeat its value. |
+| 422 | `request-invalid` | `cron` is absent, or `count` is not an integer from 1 to 20. |
+
+#### Scheduled runs and the run routes
 
 `POST /runs/{run_id}/verify`, `/apply` and `/resume` refuse a scheduled run with branch review
 with `409 scheduled-run-not-appliable`. The schedule's next run replaces it. Its plan and its

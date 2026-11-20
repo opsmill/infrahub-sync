@@ -40,6 +40,19 @@ describe("fieldRefusal", () => {
     expect(fieldRefusal(envelope(code, 409))?.detail).toBe(detail);
   });
 
+  it("does not show the schedule identifier that the schedule-exists-for-configuration message holds", () => {
+    const refusal = fieldRefusal({
+      error: {
+        code: "schedule-exists-for-configuration",
+        status: 409,
+        message:
+          "the configuration 'c-netbox' already has the schedule 'nightly' (s-3f2a9c0d1e2b4a5c6d7e8f9a0b1c2d3e); a configuration has one schedule",
+      },
+    });
+    expect(refusal?.field).toBe("config_id");
+    expect(`${refusal?.title} ${refusal?.detail}`).not.toContain("s-3f2a9c0d");
+  });
+
   it.each([
     ["secret-parameter-refused", envelope("secret-parameter-refused", 422)],
     ["forbidden", envelope("forbidden", 403)],

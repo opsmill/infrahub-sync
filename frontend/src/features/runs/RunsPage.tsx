@@ -38,7 +38,7 @@ import { useNow } from "#/lib/time";
 import { useDocumentTitle } from "#/lib/title";
 
 import { RunsTable, RunsTableSkeleton } from "./RunsTable";
-import { scheduleChoices } from "./schedule-choices";
+import { scheduleChoices, scheduleFilterText } from "./schedule-choices";
 
 export const FILTER_IDS = ["all", "action", "running", "failed", "applied"] as const;
 export type FilterId = (typeof FILTER_IDS)[number];
@@ -479,8 +479,8 @@ export function RunsPage({ q, show = "all", config, schedule }: RunsSearch) {
 
 /**
  * The active schedule filter, which names the schedule and removes the filter. The schedule's name
- * comes from `GET /schedules/{schedule_id}`; the identifier is shown while it loads or when the
- * Sync API has no such schedule.
+ * comes from `GET /schedules/{schedule_id}`. The identifier is never shown: while the schedule
+ * loads, or when it cannot be read, the filter shows `scheduleFilterText`.
  */
 function ScheduleFilter({
   scheduleId,
@@ -488,7 +488,7 @@ function ScheduleFilter({
   onRemove,
 }: {
   scheduleId: string;
-  read: { data?: { name: string }; isError: boolean; error: unknown };
+  read: { data?: { name: string }; isPending: boolean; isError: boolean; error: unknown };
   onRemove: () => void;
 }) {
   const missing = !read.data && read.isError && describeScheduleError(read.error).notFound;
@@ -508,12 +508,11 @@ function ScheduleFilter({
             {read.data.name}
           </Link>
         ) : (
-          <span className="min-w-0 font-mono text-xs [overflow-wrap:anywhere]">{scheduleId}</span>
+          <span className="min-w-0 text-foreground-muted [overflow-wrap:anywhere]">
+            {scheduleFilterText({ pending: read.isPending && !read.isError, notFound: missing })}
+          </span>
         )}
       </span>
-      {missing && (
-        <span className="text-foreground-muted text-xs">The Sync API has no such schedule.</span>
-      )}
       <Button variant="outline" size="sm" className={TOUCH} onPress={onRemove}>
         Remove schedule filter
       </Button>

@@ -1,0 +1,1 @@
+The web interface lists schedules and shows each schedule's state, next start times and history. It creates and changes schedules with a cadence helper and a preview of the next start times, and pauses, resumes, deletes and takes over schedules.

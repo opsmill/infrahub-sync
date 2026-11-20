@@ -266,11 +266,124 @@ A schedule keeps running the version it names when a newer version of the config
 registered. `schedules list` and `schedules show` then print
 `warning: a newer version of this configuration exists: <config_id> version <n>`.
 
+## Manage schedules in the web interface
+
+The web interface offers the schedule commands of the CLI. **Schedules**, in the main navigation
+after **Runs**, is shown to every signed-in account.
+
+### The schedule list
+
+The **Schedules** page lists each schedule that is not deleted, newest first, with its name, its
+configuration and version, its state, its cron expression and time zone, its next start and its
+owner. Filter the list by state, deleted schedules included, and by configuration. Select a
+schedule to open its page.
+
+### The schedule page
+
+The page of a schedule shows, in this order:
+
+- its name, its state, its configuration and version, its owner, and the actions your account can
+  take;
+- for a stopped schedule, the reason in words and the action it needs, as in
+  [A stopped schedule](#a-stopped-schedule). The page also warns when the schedule starts no run
+  until it is handed to the task manager (`prefect_synced` is `false`), and when a newer version
+  of the configuration is registered;
+- its next start, the start that waits for a run in progress, its last run with its state, its
+  count of failed runs in a row, and **View all runs of this schedule**;
+- its settings: the cron expression, the time zone, the write target, whether it writes when
+  records are left out with who turned that on and when, the overlap policy and the late-start
+  limit;
+- the next five start times of an active schedule;
+- the open review branch, the run that created it and the identifier of its proposed change;
+- its history;
+- when it was created and last updated.
+
+The page shows owners and the accounts that acted by name, as the Sync API returns them,
+including `Deleted account <short identifier>`.
+
+### Create, change, pause, resume, delete and take over a schedule
+
+Any signed-in account can create a schedule, with **Create schedule** on the **Schedules** page or
+on the page of a configuration that has no schedule. From a configuration page, the form opens
+with that configuration and its latest version chosen. The form offers every setting of
+`infrahub-sync schedules create`:
+
+- The configuration choice shows each configuration as its name and latest version, for example
+  `from-netbox, version 3`. It shows the configuration identifier only when two configurations
+  have the same name. Type in the configuration choice or in the time zone choice to narrow the
+  list.
+- The form fills in the configuration's latest version, the browser's time zone, branch review,
+  the overlap policy `reject`, a late start of at most one hour, and "write when records are left
+  out" off. When the browser's time zone is not UTC, the form states that the CLI fills in UTC.
+- The default branch as write target is unavailable, with the reason, while the Sync API requires
+  approval. "Write when records are left out" is unavailable, with the reason, for branch review.
+
+The actions that change a schedule depend on your account:
+
+| Action | Offered to |
+| --- | --- |
+| **Change**, **Delete** | The schedule's owner and administrators, for a schedule that is not deleted. For other accounts, the page shows the action as unavailable, with the reason. |
+| **Pause** | The same accounts, for an active schedule. |
+| **Resume** | The same accounts, for a paused or stopped schedule. |
+| **Take over** | Administrators, for a schedule that is not deleted and that they do not own. |
+
+Each action accepts an optional reason. **Delete** asks for confirmation and states that a run in
+progress is not cancelled and that an open review branch and its proposed change stay in
+Infrahub. **Take over** asks for confirmation and states that the next runs of the schedule record
+the administrator as the account that started them.
+
+The change form opens with the schedule's current values and sends only the settings you changed.
+When someone else changes the schedule while the form is open, the form states that the schedule
+changed since you opened it, and offers to reload it. A refusal of the Sync API is shown with its
+message, under the field it concerns, and the form keeps the values you entered. After a network
+failure, sending the form again does not create a second schedule or apply an action twice.
+
+### The cadence helper and the preview
+
+The create and change forms build the cron expression from one of these cadences:
+
+- **Every N minutes**, with N of 5, 10, 15, 20 or 30;
+- **Every hour**, at a chosen minute;
+- **Every N hours**, with N of 2, 3, 4, 6, 8 or 12, at a chosen minute;
+- **Every day**, at a chosen time;
+- **Every week**, on chosen days at a chosen time;
+- **Every month**, on a chosen day of the month at a chosen time;
+- **Custom**, a cron expression that you type. The form names each of the five fields with the
+  value typed, and states when the expression does not have five fields.
+
+A schedule whose expression matches none of the first six cadences opens as **Custom**.
+
+Below the cadence, the form shows the next five start times of the expression and the time zone,
+in the schedule's time zone with its offset, and in your local time when it differs. The preview
+is computed by the Sync API with the code that computes a schedule's `next_start_at`, and updates
+when you stop typing. An expression or a time zone that the Sync API refuses is shown under its
+field before you save. When the preview cannot be read, you can still save.
+
+### The schedule's history
+
+The **History** section lists the events of the schedule, newest first, 50 at a time: each event's
+time, what happened, the account that acted, the reason when one was given, and a link to the run
+it names. It shows the schedule's own events, including skipped and missed starts and stops.
+**Show all events** adds the events of the schedule's runs and the requests repeated with the same
+`Idempotency-Key`. **Load older events** reads the next 50 events and does not show an event twice
+when new events are recorded meanwhile.
+
+### Scheduled runs on the other pages
+
+- The runs list marks each run that a schedule started as **Scheduled**, with a link to the
+  schedule. The **Schedule** filter, next to the configuration filter, is a searchable list of the
+  schedules by name. **View all runs of this schedule** on a schedule page sets the same filter.
+  The list shows the active filter with the schedule's name and a way to remove it.
+- The page of a scheduled run states "Started by schedule `<name>`, scheduled for `<time>`", with a
+  link to the schedule.
+- The page of a configuration has a **Schedule** line: the name of its schedule that is not
+  deleted, its state and its next start, with a link, or "No schedule" and **Create schedule**.
+
 ## Check a schedule
 
 Infrahub Sync sends no notification for a scheduled run: not when a run fails, not when a start
-is skipped or missed, and not when a schedule stops. Check the schedule with these commands, or
-connect a monitoring tool to the same Sync API routes:
+is skipped or missed, and not when a schedule stops. Check the schedule in the web interface,
+with these commands, or connect a monitoring tool to the same Sync API routes:
 
 | To check | Command | Sync API route |
 | --- | --- | --- |
@@ -279,6 +392,7 @@ connect a monitoring tool to the same Sync API routes:
 | The last runs of a schedule | `infrahub-sync runs list --schedule <schedule>` | `GET /runs?schedule_id=<schedule_id>` |
 | The outcome of one run | `infrahub-sync runs show <run_id>` | `GET /runs/{run_id}` |
 | Skipped, missed and failed starts, proposed changes, and the events of the schedule's runs | `infrahub-sync events --schedule <schedule>` | `GET /events?related=schedule:<schedule_id>` |
+| All of the above in one page: the state, the reason of a stopped schedule, the next starts, the last run, a link to every run of the schedule, and the history with skipped and missed starts | The schedule's page in the web interface, under **Schedules** | `GET /schedules/{schedule_id}`, `GET /runs/{run_id}`, `POST /schedules/next-starts`, `GET /events?related=schedule:<schedule_id>&order=desc` |
 
 `schedules list` and `schedules show` write their warnings to standard error, for a stopped
 schedule, a newer version and a schedule not yet handed to Prefect. A warning does not change the

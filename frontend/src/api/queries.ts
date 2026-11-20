@@ -713,7 +713,6 @@ const SCHEDULE_MESSAGE_DETAIL = new Set([
   "schedule-cron-invalid",
   "schedule-timezone-invalid",
   "schedule-stopped",
-  "schedule-exists-for-configuration",
   "request-invalid",
 ]);
 
@@ -740,7 +739,12 @@ const SCHEDULE_ERRORS: Record<string, { title: string; detail?: string }> = {
     title: "A schedule with this name exists",
     detail: "Choose another name.",
   },
-  "schedule-exists-for-configuration": { title: "This configuration already has a schedule" },
+  // Not the Sync API message: it holds the identifier of the existing schedule (FR-007, SC-006).
+  "schedule-exists-for-configuration": {
+    title: "This configuration already has a schedule",
+    detail:
+      "A configuration has one schedule that is not deleted. Change or delete that schedule from the Schedules page.",
+  },
   "approval-required-for-schedule": {
     title: "This Sync service requires an approved plan before any write",
     detail: "A schedule cannot write to the default branch here. Choose Branch review.",

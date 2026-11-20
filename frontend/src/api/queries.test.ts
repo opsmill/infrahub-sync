@@ -40,6 +40,7 @@ describe("describeScheduleError", () => {
       "Writing when records are left out applies only to the default branch",
     ],
     ["configuration-version-not-found", 404, "No such version of this configuration"],
+    ["schedule-exists-for-configuration", 409, "This configuration already has a schedule"],
     [
       "orchestration-unavailable",
       503,
@@ -62,7 +63,6 @@ describe("describeScheduleError", () => {
     ["schedule-cron-invalid", 422, "The Sync service refused the cron expression"],
     ["schedule-timezone-invalid", 422, "The Sync service does not know this time zone"],
     ["schedule-stopped", 409, "This schedule cannot be resumed yet"],
-    ["schedule-exists-for-configuration", 409, "This configuration already has a schedule"],
     ["request-invalid", 422, "The Sync service refused the values in this form"],
   ])("%s shows the Sync API message as its detail", (code, status, title) => {
     const described = describeScheduleError(envelope(code, status));
