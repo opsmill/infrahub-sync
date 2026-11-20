@@ -786,6 +786,12 @@ def listing_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
     yield from _projection_profile(request.param, tmp_path, "the run list's PostgreSQL parameter")
 
 
+@pytest.fixture(params=_PROFILES_WITH_POSTGRESQL)
+def name_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
+    """The ``provider`` profiles plus a real PostgreSQL server, for the unique configuration name."""
+    yield from _projection_profile(request.param, tmp_path, "the configuration name's PostgreSQL parameter")
+
+
 def _projection_profile(profile: str, tmp_path: Path, purpose: str) -> Iterator[ProductProjection]:
     """Yield one projection profile; a real PostgreSQL case runs in its own dropped schema."""
     if profile == "local":
@@ -3858,72 +3864,72 @@ def test_list_configurations_orders_by_created_at_then_config_id_on_sqlite_and_e
 
 
 def test_distinct_configurations_without_a_name_may_share_identical_package_content(
-    provider: ProductProjection,
+    name_provider: ProductProjection,
 ) -> None:
     package = _named_configuration_package("")
 
-    first = provider.create_configuration(package)
-    second = provider.create_configuration(package)
+    first = name_provider.create_configuration(package)
+    second = name_provider.create_configuration(package)
 
     assert first.config_id != second.config_id
     assert first.package_checksum == second.package_checksum
     assert first.registry_version == second.registry_version == 1
-    assert _configuration_name(provider, first.config_id) is None
-    assert _configuration_name(provider, second.config_id) is None
+    assert _configuration_name(name_provider, first.config_id) is None
+    assert _configuration_name(name_provider, second.config_id) is None
 
 
 def test_registering_a_name_another_configuration_has_is_refused_and_stores_nothing(
-    provider: ProductProjection,
+    name_provider: ProductProjection,
 ) -> None:
-    first = provider.create_configuration(_configuration_package())
+    first = name_provider.create_configuration(_configuration_package())
 
     with pytest.raises(ConfigurationNameInUseError) as refusal:
-        provider.create_configuration(_configuration_package(verify_ssl=False))
+        name_provider.create_configuration(_configuration_package(verify_ssl=False))
 
     assert (refusal.value.config_id, refusal.value.name) == (first.config_id, "from-netbox")
-    assert [summary.config_id for summary in provider.list_configurations()] == [first.config_id]
+    assert [summary.config_id for summary in name_provider.list_configurations()] == [first.config_id]
 
 
 def test_a_new_version_with_the_name_of_another_configuration_is_refused_and_stores_nothing(
-    provider: ProductProjection,
+    name_provider: ProductProjection,
 ) -> None:
-    first = provider.create_configuration(_configuration_package())
-    other = provider.create_configuration(_named_configuration_package("other-inventory"))
+    first = name_provider.create_configuration(_configuration_package())
+    other = name_provider.create_configuration(_named_configuration_package("other-inventory"))
 
     with pytest.raises(ConfigurationNameInUseError) as refusal:
-        provider.add_configuration_version(other.config_id, _configuration_package(verify_ssl=False))
+        name_provider.add_configuration_version(other.config_id, _configuration_package(verify_ssl=False))
 
     assert (refusal.value.config_id, refusal.value.name) == (first.config_id, "from-netbox")
-    assert provider.list_configuration_versions(other.config_id) == (other,)
-    assert _configuration_name(provider, other.config_id) == "other-inventory"
+    assert name_provider.list_configuration_versions(other.config_id) == (other,)
+    assert _configuration_name(name_provider, other.config_id) == "other-inventory"
 
 
-def test_a_new_version_may_keep_its_name_or_take_a_free_one(provider: ProductProjection) -> None:
-    first = provider.create_configuration(_configuration_package())
+def test_a_new_version_may_keep_its_name_or_take_a_free_one(name_provider: ProductProjection) -> None:
+    first = name_provider.create_configuration(_configuration_package())
 
-    kept, _ = provider.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
-    renamed, _ = provider.add_configuration_version(
+    kept, _ = name_provider.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
+    renamed, _ = name_provider.add_configuration_version(
         first.config_id, _named_configuration_package("renamed-inventory", verify_ssl=False)
     )
     # The name the configuration gave up is free for another configuration.
-    second = provider.create_configuration(_configuration_package(url="https://second.netbox.test"))
+    second = name_provider.create_configuration(_configuration_package(url="https://second.netbox.test"))
 
     assert (kept.registry_version, renamed.registry_version) == (2, 3)
-    assert _configuration_name(provider, first.config_id) == "renamed-inventory"
-    assert _configuration_name(provider, second.config_id) == "from-netbox"
+    assert _configuration_name(name_provider, first.config_id) == "renamed-inventory"
+    assert _configuration_name(name_provider, second.config_id) == "from-netbox"
 
 
 def test_a_known_checksum_returns_its_version_even_when_another_configuration_has_its_name(
-    provider: ProductProjection,
+    name_provider: ProductProjection,
 ) -> None:
-    first = provider.create_configuration(_configuration_package())
-    provider.add_configuration_version(first.config_id, _named_configuration_package("renamed-inventory"))
-    provider.create_configuration(_configuration_package(url="https://second.netbox.test"))
+    first = name_provider.create_configuration(_configuration_package())
+    name_provider.add_configuration_version(first.config_id, _named_configuration_package("renamed-inventory"))
+    name_provider.create_configuration(_configuration_package(url="https://second.netbox.test"))
 
-    replay, created = provider.add_configuration_version(first.config_id, _configuration_package())
+    replay, created = name_provider.add_configuration_version(first.config_id, _configuration_package())
 
     assert (replay, created) == (first, False)
-    assert _configuration_name(provider, first.config_id) == "renamed-inventory"
+    assert _configuration_name(name_provider, first.config_id) == "renamed-inventory"
 
 
 @pytest.mark.parametrize("operation", ["register", "version"])
