@@ -26,3 +26,5 @@ catalog:
   tailwindcss: ^4.3.3
   typescript: ^6.0.3
   vite: ^8.3.5
+  # Used by the app only (unit tests of src/domain); not part of the submodule catalog.
+  vitest: ^5.1.0

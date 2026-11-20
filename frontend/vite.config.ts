@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
@@ -37,6 +38,12 @@ const config = defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  // Unit tests of the pure functions in src/. The pattern keeps Vitest out of the
+  // vendor/infrahub submodule, which carries its own tests.
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts"],
   },
 });
 

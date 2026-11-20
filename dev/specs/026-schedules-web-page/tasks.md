@@ -32,8 +32,8 @@ permission text `features/runs/RunPage.tsx:454,580-586`; page parts `components/
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `vitest` (a release that supports Vite 8) to the pnpm catalog in `frontend/pnpm-workspace.yaml` and to `devDependencies` in `frontend/package.json` as `catalog:`; add the script `"test": "vitest run"`; run `pnpm install` from `frontend/` and commit `frontend/pnpm-lock.yaml`. Add a `test` block to `frontend/vite.config.ts` only if Vitest needs one (environment `node`, include `src/**/*.test.ts`). Check that `pnpm check` and `pnpm typecheck` accept `*.test.ts` files.
-- [ ] T002 [P] Add a step `pnpm test` after `pnpm typecheck` in the `frontend-lint` job of `.github/workflows/workflow-linter.yml` (lines 133-166), with the same working directory as the other `pnpm` steps.
+- [X] T001 Add `vitest` (a release that supports Vite 8) to the pnpm catalog in `frontend/pnpm-workspace.yaml` and to `devDependencies` in `frontend/package.json` as `catalog:`; add the script `"test": "vitest run"`; run `pnpm install` from `frontend/` and commit `frontend/pnpm-lock.yaml`. Add a `test` block to `frontend/vite.config.ts` only if Vitest needs one (environment `node`, include `src/**/*.test.ts`). Check that `pnpm check` and `pnpm typecheck` accept `*.test.ts` files.
+- [X] T002 [P] Add a step `pnpm test` after `pnpm typecheck` in the `frontend-lint` job of `.github/workflows/workflow-linter.yml` (lines 133-166), with the same working directory as the other `pnpm` steps.
 
 ---
 
