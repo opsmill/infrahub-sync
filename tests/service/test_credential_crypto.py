@@ -18,6 +18,9 @@ pytest.importorskip("cryptography")
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # pylint: disable-next=wrong-import-position
+from infrahub_sync.execution import redaction_scope
+
+# pylint: disable-next=wrong-import-position
 from infrahub_sync.service.credential_crypto import (
     NONCE_BYTES,
     CredentialCipher,
@@ -44,7 +47,9 @@ def test_a_value_decrypts_to_the_fields_it_was_encrypted_from() -> None:
     cipher = CredentialCipher(_KEY)
     key_id, nonce, ciphertext = cipher.encrypt(_CREDENTIAL_ID, 1, _FIELDS)
 
-    decrypted = cipher.decrypt(_CREDENTIAL_ID, 1, key_id=key_id, nonce=nonce, ciphertext=ciphertext)
+    # `decrypt` adds each value to the redaction registry, so it needs a redaction scope.
+    with redaction_scope():
+        decrypted = cipher.decrypt(_CREDENTIAL_ID, 1, key_id=key_id, nonce=nonce, ciphertext=ciphertext)
 
     assert _digest(decrypted) == _digest(_FIELDS)
     assert len(nonce) == NONCE_BYTES

@@ -45,7 +45,9 @@ from infrahub_sync.execution import (
     RunResult,
     collect_secret_values,
     execute_run,
+    merge_secret_values,
     redact,
+    redaction_scope,
     sanitize_exception_chain,
 )
 from infrahub_sync.orchestration.flow import RunLogger, remote_log_bridge
@@ -1163,7 +1165,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         build_models=stage not in _WRITE_STAGES,
     )
 
-    secrets[:] = collect_secret_values(instance)
+    # Merged, never replaced: the list is the run's redaction registry, and it can already hold
+    # values that the Sync API released to this run.
+    merge_secret_values(secrets, collect_secret_values(instance))
     result: dict[str, Any]
     if stage == "plan":
         saved = _plan(
@@ -1917,10 +1921,45 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many-
     A refused execution claim, and a failure whose recorded evidence has a cause, end the flow
     run with a returned `Failed` state, so no traceback passes through Prefect's engine; any
     other failure raises its sanitized copy (plan.md, "Failure exit for known error classes").
+
+    The whole flow run executes inside one redaction scope. Its list is the run's redaction
+    registry: the log bridge and the failure boundary read it at each use, and a value that the
+    Sync API releases to the run is added to it by `execution.register_secret_values` before the
+    code that received it returns it (spec 027, research R6).
     """
     del configuration_name
+    with redaction_scope() as secrets:
+        return _service_sync_run(
+            run_id,
+            stage,
+            config_id,
+            registry_version,
+            package_checksum,
+            branch,
+            expected_checksum,
+            confirm_writes=confirm_writes,
+            confirm_left_out=confirm_left_out,
+            schedule_id=schedule_id,
+            secrets=secrets,
+        )
+
+
+def _service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many-locals
+    run_id: str | None,
+    stage: ServiceStage,
+    config_id: str | None,
+    registry_version: int | None,
+    package_checksum: str | None,
+    branch: str | None,
+    expected_checksum: str | None,
+    *,
+    confirm_writes: bool,
+    confirm_left_out: bool,
+    schedule_id: str | None,
+    secrets: list[str],
+) -> dict[str, Any] | State[Any]:
+    """Run the body of `service_sync_run` with the run's redaction registry, `secrets`."""
     run_logger, prefect_context = _run_logger()
-    secrets: list[str] = []
     # Every line this function writes itself goes through `lines`; the bridge below forwards
     # the `infrahub_sync` logger tree with the same prefix.
     lines = SyncFlowLines(run_logger, secrets)
@@ -1955,7 +1994,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments,too-many-
             confirm_writes=confirm_writes,
         )
     run_id, flow_run_id, worker_id = execution.run_id, execution.flow_run_id, execution.worker_id
-    secrets[:] = collect_secret_values()
+    merge_secret_values(secrets, collect_secret_values())
     # Owned here rather than by the stage, so the failure boundary can read it however the
     # stage ended.
     tracker = WriteDispatchTracker()

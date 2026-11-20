@@ -22,7 +22,7 @@ import structlog
 from pydantic import ValidationError
 
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
-from infrahub_sync.execution import collect_secret_values, redact
+from infrahub_sync.execution import LiveSecretValues, collect_secret_values, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     AuditEvent,
@@ -319,7 +319,8 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         self._orchestration = orchestration
         self._resolver = resolver
         self._delivered_write_targets = frozenset(delivered_write_targets)
-        self._secrets = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
+        # Read again at each use, so the list holds the values registered in the current request.
+        self._secrets = LiveSecretValues((*collect_secret_values(), *secrets))
         self._clock = clock
 
     # ------------------------------------------------------------------

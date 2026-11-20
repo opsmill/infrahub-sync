@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from infrahub_sync.client.models import (
     DEFAULT_LOG_LIMIT,
@@ -23,6 +24,7 @@ from infrahub_sync.client.models import (
     PlanReportPageResource,
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.execution import redaction_scope
 from infrahub_sync.plan.models import PROBLEM_TYPES
 from infrahub_sync.product_store import Account
 
@@ -415,6 +417,24 @@ def _principal_resolver(
     return resolve
 
 
+class RedactionScopeMiddleware:  # pylint: disable=too-few-public-methods
+    """Bind one redaction registry for each request (spec 027, research R6).
+
+    A stored value that the Sync API decrypts while it answers a request is added to this
+    registry by `CredentialCipher.decrypt` before it is returned, so each message, answer and
+    log line of the request is redacted with it. The registry ends with the request, so the
+    value is in no list while another request is answered.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pass the request on inside a new redaction scope."""
+        with redaction_scope():
+            await self._app(scope, receive, send)
+
+
 def _account_reader(service: RunService) -> AccountReader:
     """Return the account read of the presentation; the service is asked only when an answer names an account."""
 
@@ -677,5 +697,8 @@ def create_app(
         return JSONResponse(status_code=status, content=content)
 
     _include_routers(application, service, authenticate, idempotency_key, configuration_routes, schedules=schedules)
+    # Added last, so it is the outermost middleware: the registry is bound before any route,
+    # exception handler or other middleware of the request runs, and all of them share it.
+    application.add_middleware(RedactionScopeMiddleware)
 
     return application

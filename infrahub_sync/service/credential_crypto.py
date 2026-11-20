@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from infrahub_sync.execution import register_secret_values
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -105,12 +107,17 @@ class CredentialCipher:
     def decrypt(
         self, credential_id: str, revision: int, *, key_id: str, nonce: bytes, ciphertext: bytes
     ) -> dict[str, str]:
-        """Return the fields of one revision.
+        """Return the fields of one revision, after adding each value to the redaction registry.
+
+        The call must run inside `execution.redaction_scope`: the scope of a Sync API request, or
+        the scope of a run. A value shorter than `execution.MIN_SECRET_LENGTH` is not added.
 
         Raises:
             CredentialDecryptionError: the key identifier is not the current key's, checked before
                 any decryption; the ciphertext does not authenticate for this credential and
                 revision; or the decrypted text is not a JSON object of strings.
+            NoRedactionScopeError: no redaction registry is bound (`execution.redaction_scope`),
+                so the values would be in no redaction list. No value is returned.
         """
         if key_id != self._key_id:
             raise CredentialDecryptionError(_KEY_MISMATCH)
@@ -129,4 +136,7 @@ class CredentialCipher:
             isinstance(name, str) and isinstance(value, str) for name, value in fields.items()
         ):
             raise CredentialDecryptionError(_MALFORMED_VALUE)
+        # Before the values leave this function: every message that the request or the run
+        # writes from now on is redacted with them.
+        register_secret_values(fields.values())
         return fields

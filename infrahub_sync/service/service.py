@@ -26,7 +26,7 @@ from infrahub_sync.configuration import ConfigurationPackageParseError, parse_co
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.configuration.validation import credential_namespace_finding
-from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
+from infrahub_sync.execution import LiveSecretValues, collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     NO_SAVED_PLAN_MESSAGE,
@@ -219,7 +219,7 @@ class ServiceAPIError(Exception):
         run_id: str | None = None,
         mutation_id: str | None = None,
         details: dict[str, Any] | None = None,
-        secrets: tuple[str, ...] = (),
+        secrets: Sequence[str] = (),
         left_out: int | None = None,
     ) -> None:
         self.status = status
@@ -234,7 +234,7 @@ class ServiceAPIError(Exception):
         super().__init__(self.message)
 
 
-def page_size_or_refuse(limit: int | None, *, secrets: tuple[str, ...] = ()) -> int:
+def page_size_or_refuse(limit: int | None, *, secrets: Sequence[str] = ()) -> int:
     """Return the requested page size, refusing one outside the shared paging bounds.
 
     Raises:
@@ -342,7 +342,7 @@ class AccountAccess:
 
     projection: ProductProjection
     now: Callable[[], datetime]
-    secrets: tuple[str, ...] = ()
+    secrets: Sequence[str] = ()
 
     def accepts_free_text(self, value: str) -> bool:
         """Return whether a free-text value holds no secret of the process and no token prefix."""
@@ -370,7 +370,9 @@ class RunService:
         self._projection = projection
         self._prefect_ui_url = prefect_ui_url
         self._orchestration = orchestration
-        self._secrets = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
+        # Read again at each use: a value decrypted in the current request is in the list from the
+        # moment `CredentialCipher.decrypt` returns it, and in no list after the request.
+        self._secrets = LiveSecretValues((*collect_secret_values(), *secrets))
         self._cancellation_recovery_seconds = cancellation_recovery_seconds
         self._clock = clock
         self._plan_layouts = _PlanLayoutCache(PLAN_LAYOUT_CACHE_OPERATIONS)

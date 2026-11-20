@@ -64,12 +64,12 @@ the constitution.
 
 ### Redaction from the moment of use (critique E6)
 
-- [ ] T018 Write `tests/service/test_released_value_redaction.py`: an error that holds a decrypted value, raised inside a function that runs within the request's redaction registry, is redacted in the log and the answer; an error that holds a value added to a run's registry is redacted in the worker's log bridge and in the failure cause
-- [ ] T019 Implement a per-run and per-request redaction registry used by `infrahub_sync/execution.py` `redact`, so that `credential_crypto.decrypt` and, later, the worker client add each value before they return it; wire it into `service/service.py:373`, `service/apply_guard.py:303`, `service/schedules.py:322` and the worker's log bridge in `service/flow.py`
+- [X] T018 Write `tests/service/test_released_value_redaction.py`: an error that holds a decrypted value, raised inside a function that runs within the request's redaction registry, is redacted in the log and the answer; an error that holds a value added to a run's registry is redacted in the worker's log bridge and in the failure cause
+- [X] T019 Implement a per-run and per-request redaction registry used by `infrahub_sync/execution.py` `redact`, so that `credential_crypto.decrypt` and, later, the worker client add each value before they return it; wire it into `service/service.py:373`, `service/apply_guard.py:303`, `service/schedules.py:322` and the worker's log bridge in `service/flow.py`
 
 ### Shared test helper
 
-- [ ] T020 Create `tests/helpers/stored_credentials.py`: a fixture that creates stored credentials in a store (unit tier) and a function that creates them through the API (Compose, development stack, testcontainers), with a fixed test key; document its use in its module docstring
+- [X] T020 Create `tests/helpers/stored_credentials.py`: a fixture that creates stored credentials in a store (unit tier) and a function that creates them through the API (Compose, development stack, testcontainers), with a fixed test key; document its use in its module docstring
 
 **Checkpoint**: unit tier green; nothing user-visible yet.
 
