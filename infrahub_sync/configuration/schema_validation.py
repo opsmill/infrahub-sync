@@ -106,7 +106,7 @@ class DestinationSchemaValidation:
 
     ``read_failure_reason`` is the ``reason`` of the first ``DestinationSchemaReadError``
     a destination read raised (``timeout``, ``unreachable``, ``unauthorized``,
-    ``forbidden``, ``nobranch``, ``unconfigured`` or ``credentials``), or ``None`` when
+    ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured`` or ``credentials``), or ``None`` when
     every read that ran succeeded or no read ran. The same failure still becomes a
     ``destination-schema-read-failed`` finding; this field lets a caller act on the reason
     without parsing finding text.

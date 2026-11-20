@@ -1,1 +1,1 @@
-Operators can check a configuration package file for findings before they register it, with `infrahub-sync configs check` or `POST /api/configs/validate`; both need an administrator token and store nothing.
+Operators can check a configuration package file for findings before they register it, with `infrahub-sync configs check` or `POST /api/configs/validate`; both need an administrator token. A check stores no package and no version; the audit history records only a check refused because the token is not an administrator's.
