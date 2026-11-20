@@ -1,0 +1,20 @@
+tests/service/test_schedule_next_starts.py
+  s_caab93ebf0934a::t_92c9f029729a25 77-80,84-85
+  s_caab93ebf0934a::t_60916b2da059e1 86-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a8d8ce69d9375501b2d7cfb5c7516dca88f60c1f",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
