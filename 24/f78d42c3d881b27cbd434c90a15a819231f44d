@@ -1,0 +1,83 @@
+infrahub_sync/product_store/store.py
+  s_58b527396c8cb5::t_5e7509dda0bce3 241-261,263-266
+  s_58b527396c8cb5::t_77b2ceeaf539d3 1449
+  s_58b527396c8cb5::t_ba09b57c29253a 344-349
+  s_58b527396c8cb5::t_c4a00e07632583 4740-4888,6164-6173,6175,6182-6185,6196-6197,6200-6201,6204-6212,6214,6217,6219-6222,6232-6239,6241-6242,6244-6247,6256-6257,6260-6262,6266,6272,6276
+  s_58b527396c8cb5::t_e2ad1d05ab1d9e 7211-7219
+  s_58b527396c8cb5::t_897a75054adc1b 1274-1324
+  s_58b527396c8cb5::t_208b07862e035a 1448
+  s_58b527396c8cb5::t_5dc4e823d22390 6174
+  s_58b527396c8cb5::t_d39a6641eeef36 6176-6181
+  s_58b527396c8cb5::t_f6a072de6d80d8 6186-6188,6193-6195
+  s_58b527396c8cb5::t_ca442160118a70 6198-6199
+  s_58b527396c8cb5::t_44347855eee1a5 6202-6203
+  s_58b527396c8cb5::t_6804e7abec4652 6213
+  s_58b527396c8cb5::t_7f2be0bc65a492 6215-6216
+  s_58b527396c8cb5::t_12984a22923dc0 6218
+  s_58b527396c8cb5::t_effe11163061f4 6223-6225,6229-6231
+  s_58b527396c8cb5::t_21a220b2ca7c7c 6240
+  s_58b527396c8cb5::t_377ee64bfac174 6243
+  s_58b527396c8cb5::t_ab205a65f79067 6248-6250,6253-6255
+  s_58b527396c8cb5::t_748b6a5e0d04e8 6258-6259
+  s_58b527396c8cb5::t_da0e24e4b4badb 6263-6265
+  s_58b527396c8cb5::t_a72801a434368e 6267-6271
+  s_58b527396c8cb5::t_ebeb95727ddff5 6273-6275
+  s_58b527396c8cb5::t_ab738353307b6d 6277-6279
+  s_b2e0c6049ab57d::t_de43d644dd6046 11,28,64-65,90-92,102,535,6189-6192,6226-6228,6251-6252
+infrahub_sync/service/credential_crypto.py
+  s_58b527396c8cb5::t_7cd1413a2ba6e4 1-115,117-121,123-126,128-130,132
+  s_58b527396c8cb5::t_6bd21b691fa938 116
+  s_58b527396c8cb5::t_aa93c9ec18519f 122
+  s_58b527396c8cb5::t_e2bf551bce7c9d 127
+  s_58b527396c8cb5::t_a19fccb7d8001c 131
+infrahub_sync/product_store/stored_credentials.py
+  s_58b527396c8cb5::t_27b331cf12006f 391
+  s_58b527396c8cb5::t_c063bf7d74dc15 373
+  s_58b527396c8cb5::t_7d2169281bc294 1-218,230-372,374-390,392-453
+  s_58b527396c8cb5::t_4ed0f7f8859ee7 219-221,227-229
+  s_b2e0c6049ab57d::t_187b9fd3ae6a52 222-226
+tests/product_store/test_stored_credentials.py
+  s_58b527396c8cb5::t_081d70c4b16853 1-16,18-288,291-303,310-336,338-340,342-363
+  s_58b527396c8cb5::t_54e585949a1d50 17
+  s_58b527396c8cb5::t_135166c52aa783 289-290
+  s_58b527396c8cb5::t_b420ce5d55a784 304-309
+  s_58b527396c8cb5::t_5f8d17246d8e8b 337
+  s_58b527396c8cb5::t_3f120794e74862 341
+tests/service/test_credential_crypto.py
+  s_58b527396c8cb5::t_3dae7f7ca22c71 1-129
+infrahub_sync/product_store/models.py
+  s_58b527396c8cb5::t_4aa7c7d3dc1ebb 9,18-19
+  s_58b527396c8cb5::t_6568ac43c68c01 1024-1121
+  s_58b527396c8cb5::t_91bc1cdec29a76 20
+tests/product_store/test_contract.py
+  s_58b527396c8cb5::t_7945f7a81326b8 220-221
+  s_b2e0c6049ab57d::t_59966afac1cc55 100-102,147-151
+dev/specs/027-stored-credentials/tasks.md
+  s_b2e0c6049ab57d::t_da977f7246a17b 41-42,46-49
+infrahub_sync/product_store/__init__.py
+  s_b2e0c6049ab57d::t_b0dc696ad645a8 32,58-60,93-98,131-133,178-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24f78d42c3d881b27cbd434c90a15a819231f44d",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_b2e0c6049ab57d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a012395f812d35e09",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
