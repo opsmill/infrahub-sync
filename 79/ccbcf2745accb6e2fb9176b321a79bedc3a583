@@ -1,0 +1,25 @@
+tasks/netbox.py
+  s_531f0e8d1dd35e::t_70e314229518ad 608,612
+  s_531f0e8d1dd35e::t_07bf212c5ee908 619-622,628-634
+tests/dev_stack/test_netbox_presence.py
+  s_531f0e8d1dd35e::t_da01489f2bda95 152-156,160
+tests/dev_stack/test_netbox_network.py
+  s_531f0e8d1dd35e::t_43b7c2dbb8c671 187-189,191
+  s_531f0e8d1dd35e::t_dfe6abfbf286b7 173-186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79ccbcf2745accb6e2fb9176b321a79bedc3a583",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
