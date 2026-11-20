@@ -5,7 +5,7 @@ import { type ReactNode, useEffect } from "react";
 import { cn } from "tailwind-variants";
 
 import {
-  configQuery,
+  configsQuery,
   describeScheduleError,
   nextStartsQuery,
   runQuery,
@@ -178,10 +178,8 @@ function Cadence({ cron }: { cron: string }) {
 export function SchedulePage({ scheduleId }: { scheduleId: string }) {
   const q = useQuery(scheduleQuery(scheduleId));
   const schedule = q.data;
-  const config = useQuery({
-    ...configQuery(schedule?.config_id ?? ""),
-    enabled: Boolean(schedule?.config_id),
-  });
+  // The configuration name comes from the configurations list the interface already reads.
+  const configs = useQuery(configsQuery());
   const cron = schedule?.cron ?? "";
   const timezone = schedule?.timezone ?? "UTC";
   const active = schedule?.state === "active";
@@ -237,7 +235,8 @@ export function SchedulePage({ scheduleId }: { scheduleId: string }) {
     );
   }
 
-  const configName = config.data?.name ?? schedule.config_id;
+  const configName =
+    configs.data?.items.find((c) => c.config_id === schedule.config_id)?.name ?? schedule.config_id;
   const branch = schedule.open_branch;
 
   return (

@@ -164,7 +164,7 @@ export function SchedulesPage({ state, config }: SchedulesSearch) {
             </output>
           )}
         </div>
-        <SchedulesTable schedules={listed} label={LIST_TITLE[titleKey]} configNames={configNames} />
+        <SchedulesTable schedules={listed} label="Schedules" configNames={configNames} />
         {more ? (
           <div className="flex flex-col items-center gap-2">
             <LoadOlder schedules={schedules} onLoad={loadOlder} />
