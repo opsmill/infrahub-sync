@@ -1,0 +1,31 @@
+infrahub_sync/service/config_routes.py
+  s_eefe1fec4652ae::t_988eb48fd6da1c 98-121,125-126,134
+  s_eefe1fec4652ae::t_0a1adc4ee5e4a4 69-70
+  s_eefe1fec4652ae::t_ca1711bfdeb215 135
+infrahub_sync/cli.py
+  s_eefe1fec4652ae::t_9dc7b0800a9ed5 450-452
+tests/service/test_config_routes.py
+  s_eefe1fec4652ae::t_b00a7ee9392c26 1934-1956
+docs/docs/reference/sync-http-api.mdx
+  s_eefe1fec4652ae::t_b7ede0c95adfd6 592
+dev/specs/025-register-config-web/contracts/sync-api.md
+  s_eefe1fec4652ae::t_0abcac11d4a5a8 61
+tests/cli/test_client_commands.py
+  s_eefe1fec4652ae::t_1a8850780ea697 463
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f1fbea1732f8f0a24a41ec5332280dc77d2df9ff",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
