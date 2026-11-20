@@ -760,7 +760,7 @@ def _retry_wait(headers: Mapping[str, str] | None, attempt: int) -> float:
             except ValueError:
                 break
     upper_bound = min(FALLBACK_RETRY_SECONDS * 2 ** (attempt - 1), MAX_BACKOFF_SECONDS)
-    return max(1.0, random.uniform(0, upper_bound))
+    return max(1.0, random.uniform(0, upper_bound))  # noqa: S311
 
 
 def _parse_body(body: bytes | None, path: str) -> dict[str, Any]:

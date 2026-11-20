@@ -182,7 +182,7 @@ class WebexAdapter(GenericrestapiAdapter):
         self._records[model_name] = transformed
         logger.info("Webex models loaded", model=model_name, count=len(transformed), fetched=len(records))
         for obj in transformed:
-            data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
+            data = self.record_to_data(record=obj, element=element, model=model)
             for field in element.fields:
                 if field.static is not None:
                     data[field.name] = field.static

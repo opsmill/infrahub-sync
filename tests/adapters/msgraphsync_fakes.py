@@ -323,11 +323,11 @@ def make_adapter(
 ) -> MsgraphsyncAdapter:
     """Build a subclass of `MsgraphsyncAdapter` with the test models and construct it against `router`.
 
-    `top_level` follows `config.compute_order()`, so kinds load in reference order.
+    `top_level` follows `config.compute_order_and_tiers()[0]`, so kinds load in reference order.
     """
     model_classes = dict(models or TEST_MODELS)
     names = [entry.name for entry in config.schema_mapping]
-    top_level = [name for name in config.compute_order() if name in names]
+    top_level = [name for name in config.compute_order_and_tiers()[0] if name in names]
     attributes: dict[str, Any] = {"top_level": top_level}
     attributes.update({name: model_classes[name] for name in top_level})
     adapter_cls = type("FakeMsgraphsyncAdapter", (MsgraphsyncAdapter,), attributes)
