@@ -62,6 +62,7 @@ The credentials a stage execution received (FR-003, FR-016, research R9).
 | `flow_run_id` | TEXT | The stage execution in `prefect_executions` |
 | `stage` | TEXT | `plan`, `verify`, `apply`, `sync` or `resume` |
 | `block` | TEXT | `source`, `destination` or `store` |
+| `credential_id` | TEXT | Keeps the revision unambiguous after a deletion and a new credential with the same name. No foreign key, so the row survives the deletion. |
 | `credential_name` | TEXT | |
 | `revision` | INTEGER | |
 | `released_at` | TEXT | |

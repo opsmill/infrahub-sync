@@ -39,8 +39,13 @@ worker, with no restart:
 
 Step 1 is large because the format change, the worker route and the removal of `env` cannot be split:
 between them, no registered package can run and the tests fail (research R11). Its tasks are ordered so
-each commit keeps `invoke tests.tests-unit` green: add the new path beside the old, move the tests and
-examples, then remove the old path.
+each phase keeps `invoke tests.tests-unit` green (critique X1, E11):
+
+1. Add the new path beside the old one: encryption, tables, the worker account, routes, the worker
+   client, the `credential:` key accepted next to `$credential`.
+2. Move the tests and the examples to the shared helper, one test folder per commit.
+3. Remove the old path: `env`, the `credentials` block, `$credential`, the worker variable publishing,
+   and the variables in the deployment files.
 
 ## Technical Context
 
@@ -48,7 +53,8 @@ examples, then remove the old path.
 Python 3.10. TypeScript for `frontend/`.
 
 **Primary Dependencies**: FastAPI, Pydantic, Typer, httpx, psycopg. New: `cryptography` in the
-`service` extra only (`AESGCM`), already present indirectly in `uv.lock`. React, TanStack Router,
+`service` extra only (`AESGCM`), with a range pin, already present indirectly in `uv.lock`, so the
+image does not grow (critique E13). React, TanStack Router,
 `openapi-fetch` in `frontend/`.
 
 **Storage**: the product store on SQLite (tests) and PostgreSQL (service). Four new tables in `_SCHEMA`
@@ -61,7 +67,12 @@ existing store tests run on both. About 80 existing test files set `INFRAHUB_SYN
 `tests/helpers/stored_credentials.py` that creates credentials in the store or through the API. New
 tests:
 
-- the marker search over responses, logs, run records and a database dump (SC-004);
+- the marker search over responses, CLI output, logs, run records and a database dump, in one test
+  (SC-004, critique P6);
+- an error that holds a released or decrypted value, raised at each point between release and use, in
+  the worker and in the Sync API's schema read: the value is redacted (critique E6);
+- the worker client's timeout and its three retries on transient errors, and no retry on a refusal
+  (critique E3);
 - the worker account refused on every route outside `/worker/`, parametrized over the app's routes;
 - the worker route refusals (finished run, other run, unnamed credential, administrator token);
 - deletion refused by a latest version and by a schedule, allowed for an older version;
@@ -102,10 +113,11 @@ about 15 documentation pages, 1 new decision record and 3 notes on existing ones
 | Principle | Check | Result |
 | --- | --- | --- |
 | I. Read-only by default | Credential commands change Sync's own records, not a system of record. `credentials delete` asks for confirmation. Plan, verify and the read commands are unchanged. | Pass |
-| II. Idempotency and safety | Mutating credential routes take `Idempotency-Key`. A worker retry of the same execution gets the same answer and replaces its `run_credential_uses` row. A missing value fails the run before the source is read, with a named cause. | Pass |
+| II. Idempotency and safety | Mutating credential routes take `Idempotency-Key`. A worker retry of the same execution gets the same answer and replaces its `run_credential_uses` row. The worker's call has a 10-second timeout and three retries on transient errors (research R6). A missing value fails the run before the source is read, with a named cause. | Pass |
 | III. Adapter symmetry | No adapter code changes. The map from stored fields to settings sits next to the existing `credential_setting_paths`, one entry per adapter. | Pass |
 | IV. Type safety | New resources are Pydantic models; new errors are specific exceptions (`CredentialUnavailableError`, `CredentialInUseError`, `CredentialDecryptionError`) and API codes. | Pass |
 | V. Test discipline | Unit tests for every requirement; parametrized refusals; marker search. | Pass |
+| VI. Secrets (redaction) | Released and decrypted values join the process's redaction list at the moment of release or decryption, not later (research R6). | Pass |
 | VI. Secrets | Today: "Credentials MUST come from environment variables or a secret manager." Values now come from the Sync database, encrypted, and are released only to the worker account. This is a deviation until the amendment (FR-026, constitution 1.3.0) lands in the same change. | Deviation, justified |
 | VII. Simplicity | One mechanism replaces two (`env` is removed). The worker account reuses the account and token tables and the resolver. One new dependency, justified in R3. | Pass |
 

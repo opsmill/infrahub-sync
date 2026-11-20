@@ -84,3 +84,5 @@ Every route outside `/worker/` answers `403 forbidden` to the worker account.
   `credential-not-set-in-worker` and `worker-environment-unknown` are removed.
 - The run-starting routes (plan, sync, apply, verify, approve, resume) refuse with `422` and the same
   codes before they start a run (FR-008).
+- The message of `credential-not-found` names the command `infrahub-sync credentials create <name>` and
+  says that an administrator runs it.

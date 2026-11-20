@@ -133,6 +133,10 @@ account without one (`account_actions.py:355-365`). Every account action already
 
 Every worker receives `INFRAHUB_SYNC_WORKER_TOKEN` and `INFRAHUB_SYNC_API_URL`.
 
+The worker token follows the rules of the `admin` token (`service/settings.py:162-171`): a minimum
+length, and no `ifs_pat_` or `ifs_ses_` prefix. `sync-api` also refuses to start when it equals the
+`admin` token (critique E8).
+
 **Rationale**: The brief copies Infrahub's shared `agent` account and Sync's `admin` account
 (decision 6). Reusing the account and token tables keeps one resolver.
 
@@ -148,14 +152,18 @@ Sync API releases values only when every check passes:
 2. The run exists and a `prefect_executions` row for `(run_id, flow_run_id)` is claimed and not
    terminal. The worker claims its execution before it resolves settings (`flow.py:1941`).
 3. The run's configuration version names the credentials. The route returns only the blocks the stage
-   needs: apply, resume and verify get the destination only, as today (`flow.py:941`). Scheduled runs
-   are `sync` stages and get both.
+   needs: apply, resume and verify get the destination only, as today (`flow.py:941`), plus the
+   `store` block when the stage builds the incremental store (a task checks which stages build it).
+   Scheduled runs are `sync` stages and get every block.
 4. Each named credential exists and has the fields the block needs (FR-008).
 
 The answer holds, for each block, the credential name, revision and fields. The route writes one audit
 event per release, with the names and revisions and no value. It takes no `Idempotency-Key` and writes no
 `mutation_receipts` row, because a receipt stores the full answer for replay. It records each
-`(run, flow_run_id, block, credential, revision)` in `run_credential_uses` in the same transaction.
+`(run, flow_run_id, block, credential_id, credential name, revision)` in `run_credential_uses` in the
+same transaction. The identifier keeps a revision unambiguous when a credential is deleted and created
+again with the same name (critique E1). The Sync API logs `credential.released` with the run, the
+stage, the names and the revisions through `structlog` (critique E12).
 
 **Rationale**: FR-003, FR-004, FR-016. Checking the claimed execution proves the run is in progress
 for this stage, not only for the run.
@@ -166,7 +174,22 @@ stage would still get values.
 ## R6. How the worker uses released values
 
 **Decision**: A new module `infrahub_sync/service/credential_client.py` calls the worker route with
-`httpx` (a base dependency). `resolve_runtime_instance` takes the released values instead of a provider
+`httpx` (a base dependency).
+
+- **Timeouts and retries (critique E3).** A 10-second timeout. Connection errors, timeouts and the
+  answers `502`, `503` and `504` are retried three times, after 1, 2 and 4 seconds. Every other refusal
+  is final at once. After the last attempt, the cause is `api-unreachable`.
+- **Transport (critique E7).** `INFRAHUB_SYNC_API_URL` may be `https://`; the client trusts the
+  certificates in `INFRAHUB_SYNC_CA_DIRECTORY`, as the rest of the worker does. Inside Compose the call
+  is plain HTTP on the internal network, and the deployment documentation says so.
+- **Redaction from the moment of release (critique E6).** The client adds every released value to the
+  run's redaction list before it returns, so an error raised between the release and
+  `collect_secret_values` (`flow.py:1166`) is redacted. The same rule applies in the Sync API: the
+  decryption function adds each decrypted value to the request's redaction list before it returns it,
+  and the schema read (`capabilities.py:195-232`) runs inside that list. A test raises an error that
+  holds the value at each of these points and checks the log and the answer.
+
+The rest of the module: `resolve_runtime_instance` takes the released values instead of a provider
 and writes them into the block settings. The released values are added to the secret values that
 `collect_secret_values` and the log bridge redact (`flow.py:1166`). A failure maps to a new
 `CredentialUnavailableError` with a reason (`api-unreachable`, `worker-token-refused`,
@@ -203,6 +226,11 @@ version pinned by a schedule whose state is not `deleted` names it (`store.py:21
 version is registered, so the check is one query. The refusal is `409 credential-in-use` with the
 configuration identifiers and schedule names in `details`.
 
+A deletion and a registration that names the same credential run in transactions that lock the
+credential row (`SELECT … FOR UPDATE` on PostgreSQL; SQLite serializes writes), so a registration
+cannot pass its check while a deletion removes the credential (critique E4). The run-start check
+(FR-008) covers any case that remains.
+
 **Rationale**: FR-010. Reading every stored package on each deletion would parse every version.
 
 ## R9. Revisions recorded by a run
@@ -236,7 +264,18 @@ through the API after the stack starts, instead of setting `INFRAHUB_SYNC_CREDEN
 ## R12. Documentation, decision records, constitution
 
 - **ADR 0054** "The Sync API stores credentials and releases them to the worker account" supersedes
-  ADR 0039. ADR 0026 and ADR 0040 get a "Changed by 0054" note.
+  ADR 0039. ADR 0026 and ADR 0040 get a "Changed by 0054" note. ADR 0054 also records:
+    - **Rollback (critique E5).** An earlier build ignores the new tables, needs the
+      `INFRAHUB_SYNC_CREDENTIAL_*` variables again, and cannot run a version that names a stored
+      credential.
+    - **A later external store (critique P3).** Because the Sync API resolves and the worker only
+      receives, a provider such as Vault can be added in the Sync API with no change on the worker.
+    - **The validate route (critique E9).** Any signed-in account can validate a registered version
+      with a branch, which sends the destination token to the address an administrator registered.
+- **Messages (critique P4, P5).** A refusal for a missing credential names the command
+  `infrahub-sync credentials create <name>` and says that an administrator runs it. The help of
+  `credentials create`, the conversion report and `guides/credentials.mdx` say to use the username
+  `default` for a Redis server that has only a password.
 - **Pages to change**: `configuration-package.mdx`, `compose-deployment.mdx`,
   `kubernetes-deployment.mdx`, `v2-to-v3.mdx`, `reference/durable-product-records.mdx`,
   `reference/sync-http-api.mdx`, `guides/accounts.mdx`, `development-stack.mdx`, `running-a-sync.mdx`
