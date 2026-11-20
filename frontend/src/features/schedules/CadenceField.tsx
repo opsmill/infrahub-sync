@@ -23,7 +23,7 @@ import {
 } from "./cadence-draft";
 import { FieldMessage, FormSelect, RefusalText } from "./form-parts";
 import { type FieldRefusal, fieldRefusal } from "./form-rules";
-import { NextStarts, type NextStartsRead } from "./NextStarts";
+import type { NextStartsRead } from "./NextStarts";
 
 /** The wait after the last change before the preview is asked for (research R12). */
 export const PREVIEW_DELAY_MS = 400;
@@ -78,8 +78,8 @@ export function useCadencePreview(cron: string | null, timezone: string): Cadenc
 }
 
 /**
- * The cadence of a schedule: a helper with seven forms that writes the cron expression, and the
- * next start times from the Sync API. The form is chosen once, from `initialCron`, so a custom
+ * The cadence of a schedule: a helper with seven forms that writes the cron expression. The form
+ * shows the next start times of `preview` beside it (`CadenceTimeline`). The form is chosen once, from `initialCron`, so a custom
  * expression that matches a form while the person types stays "Custom". `onChange` receives the
  * expression, or `null` while an input misses a value.
  */
@@ -300,10 +300,6 @@ export function CadenceField({
 
   const words = result.form ? cadenceWords(result.form) : null;
   const shownRefusal = preview.refusal?.field === "cron" ? preview.refusal : (saveRefusal ?? null);
-  const showPreview = cron !== null && cronFields(cron) !== null && preview.refusal === null;
-  const read: NextStartsRead = preview.waiting
-    ? { data: undefined, error: null, isPending: true, fetchStatus: "fetching" }
-    : preview.read;
 
   return (
     <div className="flex flex-col gap-3">
@@ -334,14 +330,6 @@ export function CadenceField({
             <RefusalText refusal={shownRefusal} />
           )}
         </FieldMessage>
-      )}
-      {showPreview && (
-        <section aria-labelledby={`${id}-preview`} className="flex flex-col gap-2">
-          <h3 id={`${id}-preview`} className="font-medium text-foreground text-sm">
-            Next start times
-          </h3>
-          <NextStarts read={read} timezone={preview.timezone} count={PREVIEW_COUNT} />
-        </section>
       )}
     </div>
   );

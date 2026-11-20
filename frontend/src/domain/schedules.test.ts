@@ -4,6 +4,7 @@ import type { Principal, Schedule } from "#/api/types";
 
 import {
   branchKeptOpen,
+  changedFields,
   changeRequest,
   createRequest,
   differsFromOpening,
@@ -224,6 +225,48 @@ describe("changeRequest", () => {
 
   it("finds no difference in an unchanged read", () => {
     expect(differsFromOpening(opening, schedule())).toBe(false);
+  });
+});
+
+describe("changedFields", () => {
+  const opening = formValuesOf(schedule());
+
+  it.each([
+    ["no change", {}, []],
+    [
+      "the version and the cadence",
+      { registry_version: 4, cron: "0 3 * * *" },
+      ["registry_version", "cron"],
+    ],
+    ["an incomplete cadence counts as changed", { cron: null }, ["cron"]],
+    ["spaces around the expression alone are no change", { cron: ` ${opening.cron} ` }, []],
+    ["a cleared late-start limit is not counted", { start_late_by_at_most_seconds: null }, []],
+    [
+      "every setting",
+      {
+        timezone: "UTC",
+        write_target: "default-branch",
+        write_when_left_out: true,
+        overlap_policy: "queue",
+        start_late_by_at_most_seconds: 600,
+      },
+      [
+        "timezone",
+        "write_target",
+        "write_when_left_out",
+        "overlap_policy",
+        "start_late_by_at_most_seconds",
+      ],
+    ],
+  ] as const)("%s", (_name, edit, expected) => {
+    expect(changedFields(opening, { ...opening, ...edit })).toEqual(expected);
+  });
+
+  it("names the fields the change request sends", () => {
+    const form = { ...opening, registry_version: 4, overlap_policy: "queue" };
+    expect(changedFields(opening, form)).toEqual(
+      Object.keys(changeRequest(opening, form, "") ?? {})
+    );
   });
 });
 

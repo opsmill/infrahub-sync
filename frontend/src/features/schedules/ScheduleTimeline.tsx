@@ -132,13 +132,69 @@ function Heading({ children }: { children: ReactNode }) {
   );
 }
 
-function Message({ children, alert = false }: { children: ReactNode; alert?: boolean }) {
+/** A sentence in place of timeline rows, such as why there is no start. */
+export function TimelineMessage({
+  children,
+  alert = false,
+}: {
+  children: ReactNode;
+  alert?: boolean;
+}) {
   return (
     <li
       role={alert ? "alert" : undefined}
       className="pb-2 text-pretty text-foreground-muted text-sm"
     >
       {children}
+    </li>
+  );
+}
+
+/**
+ * The next starts of a timeline, grouped under Today, Tomorrow, This week and Later, the soonest
+ * last so that it sits nearest the "Now" marker below. `groups` comes from `startGroups`.
+ */
+export function NextStartGroups({
+  groups,
+  timeZone,
+}: {
+  groups: ReturnType<typeof startGroups>;
+  timeZone: string;
+}) {
+  return (
+    <>
+      {groups.map((g) => (
+        <li key={g.bucket}>
+          <ol aria-label={g.bucket}>
+            <GroupLabel>{g.bucket}</GroupLabel>
+            {g.items.map((iso) => (
+              <StartRow
+                key={iso}
+                iso={iso}
+                timeZone={timeZone}
+                far={g.bucket === "This week" || g.bucket === "Later"}
+              />
+            ))}
+          </ol>
+        </li>
+      ))}
+    </>
+  );
+}
+
+/** The marker between the next starts above and the past below. */
+export function NowMarker() {
+  return (
+    <li className={cn(GRID, "py-1.5")} aria-label="Now">
+      <span className="text-right">
+        <span className="rounded-full bg-accent px-1.5 py-0.5 font-semibold text-[11px] text-white">
+          Now
+        </span>
+      </span>
+      <span className={cn(RAIL, "items-center")}>
+        <span className="relative size-2.5 rounded-full bg-accent ring-4 ring-content" />
+      </span>
+      <span className="self-center border-t border-dashed" />
     </li>
   );
 }
@@ -181,7 +237,9 @@ export function ScheduleTimeline({
 
   let upper: ReactNode;
   if (!active) {
-    upper = <Message>No start while this schedule is {noStartWord(schedule)}.</Message>;
+    upper = (
+      <TimelineMessage>No start while this schedule is {noStartWord(schedule)}.</TimelineMessage>
+    );
   } else if (starts.isPending && starts.fetchStatus !== "idle") {
     upper = (
       <li className="flex items-center gap-2 pb-2 text-foreground-muted text-sm">
@@ -190,29 +248,15 @@ export function ScheduleTimeline({
       </li>
     );
   } else if (!starts.data) {
-    upper = <Message alert>{failureText(starts.error)}</Message>;
+    upper = <TimelineMessage alert>{failureText(starts.error)}</TimelineMessage>;
   } else {
     upper = (
       <>
-        {groups.map((g) => (
-          <li key={g.bucket}>
-            <ol aria-label={g.bucket}>
-              <GroupLabel>{g.bucket}</GroupLabel>
-              {g.items.map((iso) => (
-                <StartRow
-                  key={iso}
-                  iso={iso}
-                  timeZone={tz}
-                  far={g.bucket === "This week" || g.bucket === "Later"}
-                />
-              ))}
-            </ol>
-          </li>
-        ))}
+        <NextStartGroups groups={groups} timeZone={tz} />
         {starts.data.starts.length < count && (
-          <Message>
+          <TimelineMessage>
             {starts.data.starts.length === 0 ? "No start" : "No further start"} in the next 5 years.
-          </Message>
+          </TimelineMessage>
         )}
       </>
     );
@@ -233,15 +277,15 @@ export function ScheduleTimeline({
     );
   } else if (!runs.data) {
     lower = (
-      <Message alert>
+      <TimelineMessage alert>
         The runs could not be read.{" "}
         <button type="button" className={cn(textAction(), TOUCH)} onClick={() => runs.refetch()}>
           Try again
         </button>
-      </Message>
+      </TimelineMessage>
     );
   } else if (runLines.length === 0) {
-    lower = <Message>This schedule has started no run.</Message>;
+    lower = <TimelineMessage>This schedule has started no run.</TimelineMessage>;
   } else {
     lower = runLines.map((g) => (
       <li key={g.bucket}>
@@ -280,17 +324,7 @@ export function ScheduleTimeline({
               </ol>
             </li>
           )}
-          <li className={cn(GRID, "py-1.5")} aria-label="Now">
-            <span className="text-right">
-              <span className="rounded-full bg-accent px-1.5 py-0.5 font-semibold text-[11px] text-white">
-                Now
-              </span>
-            </span>
-            <span className={cn(RAIL, "items-center")}>
-              <span className="relative size-2.5 rounded-full bg-accent ring-4 ring-content" />
-            </span>
-            <span className="self-center border-t border-dashed" />
-          </li>
+          <NowMarker />
           <Heading>Last runs</Heading>
           {lower}
         </ol>

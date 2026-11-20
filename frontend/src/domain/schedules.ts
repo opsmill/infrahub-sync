@@ -211,14 +211,32 @@ export function formValuesOf(schedule: Schedule): ScheduleFormValues {
 const asWriteTarget = (value: string) => value as WriteTarget;
 const asOverlapPolicy = (value: string) => value as OverlapPolicy;
 
+/** The values the change form holds while the person edits them: the cadence can be incomplete. */
+export type EnteredScheduleValues = Omit<ScheduleFormValues, "cron"> & { cron: string | null };
+
+/**
+ * The fields whose entered value differs from the value the change form opened with: the fields
+ * a save sends (FR-018). An incomplete cadence (`null`) counts as changed. A custom expression is
+ * compared trimmed, so spaces alone are not a change. The Sync API reads `null` as "not
+ * changed", so a cleared late-start limit cannot be sent and is not counted.
+ */
+export function changedFields(
+  opening: ScheduleFormValues,
+  entered: EnteredScheduleValues
+): (keyof ScheduleFormValues)[] {
+  return FORM_FIELDS.filter((field) => {
+    if (field === "cron")
+      return entered.cron === null || entered.cron.trim() !== opening.cron.trim();
+    const value = entered[field];
+    return value !== null && value !== opening[field];
+  });
+}
+
 /**
  * The change request: only the fields whose value differs from the values the form opened with,
  * plus the reason when not empty; `null` when no field differs (FR-018). It is never computed
  * against a later read of the schedule, so a field another person changed meanwhile is not sent
  * back with its old value.
- *
- * The Sync API reads `null` as "not changed", so clearing the late-start limit cannot be sent and
- * is left out of the request.
  */
 export function changeRequest(
   opening: ScheduleFormValues,
@@ -226,10 +244,7 @@ export function changeRequest(
   reason: string
 ): ChangeScheduleRequest | null {
   const request: ChangeScheduleRequest = {};
-  for (const field of FORM_FIELDS) {
-    if (form[field] === opening[field] || form[field] === null) continue;
-    // A custom expression is sent trimmed, as on create; spaces alone are not a change.
-    if (field === "cron" && form.cron.trim() === opening.cron.trim()) continue;
+  for (const field of changedFields(opening, form)) {
     switch (field) {
       case "write_target":
         request.write_target = asWriteTarget(form.write_target);
@@ -241,6 +256,7 @@ export function changeRequest(
         request.registry_version = form.registry_version;
         break;
       case "cron":
+        // A custom expression is sent trimmed, as on create.
         request.cron = form.cron.trim();
         break;
       case "timezone":

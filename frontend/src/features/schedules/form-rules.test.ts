@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   fieldRefusal,
+  formProblems,
   lateStartMinutesText,
   lateStartProblem,
   lateStartSeconds,
@@ -124,5 +125,62 @@ describe("nameAccepted", () => {
     ["a".repeat(129), false],
   ])("accepts %j: %s", (name, accepted) => {
     expect(nameAccepted(name)).toBe(accepted);
+  });
+});
+
+describe("formProblems", () => {
+  const ready = {
+    changing: false,
+    name: "nightly",
+    configId: "c-1",
+    version: 3,
+    versionsPending: false,
+    cron: "0 2 * * *",
+    timezone: "Europe/Paris",
+    lateProblem: undefined,
+  };
+
+  it("finds nothing in values that can be saved", () => {
+    expect(formProblems(ready)).toEqual([]);
+  });
+
+  it.each([
+    ["an empty name", { name: "  " }, "name", "Enter a name."],
+    [
+      "a name with a refused character",
+      { name: "nightly sync!" },
+      "name",
+      "Change the name: it has a character the Sync API does not accept.",
+    ],
+    ["no configuration", { configId: undefined }, "config", "Choose a configuration version."],
+    [
+      "versions still being read",
+      { version: undefined, versionsPending: true },
+      "config",
+      "Loading the versions of this configuration.",
+    ],
+    [
+      "a configuration without a version",
+      { version: undefined },
+      "config",
+      "This configuration has no registered version.",
+    ],
+    ["an incomplete cadence", { cron: null }, "cron", "Complete the cadence."],
+    ["an empty time zone", { timezone: " " }, "timezone", "Enter a time zone."],
+    ["a late-start problem", { lateProblem: "Enter how late." }, "late", "Enter how late."],
+  ])("%s", (_name, edit, field, text) => {
+    expect(formProblems({ ...ready, ...edit })).toEqual([{ field, text }]);
+  });
+
+  it("does not check the name of the change form", () => {
+    expect(formProblems({ ...ready, changing: true, name: "" })).toEqual([]);
+  });
+
+  it("lists every problem in the order of the form", () => {
+    expect(
+      formProblems({ ...ready, name: "", cron: null, lateProblem: "Enter how late." }).map(
+        (p) => p.field
+      )
+    ).toEqual(["name", "cron", "late"]);
   });
 });
