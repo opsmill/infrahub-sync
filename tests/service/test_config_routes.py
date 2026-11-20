@@ -1932,6 +1932,29 @@ def test_a_document_that_is_not_a_mapping_is_an_invalid_package(tmp_path: Path, 
     assert (error["family"], error["reason"]) == ("request", "invalid_package")
 
 
+def _alias_expansion_document() -> str:
+    """Return a document of under 1 KB whose nested aliases expand to 10**9 values."""
+    lines = ["a0: &a0 [x, x, x, x, x, x, x, x, x, x]"]
+    lines.extend(f"a{level}: &a{level} [{', '.join([f'*a{level - 1}'] * 10)}]" for level in range(1, 9))
+    lines.append("configuration: *a8")
+    return "\n".join(lines)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [_alias_expansion_document(), "format_version: 1\nconfiguration: &loop [*loop]\n"],
+    ids=["alias-expansion", "self-reference"],
+)
+def test_a_document_whose_aliases_expand_past_the_limit_is_an_invalid_package(tmp_path: Path, document: str) -> None:
+    client, _projection = _event_client(tmp_path)
+
+    response = _check(client, {"document": document})
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("request", "invalid_package")
+
+
 @pytest.mark.parametrize("field", ["document", "package"])
 def test_a_v2_configuration_is_refused_with_the_conversion_command(tmp_path: Path, field: str) -> None:
     client, _projection = _event_client(tmp_path)

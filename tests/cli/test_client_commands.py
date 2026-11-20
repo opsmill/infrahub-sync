@@ -477,6 +477,7 @@ def _error_lines(output: str) -> list[str]:
         pytest.param("format_version: [1\n", id="invalid-yaml"),
         pytest.param("- a list\n", id="not-a-mapping"),
         pytest.param(b"\xff\xfe", id="not-utf-8"),
+        pytest.param("format_version: 1\ncreated: 2024-13-45\n", id="impossible-date"),
     ],
 )
 def test_configs_check_refuses_an_unreadable_file_like_configs_register(

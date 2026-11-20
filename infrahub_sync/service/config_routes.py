@@ -66,7 +66,8 @@ CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _MAX_VALIDATION_FINDINGS_PAGE = 256
 
 
-# The refusal of a document that is not a mapping with string keys (`POST /configs/validate`).
+# The refusal of a document that is not a mapping with string keys, or whose YAML aliases expand
+# past `_MAX_DOCUMENT_VALUES` values (`POST /configs/validate`).
 INVALID_PACKAGE_REASON = "invalid_package"
 # The refusal of a v2 `config.yml` sent where a configuration package is expected.
 V2_CONFIGURATION_REASON = "v2_configuration"
@@ -94,16 +95,43 @@ def _is_v2_configuration(package: Mapping[str, Any]) -> bool:
     return "configuration" not in package and "source" in package and "destination" in package
 
 
+# Most values a package document may hold, counting a YAML alias once at every place it is
+# used. A few hundred bytes of nested aliases expand to billions of values, and the package
+# checks walk every one of them, so such a document would hold a request thread for hours.
+_MAX_DOCUMENT_VALUES = 1_000_000
+
+
+def _within_document_value_limit(value: object) -> bool:
+    """Return whether ``value`` holds at most `_MAX_DOCUMENT_VALUES` values, aliases expanded.
+
+    The walk stops at the limit, so it costs at most that many steps, also for an alias that
+    refers to itself.
+    """
+    pending = [value]
+    for _ in range(_MAX_DOCUMENT_VALUES):
+        if not pending:
+            return True
+        item = pending.pop()
+        if type(item) is dict:  # pylint: disable=unidiomatic-typecheck
+            pending.extend(cast("dict[object, object]", item).values())
+        elif type(item) is list:  # pylint: disable=unidiomatic-typecheck
+            pending.extend(cast("list[object]", item))
+    return not pending
+
+
 def _document_package(document: str) -> dict[str, Any]:
     """Parse a package file's text as the CLI does, refusing anything but a non-empty mapping.
 
-    The refusal is fixed text: the parser's error would repeat the document.
+    A document whose aliases expand past `_MAX_DOCUMENT_VALUES` values is refused the same
+    way. The refusal is fixed text: the parser's error would repeat the document.
     """
     try:
         value = yaml.safe_load(document)
     except (yaml.YAMLError, ValueError, RecursionError):
         raise ConfigurationAPIError(400, "request", reason=INVALID_PACKAGE_REASON, proven_pre_effect=True) from None
     if type(value) is not dict or not value or not all(type(key) is str for key in value):  # pylint: disable=unidiomatic-typecheck
+        raise ConfigurationAPIError(400, "request", reason=INVALID_PACKAGE_REASON, proven_pre_effect=True)
+    if not _within_document_value_limit(value):
         raise ConfigurationAPIError(400, "request", reason=INVALID_PACKAGE_REASON, proven_pre_effect=True)
     return cast("dict[str, Any]", value)
 
