@@ -1,0 +1,34 @@
+docs/docs/orchestration.mdx
+  s_caab93ebf0934a::t_41f09523713d7c 311-316
+dev/specs/026-schedules-web-page/contracts/web-pages.md
+  s_caab93ebf0934a::t_41f09523713d7c 79-80
+dev/specs/026-schedules-web-page/data-model.md
+  s_caab93ebf0934a::t_41f09523713d7c 95-96
+dev/specs/026-schedules-web-page/spec.md
+  s_caab93ebf0934a::t_41f09523713d7c 539-545
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_99d264e1a6f141 193
+frontend/src/features/schedules/config-choices.ts
+  s_caab93ebf0934a::t_ee32c851ca6c5f 10-25,27-31,33,38,40-46
+frontend/src/features/schedules/config-choices.test.ts
+  s_caab93ebf0934a::t_f590734a7ce478 3,5-6,8-19,22,24-25,27,30-33,38-39,43,45-59
+frontend/src/features/schedules/ScheduleFormDialog.tsx
+  s_caab93ebf0934a::t_b5c9c9cdfd37d7 268
+  s_caab93ebf0934a::t_cd4cb1a46f0b5f 41,167-171,193-196,495-503,506-511,513-521,533,551
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ce56b7ade39e236d8bb2953f30f60b2ad0050e4",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
