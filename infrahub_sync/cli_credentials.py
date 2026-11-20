@@ -27,17 +27,27 @@ if TYPE_CHECKING:
     from infrahub_sync.cli_accounts import CommandSupport
     from infrahub_sync.client import CredentialResource
 
-# Fixed text for each refusal code of the credential routes. The client keeps no message text of
-# an answer (see the secret-redaction guideline), so the CLI prints its own text for each code.
+# Fixed text for each refusal of the credential routes, by status and code. The client keeps no
+# message text of an answer (see the secret-redaction guideline), so the CLI prints its own text.
+# The status is part of the key because the start of a run answers some of the same codes for another
+# reason: `422 credential-not-found` there means that a configuration names a credential that does
+# not exist, which is not the name a person typed.
+_NOT_FOUND = 404
+_CONFLICT = 409
+_UNPROCESSABLE = 422
+_UNAVAILABLE = 503
 CREDENTIAL_ERROR_MESSAGES = {
-    "credential-not-found": "no stored credential has this name",
-    "credential-exists": "a stored credential already has this name; `infrahub-sync credentials set` replaces its value",
-    "credential-fields-invalid": (
+    (_NOT_FOUND, "credential-not-found"): "no stored credential has this name",
+    (
+        _CONFLICT,
+        "credential-exists",
+    ): "a stored credential already has this name; `infrahub-sync credentials set` replaces its value",
+    (_UNPROCESSABLE, "credential-fields-invalid"): (
         "a credential holds a token, a username and a password, or a username and a token; each value is "
         "not empty, is within the length limit of the Sync API and holds no control character"
     ),
-    "credential-key-not-configured": (
-        "INFRAHUB_SYNC_ENCRYPTION_KEY is not set, so the Sync API cannot store a credential value; "
+    (_UNAVAILABLE, "credential-key-not-configured"): (
+        "INFRAHUB_SYNC_ENCRYPTION_KEY is not set in the Sync API, so it cannot store or read a credential value; "
         "the operator of the Sync API sets it"
     ),
 }
@@ -70,6 +80,11 @@ def _support() -> CommandSupport:
         message = "the credential commands are not registered"
         raise RuntimeError(message)
     return support
+
+
+def error_message(status: int, code: str) -> str | None:
+    """Return the fixed text of a refusal of a credential route, or ``None`` for any other refusal."""
+    return CREDENTIAL_ERROR_MESSAGES.get((status, code))
 
 
 def _fail(message: str) -> NoReturn:
@@ -268,4 +283,4 @@ def register(app: typer.Typer, support: CommandSupport) -> None:
     app.add_typer(credentials_app, name="credentials")
 
 
-__all__ = ["CREDENTIAL_ERROR_MESSAGES", "credentials_app", "register"]
+__all__ = ["CREDENTIAL_ERROR_MESSAGES", "credentials_app", "error_message", "register"]

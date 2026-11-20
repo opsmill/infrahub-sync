@@ -13,8 +13,9 @@ import pytest
 from typer.main import get_command
 from typer.testing import CliRunner
 
-from infrahub_sync.cli import app
+from infrahub_sync.cli import _error_fields, app  # noqa: PLC2701 - the error renderer under test is private.
 from infrahub_sync.cli_session import SavedSession, write_session
+from infrahub_sync.client import APIError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -257,6 +258,24 @@ def test_a_name_that_no_credential_can_have_is_refused_before_the_value_is_asked
     assert sync_api.routes == []
 
 
+def test_the_fixed_text_of_a_credential_route_is_not_printed_for_the_same_code_at_the_start_of_a_run() -> None:
+    # `plan`, `sync`, `apply`, `verify`, `approve` and `runs resume` answer `422 credential-not-found`
+    # when a configuration names a credential that does not exist: no name was typed.
+    _label, at_run_start = _error_fields(APIError(422, "credential-not-found"))
+    _label, at_credential_route = _error_fields(APIError(404, "credential-not-found"))
+
+    assert "message" not in dict(at_run_start)
+    assert dict(at_credential_route)["message"] == "no stored credential has this name"
+
+
+def test_the_text_of_a_missing_encryption_key_holds_for_a_change_and_for_the_start_of_a_run() -> None:
+    _label, fields = _error_fields(APIError(503, "credential-key-not-configured"))
+
+    message = str(dict(fields)["message"])
+    assert "INFRAHUB_SYNC_ENCRYPTION_KEY is not set in the Sync API" in message
+    assert "store or read" in message
+
+
 # --- create --------------------------------------------------------------------------------
 
 # The options, the label of the prompt when the value comes from a prompt, and the fields sent.
@@ -398,7 +417,13 @@ def test_a_refused_creation_exits_1_and_prints_no_text_of_the_answer(
 def test_a_sync_api_that_does_not_answer_exits_1_without_the_value(
     sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def refuse(_self: object, request: httpx.Request) -> httpx.Response:
+    answer_one_route = type(sync_api).__call__
+
+    def refuse(self: FakeSyncAPI, request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            # The version check passes, so the request that carries the value is the one that fails.
+            return answer_one_route(self, request)
+        self.requests.append(request)
         message = f"connection refused while sending {MARKER}"
         raise httpx.ConnectError(message, request=request)
 
@@ -408,6 +433,8 @@ def test_a_sync_api_that_does_not_answer_exits_1_without_the_value(
 
     assert result.exit_code == 1
     assert "error: transport" in result.stderr
+    assert sync_api.routes == ["POST /credentials"]
+    assert _digests(_body(sync_api))["token"] == MARKER_DIGEST
     _assert_no_value(result)
 
 

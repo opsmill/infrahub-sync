@@ -400,8 +400,8 @@ def _account_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
     """Return the fixed message of a refusal of an account or credential route, as one more error field."""
     if not isinstance(error, APIError) or isinstance(error, ConfigsAPIError):
         return ()
-    message = cli_accounts.ACCOUNT_ERROR_MESSAGES.get(error.code) or cli_credentials.CREDENTIAL_ERROR_MESSAGES.get(
-        error.code
+    message = cli_accounts.ACCOUNT_ERROR_MESSAGES.get(error.code) or cli_credentials.error_message(
+        error.status, error.code
     )
     return () if message is None else (("message", message),)
 
