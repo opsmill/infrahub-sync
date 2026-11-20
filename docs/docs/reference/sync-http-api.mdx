@@ -907,6 +907,26 @@ that the event does not use is `null`, and an event that records no fact has `de
 | `branch`, `proposed_change_id` | The branch and the proposed change of a run with branch review. | The events of a proposed change. |
 | `replaced_run_id` | The earlier run whose proposed change or branch was replaced. | `infrahub_sync.schedule.proposed_change_replaced`. |
 | `cause` | A refusal code or a failure class, never text from Infrahub. | `start_failed` and `proposed_change_failed`. |
+| `changes` | The settings whose stored value the change altered: one `{field, before, after}` entry per setting, described below. | `infrahub_sync.schedule.changed`. An event recorded before this key existed has `changes: null`. |
+
+Each entry of `changes` names a setting by its field of `POST /schedules/{schedule_id}/change`
+(`registry_version`, `cron`, `timezone`, `write_target`, `write_when_left_out`, `overlap_policy` or
+`start_late_by_at_most_seconds`) and holds its stored value before and after the change: a version
+number, a cron expression, a time zone name, a write target, `true` or `false`, an overlap policy,
+or a number of seconds. The entries follow the order of that list. A setting that the request sent
+with the value it already had is not listed, and a setting that the change altered without the
+request naming it is listed: a change to `branch-review` turns `write_when_left_out` off. When no
+stored value changed, `changes` is an empty list. The event is saved in the same transaction as the
+changed schedule:
+
+```json
+"details": {
+  "changes": [
+    {"field": "registry_version", "before": 2, "after": 3},
+    {"field": "start_late_by_at_most_seconds", "before": 1800, "after": 2700}
+  ]
+}
+```
 
 The event types are:
 

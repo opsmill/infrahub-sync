@@ -409,6 +409,10 @@ field before you save. When the preview cannot be read, you can still save.
 The **History** section lists the events of the schedule, newest first, 50 at a time: each event's
 time, what happened, the account that acted, the reason when one was given, and a link to the run
 it names. It shows the schedule's own events, including skipped and missed starts and stops.
+A **Settings changed** entry lists each setting that the change altered, with its value before and
+after, for example "Version 2 → 3" or "Start late by at most: 30 minutes → 45 minutes". A setting
+sent with the value it already had is not listed. A change saved before Infrahub Sync recorded the
+changed settings reads **Settings changed** only.
 **Show all events** adds the events of the schedule's runs and the requests repeated with the same
 `Idempotency-Key`. **Load older events** reads the next 50 events and does not show an event twice
 when new events are recorded meanwhile.

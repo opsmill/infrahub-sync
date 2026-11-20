@@ -152,12 +152,12 @@ Each entry of the "History" section is one `EventResource`.
 | `actor` | Account name, as returned (FR-007). |
 | `reason` | Quoted, when not empty. |
 | `related` entry of kind `run` | Link "View run". |
-| `details` | Only `start_at` ("for the start at <time>"), `cause` (start and proposed change failures), `left_out`, and, for a grouped missed-start event, `starts`, `first_start_at`, `last_start_at`. |
+| `details` | Only `start_at` ("for the start at <time>"), `cause` (start and proposed change failures), `left_out`, for a grouped missed-start event, `starts`, `first_start_at`, `last_start_at`, and, for a change, `changes` (see "Changed settings"). |
 
 | `event_type` | `outcome` | Text |
 | --- | --- | --- |
 | `infrahub_sync.schedule.created` | any | "Schedule created" |
-| `infrahub_sync.schedule.changed` | any | "Settings changed" |
+| `infrahub_sync.schedule.changed` | any | "Settings changed", and one line per entry of `details.changes` (see "Changed settings") |
 | `infrahub_sync.schedule.paused` | any | "Paused" |
 | `infrahub_sync.schedule.resumed` | any | "Resumed" |
 | `infrahub_sync.schedule.deleted` | any | "Deleted" |
@@ -200,3 +200,27 @@ A missed-start event that groups more than 500 starts reads "N starts missed bet
 
 Every other refusal is shown above the form's actions with its title and detail, as the other
 forms of the interface show refusals.
+
+### Changed settings
+
+Added 2026-11-20 (T056). The `infrahub_sync.schedule.changed` event holds `details.changes`: one
+`{field, before, after}` entry for each stored setting whose value the change altered, in the order
+of the change request's fields, saved in the transaction that stores the changed schedule. `field`
+is a field of `POST /schedules/{schedule_id}/change`; `before` and `after` are the stored values. A
+setting sent with its stored value is not listed; `write_when_left_out` turned off by a change to
+branch review is listed. The full description is in the
+[Sync HTTP API reference](../../../docs/docs/reference/sync-http-api.mdx).
+
+| `field` | Line in the history |
+| --- | --- |
+| `registry_version` | "Version 2 → 3" |
+| `cron` | "Cadence: every day at 06:30 → every day at 02:00": the words of the settings section, starting in lower case, without the note on months that lack the day; the expression itself when it has no words |
+| `timezone` | "Time zone: Europe/Paris → UTC" |
+| `write_target` | "Write target: branch review → default branch" |
+| `write_when_left_out` | "Records left out: not written → written" |
+| `overlap_policy` | "When a run is in progress: skip the start → wait for it" |
+| `start_late_by_at_most_seconds` | "Start late by at most: 30 minutes → 45 minutes" |
+| another field, or a value of another type | "<field>: <before> → <after>", as returned |
+
+An empty list shows "No setting changed: each value sent was already set". An event without
+`details.changes`, recorded before this key existed, reads "Settings changed" only.
