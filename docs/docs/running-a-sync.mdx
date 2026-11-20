@@ -64,8 +64,7 @@ accept fails with an authentication error.
 In the commands below, replace `CONFIG_ID`, `RUN_ID`, and `CHECKSUM` with the values that
 the previous command printed, and `BRANCH` with the destination branch. Wherever a command
 takes `CONFIG_ID`, you can give the configuration's name instead. The CLI tries the value as
-an identifier first, then as a name. When several configurations share the name, the command
-exits with status 2 and lists their identifiers; use one of them.
+an identifier first, then as a name. A name belongs to one configuration only.
 
 ## Register the package
 
@@ -74,7 +73,9 @@ infrahub-sync configs register package.yml --reason "register inventory import"
 ```
 
 The output includes the `config_id` and the `registry_version`, which is `1` for a new
-registration. Every later command names the package by these two values. The file itself is
+registration. If another configuration already has the name in the package, the command is
+refused with `code: configuration-name-in-use` and prints the `configs version` command that
+adds the package to that configuration instead. Every later command names the package by these two values. The file itself is
 not read again. For what registration checks and returns, see
 [Configuration package](./configuration-package.mdx#registration-and-versions).
 

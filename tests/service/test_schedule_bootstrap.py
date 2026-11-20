@@ -212,6 +212,34 @@ def test_a_product_database_of_an_earlier_build_is_reported_with_its_own_failure
     assert steps == ["deployment"]
 
 
+def test_configurations_that_share_a_name_are_reported_with_the_names_and_what_to_do(
+    api: ScheduleApi, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An earlier build let configurations share a name; start-up names them and changes nothing."""
+    steps = _bootstrap(api, monkeypatch)
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    local_product_projection(earlier)
+    with sqlite3.connect(earlier / "product-records.sqlite3") as connection:
+        connection.execute("DROP INDEX configurations_name_unique")
+        for config_id in ("config-a", "config-b"):
+            connection.execute(
+                "INSERT INTO configurations (config_id, created_at, name) VALUES (?, ?, 'from-netbox')",
+                (config_id, "2026-11-20T00:00:00+00:00"),
+            )
+        connection.commit()
+    monkeypatch.setattr(bootstrap, "service_product_projection", lambda: local_product_projection(earlier))
+
+    with caplog.at_level("ERROR"):
+        result = bootstrap.main()
+
+    assert result == 1
+    assert "refused: product-database-from-earlier-build" in caplog.text
+    assert "'from-netbox' (config-a, config-b)" in caplog.text
+    assert "register a new version with another name" in caplog.text
+    assert steps == ["deployment"]
+
+
 def test_another_product_store_failure_keeps_the_product_store_failure_code(
     api: ScheduleApi, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

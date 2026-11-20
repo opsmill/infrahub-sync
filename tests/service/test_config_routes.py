@@ -38,6 +38,7 @@ from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import Principal, Resolution
 from infrahub_sync.service.config_routes import ConfigurationAPIError, ConfigurationRoutes
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
+from infrahub_sync.service.paging import timestamp_cursor
 from infrahub_sync.service.serve import build_app
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from tests.configuration.validation_packages import package, package_data
@@ -307,7 +308,8 @@ def test_every_configuration_storage_boundary_has_a_value_free_http_family(
             "reader": {"token": reader_token, "administrator": False},
         },
     ).resolver
-    version = delegate.create_configuration(package())
+    # Another name than the package each request registers, which is unique among configurations.
+    version = delegate.create_configuration(package(name="registered-before"))
     dsn_canary = "postgresql://dsn-secret-canary@db/sync"
     driver_canary = "driver-secret-canary"
 
@@ -1374,16 +1376,15 @@ def test_configuration_list_is_a_page_newest_first_with_name_and_latest_version(
     }
 
 
-def test_name_filter_returns_every_configuration_that_shares_the_name(tmp_path: Path) -> None:
+def test_name_filter_returns_the_configuration_with_the_name(tmp_path: Path) -> None:
     client, _projection = _discovery_client(tmp_path)
-    first = _register(client, _named_package("shared-name"), "register-first")
-    second = _register(client, _named_package("shared-name"), "register-second")
+    named = _register(client, _named_package("named"), "register-named")
     _register(client, _named_package("other-name"), "register-other")
 
-    response = client.get("/configs", params={"name": "shared-name"})
+    response = client.get("/configs", params={"name": "named"})
 
     assert response.status_code == 200
-    assert {item["config_id"] for item in response.json()["items"]} == {first, second}
+    assert [item["config_id"] for item in response.json()["items"]] == [named]
 
 
 def test_configuration_summary_includes_name_and_latest_version(tmp_path: Path) -> None:
@@ -1509,14 +1510,16 @@ def test_a_cursor_is_refused_by_another_filter_configuration_or_list(tmp_path: P
     """A cursor is bound to its list and its filters, even when both lists are unfiltered."""
     client, projection = _discovery_client(tmp_path)
     alpha = _register(client, _named_package("alpha"), "register-alpha-1")
-    _register(client, _named_package("alpha", "https://alpha-2.netbox.test"), "register-alpha-2")
     beta = _register(client, _named_package("beta"), "register-beta-1")
-    _register(client, _named_package("beta", "https://beta-2.netbox.test"), "register-beta-2")
     _add_version(client, alpha, _named_package("alpha", "https://alpha-v2.netbox.test"), "alpha-version-2")
     for index in range(2):
         projection.create_run(_bound_run(f"bound-run-{index:03d}", index, alpha, 1, "accepted"))
 
-    name_cursor = client.get("/configs", params={"name": "alpha", "limit": 1}).json()["next_cursor"]
+    # A name is unique, so a name filter returns one page; the cursor is the one it would issue.
+    alpha_created = client.get(f"/configs/{alpha}").json()["created_at"]
+    name_cursor = timestamp_cursor(
+        datetime.fromisoformat(alpha_created.replace("Z", "+00:00")), alpha, {"list": "configs", "name": "alpha"}
+    )
     version_cursor = client.get(f"/configs/{alpha}/versions", params={"limit": 1}).json()["next_cursor"]
     configs_cursor = client.get("/configs", params={"limit": 1}).json()["next_cursor"]
     runs_cursor = client.get("/runs", params={"limit": 1}).json()["next_cursor"]
@@ -2411,3 +2414,101 @@ def test_a_document_with_a_lone_surrogate_is_an_invalid_package_on_every_route(t
     assert response.status_code == 400, response.text
     error = response.json()["error"]
     assert (error["family"], error["reason"]) == ("request", "invalid_package")
+
+
+# --- A name is unique among configurations ------------------------------------------------------
+
+
+def _name_in_use_body(config_id: str, name: str = "from-netbox") -> dict[str, object]:
+    return {
+        "code": "configuration-name-in-use",
+        "message": (
+            f"A configuration named '{name}' already exists ({config_id}). Did you mean to add a new version "
+            "of it? Register the package as a new version of that configuration."
+        ),
+        "status": 409,
+        "run_id": None,
+        "mutation_id": None,
+        "details": {"config_id": config_id, "name": name},
+    }
+
+
+def test_registering_a_name_another_configuration_has_is_refused_with_that_configuration(tmp_path: Path) -> None:
+    client, projection = _discovery_client(tmp_path)
+    existing = _register(client, package_data(), "register-first")
+    body = {"package": _named_package("from-netbox", "https://second.netbox.test"), "reason": "second"}
+
+    refused = client.post("/configs", headers={"Idempotency-Key": "register-second"}, json=body)
+    # The refusal stores nothing, so the same request with the same key is decided again.
+    again = client.post("/configs", headers={"Idempotency-Key": "register-second"}, json=body)
+
+    for response in (refused, again):
+        assert response.status_code == 409, response.text
+        assert response.json()["error"] == _name_in_use_body(existing)
+    assert [summary.config_id for summary in projection.list_configurations()] == [existing]
+    refusals = [event for event in projection.audit_events() if event.outcome.startswith("refused-")]
+    assert [(event.event_type, event.outcome) for event in refusals] == [
+        ("infrahub_sync.config.refused", "refused-configuration-name-in-use")
+    ] * 2
+
+
+def test_a_new_version_with_the_name_of_another_configuration_is_refused(tmp_path: Path) -> None:
+    client, projection = _discovery_client(tmp_path)
+    existing = _register(client, package_data(), "register-first")
+    other = _register(client, _named_package("other-inventory"), "register-other")
+
+    response = client.post(
+        f"/configs/{other}/versions",
+        headers={"Idempotency-Key": "version-taking-the-name"},
+        json={"package": _named_package("from-netbox", "https://second.netbox.test"), "reason": "rename"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == _name_in_use_body(existing)
+    assert [version.registry_version for version in projection.list_configuration_versions(other)] == [1]
+
+
+def test_a_new_version_may_keep_its_name_or_take_a_free_one(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
+    config_id = _register(client, package_data(), "register-first")
+
+    _add_version(client, config_id, _named_package("from-netbox", "https://second.netbox.test"), "same-name")
+    _add_version(client, config_id, _named_package("renamed-inventory", "https://second.netbox.test"), "rename")
+    # The name it gave up is free for another configuration.
+    other = _register(client, package_data(), "register-the-free-name")
+
+    assert client.get(f"/configs/{config_id}").json()["name"] == "renamed-inventory"
+    assert client.get(f"/configs/{other}").json()["name"] == "from-netbox"
+
+
+def test_configurations_without_a_name_are_not_refused(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
+
+    first = _register(client, _named_package(""), "register-unnamed-1")
+    second = _register(client, _named_package("", "https://second.netbox.test"), "register-unnamed-2")
+
+    assert first != second
+
+
+def test_a_replayed_registration_keeps_its_stored_answer_after_the_name_is_taken(tmp_path: Path) -> None:
+    """The stored answer of an accepted request is replayed; the name check does not run again."""
+    client, _projection = _discovery_client(tmp_path)
+    body = {"package": package_data(), "reason": "register"}
+
+    first = client.post("/configs", headers={"Idempotency-Key": "register-once"}, json=body)
+    replay = client.post("/configs", headers={"Idempotency-Key": "register-once"}, json=body)
+
+    assert (first.status_code, replay.status_code) == (201, 201), replay.text
+    assert replay.json() == first.json()
+
+
+def test_the_registration_routes_declare_the_conflict_refusal(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
+    paths = client.get("/openapi.json").json()["paths"]
+
+    for path in ("/configs", "/configs/{config_id}/versions"):
+        responses = paths[path]["post"]["responses"]
+        assert {"401", "403", "409", "422"} <= set(responses), path
+        assert responses["409"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ErrorEnvelope"
+        }

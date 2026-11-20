@@ -15,6 +15,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from infrahub_sync.client.errors import CONFIGURATION_NAME_IN_USE, configuration_name_in_use_message
 from infrahub_sync.client.models import (
     ConfigurationPage,
     ConfigurationSummaryResource,
@@ -47,7 +48,7 @@ from .events import (
     config_event,
 )
 from .liveness import LivenessPolicy
-from .models import ConfigMutationRequest
+from .models import ConfigMutationRequest, ErrorEnvelope
 from .paging import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -62,6 +63,11 @@ from .paging import (
 from .service import REASON_REFUSED_MESSAGE, ServiceAPIError, is_free_text
 
 CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+# The errors the two registration routes declare: authentication and authorization, a name or an
+# idempotency key in use, and a request that does not match the API schema.
+_MUTATION_ERRORS: dict[int | str, dict[str, Any]] = {
+    status: {"model": ErrorEnvelope} for status in (401, 403, 409, 422)
+}
 # Most findings one validation-report page returns, and the default page size.
 _MAX_VALIDATION_FINDINGS_PAGE = 256
 
@@ -230,11 +236,24 @@ class ConfigurationRoutes:
         )
 
     def _call(self, operation: Any, **kwargs: Any) -> Any:
-        """Translate configuration service refusals into fixed API classifications."""
+        """Translate configuration service refusals into fixed API classifications.
+
+        Raises:
+            ServiceAPIError: ``409 configuration-name-in-use`` when another configuration has
+                the name of the package; ``details`` names that configuration.
+        """
         try:
             return operation(projection=self._projection, **kwargs)
         except self._service.ConfigsError as error:
             error_type = type(error)
+            if error_type is configs.ConfigsNameInUseError:
+                raise ServiceAPIError(
+                    409,
+                    CONFIGURATION_NAME_IN_USE,
+                    configuration_name_in_use_message(error.name, error.config_id),
+                    details={"config_id": error.config_id, "name": error.name},
+                    secrets=self._secrets,
+                ) from None
             if error_type is self._service.ConfigsRequestError:
                 raise ConfigurationAPIError(400, "request", proven_pre_effect=True) from None
             if error_type is self._service.ConfigsValidationError:
@@ -545,6 +564,12 @@ class ConfigurationRoutes:
                 projection.release_mutation(stored.receipt_id, secrets=self._secrets)
             self._audit(actor, operation, reason, "unavailable", *_configuration_of(receipt, None))
             raise
+        except ServiceAPIError as error:
+            # A name in use is refused before anything is stored, so the same key can be sent
+            # again, for example after the package is renamed.
+            projection.release_mutation(stored.receipt_id, secrets=self._secrets)
+            self._audit(actor, operation, reason, f"refused-{error.code}", *_configuration_of(receipt, None))
+            raise
         response = jsonable_encoder(result)
         config_id, registry_version = _configuration_of(receipt, response)
         completed = projection.complete_mutation(
@@ -649,7 +674,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     page_limit = Query()
     branch_parameter = Query()
 
-    @router.post("/configs", status_code=201)
+    @router.post("/configs", status_code=201, responses=_MUTATION_ERRORS)
     def register(
         body: ConfigMutationRequest,
         principal: Annotated[Principal, Depends(authenticate)],
@@ -702,7 +727,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
             branch=parse_branch(branch),
         )
 
-    @router.post("/configs/{config_id}/versions", status_code=201)
+    @router.post("/configs/{config_id}/versions", status_code=201, responses=_MUTATION_ERRORS)
     def create_version(
         config_id: Annotated[str, config_id_parameter],
         body: ConfigMutationRequest,

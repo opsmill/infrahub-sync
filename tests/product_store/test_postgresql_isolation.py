@@ -223,14 +223,19 @@ _RUN_DISCOVERY_INDEXES = {
     "product_runs_config_started": "(config_id, started_at, run_id)",
     "product_runs_binding_started": "(config_id, registry_version, started_at, run_id)",
     "product_runs_binding_applied": "(config_id, registry_version, finished_at, run_id) WHERE (phase = 'applied'::text)",
-    "configurations_name": "(name)",
+    "configurations_name_unique": "(name)",
     "configurations_created": "(created_at, config_id)",
     "product_runs_schedule_started": "(schedule_id, started_at, run_id)",
     "product_runs_schedule_start": "(schedule_id, scheduled_start_at)",
     "schedules_name_not_deleted": "(name) WHERE (state <> 'deleted'::text)",
     "schedules_config_not_deleted": "(config_id) WHERE (state <> 'deleted'::text)",
 }
-_UNIQUE_SCHEDULE_INDEXES = ("product_runs_schedule_start", "schedules_name_not_deleted", "schedules_config_not_deleted")
+_UNIQUE_INDEXES = (
+    "product_runs_schedule_start",
+    "schedules_name_not_deleted",
+    "schedules_config_not_deleted",
+    "configurations_name_unique",
+)
 
 
 @pytest.mark.integration
@@ -276,7 +281,7 @@ def test_postgresql_start_up_creates_the_run_discovery_schema_once() -> None:
             assert expected <= columns[table], table
         for index, definition in _RUN_DISCOVERY_INDEXES.items():
             assert indexes[index].endswith(definition), indexes[index]
-        for index in _UNIQUE_SCHEDULE_INDEXES:
+        for index in _UNIQUE_INDEXES:
             assert indexes[index].startswith("CREATE UNIQUE INDEX"), indexes[index]
         assert catalog() == created
     finally:

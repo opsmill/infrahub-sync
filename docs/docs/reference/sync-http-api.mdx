@@ -22,8 +22,9 @@ without `/api`.
 
 ## Terms
 
-- **Configuration**: a registered sync definition, identified by `config_id`. Its `name` is
-  readable but not unique.
+- **Configuration**: a registered sync definition, identified by `config_id`. Its `name` is the
+  name in its newest version, and no other configuration has it. A configuration without a name
+  has `name: null`.
 - **Configuration version**: one immutable registered revision of a configuration,
   identified by `config_id` and `registry_version`.
 - **Run**: one attempt to synchronize one configuration version to one branch, identified by
@@ -593,8 +594,8 @@ returned unchanged.
 
 | Route | Behavior |
 | --- | --- |
-| `POST /configs` | Register a new configuration package as version 1. Administrator only. The body holds exactly one of `package`, a JSON object, or `document`, the text of a YAML or JSON file, which the service parses and refuses as `POST /configs/validate` does: 400 `request` with the reason `invalid_package`, or 422 `validation` with the reason `v2_configuration`. Both or neither gets 400 `request`. The CLI sends `package`; the web interface sends `document`, so the stored package and its checksum are those of the file that was checked. For idempotency, a `document` is compared as text, and it differs from any `package`. The response names the version by `config_id`, `registry_version`, `package_checksum`, `created_at` and `registered_without_validation`, without its package content. |
-| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The body holds `package` or `document` as for `POST /configs`. The response names the version as `POST /configs` does, without its package content. |
+| `POST /configs` | Register a new configuration package as version 1. Administrator only. The body holds exactly one of `package`, a JSON object, or `document`, the text of a YAML or JSON file, which the service parses and refuses as `POST /configs/validate` does: 400 `request` with the reason `invalid_package`, or 422 `validation` with the reason `v2_configuration`. Both or neither gets 400 `request`. The CLI sends `package`; the web interface sends `document`, so the stored package and its checksum are those of the file that was checked. For idempotency, a `document` is compared as text, and it differs from any `package`. The response names the version by `config_id`, `registry_version`, `package_checksum`, `created_at` and `registered_without_validation`, without its package content. Refused with `409 configuration-name-in-use` when another configuration already has the name of the package. |
+| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The body holds `package` or `document` as for `POST /configs`. The response names the version as `POST /configs` does, without its package content. A new version can keep the configuration's name or rename it, and is refused with `409 configuration-name-in-use` when another configuration already has its name. |
 | `GET /me` | Return the actor that the bearer token authenticates as, its administrator flag, and whether the service requires approval. |
 | `GET /configs` | List registered configurations, newest first, one page at a time. Filter by exact `name`. |
 | `GET /configs/{config_id}` | Return one registered configuration's summary, with its `name` and `latest_version`. |
@@ -632,8 +633,7 @@ returned unchanged.
 
 A configuration value in the CLI can be a `config_id` or a configuration name. The CLI reads
 `GET /configs/{config_id}` first and, when no configuration has that identifier, looks the
-value up as a name. When several configurations share the name, the CLI exits with status 2 and
-lists their identifiers.
+value up as a name. A name belongs to one configuration only.
 
 | CLI command | API action |
 | --- | --- |
@@ -1652,14 +1652,15 @@ Every error uses the same envelope:
 ```
 
 A refusal that has structured context also carries `details`, such as the existing approval
-of `already-approved`. Other errors have no `details` field.
+of `already-approved`, or the `config_id` and `name` of the configuration that already has the
+name of a package in `configuration-name-in-use`. Other errors have no `details` field.
 
 | Status | Meaning |
 | --- | --- |
 | `401` | Missing or invalid authentication. |
 | `403` | The actor does not own the mutation or the schedule and is not an administrator. |
 | `404` | The Sync run, schedule (`schedule-not-found`) or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
-| `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). For approval: a run that cannot be approved (`run-not-approvable`), a plan whose checksum is unconfirmed (`plan-checksum-unverified`), a checksum that differs from the plan's (`checksum-mismatch`), or a second approval (`already-approved`). When the service requires approval: an apply without an approval (`approval-required`) or with a different checksum (`approval-checksum-mismatch`), or a `sync` (`approval-required-for-sync`). For a cancelled run: an `approve` or `apply` (`run-cancelled`), or a second cancel (`run-already-cancelled`). A verify, apply or resume of a scheduled run with branch review (`scheduled-run-not-appliable`). The refusals of a schedule request are listed in [Schedules](#schedules). |
+| `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). For a registration or a new version: a package whose name another configuration already has (`configuration-name-in-use`). For approval: a run that cannot be approved (`run-not-approvable`), a plan whose checksum is unconfirmed (`plan-checksum-unverified`), a checksum that differs from the plan's (`checksum-mismatch`), or a second approval (`already-approved`). When the service requires approval: an apply without an approval (`approval-required`) or with a different checksum (`approval-checksum-mismatch`), or a `sync` (`approval-required-for-sync`). For a cancelled run: an `approve` or `apply` (`run-cancelled`), or a second cancel (`run-already-cancelled`). A verify, apply or resume of a scheduled run with branch review (`scheduled-run-not-appliable`). The refusals of a schedule request are listed in [Schedules](#schedules). |
 | `410` | The retained plan or artifact has expired, or the orchestrator no longer holds a flow run whose log `GET /runs/{run_id}/logs` reads (`log-expired`). |
 | `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved, or the orchestrator cannot be reached to read a run's log (`log-unavailable`). For the account routes: a password check or hash that waited more than 5 seconds for a place, or for another check of the same account name (`sign-in-busy`). |

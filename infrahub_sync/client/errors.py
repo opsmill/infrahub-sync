@@ -62,6 +62,19 @@ class NotSyncAPIError(SyncClientError):
         super().__init__("the address did not answer as a Sync API")
 
 
+# The refusal of a package whose name another configuration already has. The Sync API and the
+# CLI write the same message: the CLI rebuilds it from the refusal's ``details``.
+CONFIGURATION_NAME_IN_USE = "configuration-name-in-use"
+
+
+def configuration_name_in_use_message(name: str, config_id: str) -> str:
+    """Return the message of a ``configuration-name-in-use`` refusal."""
+    return (
+        f"A configuration named {name!r} already exists ({config_id}). Did you mean to add a new version "
+        "of it? Register the package as a new version of that configuration."
+    )
+
+
 class APIError(SyncClientError):
     """Expose safe machine fields from a general API refusal."""
 
@@ -73,6 +86,7 @@ class APIError(SyncClientError):
         run_id: str | None = None,
         mutation_id: str | None = None,
         left_out: int | None = None,
+        details: dict[str, object] | None = None,
     ) -> None:
         self.status = status
         self.code = code
@@ -80,6 +94,9 @@ class APIError(SyncClientError):
         self.mutation_id = mutation_id
         # Set on a `left-out-confirmation-required` refusal: the count the plan leaves out.
         self.left_out = left_out
+        # The structured context of a refusal, such as the configuration that already has the
+        # name of a package on `configuration-name-in-use`. Absent from most refusals.
+        self.details = details
         super().__init__("the Sync API refused the request")
 
 

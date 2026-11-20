@@ -29,6 +29,7 @@ from infrahub_sync.product_store import (
     ArtifactReference,
     ArtifactUnavailableError,
     AuditEvent,
+    ConfigurationNameInUseError,
     ConfigurationNotFoundError,
     ConfigurationSummary,
     ConfigurationVersion,
@@ -36,6 +37,7 @@ from infrahub_sync.product_store import (
     DBAPIConnection,
     DuplicateArtifactError,
     DuplicateConfigurationError,
+    DuplicateConfigurationNamesError,
     DuplicatePrefectExecutionError,
     DuplicateRunError,
     EarlierProductDatabaseError,
@@ -90,6 +92,7 @@ EXPECTED_PUBLIC_NAMES = {
     "BranchReviewKept",
     "BranchReviewOutcome",
     "ConfigurationBaseline",
+    "ConfigurationNameInUseError",
     "ConfigurationNotFoundError",
     "ConfigurationPage",
     "ConfigurationSummary",
@@ -100,6 +103,7 @@ EXPECTED_PUBLIC_NAMES = {
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicateConfigurationError",
+    "DuplicateConfigurationNamesError",
     "DuplicateCredentialError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
@@ -628,6 +632,19 @@ def _configuration_declaration(**settings_overrides: object) -> dict[str, Any]:
 
 def _configuration_package(**settings_overrides: object) -> ConfigurationPackage:
     return ConfigurationPackage.model_validate(_configuration_declaration(**settings_overrides))
+
+
+def _configuration_name(provider: ProductProjection, config_id: str) -> str | None:
+    summary = provider.lookup_configuration(config_id).value
+    assert summary is not None
+    return summary.name
+
+
+def _named_configuration_package(name: str, **settings_overrides: object) -> ConfigurationPackage:
+    """Return the package with another name: a name is unique among configurations."""
+    declaration = _configuration_declaration(**settings_overrides)
+    declaration["configuration"]["name"] = name
+    return ConfigurationPackage.model_validate(declaration)
 
 
 def test_public_surface_is_exactly_the_supported_contract() -> None:
@@ -3812,8 +3829,8 @@ def test_list_configurations_orders_by_created_at_then_config_id_on_sqlite_and_e
     clock = iter([created_at for _, created_at in registrations])
     monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: next(ids))
     monkeypatch.setattr(product_store_store, "datetime", SimpleNamespace(now=lambda tz: next(clock)))  # noqa: ARG005
-    for _ in registrations:
-        provider.create_configuration(_configuration_package())
+    for config_id, _ in registrations:
+        provider.create_configuration(_named_configuration_package(config_id))
 
     listed = provider.list_configurations()
 
@@ -3821,27 +3838,29 @@ def test_list_configurations_orders_by_created_at_then_config_id_on_sqlite_and_e
         ConfigurationSummary(
             config_id="config-z",
             created_at=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc),
-            name=_configuration_package().configuration.name,
+            name="config-z",
             latest_version=1,
         ),
         ConfigurationSummary(
             config_id="config-a",
             created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc),
-            name=_configuration_package().configuration.name,
+            name="config-a",
             latest_version=1,
         ),
         ConfigurationSummary(
             config_id="config-b",
             created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc),
-            name=_configuration_package().configuration.name,
+            name="config-b",
             latest_version=1,
         ),
     )
     assert provider.list_configurations() == listed
 
 
-def test_distinct_configurations_may_share_identical_package_content(provider: ProductProjection) -> None:
-    package = _configuration_package()
+def test_distinct_configurations_without_a_name_may_share_identical_package_content(
+    provider: ProductProjection,
+) -> None:
+    package = _named_configuration_package("")
 
     first = provider.create_configuration(package)
     second = provider.create_configuration(package)
@@ -3849,6 +3868,134 @@ def test_distinct_configurations_may_share_identical_package_content(provider: P
     assert first.config_id != second.config_id
     assert first.package_checksum == second.package_checksum
     assert first.registry_version == second.registry_version == 1
+    assert _configuration_name(provider, first.config_id) is None
+    assert _configuration_name(provider, second.config_id) is None
+
+
+def test_registering_a_name_another_configuration_has_is_refused_and_stores_nothing(
+    provider: ProductProjection,
+) -> None:
+    first = provider.create_configuration(_configuration_package())
+
+    with pytest.raises(ConfigurationNameInUseError) as refusal:
+        provider.create_configuration(_configuration_package(verify_ssl=False))
+
+    assert (refusal.value.config_id, refusal.value.name) == (first.config_id, "from-netbox")
+    assert [summary.config_id for summary in provider.list_configurations()] == [first.config_id]
+
+
+def test_a_new_version_with_the_name_of_another_configuration_is_refused_and_stores_nothing(
+    provider: ProductProjection,
+) -> None:
+    first = provider.create_configuration(_configuration_package())
+    other = provider.create_configuration(_named_configuration_package("other-inventory"))
+
+    with pytest.raises(ConfigurationNameInUseError) as refusal:
+        provider.add_configuration_version(other.config_id, _configuration_package(verify_ssl=False))
+
+    assert (refusal.value.config_id, refusal.value.name) == (first.config_id, "from-netbox")
+    assert provider.list_configuration_versions(other.config_id) == (other,)
+    assert _configuration_name(provider, other.config_id) == "other-inventory"
+
+
+def test_a_new_version_may_keep_its_name_or_take_a_free_one(provider: ProductProjection) -> None:
+    first = provider.create_configuration(_configuration_package())
+
+    kept, _ = provider.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
+    renamed, _ = provider.add_configuration_version(
+        first.config_id, _named_configuration_package("renamed-inventory", verify_ssl=False)
+    )
+    # The name the configuration gave up is free for another configuration.
+    second = provider.create_configuration(_configuration_package(url="https://second.netbox.test"))
+
+    assert (kept.registry_version, renamed.registry_version) == (2, 3)
+    assert _configuration_name(provider, first.config_id) == "renamed-inventory"
+    assert _configuration_name(provider, second.config_id) == "from-netbox"
+
+
+def test_a_known_checksum_returns_its_version_even_when_another_configuration_has_its_name(
+    provider: ProductProjection,
+) -> None:
+    first = provider.create_configuration(_configuration_package())
+    provider.add_configuration_version(first.config_id, _named_configuration_package("renamed-inventory"))
+    provider.create_configuration(_configuration_package(url="https://second.netbox.test"))
+
+    replay, created = provider.add_configuration_version(first.config_id, _configuration_package())
+
+    assert (replay, created) == (first, False)
+    assert _configuration_name(provider, first.config_id) == "renamed-inventory"
+
+
+@pytest.mark.parametrize("operation", ["register", "version"])
+def test_the_unique_index_refuses_a_name_that_passed_the_check_and_names_the_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """Two registrations can both pass the check; the index refuses the second with the same error."""
+    store = SQLiteRunStore(tmp_path / "records.sqlite3")
+    first = store.create_configuration(_configuration_package())
+    other = store.create_configuration(_named_configuration_package("other-inventory"))
+    checks: list[str] = []
+    original = SQLiteRunStore._refuse_configuration_name_in_use
+
+    def skip_the_first_check(self: SQLiteRunStore, cursor: Any, name: str | None, config_id: str) -> None:  # noqa: ANN401
+        checks.append(config_id)
+        if len(checks) > 1:
+            original(self, cursor, name, config_id)
+
+    monkeypatch.setattr(SQLiteRunStore, "_refuse_configuration_name_in_use", skip_the_first_check)
+
+    def write() -> object:
+        if operation == "register":
+            return store.create_configuration(_configuration_package(verify_ssl=False))
+        return store.add_configuration_version(other.config_id, _configuration_package(verify_ssl=False))
+
+    with pytest.raises(ConfigurationNameInUseError) as refusal:
+        write()
+
+    assert refusal.value.config_id == first.config_id
+    assert len(checks) == 2
+
+
+def test_start_up_refuses_a_database_where_configurations_share_a_name(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    store = SQLiteRunStore(database)
+    first = store.create_configuration(_configuration_package())
+    second = store.create_configuration(_named_configuration_package("second-inventory"))
+    store.create_configuration(_named_configuration_package(""))
+    store.create_configuration(_named_configuration_package(""))
+    with sqlite3.connect(database) as connection:
+        # The database of an earlier build: the plain index, and two configurations with one name.
+        connection.execute("DROP INDEX configurations_name_unique")
+        connection.execute("CREATE INDEX configurations_name ON configurations (name)")
+        connection.execute("UPDATE configurations SET name = 'from-netbox' WHERE config_id = ?", (second.config_id,))
+
+    with pytest.raises(DuplicateConfigurationNamesError) as refusal:
+        SQLiteRunStore(database)
+
+    assert refusal.value.duplicates == {"from-netbox": tuple(sorted((first.config_id, second.config_id)))}
+    message = str(refusal.value)
+    assert "'from-netbox'" in message
+    assert first.config_id in message
+    assert second.config_id in message
+    assert "register a new version with another name" in message
+    with sqlite3.connect(database) as connection:
+        indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert "configurations_name_unique" not in indexes
+
+
+def test_start_up_replaces_the_plain_name_index_of_an_earlier_build(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP INDEX configurations_name_unique")
+        connection.execute("CREATE INDEX configurations_name ON configurations (name)")
+
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert "configurations_name_unique" in indexes
+    assert "configurations_name" not in indexes
 
 
 def test_configuration_reads_are_scoped_to_their_own_configuration_with_two_in_one_store(
@@ -3859,11 +4006,14 @@ def test_configuration_reads_are_scoped_to_their_own_configuration_with_two_in_o
     a predicate that also matched every row would be indistinguishable from a correctly scoped
     one until two configurations with overlapping numbers are actually present together.
     """
-    package_a = _configuration_package()
-    package_b = _configuration_package(url="https://demo.netbox.dev/tenant-b")
+    # Without a name, so the two configurations can hold the same package: a name is unique.
+    package_a = _named_configuration_package("")
+    package_b = _named_configuration_package("", url="https://demo.netbox.dev/tenant-b")
     config_a = provider.create_configuration(package_a)
     config_b = provider.create_configuration(package_b)
-    config_a_v2, _ = provider.add_configuration_version(config_a.config_id, _configuration_package(verify_ssl=False))
+    config_a_v2, _ = provider.add_configuration_version(
+        config_a.config_id, _named_configuration_package("", verify_ssl=False)
+    )
     # config_b's second version shares its checksum with config_a's first version -- a checksum
     # that has never been registered under config_b before, so this is a plain new-checksum
     # insert, not yet the dedup path exercised below.
@@ -4126,7 +4276,7 @@ _RUN_DISCOVERY_INDEXES = {
     "product_runs_config_started": ["config_id", "started_at", "run_id"],
     "product_runs_binding_started": ["config_id", "registry_version", "started_at", "run_id"],
     "product_runs_binding_applied": ["config_id", "registry_version", "finished_at", "run_id"],
-    "configurations_name": ["name"],
+    "configurations_name_unique": ["name"],
     "configurations_created": ["created_at", "config_id"],
 }
 
@@ -4187,10 +4337,12 @@ def test_postgresql_start_up_creates_each_run_discovery_index_once_and_alters_no
 
     PostgreSQLRunStore(database.connect)
 
-    index_statements = [statement for statement in database.statements if statement.startswith("CREATE INDEX")]
+    index_statements = [
+        statement for statement in database.statements if statement.startswith(("CREATE INDEX", "CREATE UNIQUE INDEX"))
+    ]
     for index, columns in _RUN_DISCOVERY_INDEXES.items():
-        prefix = f"CREATE INDEX IF NOT EXISTS {index} ON "
-        issued = [statement for statement in index_statements if statement.startswith(prefix)]
+        prefixes = (f"CREATE INDEX IF NOT EXISTS {index} ON ", f"CREATE UNIQUE INDEX IF NOT EXISTS {index} ON ")
+        issued = [statement for statement in index_statements if statement.startswith(prefixes)]
         assert len(issued) == 1, index
         assert f"({', '.join(columns)})" in issued[0], issued[0]
 
@@ -4309,7 +4461,12 @@ class _FakePostgreSQLCursor:
             if table not in database.tables:
                 connection.pending_tables.add(table)
             return ()
-        if operation.startswith(("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")):
+        if operation.startswith(
+            ("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS", "DROP INDEX IF EXISTS")
+        ):
+            return ()
+        if operation.startswith("SELECT name, config_id FROM configurations"):
+            # The start-up check for configurations that share a name: this fake holds none.
             return ()
         if "information_schema." in operation:
             return self._catalog_rows(operation, parameters)
@@ -5064,7 +5221,7 @@ def test_version_page_reads_each_versions_latest_run_and_latest_applied_run(
     config_id = first.config_id
     for url in ("https://second.netbox.test", "https://third.netbox.test"):
         listing_provider.add_configuration_version(config_id, _configuration_package(url=url))
-    other = listing_provider.create_configuration(_configuration_package())
+    other = listing_provider.create_configuration(_named_configuration_package("other-inventory"))
     for run in (
         # Version 1: applied, then planned again later; equal start times break on run_id.
         _phased_run("run-v1-plan", 0, config_id, 1, "planned"),
@@ -5171,8 +5328,9 @@ def test_configuration_page_is_newest_first_filters_by_name_and_continues_after_
     clock = iter([created_at for _, created_at in registrations])
     monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: next(ids))
     monkeypatch.setattr(product_store_store, "datetime", SimpleNamespace(now=lambda tz: next(clock)))  # noqa: ARG005
-    for _ in registrations:
-        listing_provider.create_configuration(_configuration_package())
+    for config_id, _ in registrations:
+        name = "another-name" if config_id == "config-a" else config_id
+        listing_provider.create_configuration(_named_configuration_package(name))
     monkeypatch.undo()
 
     first = listing_provider.list_configuration_page(limit=2)
@@ -5181,9 +5339,11 @@ def test_configuration_page_is_newest_first_filters_by_name_and_continues_after_
 
     assert ([item.config_id for item in first.items], first.has_more) == (["config-c", "config-b"], True)
     assert ([item.config_id for item in rest.items], rest.has_more) == (["config-a"], False)
-    assert {(item.name, item.latest_version) for item in first.items} == {("from-netbox", 1)}
-    assert len(listing_provider.list_configuration_page(name="from-netbox").items) == 3
-    assert listing_provider.list_configuration_page(name="another-name").items == ()
+    assert {(item.name, item.latest_version) for item in first.items} == {("config-c", 1), ("config-b", 1)}
+    assert [item.config_id for item in listing_provider.list_configuration_page(name="another-name").items] == [
+        "config-a"
+    ]
+    assert listing_provider.list_configuration_page(name="from-netbox").items == ()
 
 
 # --- Scheduled runs (spec 021): the new columns, the receipt kind and the earlier database ------

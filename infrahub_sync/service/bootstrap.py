@@ -41,7 +41,11 @@ from prefect.client.schemas.actions import WorkPoolCreate
 from prefect.exceptions import ObjectNotFound
 from prefect.workers.process import ProcessWorker
 
-from infrahub_sync.product_store import DuplicateArtifactError, EarlierProductDatabaseError
+from infrahub_sync.product_store import (
+    DuplicateArtifactError,
+    DuplicateConfigurationNamesError,
+    EarlierProductDatabaseError,
+)
 
 from .compatibility import installed_server_version
 from .deploy import WORK_POOL_ENV
@@ -386,9 +390,10 @@ def _converge() -> None:
     # is the schema step; the projection then writes the bootstrap record.
     try:
         projection = service_product_projection()
-    except EarlierProductDatabaseError as error:
-        # The message names the tables and their missing columns, never a value of the
-        # database, and says that the database must be replaced.
+    except (EarlierProductDatabaseError, DuplicateConfigurationNamesError) as error:
+        # The message names the tables and their missing columns, or the configuration names
+        # and IDs that an earlier build let several configurations share, never another value
+        # of the database, and says what to do.
         logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
         raise BootstrapError(PRODUCT_DATABASE_FROM_EARLIER_BUILD) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
