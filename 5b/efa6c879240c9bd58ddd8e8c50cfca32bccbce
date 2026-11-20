@@ -1,0 +1,26 @@
+dev/specs/025-register-config-web/plan.md
+  s_eefe1fec4652ae::t_26f37d19bd38eb 139-141,143
+dev/specs/025-register-config-web/tasks.md
+  s_eefe1fec4652ae::t_26f37d19bd38eb 125-127,131
+  s_eefe1fec4652ae::t_aff565013e5280 163-165,167
+dev/specs/025-register-config-web/opsmill-implement-report.md
+  s_eefe1fec4652ae::t_aff565013e5280 10-11
+dev/specs/025-register-config-web/spec.md
+  s_eefe1fec4652ae::t_26f37d19bd38eb 95-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5befa6c879240c9bd58ddd8e8c50cfca32bccbce",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
