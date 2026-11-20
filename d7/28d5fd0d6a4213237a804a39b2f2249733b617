@@ -1,0 +1,50 @@
+dev/specs/026-schedules-web-page/design-schedules-list.md
+  s_caab93ebf0934a::t_72516505b8ab02 1-46
+frontend/src/domain/schedule-list.test.ts
+  s_caab93ebf0934a::t_732142bb748dd3 1-209
+  s_caab93ebf0934a::t_90dd05afa7cf50 210-213
+frontend/src/features/schedules/SchedulesPage.tsx
+  s_caab93ebf0934a::t_f1dd5a84939c8e 1-2,5,7,9-29,33-43,45,47-48,59,61,65,67,72-74,77,84,86-108,110-112,114-124,126-143,145-153,156-157,159-164,169-170,191-234,236-292,294-299,301,310,317-318,320,325-329,331-333,336-353,357-363,365-372,374-375,377-383,385
+  s_caab93ebf0934a::t_9c323fa09a26ac 52-57
+frontend/src/features/schedules/use-all-schedules.ts
+  s_caab93ebf0934a::t_a0c20f8ea6fae8 1-18
+frontend/src/routes/schedules.index.tsx
+  s_caab93ebf0934a::t_fa711e238b17b8 4-5,15-19,22,24-28,35-36
+frontend/src/domain/schedule-list.ts
+  s_caab93ebf0934a::t_a4a0bbd16f4a03 1-199
+  s_caab93ebf0934a::t_f7271c6e3237e5 200-205
+frontend/src/features/schedules/ScheduleListParts.tsx
+  s_caab93ebf0934a::t_be9af918f86c3c 1-296
+dev/specs/026-schedules-web-page/contracts/web-pages.md
+  s_caab93ebf0934a::t_346f21d907f330 15-16,19-21,25-27,30-52,56-63
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_c83a7f545e64c0 194
+docs/docs/orchestration.mdx
+  s_caab93ebf0934a::t_1cb63a124f7d6b 276-297
+frontend/README.md
+  s_caab93ebf0934a::t_26f6e2fdce4376 94
+frontend/src/api/queries.ts
+  s_caab93ebf0934a::t_fd42f0c92d82c3 247-249,259
+frontend/src/features/runs/RunsPage.tsx
+  s_caab93ebf0934a::t_8ab21d0df0caae 36,105
+frontend/src/features/schedules/ScheduleLine.tsx
+  s_caab93ebf0934a::t_02d4c820f8905b 13
+frontend/src/features/schedules/SchedulePage.tsx
+  s_caab93ebf0934a::t_9158209256bef8 51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d728d5fd0d6a4213237a804a39b2f2249733b617",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
