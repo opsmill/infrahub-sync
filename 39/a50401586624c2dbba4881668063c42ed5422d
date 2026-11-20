@@ -1,0 +1,31 @@
+tests/adapters/test_webex.py
+  s_7194e763d953d7::t_e8e2a7823fe54d 158
+  s_7194e763d953d7::t_60a933018d0266 18-19,153
+tests/adapters/test_webex_client.py
+  s_7194e763d953d7::t_e8e2a7823fe54d 124
+  s_7194e763d953d7::t_98d3c44e627222 19-20,87,99,111,610,620
+infrahub_sync/adapters/msgraphsync.py
+  s_7194e763d953d7::t_19e0d7fae86ace 763
+infrahub_sync/adapters/webex.py
+  s_7194e763d953d7::t_7bc450c5479204 185
+tests/adapters/msgraphsync_fakes.py
+  s_7194e763d953d7::t_64073dc99c2e4a 326,330
+tests/adapters/test_webex_examples.py
+  s_7194e763d953d7::t_10c5962bb5f6b2 28-29,78,129,142,188,214,243,258,279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "39a50401586624c2dbba4881668063c42ed5422d",
+  "prompts": {},
+  "sessions": {
+    "s_7194e763d953d7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2dcc804-8d36-4407-9e21-780e508ea091",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
