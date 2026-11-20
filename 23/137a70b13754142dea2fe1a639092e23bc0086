@@ -1,0 +1,27 @@
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_36e16c2193bf17 197
+docs/docs/reference/sync-http-api.mdx
+  s_caab93ebf0934a::t_23814d15b4b57c 895-914
+dev/specs/026-schedules-web-page/data-model.md
+  s_caab93ebf0934a::t_23814d15b4b57c 155,160,203-226
+changelog/+schedule-change-history.added.md
+  s_caab93ebf0934a::t_36e16c2193bf17 1
+docs/docs/orchestration.mdx
+  s_caab93ebf0934a::t_23814d15b4b57c 412-415
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "23137a70b13754142dea2fe1a639092e23bc0086",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
