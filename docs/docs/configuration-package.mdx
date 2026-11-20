@@ -172,7 +172,9 @@ for each finding on the page. Findings have the format described in
 For every value other than `not_requested` and `read`, the findings also include a
 `destination-schema-read-failed` finding.
 
-The command exits 1 when an error finding is on the returned page, with or without `--branch`.
+The command exits 1 when any page of findings has an error finding, with or without `--branch`.
+When the printed page has no error finding, the command reads the following pages to find one, and
+names the `--offset` of the page where it is.
 A warning does not change the exit code. `configs validate` exits 1 only for an error finding,
 and only with `--branch`. The output is paged as the output of `configs validate` is; read every page with
 `--offset` to view all findings.

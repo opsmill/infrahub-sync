@@ -93,5 +93,6 @@ list) gains:
 
 `infrahub-sync configs check PACKAGE [--branch BRANCH] [--offset N] [--limit N]` reads the file,
 sends it as `package` to `POST /api/configs/validate`, prints the report in the format of
-`configs validate`, plus `destination_read`, and exits 1 when the returned page has an `error` finding. A `warning`
-finding does not change the exit code (spec decision D-10).
+`configs validate`, plus `destination_read`, and exits 1 when any page has an `error` finding. When the
+printed page has none, it reads the following pages until it finds one or reaches the end, and then names
+the offset to read. A `warning` finding does not change the exit code (spec decision D-10).
