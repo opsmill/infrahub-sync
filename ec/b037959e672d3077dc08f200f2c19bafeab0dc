@@ -1,0 +1,21 @@
+infrahub_sync/cache/incremental.py
+  s_7194e763d953d7::t_7853f53510c5c8 29,33-34
+tests/cache/test_incremental_engine.py
+  s_7194e763d953d7::t_7853f53510c5c8 49,62,107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ecb037959e672d3077dc08f200f2c19bafeab0dc",
+  "prompts": {},
+  "sessions": {
+    "s_7194e763d953d7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2dcc804-8d36-4407-9e21-780e508ea091",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
