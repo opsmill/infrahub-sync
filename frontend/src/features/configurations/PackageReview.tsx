@@ -47,6 +47,7 @@ import {
   NEW_CONFIGURATION_TITLE,
   REASON_MAX_LENGTH,
   REVIEW_FINDINGS_LIMIT,
+  readFailureHint,
   refusalMessage,
   registeredMeanwhileText,
   renameText,
@@ -432,7 +433,8 @@ export function PackageReview({
                   ? "Register is available once the newest version is read."
                   : refusal
                     ? "Change the validation branch to validate again."
-                    : "Fix the findings, then drop the package again."
+                    : ((check.data && readFailureHint(check.data.destination_read)) ??
+                      "Fix the findings, then drop the package again.")
       }
       dismissLabel={unchanged ? "Close" : "Cancel"}
       submitOnEnter={false}

@@ -65,6 +65,23 @@ export function resultKind(check: PackageCheck): ResultKind {
   return check.destination_read === "read" ? "valid" : "unchecked";
 }
 
+/**
+ * What to do when Register is disabled because the destination schema could not be read for a
+ * reason the package does not cause; `undefined` when the package is the thing to fix.
+ */
+export function readFailureHint(destinationRead: string): string | undefined {
+  switch (destinationRead) {
+    case "nobranch":
+      return "The validation branch does not exist in Infrahub. Change the validation branch to validate again.";
+    case "credentials":
+      return "The Sync API does not hold the destination token the package references. Set that credential variable in the Sync API's environment, then validate again.";
+    case "rejected":
+      return "Infrahub refused the destination token. Check the token held for the package's credential, then validate again.";
+    default:
+      return undefined;
+  }
+}
+
 /** The warning findings a check returned, which the review step lists without blocking. */
 export const warningFindings = (check: PackageCheck) =>
   check.findings.filter((f) => f.severity === "warning");
