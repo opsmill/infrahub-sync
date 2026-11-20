@@ -10,13 +10,20 @@ import {
   useIdempotencyKey,
   useRegisterConfig,
 } from "#/api/actions";
-import { configQuery, configsNamedQuery, configVersionQuery } from "#/api/queries";
+import {
+  configQuery,
+  configsNamedQuery,
+  configVersionQuery,
+  meQuery,
+  newestVersionQuery,
+} from "#/api/queries";
 import type {
   ConfigMutationRequest,
   PackageCheck,
   RegisteredConfiguration,
   RegisteredVersion,
   ValidationFinding,
+  VersionSummary,
 } from "#/api/types";
 import { CheckIcon } from "#/components/icons";
 import { CODE_CHIP, InlineCode, Notice } from "#/components/page";
@@ -27,6 +34,7 @@ import { DialogFrame, Field, INPUT, LINK, MutationError, ReasonField } from "#/f
 
 import { MappingList } from "./detail-mapping";
 import { MappingDetail } from "./detail-mapping-panel";
+import { PackageDropArea } from "./PackageDropArea";
 import {
   credentialVariables,
   declaredContent,
@@ -74,7 +82,8 @@ type Body = {
 };
 type Outcome =
   | { kind: "unchanged"; version: number }
-  | { kind: "meanwhile"; version: number }
+  /** `registeredBy` is the account name the Sync API returns for the version, when it has one. */
+  | { kind: "meanwhile"; version: number; registeredBy?: string | null }
   | { kind: "read-failed"; error: unknown };
 
 /**
@@ -278,23 +287,31 @@ export function PackageReview({
       send(body);
       return;
     }
-    // The configuration is read again, not taken from the cache, so a version registered
-    // elsewhere since the review opened is found (FR-018).
+    // The newest version is read again, not taken from the cache, so a version registered
+    // elsewhere since the review opened is found (FR-018), with the account that registered it
+    // (FR-019).
     setPreparing(true);
-    let latest: number | null;
+    let newest: VersionSummary | undefined;
     try {
-      const fresh = await queryClient.fetchQuery({ ...configQuery(configId), staleTime: 0 });
-      latest = fresh.latest_version ?? null;
+      const page = await queryClient.fetchQuery({ ...newestVersionQuery(configId), staleTime: 0 });
+      newest = page.items.at(0);
     } catch (error) {
       setOutcome({ kind: "read-failed", error });
       return;
     } finally {
       setPreparing(false);
     }
+    const latest = newest?.registry_version ?? null;
     if (latest !== compared) {
-      if (latest !== null) setOutcome({ kind: "meanwhile", version: latest });
+      // Only the comparison is reloaded: the check does not depend on the newest version.
+      if (newest !== undefined) {
+        setOutcome({
+          kind: "meanwhile",
+          version: newest.registry_version,
+          registeredBy: newest.registered_by,
+        });
+      }
       setCompared(latest);
-      runCheck(effectiveBranch);
       return;
     }
     const body = bodyFor(lastCheck.declared_content);
@@ -355,10 +372,7 @@ export function PackageReview({
     <Notice
       tone="warning"
       role="alert"
-      title={registeredMeanwhileText(
-        outcome.version,
-        base.data?.registry_version === outcome.version ? base.data.registered_by : undefined
-      )}
+      title={registeredMeanwhileText(outcome.version, outcome.registeredBy)}
     >
       <p>The comparison below is with version {outcome.version} now.</p>
     </Notice>
@@ -551,6 +565,50 @@ export function PackageReview({
         </>
       )}
     </DialogFrame>
+  );
+}
+
+/**
+ * The drop area of a page and the review step of the package file dropped on it. A first check
+ * the Sync API refuses closes the review step and shows its message under the area.
+ */
+export function PackageRegistration({
+  action,
+  target,
+}: {
+  /** The words before the drop area's instructions: "Add a version". */
+  action: string;
+  target: ReviewTarget;
+}) {
+  /** The text of the package file under review, and the refusal of the last one. */
+  const [dropped, setDropped] = useState<{ text: string; key: number }>();
+  const [message, setMessage] = useState<string>();
+  // Only an administrator token can register; the area stays disabled until `/me` answers.
+  const administrator = useQuery(meQuery()).data?.administrator === true;
+  return (
+    <>
+      <div className="mb-6">
+        <PackageDropArea
+          action={action}
+          disabled={!administrator}
+          message={message}
+          onMessage={setMessage}
+          onFile={(text) => setDropped({ text, key: Date.now() })}
+        />
+      </div>
+      {dropped && (
+        <PackageReview
+          key={dropped.key}
+          target={target}
+          document={dropped.text}
+          onClose={() => setDropped(undefined)}
+          onRefused={(refusal) => {
+            setDropped(undefined);
+            setMessage(refusal);
+          }}
+        />
+      )}
+    </>
   );
 }
 

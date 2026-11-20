@@ -52,8 +52,6 @@ export interface ConfigurationVersion {
   registry_version: number;
   package_checksum: string;
   created_at: string;
-  /** The name of the account that registered the version, as the Sync API shows it. */
-  registered_by?: string | null;
   declared_content: {
     format_version: number;
     configuration: DeclaredConfiguration;
