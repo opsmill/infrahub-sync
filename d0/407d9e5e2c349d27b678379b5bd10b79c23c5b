@@ -1,0 +1,24 @@
+docs/docs/release-notes/infrahub-sync/release-2_1_0.mdx
+  s_7194e763d953d7::t_ac2b69aabacb12 49,61
+tests/cli/test_parity_and_closure.py
+  s_7194e763d953d7::t_00604c7cbe35a2 255
+  s_7194e763d953d7::t_575f13241af950 256-259
+tests/test_potenda_plan_artifact.py
+  s_7194e763d953d7::t_8eef7313b0d92a 1376-1378,2014,2021
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0407d9e5e2c349d27b678379b5bd10b79c23c5b",
+  "prompts": {},
+  "sessions": {
+    "s_7194e763d953d7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2dcc804-8d36-4407-9e21-780e508ea091",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
