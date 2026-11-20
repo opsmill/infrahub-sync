@@ -1,0 +1,62 @@
+tests/service/test_released_value_redaction.py
+  s_58b527396c8cb5::t_caceb247517549 1-65,68-131,134-222,224-225,227-474
+  s_58b527396c8cb5::t_52538227cdb045 66-67
+  s_58b527396c8cb5::t_b34b3e2a2e5c78 132-133
+  s_58b527396c8cb5::t_67948e9768c8bc 223
+  s_58b527396c8cb5::t_c2c3af1d775895 226
+tests/service/test_stored_credentials_helper.py
+  s_58b527396c8cb5::t_33d5e8c02f4d92 1-35,38-120,122-125,127-140
+  s_58b527396c8cb5::t_d3f5540fba5d31 36-37
+  s_58b527396c8cb5::t_a26e89183f5328 121
+  s_58b527396c8cb5::t_6ea7cd3dd4ba6f 126
+tests/helpers/__init__.py
+  s_58b527396c8cb5::t_aa7ea79125f59e 1
+tests/helpers/stored_credentials.py
+  s_58b527396c8cb5::t_88bea1b5e59089 1-116,118-136,139-207,209,211-219
+  s_58b527396c8cb5::t_882d75d2d3c8e7 117
+  s_58b527396c8cb5::t_9a9c268825fe06 137-138
+  s_58b527396c8cb5::t_c66c2164a27d58 208
+  s_58b527396c8cb5::t_7b03638a0b5785 210
+infrahub_sync/service/apply_guard.py
+  s_74af72a9983d12::t_93d2c0c1e4de81 35-40,191-192,309-311,331
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_b647de81c17a74 67-68,72
+infrahub_sync/execution.py
+  s_58b527396c8cb5::t_d3e2b63493d190 33,75,189-191,194-195,466-476,478-491,493,498-584,611-616,1493,1505
+infrahub_sync/service/app.py
+  s_58b527396c8cb5::t_ee7cf889032148 16,27,420-437,700-702
+infrahub_sync/service/credential_crypto.py
+  s_58b527396c8cb5::t_06d54c7c2bc190 23-24,110-113,119-120,139-141
+infrahub_sync/service/flow.py
+  s_58b527396c8cb5::t_cfb58c608eedb9 48,50,1168-1170,1924-1928,1931-1961,1997
+infrahub_sync/service/schedules.py
+  s_58b527396c8cb5::t_5c15ff6f06c9b4 25,322-323
+infrahub_sync/service/service.py
+  s_58b527396c8cb5::t_3ff13ecca1ae85 29,222,237,345,373-375
+tests/service/test_credential_crypto.py
+  s_58b527396c8cb5::t_162d6f5817ee5a 20-22,50-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b48e586a0e00cbe46623a1eb5d3adf14199529a",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_74af72a9983d12": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a141fe3ccb46ac4af",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
