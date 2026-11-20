@@ -572,9 +572,10 @@ reads a run response that holds a part added by a later release.
 
 Every route below requires `Authorization: Bearer <token>`. Every `POST` route that writes or
 requests a change also requires a non-empty `Idempotency-Key` header and a JSON body;
-`POST /configs/{config_id}/versions/{registry_version}/validate` and `POST /configs/validate`
-are the exceptions, since they store nothing. The first re-checks an already-registered version
-and takes no body. The second takes a JSON body but no `Idempotency-Key` and no `reason`.
+`POST /configs/{config_id}/versions/{registry_version}/validate`, `POST /configs/validate` and
+`POST /schedules/next-starts` are the exceptions, since they store nothing. The first re-checks an
+already-registered version and takes no body. The second takes a JSON body but no
+`Idempotency-Key` and no `reason`. The third computes start times and takes no `Idempotency-Key`.
 
 In the body of every `POST` route that requires an `Idempotency-Key`, `reason` is optional.
 When present, it must be non-empty, and the service records it in the audit history. When it is
