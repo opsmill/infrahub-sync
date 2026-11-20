@@ -28,9 +28,9 @@ the constitution.
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `cryptography` with a range pin (for example `>=44,<47`, matching the version in `uv.lock`) to the `service` extra in `pyproject.toml`, run `uv lock`, and check in a base-only environment that the base install does not pull it (research R3, critique E13)
-- [ ] T002 [P] Add `INFRAHUB_SYNC_ENCRYPTION_KEY`, `INFRAHUB_SYNC_WORKER_TOKEN` and the worker's `INFRAHUB_SYNC_API_URL` to `infrahub_sync/service/settings.py`: loaders that refuse a missing key, a key that is not 32 bytes after base64 decoding, a worker token shorter than the `admin` token minimum, with an `ifs_pat_` or `ifs_ses_` prefix, or equal to the `admin` token; messages name the variable and never the value; `repr=False` on values (contracts/environment.md, critique E8)
-- [ ] T003 [P] Write `tests/service/test_credential_settings.py`: parametrized refusals of T002 for each rule, and a check that no message contains the value
+- [X] T001 Add `cryptography` with a range pin (for example `>=44,<47`, matching the version in `uv.lock`) to the `service` extra in `pyproject.toml`, run `uv lock`, and check in a base-only environment that the base install does not pull it (research R3, critique E13)
+- [X] T002 [P] Add `INFRAHUB_SYNC_ENCRYPTION_KEY`, `INFRAHUB_SYNC_WORKER_TOKEN` and the worker's `INFRAHUB_SYNC_API_URL` to `infrahub_sync/service/settings.py`: loaders that refuse a missing key, a key that is not 32 bytes after base64 decoding, a worker token shorter than the `admin` token minimum, with an `ifs_pat_` or `ifs_ses_` prefix, or equal to the `admin` token; messages name the variable and never the value; `repr=False` on values (contracts/environment.md, critique E8)
+- [X] T003 [P] Write `tests/service/test_credential_settings.py`: parametrized refusals of T002 for each rule, and a check that no message contains the value
 
 ---
 
