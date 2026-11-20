@@ -43,14 +43,14 @@ destination once the `env` provider is removed. Every other journey depends on i
 
 **Independent Test**: Start two workers with no `INFRAHUB_SYNC_CREDENTIAL_*` variable. Create a credential
 with the CLI, register a package that names it, and start several plans. Each plan reads the source and
-the destination, and the value appears nowhere except in the worker route's response.
+the destination, and the value appears nowhere except in the response of the worker route that releases values.
 
 **Acceptance Scenarios**:
 
 1. **Given** a stored credential `infrahub-netbox-sync` and a registered package whose destination names
    `credential: infrahub-netbox-sync`, **When** the administrator starts a plan, **Then** whichever worker
    takes the run reads the destination with that value, and no value appears in the package, the run
-   record, the logs or any API response other than the worker route.
+   record, the logs or any API response other than the worker route that releases values.
 2. **Given** a signed-in account that is not an administrator, **When** it lists credentials and views
    one, **Then** it views each credential's name, description, which fields are set and its revision,
    and no value.
@@ -169,7 +169,7 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
   - Verification: an API test runs every operation, and a CLI test runs every operation through the
     same routes.
 - **FR-002**: The system MUST NOT return a value in any response, CLI output, web page or log, including
-  the response to the creation. The only exception is the worker route.
+  the response to the creation. The only exception is the worker route that releases values.
   - Verification: create a credential with a known marker value, then search every response and log line
     for the marker.
 - **FR-007**: The system MUST store values encrypted. A copy of the database without the key MUST NOT
@@ -272,7 +272,7 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
 - **FR-025**: The deployment documentation MUST say that changing the encryption key is not supported in
   this version, and that losing it means re-entering every credential.
 - **FR-026**: Principle VI of the constitution MUST be amended to allow values that are encrypted in the
-  Sync database and released only through the worker route. The constitution version and the matching
+  Sync database and released only through the worker route that releases values. The constitution version and the matching
   line of `AGENTS.md` MUST change with it.
 
 ### Key Entities
@@ -306,7 +306,7 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
   destination, whichever worker takes it. 0 runs fail because a worker lacks a credential.
 - **SC-004**: A known marker value, stored as a credential and then used in a plan and an apply, appears
   0 times in any of these:
-  - API responses, except the worker route
+  - API responses, except the worker route that releases values
   - CLI output
   - web pages
   - logs

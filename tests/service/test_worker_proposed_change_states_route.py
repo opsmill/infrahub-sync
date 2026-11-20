@@ -580,3 +580,28 @@ def test_a_start_fails_with_the_credential_cause_when_the_credential_was_deleted
     (failed,) = _schedule_events(states, "start_failed")
     assert failed.details is not None
     assert failed.details.cause == "credential_unavailable"
+
+
+def test_a_start_fails_and_creates_no_run_when_the_answer_lacks_the_state_of_a_row(
+    states: States, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    states.earlier_run("pc-1")
+    states.infrahub.states = {"pc-1": "open"}
+    monkeypatch.setattr(service_flow, "read_schedule_proposed_change_states", lambda _schedule_id: {})
+
+    admission = admit_scheduled_start(
+        states.store,
+        schedule_id=SCHEDULE_ID,
+        scheduled_start_at=T0 + timedelta(days=1),
+        flow_run_id="flow-incomplete",
+        worker_id=WORKER_ID,
+        now=T0 + timedelta(days=1, seconds=5),
+        receipt_age_limit=timedelta(seconds=60),
+        read_proposed_changes=service_flow._earlier_proposed_changes_reader(states.store),
+    )
+
+    # A row with no state must not read as "not approved": the start fails and no run replaces it.
+    assert (admission.run, admission.cause) == (None, "failed")
+    (failed,) = _schedule_events(states, "start_failed")
+    assert failed.details is not None
+    assert failed.details.cause == "proposed-change-states-incomplete"

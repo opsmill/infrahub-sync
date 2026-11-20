@@ -111,8 +111,10 @@ worker cannot get the destination token for this read. The Sync API does the rea
       not repeat this request.
 - No `Idempotency-Key`, no `mutation_receipts` row.
 - No audit event and no `run_credential_uses` row: no run exists, and no value leaves the Sync API. This
-  matches the destination schema read that the Sync API does to validate a package. Each success writes
-  one log line with the schedule, the credential name and its revision.
+  matches the destination schema read that the Sync API does to validate a package. Each success that
+  read Infrahub writes one log line with the schedule, the credential name and its revision. A schedule
+  with no such branch row gets `{"states": {}}`; the Sync API then decrypts nothing and writes no log
+  line.
 - The worker checks that the answer holds a state for every branch row that its admission read. When a
   state is missing, the start fails with the cause `proposed-change-states-incomplete` and creates no
   run.
@@ -126,10 +128,12 @@ Every route outside the two worker routes answers `403 forbidden` to the worker 
 - `GET /runs/{run_id}` gains `credentials_used: [{"stage", "block", "name", "revision"}]`.
 - `POST /configs` and `POST /configs/{config_id}/versions` refuse a package that has a credential finding
   with `422 configs-validation`. The `reason` field of the error names the finding:
-    - `credential-not-found`
-    - `credential-field-missing`
-    - `credential-not-used`: a block names a credential that its authentication method does not use
-    - `credential-format-removed`
+    - `credential-not-found` and `credential-field-missing`: tests of the registration cover both
+      (`tests/product_store/test_credential_admission.py`).
+    - `credential-not-used`: a block names a credential that its authentication method does not use.
+      Configuration validation reports it as an error finding. No test of the registration route checks
+      its `reason` yet; it is not known whether the `reason` is this code.
+    - `credential-format-removed`: the code does not produce it yet. T047 to T052 add it.
 - `POST /configs/{config_id}/versions/{v}/validate` returns the same findings in the `findings` list of
   its report, each with its code, its location and its message.
 - The findings `credential-not-set-in-worker` and `worker-environment-unknown` are removed.
