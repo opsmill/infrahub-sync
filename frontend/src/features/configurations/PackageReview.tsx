@@ -43,6 +43,7 @@ import {
   renameText,
   resultKind,
   reviewTitle,
+  sameAsNewestText,
   sameNameText,
   unchangedText,
   validatingText,
@@ -203,7 +204,14 @@ export function PackageReview({
   /** The configuration or its newest version could not be read, so nothing can be compared. */
   const comparisonFailed = (!isNew && config.isError) || base.isError;
 
-  const unchanged = outcome?.kind === "unchanged";
+  /** The package is the newest version already, so registering it would add no version. */
+  const sameAsNewest =
+    !isNew &&
+    sent === undefined &&
+    lastCheck !== undefined &&
+    base.data !== undefined &&
+    lastCheck.package_checksum === base.data.package_checksum;
+  const unchanged = outcome?.kind === "unchanged" || sameAsNewest;
   const noAnswer = create.isError && isNoAnswer(create.error);
   const registrable =
     sent !== undefined || (!validating && (kind === "valid" || kind === "unreachable"));
@@ -336,6 +344,8 @@ export function PackageReview({
     )
   ) : outcome?.kind === "unchanged" ? (
     <Notice role="status" title={unchangedText(outcome.version)} />
+  ) : sameAsNewest && typeof compared === "number" ? (
+    <Notice role="status" title={sameAsNewestText(compared)} />
   ) : outcome?.kind === "meanwhile" ? (
     <Notice tone="warning" role="alert" title={registeredMeanwhileText(outcome.version)}>
       <p>The comparison below is with version {outcome.version} now.</p>

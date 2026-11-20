@@ -129,6 +129,10 @@ export const validText = (branch: string) => `Valid against branch ${branch}`;
 export const unchangedText = (version: number) =>
   `This package is the same as version ${version}. No new version was registered.`;
 
+/** Before Register: the package has the checksum of the newest version, so Register adds nothing. */
+export const sameAsNewestText = (version: number) =>
+  `This package is the same as version ${version}. Registering it would add no version.`;
+
 export const registeredMeanwhileText = (version: number) =>
   `Version ${version} was registered meanwhile.`;
 
