@@ -20,6 +20,13 @@ export type ValidationFinding = Schemas["ValidationFindingResource"];
  * body without it.
  */
 export type ConfigMutationRequest = Schemas["ConfigMutationRequest"];
+export type Schedule = Schemas["ScheduleResource"];
+export type CreateScheduleRequest = Schemas["CreateScheduleRequest"];
+export type ChangeScheduleRequest = Schemas["ChangeScheduleRequest"];
+export type ScheduleNextStarts = Schemas["ScheduleNextStarts"];
+export type Principal = Schemas["PrincipalResource"];
+export type SyncEvent = Schemas["EventResource"];
+
 /** A source or destination as a registered package declares it. */
 export interface DeclaredAdapter {
   name: string;

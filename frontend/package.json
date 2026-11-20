@@ -16,7 +16,7 @@
     "lint": "biome lint",
     "check": "biome check",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
     "@infrahub/ui": "workspace:*",
