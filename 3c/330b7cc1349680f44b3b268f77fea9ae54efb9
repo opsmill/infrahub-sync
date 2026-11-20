@@ -1,0 +1,93 @@
+infrahub_sync/cli.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 599,615
+frontend/src/api/queries.ts
+  s_eefe1fec4652ae::t_a14e93b01e7c42 55-58,82-90
+  s_eefe1fec4652ae::t_33a3b6a34de444 91
+tests/service/test_config_routes.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 26,2138-2413
+frontend/src/features/configurations/ConfigurationPage.tsx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 32,355
+  s_eefe1fec4652ae::t_843f1a6ba426e1 356
+frontend/src/features/configurations/detail-mapping.tsx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 44-47,52-53,56,59-60,64-76,98,100,103,110-116,157-159,167-173,190,192-193,200-204,207-219,234,245,268-273
+frontend/src/features/runs/form.tsx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 55-56,62-64,72-73
+docs/docs/configuration-package.mdx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 107-110,184-257
+tests/product_store/test_configuration_unvalidated_mark.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 1-204
+infrahub_sync/product_store/store.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 180-184,528-536,538-544,562-566,568-571,1063,1073,3386,3388-3391,3399,3441-3443,3458-3461,3474,3478-3479,3497,5428,5434,5438-5443,5452,5458-5459,5467-5471,6957,6986-6987
+dev/specs/025-register-config-web/research.md
+  s_eefe1fec4652ae::t_a14e93b01e7c42 33-34
+frontend/src/api/types.ts
+  s_eefe1fec4652ae::t_a14e93b01e7c42 15-22,62-83
+  s_eefe1fec4652ae::t_f373f36c95f307 84
+docs/docs/compose-deployment.mdx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 685-689
+docs/docs/running-a-sync.mdx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 534-538
+tests/client/test_models.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 208-251
+dev/adr/0054-a-package-can-be-validated-before-it-is-registered.md
+  s_eefe1fec4652ae::t_a14e93b01e7c42 5-7,99-147
+tests/cli/test_client_commands.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 304-320,2337-2341,2356-2357
+infrahub_sync/product_store/configs.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 686,697-698,703-707,728,736-737,743-748
+dev/specs/025-register-config-web/spec.md
+  s_eefe1fec4652ae::t_a14e93b01e7c42 114-121,328-330
+frontend/src/features/configurations/detail-version-bar.tsx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 12-13,15-18,20-21,27-32,35,207-212
+frontend/src/api/actions.ts
+  s_eefe1fec4652ae::t_a14e93b01e7c42 151-185
+infrahub_sync/product_store/models.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 699-700,727-728
+frontend/src/domain/mapping.ts
+  s_eefe1fec4652ae::t_a14e93b01e7c42 86-103
+infrahub_sync/client/models.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 238-250,253-254,256,267-280,1269-1270,1297-1298,1320-1321,1439-1441
+docs/docs/reference/sync-http-api.mdx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 582-590,593-594,720-722
+dev/specs/025-register-config-web/opsmill-implement-report.md
+  s_eefe1fec4652ae::t_a14e93b01e7c42 3-15,38-339
+frontend/src/features/configurations/detail-mapping-panel.tsx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 264
+dev/specs/025-register-config-web/contracts/sync-api.md
+  s_eefe1fec4652ae::t_a14e93b01e7c42 83-109
+infrahub_sync/service/config_routes.py
+  s_eefe1fec4652ae::t_a14e93b01e7c42 139-146,252-257,262,265-272,276-282,287-288,297,458,460-461,463-476,478-491,497,526,528-530,534-540,669,671,723,725
+frontend/src/features/configurations/package-review.ts
+  s_eefe1fec4652ae::t_a14e93b01e7c42 1-191
+dev/specs/025-register-config-web/contracts/web-interface.md
+  s_eefe1fec4652ae::t_a14e93b01e7c42 35-38,51-54
+frontend/src/features/configurations/ConfigurationsPage.tsx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 38,618
+  s_eefe1fec4652ae::t_92122ea980b0ba 619
+dev/specs/025-register-config-web/tasks.md
+  s_eefe1fec4652ae::t_a14e93b01e7c42 69-76,88-90,106-107,111-117,136-140
+frontend/src/features/configurations/PackageReview.tsx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 1-725
+frontend/src/features/configurations/PackageDropArea.tsx
+  s_eefe1fec4652ae::t_a14e93b01e7c42 1-120
+changelog/+register-config-web.added.md
+  s_eefe1fec4652ae::t_a14e93b01e7c42 1
+frontend/src/api/types.generated.ts
+  s_eefe1fec4652ae::t_52b845bb40091d 248-267,1090-1100,1104,1106-1108,1111-1115,1182-1186,1504-1556,2371-2389,3526-3562
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c330b7cc1349680f44b3b268f77fea9ae54efb9",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
