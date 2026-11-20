@@ -36,7 +36,7 @@ import structlog
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from infrahub_sync.client.models import DEFAULT_LIMIT
-from infrahub_sync.execution import register_secret_values
+from infrahub_sync.execution import LiveSecretValues, register_secret_values
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     CredentialNameTakenError,
@@ -218,6 +218,19 @@ class CredentialActions:
     def _access(self) -> AccountAccess:
         return self._service.accounts
 
+    @property
+    def _process_secrets(self) -> tuple[str, ...]:
+        """Return the secrets of the process, without the values this request registered.
+
+        The receipt, the answer and the event hold only text the service wrote: the name, which
+        matches the name pattern, identifiers, times, and a description that passed the free-text
+        check against every secret, the request's values included. Redacting them with the
+        request's values would corrupt a name that equals a value, such as a username named like
+        its credential, and a repeat of the request would no longer match its receipt.
+        """
+        secrets = self._access.secrets
+        return secrets.fixed if isinstance(secrets, LiveSecretValues) else tuple(secrets)
+
     # ------------------------------------------------------------------
     # Rights
     # ------------------------------------------------------------------
@@ -291,7 +304,7 @@ class CredentialActions:
                 actor=principal.actor,
                 now=now,
                 event_for=_accepted(CREDENTIAL_CREATED, principal, CREATE_OPERATION, now),
-                secrets=self._access.secrets,
+                secrets=self._process_secrets,
             )
 
         return self._mutate(cipher, mutation, 201, act)
@@ -319,7 +332,7 @@ class CredentialActions:
                 actor=principal.actor,
                 now=now,
                 event_for=_accepted(CREDENTIAL_VALUE_CHANGED, principal, SET_VALUE_OPERATION, now),
-                secrets=self._access.secrets,
+                secrets=self._process_secrets,
             )
 
         return self._mutate(cipher, mutation, 200, act)
@@ -344,7 +357,7 @@ class CredentialActions:
                 actor=principal.actor,
                 now=now,
                 event_for=_accepted(CREDENTIAL_UPDATED, principal, DESCRIBE_OPERATION, now),
-                secrets=self._access.secrets,
+                secrets=self._process_secrets,
             )
 
         return self._mutate(cipher, mutation, 200, act)
@@ -382,7 +395,7 @@ class CredentialActions:
             cause=cause,
             created_at=self._access.now(),
         )
-        self._access.projection.record_audit(event, secrets=self._access.secrets)
+        self._access.projection.record_audit(event, secrets=self._process_secrets)
 
     def _mutate(
         self,
@@ -393,7 +406,7 @@ class CredentialActions:
     ) -> tuple[int, dict[str, Any]]:
         """Run one change under its idempotency key and return its answer, or the stored answer of a repeat."""
         projection = self._access.projection
-        secrets = self._access.secrets
+        secrets = self._process_secrets
         now = self._access.now()
         fingerprint = cipher.request_fingerprint(
             canonical_json_bytes({"operation": mutation.operation, "name": mutation.name, "body": mutation.content})

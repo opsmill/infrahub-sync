@@ -10,6 +10,7 @@ check prints no value.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -467,3 +468,43 @@ def test_the_client_runs_every_operation_through_the_real_routes(api: AccountApi
     assert viewed.description == "the lab"
     leaked = _holds_a_value(repr((created, changed, described, listed, viewed)))
     assert not leaked
+
+
+def test_a_username_equal_to_the_credential_name_leaves_the_name_intact(api: AccountApi) -> None:
+    """A service account is often named like its credential; the name is not a value to redact."""
+    body = {"name": "netbox-sync", "username": "netbox-sync", "password": PASSWORD_VALUE}
+    key = _key()
+
+    first = _send(api, "root", "POST", "/credentials", key=key, json=body)
+    repeated = _send(api, "root", "POST", "/credentials", key=key, json=body)
+
+    assert first.status_code == 201, first.json()["error"]["code"]
+    assert first.json()["name"] == "netbox-sync"
+    assert repeated.status_code == 201
+    assert repeated.json() == first.json()
+    created = [e for e in _credential_events(api) if e.event_type == "infrahub_sync.credential.created"]
+    assert len(created) == 1
+    assert RelatedResource(kind="credential", id="netbox-sync") in created[0].related
+    receipt = api.store.lookup_mutation(api.identifier("root"), hashlib.sha256(key.encode()).hexdigest()).value
+    assert receipt is not None
+    assert (receipt.resource_id, receipt.operation) == ("netbox-sync", "credential-create")
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/credentials/Not_A_Name"),
+        ("PUT", "/credentials/Not_A_Name/value"),
+        ("PATCH", "/credentials/Not_A_Name"),
+    ],
+)
+def test_a_path_name_outside_the_pattern_is_refused_as_an_invalid_request(
+    api: AccountApi, method: str, path: str
+) -> None:
+    body = None if method == "GET" else ({"token": TOKEN_VALUE} if method == "PUT" else {"description": "d"})
+
+    response = _send(api, "root", method, path, json=body)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "request-invalid"
+    assert "Not_A_Name" not in repr(api.events())

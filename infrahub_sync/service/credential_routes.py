@@ -17,10 +17,10 @@ thread pool, which shares the redaction registry of the request.
 from collections.abc import Callable
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import JSONResponse
 
-from infrahub_sync.client.models import DEFAULT_LIMIT, MAX_LIMIT, MIN_LIMIT
+from infrahub_sync.client.models import CREDENTIAL_NAME_PATTERN, DEFAULT_LIMIT, MAX_LIMIT, MIN_LIMIT
 
 from .auth import Principal
 from .credential_actions import (
@@ -37,6 +37,8 @@ from .credential_actions import (
 )
 from .models import ErrorEnvelope
 
+# A name outside the pattern is refused as an invalid request, before it reaches a record or a message.
+_Name = Annotated[str, Path(pattern=CREDENTIAL_NAME_PATTERN)]
 _READ_ERRORS: dict[int | str, dict[str, Any]] = {status: {"model": ErrorEnvelope} for status in (401, 403, 404, 422)}
 _CHANGE_ERRORS: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorEnvelope} for status in (401, 403, 404, 409, 422, 503)
@@ -68,7 +70,7 @@ def credential_router(
         return actions.list_credentials(offset, limit)
 
     @router.get("/credentials/{name}", responses=_READ_ERRORS)
-    def read_credential(_principal: Annotated[Principal, Depends(authenticate)], name: str) -> CredentialResource:
+    def read_credential(_principal: Annotated[Principal, Depends(authenticate)], name: _Name) -> CredentialResource:
         """Return one credential by its name, with the names of its fields and no value."""
         return actions.read_credential(name)
 
@@ -86,7 +88,7 @@ def credential_router(
     def set_credential_value(
         principal: Annotated[Principal, manage(SET_VALUE_OPERATION)],
         key: Annotated[str, Depends(idempotency_key)],
-        name: str,
+        name: _Name,
         body: CredentialValueRequest,
     ) -> JSONResponse:
         """Replace the whole set of fields of a credential; its revision goes up by one."""
@@ -97,7 +99,7 @@ def credential_router(
     def describe_credential(
         principal: Annotated[Principal, manage(DESCRIBE_OPERATION)],
         key: Annotated[str, Depends(idempotency_key)],
-        name: str,
+        name: _Name,
         body: DescribeCredentialRequest,
     ) -> JSONResponse:
         """Replace the description of a credential; its revision stays."""

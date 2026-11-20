@@ -554,6 +554,11 @@ class LiveSecretValues(Sequence[str]):
     def __init__(self, fixed: Iterable[str] = ()) -> None:
         self._fixed: tuple[str, ...] = tuple(dict.fromkeys(fixed))
 
+    @property
+    def fixed(self) -> tuple[str, ...]:
+        """Return the fixed values only, without the values registered in the current request or run."""
+        return self._fixed
+
     def _values(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys((*self._fixed, *registered_secret_values())))
 
