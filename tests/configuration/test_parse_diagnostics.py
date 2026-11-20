@@ -511,6 +511,12 @@ def test_public_parse_encodes_diagnostic_delimiters_in_ordinary_locations(
         pytest.param("invalid_unicode_surrogate", ("configuration",), "invalid Unicode surrogate", id="unicode"),
         pytest.param("unsupported_declared_fields", ("configuration",), "unsupported declared field", id="unsupported"),
         pytest.param("invalid_diffsync_flag_name", ("configuration",), "invalid diffsync flag name", id="diffsync"),
+        pytest.param(
+            "credential_setting_with_named_credential",
+            ("configuration",),
+            "credential setting refused because the block names a credential",
+            id="named-credential",
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -562,6 +568,15 @@ _CUSTOM_CONTEXT_FAMILIES = [
             "unsupported declared field",
         ),
         id="unsupported",
+    ),
+    pytest.param(
+        (
+            "credential_setting_with_named_credential",
+            {"pointer": "/trusted", "field_names": ("token",)},
+            "/trusted/token: credential setting refused because the block names a credential",
+            "credential setting refused because the block names a credential",
+        ),
+        id="named-credential",
     ),
     pytest.param(
         (

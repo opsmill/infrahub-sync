@@ -6,13 +6,14 @@ from typing import Any
 
 import pytest
 
-from infrahub_sync.configuration import parse_configuration_package
+from infrahub_sync.configuration import capabilities, parse_configuration_package
 from infrahub_sync.configuration.capabilities import (
     BUILTIN_ADAPTER_CAPABILITIES,
     UnknownAdapterCapabilitiesError,
     UnknownCredentialMethodError,
     credential_field_map,
 )
+from infrahub_sync.configuration.conversion_authentication import V2_AUTHENTICATION_METHODS
 from infrahub_sync.configuration.validation import collect_findings
 
 _TOKEN = {"token": "token"}
@@ -61,6 +62,15 @@ def test_every_bundled_adapter_has_a_field_map_within_its_credential_settings(ad
     declared = set(BUILTIN_ADAPTER_CAPABILITIES[adapter].credential_setting_paths)
 
     assert set(credential_field_map(adapter, {}).settings) <= declared
+
+
+@pytest.mark.parametrize(
+    "adapter",
+    sorted(name for name, item in BUILTIN_ADAPTER_CAPABILITIES.items() if item.credential_setting_paths),
+)
+def test_every_bundled_adapter_with_credential_settings_has_a_declared_field_map(adapter: str) -> None:
+    """A new adapter must be added to the map; falling through would report its credential as not used."""
+    assert adapter in capabilities._FIXED_CREDENTIAL_FIELDS or adapter in V2_AUTHENTICATION_METHODS
 
 
 @pytest.mark.parametrize("adapter", ["genericrestapi", "peeringmanager", "prometheus"])

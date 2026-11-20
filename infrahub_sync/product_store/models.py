@@ -11,6 +11,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from infrahub_sync.configuration.capabilities import (
+    CredentialField,  # noqa: TC001 - Pydantic resolves this annotation at runtime.
+)
 from infrahub_sync.configuration.models import CREDENTIAL_NAME_PATTERN
 from infrahub_sync.configuration.worker_credentials import is_credential_name
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
@@ -1028,7 +1031,6 @@ CREDENTIAL_ID_PATTERN = r"^cred_[0-9a-f]{32}$"
 STORED_CREDENTIAL_NAME_PATTERN = CREDENTIAL_NAME_PATTERN
 STORED_CREDENTIAL_DESCRIPTION_MAX_LENGTH = 500
 _CREDENTIAL_KEY_ID_PATTERN = r"^[0-9a-f]{16}$"
-CredentialField: TypeAlias = Literal["password", "token", "username"]
 CredentialBlock: TypeAlias = Literal["source", "destination"]
 CredentialStage: TypeAlias = Literal["plan", "verify", "apply", "sync", "resume"]
 # The sets of fields a credential may hold (FR-013). Every other set, all three fields included,
