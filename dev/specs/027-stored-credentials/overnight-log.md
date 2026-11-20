@@ -86,6 +86,40 @@ time can leave both checks in place), and list it under Risks with option (c) as
 
 **What I did next.** Applied those edits, then dispatched chunk 7.
 
+### A2. A schedule with branch review reads earlier proposed changes before a run exists (2026-11-20, about 21:00)
+
+**Context.** Chunk 8 left part of T032 undone. Before a scheduled start creates its run, the admission
+reads the state of the schedule's earlier proposed changes from the destination
+(`schedule_admission.py:326-346`). The result decides whether a run is created: an approved, open
+proposed change skips the start. The worker route releases values only to a claimed execution of a run
+(FR-004, R5). So a destination that names a stored credential makes every such start fail with
+`credential_unavailable`. Once chunk 13 removes the environment path, that becomes a regression of
+spec 021 for every schedule with branch review.
+
+**Options.** (a) Move the read after the claim. (b) Release values to the worker before a run exists.
+(c) The Sync API does the read itself through a second worker-only route and returns only the states.
+(d) Leave it as a known limit.
+
+**Recommendation sent.** None given in advance; the question was put open.
+
+**Answer.** It is a reversible code question, so the advisor answers it. Option (c): a worker-only
+route that takes a schedule id and returns only the proposed-change states. The route reads the
+destination address and the proposed-change ids from the stored version and the schedule rows, never
+from the request body, so a worker cannot send the token to an address it chooses. No value leaves
+the Sync API, the same shape as the schema read that FR-004 already allows. Do not add (b). Option (a)
+changes spec 021 because the read decides whether a run is created; the code confirmed this. Update
+the worker account's route list and its boundary tests, FR-004 and the worker account text in
+`spec.md` and `contracts/http-api.md`, and the T057 decision record text. List it under Risks as a
+wider worker boundary. Run the full unit tier at HEAD, check the three chunk 7 tests that chunk 8
+changed, check the registration refusal against the contract, and check that a test covers the
+readiness read made without a token.
+
+**What I did next.** The three tests still assert a refusal (they now delete or change the credential
+after the run is accepted). The HTTP registration refusal is `configs-validation` with a `reason`, the
+existing pattern; the findings come from the validate route; the contract wording is made exact in
+chunk 8b. `test_the_destination_of_a_scheduled_start_is_read_without_a_token` covers the readiness
+read. Then I dispatched chunk 8b for option (c).
+
 ## Progress
 
 - 2026-11-20 evening: implementation started.
