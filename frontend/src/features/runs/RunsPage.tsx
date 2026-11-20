@@ -13,13 +13,21 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import { configsQuery, describeError, runPagesQuery, runQuery } from "#/api/queries";
+import {
+  configsQuery,
+  describeError,
+  describeScheduleError,
+  runPagesQuery,
+  runQuery,
+  scheduleQuery,
+} from "#/api/queries";
 import type { Run, RunResource } from "#/api/types";
 import {
   Bar,
   EmptyPanel,
   ErrorPanel,
   FilterTabs,
+  FOCUS,
   SearchField,
   StaleNotice,
 } from "#/components/page";
@@ -36,6 +44,8 @@ export interface RunsSearch {
   q?: string;
   show?: FilterId;
   config?: string;
+  /** A schedule identifier: only the runs this schedule started. */
+  schedule?: string;
 }
 
 const FILTERS: { id: FilterId; label: string; test: (run: Run, s: ListRunState) => boolean }[] = [
@@ -83,7 +93,7 @@ function changedRuns(details: RunResource[], listed: Run[]): Map<string, Run> {
 
 const SUBTITLE = "Verify and apply are steps of a plan run.";
 
-export function RunsPage({ q, show = "all", config }: RunsSearch) {
+export function RunsPage({ q, show = "all", config, schedule }: RunsSearch) {
   useDocumentTitle("Runs");
   const navigate = useNavigate();
   const setSearch = (patch: RunsSearch) =>
@@ -95,8 +105,9 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
     });
 
   const queryClient = useQueryClient();
-  const runs = useInfiniteQuery(runPagesQuery(config));
+  const runs = useInfiniteQuery(runPagesQuery(config, schedule));
   const configs = useQuery(configsQuery());
+  const scheduleRead = useQuery({ ...scheduleQuery(schedule ?? ""), enabled: Boolean(schedule) });
 
   const listed = useMemo(() => runs.data?.pages.flatMap((p) => p.items) ?? [], [runs.data]);
   const configNames = useMemo(
@@ -209,13 +220,14 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
 
   const showAll = () => setSearch({ q: undefined, show: undefined });
   const showAllConfigs = () => setSearch({ config: undefined, show: undefined });
+  const showAllSchedules = () => setSearch({ schedule: undefined, show: undefined });
   const retryRefresh = async () => {
     const r = await runs.refetch();
     if (!r.isError) summaryRef.current?.focus();
   };
 
   const toolbar = runs.data !== undefined || configs.data !== undefined;
-  const noRunsAnywhere = !config && runs.data !== undefined && listed.length === 0;
+  const noRunsAnywhere = !config && !schedule && runs.data !== undefined && listed.length === 0;
   const filterCount = (id: FilterId) =>
     runs.data === undefined ? undefined : counts[id] === 0 && !more ? 0 : countLabel(counts[id]);
   const loadedNoun: [string, string] = more ? ["loaded run", "loaded runs"] : ["run", "runs"];
@@ -233,6 +245,28 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
     );
   } else if (!runs.data) {
     body = <ErrorPanel error={runs.error} onRetry={() => runs.refetch()} />;
+  } else if (schedule && listed.length === 0) {
+    body = (
+      <EmptyPanel title="No runs of this schedule">
+        <p className="max-w-[52ch] text-pretty text-foreground-muted">
+          {config
+            ? "The schedule started no run of this configuration."
+            : "The schedule has started no run yet."}
+        </p>
+        <div className="mt-1 flex flex-wrap justify-center gap-2">
+          <Link
+            to="/schedules/$scheduleId"
+            params={{ scheduleId: schedule }}
+            className={buttonVariants({ variant: "outline", size: "sm", className: TOUCH })}
+          >
+            View schedule
+          </Link>
+          <Button variant="outline" size="sm" className={TOUCH} onPress={showAllSchedules}>
+            Show runs of every schedule
+          </Button>
+        </div>
+      </EmptyPanel>
+    );
   } else if (missingConfig) {
     body = (
       <EmptyPanel title={`No configuration has the ID ${config}`}>
@@ -422,10 +456,57 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
               </Select>
             </div>
           </div>
+          {schedule && (
+            <ScheduleFilter scheduleId={schedule} read={scheduleRead} onRemove={showAllSchedules} />
+          )}
           {body}
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * The active schedule filter, which names the schedule and removes the filter. The schedule's name
+ * comes from `GET /schedules/{schedule_id}`; the identifier is shown while it loads or when the
+ * Sync API has no such schedule.
+ */
+function ScheduleFilter({
+  scheduleId,
+  read,
+  onRemove,
+}: {
+  scheduleId: string;
+  read: { data?: { name: string }; isError: boolean; error: unknown };
+  onRemove: () => void;
+}) {
+  const missing = !read.data && read.isError && describeScheduleError(read.error).notFound;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <span className="inline-flex min-w-0 items-center gap-1 rounded-md border px-2 py-1">
+        <span className="text-subtle">Schedule:</span>
+        {read.data ? (
+          <Link
+            to="/schedules/$scheduleId"
+            params={{ scheduleId }}
+            className={cn(
+              "min-w-0 rounded-sm text-accent [overflow-wrap:anywhere] hover:underline",
+              FOCUS
+            )}
+          >
+            {read.data.name}
+          </Link>
+        ) : (
+          <span className="min-w-0 font-mono text-xs [overflow-wrap:anywhere]">{scheduleId}</span>
+        )}
+      </span>
+      {missing && (
+        <span className="text-foreground-muted text-xs">The Sync API has no such schedule.</span>
+      )}
+      <Button variant="outline" size="sm" className={TOUCH} onPress={onRemove}>
+        Remove schedule filter
+      </Button>
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatInZone, startsIn, startTimeText } from "./start-times";
+import { formatInZone, scheduledForText, startsIn, startTimeText } from "./start-times";
 
 describe("formatInZone", () => {
   it.each<[string, string, string]>([
@@ -64,5 +64,20 @@ describe("startsIn", () => {
     [-120, "2 minutes ago"],
   ])("%i seconds", (seconds, expected) => {
     expect(startsIn(new Date(now + seconds * 1000).toISOString(), now)).toBe(expected);
+  });
+});
+
+describe("scheduledForText", () => {
+  it.each<[string, string | undefined, string, string]>([
+    ["same zone", "Europe/Paris", "Europe/Paris", "Wed 1 Jul 2026, 08:00 CEST (+02:00)"],
+    [
+      "another time",
+      "Europe/Paris",
+      "UTC",
+      "Wed 1 Jul 2026, 08:00 CEST (+02:00) (your time: Wed 1 Jul 2026, 06:00 UTC (+00:00))",
+    ],
+    ["schedule not read yet", undefined, "UTC", "Wed 1 Jul 2026, 06:00 UTC (+00:00)"],
+  ])("%s", (_, zone, viewer, expected) => {
+    expect(scheduledForText("2026-07-01T06:00:00Z", zone, viewer)).toBe(expected);
   });
 });

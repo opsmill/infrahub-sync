@@ -14,16 +14,17 @@ export const Route = createFileRoute("/runs/")({
         ? (s.show as FilterId)
         : undefined,
     config: typeof s.config === "string" && CONFIG_ID.test(s.config) ? s.config : undefined,
+    schedule: typeof s.schedule === "string" && /^\S+$/.test(s.schedule) ? s.schedule : undefined,
   }),
-  loaderDeps: ({ search }) => ({ config: search.config }),
+  loaderDeps: ({ search }) => ({ config: search.config, schedule: search.schedule }),
   loader: ({ context: { queryClient }, deps }) => {
-    void queryClient.prefetchInfiniteQuery(runPagesQuery(deps.config));
+    void queryClient.prefetchInfiniteQuery(runPagesQuery(deps.config, deps.schedule));
     void queryClient.prefetchQuery(configsQuery());
   },
   component: RunsRoute,
 });
 
 function RunsRoute() {
-  const { q, show, config } = Route.useSearch();
-  return <RunsPage q={q} show={show} config={config} />;
+  const { q, show, config, schedule } = Route.useSearch();
+  return <RunsPage q={q} show={show} config={config} schedule={schedule} />;
 }

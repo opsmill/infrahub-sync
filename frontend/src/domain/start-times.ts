@@ -92,6 +92,20 @@ export function startTimeText(
   return local === undefined || local === zoned ? { zoned } : { zoned, local };
 }
 
+/**
+ * The time a schedule meant to start a run, on one line: in the schedule's time zone, followed by
+ * the viewer's time when it reads differently. Before the schedule is read, its time zone is not
+ * known, and the time is given in the viewer's time zone.
+ */
+export function scheduledForText(
+  iso: string,
+  scheduleTimeZone: string | undefined,
+  viewer: string
+): string {
+  const text = startTimeText(iso, scheduleTimeZone ?? viewer, viewer);
+  return text.local ? `${text.zoned} (your time: ${text.local})` : text.zoned;
+}
+
 /** The viewer's time zone, or `UTC` when the browser does not give one. */
 export function viewerTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";

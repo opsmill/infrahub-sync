@@ -106,11 +106,11 @@ and actions every story uses.
 
 **Independent Test**: Quickstart scenarios 6, 7 and 8.
 
-- [ ] T025 [US2] In `api/queries.ts`, give `runPagesQuery` an optional `schedule` argument sent as `schedule_id` and included in the query key; every existing caller keeps working unchanged.
-- [ ] T026 [US2] In `routes/runs.index.tsx`, add the search parameter `schedule` to `RunsSearch` and `validateSearch` (a non-empty string without spaces), to `loaderDeps`, and pass it to `runPagesQuery`.
-- [ ] T027 [US2] In `features/runs/RunsPage.tsx`, pass `schedule` to `runPagesQuery` and, when set, show a removable filter "Schedule: <name>" (name from `scheduleQuery`; the identifier while loading or when not found).
-- [ ] T028 [P] [US2] In `features/runs/RunsTable.tsx`, in `IdLine` (`:174`), add a "Scheduled" mark for a run with `trigger_type === "scheduled"`, linking to `/schedules/$scheduleId`. Do not nest an anchor inside the row anchor; follow how `RunLink` (`:214`) handles inner links, or render the mark as text if nesting cannot be avoided, and note the choice in the commit.
-- [ ] T029 [P] [US2] Create `features/schedules/ScheduleLine.tsx` exporting `RunScheduleLine({run})`: "Started by schedule <name>, scheduled for <time>" with a link; add it to `features/runs/RunPage.tsx` near the line that names the account that started the run. In `SchedulePage.tsx`, add "View all runs of this schedule" linking to `/runs?schedule=<schedule_id>`.
+- [X] T025 [US2] In `api/queries.ts`, give `runPagesQuery` an optional `schedule` argument sent as `schedule_id` and included in the query key; every existing caller keeps working unchanged.
+- [X] T026 [US2] In `routes/runs.index.tsx`, add the search parameter `schedule` to `RunsSearch` and `validateSearch` (a non-empty string without spaces), to `loaderDeps`, and pass it to `runPagesQuery`.
+- [X] T027 [US2] In `features/runs/RunsPage.tsx`, pass `schedule` to `runPagesQuery` and, when set, show a removable filter "Schedule: <name>" (name from `scheduleQuery`; the identifier while loading or when not found).
+- [X] T028 [P] [US2] In `features/runs/RunsTable.tsx`, in `IdLine` (`:174`), add a "Scheduled" mark for a run with `trigger_type === "scheduled"`, linking to `/schedules/$scheduleId`. Do not nest an anchor inside the row anchor; follow how `RunLink` (`:214`) handles inner links, or render the mark as text if nesting cannot be avoided, and note the choice in the commit.
+- [X] T029 [P] [US2] Create `features/schedules/ScheduleLine.tsx` exporting `RunScheduleLine({run})`: "Started by schedule <name>, scheduled for <time>" with a link; add it to `features/runs/RunPage.tsx` near the line that names the account that started the run. In `SchedulePage.tsx`, add "View all runs of this schedule" linking to `/runs?schedule=<schedule_id>`.
 
 **Checkpoint**: Both P1 stories work; the feature is useful read-only.
 

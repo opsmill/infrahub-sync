@@ -141,12 +141,12 @@ export const latestRunQuery = (configId: string) =>
   );
 
 /**
- * `GET /runs` 50 runs at a time, newest first, optionally for one configuration. With older pages
- * loaded, every page is read again on each refresh, so the interval grows.
+ * `GET /runs` 50 runs at a time, newest first, optionally for one configuration and one schedule.
+ * With older pages loaded, every page is read again on each refresh, so the interval grows.
  */
-export const runPagesQuery = (config?: string) =>
+export const runPagesQuery = (config?: string, schedule?: string) =>
   infiniteQueryOptions({
-    queryKey: ["get", "/runs", "pages", { config }],
+    queryKey: ["get", "/runs", "pages", { config, schedule }],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam, signal }) => {
       const { data, error } = await fetchClient.GET("/runs", {
@@ -155,6 +155,7 @@ export const runPagesQuery = (config?: string) =>
             limit: "50",
             ...(pageParam ? { cursor: pageParam } : {}),
             ...(config ? { config_id: config } : {}),
+            ...(schedule ? { schedule_id: schedule } : {}),
           },
         },
         signal,

@@ -281,7 +281,20 @@ export function SchedulePage({ scheduleId }: { scheduleId: string }) {
         <StaleNotice error={q.error} updatedAt={q.dataUpdatedAt} onRetry={() => q.refetch()} />
       )}
       <div className="flex flex-col gap-8">
-        <ScheduleNotices schedule={schedule} />
+        <ScheduleNotices
+          schedule={schedule}
+          offers={{
+            runs: (
+              <Link
+                to="/runs"
+                search={{ schedule: schedule.schedule_id }}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                View the runs of this schedule
+              </Link>
+            ),
+          }}
+        />
         <Details
           id="schedule-next-start"
           title="Next start and last run"
@@ -309,6 +322,12 @@ export function SchedulePage({ scheduleId }: { scheduleId: string }) {
             [
               "Failed runs in a row",
               <span className="tabular-nums">{schedule.consecutive_failures}</span>,
+            ],
+            [
+              "All runs",
+              <Link to="/runs" search={{ schedule: schedule.schedule_id }} className={LINK}>
+                View all runs of this schedule
+              </Link>,
             ],
           ]}
         />

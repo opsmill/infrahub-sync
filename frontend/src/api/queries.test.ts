@@ -7,6 +7,7 @@ import { fetchClient } from "./client";
 import {
   describeScheduleError,
   nextStartsQuery,
+  runPagesQuery,
   type ScheduleEventPage,
   scheduleEventsQuery,
 } from "./queries";
@@ -187,5 +188,50 @@ describe("scheduleEventsQuery", () => {
 
   it("the default history types leave out the replayed event", () => {
     expect(DEFAULT_HISTORY_EVENT_TYPES).not.toContain("infrahub_sync.schedule.replayed");
+  });
+});
+
+describe("runPagesQuery", () => {
+  const queryOf = async (config?: string, schedule?: string) => {
+    const get = vi.spyOn(fetchClient, "GET").mockResolvedValue({
+      data: { items: [], next_cursor: null },
+      error: undefined,
+      response: new Response(),
+    } as never);
+    try {
+      const options = runPagesQuery(config, schedule);
+      const queryFn = options.queryFn as (context: unknown) => Promise<unknown>;
+      await queryFn({ pageParam: null, signal: new AbortController().signal });
+      const [path, init] = get.mock.calls[0] as [
+        string,
+        { params: { query: Record<string, unknown> } },
+      ];
+      return { path, query: init.params.query, key: options.queryKey };
+    } finally {
+      get.mockRestore();
+    }
+  };
+
+  it.each([
+    [undefined, undefined, { limit: "50" }],
+    ["netbox", undefined, { limit: "50", config_id: "netbox" }],
+    [undefined, "sched_1", { limit: "50", schedule_id: "sched_1" }],
+    ["netbox", "sched_1", { limit: "50", config_id: "netbox", schedule_id: "sched_1" }],
+  ])("with config %s and schedule %s, sends %o", async (config, schedule, expected) => {
+    const { path, query } = await queryOf(config, schedule);
+    expect(path).toBe("/runs");
+    expect(query).toEqual(expected);
+  });
+
+  it("keys the query by the schedule", () => {
+    expect(runPagesQuery(undefined, "sched_1").queryKey).not.toEqual(
+      runPagesQuery(undefined, "sched_2").queryKey
+    );
+    expect(runPagesQuery("netbox").queryKey).toEqual([
+      "get",
+      "/runs",
+      "pages",
+      { config: "netbox", schedule: undefined },
+    ]);
   });
 });
