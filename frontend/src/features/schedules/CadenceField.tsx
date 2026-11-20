@@ -328,7 +328,7 @@ export function CadenceField({
       )}
       {shownRefusal && (
         <FieldMessage id={refusalId}>
-          {preview.refusal ? (
+          {preview.refusal?.field === "cron" ? (
             <p>{shownRefusal.detail ?? shownRefusal.title}</p>
           ) : (
             <RefusalText refusal={shownRefusal} />

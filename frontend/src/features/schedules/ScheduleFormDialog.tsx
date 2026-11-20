@@ -320,6 +320,12 @@ export function ScheduleFormDialog({
             describedBy={refusalFor("config_id") ? errorId("config_id") : undefined}
           />
         )}
+        {!target.config && configs.data?.items.length === 0 && (
+          <p className="text-pretty text-subtle text-xs">
+            No configuration is registered. Register a configuration first, then create its
+            schedule.
+          </p>
+        )}
         {!target.config && configs.isError && !configs.data && (
           <p className="text-pretty text-danger text-xs">The configurations could not be loaded.</p>
         )}

@@ -130,21 +130,22 @@ export function SchedulesPage({ state, config }: SchedulesSearch) {
   } else if (listed.length === 0) {
     body = (
       <EmptyPanel title="No schedule exists.">
-        {noConfig ? (
-          <>
-            <p className="max-w-[52ch] text-pretty text-foreground-muted">
-              Register a configuration first, then create its schedule.
-            </p>
+        {noConfig && (
+          <p className="max-w-[52ch] text-pretty text-foreground-muted">
+            Register a configuration first, then create its schedule.
+          </p>
+        )}
+        <div className="flex flex-wrap justify-center gap-2">
+          {createButton("outline")}
+          {noConfig && (
             <Link
               to="/"
               className={buttonVariants({ variant: "outline", size: "sm", className: TOUCH })}
             >
               View configurations
             </Link>
-          </>
-        ) : (
-          createButton("outline")
-        )}
+          )}
+        </div>
       </EmptyPanel>
     );
   } else {
@@ -199,7 +200,7 @@ export function SchedulesPage({ state, config }: SchedulesSearch) {
             The schedules that start runs of a configuration, newest first.
           </p>
         </div>
-        {!noConfig && createButton("primary")}
+        {createButton("primary")}
       </header>
       {creating && (
         <ScheduleFormDialog target={{ mode: "create" }} onClose={() => setCreating(false)} />
