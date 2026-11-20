@@ -1,0 +1,43 @@
+frontend/src/features/schedules/ScheduleTimeline.tsx
+  s_caab93ebf0934a::t_c6452231a5616a 240-242
+  s_caab93ebf0934a::t_205e9417b06785 135-142,153-197,199-200,251,255,257,259,280,285,288,327
+  s_caab93ebf0934a::t_11c96c67a56016 198,201
+frontend/src/features/schedules/form-rules.ts
+  s_caab93ebf0934a::t_1ac70baa15c231 76-127
+frontend/src/features/schedules/CadenceTimeline.tsx
+  s_caab93ebf0934a::t_b430580a8447fb 1-28,31-165
+  s_caab93ebf0934a::t_c6452231a5616a 29-30
+frontend/src/features/schedules/ScheduleFormDialog.tsx
+  s_caab93ebf0934a::t_da8e680182f8ec 532
+  s_caab93ebf0934a::t_c6452231a5616a 28-29,531,668-671,746-748,1014,1017
+  s_caab93ebf0934a::t_a51c0aade4138e 1,4-14,32,51-52,58,65,108-167,187-191,239-244,343-371,401-406,502-530,533,537-538,544-583,585,587-624,627-667,672-745,749-842,844-902,904-993,997-1003,1005-1006,1009-1012,1015-1016,1018-1021,1023-1031,1034-1068
+frontend/src/features/schedules/CadenceField.tsx
+  s_caab93ebf0934a::t_e4898cb4382a64 26,81-82
+frontend/src/features/schedules/form-rules.test.ts
+  s_caab93ebf0934a::t_707c2ff700b28f 5
+  s_caab93ebf0934a::t_1ac70baa15c231 130-185
+  s_caab93ebf0934a::t_41204b2c72d64d 186
+frontend/src/domain/schedules.ts
+  s_caab93ebf0934a::t_990cbd559d5025 214-234,247,259
+frontend/src/domain/schedules.test.ts
+  s_caab93ebf0934a::t_990cbd559d5025 7,231-270
+  s_caab93ebf0934a::t_e3ff566776f7f6 271-272
+frontend/src/features/schedules/NextStarts.tsx
+  s_caab93ebf0934a::t_2f48745673c3ca 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1956f53da36d348c31ac31153ac58157795a33b5",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
