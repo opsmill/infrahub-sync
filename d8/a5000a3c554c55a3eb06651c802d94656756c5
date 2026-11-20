@@ -1,0 +1,25 @@
+tests/service/test_stored_destination_token.py
+  s_58b527396c8cb5::t_97036d5466ca02 92,99-103,213-214,218,220-226
+  s_58b527396c8cb5::t_04e4268bb8e3fe 44,217,219,266-274,277-280
+  s_58b527396c8cb5::t_929da1abf0491e 215-216
+  s_58b527396c8cb5::t_1bbc1657d7822a 227-228
+infrahub_sync/service/credential_actions.py
+  s_58b527396c8cb5::t_97036d5466ca02 107-109
+  s_58b527396c8cb5::t_8ed6de7b169b4e 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d8a5000a3c554c55a3eb06651c802d94656756c5",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
