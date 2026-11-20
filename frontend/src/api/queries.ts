@@ -335,10 +335,34 @@ export type ScheduleEventPage = EventPage & { until: string };
 
 type ScheduleEventPageParam = { offset: number; until: string | null };
 
+/** One read of a schedule's history, newest first; without `until`, the newest events. */
+async function readScheduleEvents(
+  scheduleId: string,
+  includeAll: boolean,
+  { offset, until, signal }: { offset: number; until?: string; signal: AbortSignal }
+): Promise<EventPage> {
+  const { data, error } = await fetchClient.GET("/events", {
+    params: {
+      query: {
+        related: [`schedule:${scheduleId}`],
+        order: "desc",
+        ...(until ? { until } : {}),
+        limit: String(EVENT_PAGE_LIMIT),
+        offset: String(offset),
+        ...(includeAll ? {} : { event_type: [...DEFAULT_HISTORY_EVENT_TYPES] }),
+      },
+    },
+    signal,
+  });
+  if (error) throw error;
+  return data;
+}
+
 /**
  * The history of a schedule, newest first, 50 entries at a time. The first page fixes `until` to
  * the time it is read and every older page uses that time, so events recorded later do not shift
  * the offsets of older pages. Unless `includeAll`, only the schedule event types are asked for.
+ * Events recorded after `until` come from `scheduleNewestEventsQuery`.
  */
 export const scheduleEventsQuery = (
   scheduleId: string,
@@ -349,20 +373,11 @@ export const scheduleEventsQuery = (
     initialPageParam: { offset: 0, until: null } as ScheduleEventPageParam,
     queryFn: async ({ pageParam, signal }): Promise<ScheduleEventPage> => {
       const until = pageParam.until ?? new Date().toISOString();
-      const { data, error } = await fetchClient.GET("/events", {
-        params: {
-          query: {
-            related: [`schedule:${scheduleId}`],
-            order: "desc",
-            until,
-            limit: String(EVENT_PAGE_LIMIT),
-            offset: String(pageParam.offset),
-            ...(includeAll ? {} : { event_type: [...DEFAULT_HISTORY_EVENT_TYPES] }),
-          },
-        },
+      const data = await readScheduleEvents(scheduleId, includeAll, {
+        offset: pageParam.offset,
+        until,
         signal,
       });
-      if (error) throw error;
       return { ...data, until };
     },
     getNextPageParam: (last, pages): ScheduleEventPageParam | undefined =>
@@ -372,6 +387,20 @@ export const scheduleEventsQuery = (
             until: pages[0].until,
           }
         : undefined,
+  });
+
+/**
+ * The newest 50 events of a schedule, read without `until` every 10 seconds (contracts/http-api.md),
+ * so the history can add the events recorded after its first page above the list.
+ */
+export const scheduleNewestEventsQuery = (
+  scheduleId: string,
+  { includeAll = false }: { includeAll?: boolean } = {}
+) =>
+  queryOptions({
+    queryKey: ["get", "/events", "schedule-newest", { scheduleId, includeAll }],
+    queryFn: ({ signal }) => readScheduleEvents(scheduleId, includeAll, { offset: 0, signal }),
+    refetchInterval: poll(LIST_REFRESH_MS),
   });
 
 /* ---------- accounts and tokens ---------- */

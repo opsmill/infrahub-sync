@@ -31,6 +31,7 @@ import { formatAbsolute } from "#/lib/time";
 import { useDocumentTitle } from "#/lib/title";
 
 import { NextStarts, StartTime } from "./NextStarts";
+import { ScheduleHistory } from "./ScheduleHistory";
 import { ScheduleNotices } from "./ScheduleNotices";
 import { ScheduleStateLabel } from "./SchedulesTable";
 
@@ -175,7 +176,13 @@ function Cadence({ cron }: { cron: string }) {
  * seconds. The schedule identifier, the owner and the account that set "write when records are
  * left out" are shown only as the strings the Sync API returns.
  */
-export function SchedulePage({ scheduleId }: { scheduleId: string }) {
+export function SchedulePage({
+  scheduleId,
+  showAllEvents = false,
+}: {
+  scheduleId: string;
+  showAllEvents?: boolean;
+}) {
   const q = useQuery(scheduleQuery(scheduleId));
   const schedule = q.data;
   // The configuration name comes from the configurations list the interface already reads.
@@ -378,7 +385,7 @@ export function SchedulePage({ scheduleId }: { scheduleId: string }) {
               : [["Open branch", <None text="No review branch is open" />]]
           }
         />
-        {/* The "History" section is added here (spec 026, T030). */}
+        <ScheduleHistory scheduleId={scheduleId} includeAll={showAllEvents} />
         <Details
           id="schedule-record"
           title="Record"

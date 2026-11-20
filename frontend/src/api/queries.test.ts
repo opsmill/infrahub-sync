@@ -10,6 +10,7 @@ import {
   runPagesQuery,
   type ScheduleEventPage,
   scheduleEventsQuery,
+  scheduleNewestEventsQuery,
 } from "./queries";
 
 const envelope = (code: string, status: number, message = "the sync api message") => ({
@@ -188,6 +189,44 @@ describe("scheduleEventsQuery", () => {
 
   it("the default history types leave out the replayed event", () => {
     expect(DEFAULT_HISTORY_EVENT_TYPES).not.toContain("infrahub_sync.schedule.replayed");
+  });
+});
+
+describe("scheduleNewestEventsQuery", () => {
+  it.each([
+    [false, { event_type: DEFAULT_HISTORY_EVENT_TYPES }],
+    [true, {}],
+  ])("with includeAll %s, asks for the newest events without until", async (includeAll, types) => {
+    const get = vi.spyOn(fetchClient, "GET").mockResolvedValue({
+      data: { items: [], limit: 50, offset: 0, has_more: false },
+      error: undefined,
+      response: new Response(),
+    } as never);
+    try {
+      const options = scheduleNewestEventsQuery("sched_1", { includeAll });
+      const queryFn = options.queryFn as (context: unknown) => Promise<unknown>;
+      await queryFn({ signal: new AbortController().signal });
+      const [path, init] = get.mock.calls[0] as [
+        string,
+        { params: { query: Record<string, unknown> } },
+      ];
+      expect(path).toBe("/events");
+      expect(init.params.query).toEqual({
+        related: ["schedule:sched_1"],
+        order: "desc",
+        limit: "50",
+        offset: "0",
+        ...types,
+      });
+    } finally {
+      get.mockRestore();
+    }
+  });
+
+  it("is kept apart from the paged history", () => {
+    expect(scheduleNewestEventsQuery("sched_1").queryKey).not.toEqual(
+      scheduleEventsQuery("sched_1").queryKey
+    );
   });
 });
 

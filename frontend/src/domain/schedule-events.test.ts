@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { SyncEvent } from "#/api/types";
 
-import { DEFAULT_HISTORY_EVENT_TYPES, eventRunId, eventText } from "./schedule-events";
+import {
+  DEFAULT_HISTORY_EVENT_TYPES,
+  eventRunId,
+  eventText,
+  withNewestEvents,
+} from "./schedule-events";
 
 const S = "infrahub_sync.schedule.";
 
@@ -276,5 +281,33 @@ describe("DEFAULT_HISTORY_EVENT_TYPES", () => {
       )
     );
     expect(DEFAULT_HISTORY_EVENT_TYPES).not.toContain(`${S}replayed`);
+  });
+});
+
+describe("withNewestEvents", () => {
+  const ids = (events: SyncEvent[]) => events.map((e) => e.event_id);
+  const listed = [
+    event({ event_id: "e-3" }),
+    event({ event_id: "e-2" }),
+    event({ event_id: "e-1" }),
+  ];
+
+  it("adds the events not listed yet above the list, newest first", () => {
+    const newest = [event({ event_id: "e-5" }), event({ event_id: "e-4" }), ...listed.slice(0, 2)];
+    expect(ids(withNewestEvents(newest, listed))).toEqual(["e-5", "e-4", "e-3", "e-2", "e-1"]);
+  });
+
+  it("returns the listed entries unchanged when every newest event is listed", () => {
+    expect(withNewestEvents(listed.slice(0, 2), listed)).toBe(listed);
+  });
+
+  it("does not list an event twice when the list already holds it", () => {
+    const newest = [event({ event_id: "e-4" }), event({ event_id: "e-1" })];
+    expect(ids(withNewestEvents(newest, listed))).toEqual(["e-4", "e-3", "e-2", "e-1"]);
+  });
+
+  it("shows the newest events when nothing is listed", () => {
+    const newest = [event({ event_id: "e-1" })];
+    expect(ids(withNewestEvents(newest, []))).toEqual(["e-1"]);
   });
 });

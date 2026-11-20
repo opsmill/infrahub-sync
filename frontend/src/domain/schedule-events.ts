@@ -151,3 +151,14 @@ export function eventRunId(event: SyncEvent): string | undefined {
   if (event.primary_resource?.kind === "run") return event.primary_resource.id;
   return event.related.find((entry) => entry.kind === "run")?.id;
 }
+
+/**
+ * The history as shown: the newest events read without `until` that are not listed yet, above the
+ * listed pages, in the order the Sync API returned them (contracts/http-api.md). The listed pages
+ * keep their order, so the offsets of older pages do not move.
+ */
+export function withNewestEvents(newest: readonly SyncEvent[], listed: SyncEvent[]): SyncEvent[] {
+  const shown = new Set(listed.map((event) => event.event_id));
+  const added = newest.filter((event) => !shown.has(event.event_id));
+  return added.length ? [...added, ...listed] : listed;
+}

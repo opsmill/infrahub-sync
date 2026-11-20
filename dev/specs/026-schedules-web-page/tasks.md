@@ -122,7 +122,7 @@ and actions every story uses.
 
 **Independent Test**: Quickstart scenarios 19, 20 and 21.
 
-- [ ] T030 [US7] Create `features/schedules/ScheduleHistory.tsx`: a `SectionHeading` "History", a checkbox "Show all events" (kept in the search parameter `events=all` of the schedule route, validated in `routes/schedules.$scheduleId.tsx`), `useInfiniteQuery(scheduleEventsQuery(scheduleId, {includeAll}))`, a list of entries (time with `When`, `eventText`, the account name, the reason in quotes, "View run" from `eventRunId`), "Load older events", an empty state "No event recorded yet.", and `ErrorPanel`. Every 10 seconds, read the first page again without `until` and add the events whose `event_id` is not listed yet above the list (contracts/http-api.md). Mount it in the history slot of `SchedulePage.tsx`; it stays visible for a deleted schedule.
+- [X] T030 [US7] Create `features/schedules/ScheduleHistory.tsx`: a `SectionHeading` "History", a checkbox "Show all events" (kept in the search parameter `events=all` of the schedule route, validated in `routes/schedules.$scheduleId.tsx`), `useInfiniteQuery(scheduleEventsQuery(scheduleId, {includeAll}))`, a list of entries (time with `When`, `eventText`, the account name, the reason in quotes, "View run" from `eventRunId`), "Load older events", an empty state "No event recorded yet.", and `ErrorPanel`. Every 10 seconds, read the first page again without `until` and add the events whose `event_id` is not listed yet above the list (contracts/http-api.md). Mount it in the history slot of `SchedulePage.tsx`; it stays visible for a deleted schedule.
 
 **Checkpoint**: A skipped start is visible with its cause and its run.
 
