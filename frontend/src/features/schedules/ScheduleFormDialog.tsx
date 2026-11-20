@@ -1,21 +1,27 @@
-import { Checkbox } from "@infrahub/ui";
+import { Button, Checkbox } from "@infrahub/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import { useCreateSchedule, useIdempotencyKey } from "#/api/actions";
+import { useChangeSchedule, useCreateSchedule, useIdempotencyKey } from "#/api/actions";
 import {
   configScheduleQuery,
   configsQuery,
   describeScheduleError,
   meQuery,
+  scheduleQuery,
   versionsQuery,
 } from "#/api/queries";
 import type { Schedule } from "#/api/types";
 import { announce } from "#/components/announcer";
+import { Notice } from "#/components/page";
 import {
+  branchKeptOpen,
+  changeRequest,
   createRequest,
+  differsFromOpening,
+  formValuesOf,
   overlapPolicyLabel,
   type ScheduleFormValues,
   writeTargetLabel,
@@ -39,18 +45,31 @@ import {
   LATE_START_MAX_MINUTES,
   LATE_START_MIN_MINUTES,
   lateStartMinutesText,
+  lateStartProblem,
   lateStartSeconds,
   NAME_HINT,
   nameAccepted,
 } from "./form-rules";
 import { browserTimeZone, timeZoneChoices } from "./time-zones";
 
-/** Where the form was opened: the create form, with or without a configuration chosen. */
-export type ScheduleFormTarget = {
-  mode: "create";
-  /** The configuration of the page the form was opened from; the form offers a choice without it. */
-  config?: { configId: string; name: string; latestVersion?: number | null };
-};
+/**
+ * Where the form was opened: the create form, with or without a configuration chosen, or the
+ * change form of one schedule.
+ */
+export type ScheduleFormTarget =
+  | {
+      mode: "create";
+      /** The configuration of the page the form was opened from; the form offers a choice without it. */
+      config?: { configId: string; name: string; latestVersion?: number | null };
+    }
+  | {
+      mode: "change";
+      /** The schedule as the page read it when the form opened. */
+      schedule: Schedule;
+      configName: string;
+      /** Opened from the newer-version notice: the newest version is filled in. */
+      newestVersion?: boolean;
+    };
 
 /** The cadence a new schedule starts with (tasks T035): every day at 02:00. */
 const DEFAULT_CRON = "0 2 * * *";
@@ -90,7 +109,11 @@ const createValues = (): FormState => ({
   start_late_by_at_most_seconds: 3600,
 });
 
-/** Create a schedule: a name, a configuration version, a cadence with its preview, and its settings. */
+/**
+ * Create a schedule, or change one: a version, a cadence with its preview, and the settings. The
+ * change form shows the name and the configuration as text and sends only the settings that
+ * differ from the values it opened with (spec FR-018, FR-023).
+ */
 export function ScheduleFormDialog({
   target,
   onClose,
@@ -102,25 +125,59 @@ export function ScheduleFormDialog({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const create = useCreateSchedule();
+  const change = useChangeSchedule();
   const [key, renewKey] = useIdempotencyKey();
 
+  const changing = target.mode === "change" ? target.schedule : undefined;
+  const fixedConfig =
+    target.mode === "create"
+      ? target.config
+      : { configId: target.schedule.config_id, name: target.configName };
+  const mutation = changing ? change : create;
+
+  // The change form keeps the values it opened with until the person reloads them.
+  const [opening, setOpening] = useState(() => (changing ? formValuesOf(changing) : undefined));
   const [name, setName] = useState("");
   const [chosenConfig, setChosenConfig] = useState<string | undefined>(undefined);
-  const [form, setForm] = useState<FormState>(createValues);
+  const [form, setForm] = useState<FormState>(() =>
+    changing
+      ? {
+          ...formValuesOf(changing),
+          registry_version:
+            target.mode === "change" && target.newestVersion && changing.newer_version != null
+              ? changing.newer_version
+              : changing.registry_version,
+        }
+      : createValues()
+  );
   const [lateText, setLateText] = useState(() =>
     lateStartMinutesText(form.start_late_by_at_most_seconds)
   );
   const [reason, setReason] = useState("");
+  /** Renewed on a reload, so the cadence helper chooses its form again from the reloaded value. */
+  const [cadenceKey, setCadenceKey] = useState(0);
+  const [confirmReload, setConfirmReload] = useState(false);
+  const [nothingChanged, setNothingChanged] = useState(false);
   /** Set while the stored schedule is read after `orchestration-unavailable`. */
   const [finding, setFinding] = useState(false);
 
-  const configId = target.config?.configId ?? chosenConfig;
-  const configs = useQuery({ ...configsQuery(), enabled: !target.config });
+  const configId = fixedConfig?.configId ?? chosenConfig;
+  const configs = useQuery({ ...configsQuery(), enabled: !fixedConfig });
   const versions = useQuery({ ...versionsQuery(configId ?? ""), enabled: Boolean(configId) });
+  // The page reads the schedule every 10 seconds; the form compares that read with its opening values.
+  const polled = useQuery({
+    ...scheduleQuery(changing?.schedule_id ?? ""),
+    enabled: Boolean(changing),
+  }).data;
+  const latest = polled ?? changing;
   const me = useQuery(meQuery()).data;
   const approvalRequired = me?.approval_required === true;
   const browserZone = useMemo(browserTimeZone, []);
-  const zones = useMemo(() => timeZoneChoices(browserZone), [browserZone]);
+  const storedZone = changing?.timezone;
+  const zones = useMemo(
+    () => timeZoneChoices(storedZone ?? browserZone),
+    [storedZone, browserZone]
+  );
   const preview = useCadencePreview(form.cron, form.timezone);
 
   const numbers = useMemo(
@@ -128,20 +185,56 @@ export function ScheduleFormDialog({
     [versions.data]
   );
   const summary = configs.data?.items.find((c) => c.config_id === configId);
-  const latest = numbers[0] ?? target.config?.latestVersion ?? summary?.latest_version ?? undefined;
-  const version = form.registry_version ?? latest;
+  const newestVersion =
+    numbers[0] ??
+    (target.mode === "create" ? target.config?.latestVersion : undefined) ??
+    summary?.latest_version ??
+    undefined;
+  const version = form.registry_version ?? newestVersion;
 
   /** Any change by the person makes it a new request; the answer to the last one no longer applies. */
   const edited = () => {
     renewKey();
-    create.reset();
+    mutation.reset();
+    setNothingChanged(false);
   };
   const set = (patch: Partial<FormState>) => {
     setForm((f) => ({ ...f, ...patch }));
     edited();
   };
 
-  const refusal = fieldRefusal(create.error);
+  const changedSinceOpening =
+    opening !== undefined && latest !== undefined && differsFromOpening(opening, latest);
+  const keptBranch = opening && latest ? branchKeptOpen(opening, form.write_target, latest) : null;
+
+  /** Replace the entered values with the schedule as last read; they become the opening values. */
+  const reload = () => {
+    if (!latest) return;
+    const values = formValuesOf(latest);
+    setOpening(values);
+    setForm({ ...values });
+    setLateText(lateStartMinutesText(values.start_late_by_at_most_seconds));
+    setReason("");
+    setCadenceKey((k) => k + 1);
+    setConfirmReload(false);
+    edited();
+  };
+  const askReload = () => {
+    if (!opening) return;
+    const values = {
+      ...form,
+      registry_version: form.registry_version ?? opening.registry_version,
+      cron: form.cron ?? "",
+    };
+    const entered =
+      reason.trim() !== "" ||
+      lateText !== lateStartMinutesText(opening.start_late_by_at_most_seconds) ||
+      changeRequest(opening, values, "") !== null;
+    if (entered) setConfirmReload(true);
+    else reload();
+  };
+
+  const refusal = fieldRefusal(mutation.error);
   const refusalFor = (field: FieldRefusal["field"]) => (refusal?.field === field ? refusal : null);
   const errorId = (field: string) => `${id}-${field}-refusal`;
 
@@ -153,26 +246,25 @@ export function ScheduleFormDialog({
         .getElementById(`${id}-${refusedField}-refusal`)
         ?.scrollIntoView({ block: "nearest" });
     }
-  }, [id, refusedField, create.error]);
+  }, [id, refusedField, mutation.error]);
 
-  const lateSeconds = lateStartSeconds(lateText);
-  const problem: string | undefined = !name.trim()
-    ? "Enter a name."
-    : !nameAccepted(name)
-      ? "Change the name: it has a character the Sync API does not accept."
-      : !configId
-        ? "Choose a configuration."
-        : version === undefined
-          ? versions.isPending
-            ? "Loading the versions of this configuration."
-            : "This configuration has no registered version."
-          : form.cron === null
-            ? "Complete the cadence."
-            : !form.timezone.trim()
-              ? "Enter a time zone."
-              : lateSeconds === null
-                ? "Enter how late a missed start may begin."
-                : undefined;
+  const lateProblem = lateStartProblem(lateText, opening?.start_late_by_at_most_seconds);
+  const problem: string | undefined =
+    !changing && !name.trim()
+      ? "Enter a name."
+      : !changing && !nameAccepted(name)
+        ? "Change the name: it has a character the Sync API does not accept."
+        : !configId
+          ? "Choose a configuration."
+          : version === undefined
+            ? versions.isPending
+              ? "Loading the versions of this configuration."
+              : "This configuration has no registered version."
+            : form.cron === null
+              ? "Complete the cadence."
+              : !form.timezone.trim()
+                ? "Enter a time zone."
+                : lateProblem;
 
   const open = (schedule: Schedule) => {
     onClose();
@@ -180,9 +272,34 @@ export function ScheduleFormDialog({
     navigate({ to: "/schedules/$scheduleId", params: { scheduleId: schedule.schedule_id } });
   };
 
+  const submitChange = (schedule: Schedule, values: ScheduleFormValues) => {
+    if (!opening) return;
+    const body = changeRequest(opening, values, reason);
+    if (body === null) {
+      setNothingChanged(true);
+      return;
+    }
+    change.mutate(
+      {
+        params: { path: { schedule_id: schedule.schedule_id }, header: { "Idempotency-Key": key } },
+        body,
+      },
+      {
+        onSuccess: () => {
+          onClose();
+          announce("Schedule changed");
+        },
+      }
+    );
+  };
+
   const submit = () => {
     if (problem || !configId || version === undefined || form.cron === null) return;
     const values: ScheduleFormValues = { ...form, registry_version: version, cron: form.cron };
+    if (changing) {
+      submitChange(changing, values);
+      return;
+    }
     create.mutate(
       {
         params: { header: { "Idempotency-Key": key } },
@@ -208,14 +325,16 @@ export function ScheduleFormDialog({
     );
   };
 
-  const schedulesOfConfig = configId ? (
+  const schedulesOfConfig = changing ? (
+    "close this form and view the settings of this schedule"
+  ) : configId ? (
     <Link to="/schedules" search={{ config: configId }} className={LINK} onClick={onClose}>
       view the schedule of this configuration
     </Link>
   ) : (
     "view the Schedules page"
   );
-  const submitLabel = "Create schedule";
+  const submitLabel = changing ? "Save changes" : "Create schedule";
   const refusalBelow = (field: FieldRefusal["field"], extra?: ReactNode) => {
     const r = refusalFor(field);
     return (
@@ -227,29 +346,76 @@ export function ScheduleFormDialog({
     );
   };
 
+  const showZoneNotice = !changing && browserZone !== "UTC";
   const timezoneRefusal = preview.refusal?.field === "timezone" ? preview.refusal : null;
   const zoneDescribedBy =
     [
-      browserZone !== "UTC" ? `${id}-zone-hint` : undefined,
+      showZoneNotice ? `${id}-zone-hint` : undefined,
       timezoneRefusal || refusalFor("timezone") ? errorId("timezone") : undefined,
     ]
       .filter(Boolean)
       .join(" ") || undefined;
 
+  const changedNotice = changedSinceOpening && (
+    <Notice
+      tone="warning"
+      role="status"
+      title="This schedule changed since you opened this form."
+      action={
+        confirmReload ? undefined : (
+          <Button variant="outline" size="sm" onPress={askReload}>
+            Reload
+          </Button>
+        )
+      }
+    >
+      {confirmReload ? (
+        <div className="flex flex-col gap-2">
+          <p>Replace the values you entered with the current values of this schedule?</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onPress={reload}>
+              Replace my values
+            </Button>
+            <Button variant="ghost" size="sm" onPress={() => setConfirmReload(false)}>
+              Keep my values
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p>
+          Saving sends only the settings you changed, so the other changes are kept. Reload to view
+          the current values.
+        </p>
+      )}
+    </Notice>
+  );
+
   return (
     <DialogFrame
       isOpen
       onOpenChange={(o) => !o && onClose()}
-      title="Create a schedule"
+      title={changing ? "Change the schedule" : "Create a schedule"}
       ariaLabel={
-        target.config ? `Create a schedule for ${target.config.name}` : "Create a schedule"
+        changing
+          ? `Change the schedule ${changing.name}`
+          : fixedConfig
+            ? `Create a schedule for ${fixedConfig.name}`
+            : "Create a schedule"
       }
       description={
-        target.config ? (
+        changing ? (
+          <p>
+            Changes the settings of{" "}
+            <span className="font-medium text-foreground [overflow-wrap:anywhere]">
+              {changing.name}
+            </span>
+            . Only the settings you change are sent.
+          </p>
+        ) : fixedConfig ? (
           <p>
             Starts sync runs of{" "}
             <span className="font-medium text-foreground [overflow-wrap:anywhere]">
-              {target.config.name}
+              {fixedConfig.name}
             </span>{" "}
             on a cadence.
           </p>
@@ -257,50 +423,62 @@ export function ScheduleFormDialog({
           <p>Starts sync runs of a configuration on a cadence.</p>
         )
       }
+      notice={changedNotice || undefined}
       error={
-        create.error && !refusal ? (
+        nothingChanged ? (
+          <Notice tone="neutral" role="status" title="Nothing changed">
+            <p>Change a setting before you save. No request was sent.</p>
+          </Notice>
+        ) : mutation.error && !refusal ? (
           <MutationError
-            error={create.error}
+            error={mutation.error}
             describe={describeScheduleError}
             retryHint={resendHint(submitLabel, { check: schedulesOfConfig })}
           />
         ) : undefined
       }
       submitLabel={submitLabel}
-      pendingLabel="Creating the schedule"
-      isPending={create.isPending || finding}
+      pendingLabel={changing ? "Saving the changes" : "Creating the schedule"}
+      isPending={mutation.isPending || finding}
       isDisabled={problem !== undefined}
       disabledReason={problem}
       onSubmit={submit}
     >
-      <Field id={`${id}-name`} label="Name" hint={NAME_HINT}>
-        <input
-          id={`${id}-name`}
-          className={INPUT}
-          value={name}
-          onChange={(e) => {
-            setName(e.target.value);
-            edited();
-          }}
-          autoComplete="off"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          // biome-ignore lint/a11y/noAutofocus: only with a fine pointer, inside a modal that just opened.
-          autoFocus={finePointer()}
-          aria-invalid={Boolean(refusalFor("name"))}
-          aria-describedby={[`${id}-name-hint`, refusalFor("name") && errorId("name")]
-            .filter(Boolean)
-            .join(" ")}
-        />
-        {refusalBelow("name")}
-      </Field>
+      {changing ? (
+        <div className="flex flex-col gap-1.5">
+          <p className="font-medium text-foreground text-sm">Name</p>
+          <p className="text-sm [overflow-wrap:anywhere]">{changing.name}</p>
+        </div>
+      ) : (
+        <Field id={`${id}-name`} label="Name" hint={NAME_HINT}>
+          <input
+            id={`${id}-name`}
+            className={INPUT}
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              edited();
+            }}
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            // biome-ignore lint/a11y/noAutofocus: only with a fine pointer, inside a modal that just opened.
+            autoFocus={finePointer()}
+            aria-invalid={Boolean(refusalFor("name"))}
+            aria-describedby={[`${id}-name-hint`, refusalFor("name") && errorId("name")]
+              .filter(Boolean)
+              .join(" ")}
+          />
+          {refusalBelow("name")}
+        </Field>
+      )}
 
       <div className="flex flex-col gap-1.5">
-        {target.config ? (
+        {fixedConfig ? (
           <>
             <p className="font-medium text-foreground text-sm">Configuration</p>
-            <p className="text-sm [overflow-wrap:anywhere]">{target.config.name}</p>
+            <p className="text-sm [overflow-wrap:anywhere]">{fixedConfig.name}</p>
           </>
         ) : (
           <FormSelect
@@ -320,13 +498,13 @@ export function ScheduleFormDialog({
             describedBy={refusalFor("config_id") ? errorId("config_id") : undefined}
           />
         )}
-        {!target.config && configs.data?.items.length === 0 && (
+        {!fixedConfig && configs.data?.items.length === 0 && (
           <p className="text-pretty text-subtle text-xs">
             No configuration is registered. Register a configuration first, then create its
             schedule.
           </p>
         )}
-        {!target.config && configs.isError && !configs.data && (
+        {!fixedConfig && configs.isError && !configs.data && (
           <p className="text-pretty text-danger text-xs">The configurations could not be loaded.</p>
         )}
         {refusalBelow(
@@ -355,7 +533,7 @@ export function ScheduleFormDialog({
             value={version}
             options={numbers.map((n) => ({
               id: n,
-              label: n === latest ? `Version ${n}, the latest` : `Version ${n}`,
+              label: n === newestVersion ? `Version ${n}, the latest` : `Version ${n}`,
             }))}
             onChange={(n) => set({ registry_version: n })}
             isInvalid={Boolean(refusalFor("registry_version"))}
@@ -371,7 +549,8 @@ export function ScheduleFormDialog({
       )}
 
       <CadenceField
-        initialCron={DEFAULT_CRON}
+        key={cadenceKey}
+        initialCron={opening?.cron ?? DEFAULT_CRON}
         onChange={(cron) => set({ cron })}
         preview={preview}
         saveRefusal={refusalFor("cron")}
@@ -407,7 +586,7 @@ export function ScheduleFormDialog({
             />
           </>
         )}
-        {browserZone !== "UTC" && (
+        {showZoneNotice && (
           <p id={`${id}-zone-hint`} className="text-pretty text-subtle text-xs">
             {UTC_NOTICE}
           </p>
@@ -465,6 +644,13 @@ export function ScheduleFormDialog({
             </label>
           );
         })}
+        {keptBranch && (
+          <p className="text-pretty text-foreground-muted text-xs">
+            The open review branch{" "}
+            <span className="font-mono text-foreground [overflow-wrap:anywhere]">{keptBranch}</span>{" "}
+            and its proposed change stay in Infrahub.
+          </p>
+        )}
         {refusalBelow("write_target")}
       </fieldset>
 
@@ -500,7 +686,7 @@ export function ScheduleFormDialog({
       <Field
         id={`${id}-late`}
         label="How late a missed start may begin, in minutes"
-        hint={`From ${LATE_START_MIN_MINUTES} to ${LATE_START_MAX_MINUTES} (7 days). When the worker runs again later than this after a missed start time, no run starts.`}
+        hint={`From ${LATE_START_MIN_MINUTES} to ${LATE_START_MAX_MINUTES} (7 days). When the worker runs again later than this after a missed start time, no run starts.${opening?.start_late_by_at_most_seconds === null ? " This schedule has no limit; leave the field empty to keep it without one." : ""}`}
       >
         <input
           id={`${id}-late`}
@@ -513,9 +699,18 @@ export function ScheduleFormDialog({
           onChange={(e) => {
             setLateText(e.target.value);
             const seconds = lateStartSeconds(e.target.value);
-            set(seconds === null ? {} : { start_late_by_at_most_seconds: seconds });
+            // An emptied input keeps a schedule without a limit as it opened.
+            const kept =
+              opening?.start_late_by_at_most_seconds === null && e.target.value.trim() === "";
+            set(
+              seconds !== null
+                ? { start_late_by_at_most_seconds: seconds }
+                : kept
+                  ? { start_late_by_at_most_seconds: null }
+                  : {}
+            );
           }}
-          aria-invalid={lateSeconds === null}
+          aria-invalid={lateProblem !== undefined}
           aria-describedby={`${id}-late-hint`}
         />
       </Field>

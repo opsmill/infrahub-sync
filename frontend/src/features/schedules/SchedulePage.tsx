@@ -44,6 +44,7 @@ import {
   PauseScheduleDialog,
   ResumeScheduleDialog,
 } from "./ScheduleActionDialogs";
+import { ScheduleFormDialog } from "./ScheduleFormDialog";
 import { ScheduleHistory } from "./ScheduleHistory";
 import { ScheduleNotices } from "./ScheduleNotices";
 import { ScheduleStateLabel } from "./SchedulesTable";
@@ -184,13 +185,17 @@ function Cadence({ cron }: { cron: string }) {
 }
 
 /** The actions of the header that this page performs with a dialog. */
-type PageAction = "pause" | "resume" | "delete";
+type PageAction = "change" | "pause" | "resume" | "delete";
+
+/** The dialog open on the page; "change-version" is the change form with the newest version filled in. */
+type PageDialog = PageAction | "change-version";
 
 const ACTION_BUTTONS: {
   action: PageAction;
   label: string;
   variant: "outline" | "danger-outline";
 }[] = [
+  { action: "change", label: "Change", variant: "outline" },
   { action: "pause", label: "Pause", variant: "outline" },
   { action: "resume", label: "Resume", variant: "outline" },
   { action: "delete", label: "Delete", variant: "danger-outline" },
@@ -246,7 +251,7 @@ export function SchedulePage({
   // The configuration name comes from the configurations list the interface already reads.
   const configs = useQuery(configsQuery());
   const me = useQuery(meQuery());
-  const [dialog, setDialog] = useState<PageAction | null>(null);
+  const [dialog, setDialog] = useState<PageDialog | null>(null);
   const cron = schedule?.cron ?? "";
   const timezone = schedule?.timezone ?? "UTC";
   const active = schedule?.state === "active";
@@ -343,7 +348,7 @@ export function SchedulePage({
               </li>
             </ul>
           </div>
-          {/* The change and take-over actions are added here (spec 026, T038). */}
+          {/* The take-over action is added here (spec 026, T041). */}
           <HeaderActions access={access} onOpen={setDialog} />
         </div>
       </header>
@@ -363,6 +368,13 @@ export function SchedulePage({
                   </Button>
                 ),
               }),
+            ...(access.change.available && {
+              change: (
+                <Button variant="outline" size="sm" onPress={() => setDialog("change")}>
+                  Change the write target
+                </Button>
+              ),
+            }),
             runs: (
               <Link
                 to="/runs"
@@ -373,6 +385,13 @@ export function SchedulePage({
               </Link>
             ),
           }}
+          changeVersion={
+            access.change.available ? (
+              <Button variant="outline" size="sm" onPress={() => setDialog("change-version")}>
+                Change version
+              </Button>
+            ) : undefined
+          }
         />
         <Details
           id="schedule-next-start"
@@ -467,6 +486,17 @@ export function SchedulePage({
           ]}
         />
       </div>
+      {(dialog === "change" || dialog === "change-version") && (
+        <ScheduleFormDialog
+          target={{
+            mode: "change",
+            schedule,
+            configName,
+            newestVersion: dialog === "change-version",
+          }}
+          onClose={closeDialog}
+        />
+      )}
       {dialog === "pause" && <PauseScheduleDialog schedule={schedule} onClose={closeDialog} />}
       {dialog === "resume" && <ResumeScheduleDialog schedule={schedule} onClose={closeDialog} />}
       {dialog === "delete" && <DeleteScheduleDialog schedule={schedule} onClose={closeDialog} />}

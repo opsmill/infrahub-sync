@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Principal, Schedule } from "#/api/types";
 
 import {
+  branchKeptOpen,
   changeRequest,
   createRequest,
   differsFromOpening,
@@ -221,6 +222,24 @@ describe("changeRequest", () => {
 
   it("finds no difference in an unchanged read", () => {
     expect(differsFromOpening(opening, schedule())).toBe(false);
+  });
+});
+
+describe("branchKeptOpen", () => {
+  const open = { run_id: "r-1", branch: "sync-nightly-1" };
+  const opening = formValuesOf(schedule());
+
+  it.each([
+    ["moved to the default branch with a branch open", "default-branch", open, "sync-nightly-1"],
+    ["moved to the default branch with no branch open", "default-branch", null, null],
+    ["kept on branch review", "branch-review", open, null],
+  ] as const)("%s", (_name, target, branch, expected) => {
+    expect(branchKeptOpen(opening, target, schedule({ open_branch: branch }))).toBe(expected);
+  });
+
+  it("states nothing when the schedule already wrote to the default branch", () => {
+    const already = formValuesOf(schedule({ write_target: "default-branch" }));
+    expect(branchKeptOpen(already, "default-branch", schedule({ open_branch: open }))).toBeNull();
   });
 });
 

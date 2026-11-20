@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { fieldRefusal, lateStartMinutesText, lateStartSeconds, nameAccepted } from "./form-rules";
+import {
+  fieldRefusal,
+  lateStartMinutesText,
+  lateStartProblem,
+  lateStartSeconds,
+  nameAccepted,
+} from "./form-rules";
 
 const envelope = (code: string, status: number, message = "the sync api message") => ({
   error: { code, status, message },
@@ -55,6 +61,33 @@ describe("lateStartSeconds", () => {
     ["-5", null],
   ])("reads %j minutes as %j seconds", (minutes, seconds) => {
     expect(lateStartSeconds(minutes)).toBe(seconds);
+  });
+});
+
+describe("lateStartProblem", () => {
+  it.each([
+    ["a valid limit in the create form", "60", undefined, undefined],
+    [
+      "an empty input in the create form",
+      "",
+      undefined,
+      "Enter how late a missed start may begin.",
+    ],
+    ["an empty input for a schedule without a limit", "", null, undefined],
+    [
+      "an empty input for a schedule with a limit",
+      "",
+      3600,
+      "Enter how late a missed start may begin.",
+    ],
+    [
+      "an invalid limit for a schedule without a limit",
+      "0",
+      null,
+      "Enter how late a missed start may begin.",
+    ],
+  ])("%s", (_name, text, opening, expected) => {
+    expect(lateStartProblem(text, opening)).toBe(expected);
   });
 });
 

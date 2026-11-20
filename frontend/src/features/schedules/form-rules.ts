@@ -46,6 +46,18 @@ export function lateStartSeconds(minutes: string): number | null {
   return n * 60;
 }
 
+/**
+ * Why the late-start input cannot be saved; `undefined` when it can. `opening` is the limit the
+ * change form opened with: there, an empty input keeps a schedule without a limit as it is,
+ * because the Sync API reads an absent limit as "not changed" and cannot remove one.
+ */
+export function lateStartProblem(minutes: string, opening?: number | null): string | undefined {
+  if (opening === null && minutes.trim() === "") return undefined;
+  return lateStartSeconds(minutes) === null
+    ? "Enter how late a missed start may begin."
+    : undefined;
+}
+
 /** The text of the minutes input for a stored limit; whole minutes, as the input accepts. */
 export function lateStartMinutesText(seconds: number | null): string {
   if (seconds === null) return "";

@@ -285,6 +285,20 @@ export function differsFromOpening(opening: ScheduleFormValues, schedule: Schedu
   return FORM_FIELDS.some((field) => current[field] !== opening[field]);
 }
 
+/**
+ * The review branch that stays open in Infrahub when the form moves the write target to the
+ * default branch (spec User Story 5, scenario 6); `null` when the form makes no such change or no
+ * review branch is open.
+ */
+export function branchKeptOpen(
+  opening: ScheduleFormValues,
+  writeTarget: string,
+  schedule: Schedule
+): string | null {
+  if (writeTarget !== "default-branch" || opening.write_target === "default-branch") return null;
+  return schedule.open_branch?.branch ?? null;
+}
+
 /* ---------- refusals mapped to a field ---------- */
 
 export type ScheduleField = keyof ScheduleFormValues | "name" | "config_id";
