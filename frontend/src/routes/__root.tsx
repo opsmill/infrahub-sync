@@ -310,6 +310,7 @@ function AccountMenu({ current }: { current: boolean }) {
           current && "text-foreground",
           FOCUS_RAC
         )}
+        aria-current={current ? "true" : undefined}
         aria-label={name ? `Signed in as ${name}. Open account menu` : "Open account menu"}
         isDisabled={pending}
       >
