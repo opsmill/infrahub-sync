@@ -20,7 +20,7 @@ import pytest
 
 from infrahub_sync.configuration import CredentialConfigurationError, validate_package_credentials
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
-from tests.configuration.validation_packages import package, package_data
+from tests.configuration.validation_packages import credential_package_data, package, package_data
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,6 +73,8 @@ def _adapter_names_unknown_reference(data: dict[str, Any]) -> None:
 
 def _adapter_carries_inline_value(data: dict[str, Any]) -> None:
     inline_value = "declared-in-line"
+    # A block that names a stored credential declares no token setting, so this block names none.
+    del data["configuration"]["source"]["credential"]
     data["configuration"]["source"]["settings"]["token"] = inline_value
 
 
@@ -240,13 +242,35 @@ def test_the_order_two_checks_run_in_decides_the_shipped_message(
     mutate: Callable[[dict[str, Any]], None],
     expected: str,
 ) -> None:
-    data = package_data()
-    mutate(data)
+    data = mutated_package_data(mutate)
 
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package(data))
 
     assert str(caught.value) == expected
+
+
+# The mutations whose defect is in the `credentials` block or in a `$credential` reference. They
+# start from the package in that format; every other mutation starts from the package whose
+# blocks name stored credentials.
+_REFERENCE_FORMAT_MUTATIONS: frozenset[Callable[[dict[str, Any]], None]] = frozenset(
+    {
+        _unknown_provider,
+        _invalid_identifier,
+        _store_names_unknown_reference,
+        _store_carries_malformed_reference,
+        _adapter_names_unknown_reference,
+        _reference_outside_declared_paths,
+        _unknown_provider_and_undeclared_store_type,
+    }
+)
+
+
+def mutated_package_data(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
+    """Return the valid package in the format that `mutate` changes, with its defect."""
+    data = package_data() if mutate in _REFERENCE_FORMAT_MUTATIONS else credential_package_data()
+    mutate(data)
+    return data
 
 
 _REFUSAL_CASES = [pytest.param(mutate, message, id=name) for name, mutate, message in SHIPPED_REFUSALS]
@@ -257,8 +281,7 @@ def test_wrapper_reproduces_the_shipped_first_error_message(
     mutate: Callable[[dict[str, Any]], None],
     expected: str,
 ) -> None:
-    data = package_data()
-    mutate(data)
+    data = mutated_package_data(mutate)
 
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package(data))
@@ -273,8 +296,7 @@ def test_every_validation_refusal_raises_one_exception_type(
 ) -> None:
     # OES-15: the unknown adapter used to escape as UnknownAdapterCapabilitiesError.
     del expected
-    data = package_data()
-    mutate(data)
+    data = mutated_package_data(mutate)
 
     with pytest.raises(CredentialConfigurationError):
         validate_package_credentials(package(data))
@@ -283,7 +305,7 @@ def test_every_validation_refusal_raises_one_exception_type(
 def test_a_warning_only_package_does_not_raise() -> None:
     # Errors prevent execution; warnings do not. A package whose only findings are
     # warnings validates with no wrapper raise, so registration cannot refuse it.
-    data = package_data()
+    data = credential_package_data()
     data["omissions"] = [{"kind": "InfraDevice", "fields": ["serial_number"]}]
 
     validate_package_credentials(package(data))
@@ -293,7 +315,7 @@ def test_the_wrapper_raises_the_first_error_even_when_warnings_precede_it() -> N
     # The element-zero pin's one sanctioned re-reading: "the first finding" becomes "the
     # first *error* in execution order". A warning accumulates ahead of this error, and
     # the raised message is still the error's own.
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["schema_mapping"] = [{"name": "InfraDevice", "mapping": "dcim.devices"}]
     data["omissions"] = [{"kind": "InfraCircuit"}, {"kind": "InfraDevice"}]
 

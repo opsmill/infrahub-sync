@@ -40,6 +40,23 @@ def _package_data() -> dict[str, Any]:
     }
 
 
+def _credential_package_data() -> dict[str, Any]:
+    """Return the same package in the format of spec 027: each block names a stored credential."""
+    return {
+        "format_version": 1,
+        "configuration": {
+            "name": "from-netbox",
+            "source": {"name": "netbox", "credential": "netbox-token", "settings": {}},
+            "destination": {"name": "infrahub", "credential": "infrahub-token", "settings": {}},
+            "order": [],
+            "schema_mapping": [],
+            "diffsync_flags": [],
+            "incremental": None,
+        },
+        "package_metadata": {"adapter_api_version": 1},
+    }
+
+
 def _caught_failure(data: dict[str, Any]) -> ConfigurationPackageParseError:
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(data)
@@ -67,7 +84,7 @@ def _parse_with_errors(
         return errors
 
     monkeypatch.setattr(ValidationError, "errors", injected_errors)
-    parse_data = data if data is not None else _package_data()
+    parse_data = data if data is not None else _credential_package_data()
     del parse_data["configuration"]["name"]
     return _parse_failure(parse_data)
 
@@ -154,7 +171,8 @@ def _set_path(data: dict[str, Any], path: tuple[str, ...], value: object) -> Non
 def test_public_parse_maps_named_pydantic_families_without_values(
     path: tuple[str, ...], value: object, expected: str
 ) -> None:
-    data = _package_data()
+    # The cases under `/credentials` need the package that holds a `credentials` block.
+    data = _package_data() if path[0] == "credentials" else _credential_package_data()
     _set_path(data, path, value)
 
     message = _parse_failure(data)
@@ -1010,7 +1028,7 @@ def test_public_parse_is_deterministic_across_hash_seeds(hash_seed: str) -> None
         from pydantic import ValidationError
         from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 
-        data = {_package_data()!r}
+        data = {_credential_package_data()!r}
         del data["configuration"]["name"]
         fields = {{"source", "name"}}
         records = [
@@ -1212,7 +1230,7 @@ def test_public_parse_accepts_exact_metadata_resource_boundaries(
 
 
 def _package_with_transform(expression: str) -> dict[str, Any]:
-    data = _package_data()
+    data = _credential_package_data()
     data["configuration"]["schema_mapping"] = [
         {
             "name": "DcimDevice",

@@ -109,6 +109,50 @@ def _package_with_nested_declared_content() -> ConfigurationPackage:
     return ConfigurationPackage.model_validate(data)
 
 
+def _credential_package(**updates: object) -> ConfigurationPackage:
+    """Return the same package in the format of spec 027: each block names a stored credential."""
+    data: dict[str, object] = {
+        "format_version": 1,
+        "configuration": {
+            "name": "from-netbox",
+            "source": {
+                "name": "netbox",
+                "credential": "netbox-token",
+                "settings": {"url": "https://demo.netbox.dev"},
+            },
+            "destination": {
+                "name": "infrahub",
+                "credential": "infrahub-token",
+                "settings": {"url": "http://localhost:8000"},
+            },
+            "order": [],
+            "schema_mapping": [],
+            "diffsync_flags": [],
+            "incremental": None,
+        },
+        "package_metadata": {"adapter_api_version": 1},
+    }
+    data.update(updates)
+    return ConfigurationPackage.model_validate(data)
+
+
+def _credential_package_with_nested_declared_content() -> ConfigurationPackage:
+    data = _credential_package().model_dump(mode="json")
+    data["configuration"]["store"] = {"type": "redis", "settings": {"host": "localhost"}}
+    data["configuration"]["order"] = ["Device"]
+    data["configuration"]["diffsync_flags"] = ["SKIP_UNMATCHED_DST"]
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "Device",
+            "identifiers": ["name"],
+            "filters": [{"field": "enabled", "operation": "==", "value": {"expected": [True]}}],
+            "transforms": [{"field": "name", "expression": "value"}],
+            "fields": [{"name": "metadata", "static": {"labels": ["edge"]}}],
+        }
+    ]
+    return ConfigurationPackage.model_validate(data)
+
+
 def _set_source_setting(package: ConfigurationPackage) -> None:
     inline_value = "inline-secret"
     cast("Any", package.configuration.source.settings)["token"] = inline_value
@@ -288,11 +332,11 @@ class _ExecutableConfigurationPackage(ConfigurationPackage):
 
 
 def test_checksum_is_stable_across_mapping_order() -> None:
-    first = _package()
+    first = _credential_package()
+    configuration = first.model_dump(mode="json")["configuration"]
     second = ConfigurationPackage.model_validate(
         {
-            "credentials": dict(reversed(list(first.model_dump(mode="json")["credentials"].items()))),
-            "configuration": first.model_dump(mode="json")["configuration"],
+            "configuration": dict(reversed(list(configuration.items()))),
             "package_metadata": {"adapter_api_version": 1},
             "format_version": 1,
         }
@@ -314,7 +358,7 @@ def test_omissions_are_declared_content_inside_package_identity() -> None:
     # `credentials`, and the empty declaration serializes too, so absent and empty cannot
     # be two different byte streams. Omissions change the validation report a version
     # produces, so two packages differing only in omissions are two identities.
-    baseline = _package()
+    baseline = _credential_package()
     data = baseline.model_dump(mode="json")
     data["omissions"] = [
         {"kind": "InfraDevice", "fields": ["serial_number", "asset_tag"], "reason": "serials tracked in the CMDB"}
@@ -332,7 +376,7 @@ def test_omissions_are_declared_content_inside_package_identity() -> None:
 
 
 def test_a_whole_kind_omission_omits_the_field_list() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["omissions"] = [{"kind": "InfraDevice"}]
 
     declared = ConfigurationPackage.model_validate(data)
@@ -341,7 +385,7 @@ def test_a_whole_kind_omission_omits_the_field_list() -> None:
 
 
 def test_an_omission_reason_at_the_bound_is_accepted_and_the_declaration_is_strict() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["omissions"] = [{"kind": "InfraDevice", "reason": "r" * 160}]
 
     declared = ConfigurationPackage.model_validate(data)
@@ -355,7 +399,7 @@ def test_an_omission_reason_at_the_bound_is_accepted_and_the_declaration_is_stri
 def test_an_over_long_omission_reason_is_a_clean_registration_time_refusal() -> None:
     # The 160-character bound plus the fixed message template stays under the 256 finding
     # text bound, so an over-long reason is refused here and can never crash a finding.
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["omissions"] = [{"kind": "InfraDevice", "reason": "r" * 161}]
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
@@ -367,7 +411,7 @@ def test_an_over_long_omission_reason_is_a_clean_registration_time_refusal() -> 
 
 def test_an_empty_omission_field_list_is_refused() -> None:
     # Omitting the list omits the whole kind; an empty list would declare nothing.
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["omissions"] = [{"kind": "InfraDevice", "fields": []}]
 
     with pytest.raises(ConfigurationPackageParseError):
@@ -376,7 +420,7 @@ def test_an_empty_omission_field_list_is_refused() -> None:
 
 @pytest.mark.parametrize("flag_name", ["SKIP_UNMATCHED_DST", "SKIP_UNMATCHED_BOTH", "NONE"])
 def test_diffsync_flags_are_declared_and_hashed_by_stable_name(flag_name: str) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["diffsync_flags"] = [flag_name]
     package = ConfigurationPackage.model_validate(data)
 
@@ -390,7 +434,7 @@ def test_diffsync_flags_are_declared_and_hashed_by_stable_name(flag_name: str) -
 
 @pytest.mark.parametrize("numeric_flag", [4, 3], ids=["named-value", "unnamed-composite"])
 def test_safe_parse_requires_diffsync_flag_names_without_changing_legacy_behavior(numeric_flag: int) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["diffsync_flags"] = [numeric_flag]
 
     legacy = SyncConfig.model_validate(data["configuration"])
@@ -416,7 +460,7 @@ def test_safe_parse_requires_diffsync_flag_names_without_changing_legacy_behavio
 def test_safe_parse_refuses_non_list_diffsync_flags_at_the_public_boundary(container: object) -> None:
     # The legacy validator raises TypeError for these, which Pydantic does not convert into a
     # ValidationError; the boundary must still fail with its own error type.
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["diffsync_flags"] = container
 
     with pytest.raises(TypeError):
@@ -432,7 +476,7 @@ def test_safe_parse_refuses_non_list_diffsync_flags_at_the_public_boundary(conta
 
 @pytest.mark.parametrize("flag_name", ["NOPE", "skip_unmatched_dst"], ids=["unknown", "wrong-case"])
 def test_safe_parse_reports_unknown_diffsync_flag_at_item_without_echo(flag_name: str) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["diffsync_flags"] = [flag_name]
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
@@ -597,7 +641,7 @@ def test_strict_legacy_model_walker_rejects_unknown_fields_at_every_registered_p
     path: tuple[str | int, ...],
     location: str,
 ) -> None:
-    data = _package_with_nested_declared_content().model_dump(mode="json")
+    data = _credential_package_with_nested_declared_content().model_dump(mode="json")
     data["configuration"]["incremental"] = {"full_resync_every": 10}
     target: object = data
     for component in path:
@@ -653,7 +697,7 @@ def test_declared_configuration_cannot_mutate_after_validation(
     mutate: Callable[[ConfigurationPackage], None],
 ) -> None:
     """Keep validated package content immutable."""
-    content = _package_with_nested_declared_content().model_dump(mode="json")
+    content = _credential_package_with_nested_declared_content().model_dump(mode="json")
     del content["configuration"]["store"]
     package = ConfigurationPackage.model_validate(content)
     validate_package_credentials(package)
@@ -670,7 +714,7 @@ def test_declared_configuration_cannot_mutate_after_validation(
 
 def test_a_previously_declared_store_stays_immutable_when_validation_refuses_it() -> None:
     """Keep legacy store declarations immutable after refusal."""
-    package = _package_with_nested_declared_content()
+    package = _credential_package_with_nested_declared_content()
     content = package.declared_content()
     checksum = package.checksum()
     with pytest.raises(CredentialConfigurationError) as caught:
@@ -685,7 +729,7 @@ def test_a_previously_declared_store_stays_immutable_when_validation_refuses_it(
 
 
 def test_default_package_dump_is_json_native_and_round_trips() -> None:
-    package = _package_with_nested_declared_content()
+    package = _credential_package_with_nested_declared_content()
 
     dumped = package.model_dump(by_alias=True)
 
@@ -697,7 +741,7 @@ def test_default_package_dump_is_json_native_and_round_trips() -> None:
 
 
 def test_package_rejects_machine_local_directory() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["directory"] = "/example/generated"
 
     with pytest.raises(ValidationError, match="unsupported declared fields: directory"):
@@ -708,7 +752,7 @@ def test_always_null_legacy_fields_stay_out_of_package_identity() -> None:
     # Refused when non-null, or absent, so hashing a constant only makes removal a rehash
     # later. A source adapter that IS declared is serialized and hashed; see
     # tests/runtime_schema/test_registered_source_declaration.py.
-    declared_content = _package().declared_content()
+    declared_content = _credential_package().declared_content()
 
     assert "adapters_path" not in declared_content["configuration"]
     for role in ("source", "destination"):
@@ -716,7 +760,7 @@ def test_always_null_legacy_fields_stay_out_of_package_identity() -> None:
 
 
 def test_package_rejects_machine_local_adapter_path() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["adapters_path"] = ["/home/alice/custom-adapters"]
 
     with pytest.raises(ValidationError, match="unsupported declared fields: adapters_path"):
@@ -726,7 +770,7 @@ def test_package_rejects_machine_local_adapter_path() -> None:
 def test_package_rejects_a_custom_destination_adapter_override() -> None:
     # The destination owns the schema-discovery and saved-plan write seams, which this
     # release qualifies only for the bundled Infrahub adapter.
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["destination"]["adapter"] = "evil.module:CustomSync"
 
     with pytest.raises(ValidationError, match="unsupported declared fields: adapter"):
@@ -734,7 +778,7 @@ def test_package_rejects_a_custom_destination_adapter_override() -> None:
 
 
 def test_package_rejects_a_filesystem_source_adapter_override() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["adapter"] = "./evil/module.py:CustomSync"
 
     with pytest.raises(ValidationError, match="unsupported adapter specification"):
@@ -742,7 +786,7 @@ def test_package_rejects_a_filesystem_source_adapter_override() -> None:
 
 
 def test_package_rejects_nested_fields_legacy_models_would_ignore() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["ignored"] = "would-not-be-hashed"
 
     with pytest.raises(ValidationError, match=r"configuration\.source contains unsupported declared fields: ignored"):
@@ -751,7 +795,7 @@ def test_package_rejects_nested_fields_legacy_models_would_ignore() -> None:
 
 @pytest.mark.parametrize("value", [datetime(2026, 8, 12, tzinfo=timezone.utc), ("not", "json"), {1: "non-string-key"}])
 def test_package_rejects_non_json_values(value: object) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["settings"]["unexpected"] = value
 
     with pytest.raises(ValidationError, match=r"non-JSON|non-string"):
@@ -768,7 +812,7 @@ def test_credential_reference_whitespace_is_rejected_not_normalized() -> None:
 
 
 def test_package_rejects_non_finite_numbers() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["settings"]["timeout"] = float("nan")
 
     with pytest.raises(ValidationError, match="non-finite"):
@@ -776,7 +820,7 @@ def test_package_rejects_non_finite_numbers() -> None:
 
 
 def test_package_rejects_recursive_declarations() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     recursive: dict[str, object] = {}
     recursive["self"] = recursive
     data["configuration"]["source"]["settings"]["recursive"] = recursive
@@ -879,7 +923,8 @@ def test_safe_parse_reports_actionable_schema_validation_failures(
     invalid_value: object,
     expected_failure: str,
 ) -> None:
-    data = _package().model_dump(mode="json")
+    # The cases under `/credentials` need the package that holds a `credentials` block.
+    data = (_package() if field_path[0] == "credentials" else _credential_package()).model_dump(mode="json")
     target = data
     for component in field_path[:-1]:
         target = target[component]
@@ -973,7 +1018,7 @@ def test_safe_parse_rejects_distinct_surrogate_keys_before_serialization(
 def test_safe_parse_rejects_surrogate_string_values_without_echo(codepoint: int) -> None:
     canary = "surrogate-value-canary"
     surrogate = chr(codepoint)
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["name"] = f"{canary}{surrogate}"
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
@@ -1002,7 +1047,7 @@ def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str,
     location_canary = "invalid\n\u202e~/"
     visible_location = r"invalid\\n\\u202e~0~1"
     type_name_canary = "RejectedTypeNameCanary"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     settings = data["configuration"]["source"]["settings"]
     expected_location = f"/configuration/source/settings/{visible_location}"
 
@@ -1074,7 +1119,7 @@ def test_native_validation_failure_rejects_unsafe_context_pointers(
 ) -> None:
     errors = [{"type": error_type, "loc": ("configuration", "source"), "ctx": context}]
     monkeypatch.setattr(ValidationError, "errors", lambda _error, **_kwargs: errors)
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     del data["configuration"]["name"]
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
@@ -1109,7 +1154,7 @@ def test_native_validation_failure_rejects_pointer_string_subclasses_without_cal
         }
     ]
     monkeypatch.setattr(ValidationError, "errors", lambda _error, **_kwargs: errors)
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     del data["configuration"]["name"]
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
@@ -1179,7 +1224,7 @@ def test_safe_parse_rejects_forged_custom_error_context(
     ],
 )
 def test_safe_parse_rejects_native_subclasses_without_callbacks(value: object) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["settings"]["hostile\n\u202e~/"] = value
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
@@ -1246,7 +1291,7 @@ def test_safe_parse_rejects_non_dict_roots_without_callbacks(root_kind: str) -> 
             credentials=None,
         )
     else:
-        value = _package()
+        value = _credential_package()
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(value)
@@ -1269,7 +1314,7 @@ def test_safe_parse_names_unknown_adapter_field_without_echoing_its_value() -> N
         "url-query-canary",
         "url-fragment-canary",
     )
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["setings"] = {
         "token": canaries[0],
         "url": f"https://user:{canaries[1]}@example.test/path?token={canaries[2]}#{canaries[3]}",
@@ -1286,7 +1331,7 @@ def test_safe_parse_names_unknown_adapter_field_without_echoing_its_value() -> N
 
 def test_safe_parse_names_unknown_nested_mapping_field_without_echoing_its_value() -> None:
     canary = "nested-field-value-canary"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["schema_mapping"] = [
         {
             "name": "Device",
@@ -1324,7 +1369,7 @@ def test_safe_parse_names_unknown_nested_mapping_field_without_echoing_its_value
 )
 def test_safe_parse_renders_unknown_field_controls_without_echoing_values(control: str, visible: str) -> None:
     canary = "control-field-value-canary"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"][f"bad{control}field~/"] = canary
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
@@ -1358,7 +1403,7 @@ def test_safe_parse_distinguishes_controls_from_literal_escape_text(control: str
     canaries = ("control-value-canary", "literal-value-canary")
     messages = []
     for field_name, canary in ((f"bad{control}field~/", canaries[0]), (f"bad{visible}field~/", canaries[1])):
-        data = _package().model_dump(mode="json")
+        data = _credential_package().model_dump(mode="json")
         data["configuration"]["source"][field_name] = canary
         with pytest.raises(ConfigurationPackageParseError) as caught:
             parse_configuration_package(data)
@@ -1376,7 +1421,7 @@ def test_safe_parse_distinguishes_controls_from_literal_escape_text(control: str
 
 def test_safe_parse_preserves_printable_unicode_in_unknown_field_locations() -> None:
     canary = "printable-unicode-value-canary"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["café-東京-😀~/"] = canary
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
@@ -1389,7 +1434,9 @@ def test_safe_parse_preserves_printable_unicode_in_unknown_field_locations() -> 
 
 def test_inline_credential_is_refused_without_echoing_value() -> None:
     canary = "canary-inline-secret"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
+    # A block that names a stored credential declares no token setting, so this block names none.
+    del data["configuration"]["source"]["credential"]
     data["configuration"]["source"]["settings"]["token"] = canary
     package = ConfigurationPackage.model_validate(data)
 
@@ -1402,7 +1449,7 @@ def test_inline_credential_is_refused_without_echoing_value() -> None:
 
 def test_prometheus_custom_headers_are_refused_without_echoing_values() -> None:
     canary = "prometheus-inline-canary"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": "prometheus",
         "settings": {
@@ -1421,7 +1468,7 @@ def test_prometheus_custom_headers_are_refused_without_echoing_values() -> None:
 
 def test_generic_rest_api_custom_headers_are_refused_without_echoing_values() -> None:
     canary = "generic-rest-api-inline-canary"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": "genericrestapi",
         "settings": {
@@ -1507,7 +1554,7 @@ def test_unproved_adapter_settings_are_refused_without_echoing_values(
     value: object,
     canary: str,
 ) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     settings = {"url": "https://source.example", setting: value}
     if setting == "base_url":
         settings.pop("url")
@@ -1526,7 +1573,7 @@ def test_unproved_adapter_settings_are_refused_without_echoing_values(
 
 def test_unsupported_adapter_settings_name_fields_in_stable_order_without_echoing_values() -> None:
     canaries = ("alpha-setting-value-canary", "zulu-setting-value-canary")
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": "netbox",
         "settings": {
@@ -1550,7 +1597,7 @@ def test_unsupported_adapter_settings_name_fields_in_stable_order_without_echoin
 
 def test_unsupported_adapter_settings_render_hostile_names_safely_without_echoing_values() -> None:
     canaries = ("literal-slash-value-canary", "newline-value-canary", "c1-value-canary")
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": "netbox",
         "settings": {
@@ -1575,7 +1622,7 @@ def test_unsupported_adapter_settings_render_hostile_names_safely_without_echoin
 
 
 def _unsupported_adapter_settings_message(settings: Mapping[str, object]) -> str:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": "netbox",
         "settings": {"url": "https://source.example", **settings},
@@ -1644,7 +1691,7 @@ def test_generic_rest_schema_mapping_endpoints_are_secret_safe(
     mapping: str,
     canary: str,
 ) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": adapter_name,
         "settings": {"url": "https://source.example", "auth_method": "none"},
@@ -1662,7 +1709,7 @@ def test_generic_rest_schema_mapping_endpoints_are_secret_safe(
 
 @pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
 def test_generic_rest_schema_mapping_accepts_relative_resource_paths(adapter_name: str) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": adapter_name,
         "settings": {"url": "https://source.example", "auth_method": "none"},
@@ -1747,7 +1794,7 @@ def test_url_settings_refuse_credential_bearing_forms_without_echo(
     value: str,
     canary: str,
 ) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     settings = {"url": "https://source.example", setting: value}
     if setting == "base_url":
         settings.pop("url")
@@ -1816,7 +1863,7 @@ def test_multiple_invalid_url_settings_choose_the_same_first_error_across_hash_s
 
 def test_non_string_url_setting_gets_type_diagnostic_without_echoing_value() -> None:
     canary = "non-string-url-value-canary"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["settings"]["url"] = {"nested": canary}
     package = ConfigurationPackage.model_validate(data)
 
@@ -1954,7 +2001,7 @@ def test_reserved_reference_node_is_refused_in_schema_mapping_static_value() -> 
 def test_store_inline_credential_is_refused_without_echoing_value() -> None:
     """Store inline credential is refused without echoing value."""
     canary = "store-inline-secret"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["store"] = {
         "type": "redis",
         "settings": {"host": "localhost", "password": canary},
@@ -1972,7 +2019,7 @@ def test_store_inline_credential_is_refused_without_echoing_value() -> None:
 def test_redis_store_rejects_undeclared_credential_settings(setting: str) -> None:
     """Redis stores with undeclared credential settings fail with the fixed refusal and leak no secret."""
     canary = "undeclared-store-secret"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["store"] = {
         "type": "redis",
         "settings": {"host": "localhost", setting: canary},
@@ -1989,7 +2036,7 @@ def test_redis_store_rejects_undeclared_credential_settings(setting: str) -> Non
 def test_redis_store_refusal_omits_control_names_and_values() -> None:
     """Redis store refusal omits control names and values."""
     canary = "store-control-value-canary"
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["store"] = {
         "type": "redis",
         "settings": {"host": "localhost", "bad\nfield~/": canary},
@@ -2021,7 +2068,7 @@ def test_reserved_reference_node_is_refused_in_store_settings() -> None:
 
 
 def test_declared_references_validate_without_resolving_environment() -> None:
-    package = _package()
+    package = _credential_package()
 
     validate_package_credentials(package)
 
@@ -2165,14 +2212,11 @@ def test_bundled_destination_writes_only_advertise_remote_operations() -> None:
 
 @pytest.mark.parametrize("capability", BUILTIN_ADAPTER_CAPABILITIES.values(), ids=lambda item: item.adapter_name)
 def test_all_bundled_supported_setting_shapes_validate(capability: AdapterConfigurationCapabilities) -> None:
-    credential_node = {"$credential": "adapter-credential"}
+    # Each source names one stored credential, so no credential setting is declared.
     generic_rest_settings: dict[str, object] = {
         "url": "https://api.example",
         "api_endpoint": "/api/v1",
         "auth_method": "basic",
-        "token": credential_node,
-        "username": credential_node,
-        "password": credential_node,
         "timeout": 30,
         "verify_ssl": True,
         "response_key_pattern": "results",
@@ -2180,23 +2224,20 @@ def test_all_bundled_supported_setting_shapes_validate(capability: AdapterConfig
     settings_by_adapter: dict[str, dict[str, object]] = {
         "aci": {
             "url": "https://aci.example",
-            "username": credential_node,
-            "password": credential_node,
             "verify": True,
             "api_endpoint": "api",
         },
         "genericrestapi": generic_rest_settings,
         "infrahub": {
             "url": "https://infrahub.example",
-            "token": credential_node,
             "verify_ssl": True,
             "branch": "main",
             "source": "network-source",
             "owner": "network-owner",
         },
-        "ipfabricsync": {"base_url": "https://ipfabric.example", "auth": credential_node, "verify_ssl": True},
-        "nautobot": {"url": "https://nautobot.example", "token": credential_node, "verify_ssl": True},
-        "netbox": {"url": "https://netbox.example", "token": credential_node, "verify_ssl": True},
+        "ipfabricsync": {"base_url": "https://ipfabric.example", "verify_ssl": True},
+        "nautobot": {"url": "https://nautobot.example", "verify_ssl": True},
+        "netbox": {"url": "https://netbox.example", "verify_ssl": True},
         "peeringmanager": generic_rest_settings,
         "prometheus": {
             "mode": "api",
@@ -2205,26 +2246,18 @@ def test_all_bundled_supported_setting_shapes_validate(capability: AdapterConfig
             "timeout": 10,
             "verify_ssl": True,
             "auth_method": "bearer",
-            "username": credential_node,
-            "password": credential_node,
-            "token": credential_node,
             "promql": {"resources": {"node_info": "node_uname_info"}},
         },
         "slurpitsync": {
             "url": "https://slurpit.example",
-            "api_key": credential_node,
-            "token": credential_node,
             "verify_ssl": True,
         },
     }
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": capability.adapter_name,
+        "credential": "adapter-credential",
         "settings": settings_by_adapter[capability.adapter_name],
-    }
-    data["credentials"]["adapter-credential"] = {
-        "provider": "env",
-        "identifier": "INFRAHUB_SYNC_CREDENTIAL_ADAPTER_CREDENTIAL",
     }
 
     validate_package_credentials(ConfigurationPackage.model_validate(data))
@@ -2239,11 +2272,11 @@ def test_capability_lookup_is_exact_and_unknown_is_refused() -> None:
 
 def test_case_variant_adapter_name_cannot_split_package_identity() -> None:
     # A folded match would let two packages validate identically under different checksums.
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["name"] = "NetBox"
     package = ConfigurationPackage.model_validate(data)
 
-    assert package.checksum() != _package().checksum()
+    assert package.checksum() != _credential_package().checksum()
     # OES-15: every validation refusal is one exception type now. The narrow type still exists
     # where it belongs, pinned by test_capability_lookup_is_exact_and_unknown_is_refused.
     with pytest.raises(CredentialConfigurationError, match="no configuration capability declaration"):
@@ -2314,7 +2347,7 @@ def test_capability_rejects_unsupported_literal_values(
 
 
 def test_wrong_adapter_role_is_refused() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["destination"] = {"name": "netbox", "settings": {}}
     package = ConfigurationPackage.model_validate(data)
 
@@ -2323,7 +2356,7 @@ def test_wrong_adapter_role_is_refused() -> None:
 
 
 def test_peering_manager_destination_is_refused() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["destination"] = {"name": "peeringmanager", "settings": {}}
     package = ConfigurationPackage.model_validate(data)
 
@@ -2425,10 +2458,11 @@ def test_endpoint_settings_separate_absolute_bases_from_relative_paths(
     value: str,
     expected: str,
 ) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": "genericrestapi",
-        "settings": {"url": "https://api.example", "token": {"$credential": "netbox-token"}, setting_name: value},
+        "credential": "netbox-token",
+        "settings": {"url": "https://api.example", setting_name: value},
     }
     package = ConfigurationPackage.model_validate(data)
 
@@ -2440,14 +2474,11 @@ def test_endpoint_settings_separate_absolute_bases_from_relative_paths(
 
 @pytest.mark.parametrize("endpoint", ["/api/v1", "api", "api/v1/", ""], ids=["rooted", "bare", "trailing", "empty"])
 def test_relative_endpoint_forms_remain_accepted(endpoint: str) -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"] = {
         "name": "genericrestapi",
-        "settings": {
-            "url": "https://api.example",
-            "api_endpoint": endpoint,
-            "token": {"$credential": "netbox-token"},
-        },
+        "credential": "netbox-token",
+        "settings": {"url": "https://api.example", "api_endpoint": endpoint},
     }
 
     validate_package_credentials(ConfigurationPackage.model_validate(data))
@@ -2455,7 +2486,7 @@ def test_relative_endpoint_forms_remain_accepted(endpoint: str) -> None:
 
 def test_unknown_store_type_with_settings_is_refused_not_a_key_error() -> None:
     """Unknown store type with settings is refused not a key error."""
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["store"] = {"type": "mystery", "settings": {"url": "redis://localhost"}}
     package = ConfigurationPackage.model_validate(data)
 
@@ -2493,7 +2524,7 @@ def test_credential_paths_must_render_identically_wherever_they_are_built(path: 
 
 def test_credential_validation_diagnostics_are_bounded_like_the_parse_boundary() -> None:
     hostile = "k" * 5000
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["settings"][hostile] = 1
     package = ConfigurationPackage.model_validate(data)
 
@@ -2507,7 +2538,7 @@ def test_credential_validation_diagnostics_are_bounded_like_the_parse_boundary()
 
 
 def test_bounded_setting_name_list_reports_what_it_omitted() -> None:
-    data = _package().model_dump(mode="json")
+    data = _credential_package().model_dump(mode="json")
     data["configuration"]["source"]["settings"].update({f"bad{index:02}": 1 for index in range(40)})
     package = ConfigurationPackage.model_validate(data)
 

@@ -30,8 +30,13 @@ from infrahub_sync.configuration import (
     validation,
 )
 from infrahub_sync.configuration.validation import collect_findings
-from tests.configuration.test_validation_compatibility import SHIPPED_REFUSALS
-from tests.configuration.validation_packages import package, package_data
+from tests.configuration.test_validation_compatibility import SHIPPED_REFUSALS, mutated_package_data
+from tests.configuration.validation_packages import (
+    credential_package,
+    credential_package_data,
+    package,
+    package_data,
+)
 
 _NARROW_TYPE = "UnknownAdapterCapabilitiesError"
 _FINDING_TEXT_BOUND = 256
@@ -42,7 +47,7 @@ def _triples(package_content: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 def test_a_valid_package_produces_no_findings() -> None:
-    assert collect_findings(package()) == ()
+    assert collect_findings(credential_package()) == ()
 
 
 def test_independent_defects_each_become_one_finding() -> None:
@@ -209,7 +214,7 @@ def test_the_walk_still_reports_where_no_surface_check_has_authority() -> None:
 
 def _shared_validator_package_data() -> dict[str, Any]:
     """One package-level mapping defect judged by two adapters sharing one validator."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"] = {"name": "genericrestapi", "settings": {"url": "https://api.example"}}
     data["configuration"]["destination"] = {"name": "infrahub", "settings": {"url": "https://ih.example"}}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "https://evil.example/devices"}]
@@ -279,7 +284,7 @@ def test_a_reference_outside_the_declared_paths_is_still_reported_by_the_walk() 
 
 
 def test_a_missing_adapter_is_expressible_as_a_finding() -> None:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["name"] = "NetBox"
 
     assert _triples(data) == [("missing-adapter", "/configuration/source")]
@@ -289,7 +294,7 @@ def test_a_missing_adapter_suppresses_only_its_own_role() -> None:
     # Its settings cannot be judged against a surface that does not exist, so claiming a finding
     # about them would be inventing one. Everything else still runs.
     """A missing adapter suppresses only its own role."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["name"] = "NetBox"
     data["configuration"]["source"]["settings"]["bogus_source"] = 1
     data["configuration"]["destination"]["settings"]["bogus_dest"] = 1
@@ -319,7 +324,7 @@ def test_an_undeclared_store_type_suppresses_only_its_own_settings() -> None:
 
 def test_an_undeclared_store_type_carrying_nothing_is_refused() -> None:
     """An undeclared store type carrying nothing is refused."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["store"] = {"type": "mystery", "settings": {}}
 
     assert _triples(data) == [("unsupported-sync-store", "/configuration/store")]
@@ -361,10 +366,10 @@ def _capabilities_with(
 
 
 def _both_roles_package_data(mapping: str = "https://evil.example/devices") -> dict[str, Any]:
-    data = package_data()
-    settings = {"url": "https://ih.example", "token": {"$credential": "netbox-token"}}
-    data["configuration"]["source"] = {"name": "infrahub", "settings": settings}
-    data["configuration"]["destination"] = {"name": "infrahub", "settings": dict(settings)}
+    data = credential_package_data()
+    block = {"name": "infrahub", "credential": "netbox-token", "settings": {"url": "https://ih.example"}}
+    data["configuration"]["source"] = block
+    data["configuration"]["destination"] = {**block, "settings": dict(block["settings"])}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": mapping}]
     return data
 
@@ -398,7 +403,7 @@ def test_one_adapter_serving_both_roles_reports_its_validator_finding_once(
 
 
 def test_an_adapter_validator_keeps_its_own_code_and_location() -> None:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"] = {"name": "genericrestapi", "settings": {"url": "https://api.example"}}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "https://evil.example/devices"}]
 
@@ -427,8 +432,10 @@ def test_a_source_validator_cannot_silence_a_finding_in_the_destination_subtree(
         "BUILTIN_ADAPTER_CAPABILITIES",
         _capabilities_with(_validator_reporting_at("/configuration/destination/settings/token"), "netbox"),
     )
-    data = package_data()
+    data = credential_package_data()
     inline_value = "declared-in-line"
+    # A block that names a stored credential declares no token setting, so this block names none.
+    del data["configuration"]["destination"]["credential"]
     data["configuration"]["destination"]["settings"]["token"] = inline_value
 
     findings = collect_findings(package(data))
@@ -461,7 +468,7 @@ def test_a_finding_outside_the_validator_role_subtree_is_contained(
         _capabilities_with(_validator_reporting_at(location), "netbox"),
     )
 
-    assert _triples(package_data()) == [("adapter-validator-finding", "/configuration/source")]
+    assert _triples(credential_package_data()) == [("adapter-validator-finding", "/configuration/source")]
 
 
 @pytest.mark.parametrize(
@@ -485,7 +492,7 @@ def test_a_finding_inside_the_validator_role_subtree_is_kept(
         _capabilities_with(_validator_reporting_at(location), "netbox"),
     )
 
-    assert _triples(package_data()) == [("adapter-note", location)]
+    assert _triples(credential_package_data()) == [("adapter-note", location)]
 
 
 def test_an_adapter_validator_cannot_mint_a_warning(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -506,7 +513,7 @@ def test_an_adapter_validator_cannot_mint_a_warning(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(validation, "BUILTIN_ADAPTER_CAPABILITIES", _capabilities_with(_validator, "netbox"))
 
-    findings = collect_findings(package(package_data()))
+    findings = collect_findings(package(credential_package_data()))
 
     assert [(finding.code, finding.severity, finding.location) for finding in findings] == [
         ("adapter-validator-finding", "error", "/configuration/source"),
@@ -548,7 +555,7 @@ def test_the_first_check_to_report_at_a_pointer_silences_a_different_check_there
     declared["netbox"] = replace(declared["netbox"], validator=_validator_reporting("source-note"))
     declared["infrahub"] = replace(declared["infrahub"], validator=_validator_reporting("destination-note"))
     monkeypatch.setattr(validation, "BUILTIN_ADAPTER_CAPABILITIES", declared)
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "/devices"}]
 
     assert _triples(data) == [("source-note", _ROLE_INDEPENDENT_POINTER)]
@@ -702,7 +709,7 @@ def test_a_returned_finding_the_contract_refuses_is_contained_inside_the_role_su
         _capabilities_with(_constructed_finding_validator(fields), "netbox"),
     )
 
-    findings = collect_findings(package(package_data()))
+    findings = collect_findings(package(credential_package_data()))
 
     assert [(finding.code, finding.location) for finding in findings] == [
         ("adapter-validator-finding", "/configuration/source"),
@@ -788,7 +795,7 @@ def test_no_two_findings_share_a_location_severity_and_code_over_the_cap(declara
 
 
 def _many_omissions_package_data(*, contradiction_at: int | None = None) -> dict[str, Any]:
-    data = package_data()
+    data = credential_package_data()
     if contradiction_at is not None:
         data["configuration"]["schema_mapping"] = [{"name": f"Kind{contradiction_at:03}", "mapping": "x"}]
     data["omissions"] = [{"kind": f"Kind{index:03}"} for index in range(_FINDING_CAP + 1)]
@@ -972,7 +979,7 @@ def test_the_collision_prone_package_reports_each_defect_once(monkeypatch: pytes
 
 def _unused_credential_package_data() -> dict[str, Any]:
     """A source that names a stored credential its ``auth_method`` never uses (spec 027)."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"] = {
         "name": "prometheus",
         "credential": "unused",
@@ -984,8 +991,7 @@ def _unused_credential_package_data() -> dict[str, Any]:
 def _reachable_codes(monkeypatch: pytest.MonkeyPatch) -> set[str]:
     reached: set[str] = set()
     for _name, mutate, _message in SHIPPED_REFUSALS:
-        data = package_data()
-        mutate(data)
+        data = mutated_package_data(mutate)
         reached.update(finding.code for finding in collect_findings(package(data)))
     reached.update(
         finding.code
@@ -1083,7 +1089,7 @@ def _pointer_bound_collision() -> dict[str, Any]:
 
 def _component_bound_collision() -> dict[str, Any]:
     """Two undeclared settings whose names differ only past the component bound."""
-    data = package_data()
+    data = credential_package_data()
     shared = "k" * 70
     data["configuration"]["source"]["settings"][f"{shared}a"] = 1
     data["configuration"]["source"]["settings"][f"{shared}b"] = 1
@@ -1126,7 +1132,7 @@ def _normalized_walk_collision() -> dict[str, Any]:
 
 def _normalized_setting_collision() -> dict[str, Any]:
     """Two undeclared adapter settings whose names differ only by a trailing space."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["settings"]["zz"] = 1
     data["configuration"]["source"]["settings"]["zz "] = 1
     return data
@@ -1173,7 +1179,7 @@ def test_two_defects_at_one_normalized_pointer_keep_their_own_codes() -> None:
     # Distinguishability is not only about deduplication deleting a finding. Two independent
     # defects whose keys differ only by what the model strips must not be rendered at one
     # pointer either, or the operator is told to look in one place for two different keys.
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["settings"]["url "] = "demo.netbox.dev"
     data["configuration"]["source"]["settings"]["url"] = "demo.netbox.dev"
 
