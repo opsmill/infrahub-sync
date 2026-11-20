@@ -226,7 +226,8 @@ def prepare(
 
     `infrahub_address` is where this process reaches Infrahub; it defaults to `infrahub_url`,
     the address the worker uses. An address with `user:password@` raises `DemoAddressError`,
-    and a schema load failure raises, before any Sync API call.
+    an invalid reason raises `ClientInputError`, and a schema load failure raises, before any
+    Sync API call. The address and reason checks also run before the schema load.
     """
     option = refused_address_option(netbox_url, infrahub_url, infrahub_address)
     if option is not None:
@@ -234,6 +235,8 @@ def prepare(
         raise DemoAddressError(msg)
     files = assets.schema_files()
     text = local_package_text(assets.netbox_package_text(), netbox_url, infrahub_url)
+    # Refuse an invalid reason here, so it never leaves a schema loaded and nothing registered.
+    _mutation_request(text, reason)
     loader = schema_loader if schema_loader is not None else load_schema
     schema = loader(infrahub_address or infrahub_url, token, files, schema_timeout)
     registration = register_package(client, text, reason)

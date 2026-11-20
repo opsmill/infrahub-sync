@@ -13,6 +13,7 @@ import pytest
 from infrahub_sdk.exceptions import ServerNotReachableError
 from infrahub_sdk.schema import SchemaLoadResponse
 
+from infrahub_sync.client import ClientInputError
 from infrahub_sync.demo import assets, prepare
 from infrahub_sync.demo.errors import DemoAddressError, DemoSchemaError
 from infrahub_sync.demo.package import local_package_text
@@ -161,6 +162,16 @@ def test_an_address_with_userinfo_is_refused_before_any_call(option: str) -> Non
 
     assert f"--{option.replace('_', '-')}" in str(raised.value)
     assert "userinfo-canary" not in str(raised.value)
+    assert (loader.calls, client.calls) == ([], [])
+
+
+@pytest.mark.parametrize("reason", ["", " padded ", "line\nbreak"], ids=["empty", "padded", "control"])
+def test_an_invalid_reason_is_refused_before_the_schema_load(reason: str) -> None:
+    client, loader = FakeSyncClient(), FakeSchemaLoader()
+
+    with pytest.raises(ClientInputError):
+        _prepare(client, loader, reason=reason)
+
     assert (loader.calls, client.calls) == ([], [])
 
 
