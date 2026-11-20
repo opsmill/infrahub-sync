@@ -1,0 +1,28 @@
+dev/adr/0054-a-package-can-be-validated-before-it-is-registered.md
+  s_eefe1fec4652ae::t_cc22e841163258 1-147
+dev/specs/025-register-config-web/tasks.md
+  s_eefe1fec4652ae::t_cc22e841163258 136
+dev/specs/025-register-config-web/plan.md
+  s_eefe1fec4652ae::t_1214110760bae2 152
+  s_eefe1fec4652ae::t_cc22e841163258 120
+dev/specs/025-register-config-web/opsmill-implement-report.md
+  s_eefe1fec4652ae::t_cc22e841163258 91,194,196-197,200,248,251,279,295,298,301
+dev/adr/README.md
+  s_eefe1fec4652ae::t_cc22e841163258 164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b9a99b40f83dbf066064d9fe95fc3c924f18e9dc",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
