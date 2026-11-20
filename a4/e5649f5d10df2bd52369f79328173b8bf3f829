@@ -1,0 +1,21 @@
+tests/service/test_worker_credentials_route.py
+  s_63ab07ec0cd723::t_022048c0fc0b92 366-389,446-448,458
+tests/service/test_worker_route_boundary.py
+  s_63ab07ec0cd723::t_e1b85bd0f1a788 15-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4e5649f5d10df2bd52369f79328173b8bf3f829",
+  "prompts": {},
+  "sessions": {
+    "s_63ab07ec0cd723": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-adeb5bd7c3d0d6f8b",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
