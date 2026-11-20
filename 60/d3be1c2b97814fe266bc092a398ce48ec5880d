@@ -1,0 +1,25 @@
+dev/specs/027-stored-credentials/data-model.md
+  s_58b527396c8cb5::t_6e2cd9b511b82a 73-81
+dev/specs/027-stored-credentials/overnight-log.md
+  s_58b527396c8cb5::t_98795ff5286e87 60-87
+dev/specs/027-stored-credentials/plan.md
+  s_58b527396c8cb5::t_001023fd3ec447 64-66
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_e084dfac8d74ed 148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60d3be1c2b97814fe266bc092a398ce48ec5880d",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
