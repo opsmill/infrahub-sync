@@ -92,9 +92,11 @@ Taken with the maintainer on 2026-11-18.
   before 3.0. The maintainer builds it. The frontend team may rework the web interface part later.
 - **D-8, the "registered without validation" mark is kept** (User Story 4). The maintainer confirmed
   this on 2026-11-19.
-- **D-9, one specification, delivered in two pull requests.** The first pull request holds User
-  Story 1 (the Sync API route and `configs check`). The second holds the web interface and the mark
-  (User Stories 2 to 4). The maintainer confirmed this on 2026-11-19.
+- **D-9, one specification, delivered in one pull request.** The maintainer first chose two pull
+  requests on 2026-11-19: User Story 1 (the Sync API route and `configs check`), then the web
+  interface and the mark (User Stories 2 to 4). On 2026-11-20 the maintainer asked for the web
+  interface work to be merged into the first pull request
+  ([#440](https://github.com/opsmill/infrahub-sync/pull/440)), so all four stories ship together.
 - **D-10, only an `error` finding blocks registration.** A finding has the severity `error` or
   `warning` ([`models.py`](../../../infrahub_sync/configuration/models.py), `ValidationFinding`).
   Two warnings exist: `worker-environment-unknown`, returned by every check with a branch while no

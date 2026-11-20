@@ -7,7 +7,8 @@
   [Code review fixes on 2026-11-19](#code-review-fixes-on-2026-11-19).
 - The first pull request (User Story 1) no longer ends cleanly at `869395e6`, because some review
   fixes belong to it. The local branch `025-register-config-web-us1` holds `869395e6` plus those
-  fixes. The second pull request is the rest of `025-register-config-web`.
+  fixes. On 2026-11-20 the rest of `025-register-config-web` was merged into that branch, so
+  pull request [#440](https://github.com/opsmill/infrahub-sync/pull/440) holds all four stories (D-9).
 - Result: all 39 tasks are done. Every new Python test passed locally, including the PostgreSQL
   cases. The web interface has no test runner, and the five quickstart scenarios were not run by
   hand.

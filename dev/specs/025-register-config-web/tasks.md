@@ -122,12 +122,13 @@ only means no mark is recorded (FR-022).
 
 ## Phase 7: Polish and cross-cutting
 
-The work ships in two pull requests (spec decision D-9, plan "Implementation order").
-- The first pull request holds Phases 1 to 3 and the User Story 1 part of T035 to T038:
+The work ships in one pull request, [#440](https://github.com/opsmill/infrahub-sync/pull/440)
+(spec decision D-9, changed on 2026-11-20). It was first split in two:
+- The User Story 1 part holds Phases 1 to 3 and the User Story 1 part of T035 to T038:
   - the ADR without the mark;
   - the `configs check` documentation and the CLI reference;
   - the fragment `changelog/+validate-config-package.added.md`.
-- The second pull request holds Phases 4 to 6 and the rest of Phase 7:
+- The web interface part holds Phases 4 to 6 and the rest of Phase 7:
   - the ADR section on the mark's table;
   - the web interface documentation;
   - the fragment `changelog/+register-config-web.added.md`;
@@ -159,8 +160,10 @@ The work ships in two pull requests (spec decision D-9, plan "Implementation ord
 
 ## Implementation strategy
 
-1. First pull request: User Story 1. It gives CLI and script users a check before registration,
+All stories ship in one pull request (D-9); the order below is the order of the work.
+
+1. User Story 1 first. It gives CLI and script users a check before registration,
    and every other story depends on it.
-2. Second pull request: User Story 2, the most frequent web interface journey, then User Story 3,
+2. Then User Story 2, the most frequent web interface journey, then User Story 3,
    then User Story 4. User Story 4 is the only story that changes the store; the maintainer
    confirmed it is kept (spec decision D-8).
