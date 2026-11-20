@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -25,6 +25,7 @@ from infrahub_sync.configuration import ConfigurationPackage, validate_package_c
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redact_ordered, redaction_order
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import accounts as account_statements
+from infrahub_sync.product_store import stored_credentials as credential_statements
 from infrahub_sync.product_store.accounts import (
     SIGN_IN_ATTEMPTS_BOUND,
     AccountIdentifierAllocationError,
@@ -60,6 +61,8 @@ from infrahub_sync.product_store.models import (
     ConfigurationVersion,
     ConfigurationVersionPage,
     ConfigurationVersionSummary,
+    CredentialBlock,
+    CredentialUse,
     EventFilters,
     EventPage,
     ExecutionFinishWriteback,
@@ -84,6 +87,9 @@ from infrahub_sync.product_store.models import (
     SchedulePage,
     ScheduleRecord,
     SignInAttempt,
+    StoredCredential,
+    StoredCredentialPage,
+    StoredCredentialRevision,
     WorkerEnvironment,
     already_approved_body,
     approval_error_body,
@@ -93,6 +99,7 @@ from infrahub_sync.product_store.models import (
 if TYPE_CHECKING:
     # Typing only: importing the engine package at runtime would load the whole engine into the store.
     from infrahub_sync.potenda.read_progress import Side
+    from infrahub_sync.product_store.stored_credentials import Encrypt
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +238,32 @@ CREATE TABLE IF NOT EXISTS schedule_branches (
     FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (schedule_id) REFERENCES schedules(schedule_id)
 );
+CREATE TABLE IF NOT EXISTS stored_credentials (
+    credential_id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '',
+    current_revision INTEGER NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stored_credential_revisions (
+    credential_id TEXT NOT NULL, revision INTEGER NOT NULL, fields TEXT NOT NULL, key_id TEXT NOT NULL,
+    nonce TEXT NOT NULL, ciphertext TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY (credential_id, revision),
+    FOREIGN KEY (credential_id) REFERENCES stored_credentials(credential_id)
+);
+CREATE TABLE IF NOT EXISTS configuration_version_credentials (
+    config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, block TEXT NOT NULL, credential_name TEXT NOT NULL,
+    PRIMARY KEY (config_id, registry_version, block),
+    FOREIGN KEY (config_id, registry_version) REFERENCES configuration_versions(config_id, registry_version)
+);
+CREATE TABLE IF NOT EXISTS run_credential_uses (
+    run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, stage TEXT NOT NULL, block TEXT NOT NULL,
+    credential_id TEXT NOT NULL, credential_name TEXT NOT NULL, revision INTEGER NOT NULL, released_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, flow_run_id, block), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
+);
 """
+# The stored credential tables (spec 027) are new tables, created whole on an earlier database;
+# none adds a column to an existing table, so ``_COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD`` is unchanged.
+# The nonce and the ciphertext of a revision are base64 text: the store has no binary column, and
+# one schema text serves SQLite and PostgreSQL.
 # The columns that a build with schedules added to tables that already existed. The store
 # has no migration: a new column is part of its ``CREATE TABLE`` statement and reaches only a
 # new database. A database whose table lacks one of them was created by an earlier build, and
@@ -308,6 +340,12 @@ _SCHEDULE_UNIQUE_INDEXES: tuple[str, ...] = (
     "CREATE UNIQUE INDEX IF NOT EXISTS product_runs_schedule_start ON product_runs (schedule_id, scheduled_start_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS schedules_name_not_deleted ON schedules (name) WHERE state <> 'deleted'",
     "CREATE UNIQUE INDEX IF NOT EXISTS schedules_config_not_deleted ON schedules (config_id) WHERE state <> 'deleted'",
+)
+# The versions that name a credential, for the check that refuses to delete one in use (spec 027,
+# research R8): the link holds the name, so a credential deleted and created again is found.
+_STORED_CREDENTIAL_INDEXES: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS configuration_version_credentials_name "
+    "ON configuration_version_credentials (credential_name)",
 )
 # The read state of each side of a plan or sync execution: one JSON document per side, so the
 # two read threads never write the same column (spec 013, research R3).
@@ -494,6 +532,7 @@ _SQLITE_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
 # An account identifier has 128 random bits and a short identifier 32. A second attempt is
 # needed about once in four billion creations for each account that exists.
 _ACCOUNT_IDENTIFIER_ATTEMPTS = 4
+_CREDENTIAL_IDENTIFIER_ATTEMPTS = 4
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
 _JSON_LIST_ADAPTER = TypeAdapter(list[str])
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
@@ -1232,6 +1271,57 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def clear_sign_in_attempts(self, name: str, *, event: AuditEvent | None = None) -> bool: ...
 
+    def create_stored_credential(
+        self,
+        *,
+        name: str,
+        description: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential: ...
+
+    def lookup_stored_credential(self, name: str) -> StoredCredential | None: ...
+
+    def list_stored_credentials(self, *, offset: int = 0, limit: int = DEFAULT_LIMIT) -> StoredCredentialPage: ...
+
+    def change_stored_credential_value(
+        self,
+        *,
+        name: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential: ...
+
+    def set_stored_credential_description(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential: ...
+
+    def lookup_stored_credential_revision(
+        self, credential_id: str, revision: int
+    ) -> StoredCredentialRevision | None: ...
+
+    def record_version_credentials(
+        self, config_id: str, registry_version: int, credentials: Mapping[CredentialBlock, str]
+    ) -> None: ...
+
+    def version_credentials(self, config_id: str, registry_version: int) -> dict[CredentialBlock, str]: ...
+
+    def record_credential_uses(self, uses: Sequence[CredentialUse], *, event: AuditEvent | None = None) -> None: ...
+
+    def credential_uses(self, run_id: str) -> tuple[CredentialUse, ...]: ...
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
     def finish(
@@ -1355,8 +1445,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     @staticmethod
     def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
-        """Create the indexes for listing runs and configurations, and the unique indexes of schedules."""
-        for statement in (*_RUN_LISTING_INDEXES, *_SCHEDULE_UNIQUE_INDEXES):
+        """Create the listing indexes, the unique indexes of schedules and the index of version credentials."""
+        for statement in (*_RUN_LISTING_INDEXES, *_SCHEDULE_UNIQUE_INDEXES, *_STORED_CREDENTIAL_INDEXES):
             cursor.execute(statement)
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
@@ -4647,6 +4737,155 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 self._insert_event(cursor, event)
             return cleared
 
+    def create_stored_credential(
+        self,
+        *,
+        name: str,
+        description: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential:
+        """Create a credential and its revision 1, and the event ``event_for`` builds, in one transaction.
+
+        ``encrypt`` is called with the new identifier and revision 1 inside the transaction.
+
+        Raises:
+            StoredCredentialInvalidError: the name, the description or the set of fields breaks a rule.
+            CredentialNameTakenError: a credential already has this name.
+            CredentialIdentifierAllocationError: every generated identifier was already in use.
+        """
+        created_at = _now(now)
+        for _attempt in range(_CREDENTIAL_IDENTIFIER_ATTEMPTS):
+            try:
+                with self._transaction() as cursor:
+                    credential = credential_statements.create_credential(
+                        cursor,
+                        self._sql,
+                        name=name,
+                        description=description,
+                        fields=fields,
+                        encrypt=encrypt,
+                        actor=actor,
+                        now=created_at,
+                    )
+                    if event_for is not None:
+                        self._insert_event(cursor, event_for(credential))
+                    return credential
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # DB-API drivers do not share an integrity-error base class;
+                # inspect only documented SQLite/PostgreSQL uniqueness markers.
+                if not _is_unique_violation(exc):
+                    raise
+            # The refused transaction is over. A new read tells a taken name from an identifier
+            # that is in use; only the second is worth another attempt. The driver's error is
+            # not chained: it can quote the refused row.
+            if self.lookup_stored_credential(name) is not None:
+                msg = f"The credential name {name!r} is already taken"
+                raise credential_statements.CredentialNameTakenError(msg)
+        msg = "Could not choose an unused credential identifier"
+        raise credential_statements.CredentialIdentifierAllocationError(msg)
+
+    def lookup_stored_credential(self, name: str) -> StoredCredential | None:
+        """Return the credential with this name, or ``None``."""
+        with self._reading() as cursor:
+            return credential_statements.read_credential_by_name(cursor, self._sql, name)
+
+    def list_stored_credentials(self, *, offset: int = 0, limit: int = DEFAULT_LIMIT) -> StoredCredentialPage:
+        """Return one page of credentials sorted by name, in byte order."""
+        with self._reading() as cursor:
+            return credential_statements.list_credentials(
+                cursor, self._sql, dialect=self._dialect, offset=offset, limit=limit
+            )
+
+    def change_stored_credential_value(
+        self,
+        *,
+        name: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential:
+        """Write the next revision of a credential with the whole new set of fields, in one transaction.
+
+        ``encrypt`` is called with the identifier and the next revision once the row is locked.
+
+        Raises:
+            StoredCredentialInvalidError: the set of fields breaks a rule.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        with self._transaction() as cursor:
+            credential = credential_statements.change_value(
+                cursor, self._sql, name=name, fields=fields, encrypt=encrypt, actor=actor, now=_now(now)
+            )
+            if event_for is not None:
+                self._insert_event(cursor, event_for(credential))
+            return credential
+
+    def set_stored_credential_description(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential:
+        """Replace the description of a credential; its revision stays.
+
+        Raises:
+            StoredCredentialInvalidError: the description is too long.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        with self._transaction() as cursor:
+            credential = credential_statements.set_description(
+                cursor, self._sql, name=name, description=description, actor=actor, now=_now(now)
+            )
+            if event_for is not None:
+                self._insert_event(cursor, event_for(credential))
+            return credential
+
+    def lookup_stored_credential_revision(self, credential_id: str, revision: int) -> StoredCredentialRevision | None:
+        """Return one revision of a credential, with its key identifier, nonce and ciphertext."""
+        with self._reading() as cursor:
+            return credential_statements.read_revision(cursor, self._sql, credential_id, revision)
+
+    def record_version_credentials(
+        self, config_id: str, registry_version: int, credentials: Mapping[CredentialBlock, str]
+    ) -> None:
+        """Record the credential name each block of a version names, in a transaction of its own.
+
+        Registration calls ``stored_credentials.write_version_credentials`` with its own cursor
+        instead, so the rows are written with the version.
+        """
+        with self._transaction() as cursor:
+            credential_statements.write_version_credentials(
+                cursor, self._sql, config_id=config_id, registry_version=registry_version, credentials=credentials
+            )
+
+    def version_credentials(self, config_id: str, registry_version: int) -> dict[CredentialBlock, str]:
+        """Return the credential name each block of a version names."""
+        with self._reading() as cursor:
+            return credential_statements.read_version_credentials(
+                cursor, self._sql, config_id=config_id, registry_version=registry_version
+            )
+
+    def record_credential_uses(self, uses: Sequence[CredentialUse], *, event: AuditEvent | None = None) -> None:
+        """Record the revisions a stage execution received, and ``event``, in one transaction."""
+        with self._transaction() as cursor:
+            credential_statements.record_credential_uses(cursor, self._sql, uses)
+            if event is not None:
+                self._insert_event(cursor, event)
+
+    def credential_uses(self, run_id: str) -> tuple[CredentialUse, ...]:
+        """Return the credentials every stage execution of a run received."""
+        with self._reading() as cursor:
+            return credential_statements.read_credential_uses(cursor, self._sql, run_id)
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         with self._transaction() as cursor:
             cursor.execute(
@@ -5922,6 +6161,122 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """
         return self._records.clear_sign_in_attempts(name, event=_redacted_event(event, secrets))
 
+    def create_stored_credential(
+        self,
+        *,
+        name: str,
+        description: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Create a credential and its revision 1 from the value ``encrypt`` encrypts.
+
+        The store receives the key identifier, the nonce and the ciphertext, never the value.
+        ``encrypt`` is called with the new identifier and revision 1 inside the transaction, and
+        the secret-safe event that ``event_for`` builds is written in the same transaction.
+
+        Raises:
+            StoredCredentialInvalidError: the name, the description or the set of fields breaks a rule.
+            CredentialNameTakenError: a credential already has this name.
+        """
+        return self._records.create_stored_credential(
+            name=name,
+            description=description,
+            fields=fields,
+            encrypt=encrypt,
+            actor=actor,
+            now=now,
+            event_for=_redacted_event_for(event_for, secrets),
+        )
+
+    def lookup_stored_credential(self, name: str) -> StoredCredential | None:
+        """Return the credential with this name, or ``None``."""
+        return self._records.lookup_stored_credential(name)
+
+    def list_stored_credentials(self, *, offset: int = 0, limit: int = DEFAULT_LIMIT) -> StoredCredentialPage:
+        """Return one page of credentials sorted by name, in byte order."""
+        return self._records.list_stored_credentials(offset=offset, limit=limit)
+
+    def change_stored_credential_value(
+        self,
+        *,
+        name: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Write the next revision of a credential with the whole new set of fields.
+
+        ``encrypt`` is called with the identifier and the next revision once the row is locked.
+
+        Raises:
+            StoredCredentialInvalidError: the set of fields breaks a rule.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        return self._records.change_stored_credential_value(
+            name=name,
+            fields=fields,
+            encrypt=encrypt,
+            actor=actor,
+            now=now,
+            event_for=_redacted_event_for(event_for, secrets),
+        )
+
+    def set_stored_credential_description(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Replace the description of a credential; its revision stays.
+
+        Raises:
+            StoredCredentialInvalidError: the description is too long.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        return self._records.set_stored_credential_description(
+            name=name,
+            description=description,
+            actor=actor,
+            now=now,
+            event_for=_redacted_event_for(event_for, secrets),
+        )
+
+    def lookup_stored_credential_revision(self, credential_id: str, revision: int) -> StoredCredentialRevision | None:
+        """Return one revision of a credential, with its key identifier, nonce and ciphertext."""
+        return self._records.lookup_stored_credential_revision(credential_id, revision)
+
+    def record_version_credentials(
+        self, config_id: str, registry_version: int, credentials: Mapping[CredentialBlock, str]
+    ) -> None:
+        """Record the credential name each block of a version names (research R8)."""
+        self._records.record_version_credentials(config_id, registry_version, credentials)
+
+    def version_credentials(self, config_id: str, registry_version: int) -> dict[CredentialBlock, str]:
+        """Return the credential name each block of a version names; a block that names none is absent."""
+        return self._records.version_credentials(config_id, registry_version)
+
+    def record_credential_uses(
+        self, uses: Sequence[CredentialUse], *, event: AuditEvent | None = None, secrets: Sequence[str] = ()
+    ) -> None:
+        """Record the revisions a stage execution received, replacing an earlier release, with the event."""
+        self._records.record_credential_uses(uses, event=_redacted_event(event, secrets))
+
+    def credential_uses(self, run_id: str) -> tuple[CredentialUse, ...]:
+        """Return the credentials every stage execution of a run received (research R9)."""
+        return self._records.credential_uses(run_id)
+
     def record_results(
         self,
         run_id: str,
@@ -6851,6 +7206,15 @@ def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
 
 def _redacted_event(event: AuditEvent | None, secrets: Sequence[str]) -> AuditEvent | None:
     return None if event is None else _redact_event(event, secrets)
+
+
+def _redacted_event_for(
+    event_for: Callable[[StoredCredential], AuditEvent] | None, secrets: Sequence[str]
+) -> Callable[[StoredCredential], AuditEvent] | None:
+    """Wrap a builder of a stored credential's event so that the event it builds is secret-safe."""
+    if event_for is None:
+        return None
+    return lambda credential: _redact_event(event_for(credential), secrets)
 
 
 def _audit_from_row(row: Sequence[Any], related: Sequence[tuple[str, str]] = ()) -> AuditEvent:

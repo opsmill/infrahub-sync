@@ -38,15 +38,15 @@ the constitution.
 
 ### Encryption
 
-- [ ] T004 Write `tests/service/test_credential_crypto.py`: round trip; a ciphertext copied to another `credential_id` or revision fails; a wrong key is reported as `CredentialDecryptionError` from the key identifier before decryption; the key identifier is stable for one key
-- [ ] T005 Implement `infrahub_sync/service/credential_crypto.py`: `CredentialCipher` with `encrypt(credential_id, revision, fields) -> (key_id, nonce, ciphertext)` and `decrypt(...)`, AES-256-GCM through `cryptography.hazmat.primitives.ciphers.aead.AESGCM`, associated data `infrahub-sync/credential/v1|<credential_id>|<revision>`, random 12-byte nonce, `key_id` = first 8 bytes of SHA-256 of the key in hex; `CredentialDecryptionError` (research R3)
+- [X] T004 Write `tests/service/test_credential_crypto.py`: round trip; a ciphertext copied to another `credential_id` or revision fails; a wrong key is reported as `CredentialDecryptionError` from the key identifier before decryption; the key identifier is stable for one key
+- [X] T005 Implement `infrahub_sync/service/credential_crypto.py`: `CredentialCipher` with `encrypt(credential_id, revision, fields) -> (key_id, nonce, ciphertext)` and `decrypt(...)`, AES-256-GCM through `cryptography.hazmat.primitives.ciphers.aead.AESGCM`, associated data `infrahub-sync/credential/v1|<credential_id>|<revision>`, random 12-byte nonce, `key_id` = first 8 bytes of SHA-256 of the key in hex; `CredentialDecryptionError` (research R3)
 
 ### Store
 
-- [ ] T006 Write `tests/product_store/test_stored_credentials.py` on SQLite and PostgreSQL as the existing store tests do: create, read by name, list sorted by name with offset and limit, new revision on value change, description change keeps the revision, unique name, the field sets of data-model.md (all three fields together refused), `configuration_version_credentials` rows written with a version, `run_credential_uses` replaced on a second release for the same execution and block
-- [ ] T007 Add the four tables of data-model.md (`stored_credentials`, `stored_credential_revisions`, `configuration_version_credentials`, `run_credential_uses`) and the index on `configuration_version_credentials.credential_name` to `_SCHEMA` and the index tuples in `infrahub_sync/product_store/store.py`; add no column to an existing table
-- [ ] T008 Implement `infrahub_sync/product_store/stored_credentials.py` with the statements for T006, called with `(cursor, self._sql, ...)` as `product_store/accounts.py` is; the name pattern `^[a-z][a-z0-9-]{0,62}$`; a description of at most 500 characters
-- [ ] T009 Add `StoredCredential`, `StoredCredentialRevision` and `CredentialUse` to `infrahub_sync/product_store/models.py`, and facade methods on `ProductProjection` and `_RunStore` in `infrahub_sync/product_store/store.py`
+- [X] T006 Write `tests/product_store/test_stored_credentials.py` on SQLite and PostgreSQL as the existing store tests do: create, read by name, list sorted by name with offset and limit, new revision on value change, description change keeps the revision, unique name, the field sets of data-model.md (all three fields together refused), `configuration_version_credentials` rows written with a version, `run_credential_uses` replaced on a second release for the same execution and block
+- [X] T007 Add the four tables of data-model.md (`stored_credentials`, `stored_credential_revisions`, `configuration_version_credentials`, `run_credential_uses`) and the index on `configuration_version_credentials.credential_name` to `_SCHEMA` and the index tuples in `infrahub_sync/product_store/store.py`; add no column to an existing table
+- [X] T008 Implement `infrahub_sync/product_store/stored_credentials.py` with the statements for T006, called with `(cursor, self._sql, ...)` as `product_store/accounts.py` is; the name pattern `^[a-z][a-z0-9-]{0,62}$`; a description of at most 500 characters
+- [X] T009 Add `StoredCredential`, `StoredCredentialRevision` and `CredentialUse` to `infrahub_sync/product_store/models.py`, and facade methods on `ProductProjection` and `_RunStore` in `infrahub_sync/product_store/store.py`
 
 ### The worker account
 

@@ -97,6 +97,9 @@ EXPECTED_PUBLIC_NAMES = {
     "ConfigurationVersionAllocationError",
     "ConfigurationVersionPage",
     "ConfigurationVersionSummary",
+    "CredentialIdentifierAllocationError",
+    "CredentialNameTakenError",
+    "CredentialUse",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicateConfigurationError",
@@ -141,6 +144,11 @@ EXPECTED_PUBLIC_NAMES = {
     "ScheduledStartRun",
     "SignInAttempt",
     "SignInAttemptsFullError",
+    "StoredCredential",
+    "StoredCredentialInvalidError",
+    "StoredCredentialNotFoundError",
+    "StoredCredentialPage",
+    "StoredCredentialRevision",
     "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",
@@ -209,6 +217,8 @@ class _CursorAdapter:
             "CAST(%s AS TIMESTAMPTZ)",
             "infrahub_sync_execution_timestamp_microseconds(?)",
         )
+        # PostgreSQL's byte-order collation; SQLite's is BINARY.
+        stripped = stripped.replace('COLLATE "C"', "COLLATE BINARY")
         self._cursor.execute(stripped.replace("%s", "?"), parameters)
         return self
 

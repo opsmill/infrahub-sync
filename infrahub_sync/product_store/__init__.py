@@ -29,6 +29,7 @@ from infrahub_sync.product_store.models import (
     ConfigurationVersion,
     ConfigurationVersionPage,
     ConfigurationVersionSummary,
+    CredentialUse,
     EventDetails,
     EventFilters,
     EventPage,
@@ -54,6 +55,9 @@ from infrahub_sync.product_store.models import (
     SchedulePage,
     ScheduleRecord,
     SignInAttempt,
+    StoredCredential,
+    StoredCredentialPage,
+    StoredCredentialRevision,
     WorkerEnvironment,
 )
 from infrahub_sync.product_store.store import (
@@ -85,6 +89,12 @@ from infrahub_sync.product_store.store import (
     production_product_projection,
     read_bootstrap_record,
     run_apply_progress,
+)
+from infrahub_sync.product_store.stored_credentials import (
+    CredentialIdentifierAllocationError,
+    CredentialNameTakenError,
+    StoredCredentialInvalidError,
+    StoredCredentialNotFoundError,
 )
 
 __all__ = (
@@ -118,6 +128,9 @@ __all__ = (
     "ConfigurationVersionAllocationError",
     "ConfigurationVersionPage",
     "ConfigurationVersionSummary",
+    "CredentialIdentifierAllocationError",
+    "CredentialNameTakenError",
+    "CredentialUse",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicateConfigurationError",
@@ -162,6 +175,11 @@ __all__ = (
     "ScheduledStartRun",
     "SignInAttempt",
     "SignInAttemptsFullError",
+    "StoredCredential",
+    "StoredCredentialInvalidError",
+    "StoredCredentialNotFoundError",
+    "StoredCredentialPage",
+    "StoredCredentialRevision",
     "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Annotated, Any, Generic, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -14,6 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from infrahub_sync.configuration.worker_credentials import is_credential_name
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 from infrahub_sync.plan.identity import OPERATION_ID_PATTERN
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # A schedule's generated identifier: ``s-`` and 32 hexadecimal characters.
@@ -1016,6 +1019,104 @@ class ResolvedCredential(BaseModel):
     last_used_at: datetime | None = None
 
     _aware = field_validator("expires_at", "last_used_at")(_require_aware)
+
+
+CREDENTIAL_ID_PATTERN = r"^cred_[0-9a-f]{32}$"
+# The name of a stored credential: lower case, a letter first, at most 63 characters. It cannot change.
+STORED_CREDENTIAL_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,62}$"
+STORED_CREDENTIAL_DESCRIPTION_MAX_LENGTH = 500
+_CREDENTIAL_KEY_ID_PATTERN = r"^[0-9a-f]{16}$"
+CredentialField: TypeAlias = Literal["password", "token", "username"]
+CredentialBlock: TypeAlias = Literal["source", "destination"]
+CredentialStage: TypeAlias = Literal["plan", "verify", "apply", "sync", "resume"]
+# The sets of fields a credential may hold (FR-013). Every other set, all three fields included,
+# is refused.
+CREDENTIAL_FIELD_SETS: frozenset[frozenset[str]] = frozenset(
+    {frozenset({"token"}), frozenset({"username", "password"}), frozenset({"username", "token"})}
+)
+
+
+def is_credential_field_set(fields: Iterable[str]) -> bool:
+    """Return whether these field names, without repetition, are one of the allowed sets."""
+    names = tuple(fields)
+    return len(names) == len(set(names)) and frozenset(names) in CREDENTIAL_FIELD_SETS
+
+
+def _sorted_field_set(value: tuple[str, ...]) -> tuple[str, ...]:
+    if not is_credential_field_set(value):
+        msg = "the fields must be token, username and password, or username and token"
+        raise ValueError(msg)
+    return tuple(sorted(value))
+
+
+class StoredCredential(BaseModel):
+    """One stored credential, without its value: the names of its fields and its current revision.
+
+    ``created_by`` and ``updated_by`` are account identifiers; the HTTP boundary shows names.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    credential_id: str = Field(pattern=CREDENTIAL_ID_PATTERN)
+    name: str = Field(pattern=STORED_CREDENTIAL_NAME_PATTERN)
+    description: str = Field(default="", max_length=STORED_CREDENTIAL_DESCRIPTION_MAX_LENGTH)
+    current_revision: int = Field(ge=1)
+    # The fields of the current revision, sorted.
+    fields: tuple[CredentialField, ...]
+    created_by: str = Field(min_length=1)
+    created_at: datetime
+    updated_by: str = Field(min_length=1)
+    updated_at: datetime
+
+    _aware = field_validator("created_at", "updated_at")(_require_aware)
+    _field_set = field_validator("fields")(_sorted_field_set)
+
+
+class StoredCredentialRevision(BaseModel):
+    """One encrypted value of a credential, as the Sync API decrypts it (research R3).
+
+    The nonce and the ciphertext are left out of the representation, and the ciphertext of
+    every serialized form, so that neither reaches a log or an answer.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    credential_id: str = Field(pattern=CREDENTIAL_ID_PATTERN)
+    revision: int = Field(ge=1)
+    fields: tuple[CredentialField, ...]
+    key_id: str = Field(pattern=_CREDENTIAL_KEY_ID_PATTERN)
+    nonce: bytes = Field(min_length=1, repr=False, exclude=True)
+    ciphertext: bytes = Field(min_length=1, repr=False, exclude=True)
+    created_by: str = Field(min_length=1)
+    created_at: datetime
+
+    _aware = field_validator("created_at")(_require_aware)
+    _field_set = field_validator("fields")(_sorted_field_set)
+
+
+class CredentialUse(BaseModel):
+    """The revision of a credential that one stage execution received for one block (research R9).
+
+    ``credential_id`` keeps the revision unambiguous after the credential is deleted and another
+    one takes its name.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(min_length=1)
+    flow_run_id: str = Field(min_length=1)
+    stage: CredentialStage
+    block: CredentialBlock
+    credential_id: str = Field(pattern=CREDENTIAL_ID_PATTERN)
+    credential_name: str = Field(pattern=STORED_CREDENTIAL_NAME_PATTERN)
+    revision: int = Field(ge=1)
+    released_at: datetime
+
+    _aware = field_validator("released_at")(_require_aware)
+
+
+# One page of stored credentials, by name.
+StoredCredentialPage: TypeAlias = StorePage[StoredCredential]
 
 
 ScheduleWriteTarget: TypeAlias = Literal["branch-review", "default-branch"]
