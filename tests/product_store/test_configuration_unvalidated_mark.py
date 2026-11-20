@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 import pytest
 
@@ -53,9 +54,15 @@ def projection(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Produ
     yield ProductProjection(_postgresql_store(schema.dsn), artifacts)
 
 
-def _second_package() -> ConfigurationPackage:
-    """Return a valid package whose checksum differs from the default one."""
-    data = package_data()
+@pytest.fixture
+def configuration_name() -> str:
+    """Return a name no other case uses: a name is unique, and the PostgreSQL cases share one schema."""
+    return f"configuration-{uuid4().hex[:8]}"
+
+
+def _second_package(name: str | None = None) -> ConfigurationPackage:
+    """Return a valid package whose checksum differs from the default one, named ``name`` if given."""
+    data = package_data(name)
     data["omissions"] = [{"kind": "InfraDevice"}]
     return package(data)
 
@@ -76,17 +83,21 @@ def _marks(projection: ProductProjection, config_id: str) -> dict[str, dict[int,
     }
 
 
-def test_a_marked_first_version_reads_back_marked_everywhere(projection: ProductProjection) -> None:
-    created = projection.create_configuration(package(), registered_without_validation=True)
+def test_a_marked_first_version_reads_back_marked_everywhere(
+    projection: ProductProjection, configuration_name: str
+) -> None:
+    created = projection.create_configuration(package(name=configuration_name), registered_without_validation=True)
 
     assert created.registered_without_validation is True
     assert _marks(projection, created.config_id) == {"lookup": {1: True}, "list": {1: True}, "page": {1: True}}
 
 
-def test_a_version_registered_without_the_mark_reads_false(projection: ProductProjection) -> None:
-    created = projection.create_configuration(package())
+def test_a_version_registered_without_the_mark_reads_false(
+    projection: ProductProjection, configuration_name: str
+) -> None:
+    created = projection.create_configuration(package(name=configuration_name))
     added, was_created = projection.add_configuration_version(
-        created.config_id, _second_package(), registered_without_validation=False
+        created.config_id, _second_package(configuration_name), registered_without_validation=False
     )
 
     assert was_created
@@ -99,10 +110,12 @@ def test_a_version_registered_without_the_mark_reads_false(projection: ProductPr
     }
 
 
-def test_a_marked_added_version_is_marked_and_its_predecessor_is_not(projection: ProductProjection) -> None:
-    created = projection.create_configuration(package())
+def test_a_marked_added_version_is_marked_and_its_predecessor_is_not(
+    projection: ProductProjection, configuration_name: str
+) -> None:
+    created = projection.create_configuration(package(name=configuration_name))
     added, was_created = projection.add_configuration_version(
-        created.config_id, _second_package(), registered_without_validation=True
+        created.config_id, _second_package(configuration_name), registered_without_validation=True
     )
 
     assert was_created
@@ -116,15 +129,15 @@ def test_a_marked_added_version_is_marked_and_its_predecessor_is_not(projection:
 
 @pytest.mark.parametrize("existing_mark", [False, True], ids=["unmarked-existing", "marked-existing"])
 def test_an_identical_package_does_not_change_the_existing_mark(
-    projection: ProductProjection, *, existing_mark: bool
+    projection: ProductProjection, configuration_name: str, *, existing_mark: bool
 ) -> None:
-    created = projection.create_configuration(package())
+    created = projection.create_configuration(package(name=configuration_name))
     first, _ = projection.add_configuration_version(
-        created.config_id, _second_package(), registered_without_validation=existing_mark
+        created.config_id, _second_package(configuration_name), registered_without_validation=existing_mark
     )
 
     again, was_created = projection.add_configuration_version(
-        created.config_id, _second_package(), registered_without_validation=not existing_mark
+        created.config_id, _second_package(configuration_name), registered_without_validation=not existing_mark
     )
 
     assert not was_created
