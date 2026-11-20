@@ -19,10 +19,10 @@ export const Route = createFileRoute("/schedules/")({
     q: typeof s.q === "string" && s.q.trim() ? s.q : undefined,
     config: typeof s.config === "string" && CONFIG_ID.test(s.config) ? s.config : undefined,
   }),
-  loaderDeps: ({ search }) => ({ show: search.show, config: search.config }),
+  loaderDeps: ({ search }) => ({ deleted: search.show === "deleted", config: search.config }),
   loader: ({ context: { queryClient }, deps }) => {
     void queryClient.prefetchInfiniteQuery(schedulePagesQuery({ config: deps.config }));
-    if (deps.show === "deleted")
+    if (deps.deleted)
       void queryClient.prefetchInfiniteQuery(
         schedulePagesQuery({ state: "deleted", config: deps.config })
       );

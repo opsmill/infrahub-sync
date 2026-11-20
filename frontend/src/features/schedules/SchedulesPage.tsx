@@ -103,6 +103,8 @@ export function SchedulesPage({ show, q = "", config }: SchedulesSearch) {
   const shows = tabShows(tab);
   const search = q.trim();
 
+  // A notice's button disappears once its read succeeds, so focus moves to the search field.
+  const focusSearch = () => searchRef.current?.focus();
   const clearSearch = () => {
     setSearch({ q: undefined });
     searchRef.current?.focus();
@@ -123,6 +125,11 @@ export function SchedulesPage({ show, q = "", config }: SchedulesSearch) {
       ? deleted
       : undefined;
 
+  const retryRefresh = async () => {
+    const r = await stale?.refetch();
+    if (r && !r.isError) focusSearch();
+  };
+
   let main: ReactNode;
   if (tab === "deleted") {
     main = loading(deleted) ? (
@@ -142,7 +149,7 @@ export function SchedulesPage({ show, q = "", config }: SchedulesSearch) {
       </EmptyPanel>
     ) : (
       <>
-        <PartialNotice what="deleted schedules" pages={deleted} />
+        <PartialNotice what="deleted schedules" pages={deleted} onLoaded={focusSearch} />
         <Group
           id="schedules-deleted"
           title="Deleted"
@@ -289,7 +296,7 @@ export function SchedulesPage({ show, q = "", config }: SchedulesSearch) {
                 Configuration names could not be loaded, so schedules show configuration IDs.
               </output>
             )}
-            <PartialNotice what="schedules" pages={live} />
+            <PartialNotice what="schedules" pages={live} onLoaded={focusSearch} />
           </div>
           {main}
         </div>
@@ -315,7 +322,7 @@ export function SchedulesPage({ show, q = "", config }: SchedulesSearch) {
         <ScheduleFormDialog target={{ mode: "create" }} onClose={() => setCreating(false)} />
       )}
       {stale && (
-        <StaleNotice error={stale.error} updatedAt={stale.dataUpdatedAt} onRetry={stale.refetch} />
+        <StaleNotice error={stale.error} updatedAt={stale.dataUpdatedAt} onRetry={retryRefresh} />
       )}
       {body}
     </>
@@ -361,25 +368,32 @@ function ConfigFilter({
 function PartialNotice({
   what,
   pages,
+  onLoaded,
 }: {
   what: string;
+  /** Called once the missing page is read: the notice and its button are then gone. */
+  onLoaded: () => void;
   pages: {
     data?: { pages: { items: unknown[] }[] };
     isFetchNextPageError: boolean;
     isFetchingNextPage: boolean;
     error: unknown;
-    fetchNextPage: () => Promise<unknown>;
+    fetchNextPage: () => Promise<{ isError: boolean }>;
   };
 }) {
   if (!pages.isFetchNextPageError || pages.isFetchingNextPage) return null;
   const d = describeError(pages.error);
+  const retry = async () => {
+    const r = await pages.fetchNextPage();
+    if (!r.isError) onLoaded();
+  };
   return (
     <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
       <p className="max-w-[70ch] text-pretty text-danger">
         Not all {what} could be loaded, so the counts and lists are incomplete.{" "}
         {d.detail ?? `${d.title}.`}
       </p>
-      <Button variant="outline" size="sm" className={TOUCH} onPress={() => pages.fetchNextPage()}>
+      <Button variant="outline" size="sm" className={TOUCH} onPress={retry}>
         Try again
       </Button>
     </div>

@@ -129,10 +129,13 @@ frontend/
     │   ├── schedules.ts              # scheduleActions, stateView, labels, change and create requests
     │   ├── cadence.ts                # cronFromForm, formFromCron, cadence words, field labels
     │   ├── schedule-events.ts        # eventText
+    │   ├── schedule-list.ts          # schedules list: needs action, groups, tabs, next starts (T053)
     │   └── *.test.ts                 # Vitest tests for the three modules
     ├── features/schedules/           # new
-    │   ├── SchedulesPage.tsx
-    │   ├── SchedulesTable.tsx
+    │   ├── SchedulesPage.tsx         # the "Triage+" list (design-schedules-list.md)
+    │   ├── ScheduleListParts.tsx     # its cards, rows, "Next starts" panel and skeleton
+    │   ├── ScheduleStateLabel.tsx    # state badge
+    │   ├── use-all-schedules.ts      # every page of GET /schedules
     │   ├── SchedulePage.tsx
     │   ├── ScheduleNotices.tsx
     │   ├── CadenceField.tsx          # helper, custom field labels, preview
