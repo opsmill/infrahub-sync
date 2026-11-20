@@ -74,10 +74,18 @@ def test_the_time_zone_and_the_count_have_defaults(api: ScheduleApi) -> None:
 
 
 def test_a_start_in_the_hour_that_daylight_saving_removes_is_the_start_prefect_computes(api: ScheduleApi) -> None:
+    """On 28 March 2027 Paris has no 02:30.
+
+    Prefect places the start at 01:30 local time on Python 3.11 and 3.12, and at 03:30 local time on Python 3.13.
+    """
     response = _preview(api, cron="30 2 28 3 *", timezone="Europe/Paris")
 
     assert response.status_code == 200, response.text
-    assert response.json()["starts"][0] == "2027-03-28T00:30:00Z"
+    first = response.json()["starts"][0]
+    assert first in {"2027-03-28T00:30:00Z", "2027-03-28T01:30:00Z"}
+    assert (
+        _time(first) == schedule_cadence.starts_between("30 2 28 3 *", "Europe/Paris", NOW, NOW + SEARCH_WINDOW, 1)[0]
+    )
 
 
 def test_an_expression_with_few_starts_returns_fewer_than_the_count(api: ScheduleApi) -> None:
