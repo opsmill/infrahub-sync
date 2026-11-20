@@ -57,10 +57,10 @@ the constitution.
 
 ### Package format beside the old one
 
-- [ ] T014 Write parametrized tests in `tests/configuration/test_block_credential.py`: `credential: <name>` accepted on the source and destination blocks; the name pattern; a block that names a credential refuses its credential settings in `settings`; the checksum changes when the name changes; for now a package with the old `credentials` block still parses
-- [ ] T015 Add the optional `credential` key to the adapter block model in `infrahub_sync/configuration/models.py`, and the refusal of credential settings in `settings` when `credential` is set
-- [ ] T016 Write `tests/configuration/test_credential_field_map.py`: parametrized over every adapter and `auth_method` of research R2, the fields needed and the setting each field fills; `credential-not-used` for a method that needs none
-- [ ] T017 Implement the field map in `infrahub_sync/configuration/capabilities.py` next to `credential_setting_paths` (`:736-815`), reusing the method table of `configuration/conversion_authentication.py:30-65`
+- [X] T014 Write parametrized tests in `tests/configuration/test_block_credential.py`: `credential: <name>` accepted on the source and destination blocks; the name pattern; a block that names a credential refuses its credential settings in `settings`; the checksum changes when the name changes; for now a package with the old `credentials` block still parses
+- [X] T015 Add the optional `credential` key to the adapter block model in `infrahub_sync/configuration/models.py`, and the refusal of credential settings in `settings` when `credential` is set
+- [X] T016 Write `tests/configuration/test_credential_field_map.py`: parametrized over every adapter and `auth_method` of research R2, the fields needed and the setting each field fills; `credential-not-used` for a method that needs none
+- [X] T017 Implement the field map in `infrahub_sync/configuration/capabilities.py` next to `credential_setting_paths` (`:736-815`), reusing the method table of `configuration/conversion_authentication.py:30-65`
 
 ### Redaction from the moment of use (critique E6)
 

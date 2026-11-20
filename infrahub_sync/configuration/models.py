@@ -40,6 +40,19 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 
 _REFERENCE_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 _PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,63}$"
+CREDENTIAL_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,62}$"
+"""The name of a stored credential: lower case, a letter first, at most 63 characters.
+
+A source or destination block names one with ``credential``; the stored credentials of the
+Sync API use the same pattern, so a name a block can declare is a name the API can store.
+"""
+CREDENTIAL_SETTING_NAMES = frozenset({"api_key", "auth", "password", "token", "username"})
+"""Every setting a bundled adapter declares as credential-bearing.
+
+A block that names a stored credential receives these values from it, so it may not also
+declare them in ``settings``. Kept here rather than read from the adapter capabilities, which
+import this module; a test holds it equal to their ``credential_setting_paths``.
+"""
 _SETTING_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 # A declared path component must survive pointer rendering unchanged, so the pointer built
 # from the declaration and the pointer built while walking a package cannot disagree.
@@ -69,6 +82,8 @@ _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
 _INVALID_DIFFSYNC_FLAG_NAME_ERROR = "invalid_diffsync_flag_name"
 _UNSUPPORTED_ADAPTER_SPEC_ERROR = "unsupported_adapter_spec"
 _INVALID_TRANSFORM_EXPRESSION_ERROR = "invalid_transform_expression"
+_CREDENTIAL_SETTING_WITH_NAMED_CREDENTIAL_ERROR = "credential_setting_with_named_credential"
+_CREDENTIAL_SETTING_WITH_NAMED_CREDENTIAL_REASON = "credential setting refused because the block names a credential"
 # An installed source adapter is one Python import target: dot-separated identifiers,
 # optionally naming a class after a colon. Every filesystem form a plugin loader would
 # otherwise accept fails this by construction — a path separator, a leading "." or "~",
@@ -158,11 +173,16 @@ def _raise_unsupported_declared_fields(
     )
 
 
+# Keys a package may declare beyond the legacy model's fields: the legacy runtime model does
+# not carry them, the package model does.
+_PACKAGE_ONLY_FIELDS: dict[type[BaseModel], frozenset[str]] = {SyncAdapter: frozenset({"credential"})}
+
+
 def _require_known_fields(value: Any, model: type[BaseModel], *, location: str) -> None:
     """Prevent legacy permissive models from dropping declaration content before hashing."""
     if not isinstance(value, Mapping):
         return
-    unknown = sorted(set(value) - set(model.model_fields))
+    unknown = sorted(set(value) - set(model.model_fields) - _PACKAGE_ONLY_FIELDS.get(model, frozenset()))
     if unknown:
         _raise_unsupported_declared_fields(location=location, fields=unknown)
 
@@ -207,11 +227,35 @@ def _require_installed_adapter_spec(value: Any, *, location: str) -> None:
         _raise_unsupported_adapter_spec(location=location)
 
 
+def _refuse_credential_settings_beside_a_named_credential(value: Mapping[Any, Any], *, location: str) -> None:
+    """Refuse the credential settings of a block that names a stored credential.
+
+    The stored credential fills them, so a value or a reference declared beside it would be a
+    second, conflicting source. Only the setting names are reported, never their values.
+    """
+    if value.get("credential") is None:
+        return
+    settings = value.get("settings")
+    if not isinstance(settings, Mapping):
+        return
+    refused = sorted(name for name in settings if isinstance(name, str) and name in CREDENTIAL_SETTING_NAMES)
+    if not refused:
+        return
+    pointer = "/" + f"{location}.settings".replace(".", "/")
+    raise PydanticCustomError(
+        _CREDENTIAL_SETTING_WITH_NAMED_CREDENTIAL_ERROR,
+        "{pointer} contains credential settings beside a named credential: {fields}",
+        {"pointer": pointer, "fields": ", ".join(refused), "field_names": tuple(refused)},
+    )
+
+
 def _require_strict_model(value: Any, model: type[BaseModel], *, location: str) -> None:
     """Apply extra-forbid semantics to one registered legacy model node."""
     if not isinstance(value, Mapping):
         return
     _require_known_fields(value, model, location=location)
+    if model is SyncAdapter:
+        _refuse_credential_settings_beside_a_named_credential(value, location=location)
     if model is SyncConfig and value.get("adapters_path") is not None:
         _raise_unsupported_declared_fields(location=location, fields=("adapters_path",))
     if model is SyncAdapter and value.get("adapter") is not None:
@@ -393,6 +437,11 @@ class _ImmutableSyncAdapter(SyncAdapter):
 
     settings: Mapping[str, Any] | None = Field(default_factory=dict, validate_default=True)
 
+    # The stored credential that fills this block's credential settings at run time. Serialized
+    # — and so covered by the package checksum — only when declared, so a package that does not
+    # name one keeps the declared content, and the checksum, it had before the key existed.
+    credential: str | None = Field(default=None, pattern=CREDENTIAL_NAME_PATTERN)
+
     @field_validator("settings")
     @classmethod
     def _freeze_settings(cls, value: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
@@ -401,6 +450,14 @@ class _ImmutableSyncAdapter(SyncAdapter):
     @field_serializer("settings")
     def _serialize_settings(self, value: Mapping[str, Any] | None) -> dict[str, Any] | None:
         return cast("dict[str, Any] | None", _thaw_json(value))
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_keys(self, handler: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
+        content = handler(self)
+        for key in ("adapter", "credential"):
+            if content.get(key) is None:
+                content.pop(key, None)
+        return content
 
 
 class _ImmutableSyncSourceAdapter(_ImmutableSyncAdapter):
@@ -414,13 +471,6 @@ class _ImmutableSyncSourceAdapter(_ImmutableSyncAdapter):
     """
 
     adapter: str | None = None
-
-    @model_serializer(mode="wrap")
-    def _omit_absent_adapter(self, handler: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
-        content = handler(self)
-        if content.get("adapter") is None:
-            content.pop("adapter", None)
-        return content
 
 
 class _ImmutableSyncStore(SyncStore):
@@ -808,9 +858,21 @@ def _decode_unicode_failure(record: dict[object, object], location: str) -> tupl
 
 def _decode_unsupported_field_failures(record: dict[object, object], location: str) -> tuple[tuple[str, str], ...]:
     """Decode one closed unsupported-field custom error context."""
+    return _decode_named_field_failures(record, location, reason="unsupported declared field")
+
+
+def _decode_credential_setting_failures(record: dict[object, object], location: str) -> tuple[tuple[str, str], ...]:
+    """Decode one closed credential-setting-beside-a-named-credential custom error context."""
+    return _decode_named_field_failures(record, location, reason=_CREDENTIAL_SETTING_WITH_NAMED_CREDENTIAL_REASON)
+
+
+def _decode_named_field_failures(
+    record: dict[object, object], location: str, *, reason: str
+) -> tuple[tuple[str, str], ...]:
+    """Decode one closed context that names the refused fields beneath one pointer."""
     context = _closed_context(record)
     if context is None:
-        return ((location, "unsupported declared field"),)
+        return ((location, reason),)
     pointer = _safe_context_pointer(context.get("pointer"))
     field_names = context.get("field_names")
     if (
@@ -822,10 +884,8 @@ def _decode_unsupported_field_failures(record: dict[object, object], location: s
             for field_name in field_names
         )
     ):
-        return ((location, "unsupported declared field"),)
-    return tuple(
-        (f"{pointer}/{safe_pointer_component(field_name)}", "unsupported declared field") for field_name in field_names
-    )
+        return ((location, reason),)
+    return tuple((f"{pointer}/{safe_pointer_component(field_name)}", reason) for field_name in field_names)
 
 
 def _decode_diffsync_failure(record: dict[object, object], location: str) -> tuple[tuple[str, str], ...]:
@@ -863,6 +923,7 @@ _CUSTOM_FAILURE_DECODERS: dict[str, _CustomFailureDecoder] = {
     _UNSUPPORTED_DECLARED_FIELDS_ERROR: _decode_unsupported_field_failures,
     _INVALID_DIFFSYNC_FLAG_NAME_ERROR: _decode_diffsync_failure,
     _UNSUPPORTED_ADAPTER_SPEC_ERROR: _decode_adapter_spec_failure,
+    _CREDENTIAL_SETTING_WITH_NAMED_CREDENTIAL_ERROR: _decode_credential_setting_failures,
 }
 
 

@@ -48,7 +48,7 @@ not.
 
 The `code` is the stable part of a finding. The message wording and the printed layout may
 change; the code will not. Four enumerations are emitted: the declared-content core's
-fifteen error codes below, the nine destination-schema codes and the two worker credential
+sixteen error codes below, the nine destination-schema codes and the two worker credential
 codes (emitted only when `validate` is given an explicit destination-schema opt-in), and the
 three warning-channel codes. One
 location can report more than one of them — a credential declaration naming an uninstalled
@@ -60,6 +60,7 @@ that reports.
 | ---- | ------------- | --------------- |
 | `adapter-role-mismatch` | The adapter named for this role cannot serve it — most often a source-only adapter declared as the destination. | `/configuration/source` or `/configuration/destination` |
 | `adapter-validator-finding` | The adapter's own configuration check failed, or handed back something unusable. Nothing the adapter said is carried into the message, so read the adapter's own findings for detail. | `/configuration/<role>` |
+| `credential-not-used` | The block names a stored credential with `credential`, but its adapter and `auth_method` use none, for example `auth_method: none`. Remove `credential`. | `/configuration/<role>/credential` |
 | `credential-path-not-declared` | A `$credential` reference sits somewhere that does not accept one. Usually a misspelled setting name, or a reference placed in `schema_mapping` or `order`. | the referencing node |
 | `endpoint-not-absolute` | A `url` or `base_url` setting is not an absolute `http` or `https` URL. | the setting |
 | `endpoint-not-relative` | An `api_endpoint` or `endpoint` setting carries a scheme or a host. It names a path beneath the absolute URL, not a second address. | the setting |

@@ -9,9 +9,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
+from .conversion_authentication import V2_AUTHENTICATION_METHODS
 from .infrahub_lineage import validate_infrahub_lineage_settings
 from .models import _SETTING_NAME, ConfigurationPackage, ValidationFinding, is_renderable_setting_path
 
@@ -830,3 +831,83 @@ def get_adapter_capabilities(name: str) -> AdapterConfigurationCapabilities:
     except KeyError:
         msg = f"adapter {name!r} has no configuration capability declaration"
         raise UnknownAdapterCapabilitiesError(msg) from None
+
+
+CredentialField = Literal["password", "token", "username"]
+"""A field of a stored credential; the Sync API stores no other."""
+
+
+def _fills(settings: dict[str, CredentialField]) -> Mapping[str, CredentialField]:
+    """Freeze one setting-to-stored-field table."""
+    return MappingProxyType(settings)
+
+
+_TOKEN_FILLS_TOKEN = _fills({"token": "token"})
+_BASIC_FILLS_BASIC = _fills({"username": "username", "password": "password"})
+# Research R2: the adapters whose credential settings do not depend on an ``auth_method``.
+# IP Fabric and Slurpit hold a token under another setting name. Slurpit's ``token`` setting
+# is not filled: the adapter passes its settings to ``slurpit.api``, which takes ``api_key``
+# and has no ``token`` parameter.
+_FIXED_CREDENTIAL_FIELDS: Mapping[str, Mapping[str, CredentialField]] = MappingProxyType(
+    {
+        "aci": _BASIC_FILLS_BASIC,
+        "infrahub": _TOKEN_FILLS_TOKEN,
+        "ipfabricsync": _fills({"auth": "token"}),
+        "nautobot": _TOKEN_FILLS_TOKEN,
+        "netbox": _TOKEN_FILLS_TOKEN,
+        "slurpitsync": _fills({"api_key": "token"}),
+    }
+)
+
+
+class UnknownCredentialMethodError(ValueError):
+    """The block's ``auth_method`` is not one its adapter accepts; the message names the accepted values."""
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialFieldMap:
+    """Which stored credential field fills which setting of one source or destination block.
+
+    ``settings`` maps each setting to the stored field that fills it. It is empty when the
+    block's adapter and ``auth_method`` need no credential.
+    """
+
+    adapter_name: str
+    settings: Mapping[str, CredentialField]
+
+    @property
+    def fields(self) -> frozenset[CredentialField]:
+        """The stored fields a credential named by this block must hold."""
+        return frozenset(self.settings.values())
+
+    @property
+    def needs_credential(self) -> bool:
+        """Whether the block uses a credential at all."""
+        return bool(self.settings)
+
+
+def credential_field_map(adapter_name: str, settings: Mapping[str, Any]) -> CredentialFieldMap:
+    """Return the stored fields a block of ``adapter_name`` with these ``settings`` needs, and where they go.
+
+    An adapter with an ``auth_method`` setting needs the fields of that method, and of the
+    adapter's default method when the setting is absent; each field fills the setting of the
+    same name. The methods are the ones ``conversion_authentication`` records for v2, which the
+    bundled V3 adapters accept unchanged.
+
+    Raises:
+        UnknownAdapterCapabilitiesError: the adapter has no configuration capability declaration.
+        UnknownCredentialMethodError: ``auth_method`` is not a method the adapter accepts.
+    """
+    get_adapter_capabilities(adapter_name)
+    fixed = _FIXED_CREDENTIAL_FIELDS.get(adapter_name)
+    if fixed is not None:
+        return CredentialFieldMap(adapter_name, fixed)
+    methods = V2_AUTHENTICATION_METHODS.get(adapter_name)
+    if methods is None:
+        return CredentialFieldMap(adapter_name, _fills({}))
+    method = settings.get("auth_method", methods.default)
+    if not isinstance(method, str) or method not in methods.uses:
+        msg = f"auth_method of adapter {adapter_name!r} must be one of {', '.join(methods.uses)}"
+        raise UnknownCredentialMethodError(msg)
+    used = cast("tuple[CredentialField, ...]", methods.uses[method])
+    return CredentialFieldMap(adapter_name, _fills({setting: setting for setting in used}))

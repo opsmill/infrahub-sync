@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
-from .capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, UnknownCredentialMethodError, credential_field_map
 from .credentials import (
     _ENV_CREDENTIAL_IDENTIFIER,
     _ENV_IDENTIFIER,
@@ -62,6 +62,7 @@ _MAX_REPORTED_FINDINGS = 256
 
 _CODE_ADAPTER_ROLE_MISMATCH = "adapter-role-mismatch"
 _CODE_ADAPTER_VALIDATOR_FINDING = "adapter-validator-finding"
+_CODE_CREDENTIAL_NOT_USED = "credential-not-used"
 _CODE_CREDENTIAL_PATH_NOT_DECLARED = "credential-path-not-declared"
 _CODE_ENDPOINT_NOT_ABSOLUTE = "endpoint-not-absolute"
 _CODE_ENDPOINT_NOT_RELATIVE = "endpoint-not-relative"
@@ -686,6 +687,36 @@ def _accumulate_reference_nodes(
             )
 
 
+def _accumulate_unused_credential(
+    adapter: Any, *, role: AdapterRole, secrets: Sequence[str]
+) -> list[_AccumulatedFinding]:
+    """Refuse a named credential the block's adapter and ``auth_method`` never use.
+
+    A package that names a credential it does not use would keep that credential in use, and
+    so undeletable, for nothing. An ``auth_method`` the adapter does not accept is not judged
+    here: whether the block needs a credential is then unknown.
+    """
+    name = adapter.credential
+    if name is None:
+        return []
+    try:
+        field_map = credential_field_map(adapter.name, adapter.settings or {})
+    except UnknownCredentialMethodError:
+        return []
+    if field_map.needs_credential:
+        return []
+    return [
+        _accumulated(
+            code=_CODE_CREDENTIAL_NOT_USED,
+            location=f"/configuration/{role}/credential",
+            message=(
+                f"{role} names credential {_rendered_component(name, secrets)!r}, but adapter "
+                f"{_rendered_component(adapter.name, secrets)!r} with this auth_method uses no credential"
+            ),
+        )
+    ]
+
+
 def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> tuple[_AccumulatedFinding, ...]:
     """Run every check in the shipped execution order, never raising for a declared defect."""
     accumulated: list[_AccumulatedFinding] = []
@@ -737,6 +768,7 @@ def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> t
                 ),
             )
         )
+        accumulated.extend(_from_check(role, _accumulate_unused_credential(adapter, role=role, secrets=secrets)))
     # Last: the surface checks above give a more precise reason for a node on an unsupported
     # setting than "not credential-bearing" would.
     walked: list[_AccumulatedFinding] = []

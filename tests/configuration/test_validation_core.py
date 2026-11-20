@@ -832,6 +832,7 @@ FROZEN_CODES = frozenset(
     {
         "adapter-role-mismatch",
         "adapter-validator-finding",
+        "credential-not-used",
         "credential-path-not-declared",
         "endpoint-not-absolute",
         "endpoint-not-relative",
@@ -969,6 +970,17 @@ def test_the_collision_prone_package_reports_each_defect_once(monkeypatch: pytes
     ]
 
 
+def _unused_credential_package_data() -> dict[str, Any]:
+    """A source that names a stored credential its ``auth_method`` never uses (spec 027)."""
+    data = package_data()
+    data["configuration"]["source"] = {
+        "name": "prometheus",
+        "credential": "unused",
+        "settings": {"url": "http://localhost:9090", "auth_method": "none"},
+    }
+    return data
+
+
 def _reachable_codes(monkeypatch: pytest.MonkeyPatch) -> set[str]:
     reached: set[str] = set()
     for _name, mutate, _message in SHIPPED_REFUSALS:
@@ -985,6 +997,7 @@ def _reachable_codes(monkeypatch: pytest.MonkeyPatch) -> set[str]:
             )
         )
     )
+    reached.update(finding.code for finding in collect_findings(package(_unused_credential_package_data())))
     monkeypatch.setattr(validation, "BUILTIN_ADAPTER_CAPABILITIES", _capabilities_with(_raising_validator))
     reached.update(finding.code for finding in collect_findings(package(_both_roles_package_data(mapping="/x"))))
     return reached

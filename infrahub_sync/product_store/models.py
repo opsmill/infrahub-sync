@@ -11,6 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from infrahub_sync.configuration.models import CREDENTIAL_NAME_PATTERN
 from infrahub_sync.configuration.worker_credentials import is_credential_name
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 from infrahub_sync.plan.identity import OPERATION_ID_PATTERN
@@ -1023,7 +1024,8 @@ class ResolvedCredential(BaseModel):
 
 CREDENTIAL_ID_PATTERN = r"^cred_[0-9a-f]{32}$"
 # The name of a stored credential: lower case, a letter first, at most 63 characters. It cannot change.
-STORED_CREDENTIAL_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,62}$"
+# The pattern a package block uses to name one, so the two cannot drift apart.
+STORED_CREDENTIAL_NAME_PATTERN = CREDENTIAL_NAME_PATTERN
 STORED_CREDENTIAL_DESCRIPTION_MAX_LENGTH = 500
 _CREDENTIAL_KEY_ID_PATTERN = r"^[0-9a-f]{16}$"
 CredentialField: TypeAlias = Literal["password", "token", "username"]
