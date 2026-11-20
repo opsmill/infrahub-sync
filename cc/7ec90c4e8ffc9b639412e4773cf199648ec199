@@ -1,0 +1,69 @@
+infrahub_sync/product_store/__init__.py
+  s_caab93ebf0934a::t_86ef54acb75a5a 34,131
+infrahub_sync/service/schedules.py
+  s_caab93ebf0934a::t_b490c28ce19331 16,45,60-65,393-418,1088-1089,1092-1100,1130
+  s_caab93ebf0934a::t_65dd6604ad38f9 114-126
+infrahub_sync/service/app.py
+  s_caab93ebf0934a::t_aaed6a8e975ace 27
+  s_caab93ebf0934a::t_db7b17e56a7a43 293,295,305
+tests/service/test_events_route.py
+  s_caab93ebf0934a::t_42445044419980 292-294
+  s_caab93ebf0934a::t_32f36ee2c8c9b7 246-290,295-315
+  s_caab93ebf0934a::t_4e547b4f16e413 332-333
+  s_caab93ebf0934a::t_725884e59b4a4b 291
+  s_caab93ebf0934a::t_be41bdba42a625 243-245
+tests/service/test_http_api.py
+  s_caab93ebf0934a::t_a10d00968eb3a4 3009
+infrahub_sync/client/models.py
+  s_caab93ebf0934a::t_c124e168068b61 16,51-53
+  s_caab93ebf0934a::t_e9e0e0ccc661b7 861-892
+  s_caab93ebf0934a::t_1f9cfb99360ac6 54
+infrahub_sync/product_store/models.py
+  s_caab93ebf0934a::t_86ef54acb75a5a 918-920
+infrahub_sync/service/schedule_routes.py
+  s_caab93ebf0934a::t_1a8ac6c0b112de 15-16
+  s_caab93ebf0934a::t_613f9a19c9f944 28
+  s_caab93ebf0934a::t_fe29161183a264 44-54
+tests/service/test_schedule_next_starts.py
+  s_caab93ebf0934a::t_0d663dafa04a61 1-162
+tests/product_store/test_contract.py
+  s_caab93ebf0934a::t_a10d00968eb3a4 109
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_450d90f4d5eb9a 49-55
+infrahub_sync/service/service.py
+  s_caab93ebf0934a::t_db7b17e56a7a43 38,1523,1525,1550
+tests/service/schedule_fixtures.py
+  s_caab93ebf0934a::t_f66b30603d63a7 327
+  s_caab93ebf0934a::t_555316fa5d59aa 40,315,319,328-331,334-339,351
+infrahub_sync/service/models.py
+  s_caab93ebf0934a::t_eb5db5dfd9dada 54-55,105-106
+infrahub_sync/product_store/store.py
+  s_caab93ebf0934a::t_86ef54acb75a5a 64,1037-1039,3314-3315,3317-3318,3349,5386-5389,5394
+  s_caab93ebf0934a::t_97ed9f6f132960 649-653
+frontend/src/api/types.generated.ts
+  s_a7e0b644cda3ee::t_bbb621cd9deb34 344-366,516,2062-2104,3806-3883,4472
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc7ec90c4e8ffc9b639412e4773cf199648ec199",
+  "prompts": {},
+  "sessions": {
+    "s_a7e0b644cda3ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a502906e688494b5e",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
