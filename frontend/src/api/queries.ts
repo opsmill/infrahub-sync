@@ -131,6 +131,15 @@ export const runsQuery = (filters: { config_id?: string; registry_version?: numb
     { refetchInterval: poll(LIST_REFRESH_MS) }
   );
 
+/** The newest runs of one schedule, for the timeline of the schedule page. */
+export const scheduleRunsQuery = (scheduleId: string, limit: number) =>
+  $api.queryOptions(
+    "get",
+    "/runs",
+    { params: { query: { schedule_id: scheduleId, limit: String(limit) } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
 /** The newest run of one configuration, for when the newest page of `GET /runs` does not include it. */
 export const latestRunQuery = (configId: string) =>
   $api.queryOptions(

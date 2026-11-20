@@ -1,7 +1,7 @@
 import { Button, buttonVariants, Card } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "tailwind-variants";
 
 import {
@@ -9,36 +9,25 @@ import {
   describeScheduleError,
   meQuery,
   nextStartsQuery,
-  runQuery,
   scheduleQuery,
+  scheduleRunsQuery,
 } from "#/api/queries";
-import type { Schedule } from "#/api/types";
+import { Bar, CRUMB, ErrorPanel, META_LIST, PageMessage, StaleNotice } from "#/components/page";
+import { When } from "#/components/run-status";
+import { cronFields } from "#/domain/cadence";
 import {
-  Bar,
-  CODE_CHIP,
-  CRUMB,
-  ErrorPanel,
-  META_LIST,
-  PageMessage,
-  SectionHeading,
-  StaleNotice,
-} from "#/components/page";
-import { BranchBadge, StateLabel, When } from "#/components/run-status";
-import { cadenceWords, cronFields, formFromCron } from "#/domain/cadence";
-import { phaseLabel, runState } from "#/domain/run-state";
-import {
-  type ActionAccess,
-  lateStartLabel,
-  overlapPolicyLabel,
-  type ScheduleAction,
-  scheduleActions,
-  writeTargetLabel,
-} from "#/domain/schedules";
+  headerActions,
+  type StepDialog,
+  scheduleStatus,
+  statusNotes,
+  TIMELINE_RUNS,
+} from "#/domain/schedule-page";
+import type { ActionAccess, ScheduleAction } from "#/domain/schedules";
+import { scheduleActions } from "#/domain/schedules";
 import { LINK } from "#/features/runs/form";
-import { formatAbsolute } from "#/lib/time";
+import { formatAbsolute, useNow } from "#/lib/time";
 import { useDocumentTitle } from "#/lib/title";
 
-import { NextStarts, StartTime } from "./NextStarts";
 import {
   DeleteScheduleDialog,
   PauseScheduleDialog,
@@ -47,11 +36,18 @@ import {
 } from "./ScheduleActionDialogs";
 import { ScheduleFormDialog } from "./ScheduleFormDialog";
 import { ScheduleHistory } from "./ScheduleHistory";
-import { ScheduleNotices } from "./ScheduleNotices";
+import { TOUCH } from "./ScheduleListParts";
+import { ScheduleReviewBranch, ScheduleSettings } from "./ScheduleSettings";
 import { ScheduleStateLabel } from "./ScheduleStateLabel";
+import { ScheduleStatusCard } from "./ScheduleStatusCard";
+import { ScheduleTimeline } from "./ScheduleTimeline";
 
-/** The number of start times the "Next starts" section asks for. */
+/** The number of start times the timeline asks for. */
 const NEXT_STARTS = 5;
+
+/** The three columns from `lg`; below it, status, timeline, history, then settings. */
+const COLUMNS =
+  "grid grid-cols-1 items-start gap-8 lg:grid-cols-[15rem_minmax(0,1fr)_16rem] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:[grid-template-areas:'left_status_right'_'left_history_right']";
 
 function Breadcrumb() {
   return (
@@ -63,172 +59,97 @@ function Breadcrumb() {
   );
 }
 
+/** The loaded page's shape, so nothing moves when the schedule arrives. */
 function ScheduleSkeleton() {
   return (
     <div aria-busy="true">
       <output className="sr-only">Loading the schedule</output>
-      <div className="flex flex-col gap-4 pt-6 pb-6">
-        <div className="flex h-8 items-center pointer-coarse:h-11">
-          <Bar className="h-4 w-24" />
+      <div aria-hidden="true">
+        <div className="flex flex-col gap-4 pt-6 pb-6">
+          <div className="flex h-5 items-center">
+            <Bar className="h-4 w-24" />
+          </div>
+          <Bar className="h-8 w-[24rem] max-w-full max-sm:h-7" />
+          <div className="flex h-5 items-center">
+            <Bar className="h-4 w-96 max-w-full" />
+          </div>
         </div>
-        <Bar className="h-8 w-[24rem] max-w-full max-sm:h-7" />
-        <div className="flex h-5 items-center">
-          <Bar className="h-4 w-96 max-w-full" />
-        </div>
-      </div>
-      <div className="flex flex-col gap-8">
-        {[3, 6].map((n) => (
-          <Card key={n} className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: n }, (_, i) => (
+        <div className={COLUMNS}>
+          <Card className="flex flex-col gap-3 bg-content bg-none p-4 lg:[grid-area:status]">
+            <Bar className="h-4 w-80 max-w-full" />
+            <Bar className="h-3.5 w-64 max-w-full" />
+          </Card>
+          <Card className="flex flex-col gap-3 bg-content bg-none p-4 lg:[grid-area:right]">
+            {Array.from({ length: 6 }, (_, i) => (
+              <Bar key={i} className="h-3.5 w-40 max-w-full" />
+            ))}
+          </Card>
+          <Card className="flex flex-col gap-4 bg-content bg-none p-4 lg:[grid-area:history]">
+            {[0, 1, 2].map((i) => (
               <div key={i} className="flex flex-col gap-1.5">
-                <Bar className="h-3 w-24" />
-                <Bar className="h-4 w-40 max-w-full" />
+                <Bar className="h-4 w-72 max-w-full" />
+                <Bar className="h-3 w-40" />
               </div>
             ))}
           </Card>
-        ))}
+          <Card className="flex flex-col gap-4 bg-content bg-none p-4 lg:[grid-area:left]">
+            {Array.from({ length: 5 }, (_, i) => (
+              <div key={i} className="flex flex-col gap-1.5">
+                <Bar className="h-3 w-20" />
+                <Bar className="h-4 w-32" />
+              </div>
+            ))}
+          </Card>
+        </div>
       </div>
     </div>
   );
 }
 
-/** A section of label and value pairs, as the run page's "Details". */
-function Details({ id, title, rows }: { id: string; title: string; rows: [string, ReactNode][] }) {
-  return (
-    <section aria-labelledby={id} className="flex flex-col gap-3">
-      <SectionHeading id={id} title={title} />
-      <Card className="p-4">
-        <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map(([k, v]) => (
-            <div key={k} className="flex min-w-0 flex-col gap-0.5">
-              <dt className="text-subtle text-xs">{k}</dt>
-              <dd className="flex min-h-6 min-w-0 flex-wrap items-center gap-1 [overflow-wrap:anywhere]">
-                {v}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </Card>
-    </section>
-  );
-}
-
-const None = ({ text = "None" }: { text?: string }) => (
-  <span className="text-foreground-muted">{text}</span>
-);
-
-/** An absolute time with its relative time, for the record and the left-out setting. */
-function At({ iso }: { iso: string }) {
-  return (
-    <span>
-      <time dateTime={iso}>{formatAbsolute(iso)}</time>{" "}
-      <span className="text-subtle">
-        (<When iso={iso} />)
-      </span>
-    </span>
-  );
-}
-
-/** The last run of the schedule with its state, read from the run itself. */
-function LastRun({ runId }: { runId: string }) {
-  const run = useQuery(runQuery(runId));
-  const data = run.data?.run;
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-      {data ? (
-        <StateLabel state={runState(data)} label={phaseLabel(data)} />
-      ) : run.isPending ? (
-        <Bar className="h-3.5 w-20" />
-      ) : (
-        <span className="text-foreground-muted">State not available</span>
-      )}
-      <Link to="/runs/$runId" params={{ runId }} className={LINK}>
-        View run
-      </Link>
-      {data && (
-        <span className="text-subtle text-xs">
-          Started <When iso={data.started_at} />
-        </span>
-      )}
-    </span>
-  );
-}
-
-function leftOutText(schedule: Schedule): ReactNode {
-  const value = schedule.write_when_left_out ? "On" : "Off";
-  if (!schedule.left_out_set_by && !schedule.left_out_set_at) return value;
-  return (
-    <span>
-      {value}
-      {schedule.left_out_set_by && (
-        <>
-          , set by <span className="text-foreground">{schedule.left_out_set_by}</span>
-        </>
-      )}
-      {schedule.left_out_set_at && (
-        <>
-          {" "}
-          on <At iso={schedule.left_out_set_at} />
-        </>
-      )}
-    </span>
-  );
-}
-
-function Cadence({ cron }: { cron: string }) {
-  const words = cadenceWords(formFromCron(cron));
-  return (
-    <span className="flex min-w-0 flex-col items-start gap-0.5">
-      <code className={cn(CODE_CHIP, "[overflow-wrap:anywhere]")}>{cron}</code>
-      {words && <span className="text-foreground-muted text-xs">{words}</span>}
-    </span>
-  );
-}
-
-/** The actions of the header that this page performs with a dialog. */
-type PageAction = "change" | "pause" | "resume" | "take-over" | "delete";
-
 /** The dialog open on the page; "change-version" is the change form with the newest version filled in. */
-type PageDialog = PageAction | "change-version";
+type PageDialog = ScheduleAction | "change-version";
 
-const ACTION_BUTTONS: {
-  action: PageAction;
-  label: string;
-  variant: "outline" | "danger-outline";
-}[] = [
-  { action: "change", label: "Change", variant: "outline" },
-  { action: "pause", label: "Pause", variant: "outline" },
-  { action: "resume", label: "Resume", variant: "outline" },
-  { action: "take-over", label: "Take over", variant: "outline" },
-  { action: "delete", label: "Delete", variant: "danger-outline" },
-];
+const ACTION_LABEL: Record<ScheduleAction, string> = {
+  change: "Change",
+  pause: "Pause",
+  resume: "Resume",
+  "take-over": "Take over",
+  delete: "Delete",
+};
 
 /**
- * The header buttons the signed-in account may use. When an action is shown but not available,
- * its reason is shown once in place of the buttons, as on the run page.
+ * The header buttons, quiet, without the action the status card offers. When an action is shown
+ * but not available, its reason is shown once in place of the buttons, as on the run page.
  */
 function HeaderActions({
+  actions,
   access,
   onOpen,
 }: {
+  actions: ScheduleAction[];
   access: Record<ScheduleAction, ActionAccess>;
-  onOpen: (action: PageAction) => void;
+  onOpen: (action: ScheduleAction) => void;
 }) {
-  const shown = ACTION_BUTTONS.filter((b) => access[b.action].shown);
-  if (shown.length === 0) return null;
-  const refused = shown.find((b) => !access[b.action].available);
+  if (actions.length === 0) return null;
+  const refused = actions.find((a) => !access[a].available);
   if (refused) {
     return (
       <p className="max-w-[40ch] text-foreground-muted text-xs">
-        {access[refused.action].unavailableReason}
+        {access[refused].unavailableReason}
       </p>
     );
   }
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {shown.map((b) => (
-        <Button key={b.action} variant={b.variant} size="sm" onPress={() => onOpen(b.action)}>
-          {b.label}
+    <div className="-mx-1.5 flex shrink-0 flex-wrap items-center gap-1">
+      {actions.map((a) => (
+        <Button
+          key={a}
+          variant="ghost"
+          size="sm"
+          className={cn(TOUCH, a === "delete" && "text-danger")}
+          onPress={() => onOpen(a)}
+        >
+          {ACTION_LABEL[a]}
         </Button>
       ))}
     </div>
@@ -236,10 +157,11 @@ function HeaderActions({
 }
 
 /**
- * The page of one schedule (contracts/web-pages.md): header, notices, next start and last run,
- * settings, next starts, review branch, history and record. The schedule is read again every 10
- * seconds. The schedule identifier, the owner and the account that set "write when records are
- * left out" are shown only as the strings the Sync API returns.
+ * The page of one schedule (design-schedule-page.md, contracts/web-pages.md): a header with the
+ * actions; a status card with the situation and its next step; the history; the settings and the
+ * open review branch; and a timeline of the next starts and the last runs. The schedule is read
+ * again every 10 seconds. The schedule identifier, the owner and the account that set "write when
+ * records are left out" are shown only as the strings the Sync API returns.
  */
 export function SchedulePage({
   scheduleId,
@@ -253,6 +175,8 @@ export function SchedulePage({
   // The configuration name comes from the configurations list the interface already reads.
   const configs = useQuery(configsQuery());
   const me = useQuery(meQuery());
+  const runs = useQuery(scheduleRunsQuery(scheduleId, TIMELINE_RUNS));
+  const now = useNow();
   const [dialog, setDialog] = useState<PageDialog | null>(null);
   const cron = schedule?.cron ?? "";
   const timezone = schedule?.timezone ?? "UTC";
@@ -311,17 +235,18 @@ export function SchedulePage({
 
   const configName =
     configs.data?.items.find((c) => c.config_id === schedule.config_id)?.name ?? schedule.config_id;
-  const branch = schedule.open_branch;
   const access = scheduleActions(me.data, schedule);
+  const status = scheduleStatus(schedule, access, now);
+  const notes = statusNotes(schedule, access, status);
   const closeDialog = () => setDialog(null);
+  const openStep = (step: StepDialog) => setDialog(step);
 
   return (
     <>
       <header className="flex flex-col gap-4 pt-6 pb-6">
         <Breadcrumb />
-        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+        <div className="flex flex-col gap-x-6 gap-y-3 md:flex-row md:items-start md:justify-between">
           <div className="flex min-w-0 flex-col gap-2">
-            <p className="font-medium text-subtle text-xs">Schedule</p>
             <h1 className="hyphens-none text-balance font-semibold text-2xl tracking-tight [overflow-wrap:anywhere] max-sm:text-xl">
               {schedule.name}
             </h1>
@@ -350,149 +275,55 @@ export function SchedulePage({
               </li>
             </ul>
           </div>
-          <HeaderActions access={access} onOpen={setDialog} />
+          <HeaderActions
+            actions={headerActions(access, status)}
+            access={access}
+            onOpen={setDialog}
+          />
         </div>
       </header>
       {q.isRefetchError && (
         <StaleNotice error={q.error} updatedAt={q.dataUpdatedAt} onRetry={() => q.refetch()} />
       )}
-      <div className="flex flex-col gap-8">
-        <ScheduleNotices
-          schedule={schedule}
-          offers={{
-            ...(schedule.state === "stopped" &&
-              schedule.state_reason === "repeated-failures" &&
-              access.resume.available && {
-                resume: (
-                  <Button variant="outline" size="sm" onPress={() => setDialog("resume")}>
-                    Resume
-                  </Button>
-                ),
-              }),
-            ...(access["take-over"].available && {
-              "take-over": (
-                <Button variant="outline" size="sm" onPress={() => setDialog("take-over")}>
-                  Take over
-                </Button>
-              ),
-            }),
-            ...(access.change.available && {
-              change: (
-                <Button variant="outline" size="sm" onPress={() => setDialog("change")}>
-                  Change the write target
-                </Button>
-              ),
-            }),
-            runs: (
-              <Link
-                to="/runs"
-                search={{ schedule: schedule.schedule_id }}
-                className={buttonVariants({ variant: "outline", size: "sm" })}
-              >
-                View the runs of this schedule
-              </Link>
-            ),
-          }}
-          changeVersion={
-            access.change.available ? (
-              <Button variant="outline" size="sm" onPress={() => setDialog("change-version")}>
-                Change version
-              </Button>
-            ) : undefined
-          }
-        />
-        <Details
-          id="schedule-next-start"
-          title="Next start and last run"
-          rows={[
-            [
-              "Next start",
-              schedule.next_start_at ? (
-                <StartTime iso={schedule.next_start_at} timezone={schedule.timezone} relative />
-              ) : (
-                <None />
-              ),
-            ],
-            ...(schedule.waiting_start_at
-              ? [
-                  [
-                    "Waiting start",
-                    <StartTime iso={schedule.waiting_start_at} timezone={schedule.timezone} />,
-                  ] as [string, ReactNode],
-                ]
-              : []),
-            [
-              "Last run",
-              schedule.last_run_id ? <LastRun runId={schedule.last_run_id} /> : <None />,
-            ],
-            [
-              "Failed runs in a row",
-              <span className="tabular-nums">{schedule.consecutive_failures}</span>,
-            ],
-            [
-              "All runs",
-              <Link to="/runs" search={{ schedule: schedule.schedule_id }} className={LINK}>
-                View all runs of this schedule
-              </Link>,
-            ],
-          ]}
-        />
-        <Details
-          id="schedule-settings"
-          title="Settings"
-          rows={[
-            ["Cron expression", <Cadence cron={schedule.cron} />],
-            ["Time zone", schedule.timezone],
-            ["Write target", writeTargetLabel(schedule.write_target)],
-            ["Write when records are left out", leftOutText(schedule)],
-            ["When a run is in progress", overlapPolicyLabel(schedule.overlap_policy)],
-            ["Start late by at most", lateStartLabel(schedule.start_late_by_at_most_seconds)],
-          ]}
-        />
-        {active && (
-          <section aria-labelledby="schedule-next-starts" className="flex flex-col gap-3">
-            <SectionHeading id="schedule-next-starts" title="Next starts">
-              In the schedule's time zone, {schedule.timezone}
-            </SectionHeading>
-            <Card className="p-4">
-              <NextStarts read={starts} timezone={schedule.timezone} count={NEXT_STARTS} />
-            </Card>
-          </section>
-        )}
-        <Details
-          id="schedule-review-branch"
-          title="Review branch"
-          rows={
-            branch
-              ? [
-                  ["Open branch", <BranchBadge branch={branch.branch} />],
-                  [
-                    "Created by run",
-                    <Link to="/runs/$runId" params={{ runId: branch.run_id }} className={LINK}>
-                      View run
-                    </Link>,
-                  ],
-                  [
-                    "Proposed change",
-                    branch.proposed_change_id ? (
-                      <code className={CODE_CHIP}>{branch.proposed_change_id}</code>
-                    ) : (
-                      <None />
-                    ),
-                  ],
-                ]
-              : [["Open branch", <None text="No review branch is open" />]]
-          }
-        />
-        <ScheduleHistory scheduleId={scheduleId} includeAll={showAllEvents} />
-        <Details
-          id="schedule-record"
-          title="Record"
-          rows={[
-            ["Created", <At iso={schedule.created_at} />],
-            ["Updated", <At iso={schedule.updated_at} />],
-          ]}
-        />
+      <div className={COLUMNS}>
+        <div className="min-w-0 lg:[grid-area:status]">
+          <ScheduleStatusCard
+            status={status}
+            notes={notes}
+            scheduleId={schedule.schedule_id}
+            onOpen={openStep}
+            title={
+              status.icon === "active" && schedule.next_start_at
+                ? `Your time: ${formatAbsolute(schedule.next_start_at)}`
+                : undefined
+            }
+          />
+        </div>
+        <aside
+          aria-label="Next starts and last runs"
+          className="min-w-0 lg:sticky lg:top-16 lg:[grid-area:right]"
+        >
+          <ScheduleTimeline
+            schedule={schedule}
+            starts={starts}
+            runs={runs}
+            count={NEXT_STARTS}
+            runCount={TIMELINE_RUNS}
+          />
+        </aside>
+        <div className="min-w-0 lg:[grid-area:history]">
+          <ScheduleHistory scheduleId={scheduleId} includeAll={showAllEvents} />
+        </div>
+        <aside
+          aria-label="Settings and review branch"
+          className="flex min-w-0 flex-col gap-6 lg:[grid-area:left]"
+        >
+          <ScheduleSettings schedule={schedule} />
+          <ScheduleReviewBranch schedule={schedule} />
+          <p className="text-subtle text-xs">
+            Created <When iso={schedule.created_at} />, updated <When iso={schedule.updated_at} />.
+          </p>
+        </aside>
       </div>
       {(dialog === "change" || dialog === "change-version") && (
         <ScheduleFormDialog

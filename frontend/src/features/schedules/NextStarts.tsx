@@ -49,7 +49,7 @@ export interface NextStartsRead {
 }
 
 /** The refusal's words when the Sync API refused the values; the fixed sentence otherwise. */
-function failureText(error: unknown): string {
+export function failureText(error: unknown): string {
   const d = describeScheduleError(error);
   return d.kind === "envelope" && !d.retryable ? (d.detail ?? d.title) : NO_PREVIEW;
 }
