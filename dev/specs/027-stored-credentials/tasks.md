@@ -199,19 +199,25 @@ credential, and the refusal lists them.
 Plan step 5. `pnpm` commands run in `frontend/`. Regenerate `frontend/src/api/types.generated.ts` with
 `pnpm codegen:openapi` against a running API first.
 
+**Design method (maintainer instruction, 2026-11-20)**: every screen of this phase is designed with the
+`emil-prototype` skill first. It builds several different versions behind a live picker, with the real
+API data. The maintainer picks one version per screen. Only then do T075 to T078 build the chosen
+version. Remove the prototype route and the picker before the phase ends.
+
 - [ ] T073 [US1] Regenerate `frontend/src/api/types.generated.ts`, and add `credentialsQuery`, `credentialQuery`, the create, change-value and describe actions, and the error descriptions to `frontend/src/api/queries.ts` and `frontend/src/api/actions.ts`
-- [ ] T074 [US1] Create `frontend/src/routes/credentials.tsx` and `frontend/src/features/credentials/` (list, "New credential", "Change value", "Edit description"), password inputs cleared after each request, administrator actions hidden for other accounts with the note of contracts/web-interface.md; add the navigation entry in `frontend/src/routes/__root.tsx`
-- [ ] T075 [US4] Add "Delete" with confirmation and the in-use listing with links to `frontend/src/features/credentials/`
-- [ ] T076 [US2] Add the "Credentials used" section to the run details in `frontend/src/features/runs/`
-- [ ] T077 [US3] If spec 025 is merged on the base, add the offer "Create credential `<name>`" for each `credential-not-found` finding in the drop area, and "Ask an administrator to create the credential `<name>`" for other accounts; otherwise record it as a follow-up of spec 025 in `dev/specs/027-stored-credentials/notes.md`
-- [ ] T078 Run `pnpm check`, `pnpm typecheck` and `pnpm build` in `frontend/`, and the web scenarios of `quickstart.md`
+- [ ] T074 [US1] Run the `emil-prototype` skill for the Credentials page (list, the create and change-value forms with the three field sets, the administrator and non-administrator views, the delete confirmation with the in-use listing), the "Credentials used" section of the run details and, if spec 025 is merged, the drop-area offer; use the queries of T073 and the contracts of contracts/web-interface.md; stop until the maintainer picks one version per screen, and record the choices in `dev/specs/027-stored-credentials/notes.md`
+- [ ] T075 [US1] Build the chosen version: create `frontend/src/routes/credentials.tsx` and `frontend/src/features/credentials/` (list, "New credential", "Change value", "Edit description"), password inputs cleared after each request, administrator actions hidden for other accounts with the note of contracts/web-interface.md; add the navigation entry in `frontend/src/routes/__root.tsx`
+- [ ] T076 [US4] Add "Delete" with confirmation and the in-use listing with links to `frontend/src/features/credentials/`
+- [ ] T077 [US2] Add the "Credentials used" section to the run details in `frontend/src/features/runs/`
+- [ ] T078 [US3] If spec 025 is merged on the base, add the offer "Create credential `<name>`" for each `credential-not-found` finding in the drop area, and "Ask an administrator to create the credential `<name>`" for other accounts; otherwise record it as a follow-up of spec 025 in `dev/specs/027-stored-credentials/notes.md`
+- [ ] T079 Run `pnpm check`, `pnpm typecheck` and `pnpm build` in `frontend/`, and the web scenarios of `quickstart.md`
 
 ---
 
 ## Phase 10: Polish and cross-cutting concerns
 
-- [ ] T079 Open the Helm chart pull request in `opsmill/infrahub-helm` (`charts/infrahub-sync/values.yaml`: add `credentials.encryptionKey` (API only) and `credentials.workerToken` (API and worker), remove `credentials.infrahubApiToken`, `worker.credentials` and `worker.credentialsExistingSecrets`, and the matching templates and tests); only when the user asks for a pull request (FR-024)
-- [ ] T080 Run the full verification (`uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, the CLI sanity commands of `AGENTS.md`, `uv run ty check .`) and the development-stack scenarios 3 to 7 of `quickstart.md`
+- [ ] T080 Open the Helm chart pull request in `opsmill/infrahub-helm` (`charts/infrahub-sync/values.yaml`: add `credentials.encryptionKey` (API only) and `credentials.workerToken` (API and worker), remove `credentials.infrahubApiToken`, `worker.credentials` and `worker.credentialsExistingSecrets`, and the matching templates and tests); only when the user asks for a pull request (FR-024)
+- [ ] T081 Run the full verification (`uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, the CLI sanity commands of `AGENTS.md`, `uv run ty check .`) and the development-stack scenarios 3 to 7 of `quickstart.md`
 
 ---
 
@@ -268,7 +274,7 @@ quickstart scenarios 1 to 3, 5 and 6.
 3. US4 (Phase 7): deletion.
 4. US3 (Phase 8): the conversion report.
 5. Web interface (Phase 9).
-6. The Helm pull request in `opsmill/infrahub-helm` (T079), on request.
+6. The Helm pull request in `opsmill/infrahub-helm` (T080), on request.
 
 ## Notes
 

@@ -34,7 +34,7 @@ worker, with no restart:
 | 2 | US2 (P2) | `credentials_used` on the run detail route and in `runs show`, the plan-then-apply revision test | step 1 |
 | 3 | US4 (P3) | Deletion check and its refusal details, CLI `delete` | step 1 |
 | 4 | US3 (P3) | The conversion report that lists the credentials to create, and the registration message for a converted package | step 1 |
-| 5 | US1, US3 | Web interface: Credentials page, run details section; the drop-area offer if spec 025 is merged | steps 1 to 4 |
+| 5 | US1, US3 | Web interface, each screen first explored with the `emil-prototype` skill and chosen by the maintainer: Credentials page, run details section; the drop-area offer if spec 025 is merged | steps 1 to 4 |
 | 6 | — | Helm chart pull request in `opsmill/infrahub-helm` | step 1 |
 
 Step 1 is large because the format change, the worker route and the removal of `env` cannot be split:
