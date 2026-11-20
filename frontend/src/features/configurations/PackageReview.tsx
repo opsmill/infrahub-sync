@@ -26,6 +26,7 @@ import { describeSystem } from "#/domain/systems";
 import { DialogFrame, Field, INPUT, LINK, MutationError, ReasonField } from "#/features/runs/form";
 
 import { MappingList } from "./detail-mapping";
+import { MappingDetail } from "./detail-mapping-panel";
 import {
   credentialVariables,
   declaredContent,
@@ -315,6 +316,10 @@ export function PackageReview({
       ? `Add a version to ${name}`
       : reviewTitle(name ?? "", (compared ?? 0) + 1);
   const credentials = content ? credentialVariables(content) : [];
+  const sourceLabel = configuration ? describeSystem(configuration.source).label : "Source";
+  const destinationLabel = configuration
+    ? describeSystem(configuration.destination).label
+    : "Destination";
   const entries = mappingEntries(nextMappings, diff);
   const removed = removedEntries(baseMappings, diff);
 
@@ -454,7 +459,20 @@ export function PackageReview({
                 Comparison with version {compared}
               </h3>
               {base.data ? (
-                <MappingList entries={entries} removed={removed} diff={diff} />
+                <MappingList
+                  key={compared}
+                  entries={entries}
+                  removed={removed}
+                  diff={diff}
+                  detail={(entry) => (
+                    <MappingDetail
+                      entry={entry}
+                      against={compared}
+                      sourceLabel={sourceLabel}
+                      destinationLabel={destinationLabel}
+                    />
+                  )}
+                />
               ) : base.isError ? (
                 <MutationError error={base.error} />
               ) : (

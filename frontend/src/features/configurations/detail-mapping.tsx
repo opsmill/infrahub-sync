@@ -41,19 +41,38 @@ export function ChangeBadge({ status }: { status: MappingChange["status"] }) {
 
 const isRemoved = (entry: MappingEntry) => entry.change?.status === "removed";
 
-/** A row that opens the mapping in the panel. A removed mapping, or a row without a page, is text only. */
+/**
+ * A row that opens the mapping in the panel, or below the row when `onToggle` is given. A removed
+ * mapping, or a row with neither a page nor `onToggle`, is text only.
+ */
 function Row({
   configId,
   entry,
   open,
+  expanded,
+  onToggle,
   children,
 }: {
   configId?: string;
   entry: MappingEntry;
   open?: string;
+  expanded?: boolean;
+  onToggle?: () => void;
   children: ReactNode;
 }) {
   if (isRemoved(entry)) return <div className={cn(ROW, "text-subtle")}>{children}</div>;
+  if (onToggle) {
+    return (
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+        className={cn(ROW, HOVER, FOCUS_INSET, "w-full cursor-pointer text-left")}
+      >
+        {children}
+      </button>
+    );
+  }
   if (configId === undefined) return <div className={ROW}>{children}</div>;
   const selected = entry.key === open;
   return (
@@ -76,17 +95,25 @@ function Groups({
   configId,
   entries,
   open,
+  inline,
 }: {
   configId?: string;
   entries: MappingEntry[];
   open?: string;
+  inline?: Inline;
 }) {
   return (
     <ul className="p-1.5">
       {groupBySource(entries).flatMap((group) =>
         group.map((entry, i) => (
           <li key={entry.key}>
-            <Row configId={configId} entry={entry} open={open}>
+            <Row
+              configId={configId}
+              entry={entry}
+              open={open}
+              expanded={inline?.expanded.has(entry.key)}
+              onToggle={inline && (() => inline.toggle(entry.key))}
+            >
               <span
                 className={cn(
                   "order-2 truncate font-mono text-foreground-muted text-xs @2xl:order-none @2xl:pr-4 @2xl:text-right",
@@ -127,11 +154,21 @@ function Groups({
                 </span>
               </span>
             </Row>
+            {inline?.expanded.has(entry.key) && !isRemoved(entry) && (
+              <div className="px-2.5 pt-1 pb-3">{inline.detail(entry)}</div>
+            )}
           </li>
         ))
       )}
     </ul>
   );
+}
+
+/** Rows that open their mapping below themselves, for a list shown without a configuration page. */
+interface Inline {
+  expanded: Set<string>;
+  toggle: (key: string) => void;
+  detail: (entry: MappingEntry) => ReactNode;
 }
 
 const EXPAND = cn(
@@ -150,6 +187,7 @@ export function MappingList({
   removed,
   diff,
   open,
+  detail,
 }: {
   /** The configuration whose page the rows open the panel on; without it, rows are text only. */
   configId?: string;
@@ -159,8 +197,26 @@ export function MappingList({
   diff?: MappingDiff;
   /** The key of the mapping open in the panel. */
   open?: string;
+  /**
+   * The detail of a mapping. When given, a row opens its mapping below itself instead of in the
+   * panel, and the mappings that are new or changed start open.
+   */
+  detail?: (entry: MappingEntry) => ReactNode;
 }) {
   const [all, setAll] = useState(false);
+  const [expanded, setExpanded] = useState(
+    () => new Set(entries.filter((e) => e.change && !isRemoved(e)).map((e) => e.key))
+  );
+  const inline: Inline | undefined = detail && {
+    expanded,
+    detail,
+    toggle: (key) =>
+      setExpanded((keys) => {
+        const next = new Set(keys);
+        if (!next.delete(key)) next.add(key);
+        return next;
+      }),
+  };
   const expand = (label: string) => (
     <button type="button" aria-expanded={all} onClick={() => setAll((v) => !v)} className={EXPAND}>
       {label}
@@ -175,7 +231,7 @@ export function MappingList({
     return (
       <Card className="@container overflow-hidden">
         {differing.length > 0 ? (
-          <Groups configId={configId} entries={differing} open={open} />
+          <Groups configId={configId} entries={differing} open={open} inline={inline} />
         ) : (
           <p className="px-4 py-5 text-center text-foreground-muted text-sm">
             The two versions declare the same mappings.
@@ -186,7 +242,7 @@ export function MappingList({
             <h3 className="border-t px-4 pt-2.5 font-medium text-subtle text-xs">
               Same in version {diff.against}
             </h3>
-            <Groups configId={configId} entries={unchanged} open={open} />
+            <Groups configId={configId} entries={unchanged} open={open} inline={inline} />
           </>
         )}
         {unchanged.length > 0 &&
@@ -209,7 +265,12 @@ export function MappingList({
   });
   return (
     <Card className="@container overflow-hidden">
-      <Groups configId={configId} entries={all ? entries : first.flat()} open={open} />
+      <Groups
+        configId={configId}
+        entries={all ? entries : first.flat()}
+        open={open}
+        inline={inline}
+      />
       {first.length < groups.length && expand(all ? "Show less" : "Show more")}
     </Card>
   );
