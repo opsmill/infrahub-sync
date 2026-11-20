@@ -42,6 +42,10 @@ behavior.
   `password`, and the `tokens` and `accounts` groups. `cli.py` calls its `register` once; the
   module imports nothing from `cli.py`. It never takes a password as an argument: it reads it from
   a prompt without echo, or from standard input with `--password-stdin`.
+- `infrahub_sync/cli_credentials.py` — the `credentials` group for stored credentials: `list`,
+  `show`, `create`, `set` and `describe`. `cli.py` calls its `register` once, with the same helpers
+  as the account commands. It never takes a value as an argument: it reads it from a prompt without
+  echo, or from standard input with `--token-stdin` or `--password-stdin`, and it prints no value.
 - `infrahub_sync/cli_session.py` — the session file that `login` writes: `sessions.json` in the
   directory that `typer.get_app_dir("infrahub-sync")` returns, mode `0600`, one session token and
   account name for each normalized Sync API address. It needs no `service` extra, so it works on

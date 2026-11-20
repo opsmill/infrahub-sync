@@ -106,8 +106,8 @@ FR-016 to FR-019.
 - [X] T034 [US1] Add the `credential-not-found`, `credential-field-missing` and `credential-not-used` findings to registration in `infrahub_sync/product_store/configs.py`, write `configuration_version_credentials` rows with each version, and lock the credential rows the version names in the same transaction (critique E4)
 - [X] T035 [US1] Add the run-start check to the run-starting routes in `infrahub_sync/service/service.py` (near `:537`): plan, sync, apply, verify, approve, resume refuse with `422` and the codes of T034 (FR-008)
 - [X] T036 [US1] Change the destination schema read in `infrahub_sync/configuration/capabilities.py:195-232` to take a decrypted token from the Sync API, which decrypts it inside the request's redaction registry and never returns it (FR-004)
-- [ ] T037 [P] [US1] Write `tests/cli/test_credentials_command.py`: `list`, `show`, `create` (prompt, `--token-stdin`, `--password-stdin`, `--username`), `set`, `describe`; no output contains the value; exit codes 0, 1, 2 (contracts/cli.md)
-- [ ] T038 [US1] Implement `infrahub_sync/cli_credentials.py` (`list`, `show`, `create`, `set`, `describe`) following `cli_accounts.py`, and register it in `infrahub_sync/cli.py`
+- [X] T037 [P] [US1] Write `tests/cli/test_credentials_command.py`: `list`, `show`, `create` (prompt, `--token-stdin`, `--password-stdin`, `--username`), `set`, `describe`; no output contains the value; exit codes 0, 1, 2 (contracts/cli.md)
+- [X] T038 [US1] Implement `infrahub_sync/cli_credentials.py` (`list`, `show`, `create`, `set`, `describe`) following `cli_accounts.py`, and register it in `infrahub_sync/cli.py`
 
 **Checkpoint**: unit tier green; packages that use `credential:` run end to end; the old format still works.
 

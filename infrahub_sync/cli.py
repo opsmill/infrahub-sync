@@ -27,7 +27,7 @@ import typer
 import yaml
 from pydantic import ValidationError
 
-from infrahub_sync import cli_accounts, cli_session
+from infrahub_sync import cli_accounts, cli_credentials, cli_session
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
@@ -397,10 +397,12 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
 
 
 def _account_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
-    """Return the fixed message of a refusal of an account route, as one more error field."""
+    """Return the fixed message of a refusal of an account or credential route, as one more error field."""
     if not isinstance(error, APIError) or isinstance(error, ConfigsAPIError):
         return ()
-    message = cli_accounts.ACCOUNT_ERROR_MESSAGES.get(error.code)
+    message = cli_accounts.ACCOUNT_ERROR_MESSAGES.get(error.code) or cli_credentials.CREDENTIAL_ERROR_MESSAGES.get(
+        error.code
+    )
     return () if message is None else (("message", message),)
 
 
@@ -481,20 +483,19 @@ def _stdin_is_interactive() -> bool:
     return sys.stdin.isatty()
 
 
-cli_accounts.register(
-    app,
-    cli_accounts.CommandSupport(
-        client=_client,
-        sign_in_client=_sign_in_client,
-        session_client=_session_client,
-        api_url=_api_url,
-        client_errors=_client_errors,
-        echo_fields=_echo_fields,
-        display=_display,
-        # Looked up at each call, so a test that replaces the function is honored.
-        stdin_is_interactive=lambda: _stdin_is_interactive(),  # noqa: PLW0108  # pylint: disable=unnecessary-lambda
-    ),
+_COMMAND_SUPPORT = cli_accounts.CommandSupport(
+    client=_client,
+    sign_in_client=_sign_in_client,
+    session_client=_session_client,
+    api_url=_api_url,
+    client_errors=_client_errors,
+    echo_fields=_echo_fields,
+    display=_display,
+    # Looked up at each call, so a test that replaces the function is honored.
+    stdin_is_interactive=lambda: _stdin_is_interactive(),  # noqa: PLW0108  # pylint: disable=unnecessary-lambda
 )
+cli_accounts.register(app, _COMMAND_SUPPORT)
+cli_credentials.register(app, _COMMAND_SUPPORT)
 
 
 def _is_not_found(error: SyncClientError) -> bool:

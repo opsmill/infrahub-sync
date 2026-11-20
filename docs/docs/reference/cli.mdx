@@ -53,6 +53,7 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 * `demo`: Prepare a Sync deployment for the NetBox...
 * `tokens`: List, create and delete the API tokens of...
 * `accounts`: Manage local accounts.
+* `credentials`: List and view stored credentials.
 
 ## `infrahub-sync login`
 
@@ -1245,4 +1246,135 @@ $ infrahub-sync accounts delete-token [OPTIONS] {name} {token_id}
 **Options**:
 
 * `--reason <str>`: Optional audit reason for the deletion.
+* `--help`: Show this message and exit.
+
+## `infrahub-sync credentials`
+
+List and view stored credentials. Creating and changing one needs an administrator. No command prints a value.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List stored credentials by name: name,...
+* `show`: View one stored credential: its...
+* `create`: Create a stored credential with its first...
+* `set`: Replace the value of a stored credential,...
+* `describe`: Change the description of a stored...
+
+### `infrahub-sync credentials list`
+
+List stored credentials by name: name, fields, revision, the account that last changed it, and when.
+
+The fields column holds the names of the fields, such as `token` or `username,password`. No value is shown.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials list [OPTIONS]
+```
+
+**Options**:
+
+* `--json`: Print the answer of the Sync API as JSON. It holds the names of the fields and no value.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials show`
+
+View one stored credential: its description, the names of its fields, its revision and who changed it.
+
+No value is shown.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials show [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+
+**Options**:
+
+* `--json`: Print the answer of the Sync API as JSON. It holds the names of the fields and no value.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials create`
+
+Create a stored credential with its first value. Needs an administrator.
+
+Without --username, the command asks for a token without echo, or reads it from standard input
+with --token-stdin. With --username, it asks for a password, or reads it with --password-stdin;
+with --username and --token-stdin, the credential holds a username and a token. The value is
+never an argument, and the command prints the credential without it.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials create [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+
+**Options**:
+
+* `--description <str>`: What the credential is for.
+* `--username <str>`: Username of the credential. A username is not a secret, so it is an option value. With it, the command reads a password, or a token with --token-stdin.
+* `--token-stdin`: Read the token from standard input instead of a prompt.
+* `--password-stdin`: Read the password from standard input instead of a prompt. Requires --username.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials set`
+
+Replace the value of a stored credential, and print its new revision. Needs an administrator.
+
+The new value replaces every field of the credential, so give --username again for a credential
+that has one. The value is read as `credentials create` reads it. Runs that start afterwards use
+the new value.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials set [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+
+**Options**:
+
+* `--username <str>`: Username of the credential. A username is not a secret, so it is an option value. With it, the command reads a password, or a token with --token-stdin.
+* `--token-stdin`: Read the token from standard input instead of a prompt.
+* `--password-stdin`: Read the password from standard input instead of a prompt. Requires --username.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials describe`
+
+Change the description of a stored credential. Its value and its revision stay. Needs an administrator.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials describe [OPTIONS] {name} {text}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+* `text`: The new description. It replaces the earlier one.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.

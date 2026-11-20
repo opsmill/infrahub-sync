@@ -107,6 +107,11 @@ CLI_CLIENT_PARITY = (
     ("accounts delete NAME", "delete_account", "DELETE /accounts/{name}"),
     ("accounts tokens NAME", "list_account_tokens", "GET /accounts/{name}/tokens"),
     ("accounts delete-token NAME TOKEN_ID", "delete_account_token", "DELETE /accounts/{name}/tokens/{token_id}"),
+    ("credentials list", "iter_credentials", "GET /credentials"),
+    ("credentials show NAME", "get_credential", "GET /credentials/{name}"),
+    ("credentials create NAME", "create_credential", "POST /credentials"),
+    ("credentials set NAME", "set_credential_value", "PUT /credentials/{name}/value"),
+    ("credentials describe NAME TEXT", "set_credential_description", "PATCH /credentials/{name}"),
 )
 
 
@@ -169,6 +174,11 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "delete_account",
         "list_account_tokens",
         "delete_account_token",
+        "iter_credentials",
+        "get_credential",
+        "create_credential",
+        "set_credential_value",
+        "set_credential_description",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 
@@ -182,7 +192,7 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
     assert "plan" in help_text
     assert "verify" in help_text
     assert "whoami" in help_text
-    for command in ("login", "logout", "password", "tokens", "accounts"):
+    for command in ("login", "logout", "password", "tokens", "accounts", "credentials"):
         assert command in help_text
     # `diff` is a hidden, deprecated alias of `plan`.
     assert "diff" not in help_text
