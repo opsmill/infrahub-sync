@@ -1,134 +1,173 @@
-import {
-  Button,
-  buttonVariants,
-  Label,
-  Select,
-  SelectItem,
-  SelectList,
-  SelectTrigger,
-  Spinner,
-} from "@infrahub/ui";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { Button, buttonVariants } from "@infrahub/ui";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useMemo, useRef, useState } from "react";
+import { cn } from "tailwind-variants";
 
-import { configsQuery, describeError, schedulePagesQuery } from "#/api/queries";
+import { configsQuery, describeError } from "#/api/queries";
 import { PlusIcon } from "#/components/icons";
-import { Bar, EmptyPanel, ErrorPanel, SectionHeading, StaleNotice } from "#/components/page";
-import { fmt } from "#/domain/run-state";
+import {
+  EmptyPanel,
+  ErrorPanel,
+  FilterTabs,
+  FOCUS,
+  SearchField,
+  SectionHeading,
+  StaleNotice,
+} from "#/components/page";
+import {
+  byName,
+  emptyTabText,
+  groupSchedules,
+  matchesSearch,
+  nextStarts,
+  SCHEDULE_TABS,
+  type ScheduleTab,
+  TAB_LABEL,
+  tabShows,
+} from "#/domain/schedule-list";
+import { useNow } from "#/lib/time";
 import { useDocumentTitle } from "#/lib/title";
 
 import { ScheduleFormDialog } from "./ScheduleFormDialog";
-import { SchedulesTable, SchedulesTableSkeleton } from "./SchedulesTable";
+import {
+  ActiveRow,
+  AttentionCard,
+  Group,
+  NextStartsPanel,
+  RestingRow,
+  RowsSkeleton,
+  SchedulesSkeleton,
+  TOUCH,
+} from "./ScheduleListParts";
+import { useAllSchedules } from "./use-all-schedules";
 
-export const SCHEDULE_STATES = ["active", "paused", "stopped", "deleted"] as const;
-export type ScheduleStateFilter = (typeof SCHEDULE_STATES)[number];
-
+/** The search parameters of `/schedules`; the "All" tab is the address without `show`. */
 export interface SchedulesSearch {
-  state?: ScheduleStateFilter;
+  show?: Exclude<ScheduleTab, "all">;
+  q?: string;
   config?: string;
 }
 
-/** The select's key for "every state except deleted", which sends no `state` to the Sync API. */
-const NOT_DELETED = "__not_deleted__";
-const ALL_CONFIGS = "__all__";
+/**
+ * Whether a list read page by page is still loading. The groups and counts need every page, so
+ * the list waits for the last one, unless reading a page failed.
+ */
+const loading = (q: { isPending: boolean; hasNextPage: boolean; isFetchNextPageError: boolean }) =>
+  q.isPending || (q.hasNextPage && !q.isFetchNextPageError);
 
-const STATE_OPTIONS: { id: ScheduleStateFilter | typeof NOT_DELETED; label: string }[] = [
-  { id: NOT_DELETED, label: "Not deleted" },
-  { id: "active", label: "Active" },
-  { id: "paused", label: "Paused" },
-  { id: "stopped", label: "Stopped" },
-  { id: "deleted", label: "Deleted" },
-];
-
-const LIST_TITLE: Record<ScheduleStateFilter | typeof NOT_DELETED, string> = {
-  [NOT_DELETED]: "Schedules that are not deleted",
-  active: "Active schedules",
-  paused: "Paused schedules",
-  stopped: "Stopped schedules",
-  deleted: "Deleted schedules",
-};
-
-/** Button sizes reach 44 px on touch, like the runs list. */
-const TOUCH = "pointer-coarse:h-11";
-
-const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`;
-
-export function SchedulesPage({ state, config }: SchedulesSearch) {
+export function SchedulesPage({ show, q = "", config }: SchedulesSearch) {
   useDocumentTitle("Schedules");
+  const tab: ScheduleTab = show ?? "all";
   const navigate = useNavigate();
   const setSearch = (patch: SchedulesSearch) =>
     navigate({
+      from: "/schedules/",
       to: "/schedules",
-      search: { state, config, ...patch },
+      search: (prev) => ({ ...prev, ...patch }),
       replace: true,
       resetScroll: false,
     });
 
-  const schedules = useInfiniteQuery(schedulePagesQuery({ state, config }));
+  const now = useNow();
+  const live = useAllSchedules({ config });
+  const deleted = useAllSchedules({ state: "deleted", config }, { enabled: tab === "deleted" });
   const configs = useQuery(configsQuery());
   const [creating, setCreating] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const noConfig = configs.data !== undefined && configs.data.items.length === 0;
+
+  const configNames = useMemo(
+    () => new Map((configs.data?.items ?? []).map((c) => [c.config_id, c.name ?? c.config_id])),
+    [configs.data]
+  );
+  const configName = (id: string) => configNames.get(id) ?? id;
+
+  const liveItems = useMemo(() => live.data?.pages.flatMap((p) => p.items) ?? [], [live.data]);
+  const groups = groupSchedules(liveItems, q, configName);
+  const starts = nextStarts(liveItems, now);
+  const deletedItems = deleted.data?.pages.flatMap((p) => p.items) ?? [];
+  const deletedMatches = deletedItems
+    .filter((s) => matchesSearch(s, q, configName(s.config_id)))
+    .sort(byName);
+  const deletedKnown = Boolean(deleted.data) && !loading(deleted);
+
+  const counts: Record<ScheduleTab, number | undefined> = {
+    all: groups.matches.length,
+    attention: groups.needsAction.length,
+    active: groups.active.length,
+    paused: groups.paused.length,
+    // Deleted schedules are read only when their tab is chosen.
+    deleted: deletedKnown ? deletedMatches.length : undefined,
+  };
+  const shows = tabShows(tab);
+  const search = q.trim();
+
+  const clearSearch = () => {
+    setSearch({ q: undefined });
+    searchRef.current?.focus();
+  };
+  const removeConfig = () => {
+    setSearch({ config: undefined });
+    searchRef.current?.focus();
+  };
   const createButton = (variant: "primary" | "outline") => (
     <Button variant={variant} size="sm" className={TOUCH} onPress={() => setCreating(true)}>
       <PlusIcon />
       Create schedule
     </Button>
   );
+  const stale = live.isRefetchError
+    ? live
+    : tab === "deleted" && deleted.isRefetchError
+      ? deleted
+      : undefined;
 
-  const listed = useMemo(
-    () => schedules.data?.pages.flatMap((p) => p.items) ?? [],
-    [schedules.data]
-  );
-  const configNames = useMemo(
-    () => new Map((configs.data?.items ?? []).map((c) => [c.config_id, c.name ?? c.config_id])),
-    [configs.data]
-  );
-  const summaryRef = useRef<HTMLParagraphElement>(null);
-  const more = schedules.hasNextPage;
-  const filtered = Boolean(state || config);
-  const clearFilters = () => setSearch({ state: undefined, config: undefined });
-
-  const loadOlder = async () => {
-    const r = await schedules.fetchNextPage();
-    if (r.isError) return;
-    const id = r.data?.pages.at(-1)?.items[0]?.schedule_id;
-    requestAnimationFrame(() => {
-      const link = id
-        ? [
-            ...document.querySelectorAll<HTMLElement>(`a[data-schedule-id="${CSS.escape(id)}"]`),
-          ].find((a) => a.offsetParent !== null)
-        : undefined;
-      (link ?? summaryRef.current)?.focus();
-    });
-  };
-  const retryRefresh = async () => {
-    const r = await schedules.refetch();
-    if (!r.isError) summaryRef.current?.focus();
-  };
-
-  let body: ReactNode;
-  if (schedules.isPending) {
-    body = (
+  let main: ReactNode;
+  if (tab === "deleted") {
+    main = loading(deleted) ? (
+      <div aria-busy="true">
+        <output className="sr-only">Loading deleted schedules</output>
+        <RowsSkeleton />
+      </div>
+    ) : !deleted.data ? (
+      <ErrorPanel error={deleted.error} onRetry={() => deleted.refetch()} />
+    ) : deletedMatches.length === 0 ? (
+      <EmptyPanel title={emptyTabText("deleted", search)}>
+        {search && (
+          <Button variant="outline" size="sm" className={TOUCH} onPress={clearSearch}>
+            Clear search
+          </Button>
+        )}
+      </EmptyPanel>
+    ) : (
       <>
-        <div className="flex h-4 items-center" aria-hidden="true">
-          <Bar className="h-3 w-24" />
-        </div>
-        <SchedulesTableSkeleton />
+        <PartialNotice what="deleted schedules" pages={deleted} />
+        <Group
+          id="schedules-deleted"
+          title="Deleted"
+          hint="Their runs are kept."
+          items={deletedMatches}
+        >
+          {(s) => <RestingRow key={s.schedule_id} s={s} configName={configName(s.config_id)} />}
+        </Group>
       </>
     );
-  } else if (!schedules.data) {
-    body = <ErrorPanel error={schedules.error} onRetry={() => schedules.refetch()} />;
-  } else if (listed.length === 0 && filtered) {
-    body = (
+  } else if (liveItems.length === 0 && config) {
+    main = (
       <EmptyPanel title="No schedule matches these filters.">
-        <Button variant="outline" size="sm" className={TOUCH} onPress={clearFilters}>
+        <Button
+          variant="outline"
+          size="sm"
+          className={TOUCH}
+          onPress={() => setSearch({ config: undefined, q: undefined })}
+        >
           Clear filters
         </Button>
       </EmptyPanel>
     );
-  } else if (listed.length === 0) {
-    body = (
+  } else if (liveItems.length === 0) {
+    main = (
       <EmptyPanel title="No schedule exists.">
         {noConfig && (
           <p className="max-w-[52ch] text-pretty text-foreground-muted">
@@ -149,45 +188,117 @@ export function SchedulesPage({ state, config }: SchedulesSearch) {
       </EmptyPanel>
     );
   } else {
-    const titleKey = state ?? NOT_DELETED;
-    body = (
-      <section aria-labelledby="schedules-list" className="flex flex-col gap-3">
-        <SectionHeading
-          id="schedules-list"
-          title={LIST_TITLE[titleKey]}
-          count={more ? undefined : listed.length}
-        />
-        <div className="flex flex-col gap-1">
-          <p
-            ref={summaryRef}
-            tabIndex={-1}
-            aria-live="polite"
-            className="text-subtle text-xs tabular-nums outline-none"
-          >
-            {more
-              ? plural(listed.length, "loaded schedule", "loaded schedules")
-              : plural(listed.length, "schedule", "schedules")}
-            {more && " · Older schedules are not loaded."}
-          </p>
-          {configs.error && !configs.data && (
-            <output className="block text-subtle text-xs">
-              Configuration names could not be loaded, so rows show configuration IDs.
-            </output>
-          )}
-        </div>
-        <SchedulesTable schedules={listed} label="Schedules" configNames={configNames} />
-        {more ? (
-          <div className="flex flex-col items-center gap-2">
-            <LoadOlder schedules={schedules} onLoad={loadOlder} />
+    const activeItems =
+      shows.active === "all" ? groups.active : shows.active ? groups.activeResting : [];
+    const shown =
+      (shows.needsAction ? groups.needsAction.length : 0) +
+      activeItems.length +
+      (shows.paused ? groups.paused.length : 0);
+    main =
+      shown === 0 ? (
+        <EmptyPanel title={emptyTabText(tab, search)}>
+          <div className="flex flex-wrap justify-center gap-2">
+            {search && (
+              <Button variant="outline" size="sm" className={TOUCH} onPress={clearSearch}>
+                Clear search
+              </Button>
+            )}
+            {tab !== "all" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={TOUCH}
+                onPress={() => setSearch({ show: undefined })}
+              >
+                Show all schedules
+              </Button>
+            )}
           </div>
-        ) : (
-          schedules.data.pages.length > 1 && (
-            <p className="text-center text-subtle text-xs">
-              All {fmt(listed.length)} schedules are loaded.
-            </p>
-          )
+        </EmptyPanel>
+      ) : (
+        <>
+          {shows.needsAction && groups.needsAction.length > 0 && (
+            <section aria-labelledby="schedules-attention" className="flex flex-col gap-2">
+              <SectionHeading
+                id="schedules-attention"
+                title="Needs action"
+                count={groups.needsAction.length}
+              >
+                Stopped or failing schedules start no run, or will stop soon.
+              </SectionHeading>
+              <ul className="flex flex-col gap-2">
+                {groups.needsAction.map((s) => (
+                  <AttentionCard key={s.schedule_id} s={s} configName={configName(s.config_id)} />
+                ))}
+              </ul>
+            </section>
+          )}
+          <Group id="schedules-active" title="Active" items={activeItems}>
+            {(s) => <ActiveRow key={s.schedule_id} s={s} configName={configName(s.config_id)} />}
+          </Group>
+          {shows.paused && (
+            <Group
+              id="schedules-paused"
+              title="Paused"
+              hint="Start no run until resumed."
+              items={groups.paused}
+            >
+              {(s) => <RestingRow key={s.schedule_id} s={s} configName={configName(s.config_id)} />}
+            </Group>
+          )}
+        </>
+      );
+  }
+
+  let body: ReactNode;
+  if (loading(live)) {
+    body = <SchedulesSkeleton />;
+  } else if (!live.data) {
+    body = <ErrorPanel error={live.error} onRetry={() => live.refetch()} />;
+  } else {
+    body = (
+      <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="flex min-w-0 flex-col gap-6">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <FilterTabs<ScheduleTab>
+                label="Show"
+                value={tab}
+                onChange={(id) => setSearch({ show: id === "all" ? undefined : id })}
+                options={SCHEDULE_TABS.map((id) => ({
+                  id,
+                  label: TAB_LABEL[id],
+                  count: counts[id],
+                }))}
+              />
+              <SearchField
+                value={q}
+                onChange={(v) => setSearch({ q: v || undefined })}
+                placeholder="Search schedules or configurations"
+                label="Search schedules by name or by configuration name"
+                count={tab === "deleted" ? deletedMatches.length : groups.matches.length}
+                noun={["schedule", "schedules"]}
+                inputRef={searchRef}
+              />
+            </div>
+            {config && (
+              <ConfigFilter configId={config} name={configName(config)} onRemove={removeConfig} />
+            )}
+            {configs.error && !configs.data && (
+              <output className="block text-subtle text-xs">
+                Configuration names could not be loaded, so schedules show configuration IDs.
+              </output>
+            )}
+            <PartialNotice what="schedules" pages={live} />
+          </div>
+          {main}
+        </div>
+        {liveItems.length > 0 && (
+          <aside aria-label="Next starts" className="flex flex-col gap-6 lg:sticky lg:top-16">
+            <NextStartsPanel starts={starts} />
+          </aside>
         )}
-      </section>
+      </div>
     );
   }
 
@@ -196,143 +307,81 @@ export function SchedulesPage({ state, config }: SchedulesSearch) {
       <header className="flex flex-col items-start gap-4 pt-8 pb-6 sm:flex-row sm:justify-between">
         <div className="flex flex-col gap-1.5">
           <h1 className="text-balance font-semibold text-2xl tracking-tight">Schedules</h1>
-          <p className="text-pretty text-foreground-muted">
-            The schedules that start runs of a configuration, newest first.
-          </p>
+          <p className="text-pretty text-foreground-muted">Schedules that need you come first.</p>
         </div>
         {createButton("primary")}
       </header>
       {creating && (
         <ScheduleFormDialog target={{ mode: "create" }} onClose={() => setCreating(false)} />
       )}
-      {schedules.isRefetchError && (
-        <StaleNotice
-          error={schedules.error}
-          updatedAt={schedules.dataUpdatedAt}
-          onRetry={retryRefresh}
-        />
+      {stale && (
+        <StaleNotice error={stale.error} updatedAt={stale.dataUpdatedAt} onRetry={stale.refetch} />
       )}
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <StateSelect value={state} onChange={(s) => setSearch({ state: s })} />
-          <ConfigSelect
-            value={config}
-            configs={configs.data?.items ?? []}
-            onChange={(id) => setSearch({ config: id })}
-          />
-        </div>
-        {body}
-      </div>
+      {body}
     </>
   );
 }
 
-function StateSelect({
-  value,
-  onChange,
+/** The configuration filter: it names the configuration, links to it and removes the filter. */
+function ConfigFilter({
+  configId,
+  name,
+  onRemove,
 }: {
-  value?: ScheduleStateFilter;
-  onChange: (state: ScheduleStateFilter | undefined) => void;
+  configId: string;
+  name: string;
+  onRemove: () => void;
 }) {
   return (
-    <Select
-      className="flex w-full flex-col gap-1.5 sm:w-48"
-      selectedKey={value ?? NOT_DELETED}
-      onSelectionChange={(k) =>
-        onChange(k === NOT_DELETED || k == null ? undefined : (k as ScheduleStateFilter))
-      }
-    >
-      <Label className="text-subtle text-xs">State</Label>
-      <SelectTrigger size="md" />
-      <SelectList className="bg-content">
-        {STATE_OPTIONS.map((o) => (
-          <SelectItem key={o.id} id={o.id} textValue={o.label}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectList>
-    </Select>
-  );
-}
-
-/** Copied from the runs list (`features/runs/RunsPage.tsx`). */
-function ConfigSelect({
-  value,
-  configs,
-  onChange,
-}: {
-  value?: string;
-  configs: { config_id: string; name?: string | null }[];
-  onChange: (id: string | undefined) => void;
-}) {
-  const options = configs.map((c) => ({ id: c.config_id, name: c.name ?? c.config_id }));
-  if (value && !options.some((o) => o.id === value)) options.push({ id: value, name: value });
-  return (
-    <Select
-      className="flex w-full flex-col gap-1.5 sm:w-64"
-      selectedKey={value ?? ALL_CONFIGS}
-      onSelectionChange={(k) => onChange(k === ALL_CONFIGS || k == null ? undefined : String(k))}
-    >
-      <Label className="text-subtle text-xs">Configuration</Label>
-      <SelectTrigger size="md" />
-      <SelectList
-        width="min-trigger"
-        className="max-h-80 max-w-[min(32rem,calc(100vw-2rem))] bg-content"
-      >
-        <SelectItem id={ALL_CONFIGS} textValue="All configurations">
-          All configurations
-        </SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o.id} id={o.id} textValue={o.name}>
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate">{o.name}</span>
-              {o.name !== o.id && (
-                <span className="truncate font-mono text-subtle text-xs in-[button]:hidden">
-                  {o.id}
-                </span>
-              )}
-            </span>
-          </SelectItem>
-        ))}
-      </SelectList>
-    </Select>
-  );
-}
-
-/** Copied from the runs list (`features/runs/RunsPage.tsx`). */
-function LoadOlder({
-  schedules,
-  onLoad,
-}: {
-  schedules: { isFetchingNextPage: boolean; isFetchNextPageError: boolean; error: unknown };
-  onLoad: () => void;
-}) {
-  const d = schedules.isFetchNextPageError ? describeError(schedules.error) : undefined;
-  return (
-    <>
-      {d && !schedules.isFetchingNextPage && (
-        <p role="alert" className="max-w-[60ch] text-pretty text-center text-danger text-sm">
-          Could not load older schedules. {d.detail ?? `${d.title}.`}
-        </p>
-      )}
-      <Button
-        variant="outline"
-        size="sm"
-        className={TOUCH}
-        isDisabledAndFocusable={schedules.isFetchingNextPage}
-        onPress={onLoad}
-      >
-        {schedules.isFetchingNextPage ? (
-          <>
-            <Spinner aria-hidden="true" className="motion-reduce:animate-none" />
-            Loading older schedules…
-          </>
-        ) : schedules.isFetchNextPageError ? (
-          "Try again"
-        ) : (
-          "Load older schedules"
-        )}
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <span className="inline-flex min-w-0 items-center gap-1 rounded-md border px-2 py-1">
+        <span className="text-subtle">Configuration:</span>
+        <Link
+          to="/configs/$configId"
+          params={{ configId }}
+          className={cn(
+            "min-w-0 rounded-sm text-accent [overflow-wrap:anywhere] hover:underline",
+            FOCUS
+          )}
+        >
+          {name}
+        </Link>
+      </span>
+      <Button variant="outline" size="sm" className={TOUCH} onPress={onRemove}>
+        Remove configuration filter
       </Button>
-    </>
+    </div>
+  );
+}
+
+/**
+ * Shown when a page of the list could not be read: the counts and groups cover only the pages
+ * read so far, and "Try again" reads the missing page.
+ */
+function PartialNotice({
+  what,
+  pages,
+}: {
+  what: string;
+  pages: {
+    data?: { pages: { items: unknown[] }[] };
+    isFetchNextPageError: boolean;
+    isFetchingNextPage: boolean;
+    error: unknown;
+    fetchNextPage: () => Promise<unknown>;
+  };
+}) {
+  if (!pages.isFetchNextPageError || pages.isFetchingNextPage) return null;
+  const d = describeError(pages.error);
+  return (
+    <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+      <p className="max-w-[70ch] text-pretty text-danger">
+        Not all {what} could be loaded, so the counts and lists are incomplete.{" "}
+        {d.detail ?? `${d.title}.`}
+      </p>
+      <Button variant="outline" size="sm" className={TOUCH} onPress={() => pages.fetchNextPage()}>
+        Try again
+      </Button>
+    </div>
   );
 }

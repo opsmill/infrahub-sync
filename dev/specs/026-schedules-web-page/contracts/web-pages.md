@@ -12,26 +12,55 @@ additions of [http-api.md](http-api.md).
 
 ## `/schedules` — schedules list
 
+The layout follows [the design decision](../design-schedules-list.md) ("Triage+").
+
 | Search parameter | Values | Effect |
 | --- | --- | --- |
-| `state` | `active`, `paused`, `stopped`, `deleted` | Only schedules in that state. Absent: every state except `deleted`. A value that is not one of these is dropped. |
-| `config` | A configuration identifier | Only that configuration's schedules. A value that does not match the identifier pattern is dropped. |
+| `show` | `attention`, `active`, `paused`, `deleted` | The chosen tab. Absent: the "All" tab. A value that is not one of these is dropped. |
+| `q` | Any text | The search text: only schedules whose name or configuration name contains it, ignoring case. An empty value is dropped. |
+| `config` | A configuration identifier | Only that configuration's schedules, shown as a removable "Configuration: <name>" filter. A value that does not match the identifier pattern is dropped. |
 
 | Sync API call | When |
 | --- | --- |
-| `GET /schedules?limit=50[&state=…][&config_id=…][&cursor=…]` | On load, every 10 seconds, and for "Load older schedules". |
-| `GET /configs` | On load, for configuration names in the rows and in the configuration filter. |
+| `GET /schedules?limit=200[&config_id=…][&cursor=…]` | On load, every page until `next_cursor` is absent, because the tabs count and group every schedule that is not deleted. Read again every 10 seconds, or every 30 seconds when there is more than one page. |
+| `GET /schedules?state=deleted&limit=200[&config_id=…][&cursor=…]` | Only while the "Deleted" tab is chosen, every page. |
+| `GET /configs` | On load, for configuration names. When it fails, schedules show configuration IDs and a notice says so. |
 | `GET /me` | On load, as every page. |
 
-Columns: name, configuration and version, state, cadence (cron expression and time zone), next
-start, owner. A row links to `/schedules/$scheduleId`. "Create schedule" opens the create dialog
-with no configuration chosen.
+The main column, sorted by name in each group:
+
+- "Needs action": one card for each stopped schedule and each active schedule whose last runs
+  failed. The card states the reason in a sentence and links to the next step: "Take over",
+  "Change the write target", "Resume" or "Open" link to `/schedules/$scheduleId`; "View the runs"
+  links to `/runs?schedule=<schedule_id>`.
+- "Active": the other active schedules, with the configuration and its version ("version 3
+  available" when a newer version exists), the owner, the cadence in words, the time zone and the
+  next start.
+- "Paused": the paused schedules, with the reason given when they were paused.
+- "Deleted", in its own tab only.
+
+The tabs are "All", "Needs action", "Active", "Paused" and "Deleted", each with its count. The
+count of "Deleted" is shown once its tab has been chosen. The "Active" tab also lists the failing
+active schedules.
+
+The side panel, "Next starts", lists the next 8 starts of the active schedules, soonest first,
+under "Today", "Tomorrow", "This week" and "Later" in the viewer's time zone, and counts the others
+("3 more later"). The search does not narrow it; the `config` filter does. From the `lg`
+breakpoint it stays in view while the page scrolls; below it, it follows the main column.
+
+Every name links to `/schedules/$scheduleId`. "Create schedule" opens the create dialog with no
+configuration chosen.
 
 Empty states:
 
-- No schedule and no filter: "No schedule exists." with "Create schedule". When no configuration is
-  registered: "Register a configuration first, then create its schedule."
-- No schedule matches the filters: "No schedule matches these filters." with a way to clear them.
+- No schedule that is not deleted and no `config` filter: "No schedule exists." with "Create
+  schedule". When no configuration is registered: "Register a configuration first, then create its
+  schedule." The tabs stay, so the "Deleted" tab can still be chosen.
+- No schedule for the `config` filter: "No schedule matches these filters." with "Clear filters".
+- A tab or a search with no schedule: a sentence such as "No schedule is paused." or "No paused
+  schedule matches “net”.", with "Clear search" and "Show all schedules".
+- A page of the list could not be read: the loaded schedules stay, a notice says the counts and
+  lists are incomplete, and "Try again" reads the missing page.
 
 ## `/schedules/$scheduleId` — schedule page
 

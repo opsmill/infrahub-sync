@@ -48,7 +48,7 @@ import {
 import { ScheduleFormDialog } from "./ScheduleFormDialog";
 import { ScheduleHistory } from "./ScheduleHistory";
 import { ScheduleNotices } from "./ScheduleNotices";
-import { ScheduleStateLabel } from "./SchedulesTable";
+import { ScheduleStateLabel } from "./ScheduleStateLabel";
 
 /** The number of start times the "Next starts" section asks for. */
 const NEXT_STARTS = 5;

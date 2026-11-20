@@ -19,7 +19,6 @@ import {
   describeScheduleError,
   runPagesQuery,
   runQuery,
-  schedulePagesQuery,
   scheduleQuery,
 } from "#/api/queries";
 import type { Run, RunResource } from "#/api/types";
@@ -34,6 +33,7 @@ import {
 } from "#/components/page";
 import { fmt, type ListRunState, listRunStates } from "#/domain/run-state";
 import { FormSelect } from "#/features/schedules/form-parts";
+import { useAllSchedules } from "#/features/schedules/use-all-schedules";
 import { useNow } from "#/lib/time";
 import { useDocumentTitle } from "#/lib/title";
 
@@ -102,6 +102,7 @@ export function RunsPage({ q, show = "all", config, schedule }: RunsSearch) {
   const navigate = useNavigate();
   const setSearch = (patch: RunsSearch) =>
     navigate({
+      from: "/runs/",
       to: "/runs",
       search: (prev) => ({ ...prev, ...patch }),
       replace: true,
@@ -539,16 +540,6 @@ function ToolbarSkeleton() {
       {field("w-full sm:hidden")}
     </div>
   );
-}
-
-/** Every page of a schedule list, read one after the other. */
-function useAllSchedules(filters: { state?: string; config?: string }) {
-  const pages = useInfiniteQuery(schedulePagesQuery(filters));
-  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = pages;
-  useEffect(() => {
-    if (hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
-  return pages;
 }
 
 /**

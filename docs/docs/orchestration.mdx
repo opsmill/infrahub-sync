@@ -273,9 +273,28 @@ after **Runs**, is shown to every signed-in account.
 
 ### The schedule list
 
-The **Schedules** page lists each schedule that is not deleted, newest first, with its name, its
-configuration and version, its state, its cron expression and time zone, its next start and its
-owner. Filter the list by state, deleted schedules included, and by configuration. Select a
+The **Schedules** page shows first the schedules that need you to act, then the others by name:
+
+- **Needs action** has one card for each stopped schedule and each active schedule whose last runs
+  failed. The card states the reason and links to the next step: **Take over**, **Change the
+  write target** or **Resume** open the schedule's page, where the actions are, and **View the
+  runs** opens the runs of the schedule.
+- **Active** lists the other active schedules with their configuration and version, their owner,
+  their cadence in words, such as `Every day at 02:00`, their time zone and their next start. When
+  a newer version of the configuration is registered, the line reads `version 3 available`.
+- **Paused** lists the paused schedules with the reason given when they were paused.
+
+The tabs **All**, **Needs action**, **Active**, **Paused** and **Deleted** show one group, each
+with its count. Deleted schedules appear only in the **Deleted** tab. The search field finds a
+schedule by its name or by its configuration's name.
+
+**Next starts**, beside the list on a wide screen and below it on a narrow one, lists the next 8
+starts of the active schedules by day: **Today**, **Tomorrow**, **This week** and **Later**, in
+your time zone. Hover a time to view it in the schedule's time zone. Starts after the eighth are
+counted, for example `3 more later`.
+
+When you follow the schedule form's link to the schedule of a configuration, the page shows only
+that configuration's schedules, with a **Configuration** filter that you can remove. Select a
 schedule to open its page.
 
 ### The schedule page

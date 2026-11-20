@@ -10,7 +10,7 @@ import { scheduledForText, startTimeText, viewerTimeZone } from "#/domain/start-
 import { LINK } from "#/features/runs/form";
 
 import { ScheduleFormDialog } from "./ScheduleFormDialog";
-import { ScheduleStateLabel } from "./SchedulesTable";
+import { ScheduleStateLabel } from "./ScheduleStateLabel";
 
 /**
  * "Started by schedule <name>, scheduled for <time>" for a run that a schedule started, with a

@@ -258,8 +258,9 @@ export interface ScheduleFilters {
 }
 
 /**
- * `GET /schedules` 50 schedules at a time, optionally in one state or for one configuration. With
- * older pages loaded, every page is read again on each refresh, so the interval grows.
+ * `GET /schedules` 200 schedules at a time, the largest page the Sync API allows, optionally in one
+ * state or for one configuration. With more than one page loaded, every page is read again on each
+ * refresh, so the interval grows.
  */
 export const schedulePagesQuery = ({ state, config }: ScheduleFilters = {}) =>
   infiniteQueryOptions({
@@ -269,7 +270,7 @@ export const schedulePagesQuery = ({ state, config }: ScheduleFilters = {}) =>
       const { data, error } = await fetchClient.GET("/schedules", {
         params: {
           query: {
-            limit: "50",
+            limit: "200",
             ...(pageParam ? { cursor: pageParam } : {}),
             ...(state ? { state } : {}),
             ...(config ? { config_id: config } : {}),
