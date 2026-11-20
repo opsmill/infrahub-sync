@@ -100,10 +100,12 @@ with only `package` has the same body and the same request fingerprint as before
 | 400 | `request`, reason `invalid_package` | `document` is not a YAML or JSON mapping with string keys, is empty, or holds more than 1,000,000 values once its YAML aliases are expanded. |
 | 422 | `validation`, reason `v2_configuration` | `document` has no `configuration` key and has top-level `source` and `destination` keys. A `package` gets the refusals it got before. |
 
-**Idempotency**: the request fingerprint holds the text of `document` instead of `package`. A retry
-with the same key and the same text replays the stored response. The same key with different text,
-or with the same package sent as `package`, gets 409 `idempotency-conflict`. A refused `document`
-releases the key, as a refused `package` does.
+**Idempotency**: the request fingerprint holds a SHA-256 digest of the text of `document` instead of
+`package`. A retry with the same key and the same text replays the stored response. The same key
+with different text, or with the same package sent as `package`, gets 409 `idempotency-conflict`.
+A refused `document` does not hold its key: a retry with the same key and the same text is refused
+the same way again, and a retry with the same key and different text gets 409
+`idempotency-conflict`, as for a refused `package`.
 
 ## Configuration version resources (changed, User Story 4)
 

@@ -464,8 +464,8 @@ class ConfigurationRoutes:
 
         Exactly one of ``package`` and ``document`` is set; ``document`` is the text of a
         package file, YAML or JSON, parsed and refused as :meth:`check_package` does. A
-        document is fingerprinted as its text, so a retry replays only when it sends the same
-        text, and a package request keeps the fingerprint it had before documents existed.
+        document is fingerprinted by a digest of its text, so a retry replays only when it sends
+        the same text, and a package request keeps the fingerprint it had before documents existed.
 
         A key reused with a different ``registered_without_validation`` is refused as for a
         different reason. The fingerprint carries the mark only when it is ``true``, so an
@@ -484,7 +484,9 @@ class ConfigurationRoutes:
         if document is None:
             fingerprinted["package"] = package
         else:
-            fingerprinted["document"] = document
+            # A digest, not the text: canonical JSON cannot encode a lone surrogate, which the
+            # parser then refuses as `invalid_package`, as the check route does.
+            fingerprinted["document_sha256"] = sha256(document.encode("utf-8", "surrogatepass")).hexdigest()
         if registered_without_validation:
             fingerprinted["registered_without_validation"] = True
         receipt = MutationReceipt(

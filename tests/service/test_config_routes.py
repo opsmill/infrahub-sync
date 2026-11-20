@@ -2361,7 +2361,7 @@ def test_a_registered_v2_document_is_refused_with_the_conversion_command(tmp_pat
 
 
 def test_a_refused_document_retried_with_its_key_is_refused_again_not_held(tmp_path: Path) -> None:
-    """The refusal releases the key, as for a refused package, so the retry is not `idempotency-in-progress`."""
+    """A refused document does not hold its key, as for a refused package: the same text is refused again."""
     client, _projection = _discovery_client(tmp_path)
     headers = {"Idempotency-Key": "refused-document"}
 
@@ -2392,3 +2392,22 @@ def test_a_document_retried_with_its_key_replays_and_a_different_body_conflicts(
         assert conflict.status_code == 409, conflict.text
         assert conflict.json()["error"]["code"] == "idempotency-conflict"
     assert len(projection.list_configurations()) == 1
+
+
+@pytest.mark.parametrize("route", ["check", "register", "version"])
+def test_a_document_with_a_lone_surrogate_is_an_invalid_package_on_every_route(tmp_path: Path, route: str) -> None:
+    """JSON can carry a lone surrogate; it is refused as text, not as a failure of the fingerprint."""
+    client, _projection = _discovery_client(tmp_path)
+    content = b'{"document": "format_version: 1\\nname: \\ud800\\n"}'
+    if route == "check":
+        response = client.post("/configs/validate", content=content, headers={"Content-Type": "application/json"})
+    else:
+        path = "/configs"
+        if route == "version":
+            path = f"/configs/{_register(client, package_data(), 'surrogate-first')}/versions"
+        headers = {"Content-Type": "application/json", "Idempotency-Key": "surrogate"}
+        response = client.post(path, content=content, headers=headers)
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("request", "invalid_package")
