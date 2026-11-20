@@ -1,0 +1,56 @@
+frontend/src/features/schedules/SchedulePage.tsx
+  s_caab93ebf0934a::t_eb009071714d0b 1-79,81-375
+  s_caab93ebf0934a::t_7afddf9cc24daf 80
+frontend/src/features/schedules/SchedulesTable.tsx
+  s_caab93ebf0934a::t_efb249507bbf83 110-111
+  s_caab93ebf0934a::t_e9691bcd6cec5e 1-65,67-109,112-253
+  s_caab93ebf0934a::t_0f2c3cc2f6b348 66
+frontend/src/routes/__root.tsx
+  s_caab93ebf0934a::t_752178e4083342 486-494
+  s_caab93ebf0934a::t_270098d132f523 361-363,366
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_12bbe51c51eff6 90-97
+frontend/src/features/schedules/ScheduleNotices.tsx
+  s_caab93ebf0934a::t_c0b096c603c8c3 1-69
+frontend/src/domain/start-times.ts
+  s_caab93ebf0934a::t_7c55fa11326b09 17
+  s_caab93ebf0934a::t_869a756d15c905 1-16,18-124
+frontend/src/features/schedules/NextStarts.tsx
+  s_caab93ebf0934a::t_1dd7675e670018 1-108
+frontend/src/features/schedules/SchedulesPage.tsx
+  s_caab93ebf0934a::t_4d9aff284f712a 1-60,62-155,159-321
+  s_caab93ebf0934a::t_7e100cb5607c54 61
+  s_caab93ebf0934a::t_40cfc980605c02 156-158
+frontend/src/routes/schedules.index.tsx
+  s_caab93ebf0934a::t_4a210e7db77b4e 1-35
+frontend/src/domain/start-times.test.ts
+  s_caab93ebf0934a::t_b811fbf3080d19 1-68
+frontend/src/routes/schedules.$scheduleId.tsx
+  s_caab93ebf0934a::t_9e99052217acd9 1-16
+frontend/src/routeTree.gen.ts
+  s_b112c278065801::t_fe0ce2f68f377b 18-19,51-60,68,70,78,80,89,91,101,103,111,113,121,123,132,134,181-194,204,206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0c1090df8a42d588e6a40fa87709393823bbc8a",
+  "prompts": {},
+  "sessions": {
+    "s_b112c278065801": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9b38accbb6568925",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
