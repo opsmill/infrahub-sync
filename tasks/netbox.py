@@ -303,6 +303,8 @@ def reset_database(context: Context, values: dict[str, str]) -> None:
     """
     print(f" - [{NAMESPACE}] Resetting the local NetBox database")
     detach_dev_worker(context, values)
+    # The data goes, so its record goes first: a load that fails next leaves no stale record.
+    (STATE_DIR / "tier.json").unlink(missing_ok=True)
     _compose(context, "down --volumes", values)
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
@@ -738,6 +740,7 @@ def restore(context: Context, tier: str = "S") -> None:
         # NetBox's ltree trigger comparisons require public on the restore search path.
         prepare_restore_sql(raw, destination=raw)
         detach_dev_worker(context, values)
+        (STATE_DIR / "tier.json").unlink(missing_ok=True)
         _compose(context, "down --volumes", values)
         up_command = f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}"
         _compose(context, f"{up_command} netbox-database netbox-redis", values)

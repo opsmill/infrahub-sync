@@ -9,6 +9,7 @@ runner and no daemon.
 
 from __future__ import annotations
 
+import gzip
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, cast
 
@@ -218,8 +219,12 @@ def test_netbox_start_connects_the_worker_once_netbox_is_ready(
 
 
 @pytest.mark.parametrize("dataset", ["seed", "demo"])
-def test_netbox_seed_disconnects_before_the_reset(monkeypatch: pytest.MonkeyPatch, dataset: str) -> None:
-    """Both datasets drop NetBox's containers and network before they load."""
+def test_netbox_seed_disconnects_before_the_reset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dataset: str
+) -> None:
+    """Both datasets drop NetBox's containers and network, and the dataset record, before they load."""
+    monkeypatch.setattr(netbox, "STATE_DIR", tmp_path)
+    (tmp_path / "tier.json").write_text('{"tier": "M", "image": "netbox", "phase": "seeded"}', encoding="utf-8")
     events: list[str] = []
     monkeypatch.setattr(netbox, "detach_dev_worker", lambda _context, _values: events.append("detach"))
     monkeypatch.setattr(netbox, "_compose", lambda _context, arguments, _values: events.append(arguments))
@@ -234,6 +239,32 @@ def test_netbox_seed_disconnects_before_the_reset(monkeypatch: pytest.MonkeyPatc
         netbox.restore_demo_database(context, VALUES, netbox.DEMO_SQL_RESTORE_FILE)
 
     assert events[:2] == ["detach", "down --volumes"]
+    assert netbox.recorded_dataset() is None
+
+
+def test_a_failed_tier_restore_leaves_no_dataset_record(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`restore` empties NetBox before it loads the dump, so a failed load must not keep the old record."""
+    monkeypatch.setattr(netbox, "STATE_DIR", tmp_path)
+    (tmp_path / "tier.json").write_text('{"tier": "M", "image": "netbox", "phase": "seeded"}', encoding="utf-8")
+    dump = tmp_path / "netbox-tier-S.sql.gz"
+    with gzip.open(dump, "wb") as archive:
+        archive.write(b"SELECT 1;\n")
+    monkeypatch.setattr(netbox, "verify_tier_dump", lambda _tier: dump)
+    monkeypatch.setattr(netbox, "load_netbox_env", lambda: VALUES)
+    monkeypatch.setattr(netbox, "prepare_restore_sql", lambda _source, destination: destination)
+    monkeypatch.setattr(netbox, "detach_dev_worker", lambda _context, _values: None)
+
+    def compose(_context: Context, arguments: str, _values: dict[str, str]) -> None:
+        if arguments.startswith("exec -T netbox-database psql"):
+            msg = "restore failed"
+            raise netbox.NetboxError(msg)
+
+    monkeypatch.setattr(netbox, "_compose", compose)
+
+    with pytest.raises(netbox.NetboxError, match="restore failed"):
+        cast("Task", netbox.restore).body(Context(), tier="S")
+
+    assert netbox.recorded_dataset() is None
 
 
 def test_start_reconnects_a_recreated_worker(monkeypatch: pytest.MonkeyPatch) -> None:
