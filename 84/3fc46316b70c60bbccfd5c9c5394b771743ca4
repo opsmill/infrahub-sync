@@ -1,0 +1,35 @@
+frontend/src/api/queries.ts
+  s_caab93ebf0934a::t_e6f7bd183624da 3-5,15-17
+  s_caab93ebf0934a::t_a24ae4c7dfdde6 666-720,723-749
+  s_caab93ebf0934a::t_c943cc93cc608b 721-722
+  s_caab93ebf0934a::t_58871a5c798227 237-361
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_56c827635eedf5 76-78
+frontend/src/api/queries.test.ts
+  s_caab93ebf0934a::t_1b5b4b81b33af4 2-4,7-27,29-32,34-37,39-43,45-48,50-74,76-127,129-136,161,186-191
+  s_caab93ebf0934a::t_7cebc99aa9a452 75
+  s_caab93ebf0934a::t_73a47031cdaa90 137-139,146-149,156,158-160,164,178-181,184-185
+  s_caab93ebf0934a::t_b366050d42aca6 140-145,150-152,154-155,157,162-163,165-177,182-183
+  s_caab93ebf0934a::t_c4bb7f6b4adf73 1
+  s_caab93ebf0934a::t_35c9487d74fb6b 5-6
+  s_caab93ebf0934a::t_5a0c08ec00a8ab 28,33,38,44,49,128,153
+frontend/src/api/actions.ts
+  s_caab93ebf0934a::t_b2c5fc3afa1087 5-6
+  s_caab93ebf0934a::t_6532b22795309a 57-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "843fc46316b70c60bbccfd5c9c5394b771743ca4",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

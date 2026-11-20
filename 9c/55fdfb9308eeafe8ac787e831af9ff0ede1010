@@ -1,0 +1,23 @@
+frontend/src/features/schedules/SchedulesPage.tsx
+  s_caab93ebf0934a::t_b628b0d7ec157d 133-140,147-148,203
+frontend/src/features/schedules/CadenceField.tsx
+  s_caab93ebf0934a::t_b628b0d7ec157d 331
+frontend/src/features/schedules/ScheduleFormDialog.tsx
+  s_caab93ebf0934a::t_b628b0d7ec157d 323-328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9c55fdfb9308eeafe8ac787e831af9ff0ede1010",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

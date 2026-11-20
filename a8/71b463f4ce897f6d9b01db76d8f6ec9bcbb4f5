@@ -1,0 +1,40 @@
+.github/workflows/workflow-linter.yml
+  s_caab93ebf0934a::t_b21033c7779c09 166-167
+  s_caab93ebf0934a::t_6a4c4f228b732a 133-134
+frontend/pnpm-workspace.yaml
+  s_caab93ebf0934a::t_1c69d8674f288f 29-30
+frontend/vite.config.ts
+  s_caab93ebf0934a::t_3edc2c87e25b6c 1,42-46
+  s_caab93ebf0934a::t_e3c3b5f08f8778 47
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_0bc28d25179c9b 35-36
+frontend/package.json
+  s_caab93ebf0934a::t_1c69d8674f288f 18,48-49
+  s_caab93ebf0934a::t_fb1cd4ecf87574 19
+frontend/pnpm-lock.yaml
+  s_eefe1fec4652ae::t_4842a5e7c80422 51-53,135-137,1674-1684,1691-1693,1787-1790,1913-1915,1933-1935,1940-1943,2190-2193,2413-2415,2480-2487,2622-2662,2666-2670,3996-4004,4013-4014,4102-4103,4178-4179,4215-4218,4221-4222,4397-4398,4707-4708,4765-4768,4847-4867,4870-4871
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a871b463f4ce897f6d9b01db76d8f6ec9bcbb4f5",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

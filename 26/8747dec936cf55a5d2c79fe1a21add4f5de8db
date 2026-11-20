@@ -1,0 +1,44 @@
+tests/dev_stack/smoke/test_cli_client.py
+  s_caab93ebf0934a::t_11661269bfe031 128-132,134
+tests/dev_stack/smoke/test_netbox_package.py
+  s_caab93ebf0934a::t_f7ff34844e3945 39
+  s_caab93ebf0934a::t_1c8ff619552b8b 140-152,198
+  s_caab93ebf0934a::t_5ac2959723d970 5-11
+  s_caab93ebf0934a::t_06c5570bcfe8ca 195-197
+  s_ce819b9c31ceef::t_687562474ac1ac 34,185,187-194,208-211,219,231,240-242,245,247-248,250-251,255-266,268,273,276-277,293-294,359
+tests/dev_stack/smoke/test_service_api.py
+  s_caab93ebf0934a::t_7d6fb58832bb51 59-69,77-80,85
+  s_caab93ebf0934a::t_0ad9e80c60d701 115-120
+tests/dev_stack/smoke/test_config_lifecycle.py
+  s_caab93ebf0934a::t_d1d073914333f5 278-279
+  s_caab93ebf0934a::t_14e1032e53444f 31
+  s_caab93ebf0934a::t_fccf93fe545679 56-58
+  s_caab93ebf0934a::t_a9b42969132ae7 305
+  s_caab93ebf0934a::t_c12104e2dff20d 60-61,63
+  s_caab93ebf0934a::t_211ab1888d2c62 42-43,48-49,51
+  s_caab93ebf0934a::t_ac65ced19de554 201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "268747dec936cf55a5d2c79fe1a21add4f5de8db",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_ce819b9c31ceef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a52bca3e8cd8bd041",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

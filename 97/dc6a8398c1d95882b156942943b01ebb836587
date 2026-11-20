@@ -1,0 +1,40 @@
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_1681113b92727a 59,65-67
+frontend/src/domain/cadence.test.ts
+  s_caab93ebf0934a::t_9f3a67a8c0173c 26-30,43
+  s_caab93ebf0934a::t_847a9b7a1a9fef 1-25,31-42,44-84
+frontend/package.json
+  s_caab93ebf0934a::t_9f3a67a8c0173c 19
+frontend/src/domain/schedules.ts
+  s_caab93ebf0934a::t_c5b6e886b4cd21 1-28,30-224,226-263,265-306
+  s_caab93ebf0934a::t_9f3a67a8c0173c 29,225,264
+frontend/src/domain/schedule-events.test.ts
+  s_caab93ebf0934a::t_9f3a67a8c0173c 105-110,124,133,145-146,165-166,184-192,200-206,235-236
+  s_caab93ebf0934a::t_626c5cab1271e3 1-104,111-123,125-132,134-144,147-164,167-183,193-199,207-234,237-240
+frontend/src/api/types.ts
+  s_caab93ebf0934a::t_7ec3c230dcbb4a 15-20
+frontend/src/domain/schedule-events.ts
+  s_caab93ebf0934a::t_9f3a67a8c0173c 101,137
+  s_caab93ebf0934a::t_bafd345ffa5c20 1-100,102-136,138-146
+frontend/src/domain/cadence.ts
+  s_caab93ebf0934a::t_6cf02d6c323ecd 1-162
+frontend/src/domain/schedules.test.ts
+  s_caab93ebf0934a::t_9f3a67a8c0173c 60-67,79-94,174,204-209
+  s_caab93ebf0934a::t_e0797a6b939df1 1-59,68-78,95-173,175-203,210-260
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "97dc6a8398c1d95882b156942943b01ebb836587",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

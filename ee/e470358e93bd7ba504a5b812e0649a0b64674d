@@ -1,0 +1,19 @@
+frontend/src/features/schedules/ScheduleFormDialog.tsx
+  s_caab93ebf0934a::t_e6ab34793a1ef6 176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eee470358e93bd7ba504a5b812e0649a0b64674d",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

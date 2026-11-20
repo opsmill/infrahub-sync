@@ -1,0 +1,21 @@
+dev/specs/026-schedules-web-page/alignment-check.md
+  s_caab93ebf0934a::t_0683384704088f 5-9,17,19-30,34-35
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_d1a3a9ea770def 6-8,10-11,13-14,22-24,29,35,42-43,47-80,86,88,90-97,99,109-113,119-131,135,137-138,144,146,148,150-154,156,160,166-167,169,173,179-180,182,186,188-194,203-208,212-217,219,222-224,232-234,238-239,242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "06864df40e67f527ecf07bac8f0b60c058c58dd0",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

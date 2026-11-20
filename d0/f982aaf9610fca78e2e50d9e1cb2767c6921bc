@@ -1,0 +1,49 @@
+frontend/src/domain/schedules.ts
+  s_caab93ebf0934a::t_84f26019d0fee4 231-232,244
+dev/specs/026-schedules-web-page/contracts/http-api.md
+  s_caab93ebf0934a::t_c0e3ef29bb2a6e 29,34-35
+  s_caab93ebf0934a::t_ed2db3656d93fd 68-69,72-82
+frontend/src/api/queries.ts
+  s_caab93ebf0934a::t_504713a55cb50f 4,320-324,332,352-357,369,372,374
+  s_caab93ebf0934a::t_0ae5743efe5173 298-299,314
+docs/docs/reference/sync-http-api.mdx
+  s_caab93ebf0934a::t_ed2db3656d93fd 840-845,848-849
+  s_caab93ebf0934a::t_c0e3ef29bb2a6e 1513,1518-1519
+infrahub_sync/service/schedules.py
+  s_caab93ebf0934a::t_c0e3ef29bb2a6e 114-115,397
+frontend/src/routes/runs.index.tsx
+  s_caab93ebf0934a::t_d22a93fd0216a8 19-20
+  s_caab93ebf0934a::t_05e63141918fdf 8-9
+frontend/src/features/schedules/ScheduleHistory.tsx
+  s_caab93ebf0934a::t_60c7986c0d3434 60-64,66-69
+  s_caab93ebf0934a::t_66ebccb26e4515 4,9-16,18-23,32-36,56-57,59,65,145-151
+  s_caab93ebf0934a::t_d22a93fd0216a8 54
+frontend/src/domain/schedule-events.ts
+  s_caab93ebf0934a::t_4e98cc1f696120 167-168,171-174
+  s_caab93ebf0934a::t_56781842b0f12b 157-160,162-166,169-170,175-204
+frontend/src/domain/schedules.test.ts
+  s_caab93ebf0934a::t_d230db3a922787 200-201
+dev/specs/026-schedules-web-page/research.md
+  s_caab93ebf0934a::t_d0fa547978e0fe 191-193
+frontend/src/domain/schedule-events.test.ts
+  s_caab93ebf0934a::t_a8cc69b9c46c4b 9-10,299,302-303,308-315,323-345,350-353,358-365
+  s_caab93ebf0934a::t_d22a93fd0216a8 346-349,354-357
+frontend/src/api/queries.test.ts
+  s_caab93ebf0934a::t_d22a93fd0216a8 141-142,145,183-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0f982aaf9610fca78e2e50d9e1cb2767c6921bc",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

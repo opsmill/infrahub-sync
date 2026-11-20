@@ -1,0 +1,49 @@
+frontend/src/features/schedules/SchedulePage.tsx
+  s_caab93ebf0934a::t_7a74b7ec4224b4 284-297,326-330
+  s_caab93ebf0934a::t_bf9fe1e6a02e26 331
+frontend/src/domain/start-times.test.ts
+  s_caab93ebf0934a::t_d09b26110df89c 3,69-81
+  s_caab93ebf0934a::t_fad947c20b5bbe 82-83
+frontend/src/api/queries.test.ts
+  s_caab93ebf0934a::t_c2cb64376d5611 10,193-233,235-236
+  s_caab93ebf0934a::t_1eca38c6d9b99e 234
+  s_caab93ebf0934a::t_cf34ccd7350fc3 237
+frontend/src/features/runs/RunsPage.tsx
+  s_caab93ebf0934a::t_e91a97749cdc56 16-23,47-48,96,108,110,223,230,248-269,459-461,469-491,496-502,504,506-509
+  s_caab93ebf0934a::t_8fada601dd84fc 30,492-495
+  s_caab93ebf0934a::t_775f082e7b462e 503
+  s_caab93ebf0934a::t_1b1d9077527b41 505
+  s_caab93ebf0934a::t_2304d6dd520dc3 510-512
+frontend/src/routes/runs.index.tsx
+  s_caab93ebf0934a::t_363b15de17a946 17,19,21,28-29
+frontend/src/api/queries.ts
+  s_caab93ebf0934a::t_d3df6c51858d7a 130-131,133,135,144
+frontend/src/features/runs/RunsTable.tsx
+  s_caab93ebf0934a::t_4bd742cbe60fd9 6,169-192,216-219,221
+  s_caab93ebf0934a::t_91b226252ab6e8 220
+frontend/src/domain/start-times.ts
+  s_caab93ebf0934a::t_d09b26110df89c 95-108
+frontend/src/features/schedules/ScheduleLine.tsx
+  s_caab93ebf0934a::t_9bf594f5aa9346 1-47
+frontend/src/features/runs/run-sections.tsx
+  s_caab93ebf0934a::t_7ab9fe53a4559c 256
+  s_caab93ebf0934a::t_7a74b7ec4224b4 14
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_b82310599621c1 109-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b2b41262ea6282e398a9b75d84ff34718adee2f",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

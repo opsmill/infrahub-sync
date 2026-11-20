@@ -1,0 +1,56 @@
+frontend/src/features/schedules/SchedulesPage.tsx
+  s_caab93ebf0934a::t_96e925b0163d09 13,16,21,70-77,133,145-146,195-202,204-206
+frontend/src/features/schedules/time-zones.ts
+  s_caab93ebf0934a::t_2e78f00f22a3b6 1-26
+frontend/src/features/schedules/form-rules.ts
+  s_caab93ebf0934a::t_2c533ee52c74d3 1-63
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_f7487489e3b32d 150-154
+frontend/src/features/configurations/ConfigurationPage.tsx
+  s_caab93ebf0934a::t_96e925b0163d09 25,299
+frontend/src/features/schedules/form-rules.test.ts
+  s_caab93ebf0934a::t_1f1f181be1fb59 19
+  s_caab93ebf0934a::t_f7da7226b457b9 1-18,20-82
+frontend/src/features/schedules/CadenceField.tsx
+  s_caab93ebf0934a::t_d0ce2e16d96a27 1,3-21,23-90,92-97,100-121,123-169,171-348
+  s_caab93ebf0934a::t_33217ad53b5461 2,170
+  s_caab93ebf0934a::t_788e1193b0c7e8 91,98-99,122
+  s_caab93ebf0934a::t_a9dbd453a33158 22
+frontend/src/features/schedules/ScheduleLine.tsx
+  s_caab93ebf0934a::t_67d01478832d75 3,5,7-9,12-14,53-81,83-97,99-104,106-136
+  s_caab93ebf0934a::t_36ee2aaba6f99c 82,98,105
+  s_caab93ebf0934a::t_bd4ff00a3dd4c0 137-138
+frontend/src/features/schedules/cadence-draft.ts
+  s_caab93ebf0934a::t_3d0543f598f6d3 1-147
+frontend/src/features/schedules/form-parts.tsx
+  s_caab93ebf0934a::t_07bc6b26641d9a 1-83,85-86,88-96
+  s_caab93ebf0934a::t_f1111898beda79 84
+  s_caab93ebf0934a::t_55e7c712c1099c 87
+frontend/src/features/schedules/time-zones.test.ts
+  s_caab93ebf0934a::t_efd73863614de8 1-58
+frontend/src/features/schedules/cadence-draft.test.ts
+  s_caab93ebf0934a::t_983031f65c00cc 46,56-57
+  s_caab93ebf0934a::t_11639969488144 1-45,47-55,58-67
+frontend/src/features/schedules/ScheduleFormDialog.tsx
+  s_caab93ebf0934a::t_27983ab22e36b2 1-144,146-147,150,155,157-371,373-488,490-527
+  s_caab93ebf0934a::t_788e1193b0c7e8 372
+  s_caab93ebf0934a::t_090cc48788ff10 148-149,151-154,156
+  s_caab93ebf0934a::t_27d0e59b4fc239 145
+  s_caab93ebf0934a::t_4d8d2e2a41fb52 489
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2e29a847fbe6aa836393e3bc7b77075690903b3a",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

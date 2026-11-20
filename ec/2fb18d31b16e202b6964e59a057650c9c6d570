@@ -1,0 +1,37 @@
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_d7ad5809c67789 137-138
+frontend/src/features/schedules/SchedulePage.tsx
+  s_caab93ebf0934a::t_cf6262a921f0f0 346
+  s_caab93ebf0934a::t_8a708c88d31e14 347
+  s_caab93ebf0934a::t_f45abd20adf5e9 357-365
+  s_caab93ebf0934a::t_8497ace523f9e6 470-472
+  s_caab93ebf0934a::t_d402458910ed22 186-191,193-230
+  s_caab93ebf0934a::t_a3bff3da8ad947 248-249
+  s_caab93ebf0934a::t_9c4644c4854999 1,4
+  s_caab93ebf0934a::t_db3b0025e0aefa 42-46
+  s_caab93ebf0934a::t_2ee7a660d76205 29-36
+  s_caab93ebf0934a::t_0c608245e1e1ac 10
+  s_caab93ebf0934a::t_add4001447e0c6 308-309
+  s_caab93ebf0934a::t_16e410d57e757c 192
+frontend/src/features/schedules/ScheduleActionDialogs.tsx
+  s_caab93ebf0934a::t_94d223969bce47 1-191
+frontend/src/features/runs/form.tsx
+  s_caab93ebf0934a::t_32a5e127b61b6a 6
+  s_caab93ebf0934a::t_4cb57309c91140 77-80,85,90,93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec2fb18d31b16e202b6964e59a057650c9c6d570",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
