@@ -10,12 +10,9 @@ artifact_name
 async
 Authentik
 boolean
-<<<<<<< HEAD
 callables
-=======
 booleans
 Booleans
->>>>>>> origin/main
 check_definitions
 class_name
 CloudFormation
@@ -178,7 +175,6 @@ Yaml
 yamllint
 ty
 formatters
-<<<<<<< HEAD
 Potenda
 autocommit
 pooler
@@ -242,7 +238,5 @@ unkeyed
 unredacted
 untyped
 writability
-=======
 Entra
 OData
->>>>>>> origin/main
