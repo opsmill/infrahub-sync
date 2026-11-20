@@ -5,14 +5,15 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
+import structlog
 import uvicorn
 from prefect.client.orchestration import get_client
 
 from infrahub_sync.execution import collect_secret_values
-from infrahub_sync.product_store.accounts import DuplicateCredentialError
+from infrahub_sync.product_store.accounts import DuplicateCredentialError, EnvironmentAccountConflictError
 
 from .app import create_app
-from .auth import StoreAccountResolver, apply_admin_account
+from .auth import WORKER_ACCOUNT_NAME, StoreAccountResolver, apply_admin_account, apply_worker_account
 from .config_routes import ConfigurationRoutes
 from .credentials import no_account_hash
 from .liveness import LivenessPolicy, RunLivenessReconciler
@@ -32,10 +33,13 @@ from .service import RunService
 from .settings import (
     ADMIN_ACCOUNT_PASSWORD_ENV,
     ADMIN_ACCOUNT_TOKEN_ENV,
+    WORKER_TOKEN_ENV,
     AccountSettingsError,
+    CredentialSettingsError,
     admin_account_settings,
     session_idle_seconds,
     web_directory,
+    worker_account_token,
 )
 from .start_check import StartRefusedError, check_bootstrap_record
 from .storage import service_product_projection
@@ -48,9 +52,13 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from starlette.applications import Starlette
 
+    from infrahub_sync.product_store import ProductProjection
+
 # The write targets of a schedule that this build can run. A request for another write target
 # is refused with ``schedule-setting-not-available``.
 DELIVERED_SCHEDULE_WRITE_TARGETS: frozenset[str] = frozenset({"branch-review", "default-branch"})
+
+logger = structlog.get_logger(__name__)
 
 
 class _ClientPerCallOrchestration:
@@ -119,13 +127,18 @@ def build_app(
     Without a ``resolver_factory``, the ``admin`` account of the store is made to match
     ``INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`` and ``INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN``, the
     password is removed from the environment of the process, and callers are resolved from the
-    accounts of the store.
+    accounts of the store. When ``INFRAHUB_SYNC_WORKER_TOKEN`` is set, the ``worker`` account is
+    made to match it too; until every deployment sets it (spec 027, T054), a start without it
+    applies no ``worker`` account and logs that.
 
     Raises:
         TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
         AccountSettingsError: when a variable of the ``admin`` account or the idle period of a
             session holds a value that is not accepted, or when another account already has the
-            token of ``admin`` as an API token. The message names the variable.
+            token of ``admin`` as an API token. The message names the variable. Its subclass
+            ``CredentialSettingsError`` when the worker token is not accepted, when another
+            account already holds it, or when an account named ``worker`` exists that the
+            environment does not manage.
         StartRefusedError: when the bootstrap record is missing or names another Sync version
             or work pool, or cannot be read.
     """
@@ -134,6 +147,7 @@ def build_app(
     # Validated before any dependency is built, so a bad address stops start-up with no side effect.
     prefect_ui_url = prefect_ui_url_from_environment()
     admin_account = admin_account_settings() if resolver_factory is None else None
+    worker_token = worker_account_token() if resolver_factory is None else None
     idle_seconds = session_idle_seconds()
     work_pool = os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default")
     start_check(work_pool)
@@ -152,7 +166,10 @@ def build_app(
         # Made now, so the first sign-in with an unknown name does not compute it and take
         # longer than a sign-in with a known name.
         no_account_hash()
-        resolver = StoreAccountResolver(projection, idle_seconds=idle_seconds, admin_token=admin_account.token)
+        _apply_worker_account(projection, worker_token)
+        resolver = StoreAccountResolver(
+            projection, idle_seconds=idle_seconds, admin_token=admin_account.token, worker_token=worker_token
+        )
     # The configuration diagnostics quote declared keys, so this surface needs the ordinary
     # environment secrets as well as the `admin` token that the environment defines.
     configuration_secrets = tuple(dict.fromkeys((*collect_secret_values(), *resolver.secret_values)))
@@ -179,6 +196,31 @@ def build_app(
         secrets=resolver.secret_values,
     )
     return app_factory(service, resolver, configuration_routes, reconciler, schedules=schedules)
+
+
+def _apply_worker_account(projection: ProductProjection, token: str | None) -> None:
+    """Apply the ``worker`` account of ``INFRAHUB_SYNC_WORKER_TOKEN``, or log that none is applied.
+
+    Raises:
+        CredentialSettingsError: an account named ``worker`` exists that the environment does not
+            manage, or another account already has the worker token as an API token. The message
+            names the account or the variable, never a value.
+    """
+    if token is None:
+        # A warning, not a refusal, until T054 makes the variable required for `sync-api`.
+        logger.warning("worker account not applied: the variable is not set", variable=WORKER_TOKEN_ENV)
+        return
+    try:
+        apply_worker_account(projection, token)
+    except EnvironmentAccountConflictError:
+        msg = (
+            f"an account named {WORKER_ACCOUNT_NAME} exists that the environment does not manage; "
+            f"{WORKER_TOKEN_ENV} defines that account, so delete the existing account"
+        )
+        raise CredentialSettingsError(msg) from None
+    except DuplicateCredentialError:
+        msg = f"{WORKER_TOKEN_ENV} is the value of an API token of another account; choose another value"
+        raise CredentialSettingsError(msg) from None
 
 
 def build_service(

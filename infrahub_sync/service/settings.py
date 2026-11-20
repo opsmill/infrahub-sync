@@ -267,12 +267,41 @@ def credential_settings(environ: Mapping[str, str] | None = None) -> CredentialS
     env = os.environ if environ is None else environ
     key = _encryption_key(env)
     token = _worker_token(env)
+    _check_differs_from_admin_token(env, token)
+    return CredentialSettings(encryption_key=key, worker_token=token)
+
+
+def _check_differs_from_admin_token(env: Mapping[str, str], token: str) -> None:
+    """Refuse a worker token equal to the token of the ``admin`` account.
+
+    Raises:
+        CredentialSettingsError: the two variables hold the same value.
+    """
     admin_token = env.get(ADMIN_ACCOUNT_TOKEN_ENV, "")
     # A start-up check of two values the operator already holds: no timing to protect.
     if admin_token and token == admin_token:
         msg = f"{WORKER_TOKEN_ENV} must differ from {ADMIN_ACCOUNT_TOKEN_ENV}"
         raise CredentialSettingsError(msg)
-    return CredentialSettings(encryption_key=key, worker_token=token)
+
+
+def worker_account_token(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return the token of the ``worker`` account that ``sync-api`` applies, or ``None`` when it is unset.
+
+    An empty value counts as unset. Until the Compose files give every ``sync-api`` the variable
+    (spec 027, T054), a start without it applies no ``worker`` account; the rules of a value that
+    is set are those of :func:`credential_settings`.
+
+    Raises:
+        CredentialSettingsError: the token is shorter than 16 characters, holds a character that is
+            not printable ASCII, starts or ends with a space, starts with ``ifs_pat_`` or
+            ``ifs_ses_``, or equals the token of the ``admin`` account.
+    """
+    env = os.environ if environ is None else environ
+    if not env.get(WORKER_TOKEN_ENV, ""):
+        return None
+    token = _worker_token(env)
+    _check_differs_from_admin_token(env, token)
+    return token
 
 
 def worker_settings(environ: Mapping[str, str] | None = None) -> WorkerSettings:

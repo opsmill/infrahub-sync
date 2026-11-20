@@ -5,7 +5,8 @@ SHA-256 digest in the product store, with the account that owns it, for every re
 cached, so the next request of a disabled account is refused.
 
 ``apply_admin_account`` makes the ``admin`` account match the variables of the environment when
-the service starts.
+the service starts, and ``apply_worker_account`` does the same for the ``worker`` account, whose
+token the workers present on the worker routes and nowhere else.
 """
 
 from __future__ import annotations
@@ -28,6 +29,10 @@ if TYPE_CHECKING:
 ADMIN_ACCOUNT_NAME = "admin"
 # The name of the one API token of ``admin`` that the environment defines.
 ADMIN_ACCOUNT_TOKEN_NAME = "environment"
+# The account of the workers: environment-managed, no password, not an administrator. The pair
+# "named ``worker`` and environment-managed" identifies it (spec 027, research R4).
+WORKER_ACCOUNT_NAME = "worker"
+WORKER_ACCOUNT_TOKEN_NAME = "environment"
 
 CredentialKind = Literal["token", "session"]
 RefusalCode = Literal["unauthenticated", "token-expired"]
@@ -37,7 +42,8 @@ class Principal(BaseModel):
     """Authenticated Sync API actor.
 
     ``actor`` is what every write records and what the rights checks compare. For an account of
-    the product store it is the account identifier, and ``name`` is the account name.
+    the product store it is the account identifier, and ``name`` is the account name. ``worker``
+    is true for the ``worker`` account only, which passes the worker routes and no other route.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -47,6 +53,12 @@ class Principal(BaseModel):
     name: str | None = None
     kind: CredentialKind | None = None
     session_id: str | None = None
+    worker: bool = False
+
+
+def is_worker_account(account: Account) -> bool:
+    """Return whether the account is the ``worker`` account: named ``worker`` and environment-managed."""
+    return account.name == WORKER_ACCOUNT_NAME and account.environment_managed
 
 
 @dataclass(frozen=True)
@@ -102,21 +114,23 @@ class StoreAccountResolver:
         *,
         idle_seconds: int,
         admin_token: str | None = None,
+        worker_token: str | None = None,
         clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._projection = projection
         self._idle_period = timedelta(seconds=idle_seconds)
         self._admin_token = admin_token
+        self._worker_token = worker_token
         self._clock = clock
 
     @property
     def secret_values(self) -> tuple[str, ...]:
-        """Return the token of ``admin`` that the environment defines, for boundary redaction.
+        """Return the tokens of ``admin`` and ``worker`` that the environment defines, for boundary redaction.
 
         The store holds every other token as a digest, so the process cannot list them. The
         password of ``admin`` is never in this list.
         """
-        return () if self._admin_token is None else (self._admin_token,)
+        return tuple(token for token in (self._admin_token, self._worker_token) if token is not None)
 
     def resolve(self, token: str) -> Resolution:
         """Return the account that owns the presented value, or the code of the refusal.
@@ -147,6 +161,7 @@ class StoreAccountResolver:
                 name=account.name,
                 kind=resolved.kind,
                 session_id=resolved.credential_id if resolved.kind == "session" else None,
+                worker=is_worker_account(account),
             )
         )
 
@@ -160,7 +175,12 @@ class StoreAccountResolver:
         account = self._projection.lookup_account(actor)
         if account is None or account.disabled or account.deleted_at is not None:
             return None
-        return Principal(actor=account.account_id, administrator=account.administrator, name=account.name)
+        return Principal(
+            actor=account.account_id,
+            administrator=account.administrator,
+            name=account.name,
+            worker=is_worker_account(account),
+        )
 
 
 def apply_admin_account(projection: ProductProjection, settings: AdminAccountSettings) -> Account:
@@ -192,4 +212,29 @@ def apply_admin_account(projection: ProductProjection, settings: AdminAccountSet
         password_hash_for=password_hash_for,
         token_name=ADMIN_ACCOUNT_TOKEN_NAME,
         token_digest=None if settings.token is None else digest(settings.token),
+    )
+
+
+def apply_worker_account(projection: ProductProjection, token: str) -> Account:
+    """Make the ``worker`` account of the store match ``INFRAHUB_SYNC_WORKER_TOKEN``.
+
+    One transaction, as for ``admin``: ``worker`` is created when it is missing, as an active
+    account that the environment manages, with no password and not an administrator; it keeps one
+    API token, the token of the environment, so a new value replaces the previous one. A call
+    that finds the store as the environment describes it changes no row.
+
+    Raises:
+        EnvironmentAccountConflictError: an account named ``worker`` exists that the environment
+            does not manage. Nothing was written.
+        DuplicateCredentialError: another account already has an API token with the same value.
+    """
+    return projection.apply_environment_account(
+        name=WORKER_ACCOUNT_NAME,
+        # No password: a new `worker` gets none, and only this function creates an
+        # environment-managed `worker`, so no hash is ever computed or stored for it.
+        password_hash_for=lambda _stored_hash: None,
+        token_name=WORKER_ACCOUNT_TOKEN_NAME,
+        token_digest=digest(token),
+        administrator=False,
+        claim_existing=False,
     )

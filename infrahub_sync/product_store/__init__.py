@@ -6,6 +6,7 @@ from infrahub_sync.product_store.accounts import (
     AccountNotActiveError,
     AccountTokenNameTakenError,
     DuplicateCredentialError,
+    EnvironmentAccountConflictError,
     SignInAttemptsFullError,
 )
 from infrahub_sync.product_store.models import (
@@ -138,6 +139,7 @@ __all__ = (
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
     "EarlierProductDatabaseError",
+    "EnvironmentAccountConflictError",
     "EventDetails",
     "EventFilters",
     "EventPage",

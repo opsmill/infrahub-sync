@@ -104,6 +104,7 @@ EXPECTED_PUBLIC_NAMES = {
     "DuplicateArtifactError",
     "DuplicateConfigurationError",
     "DuplicateCredentialError",
+    "EnvironmentAccountConflictError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
     "EarlierProductDatabaseError",

@@ -50,10 +50,10 @@ the constitution.
 
 ### The worker account
 
-- [ ] T010 Write `tests/service/test_worker_account.py`: `sync-api` start applies a `worker` account (environment-managed, no password, not an administrator) and its token; a second start with a new token replaces it; an existing non-environment-managed account named `worker` stops the start with a named conflict; sign-in as `worker` is refused; every account action on `worker` answers `409 environment-managed-account`
-- [ ] T011 Implement `apply_worker_account` in `infrahub_sync/service/auth.py` beside `apply_admin_account` (`auth.py:166`), call it from `infrahub_sync/service/serve.py:136-155`, and add the worker token to `resolver.secret_values` (research R4)
-- [ ] T012 Write `tests/service/test_worker_route_boundary.py`: parametrized over every route of `create_app`, the worker token gets `403 forbidden` on every route outside `/api/worker/` (the refusal of accounts on `/api/worker/` is tested in T022, once the route exists)
-- [ ] T013 Add the worker-only rule to `_authenticator` in `infrahub_sync/service/app.py:334` and a `require_worker` dependency for the worker routes; `Principal` (`auth.py:36`) gains a `worker` flag set from "named `worker` and environment-managed"
+- [X] T010 Write `tests/service/test_worker_account.py`: `sync-api` start applies a `worker` account (environment-managed, no password, not an administrator) and its token; a second start with a new token replaces it; an existing non-environment-managed account named `worker` stops the start with a named conflict; sign-in as `worker` is refused; every account action on `worker` answers `409 environment-managed-account`
+- [X] T011 Implement `apply_worker_account` in `infrahub_sync/service/auth.py` beside `apply_admin_account` (`auth.py:166`), call it from `infrahub_sync/service/serve.py:136-155`, and add the worker token to `resolver.secret_values` (research R4)
+- [X] T012 Write `tests/service/test_worker_route_boundary.py`: parametrized over every route of `create_app`, the worker token gets `403 forbidden` on every route outside `/api/worker/` (the refusal of accounts on `/api/worker/` is tested in T022, once the route exists)
+- [X] T013 Add the worker-only rule to `_authenticator` in `infrahub_sync/service/app.py:334` and a `require_worker` dependency for the worker routes; `Principal` (`auth.py:36`) gains a `worker` flag set from "named `worker` and environment-managed"
 
 ### Package format beside the old one
 

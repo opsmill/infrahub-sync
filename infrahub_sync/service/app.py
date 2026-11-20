@@ -38,6 +38,7 @@ from .config_routes import (
     parse_bounded_integer,
     parse_page_limit,
 )
+from .events import ACCOUNT_REFUSED
 from .liveness import RunLivenessReconciler
 from .models import (
     ApplyRunRequest,
@@ -331,18 +332,73 @@ def _include_routers(
     application.include_router(account_router(service, authenticate))
 
 
+_BEARER_AUTH = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+WORKER_ONLY_MESSAGE = "the worker account is accepted on the worker routes only"
+WORKER_REQUIRED_MESSAGE = "this route accepts the worker account only"
+
+
 def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable[..., Principal]:
     """Return the dependency that resolves the bearer value of a request to its principal.
 
     A missing or unknown value answers ``401 unauthenticated``. An API token after its expiry date
-    answers ``401 token-expired``. Every refusal is recorded, without the value.
+    answers ``401 token-expired``. The ``worker`` account answers ``403 forbidden``: every route
+    that uses this dependency is outside the worker routes, which use ``require_worker`` instead
+    (spec 027, research R4). Every refusal is recorded, without the value.
     """
-    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+    resolve = _principal_resolver(service, resolver)
 
     def authenticate(
         request: Request,
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER_AUTH)],
     ) -> Principal:
+        principal = resolve(request, credentials)
+        if principal.worker:
+            _record_refused_authorization(service, principal, request)
+            raise ServiceAPIError(403, "forbidden", WORKER_ONLY_MESSAGE)
+        return principal
+
+    return authenticate
+
+
+def require_worker(service: RunService, resolver: PrincipalResolver) -> Callable[..., Principal]:
+    """Return the dependency of the worker routes: it accepts the ``worker`` account and no other.
+
+    An unknown, missing or expired value is refused as by ``authenticate``. Every other account,
+    an administrator included, answers ``403 forbidden`` (spec 027, FR-005). Every refusal is
+    recorded, without the value.
+    """
+    resolve = _principal_resolver(service, resolver)
+
+    def authenticate_worker(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER_AUTH)],
+    ) -> Principal:
+        principal = resolve(request, credentials)
+        if not principal.worker:
+            _record_refused_authorization(service, principal, request)
+            raise ServiceAPIError(403, "forbidden", WORKER_REQUIRED_MESSAGE)
+        return principal
+
+    return authenticate_worker
+
+
+def _record_refused_authorization(service: RunService, principal: Principal, request: Request) -> None:
+    """Record a known account refused on a route, as ``require_administrator`` does; no token value."""
+    service.record_account_event(
+        ACCOUNT_REFUSED,
+        actor=principal.actor,
+        account_id=principal.actor,
+        operation=request.url.path,
+        outcome="refused-authorization",
+    )
+
+
+def _principal_resolver(
+    service: RunService, resolver: PrincipalResolver
+) -> Callable[[Request, HTTPAuthorizationCredentials | None], Principal]:
+    """Return the step that both dependencies share: the bearer value to its principal, or a ``401``."""
+
+    def resolve(request: Request, credentials: HTTPAuthorizationCredentials | None) -> Principal:
         token = credentials.credentials.lstrip(" ") if credentials is not None else ""
         if not token:
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
@@ -356,7 +412,7 @@ def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable
         service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
         raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
 
-    return authenticate
+    return resolve
 
 
 def _account_reader(service: RunService) -> AccountReader:

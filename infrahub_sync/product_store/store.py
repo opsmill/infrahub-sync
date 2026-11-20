@@ -1261,6 +1261,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         token_name: str,
         token_digest: str | None,
         now: datetime | None = None,
+        administrator: bool = True,
+        claim_existing: bool = True,
     ) -> Account: ...
 
     def read_sign_in_attempt(self, name: str) -> SignInAttempt | None: ...
@@ -4670,6 +4672,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         token_name: str,
         token_digest: str | None,
         now: datetime | None = None,
+        administrator: bool = True,
+        claim_existing: bool = True,
     ) -> Account:
         """Make the account that the environment defines match the environment, in one transaction.
 
@@ -4679,6 +4683,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         Raises:
             DuplicateCredentialError: another token of the store already holds this digest.
+            EnvironmentAccountConflictError: ``claim_existing`` is false and an account with the
+                name exists that the environment does not manage. Nothing was written.
         """
         try:
             with self._transaction() as cursor:
@@ -4694,6 +4700,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     token_name=token_name,
                     token_digest=token_digest,
                     now=_now(now),
+                    administrator=administrator,
+                    claim_existing=claim_existing,
                 )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # DB-API drivers do not share an integrity-error base class;
@@ -6104,6 +6112,8 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         token_name: str,
         token_digest: str | None,
         now: datetime | None = None,
+        administrator: bool = True,
+        claim_existing: bool = True,
     ) -> Account:
         """Make the account that the environment defines match the environment, in one transaction.
 
@@ -6116,6 +6126,8 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
 
         Raises:
             DuplicateCredentialError: another token of the store already holds this digest.
+            EnvironmentAccountConflictError: ``claim_existing`` is false and an account with the
+                name exists that the environment does not manage. Nothing was written.
         """
         return self._records.apply_environment_account(
             name=name,
@@ -6123,6 +6135,8 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             token_name=token_name,
             token_digest=token_digest,
             now=now,
+            administrator=administrator,
+            claim_existing=claim_existing,
         )
 
     def read_sign_in_attempt(self, name: str) -> SignInAttempt | None:
