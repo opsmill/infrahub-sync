@@ -1,0 +1,21 @@
+docs/docs/orchestration.mdx
+  s_caab93ebf0934a::t_a6d1b7f47e3bb9 313
+docs/docs/reference/sync-http-api.mdx
+  s_caab93ebf0934a::t_9e4d0fe2c458c5 575-578
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bec7cb54aabcbca9c5b80f5cd5f146a9617dce64",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
