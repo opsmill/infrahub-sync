@@ -1,0 +1,19 @@
+tests/service/test_config_routes.py
+  s_eefe1fec4652ae::t_434c92c116c9bd 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "75c81145a29791f304d61ae4c5bea93d7d0aa7a5",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
