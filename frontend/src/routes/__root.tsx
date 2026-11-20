@@ -1,4 +1,13 @@
-import { Button, Popover, PopoverDialog, PopoverTrigger } from "@infrahub/ui";
+import {
+  Button,
+  Menu,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+  Popover,
+  PopoverDialog,
+  PopoverTrigger,
+} from "@infrahub/ui";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { type QueryClient, useQuery } from "@tanstack/react-query";
 import { ReactQueryDevtoolsPanel } from "@tanstack/react-query-devtools";
@@ -7,6 +16,7 @@ import {
   createRootRouteWithContext,
   Link,
   Outlet,
+  useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
@@ -17,6 +27,7 @@ import { describeError, meQuery, statusQuery, versionQuery } from "#/api/queries
 import { announce, LiveRegion } from "#/components/announcer";
 import { FOCUS, FOCUS_RAC } from "#/components/classes";
 import { StateIcon } from "#/components/icons";
+import { Mark } from "#/components/mark";
 import { Notice } from "#/components/page";
 import { When } from "#/components/run-status";
 import { ThemeMenu } from "#/components/theme-menu";
@@ -40,24 +51,6 @@ const NAV = cn(
   // that row whether the navigation takes one line or wraps.
   "max-sm:h-12 max-sm:px-1.5 max-sm:data-current:after:inset-x-1.5 max-sm:data-current:after:bottom-[-1px]"
 );
-
-function Mark() {
-  return (
-    <svg viewBox="0 0 20 20" className="size-5 shrink-0" aria-hidden="true">
-      <rect
-        x="1"
-        y="1"
-        width="18"
-        height="18"
-        rx="5"
-        className="fill-cyan-900 dark:fill-cyan-700"
-      />
-      <circle cx="6" cy="10" r="1.75" className="fill-white" />
-      <circle cx="14" cy="10" r="1.75" className="fill-white" />
-      <path d="M7.75 10h4.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
 
 interface ServiceState {
   icon: RunState;
@@ -282,41 +275,73 @@ function StatusMenu() {
   );
 }
 
+/** As in the theme menu: readable text, and a 44px target on a touch screen. */
+const ACCOUNT_ITEM = "text-foreground pointer-coarse:min-h-11";
+
 /**
- * The signed-in account, from `GET /me`, and the action that signs out. Signing out removes the
- * session token, which also empties the query cache and the downloaded plans.
+ * The signed-in account, from `GET /me`, as a menu that opens the "My account" page or signs out.
+ * Signing out removes the session token, which also empties the query cache and the downloaded
+ * plans.
  */
-function AccountControls() {
+function AccountMenu({ current }: { current: boolean }) {
   const me = useQuery(meQuery());
+  const navigate = useNavigate();
   const [pending, setPending] = useState(false);
   const name = me.data?.actor;
 
-  async function press() {
-    setPending(true);
-    await signOut();
+  async function act(key: unknown) {
+    if (key === "account") {
+      await navigate({ to: "/account" });
+      return;
+    }
+    if (key === "sign-out") {
+      setPending(true);
+      await signOut();
+    }
   }
 
   return (
-    <div className="flex min-w-0 items-center gap-1">
-      {name && (
-        <span
-          className="min-w-0 max-w-24 truncate text-foreground-muted text-xs sm:max-w-48"
-          title={`Signed in as ${name}`}
-        >
-          <span className="sr-only">Signed in as </span>
-          {name}
-        </span>
-      )}
+    <MenuTrigger>
       <Button
         variant="ghost"
         size="sm"
-        className={cn("shrink-0", FOCUS_RAC)}
-        onPress={press}
+        className={cn(
+          "min-w-0 shrink gap-1.5 px-2 font-normal text-foreground-muted text-xs data-hovered:text-foreground",
+          current && "text-foreground",
+          FOCUS_RAC
+        )}
+        aria-label={name ? `Signed in as ${name}. Open account menu` : "Open account menu"}
         isDisabled={pending}
       >
-        Sign out
+        <span
+          className="min-w-0 max-w-24 truncate sm:max-w-48"
+          title={name ? `Signed in as ${name}` : undefined}
+        >
+          {name ?? "Account"}
+        </span>
+        <svg viewBox="0 0 16 16" className="size-3 shrink-0" aria-hidden="true">
+          <path
+            d="M4 6l4 4 4-4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </Button>
-    </div>
+      <Popover placement="bottom end" className="bg-content">
+        <Menu aria-label="Account" variant="picker" onAction={act} className="min-w-44">
+          <MenuItem id="account" className={ACCOUNT_ITEM}>
+            My account
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem id="sign-out" className={ACCOUNT_ITEM}>
+            Sign out
+          </MenuItem>
+        </Menu>
+      </Popover>
+    </MenuTrigger>
   );
 }
 
@@ -491,19 +516,10 @@ function RootComponent() {
                 Accounts
               </Link>
             )}
-            <Link
-              to="/account"
-              activeOptions={{ exact: true, includeSearch: false }}
-              className={NAV}
-              data-current={section === "account" ? "" : undefined}
-              aria-current={section === "account" ? "true" : undefined}
-            >
-              My account
-            </Link>
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-2 max-sm:shrink-0">
             <StatusMenu />
-            <AccountControls />
+            <AccountMenu current={section === "account"} />
             <ThemeMenu />
           </div>
         </div>

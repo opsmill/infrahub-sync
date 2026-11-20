@@ -54,9 +54,10 @@ browser tab only (`src/api/token.ts`); the password is not kept. The page sends 
 as a bearer token with every request. No cookie is used.
 
 A `401` for a request that carried the held session token, for example after the session was
-unused for the idle period, removes the token and shows the sign-in form again. **Sign out** in
-the header calls `POST /api/auth/sign-out` with the session token, then removes the token from the
-tab whatever the answer. The header names the signed-in account from `GET /api/me`.
+unused for the idle period, removes the token and shows the sign-in form again. The header names
+the signed-in account from `GET /api/me`; its menu opens **My account** and offers **Sign out**.
+**Sign out** calls `POST /api/auth/sign-out` with the session token, then removes the token from
+the tab whatever the answer.
 
 In development, the Vite server forwards every request under `/api` to the Sync service without
 changing the path and without adding an `Authorization` header, so you sign in on the page as in a
