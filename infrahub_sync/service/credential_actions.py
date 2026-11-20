@@ -50,6 +50,7 @@ from infrahub_sync.configuration.capabilities import (
     UnknownCredentialMethodError,
     credential_field_map,
 )
+from infrahub_sync.configuration.credential_admission import STAGE_CREDENTIAL_BLOCKS
 from infrahub_sync.execution import LiveSecretValues, register_secret_values
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -103,11 +104,9 @@ FLOW_RUN_ID_MAX_LENGTH: Final = 200
 # The blocks each stage builds (research R5). A saved-plan apply, a resume and a verify build the
 # destination only, as `flow.py` resolves them; a plan and a sync, scheduled or not, build both.
 STAGE_BLOCKS: Final[dict[str, tuple[CredentialBlock, ...]]] = {
-    "plan": ("source", "destination"),
-    "sync": ("source", "destination"),
-    "apply": ("destination",),
-    "resume": ("destination",),
-    "verify": ("destination",),
+    # One table for the run-start check and the release, so the two cannot disagree.
+    stage: STAGE_CREDENTIAL_BLOCKS[stage]
+    for stage in ("plan", "sync", "apply", "resume", "verify")
 }
 
 FORBIDDEN_MESSAGE = f"this action needs the {MANAGE_CREDENTIALS} permission, which administrators hold"

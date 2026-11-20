@@ -41,6 +41,7 @@ from infrahub_sync.runtime_schema import worker as worker_module
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import StoreAccountResolver
 from infrahub_sync.service.config_routes import ConfigurationRoutes
+from infrahub_sync.service.credential_crypto import CredentialCipher
 from tests.configuration.validation_packages import package_data
 from tests.helpers.stored_credentials import TEST_ENCRYPTION_KEY, create_stored_credential
 from tests.service.account_api import ADMIN_TOKEN, AccountApi, bearer, build_account_api
@@ -88,12 +89,18 @@ class Reads:
     def __init__(self) -> None:
         self.tokens: list[str] = []
         self.fail_with_the_token = False
+        self.refuse_with_the_token = False
 
     def accessor(self, package: ConfigurationPackage, branch: str) -> dict[str, Any]:
         """Build the client settings as the Infrahub accessor does, and answer a fixed snapshot."""
         _, sdk_config = capabilities_module._resolved_client_settings(package, branch)
         token = sdk_config["api_token"]
         self.tokens.append(_digest(token))
+        if self.refuse_with_the_token:
+            # What Infrahub answers with a refusal is the `detail` of the read error, which the
+            # finding shows; here it repeats the token it was given.
+            message = "the destination refused the schema read"
+            raise DestinationSchemaReadError(message, reason="unauthorized", detail=f"token {token} is not valid")
         if self.fail_with_the_token:
             logging.getLogger("infrahub_sync.configuration.test").error("the destination refused the token %s", token)
             msg = f"the destination refused the token {token}"
@@ -203,6 +210,22 @@ def test_an_error_of_the_read_that_holds_the_token_reaches_no_answer_and_no_log(
     assert not in_service_log
 
 
+def test_a_finding_of_the_read_that_repeats_the_token_is_redacted(validation: Validation, reads: Reads) -> None:
+    reads.refuse_with_the_token = True
+    # The routes hold a fixed tuple of secrets: only the registry of the request holds the token,
+    # and the answer of the request is redacted with that registry.
+    served = _served_again(validation, key=TEST_ENCRYPTION_KEY, fixed_secrets=True)
+
+    response = served.validate()
+
+    assert response.status_code == 200
+    assert reads.tokens == [_digest(DESTINATION_TOKEN)]
+    findings = {finding["code"]: finding["message"] for finding in response.json()["findings"]}
+    returned = DESTINATION_TOKEN in response.text
+    assert not returned
+    assert f"unauthorized (token {REDACTED} is not valid)" in findings[READ_FAILED]
+
+
 def test_a_deleted_destination_credential_is_a_finding_and_no_request(validation: Validation, reads: Reads) -> None:
     databases = sorted(validation.tmp_path.rglob("*.sqlite3"))
     assert len(databases) == 1
@@ -240,10 +263,21 @@ def test_validation_without_an_encryption_key_is_a_finding(
 
 def _without_a_key(first: Validation) -> Validation:
     """Return the same registered version, served by an API over the same store with no encryption key."""
+    return _served_again(first, key=None)
+
+
+def _served_again(first: Validation, *, key: bytes | None, fixed_secrets: bool = False) -> Validation:
+    """Return the same registered version, served by another API over the same store.
+
+    With ``fixed_secrets``, the configuration routes hold a fixed tuple of secrets, as a served
+    Sync API gives them, and not the live list of the test API.
+    """
     store = first.api.store
     resolver = StoreAccountResolver(store, idle_seconds=600, admin_token=ADMIN_TOKEN, clock=first.api.clock)
-    routes = ConfigurationRoutes(product_projection=store, secrets=resolver.secret_values)
-    application = create_app(first.api.service, resolver, routes, credential_cipher=None)
+    secrets = (ADMIN_TOKEN,) if fixed_secrets else resolver.secret_values
+    routes = ConfigurationRoutes(product_projection=store, secrets=secrets)
+    cipher = None if key is None else CredentialCipher(key)
+    application = create_app(first.api.service, resolver, routes, credential_cipher=cipher)
     second = object.__new__(Validation)
     second.api = replace(first.api, client=TestClient(application))
     second.tmp_path = first.tmp_path
