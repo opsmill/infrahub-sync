@@ -70,6 +70,15 @@ The credentials a stage execution received (FR-003, FR-016, research R9).
 Primary key `(run_id, flow_run_id, block)`. A second release for the same execution and block, after a
 worker retry, replaces the row.
 
+## Mutation receipts (existing table, changed check)
+
+Added during implementation (overnight log A1). The check on `mutation_receipts.resource_kind` accepts
+`credential`. It has a new name, `mutation_receipts_resource_kinds` (SQLite triggers
+`mutation_receipts_resource_kinds_insert` and `_update`). At start-up, the store drops the check of an
+earlier build by its old name, only when the catalog holds it, and creates the new one. No column
+changes. The receipt of a credential request stores an HMAC fingerprint keyed from a derivation of the
+encryption key, and an answer that holds no value.
+
 ## Accounts (existing tables, new row)
 
 - The `worker` account: an `accounts` row with `name = 'worker'`, `environment_managed = TRUE`, no

@@ -57,7 +57,34 @@ databases `sync027_store`, `sync027_guard` and `sync027_storage`. The developmen
 
 ## Advisor questions
 
-(none yet)
+### A1. Chunk 6 replaces the receipt check of an existing table at start-up (2026-11-20, about 19:00)
+
+**Context.** The credential routes write mutation receipts with `resource_kind = 'credential'`. The
+`mutation_receipts` check of an earlier build refuses that kind. Chunk 6 renamed the check
+(`mutation_receipts_resource_kinds`) and, at start-up, drops the check of an earlier build by its old
+name, only when the catalog names it, then creates the new one. The plan said no existing table changes,
+and PR #425 removed start-up migrations.
+
+**Options.** (a) Keep chunk 6's swap. (b) Edit the check text under the same name, as spec 021 did for
+`schedule`. (c) Refuse an earlier database at start-up.
+
+**Recommendation sent.** (a), if it matches the precedent.
+
+**First answer.** Keep it if spec 021 also replaced the check by name; otherwise match 021's pattern. Check
+that the swap is conditional and that the fingerprint key is derived, not the raw key.
+
+**What the code showed.** Spec 021 edited the text under the same name, and also listed its new
+`product_runs` columns in `_COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD`, so an earlier database was refused
+outright (option c in effect). Spec 027 adds no column, so an earlier database starts under this build;
+with option (b) it would then refuse every credential change. The drop is conditional on the catalog, and
+the fingerprint key is a labelled SHA-256 derivation of the key.
+
+**Corrected answer.** Keep chunk 6's swap (a). Record the exception in `plan.md` and `data-model.md`,
+correct the T057 text with two limits (an earlier build that starts later adds its old check back and on
+PostgreSQL probably fails once a credential receipt exists; old and new builds on one database at the same
+time can leave both checks in place), and list it under Risks with option (c) as the alternative.
+
+**What I did next.** Applied those edits, then dispatched chunk 7.
 
 ## Progress
 

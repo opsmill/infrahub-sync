@@ -61,7 +61,9 @@ image does not grow (critique E13). React, TanStack Router,
 
 **Storage**: the product store on SQLite (tests) and PostgreSQL (service). Four new tables in `_SCHEMA`
 with `CREATE TABLE IF NOT EXISTS`; no column added to an existing table; `worker_environments` leaves
-`_SCHEMA`.
+`_SCHEMA`. One exception, added during implementation (overnight log A1): the `mutation_receipts`
+check accepts the resource kind `credential` under a new name, and start-up drops the check of an
+earlier build by its old name when the catalog holds it.
 
 **Testing**: pytest offline tier (`uv run invoke tests.tests-unit`) on both store dialects where the
 existing store tests run on both. About 80 existing test files set `INFRAHUB_SYNC_CREDENTIAL_*` or use
