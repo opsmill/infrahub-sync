@@ -1,0 +1,31 @@
+infrahub_sync/adapters/infrahub.py
+  s_7194e763d953d7::t_d78bcb90b742a5 1500
+  s_7194e763d953d7::t_90692ef969cea7 1508
+  s_7194e763d953d7::t_904f7c5bf56256 1487
+tests/adapters/test_infrahub_loader_fields.py
+  s_7194e763d953d7::t_e626df31594e38 217-219
+  s_7194e763d953d7::t_f56dd28308e921 485
+  s_7194e763d953d7::t_a09eb522b597a5 455-484,486-510
+tests/adapters/test_infrahub_peer_identifier.py
+  s_7194e763d953d7::t_346ceb9ef179fe 426
+  s_7194e763d953d7::t_f85b61b6b49792 164,167-168,171-175,229
+  s_7194e763d953d7::t_72cd1da09529b7 1016,1020,1028-1032,1034-1035
+  s_7194e763d953d7::t_a4c7f25fb01606 432
+  s_7194e763d953d7::t_e94394775b9dc1 462
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d9543f70a02a7aeff9fa6469960d92043619ce7",
+  "prompts": {},
+  "sessions": {
+    "s_7194e763d953d7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2dcc804-8d36-4407-9e21-780e508ea091",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
