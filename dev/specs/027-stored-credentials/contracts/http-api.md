@@ -2,7 +2,7 @@
 
 All routes are under `/api`, keep the API version `v3-unstable`, and use the existing error envelope
 `{"error": {"code", "message", "status", …}}`. No response of these routes contains a value, except the
-worker route.
+worker route that releases the values of a run.
 
 ## Credential resource
 
@@ -42,7 +42,7 @@ worker route.
   `credential.updated`, `credential.deleted`) with the name and revision, never a value.
 - The checks name the permission `manage-credentials`, held by administrators (FR-015).
 
-## Worker route
+## Worker route that releases the values of a run
 
 `POST /worker/runs/{run_id}/credentials`
 
@@ -71,17 +71,68 @@ worker route.
 - No `Idempotency-Key`, no `mutation_receipts` row.
 - Each success writes `run_credential_uses` rows and one audit event `credential.released`.
 
+## Worker route that returns the states of a schedule's earlier proposed changes
+
+`POST /worker/schedules/{schedule_id}/proposed-change-states`
+
+A scheduled start with branch review reads the state of the schedule's earlier proposed changes before
+its run exists. The first worker route releases values only to a claimed execution of a run, so the
+worker cannot get the destination token for this read. The Sync API does the read itself.
+
+- Accepts only the `worker` account. Every other account, including an administrator, gets
+  `403 forbidden` (FR-005).
+- Request: no body. The route reads nothing from a request body.
+- The Sync API takes every input of the read from its own store:
+    - the destination address and the credential name, from the schedule's stored configuration version
+    - the proposed-change identifiers, from the schedule's branch rows in the states `pending` and `open`
+      that have a proposed change
+- The Sync API decrypts the destination credential inside the redaction registry of the request, and
+  reads each proposed change from Infrahub on `main`.
+- Success `200`. The answer holds only the state of each proposed change, by the run of its branch row.
+  It holds no value, no address, no token and no proposed-change identifier:
+
+```json
+{"states": {"run_…": "approved", "run_…": "merged"}}
+```
+
+- A state is `open`, `approved`, `merging`, `merged`, `closed`, `canceled`, or `missing` for a proposed
+  change that Infrahub no longer holds.
+- Refusals, each with no value:
+    - `404 schedule-not-found`
+    - `422 destination-credential-not-named`: the destination of the schedule's version names no stored
+      credential. The worker reads such a destination itself.
+    - `422 credential-not-found`, `422 credential-field-missing`, `422 credential-method-unknown` (with
+      the block and the field names), as on the first worker route
+    - `500 credential-undecryptable`, `503 credential-key-not-configured`, as on the first worker route
+    - `500 configuration-version-unavailable`: the schedule's stored version cannot be read
+    - `424 proposed-change-read-failed`: Infrahub could not be read. `details.failure` is the failure
+      class of the read, for example `system_unreachable` or `token_rejected`; the answer never holds the
+      text of the error. The worker records that class as the cause of the failed start. The worker does
+      not repeat this request.
+- No `Idempotency-Key`, no `mutation_receipts` row.
+- No audit event and no `run_credential_uses` row: no run exists, and no value leaves the Sync API. This
+  matches the destination schema read that the Sync API does to validate a package. Each success writes
+  one log line with the schedule, the credential name and its revision.
+- The worker checks that the answer holds a state for every branch row that its admission read. When a
+  state is missing, the start fails with the cause `proposed-change-states-incomplete` and creates no
+  run.
+
 ## The worker account on other routes
 
-Every route outside `/worker/` answers `403 forbidden` to the worker account.
+Every route outside the two worker routes answers `403 forbidden` to the worker account.
 
 ## Changed routes
 
 - `GET /runs/{run_id}` gains `credentials_used: [{"stage", "block", "name", "revision"}]`.
-- `POST /configs`, `POST /configs/{config_id}/versions` and `POST /configs/{config_id}/versions/{v}/validate`
-  report the findings `credential-not-found`, `credential-field-missing`, `credential-not-used`
-  (a block that names a credential its method does not use) and `credential-format-removed`.
-  `credential-not-set-in-worker` and `worker-environment-unknown` are removed.
+- `POST /configs` and `POST /configs/{config_id}/versions` refuse a package that has a credential finding
+  with `422 configs-validation`. The `reason` field of the error names the finding:
+    - `credential-not-found`
+    - `credential-field-missing`
+    - `credential-not-used`: a block names a credential that its authentication method does not use
+    - `credential-format-removed`
+- `POST /configs/{config_id}/versions/{v}/validate` returns the same findings in the `findings` list of
+  its report, each with its code, its location and its message.
+- The findings `credential-not-set-in-worker` and `worker-environment-unknown` are removed.
 - The run-starting routes (plan, sync, apply, verify, approve, resume) refuse with `422` and the same
   codes before they start a run (FR-008).
 - The message of `credential-not-found` names the command `infrahub-sync credentials create <name>` and

@@ -31,7 +31,11 @@ from prefect.states import AwaitingRetry, Completed, Failed, State
 from pydantic_core import to_json
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
-from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration import (
+    ConfigurationPackage,
+    ConfigurationPackageParseError,
+    parse_configuration_package,
+)
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError, destination_token
 from infrahub_sync.configuration.credential_admission import (
     CREDENTIAL_BLOCKS,
@@ -117,7 +121,13 @@ from .checkpoints import (
     publish_plan_checkpoint,
     rehydrate_plan_checkpoint,
 )
-from .credential_client import ReleasedBlock, release_run_credentials
+from .credential_client import (
+    CredentialUnavailableError,
+    ProposedChangeStatesUnreadableError,
+    ReleasedBlock,
+    read_schedule_proposed_change_states,
+    release_run_credentials,
+)
 from .events import (
     SCHEDULE_PROPOSED_CHANGE_FAILED,
     SCHEDULE_PROPOSED_CHANGE_KEPT,
@@ -145,7 +155,7 @@ from .run_artifact import publish_run_artifact
 from .schedule_admission import EarlierProposedChangesUnreadableError, admit_scheduled_start
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
-from .settings import approval_required
+from .settings import CredentialSettingsError, approval_required
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
 
 logger = logging.getLogger(__name__)
@@ -158,6 +168,8 @@ _STAGE_CREDENTIALS_REQUIRED = "the stage of a configuration that names a stored 
 # The failure class of a read that needs a stored credential before the run exists: see
 # `_destination_settings`.
 _CREDENTIAL_UNAVAILABLE = "credential_unavailable"
+# The cause of a start whose answer of the Sync API lacks the state of an earlier proposed change.
+_STATES_INCOMPLETE = "proposed-change-states-incomplete"
 # The outcome of a `sync` that stopped after a plan that leaves out records (spec 007 FR-012).
 LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
 # How long a start that waits under the `queue` policy waits before its flow run checks again
@@ -614,14 +626,9 @@ def _scheduled_flow_run(flow_run_id: str, worker_id: str) -> ScheduledFlowRun:
 
 
 # The errors of a branch review operation that the steps of a scheduled run record as a failure
-# class (spec 021, research R15): the typed errors of `branch_review`, and an unreachable server,
-# a timeout, a refused token or a missing permission, which keep their own classes.
-_BRANCH_REVIEW_ERRORS: tuple[type[Exception], ...] = (
-    review_ops.BranchReviewError,
-    InfrahubSdkError,
-    httpx.HTTPError,
-    OSError,
-)
+# class (spec 021, research R15). The Sync API's read of a schedule's earlier proposed changes
+# catches the same list, so it lives beside the operations.
+_BRANCH_REVIEW_ERRORS = review_ops.BRANCH_REVIEW_ERRORS
 # The outcome of the event of an earlier proposed change that a run left in place, by its cause.
 _KEPT_OUTCOMES: dict[str, str] = {
     "approved": "kept-approved",
@@ -904,6 +911,20 @@ def _stopped_by_approval(schedule: ScheduleRecord) -> bool:
         return True
 
 
+def _schedule_package(projection: ProductProjection, schedule: ScheduleRecord) -> ConfigurationPackage:
+    """The package of the schedule's version.
+
+    Raises:
+        EarlierProposedChangesUnreadableError: the version is not found.
+        ConfigurationPackageParseError: the stored content is not a package.
+    """
+    stored = projection.lookup_configuration_version(schedule.config_id, schedule.registry_version).value
+    if stored is None:
+        cause = "configuration-version-not-found"
+        raise EarlierProposedChangesUnreadableError(cause)
+    return parse_configuration_package(stored.declared_content)
+
+
 def _destination_settings(projection: ProductProjection, schedule: ScheduleRecord) -> Mapping[str, Any]:
     """The destination settings of the schedule's version, with its credentials resolved, and no source.
 
@@ -911,16 +932,11 @@ def _destination_settings(projection: ProductProjection, schedule: ScheduleRecor
         EarlierProposedChangesUnreadableError: the version is not found, or its destination
             names a stored credential (cause ``credential_unavailable``).
     """
-    stored = projection.lookup_configuration_version(schedule.config_id, schedule.registry_version).value
-    if stored is None:
-        cause = "configuration-version-not-found"
-        raise EarlierProposedChangesUnreadableError(cause)
-    package = parse_configuration_package(stored.declared_content)
+    package = _schedule_package(projection, schedule)
     if package.configuration.destination.credential is not None:
         # The Sync API releases a value only to a claimed execution of a run (spec 027, FR-004),
-        # and this read comes before the admission creates the run. The start fails with this
-        # cause; it never skips the read, because a new run could then replace a proposed
-        # change that a person approved.
+        # and no run exists yet: the worker holds no token of this destination. The reader asks
+        # the Sync API for the states and never calls this function for such a destination.
         raise EarlierProposedChangesUnreadableError(_CREDENTIAL_UNAVAILABLE)
     instance = resolve_runtime_instance(
         package, directory=_NO_CONFIGURATION_DIRECTORY, resolve_source_credentials=False
@@ -928,17 +944,42 @@ def _destination_settings(projection: ProductProjection, schedule: ScheduleRecor
     return instance.destination.settings or {}
 
 
+def _states_from_the_sync_api(schedule: ScheduleRecord, branches: tuple[ScheduleBranch, ...]) -> dict[str, str]:
+    """The states of the earlier proposed changes, read by the Sync API (spec 027, FR-004).
+
+    The destination names a stored credential and no run exists yet, so the worker receives no
+    token. The Sync API decrypts the token, reads Infrahub and answers with the states only.
+    Every row the admission passed must have a state: a row without one would read as not
+    approved, and a new run could then replace a proposed change that a person approved.
+
+    Raises:
+        EarlierProposedChangesUnreadableError: the answer lacks the state of a row.
+        ProposedChangeStatesUnreadableError: the Sync API could not read Infrahub.
+        CredentialUnavailableError: the Sync API could not be reached, or it refused.
+        CredentialSettingsError: the worker's variables for the Sync API break a rule.
+    """
+    states = read_schedule_proposed_change_states(schedule.schedule_id)
+    expected = [branch.run_id for branch in branches if branch.proposed_change_id is not None]
+    if any(run_id not in states for run_id in expected):
+        raise EarlierProposedChangesUnreadableError(_STATES_INCOMPLETE)
+    return {run_id: states[run_id] for run_id in expected}
+
+
 def _earlier_proposed_changes_reader(
     projection: ProductProjection,
 ) -> Callable[[ScheduleRecord, tuple[ScheduleBranch, ...]], dict[str, str]]:
     """Read the states of a schedule's earlier proposed changes from Infrahub (research R11, FR-031).
 
-    The run's branch does not exist yet, so the reads go to `main`. A read that fails raises
+    The run's branch does not exist yet, so the reads go to `main`. A destination that names a
+    stored credential is read by the Sync API, which answers with the states only; any other
+    destination is read here, with the worker's own credentials. A read that fails raises
     `EarlierProposedChangesUnreadableError` with the failure class of the error, never its text.
     """
 
     def read(schedule: ScheduleRecord, branches: tuple[ScheduleBranch, ...]) -> dict[str, str]:
         try:
+            if _schedule_package(projection, schedule).configuration.destination.credential is not None:
+                return _states_from_the_sync_api(schedule, branches)
             client = review_ops.build_client(_destination_settings(projection, schedule), review_ops.DEFAULT_BRANCH)
             return {
                 branch.run_id: review_ops.read_proposed_change(
@@ -947,7 +988,16 @@ def _earlier_proposed_changes_reader(
                 for branch in branches
                 if branch.proposed_change_id is not None
             }
-        except (*_BRANCH_REVIEW_ERRORS, CredentialConfigurationError, ConfigurationPackageParseError) as exc:
+        except ProposedChangeStatesUnreadableError as exc:
+            # The class that the Sync API gave, which the client checked against the fixed list.
+            raise EarlierProposedChangesUnreadableError(exc.failure) from None
+        except (
+            *_BRANCH_REVIEW_ERRORS,
+            CredentialConfigurationError,
+            ConfigurationPackageParseError,
+            CredentialUnavailableError,
+            CredentialSettingsError,
+        ) as exc:
             raise EarlierProposedChangesUnreadableError(failure_class(exc)) from exc
 
     return read

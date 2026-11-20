@@ -12,9 +12,11 @@ Exempt routes, which read no bearer value at all, so no account is refused on th
 - ``POST /auth/sign-in``: it takes a name and a password, not a token; the ``worker`` account is
   refused there by ``tests/service/test_worker_account.py``.
 
-The refusal of other accounts on the worker route (``/worker/runs/{run_id}/credentials``) is
-tested with the route, in ``tests/service/test_worker_credentials_route.py``. ``require_worker``
-is tested here on a route added for the test.
+The worker routes are the two routes of ``WORKER_ROUTES``; a case holds the list exact, so a
+third worker route cannot be added without a change here. The refusal of other accounts on each
+worker route is tested with the route, in ``tests/service/test_worker_credentials_route.py`` and
+``tests/service/test_worker_proposed_change_states_route.py``. ``require_worker`` is tested here
+on a route added for the test.
 """
 
 from __future__ import annotations
@@ -54,6 +56,14 @@ _METHODS = frozenset({"get", "post", "put", "patch", "delete"})
 # The routes that read no bearer value; see the module docstring for why each is exempt.
 EXEMPT_ROUTES = frozenset({("GET", "/version"), ("GET", "/status"), ("POST", "/auth/sign-in")})
 WORKER_PREFIX = "/worker/"
+# Every route that accepts the ``worker`` account (spec 027, FR-004 and FR-005). The first is
+# the only route whose answer holds a value; the second answers with states only.
+WORKER_ROUTES = frozenset(
+    {
+        ("POST", "/worker/runs/{run_id}/credentials"),
+        ("POST", "/worker/schedules/{schedule_id}/proposed-change-states"),
+    }
+)
 
 
 def _application(store: ProductProjection) -> tuple[FastAPI, RunService]:
@@ -102,9 +112,28 @@ def test_the_enumeration_reaches_the_routes_of_the_included_routers() -> None:
     assert set(_OPERATIONS) >= EXEMPT_ROUTES
 
 
+def test_the_worker_routes_are_exactly_the_two_routes_of_the_contract() -> None:
+    assert {operation for operation in _OPERATIONS if WORKER_PREFIX in operation[1]} == WORKER_ROUTES
+
+
+@pytest.mark.parametrize(("method", "path"), sorted(WORKER_ROUTES), ids=lambda value: value)
+def test_a_worker_route_accepts_the_worker_token(
+    api: tuple[TestClient, ProductProjection, RunService], method: str, path: str
+) -> None:
+    client, _store, _service = api
+
+    response = client.request(
+        method, _concrete(path), headers={"Authorization": f"Bearer {_WORKER_TOKEN}"}, json={"flow_run_id": "none"}
+    )
+
+    # The identifier names nothing, so the route answers that; it does not refuse the account.
+    assert response.status_code == 404, f"{method} {path} answered {response.status_code}"
+    assert _WORKER_TOKEN not in response.text
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
-    [operation for operation in _OPERATIONS if operation not in EXEMPT_ROUTES and WORKER_PREFIX not in operation[1]],
+    [operation for operation in _OPERATIONS if operation not in EXEMPT_ROUTES and operation not in WORKER_ROUTES],
     ids=lambda value: value,
 )
 def test_the_worker_token_is_forbidden_outside_the_worker_routes(

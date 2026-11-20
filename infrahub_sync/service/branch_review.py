@@ -98,6 +98,13 @@ class BranchReviewError(Exception):
         super().__init__(self.message)
 
 
+# The errors of a branch review operation that a caller records as a failure class (spec 021,
+# research R15): the typed errors of this module, and an unreachable server, a timeout, a refused
+# token or a missing permission, which keep their own classes. The steps of a scheduled run and
+# the Sync API's read of a schedule's earlier proposed changes (spec 027) catch the same list.
+BRANCH_REVIEW_ERRORS: tuple[type[Exception], ...] = (BranchReviewError, InfrahubSDKError, httpx.HTTPError, OSError)
+
+
 class DestinationDefaultBranchNotMainError(BranchReviewError):
     """The destination's default branch is not `main`, so it cannot receive a proposed change."""
 

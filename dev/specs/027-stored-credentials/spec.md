@@ -204,11 +204,21 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
   only for credentials that the run's package version names.
   - Verification: request a value for a finished run, for another run, and for a credential the package
     does not name. Each request is refused.
-  - The Sync API MAY also use a value inside its own process, when it reads the destination schema to
-    validate a package. It MUST NOT return that value in a response.
-- **FR-005**: The worker route MUST refuse every account session and every account API token, including
-  an administrator's.
-  - Verification: call the route with an administrator token and expect a refusal.
+  - The Sync API MAY also use a value inside its own process, in two cases. It MUST NOT return that value
+    in a response.
+    - It reads the destination schema to validate a package.
+    - It reads the state of a schedule's earlier proposed changes for the worker. A scheduled start with
+      branch review needs these states before its run exists, so no value can be released for it. The
+      worker calls a second worker route, `POST /worker/schedules/{schedule_id}/proposed-change-states`,
+      with the schedule identifier only. The Sync API does the read itself and returns only the state of
+      each proposed change. It takes the destination address and the proposed-change identifiers from the
+      stored version and the stored branch rows of the schedule, never from the request.
+  - Verification: call the second route and check that the response holds states only; send a request
+    body that names another address and check that the stored address is read.
+- **FR-005**: Each worker route MUST refuse every account session and every account API token, including
+  an administrator's. There are two worker routes: the route that releases values to a run in progress,
+  and the route that returns the states of a schedule's earlier proposed changes (FR-004).
+  - Verification: call each route with an administrator token and expect a refusal.
 - **FR-006**: A worker MUST be able to execute any run with no credential variable in its own
   environment.
   - Verification: start two workers with no `INFRAHUB_SYNC_CREDENTIAL_*` variables and check that both
@@ -275,7 +285,9 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
 - **Package and package version (existing, changed).** Each adapter block names at most one credential
   with `credential: <name>`. The `credentials` block and the `$credential` references are removed.
 - **Worker account (new, defined by the environment).** It is defined in the same way as `admin`. All
-  workers share its token. It can call only the worker routes and cannot sign in.
+  workers share its token. It can call only the two worker routes and cannot sign in. One route releases
+  the values of a run in progress. The other returns the states of a schedule's earlier proposed changes,
+  which the Sync API reads itself; it returns no value.
 - **Run (existing, changed).** For each stage, it records the name and revision of each credential it
   used.
 - **Worker environment record (existing, removed).** The table in which each worker publishes the names

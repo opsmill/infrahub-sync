@@ -27,7 +27,12 @@ import httpx
 
 from infrahub_sync.execution import NoRedactionScopeError, redaction_scope
 from infrahub_sync.service import credential_client
-from infrahub_sync.service.credential_client import CredentialUnavailableError, release_run_credentials
+from infrahub_sync.service.credential_client import (
+    CredentialUnavailableError,
+    ProposedChangeStatesUnreadableError,
+    read_schedule_proposed_change_states,
+    release_run_credentials,
+)
 from infrahub_sync.service.settings import WORKER_API_URL_ENV, WORKER_TOKEN_ENV, WorkerSettings
 from infrahub_sync.service.web import API_PREFIX
 
@@ -380,3 +385,170 @@ def test_a_ca_bundle_that_cannot_be_read_is_api_unreachable(monkeypatch: pytest.
 
     assert raised.value.reason == "api-unreachable"
     assert api.sleeps == []
+
+
+# --- the states of a schedule's earlier proposed changes ------------------------------------
+
+SCHEDULE_ID = "s-0123456789abcdef0123456789abcdef"
+STATES_URL = f"http://sync-api:8000/api/worker/schedules/{SCHEDULE_ID}/proposed-change-states"
+STATES = {"run_1": "approved", "run_2": "merged", "run_3": "missing"}
+
+
+def _states(*steps: Step, settings: WorkerSettings | None = SETTINGS) -> tuple[Api, Callable[[], dict[str, str]]]:
+    api = Api(*steps)
+
+    def read() -> dict[str, str]:
+        return read_schedule_proposed_change_states(
+            SCHEDULE_ID, settings=settings, sleep=api.sleeps.append, transport=httpx.MockTransport(api._handle)
+        )
+
+    return api, read
+
+
+def test_the_states_request_names_the_schedule_and_the_worker_token_and_sends_no_body() -> None:
+    api, read = _states(_answer(200, {"states": STATES}))
+
+    # No redaction registry is bound: the answer holds no value, so the read needs none.
+    answer = read()
+
+    assert answer == STATES
+    (request,) = api.requests
+    assert (request.method, str(request.url)) == ("POST", STATES_URL)
+    assert request.headers["Authorization"] == f"Bearer {WORKER_TOKEN}"
+    assert "Idempotency-Key" not in request.headers
+    assert request.content == b""
+    assert STATES_URL.startswith(f"http://sync-api:8000{API_PREFIX}/worker/")
+
+
+def test_the_states_request_waits_at_most_10_seconds_and_follows_no_redirect() -> None:
+    api, read = _states(lambda _request: httpx.Response(307, headers={"Location": "http://other.example/"}))
+
+    with pytest.raises(CredentialUnavailableError) as raised:
+        read()
+
+    assert len(api.requests) == 1
+    assert api.requests[0].extensions["timeout"] == dict.fromkeys(("connect", "read", "write", "pool"), 10.0)
+    assert raised.value.reason == "release-refused"
+
+
+@pytest.mark.parametrize("failure", sorted(_UNREACHABLE))
+def test_an_unreachable_api_is_tried_again_for_the_states_and_ends_as_api_unreachable(failure: str) -> None:
+    api, read = _states(_UNREACHABLE[failure])
+
+    with pytest.raises(CredentialUnavailableError) as raised:
+        read()
+
+    assert api.sleeps == [1.0, 2.0, 4.0]
+    assert len(api.requests) == 4
+    assert raised.value.reason == "api-unreachable"
+    leaked = _holds_a_value(f"{raised.value} {raised.value!r}")
+    assert not leaked
+
+
+def test_a_states_retry_that_succeeds_stops_the_retries() -> None:
+    api, read = _states(_raise(httpx.ConnectError), _answer(200, {"states": STATES}))
+
+    assert read() == STATES
+    assert api.sleeps == [1.0]
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "reason"),
+    [
+        (401, "unauthenticated", "worker-token-refused"),
+        (403, "forbidden", "worker-token-refused"),
+        (404, "schedule-not-found", "release-refused"),
+        (422, "credential-not-found", "credential-missing"),
+        (422, "credential-field-missing", "credential-field-missing"),
+        (422, "destination-credential-not-named", "release-refused"),
+        (500, "credential-undecryptable", "credential-undecryptable"),
+        (500, "configuration-version-unavailable", "release-refused"),
+    ],
+)
+def test_a_refusal_of_the_states_is_final_at_once_and_has_its_reason(status: int, code: str, reason: str) -> None:
+    api, read = _states(_refusal(status, code, {"block": "destination", "name": "infrahub-main"}))
+
+    with pytest.raises(CredentialUnavailableError) as raised:
+        read()
+
+    assert (raised.value.reason, raised.value.code) == (reason, code)
+    assert (len(api.requests), api.sleeps) == (1, [])
+    leaked = _holds_a_value(f"{raised.value} {raised.value!r} {raised.value.__cause__!r}")
+    assert not leaked
+
+
+@pytest.mark.parametrize("failure", ["system_unreachable", "token_rejected", "proposed_change_read_failed"])
+def test_a_failed_read_of_infrahub_is_its_failure_class_and_is_not_tried_again(failure: str) -> None:
+    api, read = _states(_refusal(424, "proposed-change-read-failed", {"failure": failure}))
+
+    with pytest.raises(ProposedChangeStatesUnreadableError) as raised:
+        read()
+
+    assert raised.value.failure == failure
+    assert (len(api.requests), api.sleeps) == (1, [])
+    leaked = _holds_a_value(f"{raised.value} {raised.value!r} {raised.value.__cause__!r}")
+    assert not leaked
+
+
+@pytest.mark.parametrize(
+    "details",
+    [None, {}, {"failure": SOURCE_TOKEN}, {"failure": "a_class_that_is_not_in_the_list"}, {"failure": 7}],
+    ids=("no-details", "no-failure", "a-value", "unknown-class", "not-text"),
+)
+def test_a_failure_class_outside_the_fixed_list_is_not_taken_from_the_answer(details: dict[str, Any] | None) -> None:
+    _api, read = _states(_refusal(424, "proposed-change-read-failed", details))
+
+    with pytest.raises(CredentialUnavailableError) as raised:
+        read()
+
+    assert (raised.value.reason, raised.value.code) == ("release-refused", "proposed-change-read-failed")
+    leaked = _holds_a_value(f"{raised.value} {raised.value!r}")
+    assert not leaked
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        [],
+        {},
+        {"states": None},
+        {"states": ["approved"]},
+        {"states": {"run_1": "a-state-that-is-not-one"}},
+        {"states": {"run_1": None}},
+        {"states": {"run_1": SOURCE_TOKEN}},
+        {"states": {"run_1": "open"}, "token": SOURCE_TOKEN},
+        {"states": {"run_1": "open"}, "url": "https://infrahub.example"},
+    ],
+    ids=(
+        "null",
+        "list",
+        "empty",
+        "no-states",
+        "states-list",
+        "unknown-state",
+        "null-state",
+        "a-value-as-state",
+        "an-extra-value",
+        "an-extra-address",
+    ),
+)
+def test_a_states_answer_that_is_not_the_contract_is_refused(body: object) -> None:
+    _api, read = _states(_answer(200, body))
+
+    with pytest.raises(CredentialUnavailableError) as raised:
+        read()
+
+    assert (raised.value.reason, raised.value.code) == ("release-refused", "answer-invalid")
+    leaked = _holds_a_value(f"{raised.value} {raised.value!r}")
+    assert not leaked
+
+
+def test_a_states_answer_that_is_not_json_is_refused_without_its_text() -> None:
+    _api, read = _states(lambda _request: httpx.Response(200, text=f"not json, with {SOURCE_TOKEN}"))
+
+    with pytest.raises(CredentialUnavailableError) as raised:
+        read()
+
+    leaked = _holds_a_value(f"{raised.value} {raised.value!r} {raised.value.__cause__!r} {raised.value.__context__!r}")
+    assert not leaked

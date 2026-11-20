@@ -28,6 +28,14 @@ not ended, reads which credential each block of the run's stored version names, 
 block the stage needs, and only then decrypts. It writes the ``run_credential_uses`` rows and
 the ``credential.released`` event in one transaction, and takes no ``Idempotency-Key``: a
 receipt would store the answer, which holds the values.
+
+Earlier proposed changes of a schedule: ``CredentialActions.proposed_change_states`` answers the
+second worker route. A scheduled start with branch review reads these states before its run
+exists, so the worker can receive no value for it. The Sync API decrypts the destination token,
+reads Infrahub and answers with the states only. The address and the proposed-change identifiers
+come from the stored version and the stored branch rows, never from the request. It writes a log
+line and no event, as the destination schema read does (``destination_credential_values``): no
+value leaves the Sync API, and ``run_credential_uses`` needs a run.
 """
 
 from __future__ import annotations
@@ -51,6 +59,8 @@ from infrahub_sync.configuration.capabilities import (
     credential_field_map,
 )
 from infrahub_sync.configuration.credential_admission import STAGE_CREDENTIAL_BLOCKS
+from infrahub_sync.configuration.credentials import CredentialConfigurationError
+from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.execution import LiveSecretValues, register_secret_values
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -67,6 +77,7 @@ from infrahub_sync.product_store.models import (
     is_credential_field_set,
 )
 
+from . import branch_review
 from .credential_crypto import CredentialDecryptionError
 from .events import (
     CREDENTIAL_CREATED,
@@ -76,6 +87,7 @@ from .events import (
     credential_event,
     credentials_released_event,
 )
+from .failure_cause import failure_class
 from .service import ServiceAPIError
 from .settings import ENCRYPTION_KEY_ENV
 
@@ -128,6 +140,18 @@ _NOT_IN_PROGRESS_MESSAGE = (
     "no execution of this run with this flow run identifier is claimed by a worker and still in progress"
 )
 _VERSION_UNAVAILABLE_MESSAGE = "the configuration version of this run cannot be read"
+_SCHEDULE_NOT_FOUND_MESSAGE = "no schedule has this identifier"
+_SCHEDULE_VERSION_UNAVAILABLE_MESSAGE = "the configuration version of this schedule cannot be read"
+_DESTINATION_CREDENTIAL_NOT_NAMED_MESSAGE = (
+    "the destination of this schedule names no stored credential, so the Sync API does not read its proposed changes"
+)
+_PROPOSED_CHANGE_READ_FAILED_MESSAGE = (
+    "the earlier proposed changes of this schedule could not be read from Infrahub; details.failure names the class"
+)
+# The branch rows whose proposed change a scheduled start reads before it creates its run.
+_EARLIER_BRANCH_STATES: Final = ("pending", "open")
+# A registered package reads nothing from a directory (`flow._NO_CONFIGURATION_DIRECTORY`).
+_NO_CONFIGURATION_DIRECTORY: Final = ""
 _BLOCK_CREDENTIAL_NOT_FOUND_MESSAGE = (
     "the {block} names the stored credential {name!r}, which does not exist; an administrator creates it "
     "with `infrahub-sync credentials create {name}`"
@@ -232,6 +256,17 @@ class ReleasedBlock(BaseModel):
     name: str
     revision: int
     fields: dict[str, str] = Field(repr=False)
+
+
+class ProposedChangeStates(BaseModel):
+    """The answer of the second worker route: the state of each earlier proposed change, by its run.
+
+    It holds no value, no address and no proposed-change identifier.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    states: dict[str, str]
 
 
 class ReleasedCredentials(BaseModel):
@@ -480,7 +515,7 @@ class CredentialActions:
             blocks[entry.block] = ReleasedBlock(
                 name=credential.name,
                 revision=credential.current_revision,
-                fields=self._decrypted(cipher, entry, run_id),
+                fields=self._decrypted(cipher, entry, run_id=run_id),
             )
             uses.append(
                 CredentialUse(
@@ -518,6 +553,90 @@ class CredentialActions:
             ],
         )
         return ReleasedCredentials(run_id=run_id, blocks=blocks)
+
+    def proposed_change_states(self, schedule_id: str) -> ProposedChangeStates:
+        """Return the state in Infrahub of each earlier proposed change of a schedule, by its run.
+
+        The caller is the ``worker`` account: the route checks it. The rows are the ``pending``
+        and ``open`` branch rows of the schedule that have a proposed change, the rows that
+        the admission of a scheduled start reads. The token is decrypted here, added to the
+        redaction registry of the request, used for the reads on ``main``, and returned in no
+        answer. The address is the one of the stored version: a registered package pins the
+        Infrahub client to it, so no variable of this process changes the address or the token.
+
+        Raises:
+            ServiceAPIError: ``404 schedule-not-found``; ``500
+                configuration-version-unavailable``; ``422 destination-credential-not-named``
+                when the destination names no stored credential or needs no field of one;
+                ``422 credential-not-found``, ``422 credential-field-missing``, ``422
+                credential-method-unknown``, ``500 credential-undecryptable`` and ``503
+                credential-key-not-configured`` as the release; ``424
+                proposed-change-read-failed`` with ``details.failure``, the failure class of
+                the read, never the text of its error. No refusal holds a value.
+        """
+        projection = self._access.projection
+        schedule = projection.lookup_schedule(schedule_id).value
+        if schedule is None:
+            raise ServiceAPIError(404, "schedule-not-found", _SCHEDULE_NOT_FOUND_MESSAGE)
+        version = projection.lookup_configuration_version(schedule.config_id, schedule.registry_version).value
+        if version is None:
+            raise ServiceAPIError(500, "configuration-version-unavailable", _SCHEDULE_VERSION_UNAVAILABLE_MESSAGE)
+        try:
+            package = parse_configuration_package(version.declared_content)
+        except ConfigurationPackageParseError:
+            # The parse error can quote the declared content; the answer names the fact only.
+            raise ServiceAPIError(
+                500, "configuration-version-unavailable", _SCHEDULE_VERSION_UNAVAILABLE_MESSAGE
+            ) from None
+        name = package.configuration.destination.credential
+        entry = None if name is None else self._checked_block("destination", name, package)
+        if entry is None:
+            # Refused before any client is built: without a stored token, the client would
+            # read a token from the variables of this process.
+            raise ServiceAPIError(422, "destination-credential-not-named", _DESTINATION_CREDENTIAL_NOT_NAMED_MESSAGE)
+        branches = [
+            row
+            for row in projection.schedule_branches(schedule_id, states=_EARLIER_BRANCH_STATES)
+            if row.proposed_change_id is not None
+        ]
+        if not branches:
+            return ProposedChangeStates(states={})
+        fields = self._decrypted(self._require_cipher(), entry, schedule_id=schedule_id)
+        states: dict[str, str] = {}
+        try:
+            instance = resolve_runtime_instance(
+                package,
+                directory=_NO_CONFIGURATION_DIRECTORY,
+                resolve_source_credentials=False,
+                released={"destination": fields},
+            )
+            client = branch_review.build_client(instance.destination.settings or {}, branch_review.DEFAULT_BRANCH)
+            for row in branches:
+                assert row.proposed_change_id is not None
+                states[row.run_id] = branch_review.read_proposed_change(
+                    client, row.proposed_change_id, branch=branch_review.DEFAULT_BRANCH
+                )
+        except (*branch_review.BRANCH_REVIEW_ERRORS, CredentialConfigurationError) as error:
+            # Only the class leaves this function: the text of the error can name the address.
+            failure = failure_class(error)
+            logger.warning(
+                "schedule.proposed_change_read_failed",
+                schedule_id=schedule_id,
+                name=entry.credential.name,
+                failure=failure,
+                error_type=type(error).__name__,
+            )
+            raise ServiceAPIError(
+                424, "proposed-change-read-failed", _PROPOSED_CHANGE_READ_FAILED_MESSAGE, details={"failure": failure}
+            ) from None
+        logger.info(
+            "credential.used_for_proposed_change_read",
+            schedule_id=schedule_id,
+            name=entry.credential.name,
+            revision=entry.credential.current_revision,
+            proposed_changes=len(states),
+        )
+        return ProposedChangeStates(states=states)
 
     def _named(
         self, run: ProductRun, stage: CredentialStage
@@ -581,8 +700,10 @@ class CredentialActions:
             )
         return _BlockCredential(block=block, credential=credential, fields=tuple(sorted(needed)))
 
-    def _decrypted(self, cipher: CredentialCipher, entry: _BlockCredential, run_id: str) -> dict[str, str]:
+    def _decrypted(self, cipher: CredentialCipher, entry: _BlockCredential, **context: str) -> dict[str, str]:
         """Return the needed fields of the current revision; the cipher adds each value to the request's registry.
+
+        ``context`` names what the values are for in a log line: the run, or the schedule.
 
         Raises:
             ServiceAPIError: ``500 credential-undecryptable``, or ``422 credential-not-found``
@@ -605,7 +726,7 @@ class CredentialActions:
         except CredentialDecryptionError as error:
             logger.warning(
                 "credential.undecryptable",
-                run_id=run_id,
+                **context,
                 block=entry.block,
                 name=credential.name,
                 revision=stored.revision,
@@ -616,7 +737,7 @@ class CredentialActions:
             # The encrypted value does not hold a field its record lists.
             logger.warning(
                 "credential.undecryptable",
-                run_id=run_id,
+                **context,
                 block=entry.block,
                 name=credential.name,
                 revision=stored.revision,

@@ -1901,6 +1901,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/status",
         "/version",
         "/worker/runs/{run_id}/credentials",
+        "/worker/schedules/{schedule_id}/proposed-change-states",
     }
     for path, route in paths.items():
         for operation in route.values():

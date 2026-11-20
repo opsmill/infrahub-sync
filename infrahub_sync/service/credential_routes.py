@@ -7,7 +7,12 @@
   a caller that holds ``manage-credentials`` (administrators, FR-015), each with ``Idempotency-Key``;
 - ``POST /worker/runs/{run_id}/credentials``, for the ``worker`` account only (FR-005). It is the
   one route whose answer holds values. It takes no ``Idempotency-Key`` and writes no mutation
-  receipt, because a receipt stores the answer.
+  receipt, because a receipt stores the answer;
+- ``POST /worker/schedules/{schedule_id}/proposed-change-states``, for the ``worker`` account only.
+  The Sync API reads the states of the schedule's earlier proposed changes from Infrahub itself,
+  with the stored credential of the destination, and answers with the states only. The request
+  has no body: the address and the identifiers come from the stored rows. It takes no
+  ``Idempotency-Key`` and writes no receipt and no event.
 
 A route calls one method of ``credential_actions.CredentialActions``. A changing route checks the
 permission in a dependency declared before the key and the body, so the refusal comes before the
@@ -38,6 +43,7 @@ from .credential_actions import (
     CredentialResource,
     CredentialValueRequest,
     DescribeCredentialRequest,
+    ProposedChangeStates,
     ReleaseCredentialsRequest,
     ReleasedCredentials,
 )
@@ -49,7 +55,11 @@ _READ_ERRORS: dict[int | str, dict[str, Any]] = {status: {"model": ErrorEnvelope
 _RELEASE_ERRORS: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorEnvelope} for status in (401, 403, 404, 409, 422, 500, 503)
 }
+_STATES_ERRORS: dict[int | str, dict[str, Any]] = {
+    status: {"model": ErrorEnvelope} for status in (401, 403, 404, 422, 424, 500, 503)
+}
 _RunId = Annotated[str, Path(min_length=1, max_length=200)]
+_ScheduleId = Annotated[str, Path(min_length=1, max_length=200)]
 _CHANGE_ERRORS: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorEnvelope} for status in (401, 403, 404, 409, 422, 503)
 }
@@ -61,7 +71,7 @@ def credential_router(
     idempotency_key: Callable[..., str],
     authenticate_worker: Callable[..., Principal],
 ) -> APIRouter:
-    """Return the routes of the stored credentials: the routes for accounts and the worker route.
+    """Return the routes of the stored credentials: the routes for accounts and the two worker routes.
 
     ``authenticate_worker`` is ``app.require_worker``: it lets the ``worker`` account through and
     answers ``403 forbidden`` to every other account.
@@ -136,5 +146,23 @@ def credential_router(
         """
         released = actions.release(principal, run_id, body)
         return JSONResponse(status_code=200, content=released.model_dump(mode="json"))
+
+    @router.post(
+        "/worker/schedules/{schedule_id}/proposed-change-states",
+        response_model=ProposedChangeStates,
+        responses=_STATES_ERRORS,
+    )
+    def read_proposed_change_states(
+        _principal: Annotated[Principal, Depends(authenticate_worker)],
+        schedule_id: _ScheduleId,
+    ) -> JSONResponse:
+        """Return the state of each earlier proposed change of the schedule, read from Infrahub by the Sync API.
+
+        The route declares no body, so nothing a request sends can change the address, the
+        token or the proposed changes that are read. The answer holds the states only.
+        """
+        return JSONResponse(
+            status_code=200, content=actions.proposed_change_states(schedule_id).model_dump(mode="json")
+        )
 
     return router

@@ -4,7 +4,9 @@
 - A configuration that names no stored credential makes no request and reads no worker variable.
 - An apply, a resume and a verify ask only for the destination.
 - The two reads of a scheduled start that come before its run exists get no value: the worker
-  route answers a claimed execution of a run only (FR-004).
+  route that releases values answers a claimed execution of a run only (FR-004). The readiness
+  read goes without a token. The read of the earlier proposed changes asks the Sync API for
+  their states, and a failure of that read fails the start; it never goes on without the read.
 
 Every value is a marker text. A check compares digests or a boolean, so a failed check prints no
 value.
@@ -28,14 +30,18 @@ from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.product_store.models import ConfigurationVersion, LookupResult, ProductRun
 from infrahub_sync.runtime_schema import worker as worker_module
 from infrahub_sync.service import flow as service_flow
-from infrahub_sync.service.credential_client import ReleasedBlock
+from infrahub_sync.service.credential_client import (
+    CredentialUnavailableError,
+    ProposedChangeStatesUnreadableError,
+    ReleasedBlock,
+)
 from infrahub_sync.service.schedule_admission import EarlierProposedChangesUnreadableError
-from infrahub_sync.service.settings import WORKER_API_URL_ENV, WORKER_TOKEN_ENV
+from infrahub_sync.service.settings import WORKER_API_URL_ENV, WORKER_TOKEN_ENV, CredentialSettingsError
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
-    from infrahub_sync.product_store.models import ScheduleRecord
+    from infrahub_sync.product_store.models import ScheduleBranch, ScheduleRecord
 
 SOURCE_TOKEN = "stage-marker-source-token-18be"  # noqa: S105 - a test value, not a secret.
 DESTINATION_TOKEN = "stage-marker-destination-token-6f03"  # noqa: S105 - a test value, not a secret.
@@ -245,26 +251,100 @@ def _schedule(projection: _Projection) -> ScheduleRecord:
     return cast("ScheduleRecord", record)
 
 
-def test_the_earlier_proposed_changes_of_a_schedule_are_not_read_without_a_run(monkeypatch: pytest.MonkeyPatch) -> None:
+def _branches(*run_ids: str, proposed_change: bool = True) -> tuple[ScheduleBranch, ...]:
+    return tuple(
+        cast("ScheduleBranch", SimpleNamespace(run_id=run_id, proposed_change_id="pc" if proposed_change else None))
+        for run_id in run_ids
+    )
+
+
+def _sync_api_states(monkeypatch: pytest.MonkeyPatch, answer: dict[str, str] | Exception) -> list[str]:
+    """Stand in for the worker's client of the states route; return the schedules it was asked for."""
+    asked: list[str] = []
+
+    def read(schedule_id: str) -> dict[str, str]:
+        asked.append(schedule_id)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(service_flow, "read_schedule_proposed_change_states", read)
+    return asked
+
+
+def test_the_worker_holds_no_destination_setting_of_a_schedule_before_its_run(monkeypatch: pytest.MonkeyPatch) -> None:
     _refuse_requests(monkeypatch)
     projection = _Projection(_package())
 
     with pytest.raises(EarlierProposedChangesUnreadableError) as unreadable:
         service_flow._destination_settings(cast("ProductProjection", projection), _schedule(projection))
 
-    # The start fails with a named cause; it never goes on without the read.
     assert unreadable.value.cause == "credential_unavailable"
 
 
-def test_the_reader_of_a_schedule_reports_the_same_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_reader_of_a_schedule_asks_the_sync_api_for_the_states(monkeypatch: pytest.MonkeyPatch) -> None:
     _refuse_requests(monkeypatch)
+    asked = _sync_api_states(monkeypatch, {"run-1": "approved", "run-2": "merged", "run-of-another-read": "open"})
+    built: list[object] = []
+    monkeypatch.setattr(service_flow.review_ops, "build_client", lambda *_args: built.append(_args))
+    projection = _Projection(_package())
+    read = service_flow._earlier_proposed_changes_reader(cast("ProductProjection", projection))
+
+    states = read(_schedule(projection), _branches("run-1", "run-2"))
+
+    assert asked == ["schedule-stored-credentials"]
+    # Only the rows the admission passed; the worker builds no client of the destination.
+    assert states == {"run-1": "approved", "run-2": "merged"}
+    assert built == []
+
+
+def test_a_destination_without_a_stored_credential_is_read_by_the_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "old-path-infrahub-value-0001")
+    asked = _sync_api_states(monkeypatch, AssertionError("the worker asked the Sync API for the states"))
+    monkeypatch.setattr(service_flow.review_ops, "build_client", lambda *_args: object())
+    monkeypatch.setattr(service_flow.review_ops, "read_proposed_change", lambda *_args, **_kwargs: "open")
+    projection = _Projection(_package(blocks=("source",)))
+    read = service_flow._earlier_proposed_changes_reader(cast("ProductProjection", projection))
+
+    states = read(_schedule(projection), _branches("run-1"))
+
+    assert (states, asked) == ({"run-1": "open"}, [])
+
+
+def test_an_answer_without_the_state_of_a_row_fails_the_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    _sync_api_states(monkeypatch, {"run-1": "merged"})
+    projection = _Projection(_package())
+    read = service_flow._earlier_proposed_changes_reader(cast("ProductProjection", projection))
+
+    # A row with no state would read as "not approved", and a new run could replace an approved change.
+    with pytest.raises(EarlierProposedChangesUnreadableError) as unreadable:
+        read(_schedule(projection), _branches("run-1", "run-2"))
+
+    assert unreadable.value.cause == "proposed-change-states-incomplete"
+
+
+@pytest.mark.parametrize(
+    ("error", "cause"),
+    [
+        (ProposedChangeStatesUnreadableError("system_unreachable"), "system_unreachable"),
+        (ProposedChangeStatesUnreadableError("token_rejected"), "token_rejected"),
+        (CredentialUnavailableError("credential-missing", code="credential-not-found"), "credential_unavailable"),
+        (CredentialUnavailableError("api-unreachable"), "credential_unavailable"),
+        (CredentialSettingsError(f"{WORKER_TOKEN_ENV} is not set"), "credential_unavailable"),
+    ],
+    ids=("infrahub-unreachable", "infrahub-refused", "credential-missing", "api-unreachable", "worker-variables"),
+)
+def test_a_failed_read_of_the_states_fails_the_start_with_its_cause(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, cause: str
+) -> None:
+    _sync_api_states(monkeypatch, error)
     projection = _Projection(_package())
     read = service_flow._earlier_proposed_changes_reader(cast("ProductProjection", projection))
 
     with pytest.raises(EarlierProposedChangesUnreadableError) as unreadable:
-        read(_schedule(projection), ())
+        read(_schedule(projection), _branches("run-1"))
 
-    assert unreadable.value.cause == "credential_unavailable"
+    assert unreadable.value.cause == cause
 
 
 @pytest.mark.parametrize(("reason", "waits_for"), [("unreachable", "unreachable"), ("unauthorized", None)])
