@@ -170,8 +170,25 @@ def test_detach_does_nothing_when_no_workers_are_attached(monkeypatch: pytest.Mo
     assert fake.changes() == []
 
 
-def test_netbox_destroy_disconnects_the_worker_before_removing_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_netbox_destroy_removes_the_dataset_record(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A fresh NetBox after `destroy` must not be reported as holding the dataset recorded before."""
+    monkeypatch.setattr(netbox, "STATE_DIR", tmp_path)
+    (tmp_path / "tier.json").write_text('{"tier": "M", "image": "netbox", "phase": "seeded"}', encoding="utf-8")
+    monkeypatch.setattr(netbox, "load_netbox_env", lambda: VALUES)
+    monkeypatch.setattr(netbox, "detach_dev_worker", lambda _context, _values: None)
+    monkeypatch.setattr(netbox, "_compose", lambda _context, _arguments, _values: None)
+
+    cast("Task", netbox.destroy).body(Context())
+
+    assert not (tmp_path / "tier.json").exists()
+    assert netbox.recorded_dataset() is None
+
+
+def test_netbox_destroy_disconnects_the_worker_before_removing_the_network(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     events: list[str] = []
+    monkeypatch.setattr(netbox, "STATE_DIR", tmp_path)
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: VALUES)
     monkeypatch.setattr(netbox, "detach_dev_worker", lambda _context, _values: events.append("detach"))
     monkeypatch.setattr(netbox, "_compose", lambda _context, arguments, _values: events.append(arguments))

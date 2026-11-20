@@ -605,26 +605,33 @@ def demo_package(_context: Context, infrahub_url: str = "", dev_stack: bool = Fa
 
 @task(name="destroy")
 def destroy(context: Context) -> None:
-    """Stop the local NetBox and remove its containers and data volumes."""
+    """Stop the local NetBox and remove its containers, its data volumes and the record of its dataset."""
     values = load_netbox_env()
     detach_dev_worker(context, values)
     _compose(context, "down --volumes", values)
+    (STATE_DIR / "tier.json").unlink(missing_ok=True)
     print(f" - [{NAMESPACE}] Local NetBox stopped and data volumes removed")
 
 
 def recorded_dataset() -> str | None:
     """Name the dataset this checkout last loaded into the local NetBox, when it can tell.
 
-    Only a `seed` load leaves a record (`.netbox/tier.json`, which a `demo` restore
-    removes), so the answer is the `seed` dataset and its tier, or None. None does not mean
-    the `demo` dataset: another checkout, or a change made in NetBox, leaves no record here.
+    Only a `seed` load leaves a record (`.netbox/tier.json`, which a `demo` restore and
+    `netbox.destroy` remove), so the answer is the `seed` dataset and its tier, with the note
+    that `netbox.change` changed it when the record says so, or None. None does not mean the
+    `demo` dataset: another checkout, or a change made in NetBox, leaves no record here.
     """
     try:
         state = json.loads((STATE_DIR / "tier.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    tier = state.get("tier") if isinstance(state, dict) else None
-    return f"the {DEFAULT_DATASET!r} dataset at tier {tier}" if isinstance(tier, str) else None
+    if not isinstance(state, dict) or not isinstance(tier := state.get("tier"), str):
+        return None
+    dataset = f"the {DEFAULT_DATASET!r} dataset at tier {tier}"
+    phase = state.get("phase")
+    if phase == "seeded":
+        return dataset
+    return f"{dataset}, changed by `netbox.change`" if phase == "changed" else None
 
 
 def netbox_image() -> str:

@@ -149,10 +149,15 @@ def test_a_failed_demo_restore_removes_the_partial_netbox(monkeypatch: pytest.Mo
     [
         (None, None),
         ('{"tier": "M", "image": "netbox", "phase": "seeded"}', "the 'seed' dataset at tier M"),
+        (
+            '{"tier": "M", "image": "netbox", "phase": "changed"}',
+            "the 'seed' dataset at tier M, changed by `netbox.change`",
+        ),
+        ('{"tier": "M", "image": "netbox"}', None),
         ("not json", None),
         ('["M"]', None),
     ],
-    ids=["no-record", "seed-tier", "unreadable", "not-an-object"],
+    ids=["no-record", "seed-tier", "changed-tier", "unknown-phase", "unreadable", "not-an-object"],
 )
 def test_recorded_dataset_names_only_a_seed_load_it_recorded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, record: str | None, expected: str | None
