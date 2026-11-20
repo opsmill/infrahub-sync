@@ -368,7 +368,14 @@ progress is not cancelled and that an open review branch and its proposed change
 Infrahub. **Take over** asks for confirmation and states that the next runs of the schedule record
 the administrator as the account that started them.
 
+The form opens as a large dialog over the page, with the settings in three parts (Configuration,
+Cadence, Writing) and the reason below them. When you press **Create schedule** or **Save
+changes** while a value is missing or refused by the form's rules, the form lists the values to
+change above the buttons, shows each problem under its field, and moves to the first one. On a
+phone, the dialog fills the screen.
+
 The change form opens with the schedule's current values and sends only the settings you changed.
+Next to the buttons, it counts them, for example "2 settings changed".
 When someone else changes the schedule while the form is open, the form states that the schedule
 changed since you opened it, and offers to reload it. A refusal of the Sync API is shown with its
 message, under the field it concerns, and the form keeps the values you entered. After a network
@@ -389,9 +396,11 @@ The create and change forms build the cron expression from one of these cadences
 
 A schedule whose expression matches none of the first six cadences opens as **Custom**.
 
-Below the cadence, the form shows the next five start times of the expression and the time zone,
-in the schedule's time zone with its offset, and in your local time when it differs. The preview
-is computed by the Sync API with the code that computes a schedule's `next_start_at`, and updates
+To the right of the form, "Next starts" lists the next five start times of the expression and
+the time zone, as on the schedule page: above a "Now" marker, the soonest nearest it, in your
+time zone, with the schedule's time zone when you hover a time. When the expression has no start,
+the list says why. On a phone, the next start shows in one line above the buttons, and opens the
+list. The preview is computed by the Sync API with the code that computes a schedule's `next_start_at`, and updates
 when you stop typing. An expression or a time zone that the Sync API refuses is shown under its
 field before you save. When the preview cannot be read, you can still save.
 
