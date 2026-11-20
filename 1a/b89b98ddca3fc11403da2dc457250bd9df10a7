@@ -1,0 +1,32 @@
+infrahub_sync/cli.py
+  s_eefe1fec4652ae::t_0a0501af9a5bb9 949-951,955-956,958-965,969-971
+  s_eefe1fec4652ae::t_d4da99f3936bd2 972-973
+dev/specs/025-register-config-web/tasks.md
+  s_eefe1fec4652ae::t_d2d1aa59fb3012 55
+dev/specs/025-register-config-web/contracts/sync-api.md
+  s_eefe1fec4652ae::t_d2d1aa59fb3012 96-98
+dev/adr/0054-a-package-can-be-validated-before-it-is-registered.md
+  s_eefe1fec4652ae::t_d2d1aa59fb3012 70
+tests/cli/test_client_commands.py
+  s_eefe1fec4652ae::t_c0888df0843412 446-494
+docs/docs/configuration-package.mdx
+  s_eefe1fec4652ae::t_d2d1aa59fb3012 175-177
+docs/docs/reference/cli.mdx
+  s_eefe1fec4652ae::t_d2d1aa59fb3012 410-412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ab89b98ddca3fc11403da2dc457250bd9df10a7",
+  "prompts": {},
+  "sessions": {
+    "s_eefe1fec4652ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09f0ff9c-6a0f-4190-9c78-36ebf5d5ccc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
