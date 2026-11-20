@@ -1,0 +1,73 @@
+docs/docs/configuration-package.mdx
+  s_caab93ebf0934a::t_91a9595328e106 101-108,123-141
+infrahub_sync/product_store/store.py
+  s_caab93ebf0934a::t_91a9595328e106 293-294,313-326,806-823,864-875,1394-1396,1435-1444,1447-1448,3458-3459,3488-3490,3516-3519,3544-3557,3615-3616,5530-5532,5558-5561
+  s_caab93ebf0934a::t_c66f65c65cba15 3457,3534
+tests/client/test_client.py
+  s_caab93ebf0934a::t_91a9595328e106 426-453
+infrahub_sync/client/client.py
+  s_caab93ebf0934a::t_91a9595328e106 1476-1481
+tests/product_store/test_postgresql_isolation.py
+  s_caab93ebf0934a::t_91a9595328e106 226,233-238,284
+tests/service/test_http_api.py
+  s_caab93ebf0934a::t_91a9595328e106 244-245,260,291,377
+infrahub_sync/cli.py
+  s_caab93ebf0934a::t_91a9595328e106 12,63,402-420,454-458,463-465,766-778
+docs/docs/reference/cli.mdx
+  s_caab93ebf0934a::t_91a9595328e106 292-294
+infrahub_sync/client/errors.py
+  s_caab93ebf0934a::t_91a9595328e106 65-77,89,97-99
+tests/product_store/test_schedules.py
+  s_caab93ebf0934a::t_91a9595328e106 60,115-117
+docs/docs/reference/sync-http-api.mdx
+  s_caab93ebf0934a::t_c66f65c65cba15 597-598
+  s_caab93ebf0934a::t_91a9595328e106 25-27,636,1655-1656,1663
+infrahub_sync/product_store/configs.py
+  s_caab93ebf0934a::t_91a9595328e106 62,133-147,727-728,772-773
+tests/cli/test_client_commands.py
+  s_caab93ebf0934a::t_91a9595328e106 289-330
+tests/configuration/validation_packages.py
+  s_caab93ebf0934a::t_91a9595328e106 30-31,33-38,40-43
+changelog/+unique-configuration-names.changed.md
+  s_caab93ebf0934a::t_91a9595328e106 1
+infrahub_sync/product_store/__init__.py
+  s_caab93ebf0934a::t_91a9595328e106 65,71,117,128
+tests/product_store/test_contract.py
+  s_caab93ebf0934a::t_91a9595328e106 32,40,95,106,637-649,3832-3833,3841,3847,3853,3860-3863,3871-3998,4009-4011,4014-4016,4279,4340-4342,4344-4345,4464-4469,5224,5331-5333,5342-5346
+tests/service/test_config_routes.py
+  s_caab93ebf0934a::t_91a9595328e106 41,311-312,1379,1381,1384,1387,1518-1522,2419-2514
+  s_caab93ebf0934a::t_bfa38be7fee6ff 2417-2418
+tests/service/test_schedule_bootstrap.py
+  s_caab93ebf0934a::t_91a9595328e106 215-242
+infrahub_sync/service/bootstrap.py
+  s_caab93ebf0934a::t_91a9595328e106 44-48,393-396
+docs/docs/development/knowledge/repository-tour.md
+  s_caab93ebf0934a::t_91a9595328e106 310-318
+tests/product_store/test_configs_service.py
+  s_caab93ebf0934a::t_bc7e94c5426bf3 1694
+  s_caab93ebf0934a::t_91a9595328e106 277-278,315,524,1678,1681,1683-1688,1690-1692
+docs/docs/orchestration.mdx
+  s_caab93ebf0934a::t_91a9595328e106 313-314
+infrahub_sync/service/config_routes.py
+  s_caab93ebf0934a::t_91a9595328e106 18,51,66-70,239-244,249-256,567-572,677,730
+docs/docs/running-a-sync.mdx
+  s_caab93ebf0934a::t_91a9595328e106 67,76-78
+infrahub_sync/service/worker.py
+  s_caab93ebf0934a::t_91a9595328e106 31,422-425
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ddbf2fd80bb5a70eb0353ad87b858e90d728a29",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
