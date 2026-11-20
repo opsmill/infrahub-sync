@@ -97,5 +97,7 @@ export interface ApiErrorBody {
     status: number;
     run_id?: string | null;
     reason?: string | null;
+    /** Values the refusal names, such as the configuration of `configuration-name-in-use`. */
+    details?: Record<string, unknown> | null;
   };
 }

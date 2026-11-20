@@ -236,8 +236,10 @@ The review step then shows:
 - the configuration name, the source adapter and the destination adapter;
 - for a new version, the changes to the mappings compared with the newest version, and a
   message when the version renames the configuration;
-- for a new configuration, a warning when a configuration with the same name exists, with a
-  link to add a version to it instead;
+- "A configuration named N already exists." when another configuration has the name of the
+  package, for a new configuration or for a version that renames its configuration.
+  Configuration names are unique, so **Register** stays disabled. Select **Add as a new
+  version** to review the same file as a new version of configuration N;
 - the names of the environment variables that the credential references point to, without
   their values;
 - the validation result against the branch in the **Validation branch** field. The field

@@ -1,6 +1,6 @@
 import { Button } from "@infrahub/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
@@ -30,7 +30,7 @@ import { CODE_CHIP, InlineCode, Notice } from "#/components/page";
 import { diffMappings, mappingEntries, removedEntries } from "#/domain/mapping";
 import { plural } from "#/domain/run-state";
 import { describeSystem } from "#/domain/systems";
-import { DialogFrame, Field, INPUT, LINK, MutationError, ReasonField } from "#/features/runs/form";
+import { DialogFrame, Field, INPUT, MutationError, ReasonField } from "#/features/runs/form";
 
 import { MappingList } from "./detail-mapping";
 import { MappingDetail } from "./detail-mapping-panel";
@@ -44,7 +44,10 @@ import {
   isNoAnswer,
   MESSAGES,
   moreFindingsText,
+  type NameInUse,
   NEW_CONFIGURATION_TITLE,
+  nameInUseOf,
+  otherNamesake,
   REASON_MAX_LENGTH,
   REVIEW_FINDINGS_LIMIT,
   readFailureHint,
@@ -54,6 +57,7 @@ import {
   resultKind,
   reviewTitle,
   sameAsNewestText,
+  sameNameHint,
   sameNameText,
   unchangedText,
   validatingText,
@@ -92,16 +96,17 @@ type Outcome =
 
 /**
  * The review step for one dropped package file: what it declares, how its mapping differs from
- * the newest version (for a new version) or whether its name is in use (for a new
- * configuration), and the result of validating it against a destination branch. Register is
- * enabled only for a valid package, or, as "Register without validation", when the destination
- * cannot be reached.
+ * the newest version (for a new version), whether another configuration has its name, and the
+ * result of validating it against a destination branch. Register is enabled only for a valid
+ * package whose name no other configuration has, or, as "Register without validation", when the
+ * destination cannot be reached.
  */
 export function PackageReview({
   target,
   document,
   onClose,
   onRefused,
+  onAddAsVersion,
 }: {
   target: ReviewTarget;
   /** The text of the dropped file; the Sync API parses it. */
@@ -109,6 +114,8 @@ export function PackageReview({
   onClose: () => void;
   /** A first check the Sync API refused: the file is not a package it accepts. */
   onRefused: (message: string) => void;
+  /** Review the same file as a new version of the configuration that has its name. */
+  onAddAsVersion: (configId: string) => void;
 }) {
   const configId = target.kind === "version" ? target.configId : undefined;
   const isNew = configId === undefined;
@@ -193,10 +200,19 @@ export function PackageReview({
   });
 
   const content = lastCheck ? declaredContent(lastCheck) : undefined;
-  // Names are not unique: a configuration with the same name is reported, never refused (FR-013).
+  // Configuration names are unique: the Sync API refuses a new configuration, or a version that
+  // renames its configuration, when another configuration has the name of the package. The
+  // configurations with that name are read first, so Register is disabled before it is refused;
+  // the refusal itself covers a configuration registered with that name meanwhile.
   const packageName = content?.configuration.name ?? "";
-  const namesake = useQuery({ ...configsNamedQuery(packageName), enabled: isNew && !!packageName });
-  const existing = isNew ? namesake.data?.items[0] : undefined;
+  const renames = !isNew && config.data !== undefined && config.data.name !== packageName;
+  const namesake = useQuery({
+    ...configsNamedQuery(packageName),
+    enabled: !!packageName && (isNew || renames),
+  });
+  const refusedName = nameInUseOf(create.error);
+  const nameInUse: NameInUse | undefined =
+    refusedName ?? (isNew || renames ? otherNamesake(namesake.data?.items, configId) : undefined);
   const nextMappings = content?.configuration.schema_mapping ?? [];
   const baseMappings = base.data?.declared_content.configuration.schema_mapping;
   const diff =
@@ -229,7 +245,7 @@ export function PackageReview({
   const noAnswer = create.isError && isNoAnswer(create.error);
   const registrable =
     sent !== undefined || (!validating && (kind === "valid" || kind === "unreachable"));
-  const isDisabled = unchanged || !registrable || !comparisonReady;
+  const isDisabled = unchanged || !registrable || !comparisonReady || nameInUse !== undefined;
   const submitLabel =
     sent && noAnswer
       ? "Retry"
@@ -355,7 +371,32 @@ export function PackageReview({
           ))}
       </Notice>
     ) : undefined;
-  const outcomeNotice = create.isError ? (
+  const nameInUseId = nameInUse?.configId;
+  const nameNotice = nameInUse ? (
+    <Notice
+      tone="danger"
+      role="alert"
+      title={sameNameText(nameInUse.name)}
+      action={
+        nameInUseId === undefined ? undefined : (
+          <Button
+            size="xs"
+            variant="ghost"
+            className="-my-1"
+            onPress={() => onAddAsVersion(nameInUseId)}
+          >
+            Add as a new version
+          </Button>
+        )
+      }
+    >
+      <p>
+        Configuration names are unique. Did you mean to add this package as a new version of{" "}
+        {nameInUse.name ?? "that configuration"}?
+      </p>
+    </Notice>
+  ) : undefined;
+  const outcomeNotice = refusedName ? undefined : create.isError ? (
     noAnswer ? (
       <Notice tone="danger" role="alert" title={MESSAGES.requestFailed}>
         <p>
@@ -384,8 +425,9 @@ export function PackageReview({
     <MutationError error={outcome.error} />
   ) : undefined;
   const footer =
-    outcomeNotice || unreachableWarning ? (
+    nameNotice || outcomeNotice || unreachableWarning ? (
       <div className="flex flex-col gap-2">
+        {nameNotice}
         {outcomeNotice}
         {unreachableWarning}
       </div>
@@ -426,18 +468,20 @@ export function PackageReview({
       disabledReason={
         unchanged
           ? undefined
-          : validating
-            ? "Register is available once validation ends."
-            : checkFailed
-              ? "Validate again to continue."
-              : comparisonFailed
-                ? "The configuration could not be read. Cancel and drop the package again."
-                : !comparisonReady
-                  ? "Register is available once the newest version is read."
-                  : refusal
-                    ? "Change the validation branch to validate again."
-                    : ((check.data && readFailureHint(check.data.destination_read)) ??
-                      "Fix the findings, then drop the package again.")
+          : nameInUse
+            ? sameNameHint(nameInUse.name)
+            : validating
+              ? "Register is available once validation ends."
+              : checkFailed
+                ? "Validate again to continue."
+                : comparisonFailed
+                  ? "The configuration could not be read. Cancel and drop the package again."
+                  : !comparisonReady
+                    ? "Register is available once the newest version is read."
+                    : refusal
+                      ? "Change the validation branch to validate again."
+                      : ((check.data && readFailureHint(check.data.destination_read)) ??
+                        "Fix the findings, then drop the package again.")
       }
       dismissLabel={unchanged ? "Close" : "Cancel"}
       submitOnEnter={false}
@@ -457,26 +501,6 @@ export function PackageReview({
         )
       ) : (
         <>
-          {existing && (
-            <Notice
-              tone="warning"
-              role="note"
-              title={sameNameText(existing.name ?? configuration?.name ?? "")}
-            >
-              <p>
-                <Link
-                  to="/configs/$configId"
-                  params={{ configId: existing.config_id }}
-                  search={{}}
-                  className={LINK}
-                  onClick={onClose}
-                >
-                  Add a version to it instead
-                </Link>
-              </p>
-            </Notice>
-          )}
-
           {!isNew && config.isError && <MutationError error={config.error} />}
 
           {typeof compared === "number" && (
@@ -585,8 +609,12 @@ export function PackageRegistration({
   action: string;
   target: ReviewTarget;
 }) {
-  /** The text of the package file under review, and the refusal of the last one. */
-  const [dropped, setDropped] = useState<{ text: string; key: number }>();
+  /**
+   * The text of the package file under review, where it goes, and the refusal of the last one.
+   * The target is the page's until the review is moved to the configuration that has the name of
+   * the package.
+   */
+  const [dropped, setDropped] = useState<{ text: string; key: number; target: ReviewTarget }>();
   const [message, setMessage] = useState<string>();
   // Only an administrator token can register; the area stays disabled until `/me` answers.
   const administrator = useQuery(meQuery()).data?.administrator === true;
@@ -598,19 +626,26 @@ export function PackageRegistration({
           disabled={!administrator}
           message={message}
           onMessage={setMessage}
-          onFile={(text) => setDropped({ text, key: Date.now() })}
+          onFile={(text) => setDropped({ text, key: Date.now(), target })}
         />
       </div>
       {dropped && (
         <PackageReview
           key={dropped.key}
-          target={target}
+          target={dropped.target}
           document={dropped.text}
           onClose={() => setDropped(undefined)}
           onRefused={(refusal) => {
             setDropped(undefined);
             setMessage(refusal);
           }}
+          onAddAsVersion={(configId) =>
+            setDropped({
+              text: dropped.text,
+              key: Date.now(),
+              target: { kind: "version", configId },
+            })
+          }
         />
       )}
     </>
