@@ -1,0 +1,25 @@
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_fb5f4a669002c3 208
+  s_58b527396c8cb5::t_f616709c0111d8 202-203,205-206
+  s_58b527396c8cb5::t_77de76a68c87a9 204,209-213,219-220,277
+dev/specs/027-stored-credentials/plan.md
+  s_58b527396c8cb5::t_f73f4d5080326e 37
+dev/specs/027-stored-credentials/alignment-check.md
+  s_58b527396c8cb5::t_9bc5e9aa38ff2c 25,30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bfad1e8dec64fb1f09e9fc299abb1c4838077b61",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
