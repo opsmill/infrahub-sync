@@ -1,0 +1,19 @@
+uv.lock
+  s_7194e763d953d7::t_ec38f1ef6e8aaa 2,804,826,1305,2138-2139,2142,2144,2237,2293,2715,3232-3233,3246,3841
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c187e1a13350b729c556d570da75e21b7799409",
+  "prompts": {},
+  "sessions": {
+    "s_7194e763d953d7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2dcc804-8d36-4407-9e21-780e508ea091",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
