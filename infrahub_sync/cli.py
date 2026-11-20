@@ -453,9 +453,48 @@ def _package(path: Path) -> dict[str, Any]:
     # `2024-13-45`; the Sync API refuses the same document as `invalid_package`.
     except (OSError, ValueError, RecursionError, yaml.YAMLError):
         raise ClientInputError(_PACKAGE_ARG) from None
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value) or _contains_itself(value):
         raise ClientInputError(_PACKAGE_ARG)
     return cast("dict[str, Any]", value)
+
+
+def _contains_itself(value: object) -> bool:
+    """Return whether a parsed YAML value holds itself, through an alias to an enclosing node.
+
+    Such a value, for example `a: &x [*x]`, has no JSON form. The walk does not recurse, and it
+    visits each mapping or list once, so a value that uses one alias in many places stays cheap.
+    """
+    on_path: set[int] = set()
+    finished: set[int] = set()
+    stack: list[tuple[object, Iterator[object]]] = []
+    end = object()
+
+    def enter(item: object) -> bool:
+        """Start the walk of one mapping or list; return whether it encloses the current position."""
+        if type(item) is dict:  # pylint: disable=unidiomatic-typecheck
+            children: Iterator[object] = iter(cast("dict[object, object]", item).values())
+        elif type(item) is list:  # pylint: disable=unidiomatic-typecheck
+            children = iter(cast("list[object]", item))
+        else:
+            return False
+        if id(item) in on_path:
+            return True
+        if id(item) not in finished:
+            on_path.add(id(item))
+            stack.append((item, children))
+        return False
+
+    enter(value)
+    while stack:
+        item, children = stack[-1]
+        child = next(children, end)
+        if child is end:
+            stack.pop()
+            on_path.discard(id(item))
+            finished.add(id(item))
+        elif enter(child):
+            return True
+    return False
 
 
 def _idempotency_key(explicit: str | None) -> str:

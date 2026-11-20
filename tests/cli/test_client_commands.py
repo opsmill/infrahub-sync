@@ -550,6 +550,8 @@ def _error_lines(output: str) -> list[str]:
         pytest.param("- a list\n", id="not-a-mapping"),
         pytest.param(b"\xff\xfe", id="not-utf-8"),
         pytest.param("format_version: 1\ncreated: 2024-13-45\n", id="impossible-date"),
+        pytest.param("format_version: 1\na: &x [*x]\n", id="alias-that-holds-itself"),
+        pytest.param("format_version: 1\na: &x {b: [*x]}\n", id="alias-that-holds-itself-deeper"),
     ],
 )
 def test_configs_check_refuses_an_unreadable_file_like_configs_register(
@@ -568,6 +570,19 @@ def test_configs_check_refuses_an_unreadable_file_like_configs_register(
     assert _error_lines(checked.output) == _error_lines(registered.output) != []
     client.check_package.assert_not_called()
     client.register_config.assert_not_called()
+
+
+def test_configs_check_sends_an_alias_used_in_several_places(client: MagicMock, tmp_path: Path) -> None:
+    """An alias that does not hold itself is sent expanded, not refused as a package that holds itself."""
+    package = tmp_path / "package.yaml"
+    package.write_text("format_version: 1\na: &x [1]\nb: {c: *x, d: *x}\n", encoding="utf-8")
+    client.check_package.return_value = _package_check()
+
+    result = _invoke(client, "configs", "check", str(package))
+
+    assert result.exit_code == 0, result.output
+    (request,) = client.check_package.call_args.args
+    assert request == PackageCheckRequest(package={"format_version": 1, "a": [1], "b": {"c": [1], "d": [1]}})
 
 
 def test_plan_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:
