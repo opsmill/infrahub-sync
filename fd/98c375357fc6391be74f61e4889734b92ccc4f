@@ -1,0 +1,42 @@
+frontend/src/features/schedules/ScheduleTimeline.tsx
+  s_caab93ebf0934a::t_e74902b9fad65d 1-13,15-136,141-213,215-300,302-312
+  s_caab93ebf0934a::t_b2d1969b776245 301
+  s_caab93ebf0934a::t_ee9ed30a6fd706 14,137-140,214
+frontend/src/domain/schedule-page.ts
+  s_caab93ebf0934a::t_da802c972125f3 1-127,129-179,186-225,227-277,284-308
+  s_caab93ebf0934a::t_ee9ed30a6fd706 180-185,278-283
+  s_caab93ebf0934a::t_c18eb65c607ac7 128
+  s_caab93ebf0934a::t_0f95be15c7999a 226
+frontend/src/features/schedules/NextStarts.tsx
+  s_caab93ebf0934a::t_eded57f3927ff3 52
+frontend/src/features/schedules/SchedulePage.tsx
+  s_caab93ebf0934a::t_bb9a7e0546a570 4,13,16-17,19,21-26,28,39-40,42-43,45,48-51,62,67-75,77-88,90-91,95-103,110,112-118,121-122,125,129,131,133-134,138,143-152,160-164,178-179,239-240,242,248,278-282,288-326
+  s_caab93ebf0934a::t_ee9ed30a6fd706 15,20
+frontend/src/features/schedules/ScheduleStatusCard.tsx
+  s_caab93ebf0934a::t_eded57f3927ff3 80
+  s_caab93ebf0934a::t_30a54ab282c50d 1-79,81-162
+frontend/src/domain/schedule-page.test.ts
+  s_caab93ebf0934a::t_0f95be15c7999a 202,241
+  s_caab93ebf0934a::t_31e2d98d85ab46 1-48,52-200,209-240,246,250-266
+  s_caab93ebf0934a::t_b242dcbba9ff78 49-51,201,203-208,242-245,247-249
+frontend/src/api/queries.ts
+  s_caab93ebf0934a::t_9cbdcc1e2bc451 120-128
+frontend/src/features/schedules/ScheduleSettings.tsx
+  s_caab93ebf0934a::t_0a6c8ae5fa2051 1-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd98c375357fc6391be74f61e4889734b92ccc4f",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
