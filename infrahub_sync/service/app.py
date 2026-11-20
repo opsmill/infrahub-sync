@@ -321,6 +321,7 @@ def _include_routers(
     *,
     schedules: ScheduleService | None,
     credential_cipher: CredentialCipher | None,
+    authenticate_worker: Callable[..., Principal],
 ) -> None:
     """Add the routes built outside ``create_app``.
 
@@ -337,7 +338,9 @@ def _include_routers(
     application.include_router(plan_router(service, authenticate))
     application.include_router(account_router(service, authenticate))
     application.include_router(
-        credential_router(CredentialActions(service, credential_cipher), authenticate, idempotency_key)
+        credential_router(
+            CredentialActions(service, credential_cipher), authenticate, idempotency_key, authenticate_worker
+        )
     )
 
 
@@ -725,6 +728,7 @@ def create_app(
         configuration_routes,
         schedules=schedules,
         credential_cipher=credential_cipher,
+        authenticate_worker=require_worker(service, resolver),
     )
     # Added last, so it is the outermost middleware: the registry is bound before any route,
     # exception handler or other middleware of the request runs, and all of them share it.

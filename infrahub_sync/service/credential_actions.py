@@ -21,6 +21,13 @@ Audit: each accepted change writes one event in the transaction of the change
 (``credential.created``, ``credential.value_changed``, ``credential.updated``), with the name and
 the revision; a refused right or a refused description writes ``credential.refused``. No event
 holds a value.
+
+Release: ``CredentialActions.release`` answers the worker route (research R5), the only answer
+that holds a value. It checks that a worker claimed the execution and that the execution has
+not ended, reads which credential each block of the run's stored version names, checks every
+block the stage needs, and only then decrypts. It writes the ``run_credential_uses`` rows and
+the ``credential.released`` event in one transaction, and takes no ``Idempotency-Key``: a
+receipt would store the answer, which holds the values.
 """
 
 from __future__ import annotations
@@ -29,17 +36,21 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime  # noqa: TC003 - Pydantic resolves the resource annotations at runtime.
 from hashlib import sha256
-from typing import TYPE_CHECKING, Annotated, Any, Final
+from itertools import starmap
+from typing import TYPE_CHECKING, Annotated, Any, Final, cast
 from uuid import uuid4
 
 import structlog
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from infrahub_sync.client.models import DEFAULT_LIMIT
+from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration.capabilities import UnknownCredentialMethodError, credential_field_map
 from infrahub_sync.execution import LiveSecretValues, register_secret_values
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     CredentialNameTakenError,
+    CredentialUse,
     MutationReceipt,
     StoredCredential,
     StoredCredentialInvalidError,
@@ -51,12 +62,14 @@ from infrahub_sync.product_store.models import (
     is_credential_field_set,
 )
 
+from .credential_crypto import CredentialDecryptionError
 from .events import (
     CREDENTIAL_CREATED,
     CREDENTIAL_REFUSED,
     CREDENTIAL_UPDATED,
     CREDENTIAL_VALUE_CHANGED,
     credential_event,
+    credentials_released_event,
 )
 from .service import ServiceAPIError
 from .settings import ENCRYPTION_KEY_ENV
@@ -64,7 +77,9 @@ from .settings import ENCRYPTION_KEY_ENV
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from infrahub_sync.product_store import AuditEvent
+    from infrahub_sync.configuration import ConfigurationPackage
+    from infrahub_sync.product_store import AuditEvent, PrefectExecutionLink, ProductRun
+    from infrahub_sync.product_store.models import CredentialBlock, CredentialStage
 
     from .auth import Principal
     from .credential_crypto import CredentialCipher
@@ -78,6 +93,18 @@ CREDENTIAL_VALUE_MAX_LENGTH: Final = 4096
 CREATE_OPERATION: Final = "credential-create"
 SET_VALUE_OPERATION: Final = "credential-set-value"
 DESCRIBE_OPERATION: Final = "credential-describe"
+RELEASE_OPERATION: Final = "credential-release"
+FLOW_RUN_ID_MAX_LENGTH: Final = 200
+
+# The blocks each stage builds (research R5). A saved-plan apply, a resume and a verify build the
+# destination only, as `flow.py` resolves them; a plan and a sync, scheduled or not, build both.
+STAGE_BLOCKS: Final[dict[str, tuple[CredentialBlock, ...]]] = {
+    "plan": ("source", "destination"),
+    "sync": ("source", "destination"),
+    "apply": ("destination",),
+    "resume": ("destination",),
+    "verify": ("destination",),
+}
 
 FORBIDDEN_MESSAGE = f"this action needs the {MANAGE_CREDENTIALS} permission, which administrators hold"
 KEY_NOT_CONFIGURED_MESSAGE = (
@@ -93,6 +120,20 @@ _DESCRIPTION_NOT_PRINTABLE = "description must hold printable characters only"
 _IDEMPOTENCY_CONFLICT_MESSAGE = "Idempotency-Key was already used by this actor for different content"
 _IN_PROGRESS_MESSAGE = "the matching request is still being processed"
 _NOT_FOUND_MESSAGE = "no stored credential has the name {name!r}"
+_RUN_NOT_FOUND_MESSAGE = "no run has this identifier"
+_NOT_IN_PROGRESS_MESSAGE = (
+    "no execution of this run with this flow run identifier is claimed by a worker and still in progress"
+)
+_VERSION_UNAVAILABLE_MESSAGE = "the configuration version of this run cannot be read"
+_BLOCK_CREDENTIAL_NOT_FOUND_MESSAGE = (
+    "the {block} names the stored credential {name!r}, which does not exist; an administrator creates it "
+    "with `infrahub-sync credentials create {name}`"
+)
+_FIELD_MISSING_MESSAGE = "the stored credential {name!r} of the {block} does not hold: {fields}"
+_METHOD_UNKNOWN_MESSAGE = "the {block} uses an adapter or an auth_method for which no stored field is known"
+_UNDECRYPTABLE_MESSAGE = (
+    "the value of the stored credential {name!r} of the {block} cannot be decrypted with the current key"
+)
 _EXISTS_MESSAGE = "a stored credential already has the name {name!r}; change its value instead"
 
 
@@ -170,6 +211,42 @@ class CredentialPage(BaseModel):
 
     items: list[CredentialResource]
     next_offset: int | None
+
+
+class ReleaseCredentialsRequest(BaseModel):
+    """The execution that asks for its values: ``POST /worker/runs/{run_id}/credentials``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    flow_run_id: str = Field(min_length=1, max_length=FLOW_RUN_ID_MAX_LENGTH)
+
+
+class ReleasedBlock(BaseModel):
+    """The credential of one block as the worker route releases it: its fields hold the values."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    revision: int
+    fields: dict[str, str] = Field(repr=False)
+
+
+class ReleasedCredentials(BaseModel):
+    """The answer of the worker route: the blocks the stage needs that name a credential."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    blocks: dict[str, ReleasedBlock]
+
+
+@dataclass(frozen=True)
+class _BlockCredential:
+    """One block that names a credential that exists and holds the fields the block needs."""
+
+    block: CredentialBlock
+    credential: StoredCredential
+    fields: tuple[str, ...]
 
 
 def credential_resource(credential: StoredCredential) -> CredentialResource:
@@ -363,6 +440,189 @@ class CredentialActions:
         return self._mutate(cipher, mutation, 200, act)
 
     # ------------------------------------------------------------------
+    # Release to a worker
+    # ------------------------------------------------------------------
+
+    def release(self, principal: Principal, run_id: str, request: ReleaseCredentialsRequest) -> ReleasedCredentials:
+        """Return the values of the blocks that the stage of one claimed execution needs.
+
+        The caller is the ``worker`` account: the route checks it. Every check of every block
+        passes before a value is decrypted. Only the fields the block needs are returned. A
+        repeated call answers again and replaces the rows of the execution.
+
+        Raises:
+            ServiceAPIError: ``404 run-not-found``; ``409 execution-not-in-progress``;
+                ``422 credential-not-found``, ``422 credential-field-missing`` or
+                ``422 credential-method-unknown``, each with the block; ``500
+                credential-undecryptable``; ``500 configuration-version-unavailable``; ``503
+                credential-key-not-configured`` when a block names a credential and no key is set.
+                No refusal holds a value.
+        """
+        projection = self._access.projection
+        run = projection.lookup_run(run_id).value
+        if run is None:
+            raise ServiceAPIError(404, "run-not-found", _RUN_NOT_FOUND_MESSAGE)
+        execution = _execution_in_progress(run, request.flow_run_id)
+        stage = cast("CredentialStage", execution.purpose)
+        named = list(starmap(self._checked_block, self._named(run, stage)))
+        named = [entry for entry in named if entry is not None]
+        if not named:
+            return ReleasedCredentials(run_id=run_id, blocks={})
+        cipher = self._require_cipher()
+        now = self._access.now()
+        blocks: dict[str, ReleasedBlock] = {}
+        uses: list[CredentialUse] = []
+        for entry in named:
+            credential = entry.credential
+            blocks[entry.block] = ReleasedBlock(
+                name=credential.name,
+                revision=credential.current_revision,
+                fields=self._decrypted(cipher, entry, run_id),
+            )
+            uses.append(
+                CredentialUse(
+                    run_id=run_id,
+                    flow_run_id=request.flow_run_id,
+                    stage=stage,
+                    block=entry.block,
+                    credential_id=credential.credential_id,
+                    credential_name=credential.name,
+                    revision=credential.current_revision,
+                    released_at=now,
+                )
+            )
+        event = credentials_released_event(
+            actor=principal.actor,
+            operation=RELEASE_OPERATION,
+            run_id=run_id,
+            config_id=run.config_id,
+            registry_version=run.registry_version,
+            released=[(use.credential_name, use.revision) for use in uses],
+            created_at=now,
+        )
+        # The rows and the event hold names, identifiers and revisions only. They are redacted
+        # with the secrets of the process, not with the values just decrypted: a name that
+        # equals a value, such as a username, must stay intact.
+        projection.record_credential_uses(uses, event=event, secrets=self._process_secrets)
+        logger.info(
+            "credential.released",
+            run_id=run_id,
+            flow_run_id=request.flow_run_id,
+            stage=stage,
+            credentials=[
+                {"block": use.block, "name": use.credential_name, "revision": use.revision}
+                for use in sorted(uses, key=lambda use: use.block)
+            ],
+        )
+        return ReleasedCredentials(run_id=run_id, blocks=blocks)
+
+    def _named(
+        self, run: ProductRun, stage: CredentialStage
+    ) -> list[tuple[CredentialBlock, str, ConfigurationPackage]]:
+        """Return the blocks of the stage that name a credential, read from the run's stored version.
+
+        The stored version is the source: the names are part of its declared content, which the
+        package checksum covers. A run without a registered version names no stored credential.
+        """
+        if run.config_id is None or run.registry_version is None:
+            return []
+        version = self._access.projection.lookup_configuration_version(run.config_id, run.registry_version).value
+        if version is None:
+            raise ServiceAPIError(500, "configuration-version-unavailable", _VERSION_UNAVAILABLE_MESSAGE)
+        try:
+            package = parse_configuration_package(version.declared_content)
+        except ConfigurationPackageParseError:
+            # The parse error can quote the declared content; the answer names the fact only.
+            raise ServiceAPIError(500, "configuration-version-unavailable", _VERSION_UNAVAILABLE_MESSAGE) from None
+        named: list[tuple[CredentialBlock, str, ConfigurationPackage]] = []
+        for block in STAGE_BLOCKS[stage]:
+            name = getattr(package.configuration, block).credential
+            if name is not None:
+                named.append((block, name, package))
+        return named
+
+    def _checked_block(
+        self, block: CredentialBlock, name: str, package: ConfigurationPackage
+    ) -> _BlockCredential | None:
+        """Return the block with its credential and the fields it needs, or ``None`` when it needs none.
+
+        Raises:
+            ServiceAPIError: ``422 credential-not-found``, ``422 credential-field-missing`` or
+                ``422 credential-method-unknown``. The details name the block, the credential
+                and the missing fields, never a value.
+        """
+        adapter = getattr(package.configuration, block)
+        try:
+            needed = credential_field_map(adapter.name, adapter.settings or {}).fields
+        except UnknownCredentialMethodError:
+            # An adapter without a capability declaration is not caught: registration refuses
+            # it, so a stored version cannot name one.
+            raise ServiceAPIError(
+                422,
+                "credential-method-unknown",
+                _METHOD_UNKNOWN_MESSAGE.format(block=block),
+                details={"block": block, "name": name},
+            ) from None
+        if not needed:
+            return None
+        credential = self._access.projection.lookup_stored_credential(name)
+        if credential is None:
+            raise _block_credential_not_found(block, name)
+        missing = sorted(set(needed) - set(credential.fields))
+        if missing:
+            raise ServiceAPIError(
+                422,
+                "credential-field-missing",
+                _FIELD_MISSING_MESSAGE.format(block=block, name=name, fields=", ".join(missing)),
+                details={"block": block, "name": name, "fields": missing},
+            )
+        return _BlockCredential(block=block, credential=credential, fields=tuple(sorted(needed)))
+
+    def _decrypted(self, cipher: CredentialCipher, entry: _BlockCredential, run_id: str) -> dict[str, str]:
+        """Return the needed fields of the current revision; the cipher adds each value to the request's registry.
+
+        Raises:
+            ServiceAPIError: ``500 credential-undecryptable``, or ``422 credential-not-found``
+                when the credential was deleted since it was checked.
+        """
+        credential = entry.credential
+        stored = self._access.projection.lookup_stored_credential_revision(
+            credential.credential_id, credential.current_revision
+        )
+        if stored is None:
+            raise _block_credential_not_found(entry.block, credential.name)
+        try:
+            values = cipher.decrypt(
+                credential.credential_id,
+                stored.revision,
+                key_id=stored.key_id,
+                nonce=stored.nonce,
+                ciphertext=stored.ciphertext,
+            )
+        except CredentialDecryptionError as error:
+            logger.warning(
+                "credential.undecryptable",
+                run_id=run_id,
+                block=entry.block,
+                name=credential.name,
+                revision=stored.revision,
+                cause=error.reason,
+            )
+            raise _undecryptable(entry.block, credential.name) from None
+        if any(field not in values for field in entry.fields):
+            # The encrypted value does not hold a field its record lists.
+            logger.warning(
+                "credential.undecryptable",
+                run_id=run_id,
+                block=entry.block,
+                name=credential.name,
+                revision=stored.revision,
+                cause="malformed-value",
+            )
+            raise _undecryptable(entry.block, credential.name)
+        return {field: values[field] for field in entry.fields}
+
+    # ------------------------------------------------------------------
     # The steps of a change
     # ------------------------------------------------------------------
 
@@ -465,6 +725,45 @@ class CredentialActions:
         assert completed.response_status is not None
         assert completed.response_body is not None
         return completed.response_status, completed.response_body
+
+
+def _execution_in_progress(run: ProductRun, flow_run_id: str) -> PrefectExecutionLink:
+    """Return the execution of the run that a worker claimed and that has not ended.
+
+    The row of the execution decides, not the phase of the run: a run that has a finished plan
+    and a running apply has one execution in progress, the apply.
+
+    Raises:
+        ServiceAPIError: ``409 execution-not-in-progress``.
+    """
+    for link in run.prefect_executions:
+        if (
+            link.flow_run_id == flow_run_id
+            and link.claimed_at is not None
+            and link.claiming_worker_id is not None
+            and link.terminal_at is None
+            and link.purpose in STAGE_BLOCKS
+        ):
+            return link
+    raise ServiceAPIError(409, "execution-not-in-progress", _NOT_IN_PROGRESS_MESSAGE, run_id=run.run_id)
+
+
+def _block_credential_not_found(block: str, name: str) -> ServiceAPIError:
+    return ServiceAPIError(
+        422,
+        "credential-not-found",
+        _BLOCK_CREDENTIAL_NOT_FOUND_MESSAGE.format(block=block, name=name),
+        details={"block": block, "name": name},
+    )
+
+
+def _undecryptable(block: str, name: str) -> ServiceAPIError:
+    return ServiceAPIError(
+        500,
+        "credential-undecryptable",
+        _UNDECRYPTABLE_MESSAGE.format(block=block, name=name),
+        details={"block": block, "name": name},
+    )
 
 
 def _require_field_set(values: dict[str, str]) -> None:

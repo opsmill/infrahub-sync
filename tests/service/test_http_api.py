@@ -1900,6 +1900,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}/cancel",
         "/status",
         "/version",
+        "/worker/runs/{run_id}/credentials",
     }
     for path, route in paths.items():
         for operation in route.values():

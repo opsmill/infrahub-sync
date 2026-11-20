@@ -252,7 +252,13 @@ def test_only_shared_client_constructs_sync_api_http_requests() -> None:
         if "httpx.Client(" in source or "httpx.AsyncClient(" in source:
             constructors.append(path.relative_to(ROOT))
 
-    assert constructors == [Path("infrahub_sync/client/client.py")]
+    # The shared client serves every route for accounts. The worker's credential client calls the
+    # one worker route, with the worker token and its own retry and redaction rules (spec 027,
+    # research R6); its answer holds values, so it does not pass through the shared client.
+    assert sorted(constructors) == [
+        Path("infrahub_sync/client/client.py"),
+        Path("infrahub_sync/service/credential_client.py"),
+    ]
 
 
 def test_live_docs_and_examples_close_removed_cli_paths() -> None:

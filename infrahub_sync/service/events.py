@@ -8,6 +8,7 @@ missing or invalid token gets no type, because the event list never returns it.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from infrahub_sync.product_store import (
@@ -18,6 +19,9 @@ from infrahub_sync.product_store import (
     ProductRun,
     RelatedResource,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 _RUN_PREFIX = "infrahub_sync.run."
 _CONFIG_PREFIX = "infrahub_sync.config."
@@ -155,6 +159,7 @@ CREDENTIAL_CREATED = f"{_CREDENTIAL_PREFIX}created"
 CREDENTIAL_VALUE_CHANGED = f"{_CREDENTIAL_PREFIX}value_changed"
 CREDENTIAL_UPDATED = f"{_CREDENTIAL_PREFIX}updated"
 CREDENTIAL_REFUSED = f"{_CREDENTIAL_PREFIX}refused"
+CREDENTIAL_RELEASED = f"{_CREDENTIAL_PREFIX}released"
 
 
 def credential_event(  # pylint: disable=too-many-arguments
@@ -188,6 +193,44 @@ def credential_event(  # pylint: disable=too-many-arguments
         event_type=event_type,
         related=tuple(related),
         details=details,
+    )
+
+
+def credentials_released_event(  # pylint: disable=too-many-arguments
+    *,
+    actor: str,
+    operation: str,
+    run_id: str,
+    config_id: str | None,
+    registry_version: int | None,
+    released: Sequence[tuple[str, int]],
+    created_at: datetime,
+) -> AuditEvent:
+    """Build the one event of a release of stored values to a stage execution of a run.
+
+    ``released`` holds the name and the revision of each credential released. The event names
+    every credential. ``details.revision`` is set when one credential was released: the details
+    of an event hold one revision, and ``run_credential_uses`` holds the revision of each block.
+    The event holds no value.
+    """
+    names = sorted({name for name, _revision in released})
+    revisions = {revision for _name, revision in released}
+    related = [RelatedResource(kind="account", id=actor)]
+    related.extend(RelatedResource(kind="credential", id=name) for name in names)
+    single = len(names) == 1 and len(revisions) == 1
+    return AuditEvent(
+        event_id=f"a-{uuid4().hex}",
+        run_id=run_id,
+        actor=actor,
+        operation=operation,
+        reason=None,
+        outcome="accepted",
+        created_at=created_at,
+        event_type=CREDENTIAL_RELEASED,
+        config_id=config_id,
+        registry_version=registry_version,
+        related=tuple(related),
+        details=EventDetails(revision=next(iter(revisions))) if single else None,
     )
 
 
