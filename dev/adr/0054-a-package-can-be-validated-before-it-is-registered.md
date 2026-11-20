@@ -68,7 +68,7 @@ calls it with `infrahub-sync configs check PACKAGE`, and the Python client with
   `unauthorized`, `forbidden`, `nobranch`, `rejected`, `unconfigured`, `credentials`). The existing
   `destination-schema-read-failed` finding stays, because before this decision the reason was
   only in its message text.
-- **`configs check` exits 1 on an error finding** on the returned page, with or without
+- **`configs check` exits 1 on an error finding** on any page of findings, with or without
   `--branch`. A warning, such as the one reported while no worker has published its credential
   variables, does not change the exit code. `configs validate` keeps its rule: exit 1 only on an
   error finding, and only with `--branch`.

@@ -948,16 +948,29 @@ def configs_check(
 ) -> None:
     """Validate a JSON or YAML configuration package without registering it.
 
-    Exits 1 when an error finding is on the returned page; a warning does not change the exit code.
-    Read every page with --offset to check them all.
+    Prints the requested page of findings. Exits 1 when any page has an error finding: when the
+    printed page has none, the command reads the following pages until it finds one or reaches
+    the end. A warning does not change the exit code.
     """
     with _client_errors():
         request = cast("PackageCheckRequest", _request(PackageCheckRequest, package=_package(package)))
-        report = _client(ctx).check_package(request, offset=offset, limit=limit, branch=branch)
+        client = _client(ctx)
+        report = client.check_package(request, offset=offset, limit=limit, branch=branch)
         _echo_package_check(report)
-    # contracts/sync-api.md (spec 025, decision D-10): an error finding on the returned page exits 1.
-    if any(finding.severity == "error" for finding in report.findings):
+        # contracts/sync-api.md (spec 025, decision D-10): an error finding exits 1, on whichever
+        # page it is, so `configs check pkg && configs register pkg` never registers one.
+        page = report
+        while not _has_error_finding(page) and page.next_offset is not None:
+            page = client.check_package(request, offset=page.next_offset, limit=limit, branch=branch)
+    if _has_error_finding(page):
+        if page is not report:
+            typer.echo(f"error findings start on a later page: run again with --offset {page.offset}", err=True)
         raise typer.Exit(code=1)
+
+
+def _has_error_finding(report: PackageCheckResource) -> bool:
+    """Return whether one page of a package check holds an `error` finding."""
+    return any(finding.severity == "error" for finding in report.findings)
 
 
 @configs_app.command("convert")

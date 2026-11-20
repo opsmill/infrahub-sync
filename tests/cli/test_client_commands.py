@@ -460,6 +460,55 @@ def test_configs_check_exits_1_when_the_page_has_an_error_finding(
     assert client.check_package.call_args.kwargs["branch"] == (arguments[1] if arguments else None)
 
 
+def _check_page(
+    severities: tuple[Literal["error", "warning"], ...], offset: int, next_offset: int | None
+) -> PackageCheckResource:
+    return _package_check(severities).model_copy(
+        update={"offset": offset, "limit": 1, "total_findings": 3, "next_offset": next_offset}
+    )
+
+
+@pytest.mark.parametrize(
+    ("pages", "exit_code", "calls"),
+    [
+        pytest.param(
+            [_check_page(("warning",), 0, 1), _check_page(("warning",), 1, 2), _check_page(("error",), 2, None)],
+            1,
+            3,
+            id="error-on-the-last-page",
+        ),
+        pytest.param(
+            [_check_page(("warning",), 0, 1), _check_page(("error",), 1, 2)],
+            1,
+            2,
+            id="stops-at-the-first-error",
+        ),
+        pytest.param(
+            [_check_page(("warning",), 0, 1), _check_page(("warning",), 1, 2), _check_page(("warning",), 2, None)],
+            0,
+            3,
+            id="warnings-only",
+        ),
+    ],
+)
+def test_configs_check_exits_1_when_a_later_page_has_an_error_finding(
+    client: MagicMock, tmp_path: Path, pages: list[PackageCheckResource], exit_code: int, calls: int
+) -> None:
+    """contracts/sync-api.md (CLI, D-10): an error finding on any page exits 1; only the requested page prints."""
+    package = tmp_path / "package.json"
+    package.write_text('{"format_version": 1}', encoding="utf-8")
+    client.check_package.side_effect = pages
+
+    result = _invoke(client, "configs", "check", str(package), "--limit", "1", "--branch", "review")
+
+    assert result.exit_code == exit_code, result.output
+    assert [call.kwargs["offset"] for call in client.check_package.call_args_list] == list(range(calls))
+    assert {call.kwargs["limit"] for call in client.check_package.call_args_list} == {1}
+    assert {call.kwargs["branch"] for call in client.check_package.call_args_list} == {"review"}
+    assert result.output.count("code=finding-0") == 1
+    assert ("run again with --offset" in result.output) is (exit_code == 1)
+
+
 def _error_lines(output: str) -> list[str]:
     """The error a command prints, without the lines that name the command and the retry key `configs register` prints first."""
     # Rich colors the usage hint when the terminal allows it; compare the text only.
