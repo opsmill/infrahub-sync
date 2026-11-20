@@ -32,6 +32,8 @@ from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
 from .config_routes import (
     CONFIG_ID_PATTERN,
     MAX_REGISTRY_VERSION,
+    V2_CONFIGURATION_MESSAGE,
+    V2_CONFIGURATION_REASON,
     ConfigurationAPIError,
     ConfigurationRoutes,
     configuration_router,
@@ -94,6 +96,12 @@ async def _service_error(_request: Request, exc: ServiceAPIError) -> JSONRespons
 
 
 _HTTP_ERROR_CODES = {404: "not-found", 405: "method-not-allowed"}
+# The fixed message of each configuration refusal reason that has its own; any other refusal
+# gets one general message, so no caller-supplied text reaches the response.
+_CONFIGURATION_REFUSAL_MESSAGES: dict[str | None, str] = {
+    UNSUPPORTED_STORE_REASON: UNSUPPORTED_STORE_MESSAGE,
+    V2_CONFIGURATION_REASON: V2_CONFIGURATION_MESSAGE,
+}
 
 
 async def _http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:  # noqa: RUF029
@@ -438,10 +446,8 @@ def create_app(
         envelope = ConfigErrorEnvelope(
             error=ConfigErrorDetail(
                 code=f"configs-{exc.family}",
-                message=(
-                    UNSUPPORTED_STORE_MESSAGE
-                    if exc.reason == UNSUPPORTED_STORE_REASON
-                    else "the configuration service refused the request"
+                message=_CONFIGURATION_REFUSAL_MESSAGES.get(
+                    exc.reason, "the configuration service refused the request"
                 ),
                 status=exc.status,
                 family=exc.family,

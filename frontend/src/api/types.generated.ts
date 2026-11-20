@@ -245,6 +245,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/configs/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Package
+         * @description Validate a package without registering it; an administrator token is required.
+         */
+        post: operations["check_package_configs_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/configs/{config_id}/versions": {
         parameters: {
             query?: never;
@@ -1067,14 +1087,32 @@ export interface components {
         /**
          * ConfigMutationRequest
          * @description Submit a configuration package with an optional audit reason.
+         *
+         *     The package is ``package``, as JSON, or ``document``, the text of a package file, YAML or
+         *     JSON, which the Sync API parses as `POST /configs/validate` does. The web interface sends
+         *     ``document``, because a browser that parses and serializes the file again can change its
+         *     numbers; the CLI sends ``package``. Exactly one is set. The Sync API checks that rule
+         *     itself, after the administrator check, so this model shared with it does not; the field
+         *     that is not set is omitted.
+         *
+         *     ``registered_without_validation`` marks the created version as registered without
+         *     validation. The web interface sets it; the CLI never does. A request without the mark
+         *     keeps today's body, so it is omitted when ``false``.
          */
         ConfigMutationRequest: {
             /** Package */
-            package: {
+            package?: {
                 [key: string]: unknown;
-            };
+            } | null;
+            /** Document */
+            document?: string | null;
             /** Reason */
             reason?: string | null;
+            /**
+             * Registered Without Validation
+             * @default false
+             */
+            registered_without_validation: boolean;
         };
         /**
          * ConfigurationPage
@@ -1141,6 +1179,11 @@ export interface components {
             registered_by?: string | null;
             /** Registration Reason */
             registration_reason?: string | null;
+            /**
+             * Registered Without Validation
+             * @default false
+             */
+            registered_without_validation: boolean;
             latest_run?: components["schemas"]["RunReference"] | null;
             latest_applied_run?: components["schemas"]["RunReference"] | null;
         } & {
@@ -1455,6 +1498,59 @@ export interface components {
             prefect_flow_run_url?: string | null;
             reads?: components["schemas"]["StageReads"] | null;
             plan_step?: components["schemas"]["PlanStepTimings"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PackageCheckRequest
+         * @description The body of `POST /configs/validate`: a package as JSON, or the text of a package file.
+         *
+         *     Exactly one field is set. The route checks that rule itself, so that breaking it is the
+         *     `request` refusal of the contract rather than a schema refusal, and so that it is checked
+         *     only after the caller is known to be an administrator.
+         */
+        PackageCheckRequest: {
+            /** Package */
+            package?: {
+                [key: string]: unknown;
+            } | null;
+            /** Document */
+            document?: string | null;
+        };
+        /**
+         * PackageCheckResource
+         * @description Return the check of a package that is not registered, with one page of its findings.
+         *
+         *     ``package_checksum`` and ``declared_content`` are what registering the package would store.
+         *     ``destination_read`` is ``not_requested`` without a branch, ``read`` when the destination
+         *     schema was read, ``not_read`` when the destination adapter is unknown or declares no schema
+         *     read, or the reason the read failed: ``timeout``, ``unreachable``,
+         *     ``unauthorized``, ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured`` or
+         *     ``credentials``.
+         */
+        PackageCheckResource: {
+            /** Package Checksum */
+            package_checksum: string;
+            /** Name */
+            name?: string | null;
+            /** Declared Content */
+            declared_content: {
+                [key: string]: unknown;
+            };
+            /** Destination Read */
+            destination_read: string;
+            /** Destination Schema Fingerprint */
+            destination_schema_fingerprint?: string | null;
+            /** Findings */
+            findings: components["schemas"]["ValidationFindingResource"][];
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Total Findings */
+            total_findings: number;
+            /** Next Offset */
+            next_offset: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -2271,6 +2367,25 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * ValidationFindingResource
+         * @description Describe one ordered configuration validation finding.
+         */
+        ValidationFindingResource: {
+            /** Code */
+            code: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "error" | "warning";
+            /** Location */
+            location: string;
+            /** Message */
+            message: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * VerifyRunRequest
@@ -3395,6 +3510,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_package_configs_validate_post: {
+        parameters: {
+            query?: {
+                offset?: string;
+                limit?: string;
+                branch?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackageCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageCheckResource"];
                 };
             };
             /** @description Validation Error */

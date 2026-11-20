@@ -103,10 +103,26 @@ class DestinationSchemaValidation:
     destination, an unknown adapter, or a failed read. Validation and registered worker
     construction compute it through the same projection; recording it on a plan, and
     comparing it before an apply writes, belong to the plan-guard unit that follows.
+
+    ``read_failure_reason`` is the ``reason`` of the first ``DestinationSchemaReadError``
+    a destination read raised (``timeout``, ``unreachable``, ``unauthorized``,
+    ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured`` or ``credentials``), or ``None`` when
+    every read that ran succeeded or no read ran. The same failure still becomes a
+    ``destination-schema-read-failed`` finding; this field lets a caller act on the reason
+    without parsing finding text.
+
+    ``schema_read`` is ``True`` when the destination schema of the branch was read and the
+    import account's access read that follows it succeeded or did not run. It is ``False``
+    when no read ran (an unknown adapter or a non-declaring destination), when the schema
+    read failed, or when the access read failed. In the last case the schema was read, so
+    ``schema_fingerprint`` can be set, and ``read_failure_reason`` holds the access read's
+    reason.
     """
 
     findings: tuple[ValidationFinding, ...]
     schema_fingerprint: str | None
+    read_failure_reason: str | None = None
+    schema_read: bool = False
 
 
 def resolve_declared_destination_branch(package: ConfigurationPackage) -> str:
@@ -268,15 +284,16 @@ def _dropdown_findings(package: ConfigurationPackage, normalized: DestinationSch
 
 def _access_findings(
     package: ConfigurationPackage, accessor: DestinationAccessAccessor | None, branch: str
-) -> list[ValidationFinding]:
+) -> tuple[list[ValidationFinding], str | None]:
     """Report the permissions the import account lacks on `branch` and the lineage names it cannot use.
 
     Spec 007 FR-036: one finding per mapped kind the account cannot view, create or update,
     and one per named `source` or `owner` that the account cannot look up, that matches no
-    node, or that matches more than one node.
+    node, or that matches more than one node. The second value is the read failure reason
+    when the access read raised, else ``None``.
     """
     if accessor is None:
-        return []
+        return [], None
     try:
         access = accessor(package, branch)
     except DestinationSchemaReadError as exc:
@@ -286,7 +303,7 @@ def _access_findings(
                 location=_DESTINATION_LOCATION,
                 message=f"destination access for branch {branch!r} could not be read: {exc.describe()}",
             )
-        ]
+        ], exc.reason
     findings = [
         _finding(
             code=_CODE_DESTINATION_PERMISSION_MISSING,
@@ -318,7 +335,7 @@ def _access_findings(
             code = _CODE_DESTINATION_LINEAGE_NODE_NOT_FOUND
             message = f"{named}, which branch {branch!r} does not hold"
         findings.append(_finding(code=code, location=location, message=message))
-    return findings
+    return findings, None
 
 
 def collect_destination_schema_findings(
@@ -354,6 +371,8 @@ def collect_destination_schema_findings(
             )
         )
     fingerprint: str | None = None
+    read_failure_reason: str | None = None
+    schema_read = False
     # The registration-time invariant on the seam makes the accessor and the declaration
     # one fact, so presence of the accessor is the declaration.
     accessor = capabilities.destination_schema_accessor
@@ -372,6 +391,7 @@ def collect_destination_schema_findings(
         try:
             snapshot = accessor(package, branch)
         except DestinationSchemaReadError as exc:
+            read_failure_reason = exc.reason
             findings.append(
                 _finding(
                     code=_CODE_DESTINATION_SCHEMA_READ_FAILED,
@@ -380,6 +400,7 @@ def collect_destination_schema_findings(
                 )
             )
         else:
+            schema_read = True
             try:
                 normalized = normalize_destination_schema(snapshot)
                 fingerprint = compute_consumed_schema_fingerprint(
@@ -401,5 +422,13 @@ def collect_destination_schema_findings(
                     )
                 )
             findings.extend(_schema_content_findings(package, snapshot))
-            findings.extend(_access_findings(package, capabilities.destination_access_accessor, branch))
-    return DestinationSchemaValidation(findings=sort_findings(findings), schema_fingerprint=fingerprint)
+            access_findings, read_failure_reason = _access_findings(
+                package, capabilities.destination_access_accessor, branch
+            )
+            findings.extend(access_findings)
+    return DestinationSchemaValidation(
+        findings=sort_findings(findings),
+        schema_fingerprint=fingerprint,
+        read_failure_reason=read_failure_reason,
+        schema_read=schema_read and read_failure_reason is None,
+    )

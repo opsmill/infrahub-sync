@@ -391,6 +391,7 @@ def test_an_explicit_request_against_a_non_declaring_destination_is_an_error_fin
         ("unsupported-destination-write", "/configuration/destination"),
     ]
     assert result.schema_fingerprint is None
+    assert result.schema_read is False
 
 
 def test_an_update_only_request_against_peeringmanager_is_refused_as_an_unsupported_write() -> None:
@@ -421,6 +422,7 @@ def test_an_unknown_destination_adapter_adds_no_schema_findings() -> None:
 
     assert result.findings == ()
     assert result.schema_fingerprint is None
+    assert result.schema_read is False
     assert ("missing-adapter", "/configuration/destination") in _codes_and_locations(core)
     assert ("undeclared-setting", "/configuration/source/settings/bogus_source") in _codes_and_locations(core)
 
@@ -428,7 +430,7 @@ def test_an_unknown_destination_adapter_adds_no_schema_findings() -> None:
 # --- AR9: a failed schema read is a typed error finding -------------------------------
 
 
-@pytest.mark.parametrize("reason", ["timeout", "unauthorized", "unreachable"])
+@pytest.mark.parametrize("reason", ["timeout", "unauthorized", "unreachable", "rejected"])
 def test_a_failed_schema_read_is_an_error_finding_not_a_raise(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
     _inject(monkeypatch, _table_with_accessor(_raising_accessor(reason)))
 
@@ -437,6 +439,49 @@ def test_a_failed_schema_read_is_an_error_finding_not_a_raise(monkeypatch: pytes
     assert _codes_and_locations(result.findings) == [("destination-schema-read-failed", "/configuration/destination")]
     assert reason in result.findings[0].message
     assert result.schema_fingerprint is None
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["timeout", "unreachable", "unauthorized", "forbidden", "nobranch", "rejected", "unconfigured", "credentials"],
+)
+def test_a_failed_schema_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
+    _inject(monkeypatch, _table_with_accessor(_raising_accessor(reason)))
+
+    result = collect_destination_schema_findings(package(package_data()))
+
+    assert result.read_failure_reason == reason
+    assert result.schema_read is False
+    assert [finding.code for finding in result.findings] == ["destination-schema-read-failed"]
+
+
+def test_a_failed_access_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The schema was read and fingerprinted, but `schema_read` covers the access read too."""
+
+    def failing_access(package_: ConfigurationPackage, branch: str) -> DestinationAccess:
+        del package_
+        msg = f"access read failed for branch {branch!r}"
+        raise DestinationSchemaReadError(msg, reason="forbidden")
+
+    table = _table_with_accessor(_SpiedAccessor())
+    table["infrahub"] = replace(table["infrahub"], destination_access_accessor=failing_access)
+    _inject(monkeypatch, table)
+
+    result = collect_destination_schema_findings(package(package_data()))
+
+    assert result.read_failure_reason == "forbidden"
+    assert result.schema_read is False
+    assert result.schema_fingerprint is not None
+    assert "destination-schema-read-failed" in [finding.code for finding in result.findings]
+
+
+def test_a_successful_read_returns_no_read_failure_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor()))
+
+    result = collect_destination_schema_findings(package(package_data()))
+
+    assert result.read_failure_reason is None
+    assert result.schema_read is True
 
 
 def test_a_failed_schema_read_does_not_suppress_the_write_operations_check(

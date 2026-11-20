@@ -1,0 +1,1 @@
+Administrators can register a new configuration, or add a version to one, by dropping a package file in the web interface, which validates the package and shows the result before registering; a version registered while the destination could not be reached is marked as registered without validation.

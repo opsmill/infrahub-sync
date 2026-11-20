@@ -177,6 +177,11 @@ CREATE TABLE IF NOT EXISTS configuration_versions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
+CREATE TABLE IF NOT EXISTS configuration_versions_unvalidated (
+    config_id TEXT NOT NULL, registry_version INTEGER NOT NULL,
+    PRIMARY KEY (config_id, registry_version),
+    FOREIGN KEY (config_id, registry_version) REFERENCES configuration_versions(config_id, registry_version)
+);
 CREATE TABLE IF NOT EXISTS worker_environments (
     worker_id TEXT PRIMARY KEY, credential_names TEXT NOT NULL, observed_at TEXT NOT NULL
 );
@@ -520,9 +525,23 @@ _CONFIGURATION_LIST_ORDER = " ORDER BY configurations.created_at DESC, configura
 _UPDATE_CONFIGURATION_NAME = "UPDATE configurations SET name = ? WHERE config_id = ?"
 _INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, registry_version, package_checksum,
 declared_content, created_at, registered_by, registration_reason) VALUES (?, ?, ?, ?, ?, ?, ?)"""
+# A version registered without validation (spec 025) has a row in its own table, so a database
+# created by an earlier build gains it at start-up; no row reads as ``false``. The column is a
+# correlated ``EXISTS`` rather than a join, so the unqualified fragments below stay unambiguous.
+_INSERT_CONFIGURATION_VERSION_UNVALIDATED = (
+    "INSERT INTO configuration_versions_unvalidated (config_id, registry_version) VALUES (?, ?)"
+)
+_UNVALIDATED_COLUMN = """EXISTS (SELECT 1 FROM configuration_versions_unvalidated AS unvalidated
+WHERE unvalidated.config_id = configuration_versions.config_id
+AND unvalidated.registry_version = configuration_versions.registry_version)"""
 # The paged version list: summaries without the package, newest version first.
-_SELECT_CONFIGURATION_VERSION_LIST = """SELECT config_id, registry_version, package_checksum, created_at,
-registered_by, registration_reason FROM configuration_versions WHERE config_id = ?"""
+_CONFIGURATION_VERSION_SUMMARY_COLUMNS = (
+    "config_id, registry_version, package_checksum, created_at, registered_by, registration_reason, "
+    + _UNVALIDATED_COLUMN
+)
+_SELECT_CONFIGURATION_VERSION_LIST = (
+    "SELECT " + _CONFIGURATION_VERSION_SUMMARY_COLUMNS + " FROM configuration_versions WHERE config_id = ?"  # noqa: S608 - module constants only.
+)
 _CONFIGURATION_VERSION_LIST_AFTER = " AND registry_version < ?"
 _CONFIGURATION_VERSION_LIST_ORDER = " ORDER BY registry_version DESC LIMIT ?"
 # For every version on one page, the newest run and the most recently applied run, in one query.
@@ -540,13 +559,16 @@ SELECT registry_version, 'applied' AS kind, run_id, phase, outcome, started_at, 
 ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY finished_at DESC, run_id DESC) AS position
 FROM product_runs WHERE config_id = ? AND registry_version IN ({0}) AND phase = 'applied'
 ) ranked WHERE position = 1"""
-_SELECT_CONFIGURATION_VERSION = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
-FROM configuration_versions WHERE config_id = ? AND registry_version = ?"""
+_CONFIGURATION_VERSION_COLUMNS = (
+    "config_id, registry_version, package_checksum, declared_content, created_at, " + _UNVALIDATED_COLUMN
+)
+_SELECT_FROM_CONFIGURATION_VERSIONS = "SELECT " + _CONFIGURATION_VERSION_COLUMNS + " FROM configuration_versions"  # noqa: S608 - module constants only.
+_SELECT_CONFIGURATION_VERSION = _SELECT_FROM_CONFIGURATION_VERSIONS + " WHERE config_id = ? AND registry_version = ?"
 _CONFIGURATION_VERSION_EXISTS = "SELECT 1 FROM configuration_versions WHERE config_id = ? AND registry_version = ?"
-_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = """SELECT config_id, registry_version, package_checksum, declared_content,
-created_at FROM configuration_versions WHERE config_id = ? AND package_checksum = ?"""
-_SELECT_CONFIGURATION_VERSIONS = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
-FROM configuration_versions WHERE config_id = ? ORDER BY registry_version"""
+_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = (
+    _SELECT_FROM_CONFIGURATION_VERSIONS + " WHERE config_id = ? AND package_checksum = ?"
+)
+_SELECT_CONFIGURATION_VERSIONS = _SELECT_FROM_CONFIGURATION_VERSIONS + " WHERE config_id = ? ORDER BY registry_version"
 _SELECT_NEXT_CONFIGURATION_VERSION = (
     "SELECT COALESCE(MAX(registry_version) + 1, 1) FROM configuration_versions WHERE config_id = ?"
 )
@@ -1038,6 +1060,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> ConfigurationVersion: ...
 
     def add_configuration_version(
@@ -1047,6 +1070,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> tuple[ConfigurationVersion, bool]: ...
 
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]: ...
@@ -3359,8 +3383,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> ConfigurationVersion:
-        """Durably register a brand-new configuration and its first version."""
+        """Durably register a brand-new configuration and its first version.
+
+        ``registered_without_validation`` marks the version in the same transaction.
+        """
         config_id = _generate_config_id()
         version = ConfigurationVersion(
             config_id=config_id,
@@ -3368,6 +3396,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             package_checksum=package.checksum(),
             declared_content=package.declared_content(),
             created_at=datetime.now(timezone.utc),
+            registered_without_validation=registered_without_validation,
         )
         connection = self._connect()
         try:
@@ -3409,7 +3438,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         Runs inside the transaction that allocates the version, which is always the newest
         one, so the configuration's name is always its latest version's name. ``name`` is
-        ``None`` when the package declares an empty name.
+        ``None`` when the package declares an empty name. A version marked
+        ``registered_without_validation`` gets its mark row after the version row, which the
+        mark's foreign key requires.
         """
         _require_checksum_digests_content(version.package_checksum, version.declared_content)
         cursor.execute(
@@ -3424,6 +3455,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 registration_reason,
             ),
         )
+        if version.registered_without_validation:
+            cursor.execute(
+                self._sql(_INSERT_CONFIGURATION_VERSION_UNVALIDATED), (version.config_id, version.registry_version)
+            )
         cursor.execute(
             self._sql(_UPDATE_CONFIGURATION_NAME),
             (name, version.config_id),
@@ -3436,11 +3471,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> tuple[ConfigurationVersion, bool]:
         """Atomically allocate the next version, or return the existing one for a known checksum.
 
-        An existing version is returned unchanged: its actor and reason stay those of the
-        request that created it.
+        An existing version is returned unchanged: its actor, reason and
+        ``registered_without_validation`` mark stay those of the request that created it.
         """
         checksum = package.checksum()
         last_conflict: BaseException | None = None
@@ -3458,6 +3494,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         package_checksum=checksum,
                         declared_content=package.declared_content(),
                         created_at=datetime.now(timezone.utc),
+                        registered_without_validation=registered_without_validation,
                     )
                     self._insert_configuration_version_row(
                         cursor,
@@ -5388,16 +5425,22 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
         secrets: Sequence[str] = (),
     ) -> ConfigurationVersion:
         """Validate, then durably register a brand-new configuration's first version.
 
         ``registered_by`` and ``registration_reason`` are recorded on the version with every
-        value in ``secrets`` redacted.
+        value in ``secrets`` redacted, and ``registered_without_validation`` marks it.
         """
         validate_package_credentials(package)
         actor, reason = _redacted_registration(registered_by, registration_reason, secrets)
-        return self._records.create_configuration(package, registered_by=actor, registration_reason=reason)
+        return self._records.create_configuration(
+            package,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
+        )
 
     def add_configuration_version(
         self,
@@ -5406,12 +5449,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
         secrets: Sequence[str] = (),
     ) -> tuple[ConfigurationVersion, bool]:
         """Validate, then atomically add a version to an existing configuration.
 
         ``registered_by`` and ``registration_reason`` are recorded on a created version with
-        every value in ``secrets`` redacted.
+        every value in ``secrets`` redacted, and ``registered_without_validation`` marks it;
+        an identical existing version keeps its own values.
         """
         validate_package_credentials(package)
         if not self._records.configuration_exists(config_id):
@@ -5419,7 +5464,11 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             raise ConfigurationNotFoundError(msg)
         actor, reason = _redacted_registration(registered_by, registration_reason, secrets)
         return self._records.add_configuration_version(
-            config_id, package, registered_by=actor, registration_reason=reason
+            config_id,
+            package,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
         )
 
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]:
@@ -6905,6 +6954,7 @@ def _configuration_version_summary_from_row(
         created_at=row[3],
         registered_by=row[4],
         registration_reason=row[5],
+        registered_without_validation=bool(row[6]),
         latest_run=latest.get((int(row[1]), "latest")),
         latest_applied_run=latest.get((int(row[1]), "applied")),
     )
@@ -6933,6 +6983,8 @@ def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:
             "package_checksum": row[2],
             "declared_content": json.loads(row[3]),
             "created_at": row[4],
+            # SQLite returns the ``EXISTS`` column as 0 or 1, PostgreSQL as a boolean.
+            "registered_without_validation": bool(row[5]),
         }
     )
 

@@ -41,6 +41,8 @@ from infrahub_sync.client import (
     EventPrimaryResource,
     EventResource,
     OrchestrationSummary,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanLastChangeResource,
     PlanOperationResource,
     PlanResource,
@@ -299,6 +301,23 @@ def test_configs_version_generates_and_discloses_retry_key(client: MagicMock, tm
     assert "created: true" in result.output
 
 
+def test_configs_version_prints_the_unvalidated_mark_and_never_sets_it(client: MagicMock, tmp_path: Path) -> None:
+    """Only the web interface marks a version; the CLI shows the mark it reads back (spec 025, US4)."""
+    package = tmp_path / "package.json"
+    package.write_text('{"name": "edge-sync"}', encoding="utf-8")
+    client.get_config_version.return_value = _version().model_copy(update={"registered_without_validation": True})
+
+    registered = _invoke(client, "configs", "version", "edge-sync", str(package))
+    shown = _invoke(client, "configs", "show", "edge-sync", "--version", "1")
+
+    assert registered.exit_code == 0, registered.output
+    assert shown.exit_code == 0, shown.output
+    _config_id, request, _key = client.create_config_version.call_args.args
+    assert request.registered_without_validation is False
+    assert "registered_without_validation: false" in registered.output
+    assert "registered_without_validation: true" in shown.output
+
+
 def test_configuration_reads_and_validation_keep_machine_fields_and_finding_order(client: MagicMock) -> None:
     listed = _invoke(client, "configs", "list")
     summary = _invoke(client, "configs", "show", "edge-sync")
@@ -362,6 +381,208 @@ def test_configs_validate_exits_1_on_an_error_finding_only_with_a_branch(
 
     assert result.exit_code == exit_code, result.output
     assert "code=finding" in result.output
+
+
+def _package_check(
+    severities: tuple[Literal["error", "warning"], ...] = (), destination_read: str = "not_requested"
+) -> PackageCheckResource:
+    return PackageCheckResource(
+        package_checksum=CHECKSUM,
+        name="edge-sync",
+        declared_content={"format_version": 1, "configuration": {"name": "edge-sync"}},
+        destination_read=destination_read,
+        destination_schema_fingerprint=None if destination_read != "read" else "f" * 64,
+        findings=tuple(
+            ValidationFindingResource(
+                code=f"finding-{index}", severity=severity, location="/a", message=f"finding {index}"
+            )
+            for index, severity in enumerate(severities)
+        ),
+        offset=2,
+        limit=3,
+        total_findings=len(severities),
+        next_offset=None,
+    )
+
+
+def test_configs_check_sends_the_file_as_package_and_prints_the_report(client: MagicMock, tmp_path: Path) -> None:
+    """contracts/sync-api.md (CLI, FR-006): the report of `configs validate`, plus `destination_read`."""
+    package = tmp_path / "package.yaml"
+    package.write_text("format_version: 1\nconfiguration:\n  name: edge-sync\n", encoding="utf-8")
+    client.check_package.return_value = _package_check(("warning", "error"), destination_read="read")
+
+    result = _invoke(client, "configs", "check", str(package), "--branch", "review", "--offset", "2", "--limit", "3")
+
+    (request,) = client.check_package.call_args.args
+    assert request == PackageCheckRequest(package={"format_version": 1, "configuration": {"name": "edge-sync"}})
+    assert client.check_package.call_args.kwargs == {"offset": 2, "limit": 3, "branch": "review"}
+    for line in (
+        f"package_checksum: {CHECKSUM}",
+        f"destination_schema_fingerprint: {'f' * 64}",
+        "destination_read: read",
+        "offset: 2",
+        "limit: 3",
+        "total_findings: 2",
+        "next_offset: <none>",
+    ):
+        assert line in result.output
+    assert result.output.index("code=finding-0") < result.output.index("code=finding-1")
+    client.register_config.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "severities", "exit_code"),
+    [
+        pytest.param((), (), 0, id="no-findings"),
+        pytest.param(("--branch", "review"), (), 0, id="branch-no-findings"),
+        pytest.param((), ("warning",), 0, id="a-warning"),
+        pytest.param(("--branch", "review"), ("warning",), 0, id="branch-with-a-warning"),
+        pytest.param((), ("error",), 1, id="an-error"),
+        pytest.param(("--branch", "review"), ("warning", "error"), 1, id="branch-with-findings"),
+    ],
+)
+def test_configs_check_exits_1_when_the_page_has_an_error_finding(
+    client: MagicMock,
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+    severities: tuple[Literal["error", "warning"], ...],
+    exit_code: int,
+) -> None:
+    """contracts/sync-api.md (CLI): the command exits 1 when the returned page has an error finding."""
+    package = tmp_path / "package.json"
+    package.write_text('{"format_version": 1}', encoding="utf-8")
+    client.check_package.return_value = _package_check(severities)
+
+    result = _invoke(client, "configs", "check", str(package), *arguments)
+
+    assert result.exit_code == exit_code, result.output
+    assert "destination_read: not_requested" in result.output
+    assert client.check_package.call_args.kwargs["branch"] == (arguments[1] if arguments else None)
+
+
+def _check_page(
+    severities: tuple[Literal["error", "warning"], ...], offset: int, next_offset: int | None
+) -> PackageCheckResource:
+    return _package_check(severities).model_copy(
+        update={"offset": offset, "limit": 1, "total_findings": 3, "next_offset": next_offset}
+    )
+
+
+@pytest.mark.parametrize(
+    ("pages", "exit_code", "calls"),
+    [
+        pytest.param(
+            [_check_page(("warning",), 0, 1), _check_page(("warning",), 1, 2), _check_page(("error",), 2, None)],
+            1,
+            3,
+            id="error-on-the-last-page",
+        ),
+        pytest.param(
+            [_check_page(("warning",), 0, 1), _check_page(("error",), 1, 2)],
+            1,
+            2,
+            id="stops-at-the-first-error",
+        ),
+        pytest.param(
+            [_check_page(("warning",), 0, 1), _check_page(("warning",), 1, 2), _check_page(("warning",), 2, None)],
+            0,
+            3,
+            id="warnings-only",
+        ),
+    ],
+)
+def test_configs_check_exits_1_when_a_later_page_has_an_error_finding(
+    client: MagicMock, tmp_path: Path, pages: list[PackageCheckResource], exit_code: int, calls: int
+) -> None:
+    """contracts/sync-api.md (CLI, D-10): an error finding on any page exits 1; only the requested page prints."""
+    package = tmp_path / "package.json"
+    package.write_text('{"format_version": 1}', encoding="utf-8")
+    client.check_package.side_effect = pages
+
+    result = _invoke(client, "configs", "check", str(package), "--limit", "1", "--branch", "review")
+
+    assert result.exit_code == exit_code, result.output
+    assert [call.kwargs["offset"] for call in client.check_package.call_args_list] == list(range(calls))
+    assert {call.kwargs["limit"] for call in client.check_package.call_args_list} == {1}
+    assert {call.kwargs["branch"] for call in client.check_package.call_args_list} == {"review"}
+    assert result.output.count("code=finding-0") == 1
+    assert ("run again with --offset" in result.output) is (exit_code == 1)
+
+
+@pytest.mark.parametrize(
+    "pages",
+    [
+        pytest.param([_check_page(("warning",), 0, 0)], id="same-offset"),
+        pytest.param([_check_page(("warning",), 0, 2), _check_page(("warning",), 2, 1)], id="backwards"),
+    ],
+)
+def test_configs_check_refuses_a_next_offset_that_does_not_move_forward(
+    client: MagicMock, tmp_path: Path, pages: list[PackageCheckResource]
+) -> None:
+    """A `next_offset` at or before the page just read is a protocol error, not an endless loop."""
+    package = tmp_path / "package.json"
+    package.write_text('{"format_version": 1}', encoding="utf-8")
+    client.check_package.side_effect = pages
+
+    result = _invoke(client, "configs", "check", str(package), "--limit", "1")
+
+    assert result.exit_code == 1, result.output
+    assert "error: protocol" in result.output
+    assert "operation: check_package" in result.output
+    assert client.check_package.call_count == len(pages)
+
+
+def _error_lines(output: str) -> list[str]:
+    """The error a command prints, without the lines that name the command and the retry key `configs register` prints first."""
+    # Rich colors the usage hint when the terminal allows it; compare the text only.
+    return [
+        line
+        for line in re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", output).splitlines()
+        if line.strip() and not line.startswith(("idempotency_key:", "Try '")) and "Usage:" not in line
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(None, id="missing-file"),
+        pytest.param("format_version: [1\n", id="invalid-yaml"),
+        pytest.param("- a list\n", id="not-a-mapping"),
+        pytest.param(b"\xff\xfe", id="not-utf-8"),
+        pytest.param("format_version: 1\ncreated: 2024-13-45\n", id="impossible-date"),
+        pytest.param("format_version: 1\na: &x [*x]\n", id="alias-that-holds-itself"),
+        pytest.param("format_version: 1\na: &x {b: [*x]}\n", id="alias-that-holds-itself-deeper"),
+    ],
+)
+def test_configs_check_refuses_an_unreadable_file_like_configs_register(
+    client: MagicMock, tmp_path: Path, content: str | bytes | None
+) -> None:
+    package = tmp_path / "package.yaml"
+    if isinstance(content, bytes):
+        package.write_bytes(content)
+    elif content is not None:
+        package.write_text(content, encoding="utf-8")
+
+    checked = _invoke(client, "configs", "check", str(package))
+    registered = _invoke(client, "configs", "register", str(package))
+
+    assert checked.exit_code == registered.exit_code != 0
+    assert _error_lines(checked.output) == _error_lines(registered.output) != []
+    client.check_package.assert_not_called()
+    client.register_config.assert_not_called()
+
+
+def test_configs_check_sends_an_alias_used_in_several_places(client: MagicMock, tmp_path: Path) -> None:
+    """An alias that does not hold itself is sent expanded, not refused as a package that holds itself."""
+    package = tmp_path / "package.yaml"
+    package.write_text("format_version: 1\na: &x [1]\nb: {c: *x, d: *x}\n", encoding="utf-8")
+    client.check_package.return_value = _package_check()
+
+    result = _invoke(client, "configs", "check", str(package))
+
+    assert result.exit_code == 0, result.output
+    (request,) = client.check_package.call_args.args
+    assert request == PackageCheckRequest(package={"format_version": 1, "a": [1], "b": {"c": [1], "d": [1]}})
 
 
 def test_plan_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:
@@ -2151,7 +2372,11 @@ def test_configs_versions_prints_latest_run_columns_and_pages(client: MagicMock)
     applied_at = NOW + timedelta(hours=1)
     applied = RunReference(run_id="run-1", phase="applied", outcome="succeeded", started_at=NOW, finished_at=applied_at)
     registered = _version_summary(2, latest_run=latest, latest_applied_run=applied).model_copy(
-        update={"registered_by": "admin@example.com", "registration_reason": "first import"}
+        update={
+            "registered_by": "admin@example.com",
+            "registration_reason": "first import",
+            "registered_without_validation": True,
+        }
     )
     client.list_config_versions.return_value = ConfigurationVersionPage(
         items=(registered, _version_summary(1)),
@@ -2166,6 +2391,8 @@ def test_configs_versions_prints_latest_run_columns_and_pages(client: MagicMock)
     assert "registered_by: admin@example.com" in lines
     assert "registration_reason: first import" in lines
     assert "registered_by: <none>" in lines
+    assert "registered_without_validation: true" in lines
+    assert "registered_without_validation: false" in lines
     assert f"latest_run: run-2 phase=planned outcome=- started_at={NOW.isoformat()}" in lines
     # The applied run shows when its apply finished, not when its plan was created.
     assert f"latest_applied_run: run-1 phase=applied outcome=succeeded finished_at={applied_at.isoformat()}" in lines

@@ -103,6 +103,7 @@ REASON_MAX_LENGTH = 512
 # apply: no space, so a name differs from every placeholder and is safe in a URL path.
 ACCOUNT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$"
 _JSON_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
+_PACKAGE_CHECK_FIELDS_MESSAGE = "exactly one of package and document is required"
 _ARTIFACT_TIME_MESSAGE = "artifact-reference timestamps must include a timezone"
 _EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"
 _ARTIFACT_KEY_MESSAGE = "artifact object and manifest keys must include the content digest"
@@ -209,12 +210,50 @@ class ResumeRunRequest(_RequestModel):
     reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
+def _json_native_package(value: dict[str, Any]) -> dict[str, Any]:
+    """Refuse a package that is not recursively exact JSON-native: what the service hashes."""
+
+    def visit(item: object) -> None:
+        item_type = type(item)
+        if item_type is dict:
+            for key, child in cast("dict[object, object]", item).items():
+                if type(key) is not str:  # pylint: disable=unidiomatic-typecheck
+                    raise ValueError(_JSON_PACKAGE_MESSAGE)
+                visit(child)
+            return
+        if item_type is list:
+            for child in cast("list[object]", item):
+                visit(child)
+            return
+        if item_type is float and not isfinite(cast("float", item)):
+            raise ValueError(_JSON_PACKAGE_MESSAGE)
+        if item_type not in {str, int, float, bool, type(None)}:
+            raise ValueError(_JSON_PACKAGE_MESSAGE)
+
+    visit(value)
+    return value
+
+
 class ConfigMutationRequest(_RequestModel):
-    """Submit a configuration package with an optional audit reason."""
+    """Submit a configuration package with an optional audit reason.
+
+    The package is ``package``, as JSON, or ``document``, the text of a package file, YAML or
+    JSON, which the Sync API parses as `POST /configs/validate` does. The web interface sends
+    ``document``, because a browser that parses and serializes the file again can change its
+    numbers; the CLI sends ``package``. Exactly one is set. The Sync API checks that rule
+    itself, after the administrator check, so this model shared with it does not; the field
+    that is not set is omitted.
+
+    ``registered_without_validation`` marks the created version as registered without
+    validation. The web interface sets it; the CLI never does. A request without the mark
+    keeps today's body, so it is omitted when ``false``.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
-    package: dict[str, Any]
+    package: dict[str, Any] | None = None
+    document: str | None = None
     reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
+    registered_without_validation: StrictBool = False
 
     @field_validator("reason")
     @classmethod
@@ -225,26 +264,48 @@ class ConfigMutationRequest(_RequestModel):
 
     @field_validator("package")
     @classmethod
-    def _require_json_package(cls, value: dict[str, Any]) -> dict[str, Any]:
-        def visit(item: object) -> None:
-            item_type = type(item)
-            if item_type is dict:
-                for key, child in cast("dict[object, object]", item).items():
-                    if type(key) is not str:  # pylint: disable=unidiomatic-typecheck
-                        raise ValueError(_JSON_PACKAGE_MESSAGE)
-                    visit(child)
-                return
-            if item_type is list:
-                for child in cast("list[object]", item):
-                    visit(child)
-                return
-            if item_type is float and not isfinite(cast("float", item)):
-                raise ValueError(_JSON_PACKAGE_MESSAGE)
-            if item_type not in {str, int, float, bool, type(None)}:
-                raise ValueError(_JSON_PACKAGE_MESSAGE)
+    def _require_json_package(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return None if value is None else _json_native_package(value)
 
-        visit(value)
-        return value
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
+    @model_serializer(mode="wrap")
+    def _omit_unset_fields(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        for field in ("package", "document"):
+            if data.get(field) is None:
+                data.pop(field, None)
+        if not self.registered_without_validation:
+            data.pop("registered_without_validation", None)
+        return data
+
+
+class PackageCheckRequest(_RequestModel):
+    """Submit a package to check without registering it: as JSON, or as the text of a package file.
+
+    Exactly one of ``package`` and ``document`` is set, and only that field is sent.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
+    package: dict[str, Any] | None = None
+    document: str | None = None
+
+    @field_validator("package")
+    @classmethod
+    def _require_json_package(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return None if value is None else _json_native_package(value)
+
+    @model_validator(mode="after")
+    def _require_exactly_one(self) -> PackageCheckRequest:
+        if (self.package is None) == (self.document is None):
+            raise ValueError(_PACKAGE_CHECK_FIELDS_MESSAGE)
+        return self
+
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
+    @model_serializer(mode="wrap")
+    def _omit_the_unset_field(self, handler: SerializerFunctionWrapHandler):
+        return {key: value for key, value in handler(self).items() if value is not None}
 
 
 def _registry_version(value: object) -> int:
@@ -1205,6 +1266,8 @@ class ConfigurationVersionSummaryResource(_ResourceModel):
     # ``None`` for versions registered before the server recorded who registered them and why.
     registered_by: str | None = None
     registration_reason: str | None = None
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
     latest_run: RunReference | None = None
     latest_applied_run: RunReference | None = None
 
@@ -1231,6 +1294,8 @@ class ConfigurationVersionResource(_ResourceModel):
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     declared_content: dict[str, Any]
     created_at: datetime
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
 
     @field_validator("created_at")
     @classmethod
@@ -1252,6 +1317,8 @@ class ConfigurationVersionReferenceResource(_ResourceModel):
     registry_version: int = Field(ge=1)
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     created_at: datetime
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
 
     @field_validator("created_at")
     @classmethod
@@ -1355,6 +1422,34 @@ class CreatedTokenResource(TokenResource):
         return f"CreatedTokenResource(name={self.name!r})"
 
     __str__ = __repr__
+
+
+class PackageCheckResource(_ResourceModel):
+    """Return the check of a package that is not registered, with one page of its findings.
+
+    ``package_checksum`` and ``declared_content`` are what registering the package would store.
+    ``destination_read`` is ``not_requested`` without a branch, ``read`` when the destination
+    schema was read, ``not_read`` when the destination adapter is unknown or declares no schema
+    read, or the reason the read failed: ``timeout``, ``unreachable``,
+    ``unauthorized``, ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured`` or
+    ``credentials``.
+    """
+
+    # Keys and values of the declared content are returned exactly, so registering the
+    # returned content from Python gives the returned checksum. A browser that parses and
+    # serializes it again can change its numbers (`30.0` becomes `30`, integers above 2**53
+    # lose precision), so the web interface registers the file's text as `document` instead.
+    model_config = ConfigDict(extra="allow", frozen=True, str_strip_whitespace=False)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    name: str | None = None
+    declared_content: dict[str, Any]
+    destination_read: str = Field(pattern=r"^[a-z][a-z_]*$", max_length=64)
+    destination_schema_fingerprint: str | None = None
+    findings: tuple[ValidationFindingResource, ...]
+    offset: int
+    limit: int
+    total_findings: int
+    next_offset: int | None
 
 
 class ErrorDetail(_ResourceModel):

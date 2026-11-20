@@ -41,6 +41,8 @@ from infrahub_sync.client import (
     CreateRunRequest,
     CreateScheduleRequest,
     NotSyncAPIError,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanResource,
     ProtocolError,
     RegisteredConfigurationResource,
@@ -115,6 +117,8 @@ OWNER_SCOPE_NOTICE = "The owner setting applies only to values this run creates.
 NOT_RECORDED = "not recorded"
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
+# The client operation that `configs check` reports when the Sync API breaks the paging contract.
+_CHECK_PACKAGE = "check_package"
 _KIND_ARG = "kind"
 _TYPE_ARG = "type"
 _VERSION_ARG = "version"
@@ -455,11 +459,52 @@ def _request(model: type[Any], **values: object) -> Any:
 def _package(path: Path) -> dict[str, Any]:
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError):
+    # `ValueError` covers a decode error and a date the YAML parser cannot build, such as
+    # `2024-13-45`; the Sync API refuses the same document as `invalid_package`.
+    except (OSError, ValueError, RecursionError, yaml.YAMLError):
         raise ClientInputError(_PACKAGE_ARG) from None
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value) or _contains_itself(value):
         raise ClientInputError(_PACKAGE_ARG)
     return cast("dict[str, Any]", value)
+
+
+def _contains_itself(value: object) -> bool:
+    """Return whether a parsed YAML value holds itself, through an alias to an enclosing node.
+
+    Such a value, for example `a: &x [*x]`, has no JSON form. The walk does not recurse, and it
+    visits each mapping or list once, so a value that uses one alias in many places stays cheap.
+    """
+    on_path: set[int] = set()
+    finished: set[int] = set()
+    stack: list[tuple[object, Iterator[object]]] = []
+    end = object()
+
+    def enter(item: object) -> bool:
+        """Start the walk of one mapping or list; return whether it encloses the current position."""
+        if type(item) is dict:  # pylint: disable=unidiomatic-typecheck
+            children: Iterator[object] = iter(cast("dict[object, object]", item).values())
+        elif type(item) is list:  # pylint: disable=unidiomatic-typecheck
+            children = iter(cast("list[object]", item))
+        else:
+            return False
+        if id(item) in on_path:
+            return True
+        if id(item) not in finished:
+            on_path.add(id(item))
+            stack.append((item, children))
+        return False
+
+    enter(value)
+    while stack:
+        item, children = stack[-1]
+        child = next(children, end)
+        if child is end:
+            stack.pop()
+            on_path.discard(id(item))
+            finished.add(id(item))
+        elif enter(child):
+            return True
+    return False
 
 
 def _idempotency_key(explicit: str | None) -> str:
@@ -602,6 +647,7 @@ def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) 
             ("created_at", resource.created_at.isoformat()),
             ("registered_by", resource.registered_by),
             ("registration_reason", resource.registration_reason),
+            ("registered_without_validation", resource.registered_without_validation),
             ("latest_run", _run_reference(resource.latest_run)),
             ("latest_applied_run", _run_reference(resource.latest_applied_run, applied=True)),
         )
@@ -617,6 +663,7 @@ def _echo_config_version_reference(
             ("registry_version", resource.registry_version),
             ("package_checksum", resource.package_checksum),
             ("created_at", resource.created_at.isoformat()),
+            ("registered_without_validation", resource.registered_without_validation),
         )
     )
 
@@ -650,6 +697,26 @@ def _echo_validation(resource: ValidationReportResource) -> None:
             ("next_offset", resource.next_offset),
         )
     )
+    _echo_findings(resource)
+
+
+def _echo_package_check(resource: PackageCheckResource) -> None:
+    """Print the check of an unregistered package as `configs validate` prints a version, with the read outcome."""
+    _echo_fields(
+        (
+            ("package_checksum", resource.package_checksum),
+            ("destination_read", resource.destination_read),
+            ("destination_schema_fingerprint", resource.destination_schema_fingerprint),
+            ("offset", resource.offset),
+            ("limit", resource.limit),
+            ("total_findings", resource.total_findings),
+            ("next_offset", resource.next_offset),
+        )
+    )
+    _echo_findings(resource)
+
+
+def _echo_findings(resource: ValidationReportResource | PackageCheckResource) -> None:
     for finding in resource.findings:
         typer.echo(
             _display(
@@ -911,6 +978,54 @@ def _with_live_schema(path: Path, result: ConversionResult) -> tuple[ConversionR
         _echo_lines(refusal_lines(path.name, filled.refusals), err=True)
         raise typer.Exit(1)
     return filled, filled.package
+
+
+@configs_app.command("check")
+def configs_check(
+    ctx: typer.Context,
+    package: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
+    *,
+    offset: int = typer.Option(0, "--offset", help="Finding offset."),
+    limit: int = typer.Option(256, "--limit", help="Maximum findings to return."),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help=(
+            "Also check the mapping, the import account's permissions and the workers' credential "
+            "variables against this Infrahub branch. `destination_read` says whether the service read "
+            "the branch's schema."
+        ),
+    ),
+) -> None:
+    """Validate a JSON or YAML configuration package without registering it.
+
+    Prints the requested page of findings. Exits 1 when any page has an error finding: when the
+    printed page has none, the command reads the following pages until it finds one or reaches
+    the end. A warning does not change the exit code.
+    """
+    with _client_errors():
+        request = cast("PackageCheckRequest", _request(PackageCheckRequest, package=_package(package)))
+        client = _client(ctx)
+        report = client.check_package(request, offset=offset, limit=limit, branch=branch)
+        _echo_package_check(report)
+        # contracts/sync-api.md (spec 025, decision D-10): an error finding exits 1, on whichever
+        # page it is, so `configs check pkg && configs register pkg` never registers one.
+        page, page_offset = report, offset
+        while not _has_error_finding(page) and page.next_offset is not None:
+            # A `next_offset` that does not move forward would read the same page forever.
+            if page.next_offset <= page_offset:
+                raise ProtocolError(_CHECK_PACKAGE)
+            page_offset = page.next_offset
+            page = client.check_package(request, offset=page_offset, limit=limit, branch=branch)
+    if _has_error_finding(page):
+        if page is not report:
+            typer.echo(f"error findings start on a later page: run again with --offset {page.offset}", err=True)
+        raise typer.Exit(code=1)
+
+
+def _has_error_finding(report: PackageCheckResource) -> bool:
+    """Return whether one page of a package check holds an `error` finding."""
+    return any(finding.severity == "error" for finding in report.findings)
 
 
 @configs_app.command("convert")

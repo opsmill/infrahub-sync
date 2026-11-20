@@ -24,6 +24,7 @@ from infrahub_sync.client.models import (
     EventRelatedResource,
     EventResource,
     OrchestrationSummary,
+    PackageCheckRequest,
     PublicRunResource,
     RunApprovalResource,
     RunResource,
@@ -202,6 +203,50 @@ def test_a_valid_configuration_reason_is_kept_unchanged() -> None:
     request = ConfigMutationRequest(package={"format_version": 1}, reason="register inventory")
 
     assert request.reason == "register inventory"
+
+
+def test_a_configuration_request_carries_the_unvalidated_mark_and_defaults_it_to_false() -> None:
+    """The web interface sets the mark when it registers without validation (spec 025, US4)."""
+    default = ConfigMutationRequest(package={"format_version": 1})
+    marked = ConfigMutationRequest(package={"format_version": 1}, registered_without_validation=True)
+
+    assert default.registered_without_validation is False
+    # An unmarked request keeps the body a Sync API without the field accepts.
+    assert "registered_without_validation" not in default.model_dump(mode="json")
+    assert marked.model_dump(mode="json")["registered_without_validation"] is True
+    assert (
+        ConfigMutationRequest.model_validate({"package": {"format_version": 1}, "registered_without_validation": True})
+        == marked
+    )
+    with pytest.raises(ValidationError):
+        ConfigMutationRequest(package={"format_version": 1}, registered_without_validation="yes")  # ty: ignore[invalid-argument-type]
+
+
+def test_a_configuration_request_with_a_package_keeps_its_body() -> None:
+    """The CLI sends `package`; the body has no `document` key, so a Sync API without it accepts it."""
+    request = ConfigMutationRequest(package={"format_version": 1}, reason="register inventory")
+
+    assert request.model_dump(mode="json") == {"package": {"format_version": 1}, "reason": "register inventory"}
+
+
+def test_a_configuration_request_sends_the_text_of_a_package_file_unchanged() -> None:
+    """The web interface sends the file's text (spec 025, D-12); whitespace and numbers are kept."""
+    document = "  format_version: 1\nconfiguration:\n  timeout: 30.0\n"
+
+    request = ConfigMutationRequest(document=document, registered_without_validation=True)
+
+    assert request.model_dump(mode="json") == {
+        "document": document,
+        "reason": None,
+        "registered_without_validation": True,
+    }
+
+
+def test_the_configuration_request_leaves_the_exactly_one_rule_to_the_sync_api() -> None:
+    """The model is shared with the Sync API, which refuses both or neither with `400 request`."""
+    assert ConfigMutationRequest().model_dump(mode="json") == {"reason": None}
+    both = ConfigMutationRequest(package={"format_version": 1}, document="format_version: 1\n")
+    assert set(both.model_dump(mode="json")) == {"package", "document", "reason"}
 
 
 def _public_run(**extra: object) -> dict[str, object]:
@@ -785,3 +830,45 @@ def test_the_service_bounds_the_details_of_an_event_it_emits() -> None:
     assert details is not None
     assert "infrahub_message" not in details.model_dump()
     assert details.start_at == datetime(2026, 11, 18, 1, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({}, id="neither"),
+        pytest.param({"package": {"format_version": 1}, "document": "format_version: 1\n"}, id="both"),
+        pytest.param({"package": None, "document": None}, id="both-null"),
+    ],
+)
+def test_a_package_check_request_needs_exactly_one_of_package_and_document(fields: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PackageCheckRequest(**fields)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize(
+    "package",
+    [
+        pytest.param({"format_version": float("nan")}, id="nan"),
+        pytest.param({"values": (1, 2)}, id="tuple"),
+        pytest.param({"nested": {1: "integer key"}}, id="integer-key"),
+    ],
+)
+def test_a_package_check_request_keeps_the_json_native_package_rule(package: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PackageCheckRequest(package=package)
+    with pytest.raises(ValidationError):
+        ConfigMutationRequest(package=package)
+
+
+def test_a_package_check_request_serializes_only_the_field_it_carries() -> None:
+    assert PackageCheckRequest(package={"format_version": 1}).model_dump(mode="json") == {
+        "package": {"format_version": 1}
+    }
+    assert PackageCheckRequest(document=" format_version: 1\n").model_dump(mode="json") == {
+        "document": " format_version: 1\n"
+    }
+
+
+def test_a_package_check_request_refuses_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        PackageCheckRequest(package={"format_version": 1}, reason="no reason field")  # ty: ignore[unknown-argument]

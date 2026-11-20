@@ -572,22 +572,35 @@ reads a run response that holds a part added by a later release.
 
 Every route below requires `Authorization: Bearer <token>`. Every `POST` route that writes or
 requests a change also requires a non-empty `Idempotency-Key` header and a JSON body;
-`POST /configs/{config_id}/versions/{registry_version}/validate` is the one exception, since it
-only re-checks an already-registered version and takes no body. The body's `reason` is
-optional. When present, it must be non-empty, and the service records it in the audit history.
-When it is absent or `null`, the service records the request without a reason. For idempotency,
-an absent reason and a `null` reason are the same value, and both differ from any text.
+`POST /configs/{config_id}/versions/{registry_version}/validate` and `POST /configs/validate`
+are the exceptions, since they store nothing. The first re-checks an already-registered version
+and takes no body. The second takes a JSON body but no `Idempotency-Key` and no `reason`.
+
+In the body of every `POST` route that requires an `Idempotency-Key`, `reason` is optional.
+When present, it must be non-empty, and the service records it in the audit history. When it is
+absent or `null`, the service records the request without a reason. For idempotency, an absent
+reason and a `null` reason are the same value, and both differ from any text.
+
+`POST /configs` and `POST /configs/{config_id}/versions` also accept
+`registered_without_validation`, `false` by default. When it is `true`, the service marks the
+created version as registered without validation. The service records the value that the request
+sends and does not check it. The web interface sends `true` when the destination could not be
+reached during validation; the CLI never sends it. For idempotency, an absent value and `false`
+are the same value, and both differ from `true`. When the package is identical to a version
+already stored for the configuration (`created: false`), the field is ignored and that version is
+returned unchanged.
 
 | Route | Behavior |
 | --- | --- |
-| `POST /configs` | Register a new configuration package as version 1. Administrator only. The response names the version by `config_id`, `registry_version`, `package_checksum` and `created_at`, without its package content. |
-| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The response names the version as `POST /configs` does, without its package content. |
+| `POST /configs` | Register a new configuration package as version 1. Administrator only. The body holds exactly one of `package`, a JSON object, or `document`, the text of a YAML or JSON file, which the service parses and refuses as `POST /configs/validate` does: 400 `request` with the reason `invalid_package`, or 422 `validation` with the reason `v2_configuration`. Both or neither gets 400 `request`. The CLI sends `package`; the web interface sends `document`, so the stored package and its checksum are those of the file that was checked. For idempotency, a `document` is compared as text, and it differs from any `package`. The response names the version by `config_id`, `registry_version`, `package_checksum`, `created_at` and `registered_without_validation`, without its package content. |
+| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The body holds `package` or `document` as for `POST /configs`. The response names the version as `POST /configs` does, without its package content. |
 | `GET /me` | Return the actor that the bearer token authenticates as, its administrator flag, and whether the service requires approval. |
 | `GET /configs` | List registered configurations, newest first, one page at a time. Filter by exact `name`. |
 | `GET /configs/{config_id}` | Return one registered configuration's summary, with its `name` and `latest_version`. |
 | `GET /configs/{config_id}/versions` | List a configuration's version summaries, newest first, one page at a time. |
 | `GET /configs/{config_id}/versions/{registry_version}` | Return one registered version, with its package content. |
 | `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. With `branch=<name>`, also check the mapping, the import account's permissions and the named `source` and `owner` against that Infrahub branch, and check that a live worker holds a variable of each `$credential` name. It checks names only, not whether a credential's value is accepted. |
+| `POST /configs/validate` | Check a package that is not registered, with the checks of the route above, and store nothing. Administrator only; a request refused because the token is not an administrator's is recorded in the audit history with the operation `check-config-package`. No other request to this route, accepted or refused, is recorded. The body holds exactly one of `package`, a JSON object, or `document`, the text of a YAML or JSON file, which the service parses. A `document` that is not a mapping with string keys, or that holds more than 1,000,000 values once its YAML aliases are expanded, gets 400 `request` with the reason `invalid_package`. Takes `branch` as the route above does. `offset`, `0` by default, and `limit`, `256` by default and at most `256`, select the page of findings that the response holds. The response holds `package_checksum`, `name`, `declared_content`, `destination_read`, `destination_schema_fingerprint` and one page of findings. A package that registration refuses gets the same refusal; a v2 `config.yml` gets 422 `validation` with the reason `v2_configuration`. |
 | `GET /runs` | List runs, newest first, one page at a time. Filter by `config_id`, `registry_version`, `trigger_type` and `schedule_id`. |
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
 | `GET /runs/{run_id}` | Return the durable product record, with current linked Prefect detail for non-terminal executions. |
@@ -631,6 +644,8 @@ lists their identifiers.
 | `infrahub-sync configs versions CONFIG` | `GET /configs/{config_id}/versions` |
 | `infrahub-sync configs validate CONFIG VERSION` | `POST /configs/{config_id}/versions/{registry_version}/validate` |
 | `infrahub-sync configs validate CONFIG VERSION --branch NAME` | `POST /configs/{config_id}/versions/{registry_version}/validate?branch=NAME` |
+| `infrahub-sync configs check PACKAGE` | `POST /configs/validate` with `package` |
+| `infrahub-sync configs check PACKAGE --branch NAME` | `POST /configs/validate?branch=NAME` with `package` |
 | `infrahub-sync plan` | `POST /runs` with `operation: plan` |
 | `infrahub-sync sync` | `POST /runs` with `operation: sync` |
 | `infrahub-sync verify RUN_ID` | `POST /runs/{run_id}/verify` |
@@ -704,8 +719,9 @@ in the same envelope:
   `config_id`, `name`, `latest_version` and `created_at`.
 - `GET /configs/{config_id}/versions` orders versions by `registry_version`, newest first. Each
   item carries `config_id`, `registry_version`, `package_checksum`, `created_at`,
-  `registered_by`, `registration_reason`, `latest_run` and `latest_applied_run`, and no
-  package content. `latest_run` is the version's newest run by `started_at`.
+  `registered_by`, `registration_reason`, `registered_without_validation`, `latest_run` and
+  `latest_applied_run`, and no package content. `registered_without_validation` is `true` for a
+  version registered with that field set to `true`, and `false` for every other version. `latest_run` is the version's newest run by `started_at`.
   `latest_applied_run` is the most recently applied run, ordered by the time its apply
   finished. An apply updates the plan run, so its `started_at` is the time the plan was
   created and its `finished_at` is the time the apply finished. Each run reference carries

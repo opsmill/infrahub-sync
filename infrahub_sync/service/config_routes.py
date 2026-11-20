@@ -1,17 +1,19 @@
 """HTTP-only adapter for the shared configuration application service."""
 
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from functools import wraps
 from hashlib import sha256
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
+import yaml
 from fastapi import APIRouter, Depends, Query
 from fastapi import Path as APIPath
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 
 from infrahub_sync.client.models import (
     ConfigurationPage,
@@ -19,10 +21,12 @@ from infrahub_sync.client.models import (
     ConfigurationVersionPage,
     ConfigurationVersionResource,
     ConfigurationVersionSummaryResource,
+    PackageCheckResource,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ValidationReportResource,
 )
+from infrahub_sync.configuration import ValidationFinding
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.canonical import canonical_json_bytes
@@ -60,6 +64,84 @@ from .service import REASON_REFUSED_MESSAGE, ServiceAPIError, is_free_text
 CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # Most findings one validation-report page returns, and the default page size.
 _MAX_VALIDATION_FINDINGS_PAGE = 256
+
+
+# The refusal of a document that is not a mapping with string keys, or whose YAML aliases expand
+# past `_MAX_DOCUMENT_VALUES` values (`POST /configs/validate`).
+INVALID_PACKAGE_REASON = "invalid_package"
+# The refusal of a v2 `config.yml` sent where a configuration package is expected.
+V2_CONFIGURATION_REASON = "v2_configuration"
+V2_CONFIGURATION_MESSAGE = (
+    "this is a v2 configuration, not a configuration package; "
+    "convert it with `infrahub-sync configs convert`, then check the package it writes"
+)
+
+
+class PackageCheckRequest(BaseModel):
+    """The body of `POST /configs/validate`: a package as JSON, or the text of a package file.
+
+    Exactly one field is set. The route checks that rule itself, so that breaking it is the
+    `request` refusal of the contract rather than a schema refusal, and so that it is checked
+    only after the caller is known to be an administrator.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
+    package: dict[str, Any] | None = None
+    document: str | None = None
+
+
+def _is_v2_configuration(package: Mapping[str, Any]) -> bool:
+    """Return whether a mapping is a v2 `config.yml` rather than a configuration package."""
+    return "configuration" not in package and "source" in package and "destination" in package
+
+
+# Most values a package document may hold, counting a YAML alias once at every place it is
+# used. A few hundred bytes of nested aliases expand to billions of values, and the package
+# checks walk every one of them, so such a document would hold a request thread for hours.
+_MAX_DOCUMENT_VALUES = 1_000_000
+
+
+def _within_document_value_limit(value: object) -> bool:
+    """Return whether ``value`` holds at most `_MAX_DOCUMENT_VALUES` values, aliases expanded.
+
+    The walk stops at the limit, so it costs at most that many steps, also for an alias that
+    refers to itself.
+    """
+    pending = [value]
+    for _ in range(_MAX_DOCUMENT_VALUES):
+        if not pending:
+            return True
+        item = pending.pop()
+        if type(item) is dict:  # pylint: disable=unidiomatic-typecheck
+            pending.extend(cast("dict[object, object]", item).values())
+        elif type(item) is list:  # pylint: disable=unidiomatic-typecheck
+            pending.extend(cast("list[object]", item))
+    return not pending
+
+
+def _document_package(document: str) -> dict[str, Any]:
+    """Parse a package file's text as the CLI does, refusing anything but a non-empty mapping.
+
+    A document whose aliases expand past `_MAX_DOCUMENT_VALUES` values is refused the same
+    way. The refusal is fixed text: the parser's error would repeat the document.
+    """
+    try:
+        value = yaml.safe_load(document)
+    except (yaml.YAMLError, ValueError, RecursionError):
+        raise ConfigurationAPIError(400, "request", reason=INVALID_PACKAGE_REASON, proven_pre_effect=True) from None
+    if type(value) is not dict or not value or not all(type(key) is str for key in value):  # pylint: disable=unidiomatic-typecheck
+        raise ConfigurationAPIError(400, "request", reason=INVALID_PACKAGE_REASON, proven_pre_effect=True)
+    if not _within_document_value_limit(value):
+        raise ConfigurationAPIError(400, "request", reason=INVALID_PACKAGE_REASON, proven_pre_effect=True)
+    return cast("dict[str, Any]", value)
+
+
+def _registrable_document(document: str) -> dict[str, Any]:
+    """Parse a package file's text for registration, refusing it as `POST /configs/validate` does."""
+    content = _document_package(document)
+    if _is_v2_configuration(content):
+        raise ConfigurationAPIError(422, "validation", reason=V2_CONFIGURATION_REASON, proven_pre_effect=True)
+    return content
 
 
 class ConfigurationAPIError(Exception):
@@ -167,24 +249,43 @@ class ConfigurationRoutes:
             raise ConfigurationAPIError(503, "configs") from None
 
     def register(
-        self, package: dict[str, Any], *, actor: str | None = None, reason: str | None = None
+        self,
+        package: dict[str, Any],
+        *,
+        actor: str | None = None,
+        reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> RegisteredConfigurationResource:
         """Register a package and return its configuration and first version.
 
         ``actor`` and ``reason`` are recorded on the first version, with this server's
-        secrets redacted.
+        secrets redacted; ``registered_without_validation`` marks it.
         """
 
-        result = self._call(self._service.register, package=package, actor=actor, reason=reason, secrets=self._secrets)
+        result = self._call(
+            self._service.register,
+            package=package,
+            actor=actor,
+            reason=reason,
+            registered_without_validation=registered_without_validation,
+            secrets=self._secrets,
+        )
         return RegisteredConfigurationResource.model_validate(result, from_attributes=True)
 
     def create_version(
-        self, config_id: str, package: dict[str, Any], *, actor: str | None = None, reason: str | None = None
+        self,
+        config_id: str,
+        package: dict[str, Any],
+        *,
+        actor: str | None = None,
+        reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> RegisteredVersionResource:
         """Create or retrieve an identical registered configuration version.
 
         ``actor`` and ``reason`` are recorded on a created version, with this server's
-        secrets redacted.
+        secrets redacted; ``registered_without_validation`` marks it. An identical stored
+        version keeps its own values.
         """
 
         result = self._call(
@@ -193,6 +294,7 @@ class ConfigurationRoutes:
             package=package,
             actor=actor,
             reason=reason,
+            registered_without_validation=registered_without_validation,
             secrets=self._secrets,
         )
         return RegisteredVersionResource.model_validate(result, from_attributes=True)
@@ -270,21 +372,12 @@ class ConfigurationRoutes:
         007 FR-034 to FR-036). Without it, validation judges declared content only, as before.
         """
 
-        options: dict[str, Any] = {}
-        if branch is not None:
-            options = {
-                "destination_schema": DestinationSchemaOptions(branch=branch),
-                "worker_liveness_seconds": self._worker_liveness_seconds,
-            }
         report = self._call(
             self._service.validate,
             config_id=config_id,
             registry_version=registry_version,
             secrets=self._secrets,
-            **options,
-        )
-        findings = tuple(
-            configs.redact_finding(finding, self._secrets) for finding in report.findings[offset : offset + limit]
+            **self._destination_options(branch),
         )
         return ValidationReportResource.model_validate(
             {
@@ -292,13 +385,66 @@ class ConfigurationRoutes:
                 "registry_version": report.registry_version,
                 "package_checksum": report.package_checksum,
                 "destination_schema_fingerprint": report.destination_schema_fingerprint,
-                "findings": tuple(finding.model_dump(mode="json") for finding in findings),
-                "offset": offset,
-                "limit": limit,
-                "total_findings": len(report.findings),
-                "next_offset": offset + len(findings) if offset + len(findings) < len(report.findings) else None,
+                **self._findings_page(report.findings, offset=offset, limit=limit),
             }
         )
+
+    def check_package(
+        self,
+        *,
+        package: dict[str, Any] | None,
+        document: str | None,
+        offset: int = 0,
+        limit: int = _MAX_VALIDATION_FINDINGS_PAGE,
+        branch: str | None = None,
+    ) -> PackageCheckResource:
+        """Validate a package that is not registered and return the requested findings page.
+
+        Exactly one of ``package`` and ``document`` is set; ``document`` is the text of a
+        package file, YAML or JSON. Every refusal the registration gives for the same package
+        is given here. With ``branch``, the destination checks run as for :meth:`validate`, and
+        ``destination_read`` says whether the destination was read. Findings are redacted
+        with this server's secrets, as for :meth:`validate`. ``declared_content`` is returned
+        as the caller sent it, defaults filled, because its checksum is ``package_checksum``.
+        """
+        if (package is None) == (document is None):
+            raise ConfigurationAPIError(400, "request", proven_pre_effect=True)
+        content = _document_package(document) if document is not None else cast("dict[str, Any]", package)
+        if _is_v2_configuration(content):
+            raise ConfigurationAPIError(422, "validation", reason=V2_CONFIGURATION_REASON, proven_pre_effect=True)
+        checked = self._call(
+            self._service.check_package, package=content, secrets=self._secrets, **self._destination_options(branch)
+        )
+        return PackageCheckResource.model_validate(
+            {
+                "package_checksum": checked.package_checksum,
+                "name": checked.name,
+                "declared_content": checked.declared_content,
+                "destination_read": checked.destination_read,
+                "destination_schema_fingerprint": checked.destination_schema_fingerprint,
+                **self._findings_page(checked.findings, offset=offset, limit=limit),
+            }
+        )
+
+    def _destination_options(self, branch: str | None) -> dict[str, Any]:
+        """Return the service arguments of the destination checks for ``branch``, or none without one."""
+        if branch is None:
+            return {}
+        return {
+            "destination_schema": DestinationSchemaOptions(branch=branch),
+            "worker_liveness_seconds": self._worker_liveness_seconds,
+        }
+
+    def _findings_page(self, findings: Sequence[ValidationFinding], *, offset: int, limit: int) -> dict[str, Any]:
+        """Return one page of ordered findings, redacted with this server's secrets, and its paging fields."""
+        page = tuple(configs.redact_finding(finding, self._secrets) for finding in findings[offset : offset + limit])
+        return {
+            "findings": tuple(finding.model_dump(mode="json") for finding in page),
+            "offset": offset,
+            "limit": limit,
+            "total_findings": len(findings),
+            "next_offset": offset + len(page) if offset + len(page) < len(findings) else None,
+        }
 
     @_provider_error_boundary
     def mutate(
@@ -309,27 +455,46 @@ class ConfigurationRoutes:
         operation: str,
         resource_kind: Literal["configuration", "configuration-registry"],
         resource_id: str,
-        package: dict[str, Any],
+        package: dict[str, Any] | None,
         reason: str | None,
+        registered_without_validation: bool = False,
+        document: str | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        """Persist one configuration mutation response and replay it exactly."""
+        """Persist one configuration mutation response and replay it exactly.
+
+        Exactly one of ``package`` and ``document`` is set; ``document`` is the text of a
+        package file, YAML or JSON, parsed and refused as :meth:`check_package` does. A
+        document is fingerprinted by a digest of its text, so a retry replays only when it sends
+        the same text, and a package request keeps the fingerprint it had before documents existed.
+
+        A key reused with a different ``registered_without_validation`` is refused as for a
+        different reason. The fingerprint carries the mark only when it is ``true``, so an
+        unmarked request keeps the fingerprint that receipts stored before the mark existed
+        were given, and their retries still replay.
+        """
+        if (package is None) == (document is None):
+            raise ConfigurationAPIError(400, "request", proven_pre_effect=True)
         now = datetime.now(timezone.utc)
+        fingerprinted: dict[str, Any] = {
+            "resource_kind": resource_kind,
+            "resource_id": resource_id,
+            "operation": operation,
+            "reason": reason,
+        }
+        if document is None:
+            fingerprinted["package"] = package
+        else:
+            # A digest, not the text: canonical JSON cannot encode a lone surrogate, which the
+            # parser then refuses as `invalid_package`, as the check route does.
+            fingerprinted["document_sha256"] = sha256(document.encode("utf-8", "surrogatepass")).hexdigest()
+        if registered_without_validation:
+            fingerprinted["registered_without_validation"] = True
         receipt = MutationReceipt(
             receipt_id=f"m-{uuid4().hex}",
             actor=actor,
             key_digest=sha256(idempotency_key.encode()).hexdigest(),
             operation=operation,
-            request_fingerprint=sha256(
-                canonical_json_bytes(
-                    {
-                        "resource_kind": resource_kind,
-                        "resource_id": resource_id,
-                        "operation": operation,
-                        "package": package,
-                        "reason": reason,
-                    }
-                )
-            ).hexdigest(),
+            request_fingerprint=sha256(canonical_json_bytes(fingerprinted)).hexdigest(),
             reason=reason,
             resource_kind=resource_kind,
             resource_id=resource_id,
@@ -358,12 +523,21 @@ class ConfigurationRoutes:
             self._audit(actor, operation, reason, "refused-idempotency-in-progress", *_configuration_of(receipt, None))
             raise ServiceAPIError(409, "idempotency-in-progress", "the matching request is still being processed")
         try:
+            content = _registrable_document(document) if document is not None else cast("dict[str, Any]", package)
             if operation == "register-config":
-                result = self.register(package, actor=actor, reason=reason)
+                result = self.register(
+                    content, actor=actor, reason=reason, registered_without_validation=registered_without_validation
+                )
                 response_status = 201
                 event_type = CONFIG_REGISTERED
             else:
-                result = self.create_version(resource_id, package, actor=actor, reason=reason)
+                result = self.create_version(
+                    resource_id,
+                    content,
+                    actor=actor,
+                    reason=reason,
+                    registered_without_validation=registered_without_validation,
+                )
                 response_status = 201 if result.created else 200
                 event_type = CONFIG_VERSION_REGISTERED if result.created else CONFIG_VERSION_RETRIEVED
         except ConfigurationAPIError as error:
@@ -467,7 +641,7 @@ def _configuration_of(receipt: MutationReceipt, response: Mapping[str, Any] | No
 
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
-    """Create the seven authenticated configuration resources."""
+    """Create the eight authenticated configuration resources."""
     router = APIRouter()
     config_id_parameter = APIPath(pattern=CONFIG_ID_PATTERN)
     registry_version_parameter = APIPath()
@@ -492,9 +666,41 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
             resource_kind="configuration-registry",
             resource_id="configs",
             package=body.package,
+            document=body.document,
             reason=body.reason,
+            registered_without_validation=body.registered_without_validation,
         )
         return JSONResponse(status_code=status, content=content)
+
+    def check_administrator(principal: Annotated[Principal, Depends(authenticate)]) -> Principal:
+        """Refuse a package check by a caller that is not an administrator.
+
+        A dependency, so the refusal comes before FastAPI validates the body and before any
+        parsing or destination read: with a branch, the check connects to the address the
+        package declares with the destination credential this server holds (critique E1).
+        """
+        if not principal.administrator:
+            routes.audit_refusal(principal.actor, "check-config-package", None)
+            raise ServiceAPIError(403, "forbidden", "administrator access is required")
+        return principal
+
+    # Registered before the `/configs/{config_id}` routes: `validate` is a valid configuration ID.
+    @router.post("/configs/validate")
+    def check_package(
+        body: PackageCheckRequest,
+        _principal: Annotated[Principal, Depends(check_administrator)],
+        offset: Annotated[str, page_offset] = "0",
+        limit: Annotated[str, page_limit] = str(_MAX_VALIDATION_FINDINGS_PAGE),
+        branch: Annotated[str | None, branch_parameter] = None,
+    ) -> PackageCheckResource:
+        """Validate a package without registering it; an administrator token is required."""
+        return routes.check_package(
+            package=body.package,
+            document=body.document,
+            offset=parse_bounded_integer(offset, minimum=0, maximum=MAX_REGISTRY_VERSION),
+            limit=parse_bounded_integer(limit, minimum=1, maximum=_MAX_VALIDATION_FINDINGS_PAGE),
+            branch=parse_branch(branch),
+        )
 
     @router.post("/configs/{config_id}/versions", status_code=201)
     def create_version(
@@ -514,7 +720,9 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
             resource_kind="configuration",
             resource_id=config_id,
             package=body.package,
+            document=body.document,
             reason=body.reason,
+            registered_without_validation=body.registered_without_validation,
         )
         return JSONResponse(status_code=status, content=content)
 

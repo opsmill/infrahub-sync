@@ -683,6 +683,11 @@ Any account can create and inspect a run. Only the account that created a run, o
 an administrator, can verify, approve, apply or cancel it. See
 [Accounts and API tokens](./reference/sync-http-api.mdx#accounts-and-api-tokens).
 
+With an administrator token, you can register a configuration or add a version by
+dropping a package file on the Configurations page or on a configuration's page. The
+web interface validates the package and shows the result before it registers it. See
+[Register a package from the web interface](./configuration-package.mdx#register-a-package-from-the-web-interface).
+
 The Sync API is served under `/api` on the same port, for example
 `http://127.0.0.1:8001/api/status`. Keep `INFRAHUB_SYNC_API_URL` set to the address
 without `/api`: the CLI adds it. A script that calls the Sync API directly adds

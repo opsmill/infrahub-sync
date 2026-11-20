@@ -52,6 +52,10 @@ export const configsQuery = () =>
     { refetchInterval: poll(LIST_REFRESH_MS) }
   );
 
+/** `GET /configs?name=`: the configurations with this name, newest first. Names are not unique. */
+export const configsNamedQuery = (name: string) =>
+  $api.queryOptions("get", "/configs", { params: { query: { name, limit: "1" } } });
+
 /** `GET /configs/{config_id}`; the OpenAPI document types its response as `any`. */
 export const configQuery = (configId: string) =>
   queryOptions({
@@ -74,6 +78,16 @@ export const versionsQuery = (configId: string) =>
     { params: { path: { config_id: configId }, query: { limit: String(PAGE_LIMIT) } } },
     { refetchInterval: poll(LIST_REFRESH_MS) }
   );
+
+/**
+ * `GET /configs/{config_id}/versions?limit=1`: the newest version of one configuration, with the
+ * account that registered it, which `GET /configs/{config_id}/versions/{registry_version}` does
+ * not return.
+ */
+export const newestVersionQuery = (configId: string) =>
+  $api.queryOptions("get", "/configs/{config_id}/versions", {
+    params: { path: { config_id: configId }, query: { limit: "1" } },
+  });
 
 /** A registered version never changes, so it is read once. */
 export const configVersionQuery = (configId: string, version: number) =>
