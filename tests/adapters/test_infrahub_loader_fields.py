@@ -214,6 +214,9 @@ class StrictNode:
         )
         for name, value in attributes.items():
             setattr(self, name, FakeAttr(value=value))
+        # A real node carries every relationship of its schema, set or not.
+        for rel in rel_schemas:
+            setattr(self, rel.name, FakeRelatedNode(id=None))
         for name, peer_id in (relationships or {}).items():
             setattr(self, name, FakeRelatedNode(id=peer_id))
 
@@ -447,6 +450,62 @@ def test_model_loader_skips_filter_and_transform_for_a_heterogeneous_destination
     loaded_names = sorted(_loaded_names(adapter, LocationSite))
     assert loaded_names == ["dc-east", "dc-west"]
     assert _loaded(adapter, LocationSite, "dc-east").description == "east"
+
+
+def _floor_tree_adapter(filters: list[SchemaMappingFilter]) -> _Harness:
+    """A source adapter reading a parent floor and a child floor that references it."""
+
+    config = SyncConfig(
+        name="floor-tree",
+        source=SyncAdapter(name="infrahub"),
+        destination=SyncAdapter(name="netbox"),
+        schema_mapping=[
+            SchemaMappingModel(
+                name="LocationFloor",
+                identifiers=["name"],
+                filters=filters,
+                fields=[
+                    SchemaMappingField(name="name", mapping="name"),
+                    SchemaMappingField(name="parent", reference="LocationFloor"),
+                ],
+            )
+        ],
+    )
+    client = StrictClient(
+        rows={
+            "LocationFloor": [
+                _Row("child-id", {"name": "child"}, {"parent": "parent-id"}),
+                _Row("parent-id", {"name": "parent"}),
+            ]
+        },
+        rel_schemas={"LocationFloor": [FakeRelSchema(name="parent", peer="LocationFloor")]},
+    )
+    adapter = _Harness(config=config, client=client)
+    adapter.target = "source"
+    setattr(adapter, LocationFloor._modelname, LocationFloor)
+    return adapter
+
+
+def test_model_loader_does_not_add_filtered_peer() -> None:
+    """Resolving a reference does not load a peer that the source filters exclude."""
+
+    adapter = _floor_tree_adapter([SchemaMappingFilter(field="name", operation="!=", value="parent")])
+
+    adapter.model_loader(model_name="LocationFloor", model=LocationFloor)
+
+    assert _loaded(adapter, LocationFloor, "child").parent == "parent"
+    assert [item.get_unique_id() for item in adapter.get_all(LocationFloor)] == ["child"]
+
+
+def test_model_loader_adds_parent_in_unfiltered_tree() -> None:
+    """Without a filter, the loader itself loads the parent the child references."""
+
+    adapter = _floor_tree_adapter([])
+
+    adapter.model_loader(model_name="LocationFloor", model=LocationFloor)
+
+    assert _loaded(adapter, LocationFloor, "child").parent == "parent"
+    assert _loaded(adapter, LocationFloor, "parent").parent is None
 
 
 def _loaded(adapter: _Harness, model: type[_ModelT], unique_id: str) -> _ModelT:
