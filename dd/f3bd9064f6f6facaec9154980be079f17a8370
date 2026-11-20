@@ -1,0 +1,19 @@
+examples/netbox_to_infrahub/README.md
+  s_d8ee5e53f8a662::t_a4cf290d5f9a53 23-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddf3bd9064f6f6facaec9154980be079f17a8370",
+  "prompts": {},
+  "sessions": {
+    "s_d8ee5e53f8a662": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8071f84596fd2be5",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
