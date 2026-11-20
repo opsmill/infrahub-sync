@@ -13,8 +13,8 @@ worker, with no restart:
   the credentials each version names, and the revisions each stage execution used
   ([data-model.md](data-model.md)). Values are encrypted with AES-256-GCM; only `sync-api` holds the key
   (research R3).
-- **A package names one credential per block** with `credential: <name>` in the source, destination
-  and store blocks. The `credentials` block, `$credential` references and the `env` provider are
+- **A package names one credential per block** with `credential: <name>` in the source and destination
+  blocks. The `credentials` block, `$credential` references and the `env` provider are
   removed (R1, R2).
 - **Workers get values from one route.** The environment defines a `worker` account and its token,
   shared by all workers. The route releases values only for a claimed, unfinished stage execution, only
@@ -30,10 +30,10 @@ worker, with no restart:
 
 | Step | User story | Content | Depends on |
 | --- | --- | --- | --- |
-| 1 | US1 (P1) | Encryption, store tables, the `worker` account, credential routes, worker route, worker client, package format change, removal of `env` and of the worker variable publishing, registration and run-start checks, run records, CLI group, deployment files (Compose, development stack, testcontainers), the shared test helper and the moved tests, ADR 0054, constitution 1.3.0, documentation | none |
+| 1 | US1 (P1) | Encryption, store tables, the `worker` account, credential routes, worker route, worker client, package format change, removal of `env` and of the worker variable publishing, registration and run-start checks, run records, CLI group, the conversion output (because the removal of `env` breaks the old one), deployment files (Compose, development stack, testcontainers), the shared test helper and the moved tests, ADR 0054, constitution 1.3.0, documentation | none |
 | 2 | US2 (P2) | `credentials_used` on the run detail route and in `runs show`, the plan-then-apply revision test | step 1 |
 | 3 | US4 (P3) | Deletion check and its refusal details, CLI `delete` | step 1 |
-| 4 | US3 (P3) | Conversion output and report, the converted examples | step 1 |
+| 4 | US3 (P3) | The conversion report that lists the credentials to create, and the registration message for a converted package | step 1 |
 | 5 | US1, US3 | Web interface: Credentials page, run details section; the drop-area offer if spec 025 is merged | steps 1 to 4 |
 | 6 | — | Helm chart pull request in `opsmill/infrahub-helm` | step 1 |
 
@@ -43,9 +43,11 @@ each phase keeps `invoke tests.tests-unit` green (critique X1, E11):
 
 1. Add the new path beside the old one: encryption, tables, the worker account, routes, the worker
    client, the `credential:` key accepted next to `$credential`.
-2. Move the tests and the examples to the shared helper, one test folder per commit.
-3. Remove the old path: `env`, the `credentials` block, `$credential`, the worker variable publishing,
-   and the variables in the deployment files.
+2. Move the tests, the examples, the development tasks and the conversion to the new path, one test
+   folder per commit.
+3. Remove the old path (`env`, the `credentials` block, `$credential`, the worker variable publishing),
+   change the deployment files and the tests that check them, and write the documentation, the decision
+   record and the constitution amendment.
 
 ## Technical Context
 
@@ -147,7 +149,7 @@ dev/specs/027-stored-credentials/
 ```text
 infrahub_sync/
 ├── configuration/
-│   ├── models.py               # `credential` on adapter and store blocks; `credentials` and
+│   ├── models.py               # `credential` on adapter blocks; `credentials` and
 │   │                           #   `$credential` refused; CredentialReference* removed
 │   ├── credentials.py          # env provider, prefix, resolve_reference removed; field map (R2)
 │   ├── capabilities.py         # stored-field map per adapter; schema read takes resolved values

@@ -186,9 +186,10 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
   Only administrators MUST be able to create, change and delete credentials.
   - Verification: a non-administrator token gets a list without values, and is refused on create, change
     and delete.
-- **FR-013**: A stored credential MUST hold one to three fields: `username`, `password` and `token`.
-  The system MUST accept a token only, a username and a password, or a username and a token. Listing
-  and viewing MUST show which fields are set, never their values.
+- **FR-013**: A stored credential MUST hold one of three sets of the fields `username`, `password` and
+  `token`: a token only, a username and a password, or a username and a token. The system MUST refuse
+  any other set, including all three fields together. Listing and viewing MUST show which fields are
+  set, never their values.
 - **FR-014**: Each change of a credential's value MUST create a new revision. The description MAY change
   without a new revision.
 - **FR-015**: The credential checks MUST name one credential-management permission, held by
@@ -241,8 +242,7 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
     `credential:` in each adapter block, and lists the credentials to create.
 - **FR-020**: Each adapter block (source or destination) MAY name one stored credential with
   `credential: <name>`. The adapter MUST take from it the fields its authentication method needs.
-  The package's `store` block, which can hold a username and a password for the incremental store, MUST
-  name a stored credential in the same way. Pointing a block to a different credential MUST require
+  Pointing a block to a different credential MUST require
   registering a new package version. Changing a value MUST NOT.
 - **FR-021**: The `env` provider, the `credentials` block and `$credential` references MUST be removed,
   with no migration path. Registration MUST refuse a package that uses them. A run of a version that
@@ -316,6 +316,9 @@ The identifiers FR-001 to FR-012 and SC-001 to SC-005 keep the numbers of the id
   from the web interface), which is not merged on this branch's base. The CLI path of P3 does not depend
   on it. If spec 025 is not merged when this feature is implemented, the drop-area offer moves to spec
   025's follow-up.
+- **The package's `store` block is not covered.** Registered runs refuse a `store` block today
+  (`UnsupportedSyncStoreError`), so it needs no stored credential. If registered runs support it later,
+  it names a credential in the same way as an adapter block.
 - **The direct Prefect flow is not affected.** It runs v2 configuration files from a directory with the
   serving process's own environment variables, not registered packages, so it never used the `env`
   provider.

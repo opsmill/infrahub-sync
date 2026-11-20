@@ -35,9 +35,9 @@ One row per value of a credential (FR-014).
 | `ciphertext` | BLOB / BYTEA | AES-256-GCM of the JSON object of the set fields |
 | `created_by`, `created_at` | TEXT | Account identifier and time |
 
-Field rules (FR-013): at least one field; `password` requires `username`; each value is 1 to 4096
-characters with no control character. Allowed sets are `{token}`, `{username, password}` and
-`{username, token}`. A change replaces the whole set of fields and creates the next revision.
+Field rules (FR-013): the allowed sets are `{token}`, `{username, password}` and `{username, token}`;
+every other set, including all three fields, is refused. Each value is 1 to 4096 characters with no
+control character. A change replaces the whole set of fields and creates the next revision.
 
 ## configuration_version_credentials
 
@@ -47,7 +47,7 @@ transaction.
 | Column | Type | Rules |
 | --- | --- | --- |
 | `config_id`, `registry_version` | TEXT, INTEGER | The version |
-| `block` | TEXT | `source`, `destination` or `store` |
+| `block` | TEXT | `source` or `destination` |
 | `credential_name` | TEXT | The name, not the identifier, so that a deleted and recreated credential with the same name is found again |
 
 Primary key `(config_id, registry_version, block)`. Index on `credential_name`.
@@ -61,7 +61,7 @@ The credentials a stage execution received (FR-003, FR-016, research R9).
 | `run_id` | TEXT | References `product_runs` |
 | `flow_run_id` | TEXT | The stage execution in `prefect_executions` |
 | `stage` | TEXT | `plan`, `verify`, `apply`, `sync` or `resume` |
-| `block` | TEXT | `source`, `destination` or `store` |
+| `block` | TEXT | `source` or `destination` |
 | `credential_id` | TEXT | Keeps the revision unambiguous after a deletion and a new credential with the same name. No foreign key, so the row survives the deletion. |
 | `credential_name` | TEXT | |
 | `revision` | INTEGER | |
@@ -96,11 +96,6 @@ destination:
   credential: infrahub-netbox-sync
   settings:
     url: http://infrahub-server:8000
-store:
-  type: redis
-  credential: sync-redis        # new, optional
-  settings:
-    host: redis
 ```
 
 - `credential` matches the credential name pattern.

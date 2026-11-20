@@ -27,7 +27,8 @@ with Infrahub is from the idea brief, which checked `../infrahub` on branch `dev
       `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` (`docker-compose.yml:275`).
 - **Each adapter already declares its credential settings** in `credential_setting_paths`
   (`configuration/capabilities.py:736-815`). The Redis store declares its own
-  (`configuration/credentials.py:132-136`).
+  (`configuration/credentials.py:132-136`), but registered runs refuse a `store` block
+  (`configuration/runtime.py:45`).
 - **Workers publish the names of their credential variables** to `worker_environments`
   (`service/worker.py:382-437`, `product_store/store.py:180`). Validation reports
   `credential-not-set-in-worker` and `worker-environment-unknown` from it
@@ -47,8 +48,9 @@ with Infrahub is from the idea brief, which checked `../infrahub` on branch `dev
 
 ## R1. Where a package names a credential
 
-**Decision**: Each adapter block and the `store` block take an optional key `credential: <name>`, next to
-`adapter` and `settings`. The credential settings of that block (from `credential_setting_paths`)
+**Decision**: Each adapter block takes an optional key `credential: <name>`, next to `adapter` and
+`settings`. The package's `store` block is not covered: registered runs refuse it today
+(`configuration/runtime.py:45`, `UnsupportedSyncStoreError`). The credential settings of that block (from `credential_setting_paths`)
 are no longer accepted in `settings`; the worker fills them from the stored credential. The
 `credentials` block and `{"$credential": …}` references are refused at parse time with a message that
 names `credential: <name>`.
@@ -72,7 +74,6 @@ adapter's settings to the three stored fields:
 | prometheus | by `auth_method`: `bearer` → `token`; `basic` → `username`, `password`; `none` → nothing | by method |
 | ipfabricsync | `auth` ← `token` | `token` |
 | slurpitsync | `api_key` ← `token` | `token` |
-| Redis store | `username` ← `username`, `password` ← `password` | `username`, `password` (use `default` as the username for a Redis server that has only a password) |
 
 The methods come from `conversion_authentication.py:30-65`, which already maps each v2 `auth_method` to
 its settings. A block whose method needs no credential refuses `credential:` with a finding, so a
@@ -83,9 +84,6 @@ package does not name a credential it never uses.
 adapter.
 
 **Alternatives**: Free-form fields on a credential: rejected by the brief.
-
-The Redis `url` setting can hold a password in its address. It stays refused when it contains user
-information, as `setting-contains-credential-material` does today.
 
 ## R3. Encryption
 
@@ -152,9 +150,9 @@ Sync API releases values only when every check passes:
 2. The run exists and a `prefect_executions` row for `(run_id, flow_run_id)` is claimed and not
    terminal. The worker claims its execution before it resolves settings (`flow.py:1941`).
 3. The run's configuration version names the credentials. The route returns only the blocks the stage
-   needs: apply, resume and verify get the destination only, as today (`flow.py:941`), plus the
-   `store` block when the stage builds the incremental store (a task checks which stages build it).
-   Scheduled runs are `sync` stages and get every block.
+   needs: apply, resume and verify get the destination only, as today (`flow.py:941`). Scheduled runs
+   are `sync` stages and get both. No stage builds a `store` block (critique E2: registered runs refuse
+   it at `configuration/runtime.py:45`).
 4. Each named credential exists and has the fields the block needs (FR-008).
 
 The answer holds, for each block, the credential name, revision and fields. The route writes one audit
@@ -273,9 +271,7 @@ through the API after the stack starts, instead of setting `INFRAHUB_SYNC_CREDEN
     - **The validate route (critique E9).** Any signed-in account can validate a registered version
       with a branch, which sends the destination token to the address an administrator registered.
 - **Messages (critique P4, P5).** A refusal for a missing credential names the command
-  `infrahub-sync credentials create <name>` and says that an administrator runs it. The help of
-  `credentials create`, the conversion report and `guides/credentials.mdx` say to use the username
-  `default` for a Redis server that has only a password.
+  `infrahub-sync credentials create <name>` and says that an administrator runs it.
 - **Pages to change**: `configuration-package.mdx`, `compose-deployment.mdx`,
   `kubernetes-deployment.mdx`, `v2-to-v3.mdx`, `reference/durable-product-records.mdx`,
   `reference/sync-http-api.mdx`, `guides/accounts.mdx`, `development-stack.mdx`, `running-a-sync.mdx`
