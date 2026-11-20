@@ -81,6 +81,9 @@ const OPERATION_WORDS: Record<string, string> = {
   "schedule-take-over": "take the schedule over",
 };
 
+/** The types whose `details.cause` the history shows: start and proposed-change failures. */
+const CAUSE_TYPES = new Set([`${SCHEDULE}start_failed`, `${SCHEDULE}proposed_change_failed`]);
+
 const STOP_REASONS = new Set(["owner-not-found", "approval-required", "repeated-failures"]);
 
 export interface EventText {
@@ -131,7 +134,7 @@ export function eventText(
     text = `${event.event_type}: ${event.outcome}`;
   }
 
-  if (details?.cause) detailParts.push(details.cause);
+  if (details?.cause && CAUSE_TYPES.has(event.event_type)) detailParts.push(details.cause);
   if (event.event_type === "infrahub_sync.run.synced" && details?.left_out != null) {
     detailParts.push(
       `${details.left_out} ${details.left_out === 1 ? "record" : "records"} left out`
@@ -140,7 +143,11 @@ export function eventText(
   return detailParts.length ? { text, detail: detailParts.join(". ") } : { text };
 }
 
-/** The run an event names, from its `related` entry of kind `run`. */
+/**
+ * The run an event names. The Sync API puts an event's run in `primary_resource`
+ * (`AuditEvent.primary_resource`), not in `related`; a `related` entry of kind `run` is read too.
+ */
 export function eventRunId(event: SyncEvent): string | undefined {
+  if (event.primary_resource?.kind === "run") return event.primary_resource.id;
   return event.related.find((entry) => entry.kind === "run")?.id;
 }

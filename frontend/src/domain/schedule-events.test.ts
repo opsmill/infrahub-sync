@@ -170,32 +170,72 @@ describe("eventText", () => {
   });
 
   it.each([
-    ["infrahub_sync.run.accepted", "sync", "accepted", {}, { text: "Run started" }],
+    ["run started", "infrahub_sync.run.accepted", "sync", "accepted", {}, { text: "Run started" }],
     [
+      "run synced with records left out",
       "infrahub_sync.run.synced",
       "sync",
       "applied",
       { left_out: 3 },
       { text: "Run wrote its changes", detail: "3 records left out" },
     ],
-    ["infrahub_sync.run.synced", "sync", "applied", {}, { text: "Run wrote its changes" }],
-    ["infrahub_sync.run.failed", "sync", "failed", {}, { text: "Run failed" }],
-    ["infrahub_sync.run.cancelled", "cancel", "cancelled", {}, { text: "cancel: cancelled" }],
     [
+      "run synced",
+      "infrahub_sync.run.synced",
+      "sync",
+      "applied",
+      {},
+      { text: "Run wrote its changes" },
+    ],
+    ["run failed", "infrahub_sync.run.failed", "sync", "failed", {}, { text: "Run failed" }],
+    [
+      "other run event",
+      "infrahub_sync.run.cancelled",
+      "cancel",
+      "cancelled",
+      {},
+      { text: "cancel: cancelled" },
+    ],
+    [
+      "unknown type",
       "infrahub_sync.config.created",
       "config-create",
       "accepted",
       {},
-      {
-        text: "infrahub_sync.config.created: accepted",
-      },
+      { text: "infrahub_sync.config.created: accepted" },
     ],
-  ])("%s", (event_type, operation, outcome, details, expected) => {
+    [
+      "cause on a type that does not show it",
+      `${S}created`,
+      "schedule-create",
+      "accepted",
+      { cause: "ignored" },
+      { text: "Schedule created" },
+    ],
+  ])("%s", (_name, event_type, operation, outcome, details, expected) => {
     expect(eventText(event({ event_type, operation, outcome, details }), at)).toEqual(expected);
   });
 });
 
 describe("eventRunId", () => {
+  it("reads the run from the primary resource", () => {
+    expect(
+      eventRunId(
+        event({
+          event_type: "infrahub_sync.run.accepted",
+          primary_resource: { kind: "run", id: "r-1" },
+          related: [{ kind: "schedule", id: "s-1" }],
+        })
+      )
+    ).toBe("r-1");
+  });
+
+  it("finds no run behind a schedule primary resource", () => {
+    expect(
+      eventRunId(event({ primary_resource: { kind: "schedule", id: "s-1" } }))
+    ).toBeUndefined();
+  });
+
   it.each([
     [
       [
