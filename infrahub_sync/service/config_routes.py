@@ -26,7 +26,6 @@ from infrahub_sync.client.models import (
 from infrahub_sync.configuration.credential_admission import STORED_CREDENTIAL_CODES
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
-from infrahub_sync.execution import registered_secret_values
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     MutationReceipt,
@@ -305,11 +304,8 @@ class ConfigurationRoutes:
             secrets=self._secrets,
             **options,
         )
-        # A token decrypted for the destination read is in the registry of this request: it is
-        # redacted from every finding with the secrets of the server.
-        secrets = (*self._secrets, *registered_secret_values())
         findings = tuple(
-            configs.redact_finding(finding, secrets) for finding in report.findings[offset : offset + limit]
+            configs.redact_finding(finding, self._secrets) for finding in report.findings[offset : offset + limit]
         )
         return ValidationReportResource.model_validate(
             {
