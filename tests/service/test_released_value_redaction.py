@@ -10,6 +10,7 @@ then asserts on that boolean, so a failure message holds `True` or `False` only.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import json
 import logging
@@ -44,7 +45,7 @@ from infrahub_sync.infrahub_errors import cause_chain
 from infrahub_sync.orchestration.flow import remote_log_bridge
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
-from infrahub_sync.service.app import create_app
+from infrahub_sync.service.app import RedactionScopeMiddleware, create_app
 from infrahub_sync.service.apply_guard import ApplyGuardError, hold_apply_guard
 from infrahub_sync.service.credential_crypto import CredentialCipher
 from infrahub_sync.service.flow import service_sync_run
@@ -168,7 +169,8 @@ def test_a_rebuilt_list_keeps_the_values_registered_before() -> None:
 
     merge_secret_values(registry, ["environment-value-0001", _TOKEN])
 
-    assert registry == [_TOKEN, "environment-value-0001"]
+    kept = registry == [_TOKEN, "environment-value-0001"]
+    assert kept
 
 
 def test_a_thread_that_copies_the_context_registers_into_the_same_registry() -> None:
@@ -177,8 +179,9 @@ def test_a_thread_that_copies_the_context_registers_into_the_same_registry() -> 
         thread = threading.Thread(target=context.run, args=(register_secret_values, [_TOKEN]))
         thread.start()
         thread.join()
+        shared = registry == [_TOKEN]
 
-        assert registry == [_TOKEN]
+    assert shared
 
 
 def test_a_live_list_reads_the_registry_of_the_current_scope_only() -> None:
@@ -189,9 +192,12 @@ def test_a_live_list_reads_the_registry_of_the_current_scope_only() -> None:
         inside = tuple(live)
     outside = tuple(live)
 
-    assert inside == ("fixed-value-0001", _TOKEN)
-    assert outside == ("fixed-value-0001",)
-    assert _TOKEN not in repr(live)
+    read_inside = inside == ("fixed-value-0001", _TOKEN)
+    read_outside = outside == ("fixed-value-0001",)
+    in_repr = _holds(repr(live), _TOKEN)
+    assert read_inside
+    assert read_outside
+    assert not in_repr
 
 
 # --------------------------------------------------------------------------- #
@@ -325,6 +331,29 @@ def test_the_lists_of_the_services_hold_a_decrypted_value_during_its_request_onl
         "service_after": False,
         "free_text_after": True,
     }
+
+
+def test_the_lifespan_of_the_application_has_no_registry() -> None:
+    """The lifespan lasts until the process stops, so a registry bound for it would never end."""
+    seen: dict[str, bool] = {}
+
+    async def application(scope: dict[str, Any], _receive: object, _send: object) -> None:  # noqa: RUF029
+        try:
+            register_secret_values([_TOKEN])
+        except NoRedactionScopeError:
+            seen[scope["type"]] = False
+        else:
+            seen[scope["type"]] = True
+
+    middleware = RedactionScopeMiddleware(application)  # ty: ignore[invalid-argument-type]
+
+    async def call() -> None:
+        for kind in ("lifespan", "http"):
+            await middleware({"type": kind}, None, None)  # ty: ignore[invalid-argument-type]
+
+    asyncio.run(call())
+
+    assert seen == {"lifespan": False, "http": True}
 
 
 def test_a_guard_failure_is_redacted_with_a_value_registered_while_the_guard_is_taken() -> None:

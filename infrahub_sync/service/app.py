@@ -423,14 +423,23 @@ class RedactionScopeMiddleware:  # pylint: disable=too-few-public-methods
     A stored value that the Sync API decrypts while it answers a request is added to this
     registry by `CredentialCipher.decrypt` before it is returned, so each message, answer and
     log line of the request is redacted with it. The registry ends with the request, so the
-    value is in no list while another request is answered.
+    value is in no list while another request is answered. The work that the application does
+    outside a request (its start, the liveness loop) has no registry: a decryption there must
+    bind its own `redaction_scope`.
     """
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Pass the request on inside a new redaction scope."""
+        """Pass an HTTP request on inside a new redaction scope.
+
+        Every other scope is passed on with no registry: the `lifespan` scope lasts until the
+        process stops, so a registry bound for it would keep its values for that long.
+        """
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
         with redaction_scope():
             await self._app(scope, receive, send)
 
