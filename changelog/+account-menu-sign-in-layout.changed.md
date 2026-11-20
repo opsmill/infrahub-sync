@@ -1,0 +1,1 @@
+The web interface shows the sign-in form in one centered column, as the Infrahub sign-in page does. To open **My account** or to sign out, you now select your account name in the page header and choose **My account** or **Sign out** from its menu: the navigation no longer has a **My account** link, and the header no longer has a separate **Sign out** button.

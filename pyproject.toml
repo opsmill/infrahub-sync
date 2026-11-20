@@ -185,6 +185,16 @@ build-backend = "hatchling.build"
 # tests rewrites imports; see `opsmill_prefect_extras/VENDORED.md`.
 packages = ["infrahub_sync", "opsmill_prefect_extras"]
 
+# The NetBox demo's destination schema and configuration package, read by
+# `infrahub_sync/demo/assets.py`. Each file keeps one copy in the repository, at the
+# path other checks already read; the wheel carries it under `infrahub_sync/demo/assets/`
+# so `infrahub-sync demo prepare` works from an installed package or the image. The
+# source distribution includes both source paths by default, so a wheel built from it
+# finds them too. See dev/adr/0048-demo-assets-ship-in-the-wheel.md.
+[tool.hatch.build.targets.wheel.force-include]
+"examples/netbox_to_infrahub/package.yml" = "infrahub_sync/demo/assets/netbox/package.yml"
+"tests/data/nightly_schema/traditional-infrastructure-sot" = "infrahub_sync/demo/assets/schema"
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
@@ -291,6 +301,7 @@ exclude = [
     # The opsmill/infrahub submodule that holds the design system; upstream code,
     # linted and formatted in its own repository.
     "frontend/vendor",
+    ".specify",
 ]
 
 
@@ -438,7 +449,7 @@ max-complexity = 33
 # entry point — local, invoke, and CI's inlined commands — agrees.
 # frontend/vendor is the opsmill/infrahub submodule that holds the design system;
 # upstream code, checked in its own repository.
-exclude = ["examples/**", "tests/vendored_prefect_extras/**", "frontend/vendor/**"]
+exclude = ["examples/**", "tests/vendored_prefect_extras/**", "frontend/vendor/**", ".specify/**"]
 
 [tool.ty.environment]
 python-version = "3.10"

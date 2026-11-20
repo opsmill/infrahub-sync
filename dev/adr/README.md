@@ -145,6 +145,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why a plan reads the creator `__system__` from node metadata, for the kinds listed in
   `INFRAHUB_BUILTIN_NODE_KINDS`, to leave out these deletes, and why no file accepts the delete of
   the `default` namespace by name.
+- [0048 — The NetBox demo's schema and package ship in the wheel](0048-demo-assets-ship-in-the-wheel.md)
+  — why the wheel carries the demo schema and the `from-netbox` package through `force-include`
+  instead of a second copy in git or an image-only path, and why `demo prepare` falls back to the
+  repository paths in an editable install.
 - [0051 — A schedule's cadence is a Prefect schedule, and the worker admits each scheduled start](0051-a-schedule-is-a-prefect-schedule-and-the-worker-admits-each-start.md)
   — why each Sync schedule is a Prefect schedule matched by slug, why the worker writes the run of
   a scheduled start, how one run for each start is guaranteed, and which starts get no flow run.

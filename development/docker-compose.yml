@@ -5,6 +5,7 @@
 #     uv run invoke dev.start                     # preset `sync`: no Infrahub
 #     uv run invoke dev.infrahub                  # preset `infrahub`: plus a local Infrahub
 #     uv run invoke dev.preview                   # preset `preview`: plus the local NetBox and the smoke dataset
+#     uv run invoke dev.demo                      # preset `demo`: plus the local NetBox, ready for the NetBox demo
 #     # or: docker compose -f development/docker-compose.yml --profile sync --profile infrahub up --detach --wait
 #
 # The operator deployment is the other way to run V3: the root

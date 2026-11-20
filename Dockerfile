@@ -54,6 +54,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY infrahub_sync ./infrahub_sync
 COPY opsmill_prefect_extras ./opsmill_prefect_extras
+# The NetBox demo's destination schema and configuration package. `pyproject.toml`
+# force-includes them into the wheel under `infrahub_sync/demo/assets/`, so they keep
+# their repository paths here and the wheel build below fails if either is missing.
+COPY examples/netbox_to_infrahub/package.yml ./examples/netbox_to_infrahub/package.yml
+COPY tests/data/nightly_schema/traditional-infrastructure-sot ./tests/data/nightly_schema/traditional-infrastructure-sot
 
 # One local distribution carries both import trees above. uv keys a built wheel of
 # a local distribution on metadata it can read without walking the tree, so a cache

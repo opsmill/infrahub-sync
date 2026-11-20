@@ -415,7 +415,7 @@ records the upstream commit and the local additions.
 | `__init__.py` | The `format` and `lint` aggregates, the only top-level tasks |
 | `linter.py`, `docs.py` | The individual lint and documentation legs |
 | `tests.py` | `tests.tests-unit`, `tests.tests-integration`, `tests.all` and `tests.check-310` |
-| `dev.py` | The local development stack: the `dev` namespace (`dev.start` and its presets `dev.infrahub` and `dev.preview`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest) |
+| `dev.py` | The local development stack: the `dev` namespace (`dev.start` and its presets `dev.infrahub`, `dev.preview` and `dev.demo`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest) |
 | `smoke_dataset.py` | The smoke dataset that `dev.seed` and `dev.smoke` load; no task of its own |
 | `netbox.py` | The local NetBox for adapter work: the `netbox` namespace (`netbox.start`, `netbox.seed`, `netbox.destroy`, and dataset dump, restore and change tasks) |
 | `bench.py` | The NetBox benchmark runner: the `bench` namespace. It reads the Infrahub port and admin token of its destination through `resolved_compose()` in `dev.py` |

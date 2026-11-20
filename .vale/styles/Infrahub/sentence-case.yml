@@ -50,6 +50,7 @@ exceptions:
   - Jinja
   - Jinja2
   - JWT
+  - Kubernetes
   - LibreNMS
   - Namespace
   - NATS

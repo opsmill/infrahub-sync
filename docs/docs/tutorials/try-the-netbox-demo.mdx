@@ -1,0 +1,291 @@
+---
+title: Import NetBox demo data in one command
+description: Start a local Infrahub, NetBox and Sync service with one command, or prepare a Sync service and an Infrahub you already run, then plan and apply an import of NetBox demo data into an Infrahub branch.
+---
+
+By the end of this tutorial you will have imported the NetBox `demo` data into a branch of
+Infrahub: you plan the import, review the plan, and apply it, from the web interface or from the
+command line. One command prepares everything the import needs, so you can plan the import a few
+minutes after you start.
+
+Start from one of two places:
+
+- **Nothing running yet.** `uv run invoke dev.demo` starts a local Infrahub, a local NetBox and
+  the Sync service, and prepares them. [Start the local demo](#start-the-local-demo) covers it.
+- **A Sync service and an Infrahub you already run**, with Compose or Kubernetes.
+  `infrahub-sync demo prepare` loads the destination schema into that Infrahub and registers the
+  NetBox configuration, with the public NetBox demo or another NetBox as the source.
+  [Prepare a Sync service you already run](#prepare-a-sync-service-you-already-run) covers it.
+
+From [Create a branch for the import](#create-a-branch-for-the-import) on, both starting points
+follow the same steps.
+
+To learn what each setup step does, follow
+[Sync the public NetBox demo to a local Infrahub](netbox-demo-to-infrahub) instead, which runs
+them one at a time.
+
+**Prerequisites**:
+
+- [Docker](https://docs.docker.com/get-docker/) installed and running (Docker Desktop or OrbStack)
+- [Git](https://git-scm.com/downloads)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
+- [Python](https://www.python.org/downloads/) 3.11 to 3.13
+- For the local demo, no other Infrahub Sync development stack running on your machine
+
+Sync 3.x is not on PyPI yet, so the `infrahub-sync` command comes from a clone of
+`feature/v3-develop`, as in the first step below. A Kubernetes deployment runs a pre-release image,
+which a maintainer publishes as described in
+[A pre-release image of the V3 line](../development/guides/publishing-an-image.md#a-pre-release-image-of-the-v3-line).
+
+## Start the local demo
+
+1. Clone the V3 branch and install the development environment:
+
+    ```bash
+    git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git
+    cd infrahub-sync
+    uv sync --extra dev --extra prefect --extra service
+    ```
+
+   The repository's default branch is `main`, which is V2. Run every remaining command from the
+   `infrahub-sync` directory.
+
+2. Start and prepare the demo:
+
+    ```bash
+    uv run invoke dev.demo
+    ```
+
+   The task runs these steps:
+
+   - It builds the Sync service image from your checkout. The build needs the web interface's
+     `frontend/vendor/infrahub` submodule, and the task fetches it when it is missing.
+   - It starts the Sync service, a local Infrahub and a local NetBox. A NetBox that does not
+     exist yet gets the official NetBox `demo` dataset.
+   - It runs `infrahub-sync demo prepare`, which loads the destination schema into the local
+     Infrahub and registers the NetBox configuration with the addresses that the Sync worker uses.
+
+   The first run takes several minutes, because Docker downloads the images and the task
+   downloads the NetBox dataset. With the images already downloaded, a run on 2026-11-19 took
+   2 minutes 30 seconds. The task never plans or applies anything.
+
+3. Read the end of the output. It names the configuration ID and version, the address of the web
+   interface, how to sign in there, and the commands for a first plan:
+
+    ```text
+     - [INFRAHUB-SYNC-DEV] schema: loaded
+     - [INFRAHUB-SYNC-DEV] configuration: registered
+     - [INFRAHUB-SYNC-DEV] Configuration  <config-id>, version <version>
+     - [INFRAHUB-SYNC-DEV] Web interface  http://127.0.0.1:8001  (sign in as admin, with the password in ADMIN_ACCOUNT_PASSWORD, by default infrahub-sync-dev-password)
+     - [INFRAHUB-SYNC-DEV] Sync API       http://127.0.0.1:8001
+     - [INFRAHUB-SYNC-DEV] Next, a first plan on a new branch:
+         export INFRAHUB_ADDRESS=http://127.0.0.1:8000 INFRAHUB_API_TOKEN=<Infrahub admin token>
+         export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001 INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
+         uv run infrahubctl branch create netbox-demo-1
+         uv run infrahub-sync plan --config-id <config-id> --version <version> --branch netbox-demo-1 --reason "demo"
+    ```
+
+   Your output shows real values in place of `<config-id>` and `<version>`. It prints the
+   Infrahub admin token only when it is the public development default. Otherwise it prints
+   `<from INFRAHUB_INITIAL_ADMIN_TOKEN>`: export the token you set in that variable. Use the
+   values your output shows in the commands on this page.
+
+If you set the `admin` account's API token yourself through `ADMIN_ACCOUNT_TOKEN`, export
+`INFRAHUB_SYNC_API_TOKEN` with that token, or with another API token, before you run `dev.demo`.
+The task does not print a token or a password that you set.
+
+If the local NetBox already existed, the task keeps its data and prints the command that loads
+the `demo` dataset into it.
+
+The development stack starts with plan approval off (`REQUIRE_APPROVAL`), so you can apply a plan
+you reviewed without an approval step.
+
+## Prepare a Sync service you already run
+
+`infrahub-sync demo prepare` is the command that `dev.demo` runs on your machine. Run it against
+a Sync service and a dedicated Infrahub that you already run, with Compose or Kubernetes. It runs
+two steps and never plans or applies:
+
+1. It loads the destination schema, the `infrahub/traditional-infrastructure-sot` collection,
+   into Infrahub. Infrahub Sync and its image hold a copy of the schema, so the command does not
+   download it.
+2. It registers the NetBox configuration with the NetBox and Infrahub addresses you give, as the
+   Sync worker reaches them.
+
+Use an Infrahub that holds no other schema. When the Infrahub schema conflicts with the
+destination schema, the command stops, names the conflict, and registers nothing.
+
+1. Give the Sync worker the NetBox and Infrahub tokens, in
+   `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`.
+   [Credentials in a package](../compose-deployment.mdx#credentials-in-a-package) explains it
+   for Compose, and
+   [Create the credentials Secret](../kubernetes-deployment.mdx#create-the-credentials-secret)
+   for Kubernetes. For the public NetBox demo,
+   [Create a NetBox API token](netbox-demo-to-infrahub.mdx#create-a-netbox-api-token) shows how
+   to get a token.
+
+2. Clone the V3 branch and install the command line:
+
+    ```bash
+    git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git
+    cd infrahub-sync
+    uv sync --extra dev --extra prefect --extra service
+    ```
+
+3. Prepare the Sync service and Infrahub:
+
+    ```bash
+    export INFRAHUB_API_TOKEN=<Infrahub API token>
+    export INFRAHUB_SYNC_API_TOKEN=<Sync API token>
+    uv run infrahub-sync --api-url <Sync API address> demo prepare \
+      --netbox-url https://demo.netbox.dev \
+      --infrahub-url <Infrahub address the worker uses> \
+      --infrahub-address <Infrahub address this machine uses>
+    ```
+
+   `--infrahub-address` defaults to `--infrahub-url`; set it when this machine reaches Infrahub
+   at another address than the worker does. Every option is listed in
+   [`infrahub-sync demo prepare`](../reference/cli.mdx#infrahub-sync-demo-prepare).
+
+   The command prints what it did, and never a token:
+
+    ```text
+    schema: loaded (16 files)
+    configuration: registered from-netbox, config_id <config-id>, version 1
+    netbox: https://demo.netbox.dev
+    infrahub: <Infrahub address the worker uses>
+    ```
+
+The command refuses an address that carries a user name or a password (`user:password@`) and
+exits with code 2. When Infrahub has not applied the schema within `--schema-timeout` seconds
+(120 by default), it stops before it registers anything; run it again with a larger value.
+
+Continue at [Create a branch for the import](#create-a-branch-for-the-import), with the
+configuration ID and version that the command printed.
+
+## Create a branch for the import
+
+Infrahub holds the imported data on a branch, so `main` does not change until you merge it.
+Set the addresses and tokens that the commands on this page read:
+
+- For the local demo, run the `export` lines from the output of `dev.demo`.
+- For a Sync service you already run, export your own values:
+
+    ```bash
+    export INFRAHUB_ADDRESS=<Infrahub address this machine uses>
+    export INFRAHUB_API_TOKEN=<Infrahub API token>
+    export INFRAHUB_SYNC_API_URL=<Sync API address>
+    export INFRAHUB_SYNC_API_TOKEN=<Sync API token>
+    ```
+
+Then create the branch:
+
+```bash
+uv run infrahubctl branch create netbox-demo-1
+```
+
+Create the branch with `infrahubctl` before you plan, also when you plan from the Sync web
+interface, which does not create branches. A plan on a branch that does not exist in Infrahub
+fails.
+
+Plan and apply from the web interface or from the command line. To try both, create a second
+branch, such as `netbox-demo-2`, for the second import. The Kubernetes deployment has no web
+interface yet
+([What this deployment does not do](../kubernetes-deployment.mdx#what-this-deployment-does-not-do)),
+so on Kubernetes, go to [Plan and apply from the command line](#plan-and-apply-from-the-command-line).
+
+## Plan and apply from the web interface
+
+The local demo and the Compose deployment serve the web interface.
+
+1. Open the Sync web interface: `http://127.0.0.1:8001` for the local demo, or the Sync API
+   address of your Compose deployment. On **Sign in to Infrahub Sync**, enter an account name and its password, then
+   select **Sign in**. For the local demo, the account is `admin` and the password is the one
+   in `ADMIN_ACCOUNT_PASSWORD`, by default `infrahub-sync-dev-password`.
+2. Open the `from-netbox` configuration, then select **Start run**.
+3. In **Destination branch**, enter `netbox-demo-1`. Under **What the run does**, select
+   **Plan for review**, then select **Create plan**.
+4. Wait for the plan to finish, then review the changes it lists. On a first plan into an
+   empty branch, most changes are creates.
+5. Select **Apply** followed by the number of changes, then confirm in the dialog. The apply
+   writes only the changes in the plan you reviewed.
+
+## Plan and apply from the command line
+
+1. Plan the import on the branch:
+
+    ```bash
+    uv run infrahub-sync plan --config-id <config-id> --version <version> \
+      --branch netbox-demo-1 --reason "demo"
+    ```
+
+   The command waits for the plan and prints its `run_id`, its `plan_checksum` and the number of
+   operations for each kind. On 2026-09-29, a plan from the `demo` dataset into an empty branch
+   held 1,687 creates across 20 kinds.
+
+2. Review the plan. Add `--detail` to list every operation:
+
+    ```bash
+    uv run infrahub-sync runs plan <run-id>
+    ```
+
+3. Apply the plan by its checksum:
+
+    ```bash
+    uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \
+      --branch netbox-demo-1 --reason "demo"
+    ```
+
+   The apply writes only the operations in the plan you reviewed. It never deletes a node.
+
+To check the result, run the same `plan` again: after a successful apply, the new plan holds no
+creates.
+
+## View the imported data in Infrahub
+
+Open Infrahub and select the `netbox-demo-1` branch to view the imported nodes. For the local
+demo, Infrahub is at `http://127.0.0.1:8000`, and you log in with `admin` and `infrahub`.
+
+## Run the demo again
+
+Run `uv run invoke dev.demo` or `infrahub-sync demo prepare` again at any time. With the same
+addresses, the command reports `schema: unchanged` and `configuration: unchanged`, also with a
+different `--reason`. To plan the import again from the start, create a new branch, such as
+`netbox-demo-3`, and plan on it.
+
+When you run `infrahub-sync demo prepare` with other addresses, it registers a new version of
+the configuration and prints `versioned`. When you return to addresses that an earlier version
+holds, it prints `unchanged` and that earlier version's number. Plan with the version that the
+output prints. In the web interface, **Start run** plans the latest version: to plan an earlier
+one, select it in the version list first, then select **Plan version** followed by its number.
+
+## When a run fails
+
+The command line and the web interface show a run's final state, and the error is recorded on the
+run's Prefect flow run. [When a run fails](netbox-demo-to-infrahub.mdx#when-a-run-fails) in the
+public NetBox demo tutorial shows how to find it. The local demo runs on the same development
+stack.
+
+## Send feedback
+
+When you try this demo as part of an OpsMill feedback round, send your feedback through the
+channel named in the invitation. Include:
+
+- where you started: the local demo, or a Sync service you already run;
+- the step where you got stuck, or the step you would change;
+- the command you ran or the screen you were on;
+- the message shown, copied as text.
+
+Remove token and password values from what you send.
+
+## Remove the demo
+
+Remove the Sync service, the local Infrahub and their data, then the local NetBox and its data:
+
+```bash
+uv run invoke dev.destroy
+uv run invoke netbox.destroy
+```
+
+`dev.destroy` keeps the image built from your checkout, so the next `dev.demo` does not build it
+again.

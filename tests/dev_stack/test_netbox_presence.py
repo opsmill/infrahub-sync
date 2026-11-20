@@ -97,6 +97,35 @@ def test_ensure_netbox_never_replaces_existing_data(
     assert events == expected
 
 
+@pytest.mark.parametrize(
+    "fake",
+    [
+        FakeNetboxDocker(running="netbox-id", containers="netbox-id"),
+        FakeNetboxDocker(volumes="netbox-dev_netbox-postgres-data"),
+        FakeNetboxDocker(),
+    ],
+    ids=["running", "stopped", "absent"],
+)
+def test_ensure_netbox_attaches_only_the_worker_of_the_given_project(
+    fake: FakeNetboxDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stack under another project name never attaches the default `infrahub-sync-dev` worker."""
+    attached: list[str] = []
+    monkeypatch.setattr(
+        netbox, "attach_dev_worker", lambda _context, _values, project: attached.append(project) or False
+    )
+    monkeypatch.setattr(netbox, "_compose", lambda *_args: None)
+    monkeypatch.setattr(netbox, "_wait_for_http", lambda *_args: None)
+    monkeypatch.setattr(netbox, "fetch_demo_sql", lambda: Path("demo.sql"))
+    monkeypatch.setattr(netbox, "restore_demo_database", lambda *_args: None)
+    values = {**VALUES, "NETBOX_PORT": "8000", "NETBOX_TOKEN_KEY": "key", "NETBOX_TOKEN": "token"}
+
+    netbox.ensure_netbox(_context(fake, monkeypatch), values, "infrahub-sync-024")
+
+    assert attached == ["infrahub-sync-024"]
+    assert not any("network connect" in command for command in fake.commands)
+
+
 def test_a_failed_demo_restore_removes_the_partial_netbox(monkeypatch: pytest.MonkeyPatch) -> None:
     """A restore that fails partway must not leave a volume the next start reads as a stopped NetBox."""
     fake = FakeNetboxDocker()
@@ -113,3 +142,28 @@ def test_a_failed_demo_restore_removes_the_partial_netbox(monkeypatch: pytest.Mo
 
     assert fake.commands[-1].endswith(" down --volumes")
     assert "--project-name netbox-dev" in fake.commands[-1]
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (None, None),
+        ('{"tier": "M", "image": "netbox", "phase": "seeded"}', "the 'seed' dataset at tier M"),
+        (
+            '{"tier": "M", "image": "netbox", "phase": "changed"}',
+            "the 'seed' dataset at tier M, changed by `netbox.change`",
+        ),
+        ('{"tier": "M", "image": "netbox"}', None),
+        ("not json", None),
+        ('["M"]', None),
+    ],
+    ids=["no-record", "seed-tier", "changed-tier", "unknown-phase", "unreadable", "not-an-object"],
+)
+def test_recorded_dataset_names_only_a_seed_load_it_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, record: str | None, expected: str | None
+) -> None:
+    monkeypatch.setattr(netbox, "STATE_DIR", tmp_path)
+    if record is not None:
+        (tmp_path / "tier.json").write_text(record, encoding="utf-8")
+
+    assert netbox.recorded_dataset() == expected

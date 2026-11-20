@@ -80,6 +80,8 @@ from infrahub_sync.configuration.conversion import (
 )
 from infrahub_sync.configuration.conversion_report import next_step_lines, refusal_lines, report_lines
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.demo import prepare as demo_prepare
+from infrahub_sync.demo.errors import DemoError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -156,9 +158,11 @@ app = typer.Typer(
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
 runs_app = typer.Typer(help="Inspect service-owned runs.")
 schedules_app = typer.Typer(help="Start `sync` runs of a configuration version on a cron cadence.")
+demo_app = typer.Typer(help="Prepare a Sync deployment for the NetBox demo.")
 app.add_typer(configs_app, name="configs")
 app.add_typer(runs_app, name="runs")
 app.add_typer(schedules_app, name="schedules")
+app.add_typer(demo_app, name="demo")
 
 
 class Verbosity(str, Enum):
@@ -432,11 +436,17 @@ def _client_errors() -> Iterator[None]:
     try:
         yield
     except SyncClientError as error:
-        label, fields = _error_fields(error)
-        typer.echo(f"error: {label}", err=True)
-        _echo_fields(fields, err=True)
+        code = _echo_client_error(error)
         _forget_refused_session(error)
-        raise typer.Exit(2 if isinstance(error, ClientInputError) else 1) from None
+        raise typer.Exit(code) from None
+
+
+def _echo_client_error(error: SyncClientError) -> int:
+    """Print a client error's label and bounded fields; return the exit code for it."""
+    label, fields = _error_fields(error)
+    typer.echo(f"error: {label}", err=True)
+    _echo_fields(fields, err=True)
+    return 2 if isinstance(error, ClientInputError) else 1
 
 
 def _request(model: type[Any], **values: object) -> Any:
@@ -2911,3 +2921,96 @@ def schedules_take_over(
     """
     with _client_errors():
         _schedule_action(ctx, schedule, "take_over_schedule", reason=reason, idempotency_key=idempotency_key)
+
+
+INFRAHUB_TOKEN_VARIABLE = "INFRAHUB_API_TOKEN"
+_DEMO_RERUN_NOTE = "note: the demo schema is already loaded; run the command again to complete the registration"
+
+
+def _echo_preparation(result: demo_prepare.PreparationResult) -> None:
+    typer.echo(_display(f"schema: {result.schema} ({result.schema_files} files)"))
+    typer.echo(
+        _display(
+            f"configuration: {result.configuration} {result.name}, "
+            f"config_id {result.config_id}, version {result.version}"
+        )
+    )
+    if result.same_name > 1:
+        typer.echo(
+            _display(
+                f"note: {result.same_name} configurations are named {result.name}; "
+                f"the newest, {result.config_id}, was used"
+            )
+        )
+    typer.echo(_display(f"netbox: {result.netbox_url}"))
+    typer.echo(_display(f"infrahub: {result.infrahub_url}"))
+
+
+@demo_app.command("prepare")
+def demo_prepare_cmd(
+    ctx: typer.Context,
+    *,
+    netbox_url: str = typer.Option(
+        ..., "--netbox-url", help="NetBox address written into the package: the address the worker uses."
+    ),
+    infrahub_url: str = typer.Option(
+        ..., "--infrahub-url", help="Infrahub address written into the package: the address the worker uses."
+    ),
+    infrahub_address: str | None = typer.Option(
+        None,
+        "--infrahub-address",
+        help="Infrahub address this command uses to load the schema. Defaults to --infrahub-url.",
+    ),
+    schema_timeout: float = typer.Option(
+        demo_prepare.DEFAULT_SCHEMA_TIMEOUT,
+        "--schema-timeout",
+        help="Seconds to wait for Infrahub to apply the schema.",
+    ),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the registration."),
+    as_json: bool = typer.Option(False, "--json", help="Print the result as one JSON object."),  # noqa: FBT003
+) -> None:
+    """Load the demo schema into Infrahub and register the NetBox configuration.
+
+    Reads the Infrahub token from INFRAHUB_API_TOKEN. A second run with the same addresses changes nothing.
+
+    It never plans, applies or approves.
+    """
+    token = os.environ.get(INFRAHUB_TOKEN_VARIABLE, "")
+    if not token:
+        typer.echo(f"error: {INFRAHUB_TOKEN_VARIABLE} is not set", err=True)
+        typer.echo(f"hint: set {INFRAHUB_TOKEN_VARIABLE} to an Infrahub API token that can load a schema", err=True)
+        raise typer.Exit(2)
+    refused = demo_prepare.refused_address_option(netbox_url, infrahub_url, infrahub_address)
+    if refused is not None:
+        typer.echo(f"error: {refused} must not carry a user name or password (user:password@)", err=True)
+        typer.echo(f"hint: give {refused} as scheme://host[:port], without user:password@", err=True)
+        raise typer.Exit(2)
+    with _client_errors():
+        _positive_duration(schema_timeout, "schema_timeout")
+        client = _client(ctx)
+        try:
+            result = demo_prepare.prepare(
+                client,
+                netbox_url=netbox_url,
+                infrahub_url=infrahub_url,
+                infrahub_address=infrahub_address,
+                token=token,
+                schema_timeout=schema_timeout,
+                reason=reason,
+            )
+        except DemoError as error:
+            typer.echo("error: demo preparation stopped", err=True)
+            typer.echo(_display(f"cause: {error}"), err=True)
+            raise typer.Exit(1) from None
+        except SyncClientError as error:
+            # The schema load runs first and raises `DemoError`, so a Sync client error here
+            # comes from the registration, after the schema was loaded.
+            exit_code = _echo_client_error(error)
+            _forget_refused_session(error)
+            if not isinstance(error, ClientInputError):
+                typer.echo(_DEMO_RERUN_NOTE, err=True)
+            raise typer.Exit(exit_code) from None
+    if as_json:
+        typer.echo(json.dumps(result.as_dict(), sort_keys=True))
+    else:
+        _echo_preparation(result)

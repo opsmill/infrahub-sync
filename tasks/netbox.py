@@ -40,6 +40,8 @@ from typing import TYPE_CHECKING, Literal
 from invoke import Context, task
 
 from development.netbox.datasets.tier_data import validate_tier
+from infrahub_sync.demo import package as demo_package_rewrite
+from infrahub_sync.demo.errors import DemoPackageError
 
 from .utils import ESCAPED_REPO_PATH
 
@@ -104,11 +106,12 @@ print(f"Development API token created for {user.username!r}")
 """
 
 # The shipped `from-netbox` package names the public NetBox demo and a default Infrahub.
-# `netbox.demo-package` replaces exactly these two lines and leaves the rest byte for byte.
+# `netbox.demo-package` replaces exactly these two lines and leaves the rest byte for byte;
+# the rewrite lives in `infrahub_sync.demo.package`, shared with `infrahub-sync demo prepare`.
 SHIPPED_PACKAGE = REPO_ROOT / "examples" / "netbox_to_infrahub" / "package.yml"
 LOCAL_PACKAGE = STATE_DIR / "from-netbox.local.yml"
-SHIPPED_NETBOX_URL = "https://demo.netbox.dev"
-SHIPPED_INFRAHUB_URL = "http://localhost:8000"
+SHIPPED_NETBOX_URL = demo_package_rewrite.SHIPPED_NETBOX_URL
+SHIPPED_INFRAHUB_URL = demo_package_rewrite.SHIPPED_INFRAHUB_URL
 # The local development stack (`development/docker-compose.yml`) and its one service
 # that reads a source. Its project name is fixed by the file's top-level `name:`.
 DEV_STACK_PROJECT = "infrahub-sync-dev"
@@ -300,6 +303,8 @@ def reset_database(context: Context, values: dict[str, str]) -> None:
     """
     print(f" - [{NAMESPACE}] Resetting the local NetBox database")
     detach_dev_worker(context, values)
+    # The data goes, so its record goes first: a load that fails next leaves no stale record.
+    (STATE_DIR / "tier.json").unlink(missing_ok=True)
     _compose(context, "down --volumes", values)
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
@@ -458,30 +463,15 @@ def local_package_text(shipped: str, netbox: str, infrahub: str) -> str:
     shipped package changed shape, and a guessed replacement could point the copy at the
     public demo.
     """
-    replacements = {
-        f"url: {json.dumps(SHIPPED_NETBOX_URL)}": f"url: {json.dumps(netbox)}",
-        f"url: {json.dumps(SHIPPED_INFRAHUB_URL)}": f"url: {json.dumps(infrahub)}",
-    }
-    # Count both lines in the shipped text before replacing either: a replacement URL can
-    # equal the other shipped URL (a local NetBox on port 8000), and counting after the first
-    # replacement would then blame the shipped package.
-    for line in replacements:
-        count = shipped.count(line)
-        if count != 1:
-            msg = f"{SHIPPED_PACKAGE} must contain {line!r} exactly once, found {count}"
-            raise NetboxError(msg)
-    lines = shipped.splitlines(keepends=True)
-    for index, line in enumerate(lines):
-        for current, replacement in replacements.items():
-            if current in line:
-                lines[index] = line.replace(current, replacement)
-                break
-    return "".join(lines)
+    try:
+        return demo_package_rewrite.local_package_text(shipped, netbox, infrahub, source=str(SHIPPED_PACKAGE))
+    except DemoPackageError as error:
+        raise NetboxError(str(error)) from error
 
 
-def _ready(context: Context, values: dict[str, str]) -> None:
-    """Connect the dev stack's worker, if it exists, then print the URL and token banner."""
-    worker_attached = attach_dev_worker(context, values)
+def _ready(context: Context, values: dict[str, str], project: str = DEV_STACK_PROJECT) -> None:
+    """Connect the worker of the dev stack's project, if it exists, then print the URL and token banner."""
+    worker_attached = attach_dev_worker(context, values, project)
     print(f" - [{NAMESPACE}] NetBox ready")
     print(f"     URL:   {netbox_url(values)}")
     if worker_attached:
@@ -489,10 +479,10 @@ def _ready(context: Context, values: dict[str, str]) -> None:
     print(f"     Token: {netbox_token(values)}")
 
 
-def _start_netbox(context: Context, values: dict[str, str]) -> None:
+def _start_netbox(context: Context, values: dict[str, str], project: str = DEV_STACK_PROJECT) -> None:
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
-    _ready(context, values)
+    _ready(context, values, project)
 
 
 def netbox_state(context: Context, values: dict[str, str]) -> Literal["absent", "stopped", "running"]:
@@ -519,7 +509,7 @@ def netbox_state(context: Context, values: dict[str, str]) -> Literal["absent", 
     return "absent"
 
 
-def ensure_netbox(context: Context, values: dict[str, str]) -> None:
+def ensure_netbox(context: Context, values: dict[str, str], project: str = DEV_STACK_PROJECT) -> None:
     """Make the local NetBox run for the development stack, without replacing data it holds.
 
     A running NetBox is left as it is. A stopped NetBox, or one whose data volume remains,
@@ -528,15 +518,19 @@ def ensure_netbox(context: Context, values: dict[str, str]) -> None:
     and NetBox starts against the restored data instead of migrating an empty database. When
     that restore fails, the NetBox it created is removed with its volumes, so the next start
     restores again instead of starting a partial database.
+
+    `project` names the development stack whose worker joins NetBox's network. The caller
+    passes its resolved project, so a stack started under another project name never
+    attaches the worker of the default `infrahub-sync-dev` project.
     """
     state = netbox_state(context, values)
     if state == "running":
         print(f" - [{NAMESPACE}] NetBox already runs; its data is kept")
-        _ready(context, values)
+        _ready(context, values, project)
         return
     if state == "stopped":
         print(f" - [{NAMESPACE}] Starting the existing local NetBox; its data is kept")
-        _start_netbox(context, values)
+        _start_netbox(context, values, project)
         return
     print(f" - [{NAMESPACE}] No local NetBox exists; creating one with the {DEMO_DATASET!r} dataset")
     sql_file = fetch_demo_sql()
@@ -550,7 +544,7 @@ def ensure_netbox(context: Context, values: dict[str, str]) -> None:
             # next start read NetBox as stopped and start it on a partial database, so remove it.
             print(f" - [{NAMESPACE}] The restore failed; removing the partial local NetBox")
             _compose(context, "down --volumes", values)
-    _ready(context, values)
+    _ready(context, values, project)
 
 
 @task(name="start")
@@ -613,11 +607,33 @@ def demo_package(_context: Context, infrahub_url: str = "", dev_stack: bool = Fa
 
 @task(name="destroy")
 def destroy(context: Context) -> None:
-    """Stop the local NetBox and remove its containers and data volumes."""
+    """Stop the local NetBox and remove its containers, its data volumes and the record of its dataset."""
     values = load_netbox_env()
     detach_dev_worker(context, values)
     _compose(context, "down --volumes", values)
+    (STATE_DIR / "tier.json").unlink(missing_ok=True)
     print(f" - [{NAMESPACE}] Local NetBox stopped and data volumes removed")
+
+
+def recorded_dataset() -> str | None:
+    """Name the dataset this checkout last loaded into the local NetBox, when it can tell.
+
+    Only a `seed` load leaves a record (`.netbox/tier.json`, which a `demo` restore and
+    `netbox.destroy` remove), so the answer is the `seed` dataset and its tier, with the note
+    that `netbox.change` changed it when the record says so, or None. None does not mean the
+    `demo` dataset: another checkout, or a change made in NetBox, leaves no record here.
+    """
+    try:
+        state = json.loads((STATE_DIR / "tier.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(state, dict) or not isinstance(tier := state.get("tier"), str):
+        return None
+    dataset = f"the {DEFAULT_DATASET!r} dataset at tier {tier}"
+    phase = state.get("phase")
+    if phase == "seeded":
+        return dataset
+    return f"{dataset}, changed by `netbox.change`" if phase == "changed" else None
 
 
 def netbox_image() -> str:
@@ -724,6 +740,7 @@ def restore(context: Context, tier: str = "S") -> None:
         # NetBox's ltree trigger comparisons require public on the restore search path.
         prepare_restore_sql(raw, destination=raw)
         detach_dev_worker(context, values)
+        (STATE_DIR / "tier.json").unlink(missing_ok=True)
         _compose(context, "down --volumes", values)
         up_command = f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}"
         _compose(context, f"{up_command} netbox-database netbox-redis", values)

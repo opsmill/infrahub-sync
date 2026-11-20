@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Tutorials',
       items: [
+        'tutorials/try-the-netbox-demo',
         'tutorials/netbox-to-existing-infrahub',
         'tutorials/nautobot-to-existing-infrahub',
         'tutorials/netbox-demo-to-infrahub',
@@ -165,6 +166,7 @@ const sidebars: SidebarsConfig = {
             slug: 'release-notes/infrahub-sync',
           },
           items: [
+            'release-notes/infrahub-sync/release-2_1_0',
             'release-notes/infrahub-sync/release-2_0_1',
             'release-notes/infrahub-sync/release-2_0_0',
             'release-notes/infrahub-sync/release-1_6_0',

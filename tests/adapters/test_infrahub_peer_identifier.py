@@ -423,14 +423,13 @@ def test_missing_relationship_identifier_is_rehydrated_by_uuid() -> None:
             "populate_store": False,
         }
     ]
-    assert len(harness._instances) == 1
-    assert harness.store.get(model="LocationGeneric", identifier="dc-east|acme") is harness._instances[0]
+    assert harness._instances == []
     assert harness.client.store.get(kind="LocationGeneric", key="peer-id", raise_when_missing=False) is None
     assert harness.client.store.get(kind="LocationGeneric", key="dc-east|acme", raise_when_missing=False) is None
     assert _resolve_cached_sdk_peer(harness, kind="LocationGeneric", unique_id="dc-east|acme") is None
 
 
-def test_production_converter_hydration_preserves_stub_non_identifiers() -> None:
+def test_production_converter_hydration_resolves_relationship_identifier_without_loading_peer() -> None:
     device_schema = _device_schema()
     lag_schema = _lag_schema()
     hydrated_peer = _make_sdk_node(
@@ -460,8 +459,7 @@ def test_production_converter_hydration_preserves_stub_non_identifiers() -> None
     )
 
     assert result == "router-1|lag-1"
-    assert len(harness._instances) == 1
-    assert harness._instances[0]._kwargs["description"] == "from relationship stub"  # ty: ignore[unresolved-attribute]
+    assert harness._instances == []
 
 
 def test_partial_sdk_converter_and_fake_store_contracts() -> None:
@@ -1015,12 +1013,11 @@ def test_reconciliation_rejects_cardinality_many_relationship_identifier() -> No
     assert harness.client.store.get(kind="InterfaceLag", key="router-1|lag-1", raise_when_missing=False) is None
 
 
-def test_unexpected_diffsync_store_error_propagates() -> None:
+def test_peer_resolution_does_not_read_or_fill_diffsync_store() -> None:
     device_schema = _device_schema()
     location_schema = _location_schema()
     harness = _Harness(schemas=(device_schema, location_schema))
-    store_error = RuntimeError("unexpected store failure")
-    harness._diffsync_store.get_error = store_error
+    harness._diffsync_store.get_error = RuntimeError("the resolver must not read the DiffSync store")
     parent = _make_node(device_schema, "parent-id", {})
     peer = _make_node(
         location_schema,
@@ -1028,14 +1025,14 @@ def test_unexpected_diffsync_store_error_propagates() -> None:
         {"name": "dc-east", "organization": "acme"},
     )
 
-    with pytest.raises(RuntimeError) as excinfo:
-        harness._resolve_peer_unique_id(
-            parent_node=parent,  # ty: ignore[invalid-argument-type]
-            rel_name="location",
-            peer_node=peer,  # ty: ignore[invalid-argument-type]
-        )
+    result = harness._resolve_peer_unique_id(
+        parent_node=parent,  # ty: ignore[invalid-argument-type]
+        rel_name="location",
+        peer_node=peer,  # ty: ignore[invalid-argument-type]
+    )
 
-    assert excinfo.value is store_error
+    assert result == "dc-east|acme"
+    assert harness._instances == []
 
 
 def test_complete_peer_adds_identity_alias_without_replacing_uuid_entry() -> None:

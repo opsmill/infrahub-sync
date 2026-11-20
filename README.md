@@ -82,6 +82,7 @@ uv sync --extra dev --extra prefect --extra service   # once
 uv run invoke dev.start      # `sync` preset, or `infrahub` when a local Infrahub container exists
 uv run invoke dev.infrahub   # the `infrahub` preset: adds a local Infrahub
 uv run invoke dev.preview    # the `preview` preset: adds a local Infrahub, NetBox and sample data
+uv run invoke dev.demo       # the `demo` preset: a local Infrahub and NetBox, ready for the NetBox demo
 ```
 
 `dev.start` builds `infrahub-sync:dev` when the image is missing or its build inputs
@@ -193,6 +194,7 @@ Apply never executes those deletes.
 | Peering Manager | Peering Manager → Infrahub |
 | Prometheus | Prometheus → Infrahub |
 | Slurp'it | Slurp'it → Infrahub |
+| Webex | Webex → Infrahub |
 | Generic REST API | external system → Infrahub |
 
 The IP Fabric and Slurp'it adapters need a worker image that installs their SDKs. The

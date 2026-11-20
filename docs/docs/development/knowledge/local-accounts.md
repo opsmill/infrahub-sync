@@ -240,7 +240,8 @@ interface has no field for an API token.
   Sync API that does not answer.
 - `api/client.ts` removes the token when the Sync API answers `401` to a request that carried
   it, and clears the cached answers, so the sign-in form opens. The header of
-  `routes/__root.tsx` names the signed-in account from `GET /me` and offers sign-out, which calls
+  `routes/__root.tsx` names the signed-in account from `GET /me` in a menu that opens the "My account" page and offers
+  sign-out, which calls
   `POST /auth/sign-out` and removes the token even when the call fails.
 - The link to the "Accounts" page is shown only when `GET /me` answers that the account is an
   administrator. The Sync API refuses the account routes to other accounts.

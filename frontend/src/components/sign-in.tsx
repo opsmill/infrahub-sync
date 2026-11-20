@@ -2,6 +2,7 @@ import { Button } from "@infrahub/ui";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
 import { type SignInResult, signIn } from "#/api/client";
+import { Mark } from "#/components/mark";
 import { Notice } from "#/components/page";
 import { Field, INPUT } from "#/features/runs/form";
 import { useDocumentTitle } from "#/lib/title";
@@ -51,17 +52,21 @@ export function SignIn() {
   }, [error]);
 
   return (
-    <div className="min-h-dvh bg-background text-foreground text-sm antialiased">
-      <main className="mx-auto max-w-[1200px] px-4 pb-24 outline-none">
-        <section className="flex w-full min-w-0 max-w-md flex-col items-start gap-3 pt-8 pb-6">
-          <h1 className="text-balance font-semibold text-2xl tracking-tight">
+    // Laid out like the Infrahub login page: one centered column, a quarter of the window from the top.
+    <div className="min-h-dvh overflow-auto bg-background px-4 py-[max(2rem,25vh)] text-foreground text-sm antialiased">
+      <main className="mx-auto flex w-full max-w-sm flex-col items-center gap-6 outline-none">
+        <Mark className="size-12" />
+        <div className="flex flex-col items-center gap-2 text-center">
+          <h1 className="text-balance font-semibold text-xl tracking-tight">
             Sign in to Infrahub Sync
           </h1>
           <p className="text-pretty text-foreground-muted">
             Sign in with the name and the password of your account. The session is kept for this
             browser tab only.
           </p>
-          <form onSubmit={submit} className="mt-2 flex w-full flex-col gap-4">
+        </div>
+        <section className="w-full rounded-xl border bg-content p-6 shadow-sm">
+          <form onSubmit={submit} className="flex w-full flex-col gap-4">
             <Field id={nameId} label="Account name">
               <input
                 id={nameId}
@@ -100,11 +105,9 @@ export function SignIn() {
                 <p>{error}</p>
               </Notice>
             )}
-            <div>
-              <Button type="submit" variant="primary" size="sm" isDisabled={pending}>
-                Sign in
-              </Button>
-            </div>
+            <Button type="submit" variant="primary" className="w-full" isDisabled={pending}>
+              Sign in
+            </Button>
           </form>
         </section>
       </main>
