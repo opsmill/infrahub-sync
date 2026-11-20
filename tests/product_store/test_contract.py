@@ -138,6 +138,7 @@ EXPECTED_PUBLIC_NAMES = {
     "ScheduleNotFoundError",
     "SchedulePage",
     "ScheduleRecord",
+    "ScheduleSettingChange",
     "ScheduleTransitionError",
     "ScheduledStartAlreadyRecordedError",
     "ScheduledStartDecision",

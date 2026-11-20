@@ -54,6 +54,7 @@ from infrahub_sync.product_store.models import (
     ScheduleFilters,
     SchedulePage,
     ScheduleRecord,
+    ScheduleSettingChange,
     SignInAttempt,
     WorkerEnvironment,
 )
@@ -160,6 +161,7 @@ __all__ = (
     "ScheduleNotFoundError",
     "SchedulePage",
     "ScheduleRecord",
+    "ScheduleSettingChange",
     "ScheduleTransitionError",
     "ScheduledStartAlreadyRecordedError",
     "ScheduledStartDecision",

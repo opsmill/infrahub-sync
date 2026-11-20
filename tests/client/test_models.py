@@ -479,8 +479,34 @@ def test_the_details_of_an_event_declare_only_the_closed_keys() -> None:
         "proposed_change_id",
         "replaced_run_id",
         "cause",
+        "changes",
     }
     assert EventDetailsResource().model_dump() == dict.fromkeys(EventDetailsResource.model_fields)
+
+
+def test_the_changes_of_a_change_event_keep_the_type_of_each_value() -> None:
+    event = EventResource.model_validate(
+        _event(
+            event_type="infrahub_sync.schedule.changed",
+            details={
+                "changes": [
+                    {"field": "registry_version", "before": 1, "after": 2},
+                    {"field": "cron", "before": "0 2 * * *", "after": "30 6 * * 1-5"},
+                    {"field": "write_when_left_out", "before": True, "after": False},
+                ]
+            },
+        )
+    )
+
+    assert event.details is not None
+    assert event.details.changes is not None
+    assert [(change.field, change.before, change.after) for change in event.details.changes] == [
+        ("registry_version", 1, 2),
+        ("cron", "0 2 * * *", "30 6 * * 1-5"),
+        ("write_when_left_out", True, False),
+    ]
+    assert type(event.details.changes[2].before) is bool
+    assert type(event.details.changes[0].before) is int
 
 
 @pytest.mark.parametrize(

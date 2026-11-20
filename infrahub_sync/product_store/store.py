@@ -6997,6 +6997,20 @@ def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
             key: _redact_ordered_value(value, ordered, numbers=False) if key in _EVENT_DETAILS_TEXT_KEYS else value
             for key, value in details.items()
         }
+        if details.get("changes") is not None:
+            # The text values of a changed setting, such as a cadence or a time zone, are
+            # redacted as the stored schedule is; the setting's name and the numbers are not.
+            redacted["details"]["changes"] = [
+                {
+                    **change,
+                    **{
+                        side: _redact_ordered_value(change[side], ordered, numbers=False)
+                        for side in ("before", "after")
+                        if isinstance(change[side], str)
+                    },
+                }
+                for change in details["changes"]
+            ]
     return AuditEvent.model_validate(redacted)
 
 

@@ -796,6 +796,19 @@ class EventRelatedResource(_ResourceModel):
     id: str
 
 
+class ScheduleSettingChangeResource(_ResourceModel):
+    """One setting that a change of a schedule altered, with its stored value before and after.
+
+    ``field`` is the name of the setting as the change request names it, such as ``cron`` or
+    ``start_late_by_at_most_seconds``; the values are the stored values, such as a version
+    number, a cron expression or a number of seconds.
+    """
+
+    field: str
+    before: StrictBool | StrictInt | str
+    after: StrictBool | StrictInt | str
+
+
 class EventDetailsResource(_ResourceModel):
     """The facts of one event, under a closed set of keys. A key the event does not use is ``None``.
 
@@ -816,6 +829,9 @@ class EventDetailsResource(_ResourceModel):
     # The earlier run whose branch or proposed change was replaced.
     replaced_run_id: str | None = None
     cause: str | None = None
+    # The settings whose stored value a change of a schedule altered; empty when every setting
+    # the change sent already had its value. Only `infrahub_sync.schedule.changed` holds it.
+    changes: tuple[ScheduleSettingChangeResource, ...] | None = None
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod

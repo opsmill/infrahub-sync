@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, get_args
 from uuid import uuid4
 
 import structlog
@@ -26,6 +26,7 @@ from infrahub_sync.execution import collect_secret_values, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     AuditEvent,
+    EventDetails,
     MutationReceipt,
     ProductProjection,
     ProductStoreProviderError,
@@ -37,8 +38,9 @@ from infrahub_sync.product_store import (
     ScheduleNameInUseError,
     ScheduleNotFoundError,
     ScheduleRecord,
+    ScheduleSettingChange,
 )
-from infrahub_sync.product_store.models import DEFAULT_START_LATE_SECONDS, SCHEDULE_ID_PATTERN
+from infrahub_sync.product_store.models import DEFAULT_START_LATE_SECONDS, SCHEDULE_ID_PATTERN, ScheduleSettingName
 
 from . import schedule_cadence
 from .events import SCHEDULE_START, SCHEDULE_STOPPED, schedule_decision_type, schedule_event
@@ -119,6 +121,28 @@ NEXT_STARTS_SEARCH_WINDOW: Final = timedelta(days=5 * 366)
 def _secret_message(name: str) -> str:
     """Return the refusal message of a request value that holds a credential; it never quotes the value."""
     return f"{name} must not hold a credential"
+
+
+# The stored settings that a change can alter, in the order of the change request's fields.
+_CHANGEABLE_SETTINGS: Final[tuple[ScheduleSettingName, ...]] = get_args(ScheduleSettingName)
+
+
+def _change_details(stored: ScheduleRecord, changed: ScheduleRecord) -> EventDetails:
+    """Return the details of a change event: each setting whose stored value differs, before and after.
+
+    A setting that the request sent with its stored value is not listed. A setting that the
+    change altered without the request naming it, such as ``write_when_left_out`` turned off
+    by a change to branch review, is listed. No credential can be in a value: a change refuses
+    a cadence or a time zone that holds one, and the store redacts the text values as it
+    redacts the schedule.
+    """
+    return EventDetails(
+        changes=tuple(
+            ScheduleSettingChange(field=name, before=getattr(stored, name), after=getattr(changed, name))
+            for name in _CHANGEABLE_SETTINGS
+            if getattr(stored, name) != getattr(changed, name)
+        )
+    )
 
 
 def _cadence_code(error: schedule_cadence.InvalidCadenceError) -> str:
@@ -547,7 +571,14 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 merged.update(state="active", state_reason=None)
             return ScheduleRecord.model_validate(merged)
 
-        return await self._act(schedule_id, context, request.model_dump(mode="json"), idempotency_key, changed)
+        return await self._act(
+            schedule_id,
+            context,
+            request.model_dump(mode="json"),
+            idempotency_key,
+            changed,
+            details_of=_change_details,
+        )
 
     async def pause(
         self, schedule_id: str, request: ScheduleActionRequest, principal: Principal, idempotency_key: str
@@ -834,10 +865,15 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         body: dict[str, Any],
         idempotency_key: str,
         decide: Callable[[ScheduleRecord, datetime], ScheduleRecord],
+        *,
+        details_of: Callable[[ScheduleRecord, ScheduleRecord], EventDetails] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         """Run one request on an existing schedule: ``decide`` returns the schedule to store.
 
-        ``decide`` returns the schedule that it received when the request changes nothing.
+        ``decide`` returns the schedule that it received when the request changes nothing. With
+        ``details_of``, which returns the details of the accepted event from the stored and the
+        new schedule, the accepted event is saved in the transaction that stores the new
+        schedule, so its details describe the record that this write replaced.
         """
         schedule = self._owned(schedule_id, context)
         context = context.of(schedule)
@@ -875,15 +911,22 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             if wanted is schedule:
                 return await self._answer(reserved, 200, context, now)
             wanted = wanted.model_copy(update={"prefect_synced": False, "updated_at": now})
+            events: tuple[AuditEvent, ...] = ()
+            if details_of is not None:
+                events = (
+                    self._event(context.of(wanted), "accepted", created_at=now, details=details_of(schedule, wanted)),
+                )
             try:
-                self._projection.update_schedule(wanted, expected_updated_at=schedule.updated_at, secrets=self._secrets)
+                self._projection.update_schedule(
+                    wanted, expected_updated_at=schedule.updated_at, events=events, secrets=self._secrets
+                )
             except (ScheduleChangedError, ScheduleDeletedError):
                 # Another writer, such as the worker that stops a schedule, saved a change in between.
                 reread = self._projection.lookup_schedule(schedule_id).value
                 assert reread is not None
                 schedule, now = reread, self._clock()
                 continue
-            return await self._answer(reserved, 200, context.of(wanted), now)
+            return await self._answer(reserved, 200, context.of(wanted), now, event_saved=bool(events))
         raise self._released(
             reserved,
             self._refusal(
@@ -1047,13 +1090,14 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             )
         return stored
 
-    async def _answer(
-        self, receipt: MutationReceipt, status: int, context: _Request, now: datetime
+    async def _answer(  # pylint: disable=too-many-arguments
+        self, receipt: MutationReceipt, status: int, context: _Request, now: datetime, *, event_saved: bool = False
     ) -> tuple[int, dict[str, Any]]:
         """Match Prefect to the store, then save the answer of an accepted request with its event.
 
         The event carries ``now``, the time of the request's decision that the schedule record
-        also carries, not the time the match with Prefect ended.
+        also carries, not the time the match with Prefect ended. With ``event_saved``, the
+        accepted event was saved with the schedule, and the answer is saved without one.
 
         Raises:
             ServiceAPIError: ``503 orchestration-unavailable`` when Prefect could not be reached.
@@ -1073,7 +1117,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             response_status=status,
             response_body=self._resource(schedule),
             flow_run_id=None,
-            events=(self._event(context, "accepted", created_at=now),),
+            events=() if event_saved else (self._event(context, "accepted", created_at=now),),
             secrets=self._secrets,
         )
         if failure is not None:
@@ -1235,7 +1279,14 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         """Return the schedule resource as the API answers it."""
         return self._emitted(schedule).model_dump(mode="json")
 
-    def _event(self, context: _Request, outcome: str, *, created_at: datetime | None = None) -> AuditEvent:
+    def _event(
+        self,
+        context: _Request,
+        outcome: str,
+        *,
+        created_at: datetime | None = None,
+        details: EventDetails | None = None,
+    ) -> AuditEvent:
         return schedule_event(
             event_type=schedule_decision_type(context.operation, outcome),
             actor=context.actor,
@@ -1246,6 +1297,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             config_id=context.config_id,
             registry_version=context.registry_version,
             created_at=self._clock() if created_at is None else created_at,
+            details=details,
         )
 
     def _audit(self, context: _Request, outcome: str) -> None:

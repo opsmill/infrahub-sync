@@ -2470,12 +2470,25 @@ def runs_logs(
 
 
 def _event_details(event: EventResource) -> str | None:
-    """Render the facts of an event as `key=value` pairs, or `None` when it records none."""
+    """Render the facts of an event as `key=value` pairs, or `None` when it records none.
+
+    Each changed setting of a change event is one `<setting>=<before>-><after>` pair, with the
+    values written as JSON, so a cadence with spaces stays one value; `changes=none` when the
+    change altered no stored value.
+    """
     if event.details is None:
         return None
     pairs = []
     for key, value in event.details.model_dump().items():
-        if value is not None:
+        if value is None:
+            continue
+        if key == "changes":
+            pairs.extend(
+                f"{change['field']}={json.dumps(change['before'])}->{json.dumps(change['after'])}" for change in value
+            )
+            if not value:
+                pairs.append("changes=none")
+        else:
             pairs.append(f"{key}={value.isoformat() if isinstance(value, datetime) else value}")
     return " ".join(pairs) or None
 
