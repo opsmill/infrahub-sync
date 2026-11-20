@@ -13,6 +13,7 @@ and the ciphertext, never a value.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 from typing import TYPE_CHECKING, Literal, NamedTuple
@@ -29,6 +30,9 @@ KEY_BYTES = 32
 NONCE_BYTES = 12
 _KEY_ID_BYTES = 8
 _ASSOCIATED_DATA_PREFIX = "infrahub-sync/credential/v1"
+# Derives the key of request fingerprints from the encryption key, so that the one key is never
+# used for two purposes.
+_FINGERPRINT_KEY_LABEL = b"infrahub-sync/credential-request-fingerprint/v1\x00"
 _UNDECRYPTABLE_MESSAGE = "the stored value cannot be decrypted with the current key"
 
 DecryptionFailure = Literal["key-mismatch", "authentication-failed", "malformed-value"]
@@ -74,7 +78,7 @@ class CredentialCipher:
     The key is the decoded ``encryption_key`` of ``service.settings.CredentialSettings``.
     """
 
-    __slots__ = ("_aead", "_key_id")
+    __slots__ = ("_aead", "_fingerprint_key", "_key_id")
 
     def __init__(self, key: bytes) -> None:
         """Hold the key for AES-256-GCM.
@@ -87,6 +91,7 @@ class CredentialCipher:
             raise ValueError(msg)
         self._aead = AESGCM(key)
         self._key_id = key_identifier(key)
+        self._fingerprint_key = hashlib.sha256(_FINGERPRINT_KEY_LABEL + key).digest()
 
     def __repr__(self) -> str:
         """Name the key by its identifier only."""
@@ -96,6 +101,15 @@ class CredentialCipher:
     def key_id(self) -> str:
         """The identifier of the current key."""
         return self._key_id
+
+    def request_fingerprint(self, payload: bytes) -> str:
+        """Return the keyed digest (HMAC-SHA-256, 64 hex characters) of a request that holds values.
+
+        A mutation receipt stores the fingerprint of its request, so that a repeated key with
+        another request is refused. A plain digest of a request that holds a short password could
+        be reversed by trying candidates; without the key, this one cannot.
+        """
+        return hmac.new(self._fingerprint_key, payload, hashlib.sha256).hexdigest()
 
     def encrypt(self, credential_id: str, revision: int, fields: Mapping[str, str]) -> EncryptedCredential:
         """Encrypt the JSON object of ``fields`` for one revision of one credential."""

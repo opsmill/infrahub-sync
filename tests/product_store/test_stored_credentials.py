@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, cast
 
@@ -22,12 +23,15 @@ from infrahub_sync.product_store import (
     AuditEvent,
     CredentialNameTakenError,
     CredentialUse,
+    MutationReceipt,
     ProductProjection,
     StoredCredential,
     StoredCredentialInvalidError,
     StoredCredentialNotFoundError,
 )
 from infrahub_sync.product_store.models import CREDENTIAL_FIELD_SETS
+from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
+from tests.product_store.postgresql_isolation import dsn_or_skip, isolated_schema
 from tests.product_store.test_contract import (
     _PROFILES_WITH_POSTGRESQL,
     _configuration_package,
@@ -361,3 +365,132 @@ def test_a_second_release_for_the_same_execution_and_block_replaces_the_use(proj
     assert sorted((use.block, use.revision) for use in uses) == [("destination", 1), ("source", 2)]
     assert retried in uses
     assert projection.credential_uses("run-002") == ()
+
+
+def _credential_receipt(key: str = "a") -> MutationReceipt:
+    return MutationReceipt(
+        receipt_id=f"m-{key * 8}",
+        actor=_ADMIN,
+        key_digest=key * 64,
+        operation="credential-create",
+        request_fingerprint="f" * 64,
+        reason=None,
+        resource_kind="credential",
+        resource_id="netbox-lab",
+        created_at=_T0,
+        updated_at=_T0,
+    )
+
+
+def test_a_credential_receipt_is_reserved(projection: ProductProjection) -> None:
+    stored, created = projection.reserve_mutation(_credential_receipt())
+
+    assert created
+    assert (stored.resource_kind, stored.resource_id) == ("credential", "netbox-lab")
+
+
+# The receipt check of a build before stored credentials, which does not accept the kind ``credential``.
+_EARLIER_RECEIPT_CHECK = (
+    "(resource_kind = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL) OR "
+    "(resource_kind IN ('configuration', 'configuration-registry', 'schedule') AND run_id IS NULL "
+    "AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)"
+)
+_EARLIER_RECEIPT_CONSTRAINT = "mutation_receipts_resource_consistent"
+_EARLIER_SQLITE_TRIGGERS = (
+    "mutation_receipts_resource_consistent_insert",
+    "mutation_receipts_resource_consistent_update",
+)
+
+
+def _earlier_sqlite_trigger(name: str, event: str) -> str:
+    condition = _EARLIER_RECEIPT_CHECK.replace("resource_kind", "NEW.resource_kind")
+    for column in ("run_id", "prefect_key", "target_run_id", "flow_run_id"):
+        condition = re.sub(rf"(?<![\w.]){column}", f"NEW.{column}", condition)
+    return (
+        f"CREATE TRIGGER {name} BEFORE {event} ON mutation_receipts FOR EACH ROW WHEN NOT ({condition}) "
+        "BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent'); END"
+    )
+
+
+def test_a_sqlite_database_of_an_earlier_build_accepts_a_credential_receipt_after_the_start(tmp_path: Path) -> None:
+    """A database created before stored credentials holds receipt triggers that refuse the kind ``credential``.
+
+    The start of this build replaces them, and the replacement still refuses an inconsistent receipt.
+    """
+    database = tmp_path / "earlier.sqlite3"
+    SQLiteRunStore(database)
+    with sqlite3.connect(database) as connection:
+        for name in [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")]:
+            if name.startswith("mutation_receipts_"):
+                connection.execute(f"DROP TRIGGER {name}")
+        connection.execute(_earlier_sqlite_trigger(_EARLIER_SQLITE_TRIGGERS[0], "INSERT"))
+        connection.execute(_earlier_sqlite_trigger(_EARLIER_SQLITE_TRIGGERS[1], "UPDATE"))
+        connection.commit()
+
+    projection = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
+    _stored, created = projection.reserve_mutation(_credential_receipt())
+
+    assert created
+    with sqlite3.connect(database) as connection:
+        triggers = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+        assert not triggers & set(_EARLIER_SQLITE_TRIGGERS)
+        with pytest.raises(sqlite3.IntegrityError, match="mutation receipt resource identity is inconsistent"):
+            connection.execute(
+                "INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation, request_fingerprint, "
+                "resource_kind, resource_id, run_id, state, created_at, updated_at) "
+                "VALUES ('m-2', 'operator', 'digest', 'credential-create', 'fingerprint', 'credential', 'x', "
+                "'run-1', 'reserved', 'now', 'now')"
+            )
+
+
+@pytest.mark.integration
+def test_a_postgresql_database_of_an_earlier_build_accepts_a_credential_receipt_after_the_start(
+    tmp_path: Path,
+) -> None:
+    """The receipt check of an earlier build is replaced at start-up on PostgreSQL too."""
+    schema = isolated_schema(dsn_or_skip("the earlier receipt check's PostgreSQL parameter"))
+    schema.create()
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    def connect() -> Any:  # noqa: ANN401
+        return PsycopgConnectionFactory(psycopg.connect)(schema.dsn)
+
+    try:
+        PostgreSQLRunStore(connect)
+        with psycopg.connect(schema.dsn) as admin:
+            names = [
+                row[0]
+                for row in admin.execute(
+                    "SELECT constraint_name FROM information_schema.table_constraints "
+                    "WHERE table_name = 'mutation_receipts' AND constraint_type = 'CHECK' "
+                    "AND constraint_name LIKE 'mutation_receipts_resource%%' AND table_schema = %s",
+                    (schema.name,),
+                ).fetchall()
+            ]
+            for name in names:
+                admin.execute(
+                    psycopg.sql.SQL("ALTER TABLE mutation_receipts DROP CONSTRAINT {}").format(
+                        psycopg.sql.Identifier(name)
+                    )
+                )
+            admin.execute(
+                f"ALTER TABLE mutation_receipts ADD CONSTRAINT {_EARLIER_RECEIPT_CONSTRAINT} "
+                f"CHECK ({_EARLIER_RECEIPT_CHECK})"
+            )
+
+        projection = ProductProjection(PostgreSQLRunStore(connect), FileArtifactStore(tmp_path / "objects"))
+        _stored, created = projection.reserve_mutation(_credential_receipt())
+
+        assert created
+        with psycopg.connect(schema.dsn) as admin:
+            remaining = admin.execute(
+                "SELECT 1 FROM information_schema.table_constraints WHERE table_name = 'mutation_receipts' "
+                "AND constraint_name = %s AND table_schema = %s",
+                (_EARLIER_RECEIPT_CONSTRAINT, schema.name),
+            ).fetchone()
+        assert remaining is None
+    finally:
+        schema.drop()

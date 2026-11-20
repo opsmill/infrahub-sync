@@ -268,8 +268,9 @@ CREATE TABLE IF NOT EXISTS run_credential_uses (
 # has no migration: a new column is part of its ``CREATE TABLE`` statement and reaches only a
 # new database. A database whose table lacks one of them was created by an earlier build, and
 # start-up refuses it before it creates anything (spec 021, research R12). The same refusal
-# covers the receipt ``CHECK`` constraint and triggers of an earlier build, which do not accept
-# the resource kind ``schedule`` and are never replaced.
+# covers the receipt ``CHECK`` constraint and triggers of a build before schedules, which do not
+# accept the resource kind ``schedule``. A later kind replaces the check by its name instead
+# (see ``_MUTATION_RECEIPT_RESOURCE_CONSTRAINT``).
 _COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD: dict[str, tuple[str, ...]] = {
     "product_runs": ("trigger_type", "schedule_id", "scheduled_start_at"),
     "audit_events": ("details",),
@@ -370,13 +371,21 @@ _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
     "OR (config_id IS NOT NULL AND registry_version IS NOT NULL AND package_checksum IS NOT NULL)"
 )
+# The receipt check is named after the resource kinds it accepts. A build that adds a kind
+# gives the check a new name, and start-up drops the check of an earlier build by its name
+# before it creates the new one (spec 027 adds ``credential``). Without the new name, the
+# check of an earlier build would be found and kept, and would refuse the new kind.
 _SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES = (
+    "mutation_receipts_resource_kinds_insert",
+    "mutation_receipts_resource_kinds_update",
+)
+_EARLIER_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES = (
     "mutation_receipts_resource_consistent_insert",
     "mutation_receipts_resource_consistent_update",
 )
 _SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK = """NOT (
     (NEW.resource_kind = 'run' AND NEW.run_id IS NOT NULL AND NEW.prefect_key IS NOT NULL)
-    OR (NEW.resource_kind IN ('configuration', 'configuration-registry', 'schedule') AND NEW.run_id IS NULL
+    OR (NEW.resource_kind IN ('configuration', 'configuration-registry', 'schedule', 'credential') AND NEW.run_id IS NULL
         AND NEW.prefect_key IS NULL AND NEW.target_run_id IS NULL AND NEW.flow_run_id IS NULL)
 )"""
 _SQLITE_MUTATION_RECEIPT_RESOURCE_INSERT_TRIGGER = f"""
@@ -391,10 +400,11 @@ BEFORE UPDATE ON mutation_receipts
 FOR EACH ROW WHEN {_SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK}
 BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent'); END;
 """
-_MUTATION_RECEIPT_RESOURCE_CONSTRAINT = "mutation_receipts_resource_consistent"
+_MUTATION_RECEIPT_RESOURCE_CONSTRAINT = "mutation_receipts_resource_kinds"
+_EARLIER_MUTATION_RECEIPT_RESOURCE_CONSTRAINTS = ("mutation_receipts_resource_consistent",)
 _MUTATION_RECEIPT_RESOURCE_CHECK = (
     "(resource_kind = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL) OR "
-    "(resource_kind IN ('configuration', 'configuration-registry', 'schedule') AND run_id IS NULL "
+    "(resource_kind IN ('configuration', 'configuration-registry', 'schedule', 'credential') AND run_id IS NULL "
     "AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)"
 )
 _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME = "product_runs_configuration_binding_insert"
@@ -1458,14 +1468,32 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 _SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES,
             )
             return {str(row[0]) for row in cursor.fetchall()} >= set(_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES)
+        return self._postgresql_receipt_constraint_exists(cursor, _MUTATION_RECEIPT_RESOURCE_CONSTRAINT)
+
+    def _postgresql_receipt_constraint_exists(self, cursor: _Cursor, name: str) -> bool:
         cursor.execute(
             self._sql(
                 "SELECT 1 FROM information_schema.table_constraints "
                 "WHERE table_name = ? AND constraint_name = ? AND table_schema = current_schema()"
             ),
-            ("mutation_receipts", _MUTATION_RECEIPT_RESOURCE_CONSTRAINT),
+            ("mutation_receipts", name),
         )
         return cursor.fetchone() is not None
+
+    def _drop_earlier_mutation_receipt_resource_constraint(self, cursor: _Cursor) -> None:
+        """Drop the receipt check of an earlier build, which refuses a resource kind this build adds.
+
+        On SQLite, ``DROP TRIGGER IF EXISTS`` changes nothing when the trigger is absent. On
+        PostgreSQL, the constraint is dropped only when the catalog names it, so a database that
+        never had it receives no ``ALTER TABLE``.
+        """
+        if self._dialect == "sqlite":
+            for name in _EARLIER_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES:
+                cursor.execute(f"DROP TRIGGER IF EXISTS {name}")
+            return
+        for name in _EARLIER_MUTATION_RECEIPT_RESOURCE_CONSTRAINTS:
+            if self._postgresql_receipt_constraint_exists(cursor, name):
+                cursor.execute(f"ALTER TABLE mutation_receipts DROP CONSTRAINT IF EXISTS {name}")
 
     def _ensure_mutation_receipt_resource_constraint(self, cursor: _Cursor) -> None:
         """Give mutation receipts their database-enforced resource shape.
@@ -1474,6 +1502,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         two, and two processes can both find the pair incomplete. ``IF NOT EXISTS`` on each
         trigger makes both cases complete the pair instead of failing on the trigger that exists.
         """
+        self._drop_earlier_mutation_receipt_resource_constraint(cursor)
         if self._mutation_receipt_resource_constraint_exists(cursor):
             return
         if self._dialect == "sqlite":

@@ -10,6 +10,7 @@ from hashlib import sha256
 from math import isfinite
 from time import monotonic, sleep
 from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -29,6 +30,7 @@ from .errors import (
 )
 from .models import (
     ACCOUNT_NAME_PATTERN,
+    CREDENTIAL_NAME_PATTERN,
     LOG_STAGES,
     MAX_LIMIT,
     MAX_LOG_LIMIT,
@@ -53,6 +55,8 @@ from .models import (
     CreatedTokenResource,
     CreateRunRequest,
     CreateScheduleRequest,
+    CredentialPage,
+    CredentialResource,
     DeletedAccountResource,
     ErrorEnvelope,
     EventPage,
@@ -136,6 +140,9 @@ _TOKEN_ID_ARG = "token_id"
 _ACCOUNT_STATES = frozenset({"active", "disabled", "all"})
 # The rule of an account name, as the Sync API applies it. A name that matches is safe in a URL path.
 _ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
+_CREDENTIAL_NAME = re.compile(CREDENTIAL_NAME_PATTERN)
+_DESCRIPTION_ARG = "description"
+_LIST_CREDENTIALS = "list_credentials"
 # The value a client built by `SyncClient.without_token` holds in place of a token. It is never sent.
 _NO_TOKEN = "-"
 
@@ -665,6 +672,111 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             if not page.items:
                 raise ProtocolError(_LIST_EVENTS)
             offset += len(page.items)
+
+    def list_credentials(self, *, offset: int = 0, limit: int | None = None) -> CredentialPage:
+        """Return one page of stored credentials sorted by name, with the names of their fields and no value."""
+
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
+        params: dict[str, str | int] = {_OFFSET_ARG: offset}
+        params.update(self._page_params(limit, None))
+        return self._request_model(
+            _LIST_CREDENTIALS, "GET", "/credentials", model=CredentialPage, success={200}, params=params
+        )
+
+    def iter_credentials(self, limit: int | None = None) -> Iterator[CredentialResource]:
+        """Yield every stored credential sorted by name, reading pages until ``next_offset`` is null."""
+
+        offset = 0
+        while True:
+            page = self.list_credentials(offset=offset, limit=limit)
+            yield from page.items
+            if page.next_offset is None:
+                return
+            # A page that names a next offset but holds no item would repeat forever.
+            if page.next_offset <= offset or not page.items:
+                raise ProtocolError(_LIST_CREDENTIALS)
+            offset = page.next_offset
+
+    def get_credential(self, name: str) -> CredentialResource:
+        """Return one stored credential by its name, with the names of its fields and no value."""
+
+        name = self._credential_name(name)
+        return self._request_model(
+            "get_credential", "GET", f"/credentials/{name}", model=CredentialResource, success={200}
+        )
+
+    def create_credential(
+        self,
+        name: str,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+        token: str | None = None,
+        description: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> CredentialResource:
+        """Create a stored credential with its first value. Administrator only.
+
+        The values are sent in the request body only, as given; the answer holds no value. A call
+        without ``idempotency_key`` sends a new key.
+        """
+
+        body: dict[str, object] = {"name": self._credential_name(name)}
+        if description is not None:
+            body[_DESCRIPTION_ARG] = self._text(description, _DESCRIPTION_ARG)
+        body.update(self._credential_values(username=username, password=password, token=token))
+        return self._request_model(
+            "create_credential",
+            "POST",
+            "/credentials",
+            model=CredentialResource,
+            success={201},
+            body=body,
+            idempotency_key=self._new_key(idempotency_key),
+        )
+
+    def set_credential_value(
+        self,
+        name: str,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+        token: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> CredentialResource:
+        """Replace the whole set of fields of a stored credential; its revision goes up by one. Administrator only.
+
+        The values are sent in the request body only, as given. A call without ``idempotency_key``
+        sends a new key.
+        """
+
+        name = self._credential_name(name)
+        return self._request_model(
+            "set_credential_value",
+            "PUT",
+            f"/credentials/{name}/value",
+            model=CredentialResource,
+            success={200},
+            body=self._credential_values(username=username, password=password, token=token),
+            idempotency_key=self._new_key(idempotency_key),
+        )
+
+    def set_credential_description(
+        self, name: str, description: str, *, idempotency_key: str | None = None
+    ) -> CredentialResource:
+        """Replace the description of a stored credential; its revision stays. Administrator only."""
+
+        name = self._credential_name(name)
+        return self._request_model(
+            "set_credential_description",
+            "PATCH",
+            f"/credentials/{name}",
+            model=CredentialResource,
+            success={200},
+            body={_DESCRIPTION_ARG: self._text(description, _DESCRIPTION_ARG)},
+            idempotency_key=self._new_key(idempotency_key),
+        )
 
     def me(self) -> PrincipalResource:
         """Return the actor the token authenticates as and whether it is an administrator."""
@@ -1473,6 +1585,26 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if not isinstance(value, str) or _ACCOUNT_NAME.fullmatch(value) is None:
             raise ClientInputError(_NAME_ARG)
         return value
+
+    @staticmethod
+    def _credential_name(value: object) -> str:
+        """Refuse a name that no stored credential can have, so the name is safe in a URL path."""
+        if not isinstance(value, str) or _CREDENTIAL_NAME.fullmatch(value) is None:
+            raise ClientInputError(_NAME_ARG)
+        return value
+
+    @classmethod
+    def _credential_values(cls, **values: str | None) -> dict[str, object]:
+        """Return the fields of a credential that are set. Each value is sent as given, never trimmed.
+
+        A value that is not text is refused by its argument name; the Sync API checks the set.
+        """
+        return {name: cls._text(value, name) for name, value in values.items() if value is not None}
+
+    @staticmethod
+    def _new_key(value: str | None) -> str:
+        """Return the given idempotency key, or a new one for a call that gives none."""
+        return f"credential-{uuid4().hex}" if value is None else value
 
     @staticmethod
     def _text(value: object, argument: str) -> str:

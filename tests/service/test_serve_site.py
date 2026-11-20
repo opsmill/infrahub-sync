@@ -92,7 +92,8 @@ def test_build_service_passes_the_schedule_service_factory_to_the_api(
     replacement = object()
     captured: dict[str, object] = {}
 
-    def _app(*_args: object, schedules: object) -> object:
+    def _app(*_args: object, schedules: object, credential_cipher: object) -> object:
+        del credential_cipher
         captured["schedules"] = schedules
         return captured
 

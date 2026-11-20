@@ -139,6 +139,7 @@ def test_the_write_target_is_checked_before_the_configuration_is_read(  # noqa: 
 def test_the_served_api_delivers_both_write_targets(monkeypatch: pytest.MonkeyPatch) -> None:
     """A deployment runs schedules with branch review and schedules that write to the default branch."""
     received: dict[str, object] = {}
+    monkeypatch.delenv("INFRAHUB_SYNC_ENCRYPTION_KEY", raising=False)
 
     def schedule_service(*providers: object, **settings: object) -> str:
         received.update(settings, providers=len(providers))
@@ -160,7 +161,7 @@ def test_the_served_api_delivers_both_write_targets(monkeypatch: pytest.MonkeyPa
         "secrets": ("a-token",),
         "providers": 3,
     }
-    assert built == {"schedules": "the schedule service"}
+    assert built == {"schedules": "the schedule service", "credential_cipher": None}
 
 
 # ---------------------------------------------------------------------------

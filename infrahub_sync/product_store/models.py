@@ -569,7 +569,7 @@ class MutationReceipt(BaseModel):
     target_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     request_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     reason: str | None = Field(min_length=1)
-    resource_kind: Literal["run", "configuration", "configuration-registry", "schedule"] = "run"
+    resource_kind: Literal["run", "configuration", "configuration-registry", "schedule", "credential"] = "run"
     resource_id: str = Field(min_length=1)
     run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     prefect_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -594,12 +594,12 @@ class MutationReceipt(BaseModel):
         if self.resource_kind == "run" and (self.run_id is None or self.prefect_key is None):
             msg = "a run mutation receipt requires its run and Prefect identifiers"
             raise ValueError(msg)
-        # A receipt of a configuration route or of a schedule route names no run: a schedule
+        # A receipt of a configuration, schedule or credential route names no run: a schedule
         # request creates none, and a scheduled run's own receipt has the resource kind ``run``.
         if self.resource_kind != "run" and any(
             value is not None for value in (self.run_id, self.prefect_key, self.flow_run_id, self.target_run_id)
         ):
-            resource = "schedule" if self.resource_kind == "schedule" else "configuration"
+            resource = self.resource_kind if self.resource_kind in {"schedule", "credential"} else "configuration"
             msg = f"a {resource} mutation receipt cannot carry run or Prefect identifiers"
             raise ValueError(msg)
         if self.state == "accepted" and (self.response_status is None or self.response_body is None):
@@ -778,16 +778,24 @@ RunPage: TypeAlias = StorePage[ProductRun]
 
 
 # An event's dotted type, ``infrahub_sync.<resource>.<action>`` (spec 012, FR-012).
-EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|schedule|account)\.[a-z_]+$"
+EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|schedule|account|credential)\.[a-z_]+$"
 # The kinds of resource an event names besides its primary resource, in the order an event lists them.
-RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "schedule", "branch"]
-_RELATED_KIND_ORDER: dict[str, int] = {"account": 0, "config": 1, "config_version": 2, "schedule": 3, "branch": 4}
+RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "schedule", "branch", "credential"]
+_RELATED_KIND_ORDER: dict[str, int] = {
+    "account": 0,
+    "config": 1,
+    "config_version": 2,
+    "schedule": 3,
+    "branch": 4,
+    "credential": 5,
+}
 
 
 class RelatedResource(BaseModel):
     """One resource an event names besides its primary resource.
 
-    The resource is the actor's account, a configuration, a version, a schedule or a branch.
+    The resource is the actor's account, a configuration, a version, a schedule, a branch or a
+    stored credential, which an event names by its name.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -829,6 +837,8 @@ class EventDetails(BaseModel):
     # The earlier run whose branch or proposed change was replaced.
     replaced_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     cause: str | None = Field(default=None, min_length=1)
+    # The revision of the stored credential an event names (spec 027).
+    revision: int | None = Field(default=None, ge=1)
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod

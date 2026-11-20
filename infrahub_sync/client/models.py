@@ -102,6 +102,8 @@ REASON_MAX_LENGTH = 512
 # The rule of a local account name (spec 022, research R8), which the Sync API and the client both
 # apply: no space, so a name differs from every placeholder and is safe in a URL path.
 ACCOUNT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$"
+# The name of a stored credential, as a package names it in ``credential:`` (spec 027).
+CREDENTIAL_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,62}$"
 _JSON_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
 _ARTIFACT_TIME_MESSAGE = "artifact-reference timestamps must include a timezone"
 _EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"
@@ -750,6 +752,8 @@ class EventDetailsResource(_ResourceModel):
     # The earlier run whose branch or proposed change was replaced.
     replaced_run_id: str | None = None
     cause: str | None = None
+    # The revision of the stored credential an event names.
+    revision: int | None = Field(default=None, ge=1)
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod
@@ -1307,6 +1311,29 @@ class AccountResource(_ResourceModel):
     environment_managed: bool
     created_at: datetime
     sign_in_refused_until: datetime | None = None
+
+
+class CredentialResource(_ResourceModel):
+    """What the Sync API shows of a stored credential: the names of its fields, never their values.
+
+    ``created_by`` and ``updated_by`` are account names, including ``Deleted account <short identifier>``.
+    """
+
+    name: str
+    description: str
+    fields: tuple[str, ...]
+    revision: int = Field(ge=1)
+    created_by: str
+    created_at: datetime
+    updated_by: str
+    updated_at: datetime
+
+
+class CredentialPage(_ResourceModel):
+    """One page of stored credentials sorted by name; ``next_offset`` is ``None`` on the last page."""
+
+    items: tuple[CredentialResource, ...]
+    next_offset: int | None = Field(default=None, ge=0)
 
 
 class DeletedAccountResource(_ResourceModel):

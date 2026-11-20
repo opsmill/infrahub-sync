@@ -4804,7 +4804,7 @@ def test_reconstructing_the_store_restores_a_dropped_update_trigger(tmp_path: Pa
 
 @pytest.mark.parametrize(
     "dropped",
-    ["mutation_receipts_resource_consistent_insert", "mutation_receipts_resource_consistent_update"],
+    list(product_store_store._SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES),
 )
 def test_reconstructing_the_store_restores_a_missing_receipt_trigger(tmp_path: Path, dropped: str) -> None:
     """SQLite commits each receipt trigger on its own, so a start-up can stop after the first.

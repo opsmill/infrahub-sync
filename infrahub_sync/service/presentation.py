@@ -24,7 +24,17 @@ if TYPE_CHECKING:
     from infrahub_sync.product_store import Account
 
 # The keys whose string value names an account, at any depth of a body.
-ACCOUNT_FIELDS = frozenset({"actor", "approved_by", "registered_by", "owner", "left_out_set_by"})
+ACCOUNT_FIELDS = frozenset(
+    {
+        "actor",
+        "approved_by",
+        "registered_by",
+        "owner",
+        "left_out_set_by",
+        "created_by",
+        "updated_by",
+    }
+)
 # The key that holds the related resources of an event, and the kind of an entry that names an account.
 RELATED_KEY = "related"
 # The key that holds the resource an event is about.

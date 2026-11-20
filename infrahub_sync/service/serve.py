@@ -15,6 +15,7 @@ from infrahub_sync.product_store.accounts import DuplicateCredentialError, Envir
 from .app import create_app
 from .auth import WORKER_ACCOUNT_NAME, StoreAccountResolver, apply_admin_account, apply_worker_account
 from .config_routes import ConfigurationRoutes
+from .credential_crypto import CredentialCipher
 from .credentials import no_account_hash
 from .liveness import LivenessPolicy, RunLivenessReconciler
 from .orchestration import (
@@ -33,10 +34,12 @@ from .service import RunService
 from .settings import (
     ADMIN_ACCOUNT_PASSWORD_ENV,
     ADMIN_ACCOUNT_TOKEN_ENV,
+    ENCRYPTION_KEY_ENV,
     WORKER_TOKEN_ENV,
     AccountSettingsError,
     CredentialSettingsError,
     admin_account_settings,
+    encryption_key,
     session_idle_seconds,
     web_directory,
     worker_account_token,
@@ -129,14 +132,17 @@ def build_app(
     password is removed from the environment of the process, and callers are resolved from the
     accounts of the store. When ``INFRAHUB_SYNC_WORKER_TOKEN`` is set, the ``worker`` account is
     made to match it too; until every deployment sets it (spec 027, T054), a start without it
-    applies no ``worker`` account and logs that.
+    applies no ``worker`` account and logs that. ``INFRAHUB_SYNC_ENCRYPTION_KEY`` gives the
+    credential routes their key; a start without it logs that, and those routes answer every
+    change with ``503 credential-key-not-configured``.
 
     Raises:
         TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
         AccountSettingsError: when a variable of the ``admin`` account or the idle period of a
             session holds a value that is not accepted, or when another account already has the
             token of ``admin`` as an API token. The message names the variable. Its subclass
-            ``CredentialSettingsError`` when the worker token is not accepted, when another
+            ``CredentialSettingsError`` when the encryption key or the worker token is not
+            accepted, when another
             account already holds it, or when an account named ``worker`` exists that the
             environment does not manage.
         StartRefusedError: when the bootstrap record is missing or names another Sync version
@@ -148,6 +154,11 @@ def build_app(
     prefect_ui_url = prefect_ui_url_from_environment()
     admin_account = admin_account_settings() if resolver_factory is None else None
     worker_token = worker_account_token() if resolver_factory is None else None
+    # Without the key, the credential routes refuse every change with `503` until T054 makes
+    # the variable required for `sync-api`; a key that is set but not accepted stops the start.
+    credential_key = encryption_key()
+    if credential_key is None:
+        logger.warning("stored credentials cannot be changed: the variable is not set", variable=ENCRYPTION_KEY_ENV)
     idle_seconds = session_idle_seconds()
     work_pool = os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default")
     start_check(work_pool)
@@ -195,7 +206,14 @@ def build_app(
         delivered_write_targets=DELIVERED_SCHEDULE_WRITE_TARGETS,
         secrets=resolver.secret_values,
     )
-    return app_factory(service, resolver, configuration_routes, reconciler, schedules=schedules)
+    return app_factory(
+        service,
+        resolver,
+        configuration_routes,
+        reconciler,
+        schedules=schedules,
+        credential_cipher=None if credential_key is None else CredentialCipher(credential_key),
+    )
 
 
 def _apply_worker_account(projection: ProductProjection, token: str | None) -> None:

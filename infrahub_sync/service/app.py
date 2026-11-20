@@ -40,6 +40,9 @@ from .config_routes import (
     parse_bounded_integer,
     parse_page_limit,
 )
+from .credential_actions import CredentialActions
+from .credential_crypto import CredentialCipher
+from .credential_routes import credential_router
 from .events import ACCOUNT_REFUSED
 from .liveness import RunLivenessReconciler
 from .models import (
@@ -317,11 +320,12 @@ def _include_routers(
     configuration_routes: ConfigurationRoutes | None,
     *,
     schedules: ScheduleService | None,
+    credential_cipher: CredentialCipher | None,
 ) -> None:
     """Add the routes built outside ``create_app``.
 
     They are the configurations, the schedules, the approval, the events, the run logs, the saved
-    plan and the accounts.
+    plan, the accounts and the stored credentials.
     """
     if configuration_routes is not None:
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
@@ -332,6 +336,9 @@ def _include_routers(
     application.include_router(run_logs_router(service, authenticate))
     application.include_router(plan_router(service, authenticate))
     application.include_router(account_router(service, authenticate))
+    application.include_router(
+        credential_router(CredentialActions(service, credential_cipher), authenticate, idempotency_key)
+    )
 
 
 _BEARER_AUTH = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
@@ -492,12 +499,17 @@ def create_app(
     reconciler: RunLivenessReconciler | None = None,
     *,
     schedules: ScheduleService | None = None,
+    credential_cipher: CredentialCipher | None = None,
 ) -> FastAPI:
     """Create the service application from explicit providers.
 
     With ``schedules``, the application serves the schedule routes. When the API process starts,
     it stops the schedules that can no longer run and makes the Prefect schedules match the stored
     schedules, once (spec 021, research R6, R8 and R13).
+
+    The stored credential routes are always served. Without ``credential_cipher``, which holds the
+    key of ``INFRAHUB_SYNC_ENCRYPTION_KEY``, they list and show credentials and answer every change
+    with ``503 credential-key-not-configured`` (spec 027).
 
     Raises:
         ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
@@ -705,7 +717,15 @@ def create_app(
         status, content = await service.cancel_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    _include_routers(application, service, authenticate, idempotency_key, configuration_routes, schedules=schedules)
+    _include_routers(
+        application,
+        service,
+        authenticate,
+        idempotency_key,
+        configuration_routes,
+        schedules=schedules,
+        credential_cipher=credential_cipher,
+    )
     # Added last, so it is the outermost middleware: the registry is bound before any route,
     # exception handler or other middleware of the request runs, and all of them share it.
     application.add_middleware(RedactionScopeMiddleware)

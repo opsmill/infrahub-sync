@@ -30,12 +30,14 @@ from infrahub_sync.service import service as service_module
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import StoreAccountResolver
 from infrahub_sync.service.config_routes import ConfigurationRoutes
+from infrahub_sync.service.credential_crypto import CredentialCipher
 from infrahub_sync.service.credentials import digest, new_api_token
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.presentation import ACCOUNT_FIELDS, RELATED_KEY, account_identifiers, present_accounts
 from infrahub_sync.service.schedules import ScheduleService
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.configuration.validation_packages import package_data
+from tests.helpers.stored_credentials import TEST_ENCRYPTION_KEY
 from tests.service.schedule_fixtures import FakeOrchestration
 from tests.service.test_approval import _RecordingOrchestration
 
@@ -219,7 +221,13 @@ def _api_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Api:
     schedules = ScheduleService(
         store, FakeOrchestration(), resolver, delivered_write_targets=("branch-review", "default-branch")
     )
-    application = create_app(service, resolver, ConfigurationRoutes(product_projection=store), schedules=schedules)
+    application = create_app(
+        service,
+        resolver,
+        ConfigurationRoutes(product_projection=store),
+        schedules=schedules,
+        credential_cipher=CredentialCipher(TEST_ENCRYPTION_KEY),
+    )
     return _Api(
         client=TestClient(application),
         store=store,
@@ -407,6 +415,26 @@ def _schedule_answers(api: _Api) -> list[Response]:
     ]
 
 
+def _credential_answers(api: _Api) -> list[Response]:
+    """Return the answers of a credential that the administrator created and changed."""
+    created = api.client.post(
+        "/credentials",
+        headers={**api.administrator_headers, "Idempotency-Key": "credential-1"},
+        json={"name": "netbox-lab", "token": "presentation-token-value"},
+    )
+    changed = api.client.put(
+        "/credentials/netbox-lab/value",
+        headers={**api.administrator_headers, "Idempotency-Key": "credential-2"},
+        json={"token": "presentation-token-value-2"},
+    )
+    return [
+        created,
+        changed,
+        api.client.get("/credentials/netbox-lab", headers=api.owner_headers),
+        api.client.get("/credentials", headers=api.owner_headers),
+    ]
+
+
 # One entry per response model that declares an account field: the routes that answer with it.
 _ANSWERS: dict[str, Callable[[_Api], list[Response]]] = {
     "PublicRunResource.actor": _run_answers,
@@ -423,9 +451,16 @@ _ANSWERS: dict[str, Callable[[_Api], list[Response]]] = {
     "ScheduleResource.left_out_set_by": _schedule_answers,
     # The copy of `ScheduleResource` that the service emits.
     "EmittedScheduleResource.left_out_set_by": _schedule_answers,
+    "CredentialResource.created_by": _credential_answers,
+    "CredentialResource.updated_by": _credential_answers,
 }
 # Fields whose key is an account field of the presentation but whose value is not an account.
-_NOT_ACCOUNTS = frozenset({"PlanLineageResource.owner"})  # A node of the destination, by kind and name.
+_NOT_ACCOUNTS = frozenset(
+    {
+        "PlanLineageResource.owner",  # A node of the destination, by kind and name.
+        "PlanLastChangeResource.updated_by",  # An account of Infrahub, as an object, not an account of Sync.
+    }
+)
 
 
 def _account_fields() -> list[str]:

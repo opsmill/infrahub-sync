@@ -304,6 +304,23 @@ def worker_account_token(environ: Mapping[str, str] | None = None) -> str | None
     return token
 
 
+def encryption_key(environ: Mapping[str, str] | None = None) -> bytes | None:
+    """Return the decoded key of stored credentials that ``sync-api`` uses, or ``None`` when it is unset.
+
+    An empty value counts as unset. Until the Compose files give every ``sync-api`` the variable
+    (spec 027, T054), a start without it serves the credential routes with ``503
+    credential-key-not-configured``; a value that is set must follow the rules of
+    :func:`credential_settings`.
+
+    Raises:
+        CredentialSettingsError: the key is not base64, or not 32 bytes once decoded.
+    """
+    env = os.environ if environ is None else environ
+    if not env.get(ENCRYPTION_KEY_ENV, "").strip():
+        return None
+    return _encryption_key(env)
+
+
 def worker_settings(environ: Mapping[str, str] | None = None) -> WorkerSettings:
     """Return the validated variables that a ``sync-worker`` reads to reach the Sync API.
 

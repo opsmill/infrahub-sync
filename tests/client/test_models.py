@@ -434,6 +434,7 @@ def test_the_details_of_an_event_declare_only_the_closed_keys() -> None:
         "proposed_change_id",
         "replaced_run_id",
         "cause",
+        "revision",
     }
     assert EventDetailsResource().model_dump() == dict.fromkeys(EventDetailsResource.model_fields)
 
