@@ -1,0 +1,50 @@
+infrahub_sync/client/models.py
+  s_caab93ebf0934a::t_c0c96607e889ef 738-750,771-773
+infrahub_sync/client/__init__.py
+  s_caab93ebf0934a::t_23a016b6851215 75,155
+infrahub_sync/product_store/store.py
+  s_caab93ebf0934a::t_a78405ebda0637 6952-6965
+infrahub_sync/cli.py
+  s_caab93ebf0934a::t_ea30fa57709a39 2358-2363,2368-2376
+infrahub_sync/product_store/__init__.py
+  s_caab93ebf0934a::t_fb03b3a8358919 57,164
+tests/service/test_schedule_change_details.py
+  s_caab93ebf0934a::t_439a6d2cad984c 1-4,6-13,15-32,34-38,43-163
+  s_caab93ebf0934a::t_1815c98aee7cde 5,14,39-42
+  s_caab93ebf0934a::t_9731a7a83961dc 33
+tests/client/test_models.py
+  s_caab93ebf0934a::t_17d4bcf261119d 437,442-464
+  s_caab93ebf0934a::t_6df43a5ceb130d 465-466
+tests/product_store/test_contract.py
+  s_caab93ebf0934a::t_d63cb5484a1ff5 141
+infrahub_sync/service/schedules.py
+  s_caab93ebf0934a::t_1815c98aee7cde 18,127
+  s_caab93ebf0934a::t_609a2d58d355e1 29,41,43,574-581,868-869,873-876,914-918,920-922,929,1093-1094,1099-1100,1120,1282-1289,1300
+  s_caab93ebf0934a::t_50592d6ce668be 126,128-147
+infrahub_sync/product_store/models.py
+  s_caab93ebf0934a::t_5e015c095d1893 801-824
+  s_caab93ebf0934a::t_eee69465fbcc2c 849-851
+  s_caab93ebf0934a::t_498f7902eee48f 12
+tests/service/test_event_transactions.py
+  s_caab93ebf0934a::t_1ae329c19c73ae 27,494-527
+  s_caab93ebf0934a::t_bbe870b5231362 528-529
+tests/cli/test_schedule_commands.py
+  s_caab93ebf0934a::t_17d4bcf261119d 30,622-654
+  s_caab93ebf0934a::t_f4cd47ec85ae44 655-656
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2e9737d0daf854181610cf8bdddeb2ceffb44bd0",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
