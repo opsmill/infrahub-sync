@@ -1,0 +1,98 @@
+tests/service/test_http_api.py
+  s_58b527396c8cb5::t_d11a59be214d27 1878-1880
+infrahub_sync/service/credential_actions.py
+  s_58b527396c8cb5::t_4ff847b6682f99 30,61,67-68,492,495
+  s_58b527396c8cb5::t_7dd075f89699dc 1-29,31-60,62-66,69-491,493-494,496-505
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_3c2c9ad4a66b06 88,96-97,99
+tests/client/test_credential_methods.py
+  s_58b527396c8cb5::t_7f263686d0c183 1-171,173-187
+  s_58b527396c8cb5::t_8a2a0281aa909b 172
+tests/service/test_serve_site.py
+  s_58b527396c8cb5::t_3ad790ff4140cb 95-96
+infrahub_sync/service/credential_crypto.py
+  s_58b527396c8cb5::t_619721d37a6b48 16,33-35,81,94,105-112
+  s_58b527396c8cb5::t_c5899bd55dba55 113
+tests/product_store/test_stored_credentials.py
+  s_58b527396c8cb5::t_2c28732d1af6b3 16,26,33-34,368-400,402-473,479-496
+  s_58b527396c8cb5::t_eb937c078df4ec 474-478
+  s_58b527396c8cb5::t_2970478a4be1b3 401
+infrahub_sync/service/app.py
+  s_58b527396c8cb5::t_379e1deddc65f0 323,328,339-341,502,510-513,720-728
+  s_58b527396c8cb5::t_366953fc4b7b73 43-45
+infrahub_sync/service/serve.py
+  s_58b527396c8cb5::t_3ad790ff4140cb 37
+  s_58b527396c8cb5::t_03e884ecbe94b2 18,135-137,144-145,157-161,209-216
+  s_7a2c9a7562be70::t_d184331cff8cb2 42
+infrahub_sync/client/client.py
+  s_58b527396c8cb5::t_69f380d6f5e5c6 13,33,58-59,143-145,676-708,710-780,1589-1607
+  s_58b527396c8cb5::t_f6ba3278f4afd2 709
+  s_58b527396c8cb5::t_1327fe5ccc944d 1608
+tests/client/test_models.py
+  s_58b527396c8cb5::t_2dff8d7181b400 437
+tests/product_store/test_contract.py
+  s_58b527396c8cb5::t_da1bdfa74bcf9f 4807
+tests/service/test_credential_routes.py
+  s_58b527396c8cb5::t_9f8e622bad3b6a 1-13,16,18-23,25,29-30,32-34,36-68,76-90,97-150,152-157,159-234,236-271,273-318,320-330,332-411
+  s_58b527396c8cb5::t_dccec6e24e25a8 17,24,443-469
+  s_58b527396c8cb5::t_8a2fc4ee1f5868 35,151
+  s_58b527396c8cb5::t_a7bc22c43f539d 14,26-28,31,412-439
+  s_58b527396c8cb5::t_df7ea4a42d4212 69-74
+  s_58b527396c8cb5::t_c5be810bf4646c 15,91-96,235,272,319,331,440-442
+  s_58b527396c8cb5::t_5edc2c2b74d2b6 75,158
+infrahub_sync/service/events.py
+  s_58b527396c8cb5::t_a3e0857c5e26d4 26,152-159,161-191
+  s_58b527396c8cb5::t_c076383f7b5e69 160
+  s_58b527396c8cb5::t_f4bed9b08159af 192-193
+tests/service/test_schedule_routes.py
+  s_58b527396c8cb5::t_3ad790ff4140cb 164
+  s_58b527396c8cb5::t_4ab03d8316b192 142
+tests/service/test_account_presentation.py
+  s_58b527396c8cb5::t_dccec6e24e25a8 33,40,224-230,418-437,454-455,458-463
+infrahub_sync/client/models.py
+  s_58b527396c8cb5::t_1f438ff7d1a8d4 105-106,1316-1336
+  s_58b527396c8cb5::t_a3e0857c5e26d4 755-756
+  s_58b527396c8cb5::t_9eb29acac7a7bc 1337-1338
+infrahub_sync/service/presentation.py
+  s_58b527396c8cb5::t_a3e0857c5e26d4 27-37
+infrahub_sync/service/settings.py
+  s_58b527396c8cb5::t_1c70a18521dc64 307-323
+infrahub_sync/service/credential_routes.py
+  s_58b527396c8cb5::t_df7ea4a42d4212 61,70
+  s_58b527396c8cb5::t_174298ab21d1a8 1-60,62-69,71-107
+infrahub_sync/product_store/store.py
+  s_58b527396c8cb5::t_e4e05e2976a40e 374-377,379-382,388,403-404,407,1471-1473,1479,1483-1497,1505
+  s_58b527396c8cb5::t_da1bdfa74bcf9f 271-273
+tests/service/account_api.py
+  s_58b527396c8cb5::t_8a2fc4ee1f5868 243-249,272-274,276-279
+  s_58b527396c8cb5::t_845cd516ab19a7 275
+infrahub_sync/product_store/models.py
+  s_58b527396c8cb5::t_4f9b568b12ddc4 572,597,602
+  s_58b527396c8cb5::t_a3e0857c5e26d4 781,783-791,797-798,840-841
+infrahub_sync/client/__init__.py
+  s_7a2c9a7562be70::t_45cc521a81c755 40-41,117-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "512efb768c1baf0824d088e92e4cdcd51475865f",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_7a2c9a7562be70": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a92b8004fad92f409",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
