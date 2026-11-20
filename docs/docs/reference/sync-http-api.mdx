@@ -916,8 +916,8 @@ number, a cron expression, a time zone name, a write target, `true` or `false`, 
 or a number of seconds. The entries follow the order of that list. A setting that the request sent
 with the value it already had is not listed, and a setting that the change altered without the
 request naming it is listed: a change to `branch-review` turns `write_when_left_out` off. When no
-stored value changed, `changes` is an empty list. The event is saved in the same transaction as the
-changed schedule:
+stored value changed, `changes` is an empty list. A request repeated with the same
+`Idempotency-Key` receives the stored answer and records no second change event:
 
 ```json
 "details": {

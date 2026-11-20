@@ -870,10 +870,9 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     ) -> tuple[int, dict[str, Any]]:
         """Run one request on an existing schedule: ``decide`` returns the schedule to store.
 
-        ``decide`` returns the schedule that it received when the request changes nothing. With
-        ``details_of``, which returns the details of the accepted event from the stored and the
-        new schedule, the accepted event is saved in the transaction that stores the new
-        schedule, so its details describe the record that this write replaced.
+        ``decide`` returns the schedule that it received when the request changes nothing.
+        ``details_of`` returns the details of the accepted event from the schedule as it was read
+        and the schedule that the write stores; the event is saved with the answer (ADR 0033).
         """
         schedule = self._owned(schedule_id, context)
         context = context.of(schedule)
@@ -908,25 +907,21 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 raise self._released(reserved, self._stopped_refusal(context, required.reason)) from None
             if reserved is None:
                 reserved = self._reserve(receipt, context)
+            # The write below is refused when the stored schedule changed after it was read
+            # (`expected_updated_at`), so when it succeeds, `schedule` holds the values it replaced.
+            details = None if details_of is None else details_of(schedule, wanted)
             if wanted is schedule:
-                return await self._answer(reserved, 200, context, now)
+                return await self._answer(reserved, 200, context, now, details=details)
             wanted = wanted.model_copy(update={"prefect_synced": False, "updated_at": now})
-            events: tuple[AuditEvent, ...] = ()
-            if details_of is not None:
-                events = (
-                    self._event(context.of(wanted), "accepted", created_at=now, details=details_of(schedule, wanted)),
-                )
             try:
-                self._projection.update_schedule(
-                    wanted, expected_updated_at=schedule.updated_at, events=events, secrets=self._secrets
-                )
+                self._projection.update_schedule(wanted, expected_updated_at=schedule.updated_at, secrets=self._secrets)
             except (ScheduleChangedError, ScheduleDeletedError):
                 # Another writer, such as the worker that stops a schedule, saved a change in between.
                 reread = self._projection.lookup_schedule(schedule_id).value
                 assert reread is not None
                 schedule, now = reread, self._clock()
                 continue
-            return await self._answer(reserved, 200, context.of(wanted), now, event_saved=bool(events))
+            return await self._answer(reserved, 200, context.of(wanted), now, details=details)
         raise self._released(
             reserved,
             self._refusal(
@@ -1091,13 +1086,18 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         return stored
 
     async def _answer(  # pylint: disable=too-many-arguments
-        self, receipt: MutationReceipt, status: int, context: _Request, now: datetime, *, event_saved: bool = False
+        self,
+        receipt: MutationReceipt,
+        status: int,
+        context: _Request,
+        now: datetime,
+        *,
+        details: EventDetails | None = None,
     ) -> tuple[int, dict[str, Any]]:
         """Match Prefect to the store, then save the answer of an accepted request with its event.
 
         The event carries ``now``, the time of the request's decision that the schedule record
-        also carries, not the time the match with Prefect ended. With ``event_saved``, the
-        accepted event was saved with the schedule, and the answer is saved without one.
+        also carries, not the time the match with Prefect ended, and ``details``.
 
         Raises:
             ServiceAPIError: ``503 orchestration-unavailable`` when Prefect could not be reached.
@@ -1117,7 +1117,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             response_status=status,
             response_body=self._resource(schedule),
             flow_run_id=None,
-            events=() if event_saved else (self._event(context, "accepted", created_at=now),),
+            events=(self._event(context, "accepted", created_at=now, details=details),),
             secrets=self._secrets,
         )
         if failure is not None:

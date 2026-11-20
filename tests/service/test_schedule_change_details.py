@@ -137,7 +137,7 @@ def test_the_events_route_returns_the_changes(api: ScheduleApi) -> None:
 
 
 def test_a_change_answered_503_records_one_event_with_its_changes(api: ScheduleApi) -> None:
-    """The event is saved with the changed schedule, before the match with the task manager."""
+    """The event is saved with the answer, also on a 503; the repeated request replays that answer."""
     created = api.create()
     api.orchestration.unavailable = True
     request_headers = headers(key="change-once")
@@ -152,6 +152,23 @@ def test_a_change_answered_503_records_one_event_with_its_changes(api: ScheduleA
     assert event.details == EventDetails(
         changes=(ScheduleSettingChange(field="cron", before="0 2 * * *", after="0 4 * * *"),)
     )
+
+
+def test_a_repeated_change_replays_the_answer_and_records_no_second_change_event(api: ScheduleApi) -> None:
+    created = api.create()
+    request_headers = headers(key="change-twice")
+    body = {"start_late_by_at_most_seconds": 2700}
+
+    first = api.client.post(f"/schedules/{created['schedule_id']}/change", json=body, headers=request_headers)
+    again = api.client.post(f"/schedules/{created['schedule_id']}/change", json=body, headers=request_headers)
+
+    assert (first.status_code, again.status_code) == (200, 200)
+    assert again.json() == first.json()
+    (event,) = _changed_events(api)
+    assert event.details is not None
+    assert event.details.changes is not None
+    assert [change.field for change in event.details.changes] == ["start_late_by_at_most_seconds"]
+    assert api.event_types().count("infrahub_sync.schedule.replayed") == 1
 
 
 def test_a_change_refused_by_a_check_records_no_change_event(api: ScheduleApi) -> None:

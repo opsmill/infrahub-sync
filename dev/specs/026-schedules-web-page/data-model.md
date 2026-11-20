@@ -205,7 +205,9 @@ forms of the interface show refusals.
 
 Added 2026-11-20 (T056). The `infrahub_sync.schedule.changed` event holds `details.changes`: one
 `{field, before, after}` entry for each stored setting whose value the change altered, in the order
-of the change request's fields, saved in the transaction that stores the changed schedule. `field`
+of the change request's fields. The event is saved with the answer to the request, as every
+accepted event is (ADR 0033); the entries compare the schedule as it was read with the values the
+write stored, and the write is refused when the schedule changed after that read. `field`
 is a field of `POST /schedules/{schedule_id}/change`; `before` and `after` are the stored values. A
 setting sent with its stored value is not listed; `write_when_left_out` turned off by a change to
 branch review is listed. The full description is in the
