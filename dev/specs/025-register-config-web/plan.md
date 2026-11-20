@@ -117,7 +117,7 @@ tests/
 └── cli/ or tests/test_cli_*.py             # configs check (follow the existing CLI test layout)
 
 docs/docs/                 # web interface and configuration package pages; CLI reference regenerated
-dev/adr/0051-a-package-can-be-validated-before-it-is-registered.md  # 0048 to 0050 may be used by other branches; take the next free number at merge
+dev/adr/0054-a-package-can-be-validated-before-it-is-registered.md  # 0048 to 0050 may be used by other branches; take the next free number at merge
 changelog/+register-config-web.added.md
 ```
 
@@ -149,7 +149,7 @@ Delivery (decision D-9): two pull requests into `feature/v3-develop`.
   `whoami` returns, which 022 keeps, and adds no actor column. Whichever branch merges second
   resolves conflicts in `config_routes.py`, `store.py` and the web interface's token handling.
 - **ADR numbers**: 0049 and 0050 are used on `022-local-accounts`; 0048 is not used on any local
-  branch, but may be reserved. This plan names 0051 and takes the next free number at merge.
+  branch, but may be reserved. This plan named 0051; the rebase onto feature/v3-develop on 2026-11-20 took 0054, because 0051 to 0053 were in use.
 
 ## Complexity Tracking
 

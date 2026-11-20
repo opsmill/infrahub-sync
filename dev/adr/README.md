@@ -161,7 +161,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0050 — A record holds an account identifier, and a deletion empties the account row](0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md)
   — why records hold `acct_` identifiers that one middleware shows as names, and why a deletion
   changes no past record.
-- [0051 — A package can be validated before it is registered](0051-a-package-can-be-validated-before-it-is-registered.md)
+- [0054 — A package can be validated before it is registered](0054-a-package-can-be-validated-before-it-is-registered.md)
   — why `POST /configs/validate` and `configs check` run the checks of a registered version on a
   package that is not registered, why the route requires an administrator, and why the service
   parses the file.
