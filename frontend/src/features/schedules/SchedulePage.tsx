@@ -1,12 +1,13 @@
-import { buttonVariants, Card } from "@infrahub/ui";
+import { Button, buttonVariants, Card } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { cn } from "tailwind-variants";
 
 import {
   configsQuery,
   describeScheduleError,
+  meQuery,
   nextStartsQuery,
   runQuery,
   scheduleQuery,
@@ -25,12 +26,24 @@ import {
 import { BranchBadge, StateLabel, When } from "#/components/run-status";
 import { cadenceWords, cronFields, formFromCron } from "#/domain/cadence";
 import { phaseLabel, runState } from "#/domain/run-state";
-import { lateStartLabel, overlapPolicyLabel, writeTargetLabel } from "#/domain/schedules";
+import {
+  type ActionAccess,
+  lateStartLabel,
+  overlapPolicyLabel,
+  type ScheduleAction,
+  scheduleActions,
+  writeTargetLabel,
+} from "#/domain/schedules";
 import { LINK } from "#/features/runs/form";
 import { formatAbsolute } from "#/lib/time";
 import { useDocumentTitle } from "#/lib/title";
 
 import { NextStarts, StartTime } from "./NextStarts";
+import {
+  DeleteScheduleDialog,
+  PauseScheduleDialog,
+  ResumeScheduleDialog,
+} from "./ScheduleActionDialogs";
 import { ScheduleHistory } from "./ScheduleHistory";
 import { ScheduleNotices } from "./ScheduleNotices";
 import { ScheduleStateLabel } from "./SchedulesTable";
@@ -170,6 +183,51 @@ function Cadence({ cron }: { cron: string }) {
   );
 }
 
+/** The actions of the header that this page performs with a dialog. */
+type PageAction = "pause" | "resume" | "delete";
+
+const ACTION_BUTTONS: {
+  action: PageAction;
+  label: string;
+  variant: "outline" | "danger-outline";
+}[] = [
+  { action: "pause", label: "Pause", variant: "outline" },
+  { action: "resume", label: "Resume", variant: "outline" },
+  { action: "delete", label: "Delete", variant: "danger-outline" },
+];
+
+/**
+ * The header buttons the signed-in account may use. When an action is shown but not available,
+ * its reason is shown once in place of the buttons, as on the run page.
+ */
+function HeaderActions({
+  access,
+  onOpen,
+}: {
+  access: Record<ScheduleAction, ActionAccess>;
+  onOpen: (action: PageAction) => void;
+}) {
+  const shown = ACTION_BUTTONS.filter((b) => access[b.action].shown);
+  if (shown.length === 0) return null;
+  const refused = shown.find((b) => !access[b.action].available);
+  if (refused) {
+    return (
+      <p className="max-w-[40ch] text-foreground-muted text-xs">
+        {access[refused.action].unavailableReason}
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {shown.map((b) => (
+        <Button key={b.action} variant={b.variant} size="sm" onPress={() => onOpen(b.action)}>
+          {b.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 /**
  * The page of one schedule (contracts/web-pages.md): header, notices, next start and last run,
  * settings, next starts, review branch, history and record. The schedule is read again every 10
@@ -187,6 +245,8 @@ export function SchedulePage({
   const schedule = q.data;
   // The configuration name comes from the configurations list the interface already reads.
   const configs = useQuery(configsQuery());
+  const me = useQuery(meQuery());
+  const [dialog, setDialog] = useState<PageAction | null>(null);
   const cron = schedule?.cron ?? "";
   const timezone = schedule?.timezone ?? "UTC";
   const active = schedule?.state === "active";
@@ -245,6 +305,8 @@ export function SchedulePage({
   const configName =
     configs.data?.items.find((c) => c.config_id === schedule.config_id)?.name ?? schedule.config_id;
   const branch = schedule.open_branch;
+  const access = scheduleActions(me.data, schedule);
+  const closeDialog = () => setDialog(null);
 
   return (
     <>
@@ -281,7 +343,8 @@ export function SchedulePage({
               </li>
             </ul>
           </div>
-          {/* The actions of the signed-in account are added here (spec 026, T032 and T038). */}
+          {/* The change and take-over actions are added here (spec 026, T038). */}
+          <HeaderActions access={access} onOpen={setDialog} />
         </div>
       </header>
       {q.isRefetchError && (
@@ -291,6 +354,15 @@ export function SchedulePage({
         <ScheduleNotices
           schedule={schedule}
           offers={{
+            ...(schedule.state === "stopped" &&
+              schedule.state_reason === "repeated-failures" &&
+              access.resume.available && {
+                resume: (
+                  <Button variant="outline" size="sm" onPress={() => setDialog("resume")}>
+                    Resume
+                  </Button>
+                ),
+              }),
             runs: (
               <Link
                 to="/runs"
@@ -395,6 +467,9 @@ export function SchedulePage({
           ]}
         />
       </div>
+      {dialog === "pause" && <PauseScheduleDialog schedule={schedule} onClose={closeDialog} />}
+      {dialog === "resume" && <ResumeScheduleDialog schedule={schedule} onClose={closeDialog} />}
+      {dialog === "delete" && <DeleteScheduleDialog schedule={schedule} onClose={closeDialog} />}
     </>
   );
 }
