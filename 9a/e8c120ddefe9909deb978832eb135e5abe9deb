@@ -1,0 +1,22 @@
+docs/docs/development/guides/publishing-an-image.md
+  s_531f0e8d1dd35e::t_20f7ff5b7f1e66 19,98-100
+  s_531f0e8d1dd35e::t_fc41057a492cde 107
+docs/docs/development-stack.mdx
+  s_531f0e8d1dd35e::t_eb26f0e1c0bb2c 55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9ae8c120ddefe9909deb978832eb135e5abe9deb",
+  "prompts": {},
+  "sessions": {
+    "s_531f0e8d1dd35e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc96e3a5-d15f-4a02-91df-9e9ea7d165d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
