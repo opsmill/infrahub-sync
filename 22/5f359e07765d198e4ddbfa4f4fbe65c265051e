@@ -1,0 +1,26 @@
+infrahub_sync/product_store/models.py
+  s_58b527396c8cb5::t_2820e944088131 14-16
+tests/configuration/test_credential_field_map.py
+  s_58b527396c8cb5::t_8cda69a1577e67 16,67-72
+  s_58b527396c8cb5::t_2820e944088131 9,73
+  s_58b527396c8cb5::t_db0f796158d3c5 74-75
+tests/configuration/test_parse_diagnostics.py
+  s_58b527396c8cb5::t_8cda69a1577e67 514-519,572-579
+  s_58b527396c8cb5::t_ec4d95a0087bc9 580
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "225f359e07765d198e4ddbfa4f4fbe65c265051e",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
