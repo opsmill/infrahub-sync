@@ -1,0 +1,19 @@
+dev/specs/027-stored-credentials/quickstart.md
+  s_58b527396c8cb5::t_6e36da598657c3 29-30,42,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10a6409ccc85e691f0cb63f139e106e3cdeb872e",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
