@@ -384,9 +384,12 @@ function PlainAnchor({
 
 const PlainLink = createLink(PlainAnchor);
 
-function sectionOf(pathname: string): "configs" | "runs" | "accounts" | "account" | undefined {
+function sectionOf(
+  pathname: string
+): "configs" | "runs" | "schedules" | "accounts" | "account" | undefined {
   if (pathname === "/" || pathname.startsWith("/configs/")) return "configs";
   if (pathname === "/runs" || pathname.startsWith("/runs/")) return "runs";
+  if (pathname === "/schedules" || pathname.startsWith("/schedules/")) return "schedules";
   if (pathname === "/accounts") return "accounts";
   if (pathname === "/account") return "account";
   return undefined;
@@ -505,6 +508,15 @@ function RootComponent() {
               aria-current={section === "runs" ? "true" : undefined}
             >
               Runs
+            </Link>
+            <Link
+              to="/schedules"
+              activeOptions={{ exact: true, includeSearch: false }}
+              className={NAV}
+              data-current={section === "schedules" ? "" : undefined}
+              aria-current={section === "schedules" ? "true" : undefined}
+            >
+              Schedules
             </Link>
             {administrator && (
               <Link
