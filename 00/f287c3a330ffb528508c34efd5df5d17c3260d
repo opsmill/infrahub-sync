@@ -1,0 +1,93 @@
+tests/cli/test_client_commands.py
+  s_caab93ebf0934a::t_2fb61c7ae9ea05 287-328
+docs/docs/development/knowledge/repository-tour.md
+  s_caab93ebf0934a::t_392e48a4f8d7f3 310-318
+  s_caab93ebf0934a::t_21bbfc6089392b 319
+tests/product_store/test_configs_service.py
+  s_caab93ebf0934a::t_25872faaf579a0 306,515,1668,1671,1673-1678,1680-1684
+  s_caab93ebf0934a::t_52436848b3c0b9 268-269
+docs/docs/orchestration.mdx
+  s_caab93ebf0934a::t_8584be89193102 313-314
+infrahub_sync/client/client.py
+  s_caab93ebf0934a::t_2d4036d49b599a 1461-1466
+infrahub_sync/service/worker.py
+  s_caab93ebf0934a::t_3dc0ae45220a18 423-425
+  s_caab93ebf0934a::t_46ddcb14544ef2 31,422
+docs/docs/configuration-package.mdx
+  s_caab93ebf0934a::t_8584be89193102 101-108,121-139
+infrahub_sync/service/config_routes.py
+  s_caab93ebf0934a::t_313ea2c4441bea 47,62-66,157-162,167-170,172-174,393-398,503,524
+  s_caab93ebf0934a::t_fdca9df8afd7e2 16,171
+infrahub_sync/cli.py
+  s_caab93ebf0934a::t_f92b48790e6fff 12,61
+  s_caab93ebf0934a::t_fdca9df8afd7e2 394-412,446-450,457-459,689-701
+tests/configuration/validation_packages.py
+  s_caab93ebf0934a::t_01f318626c53fb 30-31,33-38,40-43
+tests/client/test_client.py
+  s_caab93ebf0934a::t_90a51328750a2f 424-451
+changelog/+unique-configuration-names.changed.md
+  s_caab93ebf0934a::t_d83c4fd0061bfc 1
+docs/docs/reference/sync-http-api.mdx
+  s_caab93ebf0934a::t_01f7779d9c05e9 586-587
+  s_caab93ebf0934a::t_660567a850b192 1640-1641,1648
+  s_caab93ebf0934a::t_8584be89193102 25-27,624
+tests/product_store/test_schedules.py
+  s_caab93ebf0934a::t_1e34a329694bc0 60
+  s_caab93ebf0934a::t_25872faaf579a0 115,117
+  s_caab93ebf0934a::t_59429aac67176d 116
+infrahub_sync/product_store/configs.py
+  s_caab93ebf0934a::t_313ea2c4441bea 59,130-144,717-718,755-756
+infrahub_sync/client/errors.py
+  s_caab93ebf0934a::t_fdca9df8afd7e2 65-77
+  s_caab93ebf0934a::t_2d4036d49b599a 89,97-99
+tests/product_store/test_postgresql_isolation.py
+  s_caab93ebf0934a::t_2593aac549a3ce 226
+  s_caab93ebf0934a::t_4aedf88b1b193e 233,284
+  s_caab93ebf0934a::t_5b52dfac5421ba 234-238
+infrahub_sync/service/bootstrap.py
+  s_caab93ebf0934a::t_46ddcb14544ef2 44-48,393-396
+docs/docs/running-a-sync.mdx
+  s_caab93ebf0934a::t_8584be89193102 67,76-78
+tests/service/test_http_api.py
+  s_caab93ebf0934a::t_544e6108685b4f 244-245,260,377
+  s_caab93ebf0934a::t_df890675a43336 291
+docs/docs/reference/cli.mdx
+  s_caab93ebf0934a::t_39e0dab6748182 290-292
+tests/service/test_schedule_bootstrap.py
+  s_caab93ebf0934a::t_92f783fd890d43 215-242
+infrahub_sync/product_store/store.py
+  s_caab93ebf0934a::t_996cf373be8fcc 288-289,308-321,784-801,842-853,1370-1372,1411-1420,1423-1424,3460-3462,3486-3489,3504,3510-3523,3579-3580
+  s_caab93ebf0934a::t_e5b718b29175b9 3429-3433,5493-5495,5514-5517
+tests/service/test_config_routes.py
+  s_caab93ebf0934a::t_2cce4b09c6bdbe 38
+  s_caab93ebf0934a::t_01f318626c53fb 306-307
+  s_caab93ebf0934a::t_3f7b9424801b4c 1838-1935
+  s_caab93ebf0934a::t_9ca7748a98a2a5 1374,1376,1379,1382,1513-1517
+tests/product_store/test_contract.py
+  s_caab93ebf0934a::t_2593aac549a3ce 95,106,4279
+  s_caab93ebf0934a::t_285b1614127ac8 4464-4469
+  s_caab93ebf0934a::t_2cce4b09c6bdbe 3947,3949-3953
+  s_caab93ebf0934a::t_cf6b80db62abbe 637-642,3871-3872,3898,3912-3913,3926
+  s_caab93ebf0934a::t_7f1f60bab5c6cc 4340-4342,4344-4345
+  s_caab93ebf0934a::t_ed53791ee08b88 32,40,643-649,3832-3833,3841,3847,3853,3860-3863,3873-3897,3899-3911,3914-3925,3927-3946,3948,3954-3998,4009-4011,4014-4016,5224,5331-5333,5342-5346
+infrahub_sync/product_store/__init__.py
+  s_caab93ebf0934a::t_31e101e5f1eea5 65,71,117,128
+frontend/src/api/types.generated.ts
+  s_caab93ebf0934a::t_f55086e8b24373 3466-3493,3499,3564-3591,3597
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00f287c3a330ffb528508c34efd5df5d17c3260d",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
