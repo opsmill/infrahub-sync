@@ -26,8 +26,8 @@ uv run infrahub-sync configs --help
 
 ```bash
 uv run infrahub-sync login admin
-printf '%s' "$NETBOX_TOKEN" | uv run infrahub-sync credentials create netbox-lab --token-stdin
-printf '%s' "$INFRAHUB_TOKEN" | uv run infrahub-sync credentials create infrahub-netbox-sync --token-stdin
+printf '%s' "$NETBOX_TOKEN" | uv run infrahub-sync credentials create netbox-token --token-stdin
+printf '%s' "$INFRAHUB_TOKEN" | uv run infrahub-sync credentials create infrahub-token --token-stdin
 uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml
 uv run infrahub-sync plan netbox-to-infrahub
 ```
@@ -39,7 +39,7 @@ variable (`docker compose exec sync-worker env | grep INFRAHUB_SYNC_CREDENTIAL_`
 ## 4. Change once (P2, SC-002)
 
 ```bash
-printf '%s' "$NEW_TOKEN" | uv run infrahub-sync credentials set netbox-lab --token-stdin
+printf '%s' "$NEW_TOKEN" | uv run infrahub-sync credentials set netbox-token --token-stdin
 uv run infrahub-sync configs list        # no new version
 uv run infrahub-sync plan netbox-to-infrahub
 uv run infrahub-sync runs show <run_id>  # credentials_used shows revision 2
@@ -47,7 +47,7 @@ uv run infrahub-sync runs show <run_id>  # credentials_used shows revision 2
 
 ## 5. Refusals (FR-004, FR-005, FR-008, FR-010, FR-012)
 
-- `credentials delete netbox-lab` while the package names it: exit 1, lists `netbox-to-infrahub`.
+- `credentials delete netbox-token` while the package names it: exit 1, lists `netbox-to-infrahub`.
 - A non-administrator token: `credentials list` works; `credentials create x` is refused.
 - Calling `POST /api/worker/runs/<finished run>/credentials` with the worker token: `409`.
 - Calling the worker route with the admin token: `403`.
