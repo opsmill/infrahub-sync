@@ -1,0 +1,27 @@
+infrahub_sync/service/credential_routes.py
+  s_58b527396c8cb5::t_da0561ee0c4325 20,23,40-41,73,91,102
+infrahub_sync/execution.py
+  s_58b527396c8cb5::t_0fa537ac983502 557-561
+infrahub_sync/service/credential_actions.py
+  s_58b527396c8cb5::t_da0561ee0c4325 39,221-233,398,409
+  s_58b527396c8cb5::t_0fa537ac983502 307,335,360
+tests/service/test_credential_routes.py
+  s_58b527396c8cb5::t_6e7e3652be55b7 13,471-497,499-510
+  s_58b527396c8cb5::t_40857c22ba7aac 498
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f7a57d41a9e9f0381f001bb96f7650127f85b06",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
