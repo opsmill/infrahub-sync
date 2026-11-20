@@ -55,8 +55,8 @@ without a mouse.
 |---|---|
 | Version created | Open the new version's page. |
 | `created: false` | "This package is the same as version N. No new version was registered." |
-| Newer version found before sending | "Version M was registered meanwhile." The comparison reloads. |
+| Newer version found before sending | "Version M was registered meanwhile by <account>." The account is the `registered_by` name of version M; without one, the sentence ends after "meanwhile". The comparison reloads. |
 | Network failure | "The request did not complete. Retry." Retrying sends the same request with the same idempotency key; the reason field and the other inputs stay locked after the first attempt, because the Sync API refuses a key reused with a different request. |
 | 403 | The existing "administrator access is required" handling. |
 
-No text names a user or an actor.
+A text that says who acted names the account with the name the Sync API returns, and never shows an account identifier (spec D-11).
