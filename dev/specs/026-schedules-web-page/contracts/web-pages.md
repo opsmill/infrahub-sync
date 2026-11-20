@@ -67,7 +67,9 @@ Empty states:
 | Sync API call | When |
 | --- | --- |
 | `GET /schedules/{schedule_id}` | On load and every 10 seconds. `404 schedule-not-found` shows "Schedule not found" with a link to `/schedules`. |
-| `GET /runs/{last_run_id}` | When `last_run_id` is set, for the state of the last run. |
+| `GET /runs?schedule_id=<schedule_id>&limit=5` | On load and every 10 seconds, for the last five runs of the timeline. |
+| `GET /configs` | For the configuration's name. |
+| `GET /me` | For the actions the signed-in account may take. |
 | `GET /configs/{config_id}/versions` | When the change dialog opens, for the version choice. |
 | `POST /schedules/{schedule_id}/pause` | Pause dialog. |
 | `POST /schedules/{schedule_id}/resume` | Resume dialog. |
@@ -81,22 +83,45 @@ Every `POST` sends `Idempotency-Key`. The key is kept while the dialog is open a
 unchanged, so a second press after a lost answer resends the same key. Every `POST` body may hold
 `reason`, sent only when not empty.
 
-Sections, in order:
+Layout (design-schedule-page.md). The header sits above three columns from the `lg` breakpoint:
 
-1. Header: name, state badge, configuration and version, owner; the actions the signed-in account
-   may take (data-model "Permissions").
-2. Notices: the stop panel for a stopped schedule; "starts no run until it is handed to the task
-   manager" when `prefect_synced` is false; the newer version notice.
-3. Next start and last run: next start (local time and relative time), waiting start when set,
-   last run with its state, failed runs in a row, "View all runs of this schedule" linking to
-   `/runs?schedule=<schedule_id>`.
-4. Settings: cron expression, time zone, write target, "write when records are left out" with who
-   set it and when, overlap policy, late start.
-5. Next starts: the next five start times of an active schedule.
-6. Review branch: the open branch, the run that created it, the proposed change identifier.
-7. History: the schedule's events, newest first, with the switch "Show all events" and "Load
-   older events".
-8. Record: created and updated times.
+1. Header: name, state badge in a live region, configuration and version, owner; the actions the
+   signed-in account may take (data-model "Permissions") as quiet buttons, without the action the
+   status card offers. When an action is shown but not available, its reason replaces the buttons.
+2. Middle column:
+   - Status card: the situation in one sentence and its next step as the main button. Red for a
+     stopped schedule, amber for an active schedule with failed runs in a row, neutral otherwise.
+     - Active: "Starts in 9 hours, Saturday 02:00 Paris time." (day and time in the schedule's
+       time zone); with a newer version, the sentence "Version N of this configuration is
+       registered. This schedule starts runs of version M." and **Change to version N**.
+     - Active with failed runs in a row: "3 runs in a row failed. After 5, the schedule stops.",
+       the next start, and **View the runs** (`/runs?schedule=<schedule_id>`).
+     - Stopped: the stop reason and the action it needs; **Take over** (owner not found),
+       **Change the write target** (approval required), **Resume** with **View the runs**
+       and "Failed runs in a row: N" (repeated failures). A reason the interface does not know
+       offers no step.
+     - Paused: "This schedule starts no run until it is resumed.", the reason when one was given,
+       and **Resume**.
+     - Deleted: "This schedule was deleted. Its runs are kept." and **View the runs**.
+     - Below the sentence: "starts no run until it is handed to the task manager" when
+       `prefect_synced` is false, and the newer version with **Change version** when the
+       sentence does not name it.
+     - A step for an action is offered only when the signed-in account may use it.
+   - History: the schedule's events, newest first, with the switch "Show all events" and "Load
+     older events".
+3. Left column: Settings, each value under its label: version (with "Version N is registered"),
+   cadence in words with the cron expression, time zone, write target, records left out with who
+   set it and when, overlap policy, late start. Then Review branch, only when one is open: the
+   branch, the proposed change identifier, the run that opened it. Then created and updated
+   times.
+4. Right column, sticky: a timeline. The next five starts of an active schedule above "Now", by
+   day (Today, Tomorrow, This week, Later), the soonest nearest "Now"; the waiting start when set;
+   "No start while this schedule is stopped" (paused, deleted) otherwise. The last five runs below
+   "Now", by day (Today, Yesterday, Earlier), each with its state, time and "View run". "All runs"
+   links to `/runs?schedule=<schedule_id>`. Times in the viewer's time zone, the schedule's on
+   hover.
+
+Below `lg`, one column: status card, timeline, history, settings, review branch, record.
 
 ## Create dialog
 

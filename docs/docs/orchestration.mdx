@@ -299,23 +299,38 @@ schedule to open its page.
 
 ### The schedule page
 
-The page of a schedule shows, in this order:
+The page of a schedule starts with its name, its state, its configuration and version, its owner,
+and the actions your account can take. Below that, on a wide screen, the page has three columns:
 
-- its name, its state, its configuration and version, its owner, and the actions your account can
-  take;
-- for a stopped schedule, the reason in words and the action it needs, as in
-  [A stopped schedule](#a-stopped-schedule). The page also warns when the schedule starts no run
-  until it is handed to the task manager (`prefect_synced` is `false`), and when a newer version
-  of the configuration is registered;
-- its next start, the start that waits for a run in progress, its last run with its state, its
-  count of failed runs in a row, and **View all runs of this schedule**;
-- its settings: the cron expression, the time zone, the write target, whether it writes when
-  records are left out with who turned that on and when, the overlap policy and the late-start
-  limit;
-- the next five start times of an active schedule;
-- the open review branch, the run that created it and the identifier of its proposed change;
-- its history;
-- when it was created and last updated.
+- **In the middle**, a status card states the schedule's situation in one sentence, with the next
+  step as its main button:
+    - for an active schedule, its next start, for example `Starts in 9 hours, Saturday 02:00 Paris
+      time.`, and **Change to version N** when a newer version of the configuration is registered;
+    - for an active schedule whose last runs failed, how many failed in a row, with **View the
+      runs**;
+    - for a stopped schedule, the reason and the action it needs, as in
+      [A stopped schedule](#a-stopped-schedule), with **Take over**, **Change the write target** or
+      **Resume**;
+    - for a paused schedule, the reason given when it was paused, with **Resume**.
+
+  The card is red for a stopped schedule and amber for a failing one, as on the schedule list. It
+  also warns when the schedule starts no run until it is handed to the task manager
+  (`prefect_synced` is `false`), and names a newer version of the configuration with **Change
+  version** when the sentence does not already. The schedule's history follows the card.
+- **On the left**, the settings, each value under its label: the version, the cadence in words
+  with its cron expression, the time zone, the write target, whether it writes the records left
+  out with who set that and when, the overlap policy and the late-start limit. Then the open review
+  branch, with its proposed change and the run that opened it, and when the schedule was created
+  and last updated.
+- **On the right**, a timeline: the next five starts above a **Now** marker, the soonest nearest
+  it, and the last five runs below it, each with its state, its time and **View run**. A start that
+  waits for a run in progress is listed just above **Now**. When the schedule starts no run, the
+  upper part reads `No start while this schedule is stopped` (or paused, or deleted). **All runs**
+  opens the runs of the schedule. Times are in your time zone; hover a time to view it in the
+  schedule's time zone.
+
+On a narrow screen, the page shows the status card, the timeline, the history, the settings, the
+review branch and the record times, in that order.
 
 The page shows owners and the accounts that acted by name, as the Sync API returns them,
 including `Deleted account <short identifier>`.
@@ -393,7 +408,7 @@ when new events are recorded meanwhile.
 
 - The runs list marks each run that a schedule started as **Scheduled**, with a link to the
   schedule. The **Schedule** filter, next to the configuration filter, is a searchable list of the
-  schedules by name. **View all runs of this schedule** on a schedule page sets the same filter.
+  schedules by name. **All runs** on a schedule page sets the same filter.
   The list shows the active filter with the schedule's name and a way to remove it.
 - The page of a scheduled run states "Started by schedule `<name>`, scheduled for `<time>`", with a
   link to the schedule.
