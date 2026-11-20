@@ -1,0 +1,49 @@
+infrahub_sync/configuration/validation.py
+  s_58b527396c8cb5::t_5b4f2e33170cf2 23,65,690-719,771
+infrahub_sync/configuration/capabilities.py
+  s_58b527396c8cb5::t_e9f3b1f9f04422 839-846,855,858,907,913
+  s_58b527396c8cb5::t_5ca239fe549f84 12,15,834-838,847-854,856-857,859-906,908-912
+tests/configuration/test_block_credential.py
+  s_58b527396c8cb5::t_7937da0de8b959 1-69,71-159,162-163,165-187
+  s_58b527396c8cb5::t_4ef19041168992 160-161,164
+  s_58b527396c8cb5::t_a7076781be8d13 70
+infrahub_sync/product_store/models.py
+  s_58b527396c8cb5::t_8f20dc81107017 14,1027-1028
+docs/docs/reference/durable-product-records.mdx
+  s_58b527396c8cb5::t_677fdc365f812e 51,63
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_65d0973c7095be 60-63
+tests/configuration/test_validation_core.py
+  s_58b527396c8cb5::t_d5697ce654ad0a 1000
+  s_58b527396c8cb5::t_7034014bfc9994 973-983
+  s_58b527396c8cb5::t_677fdc365f812e 835
+tests/configuration/test_credential_field_map.py
+  s_58b527396c8cb5::t_062e9121ee59af 1-86,88-144
+  s_58b527396c8cb5::t_37d12d0f660460 87
+infrahub_sync/configuration/models.py
+  s_58b527396c8cb5::t_ffcc4f907616b9 926
+  s_58b527396c8cb5::t_3150d284b82a7b 85-86
+  s_58b527396c8cb5::t_a9745f20a991e9 230-251,257-258
+  s_58b527396c8cb5::t_9f830ccacf2649 861-872,875
+  s_58b527396c8cb5::t_19cf0bc0a56c7b 887-888
+  s_58b527396c8cb5::t_5f4b48524a4f8d 440-444,454-460
+  s_58b527396c8cb5::t_167ba3f56d3ec6 43-55
+  s_58b527396c8cb5::t_b82c1dbcd52b22 176-180,185
+  s_58b527396c8cb5::t_71253c16dcbca2 461
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7585d583ca6e7b0117664fc717bf62c03e09f167",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
