@@ -1852,10 +1852,8 @@ def _check(
     )
 
 
-def test_an_administrator_checks_a_package_and_registers_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client, projection = _event_client(tmp_path, monkeypatch)
+def test_an_administrator_checks_a_package_and_registers_nothing(tmp_path: Path) -> None:
+    client, projection = _event_client(tmp_path)
     data = _package_with_missing_kind_attribute_and_relationship()
 
     response = _check(client, {"package": data})
@@ -1884,10 +1882,8 @@ def test_an_administrator_checks_a_package_and_registers_nothing(
     ],
     ids=["yaml", "json"],
 )
-def test_an_administrator_checks_a_document_in_yaml_or_json(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, document: str
-) -> None:
-    client, _projection = _event_client(tmp_path, monkeypatch)
+def test_an_administrator_checks_a_document_in_yaml_or_json(tmp_path: Path, document: str) -> None:
+    client, _projection = _event_client(tmp_path)
     expected = _check(client, {"package": _package_with_missing_kind_attribute_and_relationship()}).json()
 
     response = _check(client, {"document": document})
@@ -1896,8 +1892,8 @@ def test_an_administrator_checks_a_document_in_yaml_or_json(
     assert response.json() == expected
 
 
-def test_the_registered_example_package_document_is_checked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client, _projection = _event_client(tmp_path, monkeypatch)
+def test_the_registered_example_package_document_is_checked(tmp_path: Path) -> None:
+    client, _projection = _event_client(tmp_path)
     document = (_EXAMPLES / "netbox_to_infrahub" / "package.yml").read_text(encoding="utf-8")
 
     response = _check(client, {"document": document})
@@ -1911,10 +1907,8 @@ def test_the_registered_example_package_document_is_checked(tmp_path: Path, monk
     [{}, {"package": package_data(), "document": "format_version: 1\n"}, {"package": None, "document": None}],
     ids=["neither", "both", "both-null"],
 )
-def test_a_check_needs_exactly_one_of_package_and_document(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: dict[str, object]
-) -> None:
-    client, _projection = _event_client(tmp_path, monkeypatch)
+def test_a_check_needs_exactly_one_of_package_and_document(tmp_path: Path, body: dict[str, object]) -> None:
+    client, _projection = _event_client(tmp_path)
 
     response = _check(client, body)
 
@@ -1928,10 +1922,8 @@ def test_a_check_needs_exactly_one_of_package_and_document(
     ["", "   \n", "# only a comment\n", "- a\n- b\n", "just text", "42", "{1: 2}", "{}", "key: [unclosed"],
     ids=["empty", "blank", "comment", "list", "scalar", "number", "integer-key", "empty-mapping", "invalid-yaml"],
 )
-def test_a_document_that_is_not_a_mapping_is_an_invalid_package(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, document: str
-) -> None:
-    client, _projection = _event_client(tmp_path, monkeypatch)
+def test_a_document_that_is_not_a_mapping_is_an_invalid_package(tmp_path: Path, document: str) -> None:
+    client, _projection = _event_client(tmp_path)
 
     response = _check(client, {"document": document})
 
@@ -1941,10 +1933,8 @@ def test_a_document_that_is_not_a_mapping_is_an_invalid_package(
 
 
 @pytest.mark.parametrize("field", ["document", "package"])
-def test_a_v2_configuration_is_refused_with_the_conversion_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
-) -> None:
-    client, _projection = _event_client(tmp_path, monkeypatch)
+def test_a_v2_configuration_is_refused_with_the_conversion_command(tmp_path: Path, field: str) -> None:
+    client, _projection = _event_client(tmp_path)
     document = (_EXAMPLES / "netbox_to_infrahub" / "config.yml").read_text(encoding="utf-8")
     body = {"document": document} if field == "document" else {"package": yaml.safe_load(document)}
 
@@ -1972,7 +1962,7 @@ def test_a_check_by_a_non_administrator_is_refused_before_any_read(
 ) -> None:
     """Critique E1: with a branch, the service sends its destination credential to the package's URL."""
     branches = _spied_schema_reads(monkeypatch)
-    client, projection = _event_client(tmp_path, monkeypatch)
+    client, projection = _event_client(tmp_path)
 
     response = _check(client, body, token=OTHER_TOKEN, params={"branch": "main"})
 
@@ -1987,7 +1977,7 @@ def test_a_check_by_a_non_administrator_is_refused_before_any_read(
 
 def test_a_check_without_a_token_is_refused_before_any_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     branches = _spied_schema_reads(monkeypatch)
-    client, _projection = _event_client(tmp_path, monkeypatch)
+    client, _projection = _event_client(tmp_path)
 
     response = client.post("/configs/validate", json={"package": package_data()}, params={"branch": "main"})
 
@@ -1997,7 +1987,7 @@ def test_a_check_without_a_token_is_refused_before_any_read(tmp_path: Path, monk
 
 def test_a_check_with_a_branch_reads_that_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     branches = _spied_schema_reads(monkeypatch)
-    client, _projection = _event_client(tmp_path, monkeypatch)
+    client, _projection = _event_client(tmp_path)
 
     response = _check(
         client, {"package": _package_with_missing_kind_attribute_and_relationship()}, params={"branch": "review"}
@@ -2016,7 +2006,7 @@ def test_a_check_finds_what_validating_the_registered_version_finds(
 ) -> None:
     """FR-002, over HTTP: the check and the registered version's validation agree."""
     _spied_schema_reads(monkeypatch)
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    client, _projection = _discovery_client(tmp_path)
     data = _package_with_missing_kind_attribute_and_relationship()
 
     checked = client.post("/configs/validate", json={"package": data}, params={"branch": "review"}).json()
@@ -2057,7 +2047,7 @@ def test_a_failed_destination_read_is_returned_by_its_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str
 ) -> None:
     _failing_schema_reads(monkeypatch, reason)
-    client, _projection = _event_client(tmp_path, monkeypatch)
+    client, _projection = _event_client(tmp_path)
 
     response = _check(client, {"package": package_data()}, params={"branch": "main"})
 
@@ -2072,7 +2062,7 @@ def test_a_check_pages_findings_like_the_validation_of_a_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _spied_schema_reads(monkeypatch)
-    client, _projection = _event_client(tmp_path, monkeypatch)
+    client, _projection = _event_client(tmp_path)
     body = {"package": _package_with_missing_kind_attribute_and_relationship()}
     whole = _check(client, body, params={"branch": "review"}).json()
     assert whole["total_findings"] >= 2
@@ -2088,21 +2078,37 @@ def test_a_check_pages_findings_like_the_validation_of_a_version(
 
 
 def test_a_check_discloses_no_collected_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A secret the service holds is redacted from every finding, wherever the text came from."""
-    _failing_schema_reads(monkeypatch, "unauthorized", detail=f"token {OTHER_TOKEN} was refused")
-    client, _projection = _event_client(tmp_path, monkeypatch)
+    """A secret the service holds is redacted from every finding, wherever the text came from.
+
+    The store keeps account tokens as digests, so the secrets the service holds are the `admin`
+    token of the environment and the values it collects at start, such as credentials.
+    """
+    credential = "credential-secret-canary-0005"
+    _failing_schema_reads(monkeypatch, "unauthorized", detail=f"token {credential} was refused")
+    projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(
+        projection, {"admin": {"token": ADMIN_TOKEN, "administrator": True}}, environment_token=True
+    ).resolver
+    secrets = (*resolver.secret_values, credential)
+    client = TestClient(
+        create_app(
+            RunService(projection, _Orchestration(), secrets=secrets),
+            resolver,
+            ConfigurationRoutes(product_projection=projection, secrets=secrets),
+        )
+    )
 
     response = _check(client, {"package": package_data()}, params={"branch": ADMIN_TOKEN})
 
     assert response.status_code == 200, response.text
     assert response.json()["destination_read"] == "unauthorized"
     assert ADMIN_TOKEN not in response.text
-    assert OTHER_TOKEN not in response.text
+    assert credential not in response.text
 
 
-def test_the_check_route_is_not_taken_for_a_configuration_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_check_route_is_not_taken_for_a_configuration_id(tmp_path: Path) -> None:
     """`validate` is a valid configuration ID; the check route is registered before the ID routes."""
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    client, _projection = _discovery_client(tmp_path)
 
     assert client.get("/configs/validate").status_code == 404
     assert client.post("/configs/validate", json={"package": package_data()}).status_code == 200
@@ -2122,10 +2128,8 @@ def _version_marks(client: TestClient, config_id: str) -> dict[str, dict[int, bo
     return {"list": {item["registry_version"]: item["registered_without_validation"] for item in listed}, "get": single}
 
 
-def test_registration_accepts_the_mark_and_every_version_resource_returns_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+def test_registration_accepts_the_mark_and_every_version_resource_returns_it(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
 
     registered = client.post(
         "/configs",
@@ -2146,8 +2150,8 @@ def test_registration_accepts_the_mark_and_every_version_resource_returns_it(
     assert _version_marks(client, config_id) == {"list": {1: True, 2: True}, "get": {1: True, 2: True}}
 
 
-def test_the_mark_defaults_to_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+def test_the_mark_defaults_to_false(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
 
     config_id = _register(client, package_data(), "register-validated")
     added = client.post(
@@ -2161,10 +2165,8 @@ def test_the_mark_defaults_to_false(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert _version_marks(client, config_id) == {"list": {1: False, 2: False}, "get": {1: False, 2: False}}
 
 
-def test_an_identical_version_request_with_the_mark_returns_the_existing_version_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+def test_an_identical_version_request_with_the_mark_returns_the_existing_version_unchanged(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
     config_id = _register(client, package_data(), "register-validated")
 
     again = client.post(
@@ -2190,9 +2192,9 @@ def test_an_identical_version_request_with_the_mark_returns_the_existing_version
     ],
 )
 def test_a_key_reused_with_a_different_mark_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_mark: dict[str, object], retry_mark: dict[str, object]
+    tmp_path: Path, first_mark: dict[str, object], retry_mark: dict[str, object]
 ) -> None:
-    client, projection = _discovery_client(tmp_path, monkeypatch)
+    client, projection = _discovery_client(tmp_path)
     headers = {"Idempotency-Key": "register-mark-conflict"}
 
     first = client.post("/configs", headers=headers, json={"package": package_data(), **first_mark})
@@ -2209,17 +2211,19 @@ def test_a_key_reused_with_a_different_mark_is_refused(
     [pytest.param({}, id="absent"), pytest.param({"registered_without_validation": False}, id="explicit-false")],
 )
 def test_an_unmarked_request_keeps_the_fingerprint_of_receipts_stored_before_the_mark(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body_mark: dict[str, object]
+    tmp_path: Path, body_mark: dict[str, object]
 ) -> None:
     """A receipt stored by an earlier build fingerprinted five keys; an unmarked retry must still match it."""
-    client, projection = _discovery_client(tmp_path, monkeypatch)
+    client, projection = _discovery_client(tmp_path)
 
     response = client.post(
         "/configs", headers={"Idempotency-Key": "pre-mark-receipt"}, json={"package": package_data(), **body_mark}
     )
 
     assert response.status_code == 201, response.text
-    receipt = projection.lookup_mutation("admin", sha256(b"pre-mark-receipt").hexdigest()).value
+    admin = projection.lookup_account_by_name("admin")
+    assert admin is not None
+    receipt = projection.lookup_mutation(admin.account_id, sha256(b"pre-mark-receipt").hexdigest()).value
     assert receipt is not None
     pre_mark_fingerprint = sha256(
         canonical_json_bytes(
