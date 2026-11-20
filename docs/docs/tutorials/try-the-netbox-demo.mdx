@@ -189,12 +189,17 @@ interface, which does not create branches. A plan on a branch that does not exis
 fails.
 
 Plan and apply from the web interface or from the command line. To try both, create a second
-branch, such as `netbox-demo-2`, for the second import.
+branch, such as `netbox-demo-2`, for the second import. The Kubernetes deployment has no web
+interface yet
+([What this deployment does not do](../kubernetes-deployment.mdx#what-this-deployment-does-not-do)),
+so on Kubernetes, go to [Plan and apply from the command line](#plan-and-apply-from-the-command-line).
 
 ## Plan and apply from the web interface
 
-1. Open the Sync web interface: `http://127.0.0.1:8001` for the local demo, or your Sync API
-   address. On **Sign in to Infrahub Sync**, enter an account name and its password, then
+The local demo and the Compose deployment serve the web interface.
+
+1. Open the Sync web interface: `http://127.0.0.1:8001` for the local demo, or the Sync API
+   address of your Compose deployment. On **Sign in to Infrahub Sync**, enter an account name and its password, then
    select **Sign in**. For the local demo, the account is `admin` and the password is the one
    in `ADMIN_ACCOUNT_PASSWORD`, by default `infrahub-sync-dev-password`.
 2. Open the `from-netbox` configuration, then select **Start run**.
