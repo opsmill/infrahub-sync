@@ -1,4 +1,4 @@
-# 51. A package can be validated before it is registered
+# 54. A package can be validated before it is registered
 
 **Status**: Accepted
 **Date**: 2026-11-19

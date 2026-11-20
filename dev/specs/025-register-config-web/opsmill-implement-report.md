@@ -88,7 +88,7 @@ Each chunk ran in its own subagent. Chunks ran one at a time.
 | 2. Shared validation | T002 to T004 | 3 / 0 / 0 | `19bd9cea` | `_check_parsed_package` is the one function both validation paths call. A destination that cannot read a schema reports `read`. |
 | 3. User Story 1, store and service | T005, T006, T009 to T011 | 5 / 0 / 0 | `f167fd92` | The request model checks "exactly one field" in the route, so the answer is 400 and not 422. `declared_content` is not redacted: it holds credential references, not values, and redacting it would change the checksum. |
 | 4. User Story 1, client and CLI | T007, T008, T012 to T014 | 5 / 0 / 0 | `15469349` | `configs check` exits 1 on any finding on the page, as the contract says. `configs validate` exits 1 only on an error finding with `--branch`. |
-| 5. User Story 1, documentation | part of T035 to T038 | done, not ticked until chunk 10 | `a52a79ef` | ADR 0051 without the mark; `configs check` documentation; changelog fragment `+validate-config-package.added.md`. |
+| 5. User Story 1, documentation | part of T035 to T038 | done, not ticked until chunk 10 | `a52a79ef` | ADR 0054 without the mark; `configs check` documentation; changelog fragment `+validate-config-package.added.md`. |
 | Review fix for User Story 1 | (review) | n/a | `869395e6` | Documentation now lists the `rejected` reason, uses the finding name `destination-schema-read-failed`, and says the Sync API sets no body size limit. |
 | 6. User Story 2 | T015 to T022 | 8 / 0 / 0 | `6c8f375a`, `e2f08a5b` | API types generated from the app in Python, without Docker. The `frontend/vendor/infrahub` submodule had to be initialized in this worktree. The generated types also picked up plan step types that were out of date on the base branch. Each review step runs two checks: without a branch, then with the package's branch. |
 | 7. User Story 3 | T023 to T025 | 3 / 0 / 0 | `2cd7b4db` | Name lookup uses `GET /configs?name=...&limit=1`, which the Sync API already supports. |
@@ -191,13 +191,13 @@ work, and one on the second (`869395e6..HEAD`). Neither found a problem rated hi
 
 | Severity | Where | Finding | Status |
 |---|---|---|---|
-| Medium | ADR 0051, `contracts/sync-api.md`, `configuration-package.mdx` | The `rejected` reason was missing from the lists of read failure reasons. | Fixed in `869395e6` |
+| Medium | ADR 0054, `contracts/sync-api.md`, `configuration-package.mdx` | The `rejected` reason was missing from the lists of read failure reasons. | Fixed in `869395e6` |
 | Medium | same files | The finding name was spelled `destination_schema_read_failed`; the code emits `destination-schema-read-failed`. | Fixed in `869395e6` |
-| Low | ADR 0051, contract, spec FR-016 | They said the Sync API answers 413 for a large body. It sets no limit; only a proxy can answer 413. | Fixed in `869395e6` |
-| Low | ADR 0051 | It did not say that a body that is not valid JSON gets 422 before the token check. | Fixed in `869395e6` |
+| Low | ADR 0054, contract, spec FR-016 | They said the Sync API answers 413 for a large body. It sets no limit; only a proxy can answer 413. | Fixed in `869395e6` |
+| Low | ADR 0054 | It did not say that a body that is not valid JSON gets 422 before the token check. | Fixed in `869395e6` |
 | Medium | `infrahub_sync/product_store/configs.py` | `destination_read` is `read` when no read ran, for a destination that cannot read a schema. Only an invalid destination does this, and it already produces an error finding. | Deferred |
 | Medium | `infrahub_sync/service/config_routes.py` | Parsing `document` with YAML aliases can use a lot of CPU and memory. Only administrators reach the parser (accepted in critique E2). | Deferred |
-| Medium | `configuration-package.mdx:228`, `sync-http-api.mdx:472`, ADR 0051 | They say `created: false` happens when the package matches the newest version. The store matches any stored version of the configuration. The web interface message is correct. | Deferred |
+| Medium | `configuration-package.mdx:228`, `sync-http-api.mdx:472`, ADR 0054 | They say `created: false` happens when the package matches the newest version. The store matches any stored version of the configuration. The web interface message is correct. | Deferred |
 | Medium | `tests/product_store/test_configuration_unvalidated_mark.py` | No test checks that a failed insert of the mark rolls back the version. | Deferred |
 | Low | `PackageReview.tsx:105,199` | When reading the configuration fails, the review step shows no error and keeps Register unavailable. | Deferred |
 | Low | `PackageReview.tsx:128` | The check request has no time limit in the browser; a request that never returns keeps "Validating…". | Deferred |
@@ -245,10 +245,10 @@ what is left for a decision.
 |---|---|---|
 | `5c30db1e` | Locks the branch and reason fields while Register reads the configuration again; detects a 403 by its status code; the two validation routes share `_findings_page` and `_destination_options`. | Both: the `config_routes.py` part is the first, the web interface part the second. |
 | `4f12b59f` | The review step blocks registration only on an `error` finding and lists warnings (spec decision D-10, research R4 corrected). | Second; its spec, research and alignment-check changes are also on the first. |
-| `d38e7a0d` | `configs check` exits 1 only on an `error` finding. ADR 0051, the contract, the docs and the CLI reference follow. | First |
+| `d38e7a0d` | `configs check` exits 1 only on an `error` finding. ADR 0054, the contract, the docs and the CLI reference follow. | First |
 | `e8fd98ea` | `destination_read` is `not_read`, not `read`, when the destination adapter is unknown or declares no schema read. No current destination reaches this: the Sync API refuses an unknown adapter and every adapter without a schema read as a destination before the check runs (checked for all eight such adapters). The user docs therefore do not list `not_read`; the contract and ADR say it guards an adapter added later. | First |
 | `be569f84` | The generated API type comment for `destination_read` names `not_read`. The comment was edited by hand: generating the file from the app in this environment also changes every 422 description from "Unprocessable Content" to "Unprocessable Entity", because the installed FastAPI version differs. | Second |
-| `fb0c3055` | The docs, ADR 0051 and FR-012 say `created: false` matches any stored version of the configuration, not only the newest. | Second |
+| `fb0c3055` | The docs, ADR 0054 and FR-012 say `created: false` matches any stored version of the configuration, not only the newest. | Second |
 | `74715d03` | The review step shows why it cannot compare when the configuration cannot be read, says to change the branch after a refused branch check, and keeps warnings out of the "cannot be reached" notice. `RegisteredVersion` types the mark. | Second |
 | `f0bae654` | A test proves that a failed insert of the mark stores no version (SQLite). | Second |
 | `95b31331`, `62f16e66` | `configs versions` prints the mark. | Second |
@@ -276,7 +276,7 @@ two warnings exist:
 
 The grilling brief says a package is valid "only when no finding has `error` severity", and that
 lower-severity findings are listed. The change follows that sentence. It also changes
-`configs check`: it now exits 1 only on an `error` finding, because ADR 0051 gave no reason for the
+`configs check`: it now exits 1 only on an `error` finding, because ADR 0054 gave no reason for the
 stricter rule other than the same assumption. When the report has more findings than one page, the
 review step still blocks Register, because an error can be on a later page.
 
@@ -292,13 +292,13 @@ review step still blocks Register, because an error can be on a later page.
   - send `package_checksum` from the check and have the Sync API refuse a different checksum.
 - **A literal credential value gets a refusal with no location.** The check returns 422
   `configs-validation` with "the configuration service refused the request", because `_call` drops
-  the findings that `_validation_refusal` collected. ADR 0051 accepts this. A fix returns those
+  the findings that `_validation_refusal` collected. ADR 0054 accepts this. A fix returns those
   findings in the refusal.
 - **YAML alias expansion.** A 408-byte file took 2.6 seconds to refuse, and each added level
-  multiplies the time by about nine. Only administrators reach the parser; ADR 0051 accepts it. A
+  multiplies the time by about nine. Only administrators reach the parser; ADR 0054 accepts it. A
   fix needs a size or alias limit shared by the CLI and the Sync API.
 - **JSON indented with tabs is refused.** YAML does not allow tab indentation. The CLI has the same
-  gap. A fix tries `json.loads` before `yaml.safe_load` in both the CLI and the Sync API; ADR 0051
+  gap. A fix tries `json.loads` before `yaml.safe_load` in both the CLI and the Sync API; ADR 0054
   names `yaml.safe_load` as the one parser, so it needs an ADR change. A fix tried during the review
   was reverted because it changed only the Sync API.
 - **Register after a definitive refusal.** After a 403 or 422 on Register, the request stays locked
