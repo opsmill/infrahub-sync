@@ -1,0 +1,35 @@
+frontend/src/api/types.ts
+  s_caab93ebf0934a::t_2e7fc552f3163a 23-29
+frontend/src/domain/cadence.test.ts
+  s_caab93ebf0934a::t_2e7fc552f3163a 1-84
+frontend/src/domain/schedule-events.ts
+  s_caab93ebf0934a::t_2e7fc552f3163a 1-146
+frontend/src/domain/schedules.ts
+  s_caab93ebf0934a::t_2e7fc552f3163a 1-306
+dev/specs/026-schedules-web-page/tasks.md
+  s_caab93ebf0934a::t_2e7fc552f3163a 59,65-67
+frontend/src/domain/cadence.ts
+  s_caab93ebf0934a::t_2e7fc552f3163a 1-162
+frontend/package.json
+  s_caab93ebf0934a::t_2e7fc552f3163a 19
+frontend/src/domain/schedules.test.ts
+  s_caab93ebf0934a::t_2e7fc552f3163a 1-260
+frontend/src/domain/schedule-events.test.ts
+  s_caab93ebf0934a::t_2e7fc552f3163a 1-240
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f773a01ac2e97145d064abc0f85fe377ebec0b78",
+  "prompts": {},
+  "sessions": {
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
