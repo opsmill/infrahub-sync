@@ -1,0 +1,21 @@
+frontend/src/features/schedules/ScheduleHistory.tsx
+  s_0f3e9b98ad49ab::t_bfc48108b7adaf 161
+  s_0f3e9b98ad49ab::t_0695c8b75eb5d6 36-37
+  s_0f3e9b98ad49ab::t_6992e3df7de722 147-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc7145dd416b7928b2eee631e946ebf24a9c6f33",
+  "prompts": {},
+  "sessions": {
+    "s_0f3e9b98ad49ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "160719ec-2b7c-46e8-a304-b5a97feb7475",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
