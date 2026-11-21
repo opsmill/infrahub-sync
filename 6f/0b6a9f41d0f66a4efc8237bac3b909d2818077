@@ -1,0 +1,52 @@
+frontend/src/features/schedules/form-rules.ts
+  s_0f3e9b98ad49ab::t_75110130301631 112
+tests/service/test_config_routes.py
+  s_0f3e9b98ad49ab::t_b259eea597695c 499,598,688,743,837,950,975,1002,1037
+frontend/src/domain/schedule-page.test.ts
+  s_0f3e9b98ad49ab::t_7fc4a2ffe0d634 62-67
+infrahub_sync/client/__init__.py
+  s_0f3e9b98ad49ab::t_75110130301631 74-75,158-159
+frontend/src/domain/start-times.ts
+  s_0f3e9b98ad49ab::t_75110130301631 127
+docs/docs/reference/sync-http-api.mdx
+  s_0f3e9b98ad49ab::t_7fc4a2ffe0d634 859-863
+  s_0f3e9b98ad49ab::t_e7cfca70290a8f 855
+frontend/src/features/schedules/form-rules.test.ts
+  s_0f3e9b98ad49ab::t_75110130301631 153
+frontend/src/features/runs/schedule-choices.ts
+  s_0f3e9b98ad49ab::t_75110130301631 52-55
+frontend/src/domain/schedule-page.ts
+  s_0f3e9b98ad49ab::t_7fc4a2ffe0d634 55-56,77,79
+  s_0f3e9b98ad49ab::t_aea03e483a3a43 61-62
+frontend/pnpm-workspace.yaml
+  s_0f3e9b98ad49ab::t_75110130301631 29
+infrahub_sync/service/config_routes.py
+  s_0f3e9b98ad49ab::t_75110130301631 257
+frontend/src/features/schedules/CadenceTimeline.tsx
+  s_0f3e9b98ad49ab::t_75110130301631 36,38,145
+  s_0f3e9b98ad49ab::t_ca2ab7a9276eb2 3
+infrahub_sync/product_store/models.py
+  s_0f3e9b98ad49ab::t_75110130301631 946
+docs/docs/configuration-package.mdx
+  s_0f3e9b98ad49ab::t_75110130301631 103
+tests/service/test_validation_secret_containment.py
+  s_0f3e9b98ad49ab::t_b259eea597695c 182
+frontend/src/features/runs/schedule-choices.test.ts
+  s_0f3e9b98ad49ab::t_7fc4a2ffe0d634 45-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f0b6a9f41d0f66a4efc8237bac3b909d2818077",
+  "prompts": {},
+  "sessions": {
+    "s_0f3e9b98ad49ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "160719ec-2b7c-46e8-a304-b5a97feb7475",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
