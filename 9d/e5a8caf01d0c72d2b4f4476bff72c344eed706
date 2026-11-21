@@ -1,0 +1,19 @@
+dev/specs/027-stored-credentials/tasks.md
+  s_98605ebdd2cf30::t_efb0c8cffafc5d 206-208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9de5a8caf01d0c72d2b4f4476bff72c344eed706",
+  "prompts": {},
+  "sessions": {
+    "s_98605ebdd2cf30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3dbe109f3e5e8aa7",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
