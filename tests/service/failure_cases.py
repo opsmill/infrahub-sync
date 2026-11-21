@@ -55,8 +55,6 @@ SHORT_CREDENTIAL = "k3yQz"
 # Python's `repr`, a double escape) still shows that run.
 SPECIAL_CREDENTIAL = 'Wq7Zm"ss\\wo,rd'
 SPECIAL_CREDENTIAL_RUN = "Wq7Zm"
-SHORT_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SHORT_TOKEN"
-SPECIAL_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SPECIAL_PASSWORD"
 CREDENTIALS = (SHORT_CREDENTIAL, SPECIAL_CREDENTIAL)
 
 # An address with a user name and password, and a request header.
@@ -389,9 +387,7 @@ __all__ = [
     "FAILED_OPERATION",
     "NEUTRAL_TEXT",
     "SHORT_CREDENTIAL",
-    "SHORT_CREDENTIAL_NAME",
     "SPECIAL_CREDENTIAL",
-    "SPECIAL_CREDENTIAL_NAME",
     "SPECIAL_CREDENTIAL_RUN",
     "FailureCase",
     "forbidden_values",

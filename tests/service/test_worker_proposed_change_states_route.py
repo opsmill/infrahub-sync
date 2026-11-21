@@ -46,7 +46,12 @@ from infrahub_sync.service.credential_crypto import CredentialCipher
 from infrahub_sync.service.schedule_admission import admit_scheduled_start
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.settings import WorkerSettings
-from tests.helpers.stored_credentials import TEST_ENCRYPTION_KEY, create_stored_credential
+from tests.configuration.validation_packages import SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import (
+    TEST_ENCRYPTION_KEY,
+    create_stored_credential,
+    create_stored_credential_names,
+)
 from tests.service.accounts import IDLE_SECONDS, seed_accounts
 from tests.service.schedule_fixtures import (
     ACCOUNTS,
@@ -88,11 +93,12 @@ def _holds_a_value(text: str) -> bool:
 
 
 def _package(name: str = "from-netbox", *, stored: bool = True) -> ConfigurationPackage:
-    """Return a package whose destination names the stored credential; the source keeps its reference."""
+    """Return a package whose destination names the stored credential, or no credential at all."""
     data = package(name).model_dump(mode="json")
     if stored:
-        data["configuration"]["destination"]["settings"].pop("token")
         data["configuration"]["destination"]["credential"] = DESTINATION_CREDENTIAL
+    else:
+        data["configuration"]["destination"].pop("credential")
     return ConfigurationPackage.model_validate(data)
 
 
@@ -211,6 +217,8 @@ def _build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, key: bytes | None
     seed_accounts(store, ACCOUNTS, environment_token=True)
     apply_worker_account(store, WORKER_TOKEN)
     create_stored_credential(store, DESTINATION_CREDENTIAL, {"token": DESTINATION_TOKEN})
+    # The source of the shared package names a credential too; no test of this file reads its value.
+    create_stored_credential_names(store, SOURCE_CREDENTIAL)
     config_id = store.create_configuration(_package()).config_id
     resolver = StoreAccountResolver(
         store, idle_seconds=IDLE_SECONDS, admin_token=ADMIN_TOKEN, worker_token=WORKER_TOKEN
@@ -348,7 +356,6 @@ def test_a_destination_that_names_no_stored_credential_is_refused_before_any_rea
     states: States, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("INFRAHUB_API_TOKEN", API_PROCESS_TOKEN)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_TOKEN", API_PROCESS_TOKEN)
     config_id = states.store.create_configuration(_package("from-netbox-other", stored=False)).config_id
     states.schedule(OTHER_SCHEDULE_ID, config_id=config_id)
     states.earlier_run("pc-1", schedule_id=OTHER_SCHEDULE_ID)

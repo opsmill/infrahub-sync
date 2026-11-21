@@ -26,6 +26,8 @@ pytest.importorskip("psycopg")
 
 from infrahub_sdk.exceptions import GraphQLError, ServerNotReachableError
 
+from infrahub_sync.configuration import parse_configuration_package
+from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.execution import RunResult
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.identity import canonical_identity, operation_id
@@ -35,8 +37,10 @@ from infrahub_sync.plan.writer import write_plan_artifact
 from infrahub_sync.product_store import AuditEvent, ProductRun, ProductStoreProviderError, RunFilters, ScheduleRecord
 from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service.credential_client import ProposedChangeStatesUnreadableError
+from infrahub_sync.service.failure_cause import failure_class
 from infrahub_sync.service.schedule_admission import branch_review_branch, decide_start
-from tests.service.execution_fixtures import stage_root, write_applied_sidecar
+from tests.service.execution_fixtures import serve_released_credentials, stage_root, write_applied_sidecar
 from tests.service.schedule_fixtures import OWNER_TOKEN, WORKER_ID, ScheduleApi, headers, package, schedule_api
 from tests.service.test_managed_write_guard import SCHEMA_FINGERPRINT, _FakeGuardSession
 
@@ -47,6 +51,11 @@ if TYPE_CHECKING:
 T0 = datetime(2026, 3, 2, 2, tzinfo=timezone.utc)
 SCHEDULE_ID = "s-0123456789abcdef0123456789abcdef"
 CHECKSUM = "a" * 64
+# The fields that the Sync API releases for each block of the registered package.
+RELEASED = {
+    "source": {"token": "branch-review-source-canary"},
+    "destination": {"token": "branch-review-token-canary"},
+}
 
 
 @pytest.fixture
@@ -76,9 +85,44 @@ def _schedule(api: ScheduleApi, config_id: str | None = None) -> ScheduleRecord:
     return record
 
 
+def _states_route(api: ScheduleApi) -> Callable[[str], dict[str, str]]:
+    """Stand in for the route of the Sync API that reads the earlier proposed changes of a schedule.
+
+    The destination names a stored credential, so the worker asks the Sync API for the states.
+    As the route does, the function reads the ``pending`` and ``open`` branch rows that have a
+    proposed change on the default branch, with the client of the test, and answers a failed
+    read with its failure class only.
+    """
+
+    def read(schedule_id: str) -> dict[str, str]:
+        rows = [
+            (row.run_id, row.proposed_change_id)
+            for row in api.projection.schedule_branches(schedule_id, states=("pending", "open"))
+            if row.proposed_change_id is not None
+        ]
+        if not rows:
+            return {}
+        review_ops = service_flow.review_ops
+        try:
+            client = review_ops.build_client({}, review_ops.DEFAULT_BRANCH)
+            return {
+                run_id: review_ops.read_proposed_change(client, proposed_change, branch=review_ops.DEFAULT_BRANCH)
+                for run_id, proposed_change in rows
+            }
+        except review_ops.BRANCH_REVIEW_ERRORS as error:
+            raise ProposedChangeStatesUnreadableError(failure_class(error)) from None
+
+    return read
+
+
 def _start(monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, start: datetime) -> object:
-    """Run the service flow for the flow run of ``start``, with the real `sync` stage."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_TOKEN", "branch-review-token-canary")
+    """Run the service flow for the flow run of ``start``, with the real `sync` stage.
+
+    The worker asks the Sync API for two things, and both are answered in the test process:
+    the stored credential values of its stage, and the states of the earlier proposed changes.
+    """
+    serve_released_credentials(monkeypatch, service_flow, RELEASED, projection=api.projection)
+    monkeypatch.setattr(service_flow, "read_schedule_proposed_change_states", _states_route(api))
     monkeypatch.setattr(service_flow, "_runtime", lambda: api.projection)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-branch-review"), False))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
@@ -463,15 +507,20 @@ def _stored(api: ScheduleApi, run_id: str) -> ProductRun:
     return stored
 
 
-def test_the_client_of_the_branch_steps_is_built_from_the_resolved_destination_settings(
-    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
-) -> None:
+def test_the_client_of_the_branch_steps_is_built_from_the_resolved_destination_settings(api: ScheduleApi) -> None:
     """The real `build_client`, with no request: the address and token of the version, the run's branch."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_TOKEN", "branch-review-token-canary")
     schedule = _schedule(api)
+    stored = api.projection.lookup_configuration_version(schedule.config_id, schedule.registry_version).value
+    assert stored is not None
 
-    settings = service_flow._destination_settings(api.projection, schedule)
-    client = service_flow.review_ops.build_client(settings, "sync/nightly-20260302-adcace")
+    # The settings of a stage of the run: the destination of the version, with the released token.
+    instance = resolve_runtime_instance(
+        parse_configuration_package(stored.declared_content),
+        directory="",
+        resolve_source_credentials=False,
+        released={"destination": RELEASED["destination"]},
+    )
+    client = service_flow.review_ops.build_client(instance.destination.settings or {}, "sync/nightly-20260302-adcace")
 
     assert client.address == "https://infrahub.example"
     assert client.default_branch == "sync/nightly-20260302-adcace"

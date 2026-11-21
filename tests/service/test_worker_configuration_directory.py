@@ -17,9 +17,12 @@ import pytest
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 
+from infrahub_sync.execution import redaction_scope
 from infrahub_sync.product_store import ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
-from tests.configuration.validation_packages import package
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL, credential_package
+from tests.helpers.stored_credentials import create_stored_credential_names
+from tests.service.execution_fixtures import serve_released_credentials
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
@@ -30,7 +33,8 @@ CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
 def _registered_run(cache: Path, run_id: str) -> tuple[ProductProjection, tuple[str, int, str]]:
     """One durable run bound to a registered configuration version."""
     projection = local_product_projection(cache)
-    version = projection.create_configuration(package())
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    version = projection.create_configuration(credential_package())
     binding = (version.config_id, version.registry_version, version.package_checksum)
     projection.create_run(
         ProductRun(
@@ -68,21 +72,26 @@ def test_a_registered_run_resolves_with_no_configuration_directory(
 ) -> None:
     """Declared content comes from the registry and both adapters from installed code."""
     monkeypatch.delenv(CONFIG_DIR_ENV, raising=False)
-    # The declared package references both credentials, so they have to resolve
+    # The declared package names both credentials, so the Sync API has to release them
     # for the run to reach the question this test is about.
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "registered-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "registered-infrahub-canary")
+    serve_released_credentials(
+        monkeypatch,
+        service_flow,
+        {"source": {"token": "registered-netbox-canary"}, "destination": {"token": "registered-infrahub-canary"}},
+    )
     run_id = "registered-without-directory"
     projection, binding = _registered_run(tmp_path / "product", run_id)
 
-    _, instance, name = service_flow._worker_execution_context(
-        run_id,
-        binding,
-        projection=projection,
-        run_branch=None,
-        stage="plan",
-        build_models=False,
-    )
+    with redaction_scope():
+        _, instance, name = service_flow._worker_execution_context(
+            run_id,
+            binding,
+            projection=projection,
+            run_branch=None,
+            stage="plan",
+            build_models=False,
+            credentials=service_flow._RunCredentials(run_id, "flow-run-without-directory"),
+        )
 
-    assert name == package().configuration.name
+    assert name == credential_package().configuration.name
     assert instance._configuration_binding == binding

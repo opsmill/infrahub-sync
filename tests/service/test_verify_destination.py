@@ -27,6 +27,7 @@ from prefect.client.schemas.objects import State
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
+from infrahub_sync.execution import redaction_scope
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.config_version import resolve_config_version
@@ -39,9 +40,15 @@ from infrahub_sync.runtime_schema import DestinationSchemaUnavailableError, Runt
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.scratch import stage_scratch
-from tests.configuration.validation_packages import package
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL, credential_package
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.plan.artifact_fixtures import tamper_with_operations, tamperable_operation
-from tests.service.execution_fixtures import append_execution, bind_granting_guard, publish_plan_directory
+from tests.service.execution_fixtures import (
+    append_execution,
+    bind_granting_guard,
+    publish_plan_directory,
+    serve_released_credentials,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -56,6 +63,8 @@ SCHEMA_FINGERPRINT = "d" * 64
 RECORDED_URL = "https://destination.invalid"
 NETBOX_CANARY = "verify-netbox-canary"
 INFRAHUB_CANARY = "verify-infrahub-canary"
+# The fields that the Sync API releases for each block of the registered package.
+RELEASED = {"source": {"token": NETBOX_CANARY}, "destination": {"token": INFRAHUB_CANARY}}
 
 # Every check a registered verify reports on an Infrahub-like destination that records lineage
 # and its destination binding, in the order the data model lists them.
@@ -152,12 +161,12 @@ class _Harness:
 
 def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, purpose: str = "verify") -> _Harness:
     """Register one configuration and retain one plan against it, bound to its destination."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", NETBOX_CANARY)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     projection = local_product_projection(tmp_path / "product")
-    registered = projection.create_configuration(package())
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    serve_released_credentials(monkeypatch, service_flow, RELEASED, projection=projection)
+    registered = projection.create_configuration(credential_package())
     binding = (registered.config_id, registered.registry_version, registered.package_checksum)
     projection.create_run(
         ProductRun(
@@ -182,7 +191,7 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, purpose: str = 
     stored = projection.lookup_configuration_version(binding[0], binding[1]).value
     assert stored is not None
     runtime = resolve_runtime_instance(
-        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
+        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path), released=RELEASED
     )
     runtime._configuration_binding = binding
     run_dir = tmp_path / "authored" / runtime.name / RUN_ID
@@ -231,7 +240,8 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, purpose: str = 
 def _execute(harness: _Harness, stage: Literal["verify", "apply"], *, approved: str) -> dict[str, Any]:
     """Drive one stage at the production boundary, before remote exception sanitization."""
     publish_plan_directory(harness.projection, RUN_ID, harness.run_dir)
-    with stage_scratch(stage) as scratch:
+    # The flow binds the redaction list of the run before its stage; the released values enter it.
+    with redaction_scope(), stage_scratch(stage) as scratch:
         result, _ = service_flow._execute_stage(
             RUN_ID,
             stage,
@@ -494,9 +504,10 @@ def test_verify_takes_no_configuration_write_guard(tmp_path: Path, monkeypatch: 
 
 
 def test_verify_resolves_no_source_credential(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The host that verifies holds the destination credential and no source credential at all."""
+    """The worker that verifies gets the destination credential and no source credential at all."""
     harness = _harness(tmp_path, monkeypatch)
-    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN")
+    # The Sync API releases the destination block only to a verify: no source value reaches the worker.
+    asked = serve_released_credentials(monkeypatch, service_flow, {"destination": RELEASED["destination"]})
     requested: list[bool] = []
     real = service_flow.resolve_runtime_instance
 
@@ -510,4 +521,5 @@ def test_verify_resolves_no_source_credential(tmp_path: Path, monkeypatch: pytes
 
     assert requested
     assert not any(requested)
+    assert asked == [RUN_ID]
     assert _stored(harness).results["verification"]["destination_checked"] is True

@@ -56,12 +56,7 @@ from infrahub_sync.service.worker import ServiceProcessWorker
 from tests.configuration.test_validate_permissions import _StandInClient
 from tests.configuration.validation_packages import package_data
 from tests.service.accounts import seed_accounts
-from tests.service.failure_cases import (
-    SHORT_CREDENTIAL,
-    SHORT_CREDENTIAL_NAME,
-    SPECIAL_CREDENTIAL,
-    SPECIAL_CREDENTIAL_NAME,
-)
+from tests.service.failure_cases import SHORT_CREDENTIAL, SPECIAL_CREDENTIAL
 from tests.service.test_config_routes import _Orchestration
 
 if TYPE_CHECKING:
@@ -71,6 +66,9 @@ if TYPE_CHECKING:
 
     from infrahub_sync.product_store.store import ProductProjection
 
+# The worker variables of the two credentials; only this file, which tests the removed check, names them.
+SHORT_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SHORT_TOKEN"
+SPECIAL_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SPECIAL_PASSWORD"
 _ADMIN_TOKEN = "worker-environment-admin-0005"  # noqa: S105 - deliberate non-secret canary.
 _POOL_NAME = "service-pool"
 _POOL_ID = UUID("e0679e8a-9460-4ca7-8bf1-70bf967eed2d")

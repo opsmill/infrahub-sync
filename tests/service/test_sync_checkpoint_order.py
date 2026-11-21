@@ -39,13 +39,21 @@ from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.checkpoints import FINAL_RUN_FILE_MEMBER
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
-from tests.configuration.validation_packages import package
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL, credential_package
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.plan.artifact_fixtures import operation_record
-from tests.service.execution_fixtures import append_execution, stage_root, write_applied_sidecar
+from tests.service.execution_fixtures import (
+    append_execution,
+    serve_released_credentials,
+    stage_root,
+    write_applied_sidecar,
+)
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
 
+# The fields that the Sync API releases for each block of the registered package.
+RELEASED = {"source": {"token": "sync-source-canary"}, "destination": {"token": "sync-destination-canary"}}
 FLOW_RUN_ID = "c73e1a4d-8b26-4f19-9e35-0a2c7d41b8f6"
 WORKER_ID = "9e1f2a08-6c74-4b3d-8a51-2f7e0c9b46d3"
 SCHEMA_FINGERPRINT = "e" * 64
@@ -124,11 +132,11 @@ class _Row:
 @pytest.fixture
 def stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _SyncStage:
     """A registered sync whose plan is generated and applied under one guard hold."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "sync-destination-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "sync-source-canary")
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     inner = local_product_projection(tmp_path / "product")
-    registered = inner.create_configuration(package())
+    create_stored_credential_names(inner, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    serve_released_credentials(monkeypatch, service_flow, RELEASED, projection=inner)
+    registered = inner.create_configuration(credential_package())
     binding = (registered.config_id, registered.registry_version, registered.package_checksum)
     inner.create_run(
         ProductRun(
@@ -156,7 +164,7 @@ def stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _SyncStage:
     stored = inner.lookup_configuration_version(binding[0], binding[1]).value
     assert stored is not None
     runtime = resolve_runtime_instance(
-        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
+        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path), released=RELEASED
     )
     runtime._configuration_binding = binding
 

@@ -22,6 +22,8 @@ from infrahub_sync.service.app import create_app
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
 from tests.service.schedule_fixtures import NoDeploymentSchedules
@@ -78,18 +80,19 @@ def _registered_package() -> ConfigurationPackage:
                 "name": "registered-inventory",
                 "source": {
                     "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                    "credential": SOURCE_CREDENTIAL,
+                    "settings": {"url": "https://netbox.example"},
                 },
                 "destination": {
                     "name": "infrahub",
-                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
+                    "credential": DESTINATION_CREDENTIAL,
+                    "settings": {"url": "https://infrahub.example"},
                 },
                 "order": [],
                 "schema_mapping": [],
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
@@ -109,6 +112,7 @@ def _api_fixture(tmp_path: Path) -> _Api:
         },
     ).resolver
     orchestration = _RecordingOrchestration()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
     return TestClient(create_app(service, resolver)), projection, orchestration, version
@@ -210,6 +214,7 @@ def test_an_approval_and_its_accepted_event_carry_one_clock_reading(tmp_path: Pa
     """An injected clock that advances on every read still stamps both records with one time."""
     projection = local_product_projection(tmp_path.resolve())
     resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     readings = iter(datetime(2026, 11, 11, 12, second, tzinfo=timezone.utc) for second in range(60))
     service = RunService(

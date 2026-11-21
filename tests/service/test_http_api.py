@@ -79,6 +79,8 @@ from infrahub_sync.service.orchestration import (
 from infrahub_sync.service.plan_step import StorePlanStepObserver
 from infrahub_sync.service.read_progress import StoreSideReadObserver, record_waiting
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
 from tests.service.schedule_fixtures import OWNER_TOKEN as SCHEDULE_OWNER_TOKEN
@@ -118,6 +120,32 @@ def _json_timestamp(value: datetime | None) -> str | None:
 
 
 def _registered_package() -> ConfigurationPackage:
+    return ConfigurationPackage.model_validate(
+        {
+            "format_version": 1,
+            "configuration": {
+                "name": "registered-inventory",
+                "source": {
+                    "name": "netbox",
+                    "credential": SOURCE_CREDENTIAL,
+                    "settings": {"url": "https://netbox.example"},
+                },
+                "destination": {
+                    "name": "infrahub",
+                    "credential": DESTINATION_CREDENTIAL,
+                    "settings": {"url": "https://infrahub.example"},
+                },
+                "order": [],
+                "schema_mapping": [],
+                "diffsync_flags": [],
+                "incremental": None,
+            },
+        }
+    )
+
+
+def _legacy_registered_package() -> ConfigurationPackage:
+    """Return the package in the removed `credentials` format, for the tests whose subject is that format."""
     return ConfigurationPackage.model_validate(
         {
             "format_version": 1,
@@ -209,6 +237,7 @@ def service_api(tmp_path: Path) -> tuple[TestClient, ProductProjection, _FakeOrc
         environment_token=True,
     ).resolver
     orchestration = _FakeOrchestration()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
     client = TestClient(create_app(service, resolver))
@@ -287,7 +316,7 @@ def test_run_creation_refuses_legacy_credential_identifiers_before_reservation(
 ) -> None:
     """Refuse legacy declarations through HTTP without creating or submitting a run."""
     client, projection, orchestration = service_api
-    content = _registered_package().model_dump(mode="json")
+    content = _legacy_registered_package().model_dump(mode="json")
     content["credentials"] = {"netbox-token": {"provider": "env", "identifier": identifier}}
     for role in ("source", "destination"):
         content["configuration"][role]["settings"]["token"] = {"$credential": "netbox-token"}
@@ -350,7 +379,8 @@ def test_run_creation_accepts_prefixed_credentials_without_api_host_values(
         "infrahub_sync.configuration.credentials.EnvironmentCredentialProvider.resolve",
         lambda *_args: pytest.fail("API admission resolved a credential"),
     )
-    version = client.app.state.run_binding
+    # The subject is a declaration with a prefixed identifier, so the version is in that format.
+    version = projection.create_configuration(_legacy_registered_package())
 
     response = client.post(
         "/runs",
@@ -373,7 +403,7 @@ def _legacy_source_credential_version(
     projection: ProductProjection, monkeypatch: pytest.MonkeyPatch, *, unused: bool = False
 ) -> ConfigurationVersion:
     """Store a pre-upgrade declaration while retaining a valid destination credential."""
-    content = _registered_package().model_dump(mode="json")
+    content = _legacy_registered_package().model_dump(mode="json")
     content["credentials"]["legacy-source"] = {"provider": "env", "identifier": "LEGACY_SOURCE_TOKEN"}
     if not unused:
         content["configuration"]["source"]["settings"]["token"] = {"$credential": "legacy-source"}
@@ -637,6 +667,7 @@ def test_worker_published_plan_is_retrievable_through_an_independent_api_project
     api_projection = local_product_projection(tmp_path.resolve())
     resolver = seed_accounts(api_projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     worker_projection = local_product_projection(tmp_path.resolve())
+    create_stored_credential_names(api_projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = api_projection.create_configuration(_registered_package())
     run_id = "run-worker-api-artifact"
     api_projection.create_run(

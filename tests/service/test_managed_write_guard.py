@@ -44,9 +44,15 @@ from infrahub_sync.product_store import (  # noqa: E402
 from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels  # noqa: E402
 from infrahub_sync.service import flow as service_flow  # noqa: E402
 from infrahub_sync.service.flow import service_sync_run  # noqa: E402
-from tests.configuration.validation_packages import package  # noqa: E402
+from tests.configuration.validation_packages import (  # noqa: E402
+    DESTINATION_CREDENTIAL,
+    SOURCE_CREDENTIAL,
+    credential_package,
+)
+from tests.helpers.stored_credentials import create_stored_credential_names  # noqa: E402
 from tests.service.execution_fixtures import (  # noqa: E402
     publish_authored_plan,
+    serve_released_credentials,
     stage_root,
     write_applied_sidecar,
 )
@@ -54,6 +60,8 @@ from tests.service.execution_fixtures import (  # noqa: E402
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+# The fields that the Sync API releases for each block of the registered package.
+RELEASED = {"source": {"token": "managed-netbox-canary"}, "destination": {"token": "managed-infrahub-canary"}}
 FLOW_RUN_ID = "b0c0a2d4-6f31-4a58-9b0e-2d4e6f318a55"
 WORKER_ID = "4d9a1c77-2f8e-4d3b-9c11-6a0e7b2f9d40"
 SCHEMA_FINGERPRINT = "d" * 64
@@ -149,12 +157,12 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
     engine: Any = None,  # noqa: ANN401 - the double receives the engine's own keyword mapping.
 ) -> _ManagedStage:
     """Wire one bound managed run whose guard, schema read, and engine are observable."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "managed-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "managed-infrahub-canary")
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     events: list[str] = []
     projection = local_product_projection(tmp_path / "product")
-    registered = projection.create_configuration(package())
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    serve_released_credentials(monkeypatch, service_flow, RELEASED, projection=projection)
+    registered = projection.create_configuration(credential_package())
     binding = (registered.config_id, registered.registry_version, registered.package_checksum)
     run_id = f"managed-{stage}"
     projection.create_run(
@@ -183,7 +191,7 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
     stored = projection.lookup_configuration_version(binding[0], binding[1]).value
     assert stored is not None
     runtime = resolve_runtime_instance(
-        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
+        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path), released=RELEASED
     )
     runtime._configuration_binding = binding
     authored = tmp_path / "runs" / runtime.name / run_id
