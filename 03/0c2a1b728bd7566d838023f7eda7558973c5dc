@@ -1,0 +1,37 @@
+dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md
+  s_58b527396c8cb5::t_e294d030626d9e 1-234
+dev/adr/0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md
+  s_0a9f0b6318b368::t_d22e0dc1d703c8 3-6
+dev/adr/0039-workers-publish-the-names-of-their-credential-variables.md
+  s_0a9f0b6318b368::t_e6a2f68334f27e 3-4
+dev/adr/0040-a-v2-configuration-converts-locally-by-v2-rules.md
+  s_0a9f0b6318b368::t_8d021900038a05 3-6
+dev/adr/README.md
+  s_0a9f0b6318b368::t_90cd8206e4a2ce 75,119,122,168-172
+docs/docs/development/adr-index.mdx
+  s_0a9f0b6318b368::t_2d3764498a4a19 52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "030c2a1b728bd7566d838023f7eda7558973c5dc",
+  "prompts": {},
+  "sessions": {
+    "s_0a9f0b6318b368": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac6b42be7674a2a53",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
