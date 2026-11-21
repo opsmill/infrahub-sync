@@ -3,8 +3,11 @@
 ``credential_router`` builds them and ``app.py`` mounts them once:
 
 - ``GET /credentials`` and ``GET /credentials/{name}``, for every signed-in account (FR-012);
-- ``POST /credentials``, ``PUT /credentials/{name}/value`` and ``PATCH /credentials/{name}``, for
-  a caller that holds ``manage-credentials`` (administrators, FR-015), each with ``Idempotency-Key``;
+- ``POST /credentials``, ``PUT /credentials/{name}/value``, ``PATCH /credentials/{name}`` and
+  ``DELETE /credentials/{name}``, for a caller that holds ``manage-credentials`` (administrators,
+  FR-015), each with ``Idempotency-Key``. The deletion answers ``409 credential-in-use`` while the
+  latest version of a configuration, or a schedule that is not deleted, names the credential
+  (FR-010). No route changes the name of a credential (FR-011);
 - ``POST /worker/runs/{run_id}/credentials``, for the ``worker`` account only (FR-005). It is the
   one route whose answer holds values. It takes no ``Idempotency-Key`` and writes no mutation
   receipt, because a receipt stores the answer;
@@ -26,7 +29,7 @@ thread pool, which shares the redaction registry of the request.
 from collections.abc import Callable
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Response
 from fastapi.responses import JSONResponse
 
 from infrahub_sync.client.models import CREDENTIAL_NAME_PATTERN, DEFAULT_LIMIT, MAX_LIMIT, MIN_LIMIT
@@ -34,6 +37,7 @@ from infrahub_sync.client.models import CREDENTIAL_NAME_PATTERN, DEFAULT_LIMIT, 
 from .auth import Principal
 from .credential_actions import (
     CREATE_OPERATION,
+    DELETE_OPERATION,
     DESCRIBE_OPERATION,
     MANAGE_CREDENTIALS,
     SET_VALUE_OPERATION,
@@ -132,6 +136,20 @@ def credential_router(
         """Replace the description of a credential; its revision stays."""
         status, content = actions.describe(principal, name, body, key)
         return JSONResponse(status_code=status, content=content)
+
+    @router.delete("/credentials/{name}", status_code=204, response_class=Response, responses=_CHANGE_ERRORS)
+    def delete_credential(
+        principal: Annotated[Principal, manage(DELETE_OPERATION)],
+        key: Annotated[str, Depends(idempotency_key)],
+        name: _Name,
+    ) -> Response:
+        """Delete a credential that no latest version of a configuration and no schedule that is not deleted names.
+
+        The refusal ``409 credential-in-use`` lists those configurations and schedules in
+        ``details``. A deletion cannot be reversed.
+        """
+        status, _content = actions.delete(principal, name, key)
+        return Response(status_code=status)
 
     @router.post("/worker/runs/{run_id}/credentials", response_model=ReleasedCredentials, responses=_RELEASE_ERRORS)
     def release_credentials(

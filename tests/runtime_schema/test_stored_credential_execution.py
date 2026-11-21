@@ -198,7 +198,7 @@ class Workers:
         return service_sync_run(run_id, "plan", *self.binding(), return_state=True)  # ty: ignore[no-matching-overload] - TODO: ty cannot select prefect's ParamSpec return_state overload
 
     def delete_credential(self, name: str) -> None:
-        """Remove a credential and its revisions; the deletion route belongs to a later user story."""
+        """Remove a credential and its revisions; the deletion route refuses one that a latest version names."""
         databases = sorted(self._database.rglob("*.sqlite3"))
         assert len(databases) == 1
         with sqlite3.connect(databases[0]) as connection:

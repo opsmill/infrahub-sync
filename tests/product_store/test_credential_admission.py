@@ -7,7 +7,7 @@ registration: the credential was deleted, or its fields changed.
 
 The store cases run on the three profiles of ``test_stored_credentials``. The cases of the run
 routes use the in-process API on the SQLite store, and remove a credential with SQL statements,
-because the deletion route belongs to a later user story.
+because the deletion route refuses a credential that the latest version of a configuration names.
 
 No test puts a credential value in an assertion message.
 """

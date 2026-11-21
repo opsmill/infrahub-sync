@@ -158,6 +158,7 @@ def schedule_decision_type(operation: str, outcome: str) -> str | None:
 CREDENTIAL_CREATED = f"{_CREDENTIAL_PREFIX}created"
 CREDENTIAL_VALUE_CHANGED = f"{_CREDENTIAL_PREFIX}value_changed"
 CREDENTIAL_UPDATED = f"{_CREDENTIAL_PREFIX}updated"
+CREDENTIAL_DELETED = f"{_CREDENTIAL_PREFIX}deleted"
 CREDENTIAL_REFUSED = f"{_CREDENTIAL_PREFIX}refused"
 CREDENTIAL_RELEASED = f"{_CREDENTIAL_PREFIX}released"
 

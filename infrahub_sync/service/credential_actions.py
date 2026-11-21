@@ -1,6 +1,7 @@
 """The requests, answers and actions of the stored credential routes (spec 027, contracts/http-api.md).
 
 ``credential_routes`` mounts the routes; each route calls one method of ``CredentialActions``.
+``credential_models`` holds the request and answer models, which this module exports again.
 
 Rights: every check names one permission, ``manage-credentials``, which administrators hold
 (FR-015). A later version can give it to a role without changing the routes. The check runs in a
@@ -18,9 +19,15 @@ credential resource, which holds no value, and a keyed fingerprint of the reques
 reversed by trying candidates.
 
 Audit: each accepted change writes one event in the transaction of the change
-(``credential.created``, ``credential.value_changed``, ``credential.updated``), with the name and
-the revision; a refused right or a refused description writes ``credential.refused``. No event
-holds a value.
+(``credential.created``, ``credential.value_changed``, ``credential.updated``,
+``credential.deleted``), with the name and the revision; a refused right or a refused description
+writes ``credential.refused``. No event holds a value.
+
+Deletion: ``CredentialActions.delete`` removes a credential that nothing current names. The store
+refuses it while the latest version of a configuration, or a schedule that is not deleted, names
+the credential, and the answer is ``409 credential-in-use`` with those configurations and
+schedules in ``details`` (FR-010). The receipt of a deletion stores the status ``204`` and an
+empty body, so a repeat with the same key answers ``204`` again and not ``404``.
 
 Release: ``CredentialActions.release`` answers the worker route (research R5), the only answer
 that holds a value. It checks that a worker claimed the execution and that the execution has
@@ -42,14 +49,12 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime  # noqa: TC003 - Pydantic resolves the resource annotations at runtime.
 from hashlib import sha256
 from itertools import starmap
-from typing import TYPE_CHECKING, Annotated, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 from uuid import uuid4
 
 import structlog
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from infrahub_sync.client.models import DEFAULT_LIMIT
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_stored_configuration_package
@@ -64,6 +69,7 @@ from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.execution import LiveSecretValues, register_secret_values
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
+    CredentialInUseError,
     CredentialNameTakenError,
     CredentialUse,
     MutationReceipt,
@@ -71,16 +77,24 @@ from infrahub_sync.product_store import (
     StoredCredentialInvalidError,
     StoredCredentialNotFoundError,
 )
-from infrahub_sync.product_store.models import (
-    STORED_CREDENTIAL_DESCRIPTION_MAX_LENGTH,
-    STORED_CREDENTIAL_NAME_PATTERN,
-    is_credential_field_set,
-)
+from infrahub_sync.product_store.models import is_credential_field_set
 
 from . import branch_review
 from .credential_crypto import CredentialDecryptionError
+from .credential_models import (
+    CreateCredentialRequest,
+    CredentialPage,
+    CredentialResource,
+    CredentialValueRequest,
+    DescribeCredentialRequest,
+    ProposedChangeStates,
+    ReleaseCredentialsRequest,
+    ReleasedBlock,
+    ReleasedCredentials,
+)
 from .events import (
     CREDENTIAL_CREATED,
+    CREDENTIAL_DELETED,
     CREDENTIAL_REFUSED,
     CREDENTIAL_UPDATED,
     CREDENTIAL_VALUE_CHANGED,
@@ -93,6 +107,7 @@ from .settings import ENCRYPTION_KEY_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import datetime
 
     from infrahub_sync.configuration import ConfigurationPackage
     from infrahub_sync.product_store import AuditEvent, PrefectExecutionLink, ProductRun
@@ -110,8 +125,8 @@ CREDENTIAL_VALUE_MAX_LENGTH: Final = 4096
 CREATE_OPERATION: Final = "credential-create"
 SET_VALUE_OPERATION: Final = "credential-set-value"
 DESCRIBE_OPERATION: Final = "credential-describe"
+DELETE_OPERATION: Final = "credential-delete"
 RELEASE_OPERATION: Final = "credential-release"
-FLOW_RUN_ID_MAX_LENGTH: Final = 200
 
 # The blocks each stage builds (research R5). A saved-plan apply, a resume and a verify build the
 # destination only, as `flow.py` resolves them; a plan and a sync, scheduled or not, build both.
@@ -131,7 +146,6 @@ FIELDS_INVALID_MESSAGE = (
     f"1 to {CREDENTIAL_VALUE_MAX_LENGTH} characters and no control character"
 )
 DESCRIPTION_REFUSED_MESSAGE = "description must not contain a secret or a token"
-_DESCRIPTION_NOT_PRINTABLE = "description must hold printable characters only"
 _IDEMPOTENCY_CONFLICT_MESSAGE = "Idempotency-Key was already used by this actor for different content"
 _IN_PROGRESS_MESSAGE = "the matching request is still being processed"
 _NOT_FOUND_MESSAGE = "no stored credential has the name {name!r}"
@@ -161,121 +175,11 @@ _METHOD_UNKNOWN_MESSAGE = "the {block} uses an adapter or an auth_method for whi
 _UNDECRYPTABLE_MESSAGE = (
     "the value of the stored credential {name!r} of the {block} cannot be decrypted with the current key"
 )
+_IN_USE_MESSAGE = (
+    "the stored credential {name!r} is in use: the latest version of a configuration, or a schedule that is "
+    "not deleted, names it; register a version that names another credential, or change or delete the schedule"
+)
 _EXISTS_MESSAGE = "a stored credential already has the name {name!r}; change its value instead"
-
-
-def _printable_description(value: str) -> str:
-    """Refuse a description with a character that is not printable, such as a line break or NUL."""
-    if not value.isprintable():
-        raise ValueError(_DESCRIPTION_NOT_PRINTABLE)
-    return value
-
-
-Description = Annotated[
-    str, Field(max_length=STORED_CREDENTIAL_DESCRIPTION_MAX_LENGTH), AfterValidator(_printable_description)
-]
-CredentialName = Annotated[str, Field(pattern=STORED_CREDENTIAL_NAME_PATTERN)]
-
-
-class _SecretRequest(BaseModel):
-    """A request that can hold a value: no field is trimmed, echoed in an error or printed."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
-
-    def __repr__(self) -> str:
-        """Show no field: a field can be a value."""
-        return f"{type(self).__name__}()"
-
-    __str__ = __repr__
-
-
-class CredentialValueRequest(_SecretRequest):
-    """The whole new set of fields of a credential: ``PUT /credentials/{name}/value``."""
-
-    username: str | None = None
-    password: str | None = None
-    token: str | None = None
-
-    def values(self) -> dict[str, str]:
-        """Return the fields that the request sets, by name."""
-        candidates = {"username": self.username, "password": self.password, "token": self.token}
-        return {name: value for name, value in candidates.items() if value is not None}
-
-
-class CreateCredentialRequest(CredentialValueRequest):
-    """A new credential: ``POST /credentials``."""
-
-    name: CredentialName
-    description: Description = ""
-
-
-class DescribeCredentialRequest(BaseModel):
-    """A new description: ``PATCH /credentials/{name}``."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    description: Description
-
-
-class CredentialResource(BaseModel):
-    """A stored credential as the routes return it: the names of its fields, never their values.
-
-    ``created_by`` and ``updated_by`` hold account identifiers here; the answer shows names.
-    """
-
-    name: str
-    description: str
-    fields: list[str]
-    revision: int
-    created_by: str
-    created_at: datetime
-    updated_by: str
-    updated_at: datetime
-
-
-class CredentialPage(BaseModel):
-    """One page of credentials sorted by name; ``next_offset`` is ``None`` on the last page."""
-
-    items: list[CredentialResource]
-    next_offset: int | None
-
-
-class ReleaseCredentialsRequest(BaseModel):
-    """The execution that asks for its values: ``POST /worker/runs/{run_id}/credentials``."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    flow_run_id: str = Field(min_length=1, max_length=FLOW_RUN_ID_MAX_LENGTH)
-
-
-class ReleasedBlock(BaseModel):
-    """The credential of one block as the worker route releases it: its fields hold the values."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    revision: int
-    fields: dict[str, str] = Field(repr=False)
-
-
-class ProposedChangeStates(BaseModel):
-    """The answer of the second worker route: the state of each earlier proposed change, by its run.
-
-    It holds no value, no address and no proposed-change identifier.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    states: dict[str, str]
-
-
-class ReleasedCredentials(BaseModel):
-    """The answer of the worker route: the blocks the stage needs that name a credential."""
-
-    model_config = ConfigDict(frozen=True)
-
-    run_id: str
-    blocks: dict[str, ReleasedBlock]
 
 
 @dataclass(frozen=True)
@@ -477,6 +381,28 @@ class CredentialActions:
             )
 
         return self._mutate(cipher, mutation, 200, act)
+
+    def delete(self, principal: Principal, name: str, idempotency_key: str) -> tuple[int, dict[str, Any]]:
+        """Delete a credential that nothing current names, and answer ``204`` with an empty body.
+
+        The run records and the older versions that name the credential keep its name.
+
+        Raises:
+            ServiceAPIError: ``503 credential-key-not-configured``, ``404 credential-not-found``,
+                ``409 credential-in-use`` with the configurations and the schedules that name
+                the credential in ``details``, or a refusal of the key.
+        """
+        cipher = self._require_cipher()
+        mutation = _Mutation(principal, idempotency_key, DELETE_OPERATION, name, {})
+
+        def act(now: datetime) -> StoredCredential:
+            return self._access.projection.delete_stored_credential(
+                name=name,
+                event_for=_accepted(CREDENTIAL_DELETED, principal, DELETE_OPERATION, now),
+                secrets=self._process_secrets,
+            )
+
+        return self._mutate(cipher, mutation, 204, act, answer=_no_content)
 
     # ------------------------------------------------------------------
     # Release to a worker
@@ -788,8 +714,13 @@ class CredentialActions:
         mutation: _Mutation,
         status: int,
         act: Callable[[datetime], StoredCredential],
+        *,
+        answer: Callable[[StoredCredential], dict[str, Any]] | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        """Run one change under its idempotency key and return its answer, or the stored answer of a repeat."""
+        """Run one change under its idempotency key and return its answer, or the stored answer of a repeat.
+
+        The answer is the credential resource, or what ``answer`` builds from the credential.
+        """
         projection = self._access.projection
         secrets = self._process_secrets
         now = self._access.now()
@@ -827,6 +758,15 @@ class CredentialActions:
         except StoredCredentialNotFoundError:
             projection.release_mutation(stored.receipt_id, secrets=secrets)
             raise _not_found(mutation.name) from None
+        except CredentialInUseError as in_use:
+            # The receipt is released, so the same key deletes once nothing names the credential.
+            projection.release_mutation(stored.receipt_id, secrets=secrets)
+            raise ServiceAPIError(
+                409,
+                "credential-in-use",
+                _IN_USE_MESSAGE.format(name=mutation.name),
+                details={"configurations": list(in_use.configurations), "schedules": list(in_use.schedules)},
+            ) from None
         except StoredCredentialInvalidError:
             # The checks above hold every rule of the store; this answers a rule added there later.
             projection.release_mutation(stored.receipt_id, secrets=secrets)
@@ -837,7 +777,7 @@ class CredentialActions:
         completed = projection.complete_mutation(
             stored.receipt_id,
             response_status=status,
-            response_body=credential_resource(credential).model_dump(mode="json"),
+            response_body=(answer or _resource_answer)(credential),
             flow_run_id=None,
             secrets=secrets,
         )
@@ -962,6 +902,16 @@ def _require_matching(stored: MutationReceipt, requested: MutationReceipt) -> No
         requested.request_fingerprint,
     ):
         raise ServiceAPIError(409, "idempotency-conflict", _IDEMPOTENCY_CONFLICT_MESSAGE, mutation_id=stored.receipt_id)
+
+
+def _resource_answer(credential: StoredCredential) -> dict[str, Any]:
+    return credential_resource(credential).model_dump(mode="json")
+
+
+def _no_content(credential: StoredCredential) -> dict[str, Any]:
+    """Return the stored answer of a deletion: ``204`` has no body, so the receipt holds an empty one."""
+    del credential
+    return {}
 
 
 def _not_found(name: str) -> ServiceAPIError:
