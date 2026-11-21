@@ -1,0 +1,77 @@
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_37fab726064c78 121
+tests/service/test_verify_destination.py
+  s_58b527396c8cb5::t_5ec00fa38f6314 243-244
+  s_58b527396c8cb5::t_2fef44b5d90cd2 507,509-510,524
+  s_58b527396c8cb5::t_7077ef58c2465c 43-44,46-51,66-67,167-169,194
+  s_58b527396c8cb5::t_b4d5d62e77c327 30
+tests/service/test_artifact_confidentiality.py
+  s_58b527396c8cb5::t_1e48af6f74459e 22-23,79-80,84-85,101
+tests/service/test_plan_report_routes.py
+  s_58b527396c8cb5::t_05f496ec2d475c 36-37,58
+tests/service/test_failure_cause_credentials.py
+  s_58b527396c8cb5::t_05f496ec2d475c 52-53,111
+tests/service/execution_fixtures.py
+  s_58b527396c8cb5::t_7d5327372bddf1 13,24,203-204,209-211,216-220,226,230
+  s_58b527396c8cb5::t_fe08e98ddb0de2 19-21,28,30,40-41,197-202,205-208,212-215,221-225,227-229,231-240
+tests/service/test_registered_schema_guard.py
+  s_58b527396c8cb5::t_b5a169f415e471 34,57,293-294
+  s_58b527396c8cb5::t_bf2b55c7e4ec16 50-51,72-73,108,177-178,202
+tests/service/test_schedule_branch_review.py
+  s_58b527396c8cb5::t_05f496ec2d475c 29-30,40-41,43,54-58,88-117,119-125,510,513-514,516-523
+tests/service/test_registered_plan_apply.py
+  s_58b527396c8cb5::t_37fab726064c78 267-268
+  s_58b527396c8cb5::t_e7b244d1f272f2 26-27,33,42-43,52,55,83,277-278,305,361-362,369
+  s_58b527396c8cb5::t_7077ef58c2465c 53-54
+tests/service/test_http_api.py
+  s_58b527396c8cb5::t_1e48af6f74459e 82-83,123-148,240,319,406,670
+  s_58b527396c8cb5::t_94ea595214a23e 382-383
+tests/service/test_managed_write_guard.py
+  s_58b527396c8cb5::t_2fef44b5d90cd2 48-52,55,63-64,163-165,194
+  s_58b527396c8cb5::t_4efbfd74b7eb02 47
+tests/service/test_sync_checkpoint_order.py
+  s_58b527396c8cb5::t_2fef44b5d90cd2 42-43,45-50,55-56,137-139,167
+tests/service/test_cancel_planned_run.py
+  s_58b527396c8cb5::t_1e48af6f74459e 38-39,98-99,103-104,131
+tests/service/test_worker_proposed_change_states_route.py
+  s_58b527396c8cb5::t_05f496ec2d475c 49-54,96,100-101,220-221
+tests/service/test_sync_left_out_stop.py
+  s_58b527396c8cb5::t_2fef44b5d90cd2 48-50,63-64,140-142,174
+tests/service/test_approval_required.py
+  s_58b527396c8cb5::t_1e48af6f74459e 27-28,122-123,127-128,148
+tests/service/test_validation_secret_containment.py
+  s_58b527396c8cb5::t_f2cd275d2939e6 41-42,91-125,155,259,301,303,306-308,310-314,317,367-368,416-417,488,516,545-546,569
+  s_58b527396c8cb5::t_66e3c55380b8fd 254-258,260
+tests/service/test_sync_store_policy.py
+  s_58b527396c8cb5::t_4abadd1b1ade4e 19-25,40-41,46,61,91-92,113,155-156,160,182-183,187
+tests/service/test_worker_configuration_directory.py
+  s_58b527396c8cb5::t_2fef44b5d90cd2 20,23-25,36-37,75,77-81,85-94,96
+tests/service/test_events_route.py
+  s_58b527396c8cb5::t_1e48af6f74459e 34-35,89-90,94-95,362
+tests/plan/test_format_5.py
+  s_58b527396c8cb5::t_35a34f10a58e46 304-305,317-318
+tests/service/test_worker_environment.py
+  s_58b527396c8cb5::t_1512359cbcc24d 59,69-71
+tests/service/test_approval.py
+  s_58b527396c8cb5::t_1e48af6f74459e 25-26,83-84,88-89,115,217
+tests/service/test_apply_checkpoint_order.py
+  s_58b527396c8cb5::t_2fef44b5d90cd2 41-42,44,49-50,161-163,190
+tests/service/schedule_fixtures.py
+  s_58b527396c8cb5::t_70e5b2dd5fff87 37-38,167-172,182-183,185,330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7a87908c48a8169d82c0d27645a210ba5e3f9429",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
