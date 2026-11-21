@@ -237,7 +237,7 @@ def test_a_class_valued_entry_point_reaches_a_runtime_model_plan(
     from infrahub_sync.configuration.runtime import resolve_runtime_instance
     from infrahub_sync.runtime_schema import build_runtime_model_plan
     from infrahub_sync.runtime_schema import worker as worker_module
-    from tests.configuration.validation_packages import package_data
+    from tests.configuration.validation_packages import credential_package_data
 
     snapshot = {
         "BuiltinTag": {
@@ -250,15 +250,15 @@ def test_a_class_valued_entry_point_reaches_a_runtime_model_plan(
     module = _plugin_module(with_model=True)
     _publish(monkeypatch, module, value=module.PluginAdapter)
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", lambda _package, _branch: snapshot)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "entry-point-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "entry-point-canary")
-    content = package_data()
+    # The fields that the Sync API released to the run for each block of the package.
+    released = {"source": {"token": "entry-point-canary"}, "destination": {"token": "entry-point-canary"}}
+    content = credential_package_data()
     content["configuration"]["schema_mapping"] = [
         {"name": "BuiltinTag", "mapping": "extras.tags", "fields": [{"name": "name", "mapping": "name"}]}
     ]
     content["configuration"]["source"]["adapter"] = ENTRY_POINT
     package = parse_configuration_package(content)
-    instance = resolve_runtime_instance(package, directory=str(tmp_path))
+    instance = resolve_runtime_instance(package, directory=str(tmp_path), released=released)
 
     plan = build_runtime_model_plan(package=package, instance=instance, run_branch=None, scope="both")
 

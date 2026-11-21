@@ -51,7 +51,7 @@ from infrahub_sync.service.auth import apply_worker_account
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.orchestration import Submission
 from infrahub_sync.service.settings import WORKER_API_URL_ENV, WORKER_TOKEN_ENV
-from tests.configuration.validation_packages import package_data
+from tests.configuration.validation_packages import credential_package_data
 from tests.helpers.stored_credentials import TEST_ENCRYPTION_KEY, create_stored_credential
 from tests.runtime_schema.test_registered_execution import (
     MAPPING,
@@ -102,11 +102,9 @@ def _reachable_text(error: BaseException) -> str:
 
 def _package() -> dict[str, Any]:
     """Return a NetBox to Infrahub package whose two blocks each name a stored credential."""
-    data = package_data()
-    data.pop("credentials", None)
+    data = credential_package_data()
     data["configuration"]["schema_mapping"] = MAPPING
     for block, name in (("source", SOURCE_CREDENTIAL), ("destination", DESTINATION_CREDENTIAL)):
-        data["configuration"][block]["settings"].pop("token", None)
         data["configuration"][block]["credential"] = name
     return data
 
