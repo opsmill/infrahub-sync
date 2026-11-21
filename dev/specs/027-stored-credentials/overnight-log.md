@@ -160,6 +160,16 @@ The web interface text for the new code goes to chunk 19.
 The loop does read token and password names, outside a registered package only. I dispatched chunk
 13b with the checks above.
 
+**Result of chunk 13b.** The narrowing keeps the checksum, so it was applied (option b). The earlier build's
+digest differs from this build's only by the empty `credentials` key, so a stored version is now
+digested with that key, and a test pins a checksum the earlier build wrote. A version that used a
+secret is still refused, because the earlier build needed a `$credential` reference for every secret.
+Registering the same file again creates a new version with a different checksum. T049 stays open:
+the direct Prefect flow (`orchestration/flow.py:214`, `execution.py:785`) builds adapters outside a
+registered package and needs the environment reads, and `spec.md:334` says that flow does not change.
+The read routes answer 200 for a version in the removed format; schedule creation and change answer
+`422 credential-format-removed` (commits `fa957165`, `2412a942`, `ca183709`, `f189abdd`).
+
 ## Progress
 
 - 2026-11-20 evening: implementation started.
