@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  blockingNamesake,
   CONFIGURATION_NAME_IN_USE,
   nameInUseOf,
   otherNamesake,
@@ -69,6 +70,63 @@ describe("otherNamesake", () => {
   it("returns nothing while the configurations are not read", () => {
     expect(otherNamesake(undefined, undefined)).toBeUndefined();
     expect(otherNamesake([], undefined)).toBeUndefined();
+  });
+});
+
+describe("blockingNamesake", () => {
+  const namesakes = [{ config_id: "cfg-1", name: "from-netbox" }];
+  const refusal = nameInUseOf(
+    envelope(CONFIGURATION_NAME_IN_USE, 409, { config_id: "cfg-9", name: "from-netbox" })
+  );
+
+  it("blocks Register when a configuration listed with the name exists before sending", () => {
+    expect(
+      blockingNamesake({
+        refused: undefined,
+        namesakes,
+        ownConfigId: undefined,
+        checksName: true,
+        sent: false,
+      })
+    ).toEqual({ configId: "cfg-1", name: "from-netbox" });
+  });
+
+  it("keeps Retry available when the answer was lost and the listing now has the name", () => {
+    // The request was sent, its answer was lost (no refusal), and a refetch lists the
+    // configuration that this request itself may have registered.
+    expect(
+      blockingNamesake({
+        refused: nameInUseOf(new TypeError("Failed to fetch")),
+        namesakes,
+        ownConfigId: undefined,
+        checksName: true,
+        sent: true,
+      })
+    ).toBeUndefined();
+  });
+
+  it("still blocks on a configuration-name-in-use refusal after sending", () => {
+    expect(
+      blockingNamesake({
+        refused: refusal,
+        namesakes: undefined,
+        ownConfigId: undefined,
+        checksName: true,
+        sent: true,
+      })
+    ).toEqual({ configId: "cfg-9", name: "from-netbox" });
+  });
+
+  it("ignores the listing when the package keeps the configuration's name", () => {
+    expect(
+      blockingNamesake({
+        refused: undefined,
+        namesakes,
+        ownConfigId: "cfg-2",
+        checksName: false,
+        sent: false,
+      })
+    ).toBeUndefined();
   });
 });
 

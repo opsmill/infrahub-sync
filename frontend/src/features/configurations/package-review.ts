@@ -189,6 +189,24 @@ export function otherNamesake(
   return { configId: other.config_id, ...(other.name ? { name: other.name } : {}) };
 }
 
+/**
+ * The configuration whose name blocks Register. A `configuration-name-in-use` refusal always
+ * blocks it. The configurations listed for the name block it only before the request is sent:
+ * once it is sent, a configuration listed with that name can be the one the request itself
+ * registered before its answer was lost, and Retry with the same Idempotency-Key returns it.
+ */
+export function blockingNamesake(options: {
+  refused: NameInUse | undefined;
+  namesakes: readonly { config_id: string; name?: string | null }[] | undefined;
+  ownConfigId: string | undefined;
+  checksName: boolean;
+  sent: boolean;
+}): NameInUse | undefined {
+  if (options.refused) return options.refused;
+  if (!options.checksName || options.sent) return undefined;
+  return otherNamesake(options.namesakes, options.ownConfigId);
+}
+
 export const validatingText = (branch: string) => `Validating against branch ${branch}…`;
 
 export const validText = (branch: string) => `Valid against branch ${branch}`;

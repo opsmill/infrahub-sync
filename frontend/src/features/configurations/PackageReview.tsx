@@ -36,6 +36,7 @@ import { MappingList } from "./detail-mapping";
 import { MappingDetail } from "./detail-mapping-panel";
 import { PackageDropArea } from "./PackageDropArea";
 import {
+  blockingNamesake,
   credentialVariables,
   declaredContent,
   defaultBranch,
@@ -47,7 +48,6 @@ import {
   type NameInUse,
   NEW_CONFIGURATION_TITLE,
   nameInUseOf,
-  otherNamesake,
   REASON_MAX_LENGTH,
   REVIEW_FINDINGS_LIMIT,
   readFailureHint,
@@ -203,7 +203,9 @@ export function PackageReview({
   // Configuration names are unique: the Sync API refuses a new configuration, or a version that
   // renames its configuration, when another configuration has the name of the package. The
   // configurations with that name are read first, so Register is disabled before it is refused;
-  // the refusal itself covers a configuration registered with that name meanwhile.
+  // the refusal itself covers a configuration registered with that name meanwhile. Once the
+  // request is sent, only the refusal blocks Retry: the configuration listed with that name can
+  // be the one the request registered before its answer was lost.
   const packageName = content?.configuration.name ?? "";
   const renames = !isNew && config.data !== undefined && config.data.name !== packageName;
   const namesake = useQuery({
@@ -211,8 +213,13 @@ export function PackageReview({
     enabled: !!packageName && (isNew || renames),
   });
   const refusedName = nameInUseOf(create.error);
-  const nameInUse: NameInUse | undefined =
-    refusedName ?? (isNew || renames ? otherNamesake(namesake.data?.items, configId) : undefined);
+  const nameInUse: NameInUse | undefined = blockingNamesake({
+    refused: refusedName,
+    namesakes: namesake.data?.items,
+    ownConfigId: configId,
+    checksName: isNew || renames,
+    sent: sent !== undefined,
+  });
   const nextMappings = content?.configuration.schema_mapping ?? [];
   const baseMappings = base.data?.declared_content.configuration.schema_mapping;
   const diff =
