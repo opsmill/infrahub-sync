@@ -177,9 +177,9 @@ tests, nothing uses `INFRAHUB_SYNC_CREDENTIAL_*` or `$credential`.
 
 **Independent test**: quickstart scenario 4; FR-003, SC-002.
 
-- [ ] T063 [P] [US2] Write `tests/service/test_credential_revisions_on_runs.py`: 5 packages name `netbox-lab`; one value change registers no version; the next run of each records revision 2; a plan with revision 3, a change, and the apply records revision 4 for the apply and 3 for the plan (FR-003, SC-002, spec edge case)
-- [ ] T064 [US2] Add `credentials_used: [{stage, block, name, revision}]` to the run detail answer in `infrahub_sync/service/service.py` and `infrahub_sync/client/models.py`, read from `run_credential_uses`
-- [ ] T065 [US2] Show a "Credentials used" section in `infrahub-sync runs show` in `infrahub_sync/cli.py`, add a CLI test to `tests/cli/test_credentials_command.py`, and describe it in `docs/docs/guides/credentials.mdx`
+- [X] T063 [P] [US2] Write `tests/service/test_credential_revisions_on_runs.py`: 5 packages name `netbox-lab`; one value change registers no version; the next run of each records revision 2; a plan with revision 3, a change, and the apply records revision 4 for the apply and 3 for the plan (FR-003, SC-002, spec edge case)
+- [X] T064 [US2] Add `credentials_used: [{stage, block, name, revision}]` to the run detail answer in `infrahub_sync/service/service.py` and `infrahub_sync/client/models.py`, read from `run_credential_uses`
+- [X] T065 [US2] Show a "Credentials used" section in `infrahub-sync runs show` in `infrahub_sync/cli.py`, add a CLI test to `tests/cli/test_credentials_command.py`, and describe it in `docs/docs/guides/credentials.mdx`
 
 ---
 

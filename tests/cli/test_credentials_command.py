@@ -15,7 +15,8 @@ from typer.testing import CliRunner
 
 from infrahub_sync.cli import _error_fields, app  # noqa: PLC2701 - the error renderer under test is private.
 from infrahub_sync.cli_session import SavedSession, write_session
-from infrahub_sync.client import APIError
+from infrahub_sync.client import APIError, CredentialUsedResource
+from tests.cli.test_client_commands import _run
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -527,6 +528,62 @@ def test_a_refused_description_exits_1(sync_api: FakeSyncAPI) -> None:
     assert result.exit_code == 1
     assert "code: credential-not-found" in result.stderr
     assert "message: no stored credential has this name" in result.stderr
+
+
+# --- the credentials that a run used -------------------------------------------------------
+
+
+def _show_run(sync_api: FakeSyncAPI, *used: CredentialUsedResource) -> Result:
+    """Answer the detail of a run with these entries, and return the output of `runs show`."""
+    resource = _run(operation="apply", phase="applied").model_copy(update={"credentials_used": used})
+    sync_api.answers["GET /runs/service-run-1"] = httpx.Response(200, json=resource.model_dump(mode="json"))
+    result = _invoke("runs", "show", "service-run-1")
+    assert result.exit_code == 0, result.output
+    _assert_no_value(result)
+    return result
+
+
+def test_runs_show_lists_the_credential_and_the_revision_of_each_stage(sync_api: FakeSyncAPI) -> None:
+    result = _show_run(
+        sync_api,
+        CredentialUsedResource(stage="plan", block="destination", name="infrahub-main", revision=3),
+        CredentialUsedResource(stage="plan", block="source", name="netbox-lab", revision=1),
+        CredentialUsedResource(stage="apply", block="destination", name="infrahub-main", revision=4),
+    )
+
+    lines = result.stdout.splitlines()
+    start = lines.index("Credentials used:")
+    assert lines[start : start + 4] == [
+        "Credentials used:",
+        "  plan destination: infrahub-main revision 3",
+        "  plan source: netbox-lab revision 1",
+        "  apply destination: infrahub-main revision 4",
+    ]
+
+
+def test_runs_show_prints_no_credential_section_for_a_run_that_used_none(sync_api: FakeSyncAPI) -> None:
+    result = _show_run(sync_api)
+
+    assert "Credentials used" not in result.stdout
+
+
+def test_runs_show_reads_a_run_detail_without_the_credential_list(sync_api: FakeSyncAPI) -> None:
+    """A Sync API of an earlier release answers no `credentials_used`."""
+    document = _run(operation="apply", phase="applied").model_dump(mode="json")
+    del document["credentials_used"]
+    sync_api.answers["GET /runs/service-run-1"] = httpx.Response(200, json=document)
+
+    result = _invoke("runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "Credentials used" not in result.stdout
+
+
+def test_runs_show_makes_a_control_character_of_a_credential_entry_visible(sync_api: FakeSyncAPI) -> None:
+    result = _show_run(sync_api, CredentialUsedResource(stage="plan", block="source", name="lab\x1b[2J", revision=1))
+
+    assert "  plan source: lab\\x1b[2J revision 1" in result.stdout.splitlines()
+    assert "\x1b" not in result.stdout
 
 
 # --- the surface ---------------------------------------------------------------------------

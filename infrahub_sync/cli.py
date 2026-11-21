@@ -1153,6 +1153,19 @@ def _echo_apply_progress(resource: RunResource) -> None:
         )
 
 
+def _echo_credentials_used(resource: RunResource) -> None:
+    """Print the stored credential and the revision that each stage of a run received for each block.
+
+    Nothing is printed for a run whose stages received no stored credential. The lines hold a
+    stage, a block, a name and a revision only: the Sync API answers no value on this route.
+    """
+    if not resource.credentials_used:
+        return
+    typer.echo("Credentials used:")
+    for used in resource.credentials_used:
+        typer.echo(_display(f"  {used.stage} {used.block}: {used.name} revision {used.revision}"))
+
+
 def _side_read_text(side: SideRead | None) -> str | None:
     """Render one side's read state as `key=value` pairs, leaving out the keys with no value."""
     if side is None:
@@ -2163,6 +2176,10 @@ def runs_show(
     every execution of the run.
     Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
     scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
+    A run with a stage that received the values of a stored credential adds a `Credentials used:` section, with one
+    line per stage and block: `<stage> <block>: <name> revision <number>`. The name and the revision are the ones
+    recorded when the stage received the values, so a plan and its apply can show two revisions of one credential,
+    and a credential that was deleted since still shows. No line holds a value.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
@@ -2177,6 +2194,7 @@ def runs_show(
             ("scheduled_start_at", scheduled_start.isoformat() if scheduled_start is not None else None),
         )
     )
+    _echo_credentials_used(resource)
     # The latest execution of each stage; the orchestration list is in run order.
     latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
     # A failed stage's cause and next action, as the run's results recorded them (FR-002).

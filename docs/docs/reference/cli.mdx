@@ -612,6 +612,10 @@ line counts the creates and updates that resume wrote; the `written:` line of a 
 every execution of the run.
 Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
 scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
+A run with a stage that received the values of a stored credential adds a `Credentials used:` section, with one
+line per stage and block: `&lt;stage&gt; &lt;block&gt;: &lt;name&gt; revision &lt;number&gt;`. The name and the revision are the ones
+recorded when the stage received the values, so a plan and its apply can show two revisions of one credential,
+and a credential that was deleted since still shows. No line holds a value.
 
 **Usage**:
 

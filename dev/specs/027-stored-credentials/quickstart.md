@@ -42,7 +42,7 @@ variable (`docker compose exec sync-worker env | grep INFRAHUB_SYNC_CREDENTIAL_`
 printf '%s' "$NEW_TOKEN" | uv run infrahub-sync credentials set netbox-token --token-stdin
 uv run infrahub-sync configs list        # no new version
 uv run infrahub-sync plan netbox-to-infrahub
-uv run infrahub-sync runs show <run_id>  # credentials_used shows revision 2
+uv run infrahub-sync runs show <run_id>  # "Credentials used:" shows revision 2
 ```
 
 ## 5. Refusals (FR-004, FR-005, FR-008, FR-010, FR-012)
