@@ -49,7 +49,10 @@ V3 has not been released, so the format can change with no migration path.
 
 - AES-256-GCM from the `cryptography` package, which the `service` extra declares.
 - The key is 32 bytes, base64-encoded in `INFRAHUB_SYNC_ENCRYPTION_KEY`. Only `sync-api` receives
-  it. `sync-api` refuses to start without it or with another length.
+  it. `sync-api` refuses to start with a value that is not base64 or does not decode to 32 bytes.
+- Without the variable, `sync-api` starts, logs a warning, and answers every credential change
+  with `503 credential-key-not-configured`. The operator Compose file makes the variable
+  required: Compose stops before any container starts when it is missing.
 - Each revision stores one ciphertext of the JSON object of its fields, with a random 12-byte
   nonce. The associated data names the credential identifier and the revision, so a ciphertext
   copied to another row or revision does not decrypt.
@@ -67,7 +70,8 @@ V3 has not been released, so the format can change with no migration path.
   applies the account and its token at each start. The account has no password, cannot sign in,
   is not an administrator, and cannot be changed through the API.
 - The token follows the rules of the `admin` token, and `sync-api` refuses to start when the two
-  are equal.
+  are equal. Without the variable, `sync-api` starts, applies no `worker` account and logs that;
+  no worker can then get a value. The operator Compose file makes the variable required.
 - Every worker receives the same token and the address of the Sync API
   (`INFRAHUB_SYNC_API_URL`). There is no identity for each worker.
 - The worker account can call only the routes under `/api/worker/`. Every other route answers
