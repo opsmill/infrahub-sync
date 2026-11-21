@@ -1,0 +1,20 @@
+tests/test_stored_credential_marker.py
+  s_58b527396c8cb5::t_8cd962eae924a7 44
+  s_58b527396c8cb5::t_624cc54ac40eaa 58,60,196-222,234,242,332-345,347-354,474-475,480,622-627
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c7d919a13f95d6f4c2eff392e91b903385bbfee",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
