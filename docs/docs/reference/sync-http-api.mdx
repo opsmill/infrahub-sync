@@ -330,8 +330,7 @@ route releases the values to that stage.
   format.
 - No entry holds a value.
 - Every other route that answers a run with its orchestration entries returns the same field.
-  An answer that the Sync API replays for a repeated `Idempotency-Key` holds the list as it was
-  at the first answer. `GET /runs` does not return the field.
+  `GET /runs` does not return the field.
 
 ### Checks of stored credentials on the other routes
 

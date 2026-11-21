@@ -1017,6 +1017,7 @@ class RunService:
         response = ApprovedRunResource(
             run=resource.run,
             orchestration=resource.orchestration,
+            credentials_used=resource.credentials_used,
             plan_summary=ApprovedPlanSummaryResource(
                 creates=by_action.get("create", 0),
                 updates=by_action.get("update", 0),

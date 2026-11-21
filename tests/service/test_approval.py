@@ -17,7 +17,13 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration import ConfigurationPackage
-from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection, ProductRun, local_product_projection
+from infrahub_sync.product_store import (
+    CredentialUse,
+    PrefectExecutionLink,
+    ProductProjection,
+    ProductRun,
+    local_product_projection,
+)
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
@@ -213,6 +219,34 @@ def test_approve_records_the_approval_and_returns_the_run_with_the_plan_summary(
     assert stored.approval is not None
     assert stored.approval.approved_by == account_identifier(projection, "owner")
     assert _outcomes(projection) == ["accepted"]
+
+
+def test_the_approve_answer_holds_the_credentials_that_the_plan_stage_received(api: _Api) -> None:
+    client, projection, _, version = api
+    _stored_run(projection, version)
+    credential = projection.lookup_stored_credential(SOURCE_CREDENTIAL)
+    assert credential is not None
+    projection.record_credential_uses(
+        [
+            CredentialUse(
+                run_id=RUN_ID,
+                flow_run_id="flow-run-of-the-plan",
+                stage="plan",
+                block="source",
+                credential_id=credential.credential_id,
+                credential_name=credential.name,
+                revision=1,
+                released_at=datetime(2026, 11, 10, 12, tzinfo=timezone.utc),
+            )
+        ]
+    )
+
+    response = _approve(client)
+
+    assert response.status_code == 200, response.json()["error"]["code"]
+    assert response.json()["credentials_used"] == [
+        {"stage": "plan", "block": "source", "name": SOURCE_CREDENTIAL, "revision": 1}
+    ]
 
 
 def test_a_version_stored_in_the_removed_credential_format_cannot_be_approved(api: _Api, tmp_path: Path) -> None:
