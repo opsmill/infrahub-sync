@@ -528,7 +528,8 @@ def create_app(
 
     The stored credential routes are always served. Without ``credential_cipher``, which holds the
     key of ``INFRAHUB_SYNC_ENCRYPTION_KEY``, they list and show credentials and answer every change
-    with ``503 credential-key-not-configured`` (spec 027).
+    with ``503 credential-key-not-configured`` (spec 027). A Sync API process always has the key
+    (``serve.build_process_service``); only an application built in a test has none.
 
     Raises:
         ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that

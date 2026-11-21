@@ -28,6 +28,7 @@ from infrahub_sync.service import serve, worker
 from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV
 from infrahub_sync.service.start_check import START_REFUSED_MESSAGE, StartRefusedError, check_bootstrap_record
 from infrahub_sync.service.storage import DATABASE_URL_ENV
+from tests.helpers.stored_credentials import set_process_start_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -225,6 +226,8 @@ def test_the_api_checks_the_work_pool_it_reconciles(monkeypatch: pytest.MonkeyPa
 
 
 def test_the_api_main_exits_non_zero_on_a_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_process_start_settings(monkeypatch)
+
     def refused_build(**_factories: object) -> NoReturn:
         raise StartRefusedError
 

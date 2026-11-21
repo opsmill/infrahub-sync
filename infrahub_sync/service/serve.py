@@ -39,6 +39,7 @@ from .settings import (
     AccountSettingsError,
     CredentialSettingsError,
     admin_account_settings,
+    credential_settings,
     encryption_key,
     session_idle_seconds,
     web_directory,
@@ -131,10 +132,14 @@ def build_app(
     ``INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`` and ``INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN``, the
     password is removed from the environment of the process, and callers are resolved from the
     accounts of the store. When ``INFRAHUB_SYNC_WORKER_TOKEN`` is set, the ``worker`` account is
-    made to match it too; until every deployment sets it (spec 027, T054), a start without it
-    applies no ``worker`` account and logs that. ``INFRAHUB_SYNC_ENCRYPTION_KEY`` gives the
-    credential routes their key; a start without it logs that, and those routes answer every
-    change with ``503 credential-key-not-configured``.
+    made to match it too. ``INFRAHUB_SYNC_ENCRYPTION_KEY`` gives the credential routes their key.
+
+    This factory accepts an environment without the key or without the worker token, for an
+    application that a test builds in its own process: it then logs each missing variable, the
+    credential routes answer every change with ``503 credential-key-not-configured``, and no
+    ``worker`` account is applied. A Sync API process never starts that way:
+    ``build_process_service`` refuses a start without either variable before it calls this
+    factory.
 
     Raises:
         TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
@@ -154,8 +159,8 @@ def build_app(
     prefect_ui_url = prefect_ui_url_from_environment()
     admin_account = admin_account_settings() if resolver_factory is None else None
     worker_token = worker_account_token() if resolver_factory is None else None
-    # Without the key, the credential routes refuse every change with `503` until T054 makes
-    # the variable required for `sync-api`; a key that is set but not accepted stops the start.
+    # A process start has the key: `build_process_service` refuses a start without it. Only an
+    # application built in a test gets here without one, and its credential routes answer `503`.
     credential_key = encryption_key()
     if credential_key is None:
         logger.warning("stored credentials cannot be changed: the variable is not set", variable=ENCRYPTION_KEY_ENV)
@@ -225,7 +230,8 @@ def _apply_worker_account(projection: ProductProjection, token: str | None) -> N
             names the account or the variable, never a value.
     """
     if token is None:
-        # A warning, not a refusal, until T054 makes the variable required for `sync-api`.
+        # Only an application built in a test: `build_process_service` refuses a process start
+        # without the variable.
         logger.warning("worker account not applied: the variable is not set", variable=WORKER_TOKEN_ENV)
         return
     try:
@@ -274,10 +280,35 @@ def build_service(
     return create_site(api, web_directory())
 
 
+def build_process_service() -> Starlette:
+    """Construct the application that a Sync API process serves, or refuse the start.
+
+    It is the factory of every process start: ``main`` calls it, and so does an ASGI server that
+    is given a factory (``uvicorn --factory``, as ``dev.api`` does). ``INFRAHUB_SYNC_ENCRYPTION_KEY``
+    and ``INFRAHUB_SYNC_WORKER_TOKEN`` are required here, and they are checked before anything is
+    built, so a refused start opens no database.
+
+    Raises:
+        CredentialSettingsError: the encryption key is unset, empty, not base64 or not 32 bytes
+            once decoded; or the worker token is unset, empty or not accepted, or equals the token
+            of the ``admin`` account. The message names the variable, never a value.
+        TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
+        AccountSettingsError: when a variable of the ``admin`` account or the idle period of a
+            session holds a value that is not accepted.
+        StartRefusedError: when the bootstrap record does not name this version and work pool.
+    """
+    credential_settings()
+    return build_service()
+
+
 def main() -> None:
-    """Serve the Sync API and the web interface; Prefect workers and deployments are separate."""
+    """Serve the Sync API and the web interface; Prefect workers and deployments are separate.
+
+    A start without ``INFRAHUB_SYNC_ENCRYPTION_KEY`` or ``INFRAHUB_SYNC_WORKER_TOKEN``, or with a
+    value that is not accepted, exits with a message that names the variable.
+    """
     try:
-        app = build_service()
+        app = build_process_service()
     except (TrustStoreError, AccountSettingsError, StartRefusedError) as error:
         raise SystemExit(str(error)) from None
     uvicorn.run(app, host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)

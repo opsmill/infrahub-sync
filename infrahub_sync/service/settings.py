@@ -15,9 +15,12 @@ not accepted stops the service. ``INFRAHUB_SYNC_SESSION_IDLE_SECONDS`` is the pe
 activity after which a session ends.
 
 ``INFRAHUB_SYNC_ENCRYPTION_KEY`` and ``INFRAHUB_SYNC_WORKER_TOKEN`` are read by ``sync-api``: the key
-of stored credentials and the token of the ``worker`` account. ``INFRAHUB_SYNC_WORKER_TOKEN`` and
-``INFRAHUB_SYNC_API_URL`` are read by each ``sync-worker`` to reach the Sync API. A value that is not
-accepted stops the process. No message of this module contains a value.
+of stored credentials and the token of the ``worker`` account. Both are required: a ``sync-api``
+process refuses to start without either, or with a value that is not accepted.
+``INFRAHUB_SYNC_WORKER_TOKEN`` and ``INFRAHUB_SYNC_API_URL`` are read by each ``sync-worker`` to
+reach the Sync API, when a run names a stored credential: a worker without either starts, and each
+such run fails before it reads the source, with a cause that names both variables. No message of this
+module contains a value.
 """
 
 from __future__ import annotations
@@ -256,7 +259,7 @@ def _worker_token(env: Mapping[str, str]) -> str:
 
 
 def credential_settings(environ: Mapping[str, str] | None = None) -> CredentialSettings:
-    """Return the validated variables of stored credentials that ``sync-api`` reads.
+    """Return the validated variables of stored credentials that a ``sync-api`` process requires at its start.
 
     Raises:
         CredentialSettingsError: the encryption key is unset, empty, not base64 or not 32 bytes
@@ -287,9 +290,10 @@ def _check_differs_from_admin_token(env: Mapping[str, str], token: str) -> None:
 def worker_account_token(environ: Mapping[str, str] | None = None) -> str | None:
     """Return the token of the ``worker`` account that ``sync-api`` applies, or ``None`` when it is unset.
 
-    An empty value counts as unset. Until the Compose files give every ``sync-api`` the variable
-    (spec 027, T054), a start without it applies no ``worker`` account; the rules of a value that
-    is set are those of :func:`credential_settings`.
+    An empty value counts as unset. A ``sync-api`` process refuses to start without the variable
+    (``serve.build_process_service``), so only an application that a test builds in its own
+    process gets ``None``, and it applies no ``worker`` account; the rules of a value that is set
+    are those of :func:`credential_settings`.
 
     Raises:
         CredentialSettingsError: the token is shorter than 16 characters, holds a character that is
@@ -307,8 +311,9 @@ def worker_account_token(environ: Mapping[str, str] | None = None) -> str | None
 def encryption_key(environ: Mapping[str, str] | None = None) -> bytes | None:
     """Return the decoded key of stored credentials that ``sync-api`` uses, or ``None`` when it is unset.
 
-    An empty value counts as unset. Until the Compose files give every ``sync-api`` the variable
-    (spec 027, T054), a start without it serves the credential routes with ``503
+    An empty value counts as unset. A ``sync-api`` process refuses to start without the variable
+    (``serve.build_process_service``), so only an application that a test builds in its own
+    process gets ``None``, and its credential routes answer ``503
     credential-key-not-configured``; a value that is set must follow the rules of
     :func:`credential_settings`.
 

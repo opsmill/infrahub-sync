@@ -7,6 +7,7 @@ every command the tasks run and every URL they call (FR-020, FR-021, FR-022, D-2
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 from contextlib import nullcontext
@@ -228,7 +229,7 @@ def test_dev_api_runs_in_the_foreground_against_the_loopback_publications(
 
     command, kwargs = fake.calls[-1]
     assert command == (
-        f"{sys.executable} -m uvicorn --factory infrahub_sync.service.serve:build_service --host 127.0.0.1 --port 8001"
+        f"{sys.executable} -m uvicorn --factory infrahub_sync.service.serve:build_process_service --host 127.0.0.1 --port 8001"
     )
     assert kwargs["pty"] is True
     assert not kwargs.get("asynchronous")
@@ -238,6 +239,9 @@ def test_dev_api_runs_in_the_foreground_against_the_loopback_publications(
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
     assert environment["PREFECT_API_URL"] == "http://127.0.0.1:4230/api"
     assert environment["INFRAHUB_SYNC_SERVICE_HOST"] == "127.0.0.1"
+    # The Sync API refuses to start without these two; the development stack gives both a value.
+    assert len(base64.b64decode(environment["INFRAHUB_SYNC_ENCRYPTION_KEY"], validate=True)) == 32
+    assert len(environment["INFRAHUB_SYNC_WORKER_TOKEN"]) >= 16
     assert environment["INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"]
     assert environment["INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"] == dev.API_TOKEN
     # The key and the token of the `worker` account are the container's own.

@@ -321,7 +321,8 @@ class _Mutation:
 class CredentialActions:
     """The actions of the stored credential routes, over the product store of a ``RunService``.
 
-    ``cipher`` is ``None`` when ``INFRAHUB_SYNC_ENCRYPTION_KEY`` is not set: the list and the view
+    ``cipher`` is ``None`` when the application was built without ``INFRAHUB_SYNC_ENCRYPTION_KEY``,
+    which only a test does (a Sync API process refuses to start without it): the list and the view
     answer, and every change answers ``503 credential-key-not-configured``.
     """
 

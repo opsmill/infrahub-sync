@@ -168,7 +168,11 @@ STORAGE_READY_SECONDS = 120
 BEARER_TOKEN = "smoke-token-0123456789"  # noqa: S105 -- throwaway credential for the smoke container
 ADMIN_PASSWORD = "smoke-admin-password-7c3e1a"  # noqa: S105 -- throwaway credential for the smoke container
 S3_SECRET_KEY = "smoke-secret-key-8a4f2b"  # noqa: S105 -- throwaway credential for the smoke container
-INJECTED_SECRETS = (BEARER_TOKEN, ADMIN_PASSWORD, STORAGE_PASSWORD, S3_SECRET_KEY)
+# The Sync API refuses to start without these two (spec 027). The key is the base64 text of 32
+# throwaway bytes; it is not the key of any deployment.
+WORKER_TOKEN = "smoke-worker-token-2f6a8c-0123456789"  # noqa: S105 -- throwaway credential for the smoke container
+ENCRYPTION_KEY = "c21va2UtZW5jcnlwdGlvbi1rZXktNGU5YjdkLTAwMDA="
+INJECTED_SECRETS = (BEARER_TOKEN, ADMIN_PASSWORD, STORAGE_PASSWORD, S3_SECRET_KEY, WORKER_TOKEN, ENCRYPTION_KEY)
 API_READY_SECONDS = 60
 
 
@@ -253,6 +257,9 @@ def api_environment(storage_host: str) -> dict[str, str]:
         # The `admin` account: the API does not start without its password.
         "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": ADMIN_PASSWORD,
         "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": BEARER_TOKEN,
+        # The API does not start without the key of stored credentials or the worker token.
+        "INFRAHUB_SYNC_ENCRYPTION_KEY": ENCRYPTION_KEY,
+        "INFRAHUB_SYNC_WORKER_TOKEN": WORKER_TOKEN,
     }
 
 

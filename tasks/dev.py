@@ -188,7 +188,8 @@ DEPS_SMOKE_STACK = "dev-deps"
 DEPS_PROFILES = ("infrahub",)
 # Where `dev.api` listens: loopback only, like every publication of the stack.
 HOST_PROCESS_ADDRESS = "127.0.0.1"
-API_FACTORY = "infrahub_sync.service.serve:build_service"
+# The factory that refuses a start without the encryption key or the worker token, as `main` does.
+API_FACTORY = "infrahub_sync.service.serve:build_process_service"
 DATABASE_URL_VARIABLE = "INFRAHUB_SYNC_DATABASE_URL"
 S3_ENDPOINT_VARIABLE = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 # The bundled store's service, the host name its endpoint names inside the stack.

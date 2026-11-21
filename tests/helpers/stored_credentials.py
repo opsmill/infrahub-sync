@@ -86,6 +86,8 @@ if TYPE_CHECKING:
 # A fixed, public key for tests only: the bytes 0 to 31.
 TEST_ENCRYPTION_KEY = bytes(range(32))
 TEST_ENCRYPTION_KEY_BASE64 = base64.b64encode(TEST_ENCRYPTION_KEY).decode()
+# A fixed, public worker token for tests only.
+TEST_WORKER_TOKEN = "worker-token-for-tests-only-0123456789"  # noqa: S105 - a test value, not a secret.
 # The account identifier that the store records as the author; a test can pass another one.
 TEST_CREDENTIAL_ACTOR = "test-stored-credentials"
 
@@ -106,6 +108,17 @@ class StoredCredentialApiError(RuntimeError):
         super().__init__(f"the Sync API refused to {action} the credential {name!r}: status {status}, code {code!r}")
         self.status = status
         self.code = code
+
+
+def set_process_start_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give a test the two variables that a Sync API process requires at its start.
+
+    ``serve.main`` and ``serve.build_process_service`` refuse to start without
+    ``INFRAHUB_SYNC_ENCRYPTION_KEY`` or ``INFRAHUB_SYNC_WORKER_TOKEN``; a test of another refusal,
+    or of what the process serves, calls this first. The values are public test values.
+    """
+    monkeypatch.setenv("INFRAHUB_SYNC_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY_BASE64)
+    monkeypatch.setenv("INFRAHUB_SYNC_WORKER_TOKEN", TEST_WORKER_TOKEN)
 
 
 def create_stored_credential(
