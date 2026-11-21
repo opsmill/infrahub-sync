@@ -322,6 +322,36 @@ def test_a_run_of_an_older_version_that_started_before_the_deletion_receives_no_
     assert deletion.credentials_used(run_id) == []
 
 
+def test_a_deletion_between_the_check_of_a_run_and_its_start_releases_no_value(
+    deletion: Deletion, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deletion.create_credential()
+    version = deletion.register()
+    deletion.stop_naming(version)
+    deleted: list[int] = []
+
+    async def submit(  # noqa: RUF029 - it replaces an asynchronous method.
+        _self: object, parameters: dict[str, object], *, idempotency_key: str
+    ) -> Submission:
+        # The start of the run takes no lock on the credential: its check passed, and the
+        # deletion commits before the run reaches a worker.
+        del parameters, idempotency_key
+        deleted.append(deletion.delete().status_code)
+        return Submission(flow_run_id="flow-run-after-the-deletion", state="pending")
+
+    monkeypatch.setattr(account_api.Orchestration, "submit", submit)
+
+    run_id, flow_run_id = deletion.claimed_plan(version)
+
+    assert deleted == [204]
+    assert not deletion.exists()
+    # The run was accepted. Its stage is refused when it asks for the values, and none is released.
+    released = _checked(deletion.release(run_id, flow_run_id))
+    assert released.status_code == 422, released.text
+    assert released.json()["error"]["code"] == "credential-not-found"
+    assert deletion.credentials_used(run_id) == []
+
+
 def test_a_credential_created_again_with_the_name_starts_at_revision_1(deletion: Deletion) -> None:
     deletion.create_credential()
     deletion.change_value()
