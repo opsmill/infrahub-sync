@@ -1,67 +1,25 @@
-"""Credential-reference primitives and runtime provider contracts.
+"""Credential primitives of a registered package's runtime, and of its diagnostics.
 
 The checks that read these primitives live in :mod:`infrahub_sync.configuration.validation`,
 which accumulates findings instead of raising at the first defect, and which owns
-``validate_package_credentials`` with them. What stays here is what a credential reference *is*:
-how one is declared, how one is rendered into a diagnostic, and how one is resolved at run time.
-The dependency runs one way — validation reads these primitives and nothing here reads it back.
+``validate_package_credentials`` with them. What stays here is how an adapter selects a
+credential setting at run time, and how a declared key is rendered into a diagnostic. The
+dependency runs one way — validation reads these primitives and nothing here reads it back.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from .models import REDACTED, is_renderable_setting_path, safe_pointer_component
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from .models import ConfigurationPackage, CredentialReference
 
-_ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-# A worker's environment also holds its own infrastructure settings -- storage, database and
-# Prefect credentials among them. A declared package may name only variables in this namespace,
-# which no service setting uses, so a registered reference cannot select one of those.
-ENV_CREDENTIAL_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
-# The credential variables the `sync-worker` service of `docker-compose.yml` passes through,
-# without the prefix and in the file's order: a name for each credential setting of each
-# bundled adapter. `test_conversion_worker_variables.py` fails when the file and this differ.
-COMPOSE_WORKER_CREDENTIAL_SUFFIXES = (
-    "INFRAHUB_API_TOKEN",
-    "CISCO_APIC_USERNAME",
-    "CISCO_APIC_PASSWORD",
-    "REST_API_TOKEN",
-    "REST_API_USERNAME",
-    "REST_API_PASSWORD",
-    "DEVICE42_USERNAME",
-    "DEVICE42_PASSWORD",
-    "LIBRENMS_TOKEN",
-    "OBSERVIUM_USERNAME",
-    "OBSERVIUM_PASSWORD",
-    "PEERINGDB_API_KEY",
-    "SOURCE_INFRAHUB_TOKEN",
-    "IPF_TOKEN",
-    "NAUTOBOT_TOKEN",
-    "NETBOX_TOKEN",
-    "PEERING_MANAGER_TOKEN",
-    "PEERING_MANAGER_USERNAME",
-    "PEERING_MANAGER_PASSWORD",
-    "PROMETHEUS_TOKEN",
-    "PROMETHEUS_USERNAME",
-    "PROMETHEUS_PASSWORD",
-    "SLURPIT_API_KEY",
-    "SLURPIT_TOKEN",
-)
-# The same names with the prefix. Built here so that only this module spells the namespace out
-# (`test_no_service_setting_uses_the_credential_namespace`); nothing reads these variables here.
-COMPOSE_WORKER_CREDENTIAL_VARIABLES: tuple[str, ...] = tuple(
-    f"{ENV_CREDENTIAL_PREFIX}{suffix}" for suffix in COMPOSE_WORKER_CREDENTIAL_SUFFIXES
-)
-_ENV_CREDENTIAL_IDENTIFIER = re.compile(rf"^{ENV_CREDENTIAL_PREFIX}[A-Za-z0-9_]+$")
 _REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
 
 
@@ -193,57 +151,3 @@ def _render_setting_name_list(names: Iterable[str], secrets: Sequence[str] = ())
     rendered = json.dumps(listed, ensure_ascii=True)
     omitted = len(escaped_names) - len(listed)
     return f"{rendered} and {omitted} more" if omitted else rendered
-
-
-class CredentialProvider(Protocol):
-    """Resolve one non-secret identifier inside a worker-owned runtime."""
-
-    def resolve(self, identifier: str) -> str:
-        """Return the non-empty credential value or raise a safe error."""
-
-
-class EnvironmentCredentialProvider:
-    """Resolve credentials from exact environment-variable identifiers in the credential namespace."""
-
-    def __init__(self, environment: Mapping[str, str] | None = None) -> None:
-        self._environment = os.environ if environment is None else environment
-
-    def resolve(self, identifier: str) -> str:
-        """Return a non-empty environment value without including it in errors."""
-        if _ENV_IDENTIFIER.fullmatch(identifier) is None:
-            msg = f"environment credential identifier {identifier!r} is invalid"
-            raise CredentialConfigurationError(msg)
-        if _ENV_CREDENTIAL_IDENTIFIER.fullmatch(identifier) is None:
-            msg = (
-                f"environment credential identifier {identifier!r} must start with "
-                f"{ENV_CREDENTIAL_PREFIX!r} followed by a name"
-            )
-            raise CredentialConfigurationError(msg)
-        value = self._environment.get(identifier)
-        if value is None or not value:
-            msg = f"environment credential {identifier!r} is missing or empty"
-            raise CredentialConfigurationError(msg)
-        return value
-
-
-def provider_for(reference: CredentialReference, *, environment: Mapping[str, str] | None = None) -> CredentialProvider:
-    """Return the shipped provider for a declared reference."""
-    if reference.provider == "env":
-        return EnvironmentCredentialProvider(environment)
-    msg = f"credential provider {reference.provider!r} is not installed"
-    raise CredentialConfigurationError(msg)
-
-
-def resolve_reference(
-    package: ConfigurationPackage,
-    reference_name: str,
-    *,
-    environment: Mapping[str, str] | None = None,
-) -> str:
-    """Resolve one named reference without mutating the declared package."""
-    try:
-        reference = package.credentials[reference_name]
-    except KeyError:
-        msg = f"credential reference {reference_name!r} is not declared"
-        raise CredentialConfigurationError(msg) from None
-    return provider_for(reference, environment=environment).resolve(reference.identifier)

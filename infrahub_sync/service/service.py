@@ -31,7 +31,6 @@ from infrahub_sync.configuration.credential_admission import (
 )
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
-from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.execution import LiveSecretValues, collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -555,14 +554,6 @@ class RunService:
             raise self._error(503, "configuration-version-invalid", "the registered configuration version is invalid")
         if package.configuration.store is not None:
             raise self._error(422, UNSUPPORTED_STORE_REASON, UNSUPPORTED_STORE_MESSAGE)
-        for name, reference in package.credentials.items():
-            if (finding := credential_namespace_finding(name, reference, secrets=self._secrets)) is not None:
-                raise self._error(
-                    422,
-                    finding.code,
-                    f"{finding.message}; register a new version with prefixed identifiers "
-                    "and recreate saved plans against it",
-                )
         refused = self._stored_credential_refusal(package, stage)
         if refused is not None:
             raise self._error(422, refused.code, refused.message, details=refused.details())

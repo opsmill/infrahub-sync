@@ -44,7 +44,6 @@ from .conversion_credentials import (
     check_origin_variable,
     credential_name,
 )
-from .credentials import COMPOSE_WORKER_CREDENTIAL_VARIABLES as _COMPOSE_WORKER_CREDENTIAL_VARIABLES
 from .models import CREDENTIAL_NAME_PATTERN, ConfigurationPackageParseError, parse_configuration_package
 from .validation import collect_findings
 
@@ -131,12 +130,6 @@ For ``genericrestapi`` and ``peeringmanager`` the names are v2's defaults; a fil
 ``*_env_vars`` settings never extend this table (spec FR-030).
 """
 
-
-# Kept until the Compose files stop passing credential variables to the worker (spec 027 T053):
-# ``test_conversion_worker_variables`` checks ``docker-compose.yml`` against this name. The
-# conversion itself does not use it.
-COMPOSE_WORKER_CREDENTIAL_VARIABLES: tuple[str, ...] = _COMPOSE_WORKER_CREDENTIAL_VARIABLES
-"""The credential variables the ``sync-worker`` service of ``docker-compose.yml`` passes through."""
 
 _CREDENTIAL_NAME = re.compile(CREDENTIAL_NAME_PATTERN)
 

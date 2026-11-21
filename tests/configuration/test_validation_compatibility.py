@@ -6,7 +6,7 @@ raise-first checks with finding producers, and the wrapper reproduces the messag
 the finding the shipped code would have raised first — the **execution-order** element, not the
 sort-order one. A drift in either the messages or the check order moves an assertion here.
 
-Each of the eighteen shipped pins carries one defect, so none of them can see the order two
+Each of the twelve shipped pins carries one defect, so none of them can see the order two
 *different* checks run in. ``CROSS_CHECK_REFUSALS`` covers that separately: each of its packages
 carries two defects that different checks report, so reordering those checks changes which
 message the wrapper raises and the pin moves.
@@ -20,18 +20,10 @@ import pytest
 
 from infrahub_sync.configuration import CredentialConfigurationError, validate_package_credentials
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
-from tests.configuration.validation_packages import credential_package_data, package, package_data
+from tests.configuration.validation_packages import credential_package_data, package
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-
-def _unknown_provider(data: dict[str, Any]) -> None:
-    data["credentials"]["netbox-token"]["provider"] = "vault"
-
-
-def _invalid_identifier(data: dict[str, Any]) -> None:
-    data["credentials"]["netbox-token"]["identifier"] = "INVALID-NAME"
 
 
 def _undeclared_store_type(data: dict[str, Any]) -> None:
@@ -42,17 +34,8 @@ def _undeclared_store_setting(data: dict[str, Any]) -> None:
     data["configuration"]["store"] = {"type": "redis", "settings": {"host": "localhost", "bogus": 1}}
 
 
-def _store_names_unknown_reference(data: dict[str, Any]) -> None:
-    data["configuration"]["store"] = {"type": "redis", "settings": {"password": {"$credential": "nope"}}}
-
-
 def _store_carries_inline_value(data: dict[str, Any]) -> None:
     data["configuration"]["store"] = {"type": "redis", "settings": {"password": "declared-in-line"}}
-
-
-def _store_carries_malformed_reference(data: dict[str, Any]) -> None:
-    node = {"$credential": "netbox-token", "fallback": "declared-in-line"}
-    data["configuration"]["store"] = {"type": "redis", "settings": {"password": node}}
 
 
 def _unknown_adapter(data: dict[str, Any]) -> None:
@@ -65,10 +48,6 @@ def _role_mismatch(data: dict[str, Any]) -> None:
 
 def _undeclared_adapter_setting(data: dict[str, Any]) -> None:
     data["configuration"]["source"]["settings"]["bogus"] = 1
-
-
-def _adapter_names_unknown_reference(data: dict[str, Any]) -> None:
-    data["configuration"]["source"]["settings"]["token"] = {"$credential": "nope"}
 
 
 def _adapter_carries_inline_value(data: dict[str, Any]) -> None:
@@ -97,26 +76,12 @@ def _endpoint_is_not_relative(data: dict[str, Any]) -> None:
     }
 
 
-def _reference_outside_declared_paths(data: dict[str, Any]) -> None:
-    data["configuration"]["source"]["settings"]["verify_ssl"] = {"$credential": "netbox-token"}
-
-
 def _adapter_validator_refuses(data: dict[str, Any]) -> None:
     data["configuration"]["source"] = {"name": "genericrestapi", "settings": {"url": "https://api.example"}}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "https://evil.example/devices"}]
 
 
 SHIPPED_REFUSALS: tuple[tuple[str, Callable[[dict[str, Any]], None], str], ...] = (
-    (
-        "unknown-credential-provider",
-        _unknown_provider,
-        "credential reference 'netbox-token' uses provider 'vault', which is not installed",
-    ),
-    (
-        "malformed-credential-reference-declaration",
-        _invalid_identifier,
-        "credential reference 'netbox-token' has an invalid environment identifier",
-    ),
     (
         "missing-store-capabilities",
         _undeclared_store_type,
@@ -129,18 +94,8 @@ SHIPPED_REFUSALS: tuple[tuple[str, Callable[[dict[str, Any]], None], str], ...] 
         UNSUPPORTED_STORE_MESSAGE,
     ),
     (
-        "unknown-credential-reference-store",
-        _store_names_unknown_reference,
-        UNSUPPORTED_STORE_MESSAGE,
-    ),
-    (
         "inline-credential-value-store",
         _store_carries_inline_value,
-        UNSUPPORTED_STORE_MESSAGE,
-    ),
-    (
-        "malformed-credential-reference-store",
-        _store_carries_malformed_reference,
         UNSUPPORTED_STORE_MESSAGE,
     ),
     (
@@ -157,11 +112,6 @@ SHIPPED_REFUSALS: tuple[tuple[str, Callable[[dict[str, Any]], None], str], ...] 
         "undeclared-setting-adapter",
         _undeclared_adapter_setting,
         "adapter 'netbox' contains unsupported declared settings for the source role: [\"bogus\"]",
-    ),
-    (
-        "unknown-credential-reference-adapter",
-        _adapter_names_unknown_reference,
-        "/configuration/source/settings/token names unknown credential reference 'nope'",
     ),
     (
         "inline-credential-value-adapter",
@@ -189,11 +139,6 @@ SHIPPED_REFUSALS: tuple[tuple[str, Callable[[dict[str, Any]], None], str], ...] 
         "/configuration/source/settings/api_endpoint must be a relative request path without a scheme or authority",
     ),
     (
-        "credential-path-not-declared",
-        _reference_outside_declared_paths,
-        "/configuration/source/settings/verify_ssl is not a credential-bearing setting",
-    ),
-    (
         "adapter-validator-finding",
         _adapter_validator_refuses,
         "/configuration/schema_mapping/0/mapping: genericrestapi schema mapping endpoints must be "
@@ -202,9 +147,9 @@ SHIPPED_REFUSALS: tuple[tuple[str, Callable[[dict[str, Any]], None], str], ...] 
 )
 
 
-def _unknown_provider_and_undeclared_store_type(data: dict[str, Any]) -> None:
-    _unknown_provider(data)
+def _undeclared_store_type_and_undeclared_adapter_setting(data: dict[str, Any]) -> None:
     _undeclared_store_type(data)
+    _undeclared_adapter_setting(data)
 
 
 def _validator_refusal_and_inline_adapter_token(data: dict[str, Any]) -> None:
@@ -215,14 +160,14 @@ def _validator_refusal_and_inline_adapter_token(data: dict[str, Any]) -> None:
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "https://evil.example/devices"}]
 
 
-# Two defects, reported by two different checks, in one package. Both messages were re-observed
-# by executing c767067; each pin names the check that has to keep running first.
+# Two defects, reported by two different checks, in one package. Each pin names the check that
+# has to keep running first.
 CROSS_CHECK_REFUSALS: tuple[tuple[str, Callable[[dict[str, Any]], None], str], ...] = (
     (
-        # The credential declarations run before the store surface.
-        "credential-declarations-before-store",
-        _unknown_provider_and_undeclared_store_type,
-        "credential reference 'netbox-token' uses provider 'vault', which is not installed",
+        # The store surface runs before the adapter roles.
+        "store-before-adapter-roles",
+        _undeclared_store_type_and_undeclared_adapter_setting,
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         # Inside one adapter role, the adapter-owned validator runs before the credential paths.
@@ -250,25 +195,9 @@ def test_the_order_two_checks_run_in_decides_the_shipped_message(
     assert str(caught.value) == expected
 
 
-# The mutations whose defect is in the `credentials` block or in a `$credential` reference. They
-# start from the package in that format; every other mutation starts from the package whose
-# blocks name stored credentials.
-_REFERENCE_FORMAT_MUTATIONS: frozenset[Callable[[dict[str, Any]], None]] = frozenset(
-    {
-        _unknown_provider,
-        _invalid_identifier,
-        _store_names_unknown_reference,
-        _store_carries_malformed_reference,
-        _adapter_names_unknown_reference,
-        _reference_outside_declared_paths,
-        _unknown_provider_and_undeclared_store_type,
-    }
-)
-
-
 def mutated_package_data(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
-    """Return the valid package in the format that `mutate` changes, with its defect."""
-    data = package_data() if mutate in _REFERENCE_FORMAT_MUTATIONS else credential_package_data()
+    """Return the valid package with the defect that `mutate` adds."""
+    data = credential_package_data()
     mutate(data)
     return data
 
@@ -328,55 +257,13 @@ def test_the_wrapper_raises_the_first_error_even_when_warnings_precede_it() -> N
 def test_a_legacy_defect_keeps_its_shipped_message_when_warnings_are_also_declared() -> None:
     # The warning families run after the shipped execution order, so a package carrying a
     # legacy defect raises the same message it raised before omissions existed.
-    data = package_data()
-    data["credentials"]["netbox-token"]["provider"] = "vault"
+    data = credential_package_data()
+    _undeclared_adapter_setting(data)
     data["omissions"] = [{"kind": "InfraDevice"}]
 
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package(data))
 
-    assert str(caught.value) == "credential reference 'netbox-token' uses provider 'vault', which is not installed"
-
-
-def _two_defective_declarations(first_name: str, second_name: str) -> dict[str, Any]:
-    data = package_data()
-    declarations = {
-        "zeta": {"provider": "vault", "identifier": "INFRAHUB_SYNC_CREDENTIAL_ZETA_TOKEN"},
-        "alpha": {"provider": "env", "identifier": "ALPHA-TOKEN"},
-    }
-    data["credentials"] = {
-        **data["credentials"],
-        first_name: declarations[first_name],
-        second_name: declarations[second_name],
-    }
-    return data
-
-
-@pytest.mark.parametrize(
-    ("first_name", "second_name", "expected"),
-    [
-        pytest.param(
-            "zeta",
-            "alpha",
-            "credential reference 'zeta' uses provider 'vault', which is not installed",
-            id="zeta-declared-first",
-        ),
-        pytest.param(
-            "alpha",
-            "zeta",
-            "credential reference 'alpha' has an invalid environment identifier",
-            id="alpha-declared-first",
-        ),
-    ],
-)
-def test_declaration_order_decides_which_defect_is_reported_first(
-    first_name: str,
-    second_name: str,
-    expected: str,
-) -> None:
-    # Two defects inside one check: the eighteen single-defect pins cannot see iteration order,
-    # and sorting the declarations would silently change the message for one of these packages.
-    with pytest.raises(CredentialConfigurationError) as caught:
-        validate_package_credentials(package(_two_defective_declarations(first_name, second_name)))
-
-    assert str(caught.value) == expected
+    assert str(caught.value) == (
+        "adapter 'netbox' contains unsupported declared settings for the source role: [\"bogus\"]"
+    )

@@ -38,8 +38,8 @@ from infrahub_sync import (
 )
 from infrahub_sync.plan.canonical import canonical_json_bytes
 
-_REFERENCE_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
-_PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,63}$"
+from .removed_credential_format import REMOVED_CREDENTIAL_FORMAT_FAILURES, removed_credential_format_failures
+
 CREDENTIAL_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,62}$"
 """The name of a stored credential: lower case, a letter first, at most 63 characters.
 
@@ -84,6 +84,7 @@ _UNSUPPORTED_ADAPTER_SPEC_ERROR = "unsupported_adapter_spec"
 _INVALID_TRANSFORM_EXPRESSION_ERROR = "invalid_transform_expression"
 _CREDENTIAL_SETTING_WITH_NAMED_CREDENTIAL_ERROR = "credential_setting_with_named_credential"
 _CREDENTIAL_SETTING_WITH_NAMED_CREDENTIAL_REASON = "credential setting refused because the block names a credential"
+_REMOVED_CREDENTIAL_FORMAT_ERROR = "removed_credential_format"
 # An installed source adapter is one Python import target: dot-separated identifiers,
 # optionally naming a class after a colon. Every filesystem form a plugin loader would
 # otherwise accept fails this by construction — a path separator, a leading "." or "~",
@@ -138,6 +139,14 @@ _POINTER_CHARACTER_ESCAPES = {
 
 class ConfigurationPackageParseError(ValueError):
     """A declared package failed validation at a secret-safe public boundary."""
+
+
+class RemovedCredentialFormatError(ConfigurationPackageParseError):
+    """A declared package uses the removed `credentials` block or `$credential` references.
+
+    A version that was stored before the removal raises it too, when its stored content is
+    parsed. The message is fixed text: it names `credential: <name>` and nothing of the package.
+    """
 
 
 def is_renderable_setting_path(path: str) -> bool:
@@ -342,6 +351,17 @@ def _require_json_native(
             _require_json_native(item, location=item_location, _containers=containers, _depth=_depth + 1)
         return
     _raise_invalid_json_value(location=location, reason="non-JSON value")
+
+
+def _refuse_removed_credential_format(value: object) -> None:
+    """Refuse the removed credential format before any other check of the package."""
+    failures = removed_credential_format_failures(value)
+    if failures:
+        raise PydanticCustomError(
+            _REMOVED_CREDENTIAL_FORMAT_ERROR,
+            "the package uses the removed credential format",
+            {"parts": tuple(location for location, _reason in failures)},
+        )
 
 
 def _freeze_json(value: Any) -> Any:
@@ -552,26 +572,6 @@ class _ImmutableSyncConfig(SyncConfig):
         return [item.name if isinstance(item, DiffSyncFlags) else item for item in value]
 
 
-class CredentialReference(BaseModel):
-    """Non-secret pointer to a runtime credential provider entry."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    provider: str = Field(pattern=_PROVIDER_NAME_PATTERN)
-    identifier: str = Field(min_length=1, max_length=256)
-
-
-CredentialReferenceName = Annotated[str, StringConstraints(pattern=_REFERENCE_NAME_PATTERN)]
-
-
-class CredentialReferenceNode(BaseModel):
-    """Exact reference node accepted at a credential-bearing setting path."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
-
-    reference_name: str = Field(alias="$credential", pattern=_REFERENCE_NAME_PATTERN)
-
-
 class ConfigurationPackageMetadata(BaseModel):
     """Behavior-affecting metadata included in declared package identity."""
 
@@ -644,9 +644,6 @@ class ConfigurationPackage(BaseModel):
     format_version: Literal[1] = 1
     configuration: _ImmutableSyncConfig
     package_metadata: ConfigurationPackageMetadata = Field(default_factory=ConfigurationPackageMetadata)
-    credentials: Mapping[CredentialReferenceName, CredentialReference] = Field(
-        default_factory=dict, validate_default=True
-    )
     # Always serialized, the empty tuple included: omissions change the validation report a
     # version produces, so they sit inside declared identity, and serializing the empty
     # declaration keeps absent and empty from being two different byte streams.
@@ -656,6 +653,7 @@ class ConfigurationPackage(BaseModel):
     @classmethod
     def _require_strict_json_input(cls, value: Any) -> Any:
         _require_json_native(value)
+        _refuse_removed_credential_format(value)
         return value
 
     @field_validator("configuration", mode="before")
@@ -663,18 +661,6 @@ class ConfigurationPackage(BaseModel):
     def _reject_ignored_configuration_fields(cls, value: Any) -> Any:
         _require_strict_configuration(value)
         return value
-
-    @field_validator("credentials")
-    @classmethod
-    def _freeze_credentials(
-        cls, value: Mapping[CredentialReferenceName, CredentialReference]
-    ) -> Mapping[CredentialReferenceName, CredentialReference]:
-        """Freeze credentials after Pydantic validates every key and value."""
-        return MappingProxyType(dict(value))
-
-    @field_serializer("credentials")
-    def _serialize_credentials(self, value: Mapping[str, CredentialReference]) -> dict[str, CredentialReference]:
-        return dict(value)
 
     @field_serializer("omissions")
     def _serialize_omissions(self, value: tuple[_OmissionDeclaration, ...]) -> list[_OmissionDeclaration]:
@@ -779,46 +765,6 @@ def _safe_context_string(value: object) -> str | None:
     return value
 
 
-def _credential_key_failure(error_type: str, raw_location: object) -> tuple[str, str] | None:
-    """Normalize Pydantic's versioned constrained-mapping-key location marker."""
-    if error_type != "string_pattern_mismatch" or type(raw_location) is not tuple:  # pylint: disable=unidiomatic-typecheck
-        return None
-    if len(raw_location) != 3:
-        return None
-    container, name, marker = raw_location
-    if not (
-        type(container) is str  # pylint: disable=unidiomatic-typecheck
-        and container == "credentials"
-        and type(name) is str  # pylint: disable=unidiomatic-typecheck
-        and type(marker) is str  # pylint: disable=unidiomatic-typecheck
-        and marker == "[key]"
-    ):
-        return None
-    location = "/credentials"
-    if len(name) <= _MAX_LOCATION_STRING_LENGTH:
-        location = f"{location}/{safe_pointer_component(name)}"
-    return location, "invalid credential reference name"
-
-
-def _is_oversized_credential_location(raw_location: object) -> bool:
-    """Recognize child errors whose constrained credential key exceeds the display bound."""
-    if type(raw_location) is not tuple or not 2 <= len(raw_location) <= _MAX_LOCATION_MEMBERS:  # pylint: disable=unidiomatic-typecheck
-        return False
-    container, name, *children = raw_location
-    if not (
-        type(container) is str  # pylint: disable=unidiomatic-typecheck
-        and container == "credentials"
-        and type(name) is str  # pylint: disable=unidiomatic-typecheck
-        and len(name) > _MAX_LOCATION_STRING_LENGTH
-    ):
-        return False
-    return all(
-        (type(child) is str and len(child) <= _MAX_LOCATION_STRING_LENGTH)  # pylint: disable=unidiomatic-typecheck
-        or (type(child) is int and 0 <= child <= _MAX_CONTEXT_INTEGER)  # pylint: disable=unidiomatic-typecheck
-        for child in children
-    )
-
-
 def _validation_record_header(
     record: object,
 ) -> tuple[dict[object, object], str, object, str, bool] | None:
@@ -906,6 +852,24 @@ def _decode_diffsync_failure(record: dict[object, object], location: str) -> tup
     return ((location, "invalid diffsync flag name"),)
 
 
+def _decode_removed_credential_format_failure(
+    record: dict[object, object], location: str
+) -> tuple[tuple[str, str], ...]:
+    """Decode the parts of the removed credential format into their fixed failures."""
+    context = _closed_context(record)
+    parts = None if context is None else context.get("parts")
+    known = {failure[0]: failure for failure in REMOVED_CREDENTIAL_FORMAT_FAILURES}
+    # pylint: disable=unidiomatic-typecheck  # Exact types only: a subclass would run its own `__hash__`.
+    if (
+        type(parts) is not tuple
+        or not 1 <= len(parts) <= len(known)
+        or any(type(part) is not str or part not in known for part in parts)
+    ):
+        return ((location, "invalid value"),)
+    # pylint: enable=unidiomatic-typecheck
+    return tuple(known[cast("str", part)] for part in parts)
+
+
 def _decode_adapter_spec_failure(record: dict[object, object], location: str) -> tuple[tuple[str, str], ...]:
     """Decode one closed unsupported-adapter-specification custom error context."""
     context = _closed_context(record)
@@ -924,6 +888,7 @@ _CUSTOM_FAILURE_DECODERS: dict[str, _CustomFailureDecoder] = {
     _INVALID_DIFFSYNC_FLAG_NAME_ERROR: _decode_diffsync_failure,
     _UNSUPPORTED_ADAPTER_SPEC_ERROR: _decode_adapter_spec_failure,
     _CREDENTIAL_SETTING_WITH_NAMED_CREDENTIAL_ERROR: _decode_credential_setting_failures,
+    _REMOVED_CREDENTIAL_FORMAT_ERROR: _decode_removed_credential_format_failure,
 }
 
 
@@ -932,14 +897,8 @@ def _decode_validation_record(record: object) -> tuple[tuple[str, str], ...]:
     header = _validation_record_header(record)
     if header is None:
         return (("/", "invalid value"),)
-    safe_record, error_type, raw_location, location, valid_location = header
+    safe_record, error_type, _raw_location, location, valid_location = header
 
-    credential_failure = _credential_key_failure(error_type, raw_location)
-    if credential_failure is not None:
-        return (credential_failure,)
-    if not valid_location and _is_oversized_credential_location(raw_location):
-        location = "/credentials"
-        valid_location = True
     if not valid_location:
         return ((location, "invalid value"),)
 
@@ -967,8 +926,25 @@ def _configuration_package_parse_error(
     failures: Sequence[tuple[str, str]],
 ) -> ConfigurationPackageParseError:
     """Format one public parse error from value-free failure details."""
+    return ConfigurationPackageParseError(_parse_error_message(failures))
+
+
+def _parse_error_message(failures: Sequence[tuple[str, str]]) -> str:
+    """Write the message of a parse error from value-free failure details."""
     details = "; ".join(f"{location}: {reason}" for location, reason in failures)
-    return ConfigurationPackageParseError(f"configuration package is invalid at {details}")
+    return f"configuration package is invalid at {details}"
+
+
+def _is_removed_credential_format(errors: object) -> bool:
+    """Whether the one validation error is the refusal of the removed credential format."""
+    if type(errors) is not list or len(errors) != 1:  # pylint: disable=unidiomatic-typecheck
+        return False
+    record = errors[0]
+    if type(record) is not dict:  # pylint: disable=unidiomatic-typecheck
+        return False
+    error_type = cast("dict[object, object]", record).get("type")
+    # An exact string only: comparing a string subclass would run its own `__eq__`.
+    return type(error_type) is str and error_type == _REMOVED_CREDENTIAL_FORMAT_ERROR  # pylint: disable=unidiomatic-typecheck
 
 
 def parse_configuration_package(value: object) -> ConfigurationPackage:
@@ -982,6 +958,8 @@ def parse_configuration_package(value: object) -> ConfigurationPackage:
         if exc.error_count() <= _MAX_VALIDATION_ERRORS:
             validation_errors = exc.errors(include_input=False, include_context=True, include_url=False)
     failures = _decode_validation_errors(validation_errors)
+    if _is_removed_credential_format(validation_errors):
+        raise RemovedCredentialFormatError(_parse_error_message(failures))
     raise _configuration_package_parse_error(failures)
 
 

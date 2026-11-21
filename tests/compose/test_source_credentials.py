@@ -2,8 +2,8 @@
 
 The bundled NetBox and Nautobot adapters are the first source adapters whose SDK
 the image installs, so this suite proves the thing that installation is for: a
-registered package's declared credential reference reaches the real adapter
-client, and nothing ambient does.
+registered package's stored credential, as the Sync API releases it to a run,
+reaches the real adapter client, and nothing ambient does.
 
 Two boundaries, deliberately separate.
 
@@ -85,6 +85,7 @@ class Source:
     reference: str
     identifier: str
     ambient_url_names: tuple[str, ...]
+    ambient_token_name: str
     mapping: str
 
 
@@ -97,6 +98,7 @@ SOURCES = {
             reference="netbox-token",
             identifier="INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
             ambient_url_names=("NETBOX_ADDRESS", "NETBOX_URL"),
+            ambient_token_name="NETBOX_TOKEN",  # noqa: S106 - the name of a variable, not a value
             mapping="extras.tags",
         ),
         Source(
@@ -105,6 +107,7 @@ SOURCES = {
             reference="nautobot-token",
             identifier="INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
             ambient_url_names=("NAUTOBOT_ADDRESS", "NAUTOBOT_URL"),
+            ambient_token_name="NAUTOBOT_TOKEN",  # noqa: S106 - the name of a variable, not a value
             mapping="extras.tags",
         ),
     )
@@ -130,8 +133,8 @@ MANAGED_ENVIRONMENT = (
 def package_content(source: str) -> dict[str, Any]:
     """One minimal single-kind package declaring `source` against Infrahub.
 
-    Sanitized and illustrative. It is the smallest package that carries a source
-    credential reference, which is the only property this file reads from it.
+    Sanitized and illustrative. It is the smallest package whose source names a
+    stored credential, which is the only property this file reads from it.
     """
     profile = SOURCES[source]
     return {
@@ -140,17 +143,13 @@ def package_content(source: str) -> dict[str, Any]:
             "name": f"pkg-r1-{source}",
             "source": {
                 "name": source,
-                "settings": {
-                    "url": profile.url,
-                    "token": {"$credential": profile.reference},
-                },
+                "credential": profile.reference,
+                "settings": {"url": profile.url},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": "http://infrahub.example.net:8000",
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": "infrahub-token",
+                "settings": {"url": "http://infrahub.example.net:8000"},
             },
             "schema_mapping": [
                 {
@@ -160,10 +159,6 @@ def package_content(source: str) -> dict[str, Any]:
                     "fields": [{"name": "name", "mapping": "name"}],
                 }
             ],
-        },
-        "credentials": {
-            profile.reference: {"provider": "env", "identifier": profile.identifier},
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
         },
     }
 
@@ -193,13 +188,27 @@ def deny_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket, "create_connection", refuse)
 
 
-def runtime_instance(source: str, *, resolve_source_credentials: bool = True) -> SyncInstance:
-    """Parse and resolve one package exactly as a registered worker run does."""
+RELEASED_SOURCE = {"token": DECLARED_SOURCE_TOKEN}
+RELEASED_DESTINATION = {"token": DECLARED_DESTINATION_TOKEN}
+
+
+def runtime_instance(
+    source: str,
+    *,
+    resolve_source_credentials: bool = True,
+    released: Mapping[str, Mapping[str, str]] | None = None,
+) -> SyncInstance:
+    """Parse and resolve one package exactly as a registered worker run does.
+
+    ``released`` holds, for each block, the fields the Sync API released to the run. The default
+    is the values of both blocks.
+    """
     package = parse_configuration_package(package_content(source))
     return resolve_runtime_instance(
         package,
         directory="/nonexistent/pkg-r1",
         resolve_source_credentials=resolve_source_credentials,
+        released={"source": RELEASED_SOURCE, "destination": RELEASED_DESTINATION} if released is None else released,
     )
 
 
@@ -212,104 +221,96 @@ def runtime_instance(source: str, *, resolve_source_credentials: bool = True) ->
 def test_an_absent_selected_source_token_is_refused(source: str) -> None:
     """A run that needs a source credential does not start without one."""
     with pytest.raises(CredentialConfigurationError) as raised:
-        runtime_instance(source)
+        runtime_instance(source, released={"destination": RELEASED_DESTINATION})
 
-    assert SOURCES[source].identifier in str(raised.value)
-
-
-@pytest.mark.parametrize("source", sorted(SOURCES))
-def test_an_empty_selected_source_token_is_refused(source: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An empty value is an unset one; a blank operator entry must not start a run."""
-    monkeypatch.setenv(SOURCES[source].identifier, "")
-
-    with pytest.raises(CredentialConfigurationError) as raised:
-        runtime_instance(source)
-
-    assert SOURCES[source].identifier in str(raised.value)
+    assert "source block" in str(raised.value)
 
 
 @pytest.mark.parametrize("source", sorted(SOURCES))
-def test_a_refusal_names_the_environment_identifier_and_never_the_value(
-    source: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The diagnosis an operator needs is the name; the value must not be in it."""
-    profile = SOURCES[source]
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
-
+def test_an_empty_selected_source_token_is_refused(source: str) -> None:
+    """An empty value is an unset one; a blank released field must not start a run."""
     with pytest.raises(CredentialConfigurationError) as raised:
-        runtime_instance(source)
+        runtime_instance(source, released={"source": {"token": ""}, "destination": RELEASED_DESTINATION})
+
+    assert "source block" in str(raised.value)
+    assert "token" in str(raised.value)
+
+
+@pytest.mark.parametrize("source", sorted(SOURCES))
+def test_a_refusal_names_the_block_and_never_a_value(source: str) -> None:
+    """The diagnosis an operator needs is the block; no released value must be in it."""
+    with pytest.raises(CredentialConfigurationError) as raised:
+        runtime_instance(source, released={"destination": RELEASED_DESTINATION})
 
     rendered = str(raised.value)
-    assert profile.identifier in rendered
-    assert DECLARED_DESTINATION_TOKEN not in rendered
+    value_shown = DECLARED_DESTINATION_TOKEN in rendered
+    assert "source block" in rendered
+    assert not value_shown
 
 
 @pytest.mark.parametrize("source", sorted(SOURCES))
-def test_the_source_a_package_does_not_select_may_be_absent(source: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """One deployment serves packages of both kinds; only the selected token is needed."""
-    monkeypatch.setenv(SOURCES[source].identifier, DECLARED_SOURCE_TOKEN)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
-
+def test_the_source_a_package_does_not_select_may_be_absent(source: str) -> None:
+    """One deployment serves packages of both kinds; only the credential the package names is needed."""
     instance = runtime_instance(source)
 
-    other = next(name for name in SOURCES if name != source)
-    assert SOURCES[other].identifier not in dict(instance.source.settings or {})
-    assert (instance.source.settings or {})["token"] == DECLARED_SOURCE_TOKEN
+    token_is_released = (instance.source.settings or {})["token"] == DECLARED_SOURCE_TOKEN
+    assert token_is_released
 
 
 @pytest.mark.parametrize("source", sorted(SOURCES))
 def test_declared_validation_resolves_no_source_credential(source: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Registration judges declared content, so it must not reach for the secret.
 
-    Finding nothing wrong would also be true of a validation that resolved the
-    credential and happened to succeed, so the resolver itself is made to fail
-    the case if it is called at all.
+    Finding nothing wrong would also be true of a validation that filled the
+    credential and happened to succeed, so the function that fills released
+    values is made to fail the case if it is called at all.
     """
 
-    def refuse(*_args: object, **_kwargs: object) -> str:
-        message = "declared validation resolved a credential reference"
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        message = "declared validation filled a credential setting"
         raise AssertionError(message)
 
-    monkeypatch.setattr("infrahub_sync.configuration.validation.resolve_reference", refuse, raising=False)
-    monkeypatch.setattr("infrahub_sync.configuration.credentials.resolve_reference", refuse)
+    monkeypatch.setattr("infrahub_sync.configuration.runtime._fill_released_values", refuse)
     package = parse_configuration_package(package_content(source))
 
     assert collect_findings(package) == ()
 
 
 @pytest.mark.parametrize("source", sorted(SOURCES))
-def test_a_saved_plan_apply_needs_no_source_token(source: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_saved_plan_apply_needs_no_source_token(source: str) -> None:
     """An apply host constructs the destination only, so it holds no source secret."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
+    instance = runtime_instance(
+        source, resolve_source_credentials=False, released={"destination": RELEASED_DESTINATION}
+    )
 
-    instance = runtime_instance(source, resolve_source_credentials=False)
-
-    assert (instance.source.settings or {})["token"] == {"$credential": SOURCES[source].reference}
-    assert (instance.destination.settings or {})["token"] == DECLARED_DESTINATION_TOKEN
+    destination_token_is_released = (instance.destination.settings or {})["token"] == DECLARED_DESTINATION_TOKEN
+    assert "token" not in (instance.source.settings or {})
+    assert destination_token_is_released
 
 
 @pytest.mark.parametrize("source", sorted(SOURCES))
 def test_the_registered_url_and_token_beat_a_conflicting_ambient_pair(
     source: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A registered run reads its declared settings; the shell has no vote.
+    """A registered run reads its declared settings and its released values; the shell has no vote.
 
-    Both halves matter. An ambient URL that won would send a declared credential
+    Both halves matter. An ambient URL that won would send a stored credential
     somewhere the package never named, and an ambient token that won would send
-    a credential the operator did not register.
+    a credential the operator did not store.
     """
     profile = SOURCES[source]
-    monkeypatch.setenv(profile.identifier, DECLARED_SOURCE_TOKEN)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
     instance = runtime_instance(source)
     settings = instance.source.settings or {}
 
     for name in profile.ambient_url_names:
         monkeypatch.setenv(name, AMBIENT_URL)
-    monkeypatch.setenv(profile.identifier, AMBIENT_SOURCE_TOKEN)
+    monkeypatch.setenv(profile.ambient_token_name, AMBIENT_SOURCE_TOKEN)
 
+    token_is_released = (
+        select_runtime_credential(settings, "token", (profile.ambient_token_name,)) == DECLARED_SOURCE_TOKEN
+    )
     assert select_runtime_credential(settings, "url", profile.ambient_url_names) == profile.url
-    assert select_runtime_credential(settings, "token", (profile.identifier,)) == DECLARED_SOURCE_TOKEN
+    assert token_is_released
 
 
 # ---------------------------------------------------------------------------
@@ -332,8 +333,6 @@ def test_the_netbox_adapter_client_carries_the_registered_credential(
     del deny_network
     from infrahub_sync.adapters.netbox import NetboxAdapter
 
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", DECLARED_SOURCE_TOKEN)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
     instance = runtime_instance("netbox")
     for name in SOURCES["netbox"].ambient_url_names:
         monkeypatch.setenv(name, AMBIENT_URL)
@@ -386,8 +385,6 @@ def test_the_nautobot_adapter_client_carries_the_registered_credential(
         return answer
 
     monkeypatch.setattr(requests.Session, "get", version_only_get)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN", DECLARED_SOURCE_TOKEN)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
     instance = runtime_instance("nautobot")
     for name in SOURCES["nautobot"].ambient_url_names:
         monkeypatch.setenv(name, AMBIENT_URL)

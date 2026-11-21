@@ -234,13 +234,12 @@ def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tup
     """Resolve the declared destination settings one schema read needs.
 
     Returns the declared url and the SDK configuration built from the declared settings,
-    refusing — as :class:`DestinationSchemaReadError` — a missing url, a declared token
-    credential that does not resolve, and a named stored credential whose token no caller
-    gave through :func:`destination_token`.
+    refusing — as :class:`DestinationSchemaReadError` — a missing url, and a named stored
+    credential whose token no caller gave through :func:`destination_token`.
     """
     # Imported here, not at module load, for the same reason as the client imports below.
     # pylint: disable-next=import-outside-toplevel
-    from .credentials import CredentialConfigurationError, pin_infrahub_sdk_authority, resolve_reference
+    from .credentials import pin_infrahub_sdk_authority
 
     settings = package.configuration.destination.settings or {}
     url = settings.get("url")
@@ -253,7 +252,6 @@ def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tup
         "default_branch": branch,
         "default_branch_from_git": False,
     }
-    token = settings.get("token")
     if package.configuration.destination.credential is not None:
         given = _DESTINATION_TOKEN.get()
         if isinstance(given, _NoDestinationToken):
@@ -261,14 +259,6 @@ def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tup
             raise DestinationSchemaReadError(msg, reason="credentials")
         if given is not None:
             sdk_config["api_token"] = given
-    elif isinstance(token, Mapping):
-        reference_name = token.get("$credential")
-        if isinstance(reference_name, str):
-            try:
-                sdk_config["api_token"] = resolve_reference(package, reference_name)
-            except CredentialConfigurationError as exc:
-                msg = f"destination token credential could not be resolved: {type(exc).__name__}"
-                raise DestinationSchemaReadError(msg, reason="credentials") from None
     verify_ssl = settings.get("verify_ssl")
     if verify_ssl is not None:
         sdk_config["tls_insecure"] = not verify_ssl

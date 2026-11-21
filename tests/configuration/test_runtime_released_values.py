@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 TOKEN = "runtime-marker-token-4a7c"  # noqa: S105 - a test value, not a secret.
 USERNAME = "runtime-marker-user"
 PASSWORD = "runtime-marker-password-e21d"  # noqa: S105 - a test value, not a secret.
-OLD_PATH_VALUE = "runtime-marker-old-path-93fb"
 
 
 def _digest(value: object) -> str:
@@ -33,19 +32,12 @@ def _digest(value: object) -> str:
 
 
 def _content(source: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Return a package whose source names a stored credential; the destination keeps ``$credential``."""
+    """Return a package whose source names a stored credential; the destination names none."""
     data = package_data()
-    data["credentials"].pop("netbox-token")
-    data["configuration"]["source"]["settings"].pop("token")
     data["configuration"]["source"]["credential"] = "source-credential"
     if source is not None:
         data["configuration"]["source"] = {**source, "credential": "source-credential"}
     return data
-
-
-@pytest.fixture(autouse=True)
-def _old_path_destination(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", OLD_PATH_VALUE)
 
 
 def test_a_released_token_fills_the_token_setting(tmp_path: Path) -> None:
@@ -61,14 +53,17 @@ def test_a_released_token_fills_the_token_setting(tmp_path: Path) -> None:
     assert getattr(instance.source, "credential", None) is None
 
 
-def test_a_block_with_references_still_resolves_beside_a_block_with_a_stored_credential(tmp_path: Path) -> None:
+def test_a_block_that_names_no_credential_takes_no_released_value(tmp_path: Path) -> None:
     package = parse_configuration_package(_content())
 
-    instance = resolve_runtime_instance(package, directory=str(tmp_path), released={"source": {"token": TOKEN}})
+    instance = resolve_runtime_instance(
+        package, directory=str(tmp_path), released={"source": {"token": TOKEN}, "destination": {"token": TOKEN}}
+    )
 
     settings = instance.destination.settings
     assert settings is not None
-    assert _digest(settings["token"]) == _digest(OLD_PATH_VALUE)
+    assert "token" not in settings
+    assert is_registered_context(settings)
 
 
 @pytest.mark.parametrize(

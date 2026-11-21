@@ -325,7 +325,8 @@ def test_a_package_that_names_no_credential_ignores_the_given_token(monkeypatch:
     with destination_token(DESTINATION_TOKEN):
         _, sdk_config = capabilities_module._resolved_client_settings(package, "main")
 
-    assert _digest(sdk_config["api_token"]) == _digest("old-path-infrahub-value-0001")
+    # Neither the given token nor the variable of the removed format is used.
+    assert sdk_config["api_token"] is None
 
 
 # --- the worker -----------------------------------------------------------------------------

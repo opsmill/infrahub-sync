@@ -11,17 +11,11 @@ from .capabilities import (
 )
 from .credentials import (
     CredentialConfigurationError,
-    CredentialProvider,
-    EnvironmentCredentialProvider,
-    provider_for,
-    resolve_reference,
 )
 from .models import (
     ConfigurationPackage,
     ConfigurationPackageMetadata,
     ConfigurationPackageParseError,
-    CredentialReference,
-    CredentialReferenceNode,
     ValidationFinding,
     parse_configuration_package,
     sort_findings,
@@ -37,18 +31,12 @@ __all__ = [
     "ConfigurationPackageParseError",
     "ConfigurationValidator",
     "CredentialConfigurationError",
-    "CredentialProvider",
-    "CredentialReference",
-    "CredentialReferenceNode",
-    "EnvironmentCredentialProvider",
     "UnknownAdapterCapabilitiesError",
     "ValidationFinding",
     "WriteOperation",
     "collect_findings",
     "get_adapter_capabilities",
     "parse_configuration_package",
-    "provider_for",
-    "resolve_reference",
     "sort_findings",
     "validate_package_credentials",
 ]

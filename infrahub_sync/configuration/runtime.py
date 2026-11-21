@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from infrahub_sync import SyncInstance
 
 from .capabilities import UnknownCredentialMethodError, credential_field_map
-from .credentials import _REGISTERED_CONTEXT, CredentialConfigurationError, resolve_reference
+from .credentials import _REGISTERED_CONTEXT, CredentialConfigurationError
 from .storage import UnsupportedSyncStoreError
 
 if TYPE_CHECKING:
@@ -71,11 +71,9 @@ def resolve_runtime_instance(
 
     A block that names a stored credential (``credential: <name>``) takes its values from
     ``released``: for each block, the fields that the Sync API released to the run. The field
-    map of the block's adapter writes them into the block settings. A block with
-    ``$credential`` references resolves them as before.
+    map of the block's adapter writes them into the block settings.
 
-    ``resolve_source_credentials=False`` leaves the declared ``source`` settings exactly as
-    the package declares them, references included, and fills nothing from ``released``. A
+    ``resolve_source_credentials=False`` fills nothing into the ``source`` settings. A
     saved-plan apply constructs the destination only, so resolving the source's credential
     would make the apply host hold a source credential it never uses. Every source-using
     path — plan, sync, and configuration validation — keeps the default and resolves both
@@ -83,27 +81,14 @@ def resolve_runtime_instance(
 
     Raises:
         CredentialConfigurationError: a resolved block names a stored credential and
-            ``released`` does not hold its values; or a reference does not resolve.
+            ``released`` does not hold its values.
     """
 
     if package.configuration.store is not None:
         raise UnsupportedSyncStoreError
 
-    def resolve(value: object) -> object:
-        if type(value) is dict:  # pylint: disable=unidiomatic-typecheck
-            mapping = cast("dict[str, object]", value)
-            if set(mapping) == {"$credential"} and type(mapping["$credential"]) is str:  # pylint: disable=unidiomatic-typecheck
-                return resolve_reference(package, mapping["$credential"])
-            return {key: resolve(child) for key, child in mapping.items()}
-        if type(value) is list:  # pylint: disable=unidiomatic-typecheck
-            return [resolve(child) for child in cast("list[object]", value)]
-        return value
-
     declared = cast("dict[str, object]", package.configuration.model_dump(mode="json", by_alias=True))
-    runtime: dict[str, object] = {
-        key: value if key == "source" and not resolve_source_credentials else resolve(value)
-        for key, value in declared.items()
-    }
+    runtime: dict[str, object] = dict(declared)
     for side in ("source", "destination"):
         adapter = runtime[side]
         if type(adapter) is dict:  # pylint: disable=unidiomatic-typecheck

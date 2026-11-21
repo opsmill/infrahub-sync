@@ -175,19 +175,13 @@ def _register_configuration(api: httpx.Client, live_stack: LiveStack, name: str)
             "name": name,
             "source": {
                 "name": "infrahub",
-                "settings": {
-                    "url": live_stack.infrahub,
-                    "branch": "main",
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": dev.INFRAHUB_CREDENTIAL,
+                "settings": {"url": live_stack.infrahub, "branch": "main"},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": live_stack.infrahub,
-                    "branch": SMOKE_BRANCH,
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": dev.INFRAHUB_CREDENTIAL,
+                "settings": {"url": live_stack.infrahub, "branch": SMOKE_BRANCH},
             },
             "schema_mapping": [
                 {
@@ -197,9 +191,6 @@ def _register_configuration(api: httpx.Client, live_stack: LiveStack, name: str)
                     "fields": [{"name": field_name, "mapping": field_name} for field_name in _MAPPED_FIELDS],
                 }
             ],
-        },
-        "credentials": {
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
         },
     }
     registered = api.post(

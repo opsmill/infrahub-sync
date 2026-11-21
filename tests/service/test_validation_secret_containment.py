@@ -14,7 +14,6 @@ such case first asserts the value is really collected and really present before 
 
 from __future__ import annotations
 
-import copy
 import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -115,39 +114,6 @@ def _projection(tmp_path: Path) -> ProductProjection:
     projection = local_product_projection(tmp_path)
     create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     return projection
-
-
-def _reference_package(*, undeclared: str, credential_path: str) -> dict[str, Any]:
-    """One valid package in the `$credential` format, with a reference at a setting the caller names.
-
-    Only the two tests of the `credential-path-not-declared` finding use it: that finding
-    reports a `$credential` reference at a path the adapter does not declare.
-    """
-    return copy.deepcopy(
-        {
-            "format_version": 1,
-            "configuration": {
-                "name": "secret-containment",
-                "source": {
-                    "name": "netbox",
-                    "settings": {
-                        "url": "https://demo.netbox.dev",
-                        "token": {"$credential": "netbox-token"},
-                        undeclared: "declared at registration",
-                        credential_path: {"$credential": "netbox-token"},
-                    },
-                },
-                "destination": {
-                    "name": "infrahub",
-                    "settings": {"url": "http://localhost:8000", "token": {"$credential": "infrahub-token"}},
-                },
-            },
-            "credentials": {
-                "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
-                "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
-            },
-        }
-    )
 
 
 def _nested_package() -> dict[str, Any]:
@@ -304,19 +270,20 @@ def _register_then_narrow(
 
     Revalidating a persisted version against the *current* declaration is the product's own
     contract, and it is the only way a registered package reports these families. With
-    `credential_path`, the package holds a `$credential` reference at that setting, and the
-    declaration first accepts the path as a credential path, then no longer does.
+    `credential_path`, the package holds a plain value at that setting, and the declaration
+    first accepts the setting as a plain one, then declares it as a credential setting: the
+    value is then reported as `inline-credential-value`, in a message that holds its pointer.
     """
     if credential_path is None:
         _install(monkeypatch, _capabilities(allowed=(undeclared,), credential_paths=()))
         registered = configs.register(package=_package(undeclared=undeclared), projection=projection)
         _install(monkeypatch, _capabilities(allowed=(), credential_paths=()))
         return registered.version
-    _install(monkeypatch, _capabilities(allowed=(undeclared, credential_path), credential_paths=(credential_path,)))
-    registered = configs.register(
-        package=_reference_package(undeclared=undeclared, credential_path=credential_path), projection=projection
-    )
-    _install(monkeypatch, _capabilities(allowed=(credential_path,), credential_paths=()))
+    _install(monkeypatch, _capabilities(allowed=(undeclared, credential_path), credential_paths=()))
+    package = _package(undeclared=undeclared)
+    package["configuration"]["source"]["settings"][credential_path] = "declared at registration"
+    registered = configs.register(package=package, projection=projection)
+    _install(monkeypatch, _capabilities(allowed=(credential_path,), credential_paths=(credential_path,)))
     return registered.version
 
 
@@ -378,7 +345,7 @@ def test_both_reproduced_finding_families_are_reported_and_carry_no_secret(
 ) -> None:
     """The two families the defect was reproduced in are still produced, and are safe."""
     _ = environment
-    projection = local_product_projection(tmp_path)
+    projection = _projection(tmp_path)
     version = _register_then_narrow(monkeypatch, projection, undeclared=LONG_SECRET, credential_path=BOUND_SECRET)
 
     report = _validate(monkeypatch, projection, version)
@@ -386,7 +353,7 @@ def test_both_reproduced_finding_families_are_reported_and_carry_no_secret(
     body = json.dumps(report)
 
     assert "undeclared-setting" in codes, report
-    assert "credential-path-not-declared" in codes, report
+    assert "inline-credential-value" in codes, report
     for secret in (LONG_SECRET, BOUND_SECRET):
         assert secret not in body
         assert secret[:64] not in body
@@ -441,7 +408,7 @@ def test_two_secret_named_settings_stay_distinguishable_after_redaction(
 ) -> None:
     """Redaction is lossy, so two pointers it maps together keep the existing location tag."""
     _ = environment
-    projection = local_product_projection(tmp_path)
+    projection = _projection(tmp_path)
     version = _register_then_narrow(monkeypatch, projection, undeclared=LONG_SECRET, credential_path=BOUND_SECRET)
 
     report = _validate(monkeypatch, projection, version)

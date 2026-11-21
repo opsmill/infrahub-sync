@@ -912,7 +912,7 @@ def test_a_secret_the_escape_table_hides_is_still_redacted(key: str) -> None:
 # A finding *message* quotes the same declared key the pointer does, and quotes it escaped. Two
 # producers write it, in two different encodings, so the property below is asserted against the
 # forms spelled out here rather than against either producer's output.
-_MESSAGE_PRODUCER_CODES = frozenset({"undeclared-setting", "credential-path-not-declared"})
+_MESSAGE_PRODUCER_CODES = frozenset({"undeclared-setting", "adapter-validator-finding"})
 
 
 def _tree_forms(key: str) -> tuple[str, ...]:
@@ -928,18 +928,25 @@ def _tree_forms(key: str) -> tuple[str, ...]:
 
 
 def _findings_for_declared_key(key: str) -> tuple[ValidationFinding, ...]:
-    """Return the real findings a package declaring `key` as a setting name produces.
+    """Return two findings whose messages hold `key`, declared as a setting name, in two encodings.
 
-    Two, and deliberately two, because they are the two message producers: an undeclared
-    setting, whose message renders the escaped name through ``json.dumps``; and a
-    ``$credential`` node nested under an allowed setting, whose message embeds the escaped
-    pointer directly.
+    Two, and deliberately two, because they are the two encodings a message is written in: the
+    core's finding for an undeclared setting, whose message renders the escaped name through
+    ``json.dumps``; and a finding as an adapter-owned validator writes one, whose message embeds
+    the escaped pointer directly. No check of the core embeds a pointer built from a declared
+    key since the reference walk was removed (spec 027), so the second finding is built here,
+    in the form such a validator returns.
     """
     data = package_data()
-    settings = data["configuration"]["source"]["settings"]
-    settings[key] = 1
-    settings["verify_ssl"] = {key: {"$credential": "netbox-token"}}
-    return collect_findings(package(data))
+    data["configuration"]["source"]["settings"][key] = 1
+    pointer = f"/configuration/source/settings/{safe_pointer_component(key)}"
+    from_a_validator = ValidationFinding(
+        code="adapter-validator-finding",
+        severity="error",
+        location=pointer,
+        message=f"{pointer} is not a setting this adapter reads",
+    )
+    return (*collect_findings(package(data)), from_a_validator)
 
 
 @pytest.mark.parametrize("key", _ESCAPED_SECRET_KEYS)
@@ -980,7 +987,7 @@ def test_the_two_validation_message_producers_each_write_a_different_encoding() 
     messages = {finding.code: finding.message for finding in _findings_for_declared_key(_USERINFO_SHAPED_KEY)}
 
     assert escaped != json_doubled
-    assert escaped in messages["credential-path-not-declared"]
+    assert escaped in messages["adapter-validator-finding"]
     assert json_doubled in messages["undeclared-setting"]
 
 
@@ -1035,7 +1042,7 @@ def test_a_finding_message_carries_the_declared_key_it_quotes() -> None:
 
     assert len(_SUB_FLOOR_KEY) < MIN_SECRET_LENGTH
     assert _SUB_FLOOR_KEY not in collect_secret_values(environ={"NETBOX_ADDRESS": f"https://{_SUB_FLOOR_KEY}@h/api"})
-    assert escaped in messages["credential-path-not-declared"]
+    assert escaped in messages["adapter-validator-finding"]
     assert json_doubled in messages["undeclared-setting"]
     for finding in findings:
         redacted = configs_service.redact_finding(finding, [_SUB_FLOOR_KEY])

@@ -63,17 +63,12 @@ def _digest(value: object) -> str:
 
 
 def _package(*, blocks: tuple[str, ...] = ("source", "destination")) -> ConfigurationPackage:
-    """Return a package whose ``blocks`` each name a stored credential; the others keep ``$credential``."""
+    """Return a package whose ``blocks`` each name a stored credential; the others name none."""
     data = package_data()
     data["configuration"]["schema_mapping"] = MAPPING
     names = {"source": SOURCE_CREDENTIAL, "destination": DESTINATION_CREDENTIAL}
-    references = {"source": "netbox-token", "destination": "infrahub-token"}
     for block in blocks:
-        data["configuration"][block]["settings"].pop("token", None)
         data["configuration"][block]["credential"] = names[block]
-        data["credentials"].pop(references[block])
-    if not data["credentials"]:
-        data.pop("credentials")
     return parse_configuration_package(data)
 
 
@@ -213,7 +208,9 @@ def test_a_configuration_that_names_no_stored_credential_makes_no_request(monkey
 
     instance = _resolve(_Projection(_package(blocks=())), "plan", credentials)
 
-    assert _digest(instance.source.settings["token"]) == _digest("old-path-netbox-value-0001")
+    # No request was made, and the variables of the removed format fill no setting.
+    assert "token" not in instance.source.settings
+    assert "token" not in instance.destination.settings
 
 
 @pytest.mark.parametrize("stage", ["apply", "resume", "verify"])

@@ -18,17 +18,15 @@ from infrahub_sync.product_store.models import STORED_CREDENTIAL_NAME_PATTERN
 from tests.configuration.validation_packages import package_data
 
 _ROLES = ("source", "destination")
-# The checksum of the shared valid package before the ``credential`` key existed: a package
-# that does not use the key keeps the identity it was registered with.
-_CHECKSUM_WITHOUT_CREDENTIAL_KEY = "bd4a3240c671745a379e195f988aa25c2b8242759cdb1f6985fd6dffeec75e1b"
+_INLINE_VALUE = "credential-value-canary"
+# The checksum of the shared package when no block names a credential: the content that the
+# checksum covers holds no ``credential`` key and no ``credentials`` block.
+_CHECKSUM_WITHOUT_CREDENTIAL_KEY = "5f28cef30017a131051ad6fdf70ce7fda5f6e28326eed9a2b4d96eaf498b2020"
 
 
 def _named_credential_data(**names: str) -> dict[str, Any]:
-    """Return the shared package with ``credential`` set on the given roles and no token setting."""
+    """Return the shared package with ``credential`` set on the given roles only, and no token setting."""
     data = package_data()
-    del data["credentials"]
-    for role in _ROLES:
-        data["configuration"][role]["settings"].pop("token")
     for role, name in names.items():
         data["configuration"][role]["credential"] = name
     return data
@@ -53,7 +51,10 @@ def test_a_block_without_a_credential_name_keeps_its_declared_content(role: str)
 
 
 def test_a_package_without_the_credential_key_keeps_its_checksum() -> None:
-    assert parse_configuration_package(package_data()).checksum() == _CHECKSUM_WITHOUT_CREDENTIAL_KEY
+    parsed = parse_configuration_package(_named_credential_data())
+
+    assert "credentials" not in parsed.declared_content()
+    assert parsed.checksum() == _CHECKSUM_WITHOUT_CREDENTIAL_KEY
 
 
 @pytest.mark.parametrize(
@@ -108,17 +109,10 @@ def test_the_stored_credential_name_pattern_is_the_block_pattern() -> None:
     assert STORED_CREDENTIAL_NAME_PATTERN == CREDENTIAL_NAME_PATTERN == r"^[a-z][a-z0-9-]{0,62}$"
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        pytest.param("credential-value-canary", id="inline-value"),
-        pytest.param({"$credential": "netbox-token"}, id="reference"),
-    ],
-)
 @pytest.mark.parametrize("role", _ROLES)
-def test_a_block_that_names_a_credential_refuses_its_credential_settings(role: str, value: object) -> None:
+def test_a_block_that_names_a_credential_refuses_its_credential_settings(role: str) -> None:
     data = _named_credential_data(**{role: "netbox-lab"})
-    data["configuration"][role]["settings"]["token"] = value
+    data["configuration"][role]["settings"]["token"] = _INLINE_VALUE
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(data)
@@ -157,11 +151,19 @@ def test_the_refused_setting_names_are_the_declared_credential_settings() -> Non
     assert declared == CREDENTIAL_SETTING_NAMES
 
 
-@pytest.mark.parametrize(("role", "reference"), [("source", "netbox-token"), ("destination", "infrahub-token")])
-def test_a_block_without_a_credential_name_keeps_its_credential_settings(role: str, reference: str) -> None:
-    parsed = parse_configuration_package(package_data())
+@pytest.mark.parametrize("role", _ROLES)
+def test_a_block_without_a_credential_name_keeps_its_credential_setting_for_validation_to_refuse(role: str) -> None:
+    data = _named_credential_data()
+    data["configuration"][role]["settings"]["token"] = _INLINE_VALUE
 
-    assert getattr(parsed.configuration, role).settings["token"] == {"$credential": reference}
+    parsed = parse_configuration_package(data)
+
+    assert "token" in getattr(parsed.configuration, role).settings
+    findings = collect_findings(parsed)
+    assert [(item.code, item.location) for item in findings] == [
+        ("inline-credential-value", f"/configuration/{role}/settings/token")
+    ]
+    assert all("canary" not in item.message for item in findings)
 
 
 @pytest.mark.parametrize(
@@ -178,10 +180,3 @@ def test_the_checksum_changes_when_the_credential_name_changes(first: dict[str, 
     second_checksum = parse_configuration_package(_named_credential_data(**second)).checksum()
 
     assert first_checksum != second_checksum
-
-
-def test_a_package_with_the_old_credentials_block_still_parses() -> None:
-    parsed = parse_configuration_package(package_data())
-
-    assert set(parsed.credentials) == {"netbox-token", "infrahub-token"}
-    assert collect_findings(parsed) == ()

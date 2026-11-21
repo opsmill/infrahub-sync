@@ -38,7 +38,6 @@ from infrahub_sync.adapters.infrahub import resolved_endpoint
 from infrahub_sync.client import PlanStepTimings
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.configuration.runtime import effective_destination_branch
-from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.potenda import Potenda
@@ -80,6 +79,11 @@ from infrahub_sync.service.plan_step import StorePlanStepObserver
 from infrahub_sync.service.read_progress import StoreSideReadObserver, record_waiting
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
 from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.removed_credential_format import (
+    REMOVED_IDENTIFIER,
+    REMOVED_REFERENCE_NAME,
+    store_in_removed_format,
+)
 from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
@@ -115,6 +119,10 @@ _LEGACY_EXECUTION_FIELDS = {
 }
 
 
+# What a run-starting route answers for a version stored in the removed credential format.
+_REMOVED_FORMAT_REFUSAL = (503, "configuration-version-invalid")
+
+
 def _json_timestamp(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat().replace("+00:00", "Z")
 
@@ -140,31 +148,6 @@ def _registered_package() -> ConfigurationPackage:
                 "diffsync_flags": [],
                 "incremental": None,
             },
-        }
-    )
-
-
-def _legacy_registered_package() -> ConfigurationPackage:
-    """Return the package in the removed `credentials` format, for the tests whose subject is that format."""
-    return ConfigurationPackage.model_validate(
-        {
-            "format_version": 1,
-            "configuration": {
-                "name": "registered-inventory",
-                "source": {
-                    "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
-                },
-                "destination": {
-                    "name": "infrahub",
-                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
-                },
-                "order": [],
-                "schema_mapping": [],
-                "diffsync_flags": [],
-                "incremental": None,
-            },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
@@ -306,218 +289,23 @@ def test_admission_reads_registered_binding_before_allocating_run(
     assert len(orchestration.submissions) == 1
 
 
-@pytest.mark.parametrize("operation", ["plan", "sync"])
-@pytest.mark.parametrize("identifier", ["NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_", "credential-value-canary"])
-def test_run_creation_refuses_legacy_credential_identifiers_before_reservation(
-    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-    identifier: str,
-) -> None:
-    """Refuse legacy declarations through HTTP without creating or submitting a run."""
-    client, projection, orchestration = service_api
-    content = _legacy_registered_package().model_dump(mode="json")
-    content["credentials"] = {"netbox-token": {"provider": "env", "identifier": identifier}}
-    for role in ("source", "destination"):
-        content["configuration"][role]["settings"]["token"] = {"$credential": "netbox-token"}
-    legacy_package = ConfigurationPackage.model_validate(content)
-    with monkeypatch.context() as before_policy:
-        before_policy.setattr("infrahub_sync.product_store.store.validate_package_credentials", lambda _package: None)
-        version = projection.create_configuration(legacy_package)
-    monkeypatch.setenv(identifier, "legacy-credential-value-canary")
-    monkeypatch.setattr("infrahub_sync.service.service.generate_run_id", lambda: "refused-credential-run")
-    monkeypatch.setattr(
-        "infrahub_sync.configuration.credentials.EnvironmentCredentialProvider.resolve",
-        lambda *_args: pytest.fail("API admission resolved a credential"),
-    )
-
-    response = client.post(
-        "/runs",
-        headers=AUTH,
-        json={
-            "operation": operation,
-            "config_id": version.config_id,
-            "registry_version": version.registry_version,
-            "reason": "review legacy inventory",
-            "confirm_writes": True,
-        },
-    )
-
-    assert response.status_code == 422
-    error = response.json()["error"]
-    assert error["code"] == "malformed-credential-reference"
-    assert "credential reference 'netbox-token'" in error["message"]
-    assert "must start with 'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in error["message"]
-    assert "register a new version with prefixed identifiers" in error["message"]
-    finding = credential_namespace_finding("netbox-token", legacy_package.credentials["netbox-token"])
-    assert finding is not None
-    assert error["message"] == (
-        f"{finding.message}; register a new version with prefixed identifiers and recreate saved plans against it"
-    )
-    assert "legacy-credential-value-canary" not in response.text
-    if identifier != "INFRAHUB_SYNC_CREDENTIAL_":
-        assert identifier not in response.text
-    assert projection.lookup_run("refused-credential-run").value is None
-    assert (
-        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()).value
-        is None
-    )
-    assert orchestration.submissions == []
-    assert projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
-
-
-@pytest.mark.parametrize("operation", ["plan", "sync"])
-def test_run_creation_accepts_prefixed_credentials_without_api_host_values(
-    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-) -> None:
-    """The API accepts valid declarations without resolving worker credentials."""
-    client, projection, orchestration = service_api
-    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_TOKEN", raising=False)
-    monkeypatch.setattr(
-        "infrahub_sync.configuration.credentials.EnvironmentCredentialProvider.resolve",
-        lambda *_args: pytest.fail("API admission resolved a credential"),
-    )
-    # The subject is a declaration with a prefixed identifier, so the version is in that format.
-    version = projection.create_configuration(_legacy_registered_package())
-
-    response = client.post(
-        "/runs",
-        headers=AUTH,
-        json={
-            "operation": operation,
-            "config_id": version.config_id,
-            "registry_version": version.registry_version,
-            "reason": "review inventory",
-            "confirm_writes": True,
-        },
-    )
-
-    assert response.status_code == 202
-    assert projection.lookup_run(response.json()["run"]["run_id"]).value is not None
-    assert len(orchestration.submissions) == 1
-
-
-def _legacy_source_credential_version(
-    projection: ProductProjection, monkeypatch: pytest.MonkeyPatch, *, unused: bool = False
-) -> ConfigurationVersion:
-    """Store a pre-upgrade declaration while retaining a valid destination credential."""
-    content = _legacy_registered_package().model_dump(mode="json")
-    content["credentials"]["legacy-source"] = {"provider": "env", "identifier": "LEGACY_SOURCE_TOKEN"}
-    if not unused:
-        content["configuration"]["source"]["settings"]["token"] = {"$credential": "legacy-source"}
-    with monkeypatch.context() as before_policy:
-        before_policy.setattr("infrahub_sync.product_store.store.validate_package_credentials", lambda _package: None)
-        version = projection.create_configuration(ConfigurationPackage.model_validate(content))
-    monkeypatch.setenv("LEGACY_SOURCE_TOKEN", "legacy-source-value-canary")
-    monkeypatch.setattr(
-        "infrahub_sync.configuration.credentials.EnvironmentCredentialProvider.resolve",
-        lambda *_args: pytest.fail("API admission resolved a credential"),
-    )
-    return version
-
-
-@pytest.mark.parametrize("operation", ["plan", "sync"])
-def test_run_creation_refuses_unused_legacy_credential_declarations(
-    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-) -> None:
-    """Admission checks every declaration, including one no setting references."""
-    client, projection, orchestration = service_api
-    version = _legacy_source_credential_version(projection, monkeypatch, unused=True)
-    monkeypatch.setattr("infrahub_sync.service.service.generate_run_id", lambda: "unused-credential-run")
-
-    response = client.post(
-        "/runs",
-        headers=AUTH,
-        json={
-            "operation": operation,
-            "config_id": version.config_id,
-            "registry_version": version.registry_version,
-            "reason": "review unused legacy declaration",
-            "confirm_writes": True,
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "malformed-credential-reference"
-    assert "credential reference 'legacy-source'" in response.json()["error"]["message"]
-    assert "LEGACY_SOURCE_TOKEN" not in response.text
-    assert "legacy-source-value-canary" not in response.text
-    assert projection.lookup_run("unused-credential-run").value is None
-    assert (
-        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()).value
-        is None
-    )
-    assert orchestration.submissions == []
-
-
-@pytest.mark.parametrize("operation", ["verify", "apply"])
-def test_saved_plan_refuses_legacy_source_credential_before_reservation(
-    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-) -> None:
-    """Even destination-only apply requires a supported immutable package binding."""
-    client, projection, orchestration = service_api
-    version = _legacy_source_credential_version(projection, monkeypatch)
-    run = ProductRun(
-        run_id="legacy-saved-plan",
-        operation="plan",
-        actor=account_identifier(projection, "owner"),
-        configuration_reference=f"{version.config_id}@{version.registry_version}",
-        config_id=version.config_id,
-        registry_version=version.registry_version,
-        package_checksum=version.package_checksum,
-        started_at=datetime.now(timezone.utc),
-        phase="planned",
-    )
-    projection.create_run(run)
-    plan = _publish_plan(projection, run.run_id)
-    before_request = projection.lookup_run(run.run_id).value
-    body: dict[str, object] = {"reason": "review legacy saved plan"}
-    if operation == "apply":
-        body.update(expected_checksum=plan.checksum, confirm_writes=True)
-
-    response = client.post(f"/runs/{run.run_id}/{operation}", headers=AUTH, json=body)
-
-    assert response.status_code == 422
-    error = response.json()["error"]
-    assert error["code"] == "malformed-credential-reference"
-    assert "credential reference 'legacy-source'" in error["message"]
-    assert "must start with 'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in error["message"]
-    assert "register a new version with prefixed identifiers" in error["message"]
-    assert "recreate saved plans against it" in error["message"]
-    assert "LEGACY_SOURCE_TOKEN" not in response.text
-    assert "legacy-source-value-canary" not in response.text
-    assert (
-        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()).value
-        is None
-    )
-    assert projection.lookup_run(run.run_id).value == before_request
-    assert projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
-    assert orchestration.submissions == []
-    retained_plan = client.get(f"/runs/{run.run_id}/plan", headers=AUTH)
-    assert retained_plan.status_code == 200
-    assert retained_plan.json()["checksum"] == plan.checksum
-
-
 @pytest.mark.parametrize("operation", ["plan", "sync", "verify", "apply"])
 @pytest.mark.parametrize("accepted", [False, True])
-def test_legacy_credential_receipts_replay_only_accepted_responses(
+def test_removed_format_receipts_replay_only_accepted_responses(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     operation: str,
     *,
     accepted: bool,
 ) -> None:
-    """Refuse unsubmitted retries while replaying accepted receipts after upgrade."""
+    """Refuse unsubmitted retries while replaying accepted receipts of a version stored in the removed format."""
     client, projection, orchestration = service_api
-    version = _legacy_source_credential_version(projection, monkeypatch)
+    version = client.app.state.run_binding
+    store_in_removed_format(
+        tmp_path.resolve(), version.config_id, version.registry_version, _registered_package().declared_content()
+    )
     run = ProductRun(
-        run_id="legacy-credential-receipt",
+        run_id="removed-format-receipt",
         operation="sync" if operation == "sync" else "plan",
         actor=account_identifier(projection, "owner"),
         configuration_reference=f"{version.config_id}@{version.registry_version}",
@@ -532,16 +320,20 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
             operation="sync" if operation == "sync" else "plan",
             config_id=version.config_id,
             registry_version=version.registry_version,
-            reason="retry legacy work",
+            reason="retry work of a version stored in the removed format",
             confirm_writes=True,
         )
         path, target = "/runs", None
     else:
         projection.create_run(run)
         request = (
-            VerifyRunRequest(reason="retry legacy work")
+            VerifyRunRequest(reason="retry work of a version stored in the removed format")
             if operation == "verify"
-            else ApplyRunRequest(reason="retry legacy work", expected_checksum="a" * 64, confirm_writes=True)
+            else ApplyRunRequest(
+                reason="retry work of a version stored in the removed format",
+                expected_checksum="a" * 64,
+                confirm_writes=True,
+            )
         )
         path, target = f"/runs/{run.run_id}/{operation}", run.run_id
     body = request.model_dump(mode="json")
@@ -589,10 +381,9 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
         assert conflict.status_code == 409
         assert conflict.json()["error"]["code"] == "idempotency-conflict"
     else:
-        assert response.status_code == 422
-        assert response.json()["error"]["code"] == "malformed-credential-reference"
-        assert "legacy-source-value-canary" not in response.text
-        assert "LEGACY_SOURCE_TOKEN" not in response.text
+        assert (response.status_code, response.json()["error"]["code"]) == _REMOVED_FORMAT_REFUSAL
+        assert REMOVED_REFERENCE_NAME not in response.text
+        assert REMOVED_IDENTIFIER not in response.text
 
 
 def _plan_document(run_id: str, *, checksum: str = "a" * 64) -> PlanResource:

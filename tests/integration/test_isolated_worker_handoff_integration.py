@@ -130,8 +130,6 @@ def _run_worker(  # noqa: PLR0913 - one parameter per input the worker process n
         **os.environ,
         **settings,
         "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(config_directory),
-        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "qualification-destination-token",
-        "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": "qualification-source-token",
     }
     # The upgraded operator's shell: the retired cache setting is still exported, and the
     # worker is started somewhere that is not its stage root. Both are left in place on
