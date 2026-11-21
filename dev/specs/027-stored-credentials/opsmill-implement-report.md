@@ -1,7 +1,7 @@
 # Implementation report: spec 027, stored credentials (DRAFT)
 
 Status: draft, updated after each chunk. Base commit `e73deca4`. Branch `027-stored-credentials`. Not pushed.
-Advisor decisions are recorded in [overnight-log.md](overnight-log.md) (A1 to A4).
+Advisor decisions are recorded in [overnight-log.md](overnight-log.md).
 
 ## Chunk ledger
 
@@ -25,6 +25,8 @@ One line per chunk: chunk, tasks, outcome, commits, notes.
 13b | A3 follow-up | refusal narrowed for stored versions (empty block read, stored checksum kept); read routes 200; schedule routes 422; T049 stays partial (direct Prefect flow needs env reads; spec.md:334 keeps that flow) | fa957165 2412a942 ca183709 f189abdd | re-registering the same file for an empty-block version creates a new version (checksum differs); .venv briefly switched to 3.10 and restored
 14 | T054-T056 | 3 done (T055 compose/docker/smoke/integration cases changed, collection only) | 7a3cc0da 5a78af98 78f96e8f | operator compose requires key and worker token (:?); dev compose fixed dev defaults; dev task overrides renamed INFRAHUB_SYNC_DEV_*_TOKEN; development-stack.mdx still names old exports (docs chunk); tests/image/conftest.py starts API without a key (not in scope)
 15 | T057-T062 | 6 done | 030c2a1b 13344215 63e061f1 a710929d 6c48c757 ddfc6bea f651457d 783201dc ee7ca279 | ADR 0054 (0039 superseded, 0026/0040 partly); constitution 1.3.0; docs written from code where code differs from spec (lenient start, A4); unit tier 1 failure (marker test, order-dependent); changelog fragments to delete/reword at release listed
+15b | A4 follow-up | Sync API process refuses to start without key or worker token (503 kept inside build_app); worker unchanged (run fails naming both variables; docs say so); marker test fixed (searches Prefect's resolved home and database) | ab4fb381 19f6507c 5c7d919a 11f26774 | lenient start came from chunks 3 and 6 ("until T054"); dev.api now uses build_process_service; tests/image gets throwaway key; worker token minimum is 16 characters per contract and code
+16 | T063-T065 | 3 done | 964f36a1 50cdf84e a1d38916 | credentials_used on every run answer (contract names only GET /runs/{id}); approve answer fixed to carry it; runs show line format chosen by the chunk; frontend types.generated.ts not regenerated (codegen reads a live API on forbidden port 8001)
 ```
 
 ## Local-pass evidence
@@ -89,4 +91,12 @@ check-310 after chunk 12|unit 3.10|uv run invoke tests.check-310|2026-11-21T01:1
 15 | tutorial pin | uv run pytest tests/cli/test_parity_and_closure.py::test_netbox_tutorial_starts_and_authenticates_the_service_boundary -v | 2026-11-21T05:38:45Z | n/a | PASSED
 15 | documentation tests | (unchanged files) | 2026-11-21T05:38:45Z | n/a | 227 passed
 15 | unit tier | uv run invoke tests.tests-unit | 2026-11-21T05:40:49Z | no DSN | 1 failed (test_stored_credential_marker), 11407 passed -> chunk 15b
+15b | serve required settings + 6 modified files | uv run pytest <7 files> | 2026-11-21T06:20:53Z | n/a | 146 passed, 13 skipped
+15b | marker test alone | uv run pytest tests/test_stored_credential_marker.py | 2026-11-21T06:19:58Z | n/a | 1 passed
+15b | unit tier at 11f26774 | uv run invoke tests.tests-unit | 2026-11-21T06:13:51Z | 3 PostgreSQL DSNs | 11428 passed, 4 skipped, 2 xfailed, 0 failed
+15b | check-310 | uv run invoke tests.check-310 | chunk 15b | Python 3.10 | all three legs passed
+15b | NOT RUN | uv run pytest tests/image -m docker (68 collected) | deferred | needs Docker and an image | -
+16 | revisions, approve, runs show (10 tests) | uv run pytest tests/service/test_credential_revisions_on_runs.py tests/service/test_approval.py tests/cli/test_credentials_command.py -k "..." | 2026-11-21T06:45:41Z | SQLite | 10 passed
+16 | unit tier at a1d38916 | uv run invoke tests.tests-unit | 2026-11-21T06:52:54Z | 3 PostgreSQL DSNs | 11438 passed, 4 skipped, 2 xfailed, 0 failed
+16 | check-310 | uv run invoke tests.check-310 | before a1d38916 | Python 3.10 | all three legs passed
 ```
