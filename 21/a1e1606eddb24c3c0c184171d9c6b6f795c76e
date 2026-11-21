@@ -1,0 +1,25 @@
+dev/specs/027-stored-credentials/contracts/http-api.md
+  s_98605ebdd2cf30::t_d4c180cc295dff 133-138
+docs/docs/reference/durable-product-records.mdx
+  s_98605ebdd2cf30::t_e5f5ef4e6868b7 87
+docs/docs/reference/sync-http-api.mdx
+  s_98605ebdd2cf30::t_1dd344a1772a43 376-380
+docs/docs/v2-to-v3.mdx
+  s_98605ebdd2cf30::t_81ef733d7bb2dc 43-44,141-143,145-163,191-219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "21a1e1606eddb24c3c0c184171d9c6b6f795c76e",
+  "prompts": {},
+  "sessions": {
+    "s_98605ebdd2cf30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3dbe109f3e5e8aa7",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
