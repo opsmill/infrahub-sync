@@ -1,0 +1,22 @@
+infrahub_sync/product_store/store.py
+  s_0f3e9b98ad49ab::t_c29af4413153f8 1389-1391,1393
+  s_0f3e9b98ad49ab::t_6b5b8fbd402785 1435-1444
+tests/product_store/test_contract.py
+  s_0f3e9b98ad49ab::t_0bc830cf39f258 3974-3975,3979,3992,3994-3995
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73100fc51f435d80eb7d8a281accc60409a3cdf2",
+  "prompts": {},
+  "sessions": {
+    "s_0f3e9b98ad49ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "160719ec-2b7c-46e8-a304-b5a97feb7475",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
