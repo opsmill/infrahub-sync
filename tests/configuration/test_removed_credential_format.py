@@ -167,6 +167,45 @@ def test_a_stored_version_with_an_empty_credentials_block_is_read_and_keeps_its_
     assert stored.checksum != stored.package.checksum()
 
 
+# The declared content and the checksum that the build before spec 027 (commit 1dc5e204) stored for
+# one package, written by that build's own `declared_content()` and `checksum()`.
+EARLIER_BUILD_STORED_CONTENT: dict[str, Any] = {
+    "configuration": {
+        "destination": {"name": "infrahub", "settings": {"url": "http://infrahub.example"}},
+        "diffsync_flags": [],
+        "incremental": None,
+        "name": "from-netbox",
+        "order": ["BuiltinTag"],
+        "schema_mapping": [
+            {
+                "fields": [{"mapping": "name", "name": "name", "reference": None, "static": None}],
+                "filters": None,
+                "identifiers": ["name"],
+                "mapping": "extras.tags",
+                "name": "BuiltinTag",
+                "transforms": None,
+            }
+        ],
+        "source": {"name": "netbox", "settings": {"url": "http://netbox.example"}},
+        "store": None,
+    },
+    "credentials": {},
+    "format_version": 1,
+    "omissions": [],
+    "package_metadata": {"adapter_api_version": 1},
+}
+EARLIER_BUILD_STORED_CHECKSUM = "d636aff245335205092a86ee7ad490962fe57c4f82c3d60a6b69a100636016ae"
+
+
+def test_a_version_that_the_earlier_build_stored_keeps_the_checksum_that_build_wrote() -> None:
+    """The stored checksum is the one of the earlier build, not one that this build computes again."""
+    stored = parse_stored_configuration_package(copy.deepcopy(EARLIER_BUILD_STORED_CONTENT))
+
+    assert stored.checksum == EARLIER_BUILD_STORED_CHECKSUM
+    assert stored.package.checksum() != EARLIER_BUILD_STORED_CHECKSUM
+    assert {**stored.package.declared_content(), "credentials": {}} == EARLIER_BUILD_STORED_CONTENT
+
+
 def test_a_stored_version_without_a_credentials_block_keeps_the_checksum_of_its_package() -> None:
     declared = credential_package_data()
 
