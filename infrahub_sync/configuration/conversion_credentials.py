@@ -28,6 +28,7 @@ _ACCOUNT_SUFFIX = "account"
 
 FIELD_ORDER: tuple[CredentialField, ...] = ("username", "password", "token")
 _CREATE_COMMAND = "infrahub-sync credentials create"
+_SET_COMMAND = "infrahub-sync credentials set"
 
 
 def ordered_fields(fields: Iterable[str]) -> tuple[str, ...]:
@@ -45,6 +46,17 @@ def create_command(name: str, fields: Iterable[str]) -> str:
     """
     username = " --username <username>" if "username" in fields else ""
     return f"{_CREATE_COMMAND} {name}{username}"
+
+
+def set_command(name: str, fields: Iterable[str]) -> str:
+    """Return the command that replaces the value of the stored credential ``name`` with ``fields``.
+
+    ``fields`` are the fields the credential must hold afterwards, or the ones it lacks. The
+    command replaces every field, so a credential with a username or a password takes the
+    username as the option ``--username``, as ``create_command`` does. No value is in the command.
+    """
+    username = " --username <username>" if {"username", "password"} & set(fields) else ""
+    return f"{_SET_COMMAND} {name}{username}"
 
 
 def credential_name(adapter: str, settings: Iterable[str]) -> str:

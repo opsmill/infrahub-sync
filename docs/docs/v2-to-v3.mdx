@@ -143,9 +143,10 @@ hand in the same way.
      credential that replaces it. The command never reads or prints a value. See
      [Manage stored credentials](./guides/credentials.mdx).
 
-     A stored credential holds either a `token`, or a `username` and a `password`. For a
-     source that uses a username and a password, such as Cisco ACI, the section names one
-     credential with both fields, and its command takes the username as an option. When
+     The stored credential of a converted block needs either a `token`, or a `username` and a
+     `password`. For a source that uses a username and a password, such as Cisco ACI, the
+     section names one credential with both fields, and its command takes the username as an
+     option. When
      `config.yml` holds a credential value, the report says `a literal value in config.yml`
      and adds a warning. It does not print the value, and the package does not hold it:
 
@@ -199,8 +200,8 @@ hand in the same way.
 
    When you register the package before a stored credential exists, the Sync API registers
    nothing, and the command exits with status 1. It prints one `credential` line for each
-   credential that is missing, with the block that names it, the fields it needs and the
-   command that creates it:
+   block that names a missing credential, with the name of the credential, the fields it
+   needs and the command that creates it:
 
    ```text
    error: configs-api
@@ -215,7 +216,7 @@ hand in the same way.
 
    When a stored credential exists and does not hold a field that the block needs, the line
    names the field and the command `infrahub-sync credentials set <name>`, and `reason` is
-   `credential-field-missing`. Create or change the credentials, then run
+   `credential-field-missing`. That command replaces every field of the credential. Create or change the credentials, then run
    `infrahub-sync configs register package.yml` again.
 
    Then review the first plan before you apply it. When the Sync API requires approval, approve

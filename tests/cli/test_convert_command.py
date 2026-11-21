@@ -578,22 +578,42 @@ def test_registration_before_the_credentials_exist_names_each_missing_credential
     assert not _holds_literal(stderr)
 
 
+@pytest.mark.parametrize(
+    ("fields", "line"),
+    [
+        pytest.param(
+            ["token"],
+            "which does not hold token; an administrator sets it with: infrahub-sync credentials set netbox-token",
+            id="token",
+        ),
+        # `credentials set` replaces every field, so the command takes the username again.
+        pytest.param(
+            ["password"],
+            "which does not hold password; an administrator sets it with: "
+            "infrahub-sync credentials set netbox-token --username <username>",
+            id="password",
+        ),
+        pytest.param(
+            ["password", "username"],
+            "which does not hold username, password; an administrator sets it with: "
+            "infrahub-sync credentials set netbox-token --username <username>",
+            id="username-and-password",
+        ),
+    ],
+)
 def test_registration_names_the_fields_that_a_stored_credential_does_not_hold(
-    config_file: Path, sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch
+    config_file: Path, sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch, fields: list[str], line: str
 ) -> None:
     assert _convert(str(config_file), "--yes")[0] == 0
     sync_api.answers["POST /configs"] = _refused_registration(
-        {"block": "source", "name": "netbox-token", "code": "credential-field-missing", "fields": ["token"]},
+        {"block": "source", "name": "netbox-token", "code": "credential-field-missing", "fields": fields},
         reason="credential-field-missing",
     )
 
     code, _, stderr = _register(config_file.parent / "package.yml", monkeypatch)
 
     assert code == 1
-    assert (
-        "credential: source names netbox-token, which does not hold token; "
-        "an administrator sets it with: infrahub-sync credentials set netbox-token"
-    ) in stderr.splitlines()
+    assert f"credential: source names netbox-token, {line}" in stderr.splitlines()
 
 
 def test_registration_refused_by_a_sync_api_that_sends_no_details_prints_the_reason_only(

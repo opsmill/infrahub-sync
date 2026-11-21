@@ -22,7 +22,7 @@ import typer
 
 from infrahub_sync.client import APIError, ClientInputError, ConfigsAPIError
 from infrahub_sync.client.models import CREDENTIAL_NAME_PATTERN
-from infrahub_sync.configuration.conversion_credentials import create_command, ordered_fields
+from infrahub_sync.configuration.conversion_credentials import create_command, ordered_fields, set_command
 
 if TYPE_CHECKING:
     from infrahub_sync.cli_accounts import CommandSupport
@@ -115,10 +115,8 @@ def _refused_credential_text(refused: RefusedCredential) -> str:
         command = create_command(refused.name, refused.fields)
         return f"{subject}, which does not exist{needs}; an administrator creates it with: {command}"
     if refused.code == "credential-field-missing":
-        return (
-            f"{subject}, which does not hold {fields}; an administrator sets it with: "
-            f"infrahub-sync credentials set {refused.name}"
-        )
+        command = set_command(refused.name, refused.fields)
+        return f"{subject}, which does not hold {fields}; an administrator sets it with: {command}"
     return f"{subject}, and the auth_method of the block is not one that its adapter accepts"
 
 

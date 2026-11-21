@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, UnknownCredentialMethodError, credential_field_map
-from .conversion_credentials import create_command, ordered_fields
+from .conversion_credentials import create_command, ordered_fields, set_command
 from .credentials import CredentialConfigurationError
 from .models import ValidationFinding
 
@@ -160,7 +160,7 @@ def stored_credential_findings(
             message = (
                 f"the stored credential {name!r} that {block} names does not hold the fields "
                 f"{', '.join(missing)}, which adapter {adapter.name!r} needs; an administrator can set "
-                f"them with `infrahub-sync credentials set {name}`"
+                f"them with `{set_command(name, needed)}`"
             )
             findings.append(
                 StoredCredentialFinding(CREDENTIAL_FIELD_MISSING, block, name, message, missing, needed_fields=needs)

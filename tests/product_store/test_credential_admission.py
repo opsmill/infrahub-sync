@@ -139,6 +139,8 @@ def test_registration_refuses_a_credential_without_a_field_its_block_needs(proje
     assert finding.location == "/configuration/source/credential"
     assert "password, username" in finding.message
     assert SOURCE_CREDENTIAL in finding.message
+    # `credentials set` replaces every field, so the command takes the username.
+    assert f"infrahub-sync credentials set {SOURCE_CREDENTIAL} --username <username>" in finding.message
     assert refused.value.reason == "credential-field-missing"
     assert configs.list_configs(projection=projection).items == ()
 
