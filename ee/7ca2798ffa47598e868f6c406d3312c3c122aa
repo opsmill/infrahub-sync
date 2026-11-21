@@ -1,0 +1,31 @@
+dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md
+  s_0a9f0b6318b368::t_bd9bc33adc4e57 225
+docs/docs/compose-deployment.mdx
+  s_0a9f0b6318b368::t_83f5aeb10c77e6 351-354
+docs/docs/development/constitution.md
+  s_0a9f0b6318b368::t_7b6c0d40e3e4f6 112-113
+docs/docs/guides/credentials.mdx
+  s_0a9f0b6318b368::t_8148be52a24bb6 47
+docs/docs/kubernetes-deployment.mdx
+  s_0a9f0b6318b368::t_c879bfacee199a 105-109
+docs/docs/operations/day-2-operations.mdx
+  s_0a9f0b6318b368::t_5059c094fd311d 122-134
+docs/docs/reference/durable-product-records.mdx
+  s_0a9f0b6318b368::t_71297213a40d1d 349,353-354
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee7ca2798ffa47598e868f6c406d3312c3c122aa",
+  "prompts": {},
+  "sessions": {
+    "s_0a9f0b6318b368": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac6b42be7674a2a53",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
