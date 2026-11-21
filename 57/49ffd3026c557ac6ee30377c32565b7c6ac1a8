@@ -1,0 +1,29 @@
+docs/docs/v2-to-v3.mdx
+  s_98605ebdd2cf30::t_850c4b3c837e81 146-149,203-204,219
+infrahub_sync/cli_credentials.py
+  s_98605ebdd2cf30::t_84fc26f275367c 25,118-119
+infrahub_sync/configuration/conversion_credentials.py
+  s_98605ebdd2cf30::t_65ef512f222e53 31,51-61
+infrahub_sync/configuration/credential_admission.py
+  s_98605ebdd2cf30::t_f28315f340e4fe 22,163
+tests/cli/test_convert_command.py
+  s_98605ebdd2cf30::t_8b9995a6e5a4dc 581-603,605,609,616
+tests/product_store/test_credential_admission.py
+  s_98605ebdd2cf30::t_2a31d27de17138 142-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5749ffd3026c557ac6ee30377c32565b7c6ac1a8",
+  "prompts": {},
+  "sessions": {
+    "s_98605ebdd2cf30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3dbe109f3e5e8aa7",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
