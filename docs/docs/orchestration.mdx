@@ -49,11 +49,12 @@ UTC. The Sync API refuses the request, and stores nothing, when:
 - the configuration already has a schedule that is not deleted (`schedule-exists-for-configuration`).
   The message names that schedule.
 
-When the Sync API stores the schedule but cannot confirm that Prefect holds it, it answers
-`503 orchestration-unavailable`. The handover is then not confirmed: Prefect may hold the earlier
-settings of the schedule, the new ones, or no schedule, and starts runs with what it holds. A later
-request on a schedule, or a restart of the Sync API, hands the stored schedule to Prefect. Until
-then `schedules show` prints `warning: this schedule is not yet handed to the task manager`.
+When the Sync API stores a change to a schedule but cannot confirm that Prefect matches it, it
+answers `503 orchestration-unavailable`. Prefect may then still hold the schedule as it was before
+the change, also after a deletion, and starts runs with what it holds. The Sync API matches Prefect
+to the stored schedules again at the next change to any schedule and at each restart of the Sync
+API: it creates or updates the Prefect schedule of each schedule that is not deleted, and removes
+the Prefect schedule of a deleted one. Until then `schedules show` prints `warning: this schedule is not yet handed to the task manager`.
 
 The other settings of a schedule are:
 

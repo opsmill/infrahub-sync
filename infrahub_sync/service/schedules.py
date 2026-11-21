@@ -87,15 +87,15 @@ _STOP_ATTEMPTS: Final = 3
 _STOP_RETRY_SECONDS: float = 2.0
 _MATCH_PAGE_SIZE: Final = 200
 _UNAVAILABLE_MESSAGE: Final = (
-    "the schedule is stored, and the task manager could not be reached; the schedule is handed to the "
-    "task manager by a later schedule request or by a restart of the Sync API"
+    "the schedule is stored, and the task manager could not be reached; the Sync API matches the task "
+    "manager to the stored schedules again at the next change to a schedule or at a restart of the Sync API"
 )
-# The same answer when the product database failed while the schedules were handed to the task
-# manager: the task manager was not the dependency that failed.
+# The same answer when the product database failed while the task manager was matched to the stored
+# schedules: the task manager was not the dependency that failed.
 _STORE_UNAVAILABLE_MESSAGE: Final = (
-    "the schedule is stored, and the product database failed while the schedule was handed to the task "
-    "manager; the schedule is handed to the task manager by a later schedule request or by a restart of "
-    "the Sync API"
+    "the schedule is stored, and the product database failed while the task manager was matched to the "
+    "stored schedules; the Sync API matches them again at the next change to a schedule or at a restart "
+    "of the Sync API"
 )
 _MatchFailure = Literal["orchestration", "product-store"]
 # What a stopped schedule needs before a resume is accepted, by the reason it stopped for.

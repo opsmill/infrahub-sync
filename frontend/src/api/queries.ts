@@ -785,7 +785,7 @@ const SCHEDULE_ERRORS: Record<string, { title: string; detail?: string }> = {
     title:
       "The Sync service saved the change, but could not confirm what the task manager holds for this schedule",
     detail:
-      "Until a later change to a schedule or a restart of the Sync API hands it over, the task manager may start runs with the earlier settings, with the new ones, or start none. Open the schedule page to check its state.",
+      "The Sync service matches the task manager to the saved schedules again at the next change to any schedule or when the Sync API restarts. Until then, the task manager may still hold this schedule as it was before the change, also after a deletion, and start runs with it. Open the schedule page to check its state.",
   },
   "secret-parameter-refused": {
     title: "A value in this form matches a secret the Sync service holds",

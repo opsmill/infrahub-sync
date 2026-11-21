@@ -59,6 +59,13 @@ describe("describeScheduleError", () => {
     expect(described.code).toBe(code);
   });
 
+  it("orchestration-unavailable says when the task manager is matched again, which also holds after a deletion", () => {
+    const described = describeScheduleError(envelope("orchestration-unavailable", 503));
+    expect(described.detail).toBe(
+      "The Sync service matches the task manager to the saved schedules again at the next change to any schedule or when the Sync API restarts. Until then, the task manager may still hold this schedule as it was before the change, also after a deletion, and start runs with it. Open the schedule page to check its state."
+    );
+  });
+
   it.each([
     ["schedule-cron-invalid", 422, "The Sync service refused the cron expression"],
     ["schedule-timezone-invalid", 422, "The Sync service does not know this time zone"],
