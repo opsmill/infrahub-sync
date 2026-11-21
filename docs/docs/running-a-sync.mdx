@@ -69,6 +69,17 @@ exits with status 2 and lists their identifiers; use one of them.
 
 ## Register the package
 
+The package names a stored credential in its source block and in its destination block. An
+administrator creates each one before the registration; the command asks for the value and does
+not echo it. See [Manage stored credentials](./guides/credentials.mdx).
+
+```bash
+infrahub-sync credentials create netbox-token
+infrahub-sync credentials create infrahub-token
+```
+
+Registration refuses a package that names a credential that does not exist.
+
 ```bash
 infrahub-sync configs register package.yml --reason "register inventory import"
 ```
@@ -85,8 +96,9 @@ infrahub-sync configs validate CONFIG_ID 1
 infrahub-sync configs show CONFIG_ID --version 1
 ```
 
-`configs validate` reports findings in the declared content. It does not connect to the
-source or the destination.
+`configs validate` reports findings in the declared content. It also reports each stored
+credential that a block names and that does not exist, or that lacks a field the block needs. It
+does not connect to the source or the destination.
 
 To check the version against the Infrahub branch that the run will write to, add `--branch`:
 
@@ -99,8 +111,9 @@ With `--branch`, validation also reads that branch and reports:
 - each mapped kind, attribute or relationship that the branch schema does not hold;
 - each literal Dropdown value in the mapping that is not one of the attribute's choices;
 - each permission that the import account lacks to view, create or update a mapped kind;
-- a `source` or `owner` setting that names no node, or more than one node;
-- each `$credential` variable that no running worker holds.
+- a `source` or `owner` setting that names no node, or more than one node.
+
+The Sync API reads the branch with the stored credential that the destination block names.
 
 The command exits with code 1 when one of these findings is an error. The finding codes are
 listed in [Durable product records](./reference/durable-product-records.mdx).

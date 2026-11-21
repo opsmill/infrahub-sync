@@ -88,6 +88,37 @@ period. A container from an earlier image fails to start, because the image has 
 `/usr/bin/tini`. No release contains these yet, so the minimum Sync version is not known yet. The
 release that the chart's current `appVersion` names does not contain them.
 
+### Stored credentials and the chart
+
+A Sync build with stored credentials reads three variables that the published chart does not
+pass:
+
+- `INFRAHUB_SYNC_ENCRYPTION_KEY` on the Sync API: the key that encrypts stored credentials, 32
+  bytes, base64-encoded.
+- `INFRAHUB_SYNC_WORKER_TOKEN` on the Sync API and on every worker: the token of the `worker`
+  account.
+- `INFRAHUB_SYNC_API_URL` on every worker: the address of the Sync API.
+
+Without the first two, the Sync API of such a build starts, but it answers every creation and
+change of a credential with `503 credential-key-not-configured`, and it applies no `worker`
+account, so no worker can get a value and a run of a package that names a stored credential
+fails. The chart change that passes them is a separate change in the `opsmill/infrahub-helm` repository. It
+is not released, and the chart version that will contain it is not known. That change also
+removes `worker.credentials`, `worker.credentialsExistingSecrets` and the
+`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` key, which such a build does not read. The
+sections below describe the published chart.
+
+With such a build, these rules apply on Kubernetes as on Compose:
+
+- An administrator stores the tokens and passwords of sources and destinations in the Sync API,
+  and a package names them. See [Manage stored credentials](./guides/credentials.mdx).
+- Changing the encryption key is not supported in this version.
+- Losing the key means entering every credential again with `infrahub-sync credentials set`.
+- The worker's request to the Sync API holds the worker token, and the answer holds the values.
+  Whether that request is plain HTTP inside the cluster depends on the address that the chart
+  sets in `INFRAHUB_SYNC_API_URL`, which is not known yet. The worker accepts an `https://`
+  address and trusts the certificates of [a private certificate authority](#trust-a-private-certificate-authority).
+
 ## Prerequisites
 
 - A Kubernetes cluster where you can create a namespace, and a default storage class or a storage
@@ -132,9 +163,7 @@ kubectl -n infrahub-sync create secret generic infrahub-sync --from-env-file=.en
 ```
 
 Each container reads only the keys it needs, so other lines of the file, such as
-`INFRAHUB_SYNC_API_TOKEN` or `VERSION`, are stored in the Secret and not read. This includes source
-credentials such as `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`: the worker reads them only from the
-Secrets described in [Settings](#settings), so put them there. To write a new
+`INFRAHUB_SYNC_API_TOKEN` or `VERSION`, are stored in the Secret and not read. To write a new
 `.env` file with random values, follow [The `.env` file](./compose-deployment.mdx#configuration-prerequisites)
 of the Compose deployment page, and keep the file at mode 0600, out of version control.
 
@@ -150,7 +179,7 @@ of the Compose deployment page, and keep the file at mode 0600, out of version c
 | `INFRAHUB_SYNC_PREFECT_PASSWORD` | with the bundled PostgreSQL | PostgreSQL, Prefect server |
 | `INFRAHUB_SYNC_DATABASE_URL` | with your own PostgreSQL | Sync API, worker, bootstrap |
 | `INFRAHUB_SYNC_PREFECT_DATABASE_URL` | with your own PostgreSQL | Prefect server |
-| `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | never | Sync API, worker |
+| `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | never | Sync API, worker, in the published chart. A Sync build with stored credentials does not read it; see [Stored credentials and the chart](#stored-credentials-and-the-chart). |
 
 The two `INFRAHUB_SYNC_ADMIN_ACCOUNT_*` keys define `admin`, the administrator account that
 always exists. Only the Sync API container receives them; the worker does not.
@@ -353,23 +382,13 @@ After you set `settings.requireApproval` to `true`, list the active schedules wi
 `infrahub-sync schedules list --state active --all`, then check with `infrahub-sync schedules show`
 that none of them has `write_target: default-branch`.
 
-Source credentials go to the worker only:
-
-- `worker.credentials` maps a variable name to its value, for example
-  `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`. The chart creates a Secret from the map. It refuses a
-  name that does not match `^INFRAHUB_SYNC_CREDENTIAL_[A-Za-z0-9_]+$`.
-- `worker.credentialsExistingSecrets` lists Secrets you create. Each key of each Secret becomes a
-  variable of the worker, so name the keys `INFRAHUB_SYNC_CREDENTIAL_<NAME>`. Do not list the
-  credentials Secret here: the worker would then receive every key of it, including the
-  PostgreSQL passwords.
-
-A package references these variables by name, as
-[Credentials in a package](./compose-deployment.mdx#credentials-in-a-package) describes. The destination
-token `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` is a key of the credentials Secret, and the
-Sync API and the worker both read it. To give the worker another token, set that key in
-`worker.credentials`: the worker then reads it from there and not from the credentials Secret.
-Do not put that key in a Secret of `worker.credentialsExistingSecrets` while the credentials
-Secret also holds it, because the credentials Secret's value wins.
+The published chart has two values for source credentials, `worker.credentials` and
+`worker.credentialsExistingSecrets`. Each makes `INFRAHUB_SYNC_CREDENTIAL_<NAME>` variables of
+the worker. A Sync build with stored credentials reads none of them: a package names a stored
+credential, and an administrator creates it with `infrahub-sync credentials create`. See
+[Stored credentials and the chart](#stored-credentials-and-the-chart). Do not list the
+credentials Secret in `worker.credentialsExistingSecrets`: the worker would then receive every
+key of it, including the PostgreSQL passwords.
 
 The init containers of the Prefect server and the bootstrap Job set the resource requests and
 limits of `initContainers.resources`: 10m CPU and 64Mi memory requested, and a 128Mi memory limit,

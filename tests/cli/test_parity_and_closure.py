@@ -428,10 +428,13 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
     required = (
         "uv sync --extra dev --extra prefect --extra service",
         "uv run invoke dev.start --infrahub-network infrahub_default",
-        "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
-        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
+        "INFRAHUB_SYNC_DEV_NETBOX_TOKEN",
+        "INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN",
+        "uv run infrahub-sync credentials list",
         "INFRAHUB_SYNC_API_URL",
         "INFRAHUB_SYNC_API_TOKEN",
-        "The worker reads both credentials from its environment",
+        "The worker gets both values from the Sync API",
+        "netbox-token",
+        "infrahub-token",
     )
     assert not [token for token in required if token not in text]

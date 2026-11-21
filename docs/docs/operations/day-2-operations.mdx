@@ -84,10 +84,15 @@ changes these steps of an image change:
 - The CLI: upgrade the CLI together with the Sync API. An earlier CLI cannot read the new
   response of `configs register` and `configs version`: the command stores the version and then
   fails. The registration is kept; read it with `configs show CONFIG_ID --version VERSION`.
-- The `worker_environments` table: each worker writes the names of its credential variables
-  to this new table, never their values. Each worker restart adds a row under a new worker name,
-  and the rows of earlier worker processes stay in the table. If you return to an earlier
-  image, the table stays in the database and the earlier release does not read it.
+- Stored credentials: `sync-api` needs `INFRAHUB_SYNC_ENCRYPTION_KEY` and
+  `INFRAHUB_SYNC_WORKER_TOKEN`, and each worker needs `INFRAHUB_SYNC_WORKER_TOKEN`. The
+  `INFRAHUB_SYNC_CREDENTIAL_*` variables are no longer read. A registered version that used a
+  `$credential` reference is refused with `422 credential-format-removed`; see
+  [Versions registered with the earlier format](../guides/credentials.mdx#versions-registered-with-the-earlier-format).
+  A `worker_environments` table of an earlier release stays in the database, and nothing reads
+  or writes it. If you return to an earlier image, that release needs the
+  `INFRAHUB_SYNC_CREDENTIAL_*` variables again and cannot run a version that names a stored
+  credential.
 - Warm incremental reads: no adapter bundled with Sync reads only the records changed since
   the last run, and the Sync API and the Prefect flow always read every record. A custom
   source adapter that defines `safe_cursor_before_load` reads this way only when it also

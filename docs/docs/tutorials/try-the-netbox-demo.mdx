@@ -115,12 +115,17 @@ two steps and never plans or applies:
 Use an Infrahub that holds no other schema. When the Infrahub schema conflicts with the
 destination schema, the command stops, names the conflict, and registers nothing.
 
-1. Give the Sync worker the NetBox and Infrahub tokens, in
-   `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`.
-   [Credentials in a package](../compose-deployment.mdx#credentials-in-a-package) explains it
-   for Compose, and
-   [Create the credentials Secret](../kubernetes-deployment.mdx#create-the-credentials-secret)
-   for Kubernetes. For the public NetBox demo,
+1. As an administrator, store the NetBox and Infrahub tokens in the Sync API, as the stored
+   credentials `netbox-token` and `infrahub-token`. The NetBox configuration names them. Each
+   command asks for the token and does not echo it:
+
+    ```bash
+    infrahub-sync credentials create netbox-token
+    infrahub-sync credentials create infrahub-token
+    ```
+
+   [Manage stored credentials](../guides/credentials.mdx) describes the commands; they are the
+   same for Compose and for Kubernetes. For the public NetBox demo,
    [Create a NetBox API token](netbox-demo-to-infrahub.mdx#create-a-netbox-api-token) shows how
    to get a token.
 

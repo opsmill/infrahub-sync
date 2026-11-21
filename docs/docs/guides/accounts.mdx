@@ -37,6 +37,20 @@ administrator can still end a refusal after repeated failed sign-ins for `admin`
 edit the variable and recreate `sync-api` alone; see
 [Recover or rotate the `admin` account](../compose-deployment.mdx#recover-or-rotate-the-admin-account).
 
+## The `worker` account
+
+A second account that the environment defines is named `worker`. The Sync workers present its
+token, `INFRAHUB_SYNC_WORKER_TOKEN`, to get the values of stored credentials for a run.
+
+- The account listing shows `worker` as an account that the environment defines.
+- It has no password, so no person can sign in as `worker`, and it is not an administrator.
+- It can call only the two worker routes. Every other route answers `403 forbidden` to it.
+- The CLI and the Sync API refuse every change of `worker`. To replace its token, change the
+  variable on `sync-api` and on every worker, then recreate them.
+- No account can be created with the name `worker`.
+
+See [The `worker` account](./credentials.mdx#the-worker-account).
+
 ## Sign in from a workstation
 
 On a workstation where the CLI is installed, sign in with the account name. Leave
@@ -393,4 +407,6 @@ These commands take `--json` to print the answer of the Sync API as JSON:
   upgrade from `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`
 - [Sync HTTP API](../reference/sync-http-api.mdx#accounts-and-api-tokens): the sign-in, account
   and token routes
+- [Manage stored credentials](./credentials.mdx): the tokens and passwords of sources and
+  destinations, which administrators create and change
 - [CLI reference](../reference/cli.mdx): every option of the account and token commands

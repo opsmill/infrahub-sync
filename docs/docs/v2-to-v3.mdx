@@ -20,7 +20,7 @@ the top navigation; every page on this line describes V3 only.
 | Area | V2 | V3 | Sources |
 | --- | --- | --- | --- |
 | Installation and runtime | The package was installed into a virtual environment, and that one process read the source, computed the difference, and wrote to the destination. | A service runs the Sync API, a worker, Prefect, PostgreSQL, and object storage, either from the release image through the root `docker-compose.yml` or built from source. The command-line client talks to that API and executes no synchronization itself. | [V2](/v2/installation) · [V3](./installation.mdx#two-ways-to-run-v3) |
-| Configuration and credentials | A project directory holding a `config.yml`, whose token settings named environment variables the local process read. | One package file with a `format_version`, a `configuration` object, and a `credentials` block. Credential-bearing settings hold `$credential` references, and the worker resolves them from the deployment's `.env` where it runs. | [V2](/v2/creating-a-sync-project) · [V3](./reference/config.mdx) |
+| Configuration and credentials | A project directory holding a `config.yml`, whose token settings named environment variables the local process read. | One package file with a `format_version` and a `configuration` object. Each adapter block names a stored credential with `credential: <name>`. An administrator stores the value in the Sync API, and the worker gets it from the Sync API for each run. | [V2](/v2/creating-a-sync-project) · [V3](./reference/config.mdx) |
 | Adapter code | A generation step emitted Python adapter and model code beside the configuration before a run. | No generation step. The worker loads installed adapter classes for the registered package version. | [V2](/v2/running-a-sync#generating-sync-adapters-and-models) · [V3](./reference/config.mdx) |
 | Registration and validation | There was no registry. Each command re-read the files on disk, addressed by project name and directory. | Registration returns an immutable configuration identity, version, and package checksum, and the registry is append-only. A registered version can be re-validated later against the adapter declarations installed at that moment, and mutations accept an idempotency key. | [V2](/v2/reference/cli) · [V3](./reference/sync-http-api.mdx#routes) |
 | Planning and apply | `diff` wrote a Parquet plan into a local cache directory and logged a run identifier. `apply` replayed that cached plan from disk and refused it when the destination schema shape had drifted. | `plan` admits a service plan run. The saved plan is reviewed through the service, which issues its checksum, and `apply` is bound to that checksum. `sync` submits a confirmed run. A plan records deletes, and apply never executes them. | [V2](/v2/running-a-sync#reviewing-and-applying-a-cached-plan) · [V3](./reference/cache-layout.mdx#saved-plan-review) |
@@ -119,9 +119,11 @@ hand in the same way.
    ```text
    Converting config.yml (v1 or v2 configuration "from-netbox")
 
-   Credentials (set these in the Sync deployment's .env file):
-     source.settings.token        NETBOX_TOKEN (v2) -> INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
-     destination.settings.token   INFRAHUB_API_TOKEN (v2) -> INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
+   Credentials (create each stored credential before you register the package):
+     source.credential            netbox-token (token): infrahub-sync credentials create netbox-token
+     source.settings.token        NETBOX_TOKEN (v2) -> field token of netbox-token
+     destination.credential       infrahub-token (token): infrahub-sync credentials create infrahub-token
+     destination.settings.token   INFRAHUB_API_TOKEN (v2) -> field token of infrahub-token
 
    Settings taken from the environment or the file:
      source.settings.url          https://demo.netbox.dev   from config.yml
@@ -135,12 +137,11 @@ hand in the same way.
 
    The report has these sections, in this order. A section with nothing to report is left out.
 
-   - `Credentials`: each credential setting, where V2 took its value from, and the
-     `INFRAHUB_SYNC_CREDENTIAL_` variable the Sync worker reads in V3. A warning follows when
-     `config.yml` still holds a literal value, and when the `docker-compose.yml` shipped with
-     this version does not pass the variable to the Sync worker. The shipped file passes a
-     fixed list of credential variables for the bundled adapters, listed in
-     [Credential variables the worker receives](./compose-deployment.mdx#credential-variables-the-worker-receives).
+   - `Credentials`: for each block that uses authentication, the stored credential that the
+     package names, the fields it needs, and the command that creates it. Below it, each
+     credential setting, where V2 took its value from, and the field of the stored credential
+     that replaces it. The command never reads or prints a value. See
+     [Manage stored credentials](./guides/credentials.mdx).
    - `Settings taken from the environment or the file`: each address, and each other setting
      that V2 read from an environment variable, with the value written and where it came from.
      A warning follows for a `localhost` or `127.0.0.1` address, and for an address taken from a
@@ -162,10 +163,13 @@ hand in the same way.
 
    ```text
    Next steps:
-     1. Set INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN in .env
-     2. Restart the deployment so the Sync worker receives them
+     1. infrahub-sync credentials create netbox-token
+     2. infrahub-sync credentials create infrahub-token
      3. infrahub-sync configs register package.yml
    ```
+
+   An administrator runs the `credentials create` commands. Each one asks for the value and
+   does not echo it. No deployment restart is needed.
 
    Then review the first plan before you apply it. When the Sync API requires approval, approve
    the plan with `infrahub-sync approve` before `apply`; `sync` is refused in that mode. See
@@ -206,10 +210,12 @@ holds the addresses V2 used. Then check that the Sync worker can reach them.
 - When `config.yml` holds `${CISCO_APIC_VERIFY}`, set that variable where you run the command;
   no flag sets `verify`. Set the APIC address with `CISCO_APIC_URL` or `--source-url`.
 
-### Credentials that the package references
+### Credentials that the package names
 
-V3 does not run a sync when a credential reference points to a variable that is missing or
-empty. So the package references only the credential settings that your V2 configuration used:
+The package names one stored credential in each block that uses authentication, and holds no
+credential setting. V3 refuses a block that names a credential its authentication method does
+not use. The fields that the credential needs come from the credential settings that your V2
+configuration used:
 
 - For `genericrestapi` and `peeringmanager`, the `auth_method` setting decides. Its V2 default is
   `token`. The methods `token`, `x-auth-token`, `api-key` and `key` use `token`, `basic` uses
@@ -220,10 +226,14 @@ empty. So the package references only the credential settings that your V2 confi
 - Every other adapter uses all of its credential settings: `token` for `infrahub`, `netbox` and
   `nautobot`, `username` and `password` for `aci`, and `auth` for `ipfabricsync`.
 
-A credential setting that holds a value or a `${NAME}` placeholder in `config.yml` is also
-referenced, even when the authentication method does not use it. Each credential setting that
-the package does not reference is listed under `Notes`, for example
-`not referenced: source.settings.token (auth_method basic does not use it)`.
+Each credential setting that the authentication method does not use is listed under `Notes`,
+for example `not referenced: source.settings.token (auth_method basic does not use it)`. When
+`config.yml` holds a value for such a setting, the note adds `its value in config.yml is left
+out`. A block whose method uses no credential names none.
+
+When the source and the destination use the same adapter, both blocks name the same stored
+credential, and a note says so. To give them different values, change one name in the package
+and create both credentials.
 
 When `auth_method` holds a value that V2 did not accept, the command refuses the configuration
 and names the setting.
@@ -235,7 +245,7 @@ and names the setting.
 | `name` | Copies it. |
 | `source.name`, `destination.name` | Copies a bundled adapter name. Refuses any other name. The destination must be `infrahub`. |
 | `source.adapter`, `destination.adapter` | Drops it with a note when it names the bundled adapter's own module. Refuses any other value. |
-| Credential settings, such as `token` or `password` | Replaces the value with a `$credential` reference and declares the reference in the `credentials` block, for each setting that the V2 authentication method used or that holds a value. Leaves out the others with a note. |
+| Credential settings, such as `token` or `password` | Leaves every credential setting out of the package. Writes `credential: <name>` in each block whose V2 authentication method used a credential, and lists the credential to create with the fields it needs. |
 | `auth_method` | Copies a value that V2 accepted. Refuses any other value. |
 | `url` and other settings that V2 read from the environment first | Writes the value from the flag, the variable or the file, and reports its origin. |
 | `genericrestapi` and `peeringmanager` settings that end in `_env_vars` | Drops them and lists them under `Dropped`. The command does not read the variables they name. |

@@ -6,9 +6,11 @@ The local development stack builds the Sync service image from your checkout and
 with Docker Compose: PostgreSQL, an object store, the Prefect server, the Sync API and the Sync
 worker. A preset adds a local Infrahub, and a local NetBox, when you want them. Use the stack
 to work on Infrahub Sync, test a fix, run the smoke suite, run a first sync, or run V3 on a
-Mac. Every credential the stack defines is a published local default. With the default `sync`
-preset, the worker also needs the token of the Infrahub it connects to: export it as
-`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` before you start the stack.
+Mac. Every credential the stack defines is a published local default, including the key that
+encrypts stored credentials and the token of the `worker` account. With the default `sync`
+preset, the stack also needs the token of the Infrahub it connects to: export it as
+`INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN` before you start the stack, and `dev.start` stores it in the
+Sync API as the stored credential `infrahub-token`.
 Never point any value on this page at a shared or internet-facing instance.
 
 The `dev` Invoke tasks drive the stack. They run
@@ -82,9 +84,10 @@ The `preview` preset changes the local NetBox only when no NetBox exists:
   does. The first run downloads that dataset. When the restore fails, the task removes the
   NetBox it created, with its data volume, so the next run loads the dataset again.
 
-With the `preview` preset, and with any preset while the local NetBox runs, the worker gets
-the local NetBox's development token as `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, unless your
-shell already exports that variable.
+With the `preview` and `demo` presets, and with any preset while the local NetBox runs,
+`dev.start` stores the local NetBox's development token in the Sync API as the stored credential
+`netbox-token`. When your shell exports `INFRAHUB_SYNC_DEV_NETBOX_TOKEN`, that value is stored
+instead.
 
 ### Choose a mode
 
@@ -141,8 +144,9 @@ the deployment's `.env`.
 
 With a local Infrahub, the worker reaches it at `http://infrahub-server:8000` inside the stack.
 A package that the containerized worker runs names that address, not the host address.
-`dev.start` gives the worker the stack's Infrahub admin token as
-`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, unless your shell already exports that variable.
+`dev.start` stores the stack's Infrahub admin token in the Sync API as the stored credential
+`infrahub-token`. When your shell exports `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN`, that value is
+stored instead. See [Stored credentials of the stack](#stored-credentials-of-the-stack).
 With the `sync` preset, see [Use an Infrahub that already runs](#use-an-infrahub-that-already-runs).
 
 When the local NetBox from the `netbox` tasks is running, `dev.start` and `dev.restart` also
@@ -298,6 +302,29 @@ image does.
 The `sync` preset, the default, starts no Infrahub. The worker then syncs into the Infrahub
 that a registered package names.
 
+### Stored credentials of the stack
+
+The shipped example packages name two stored credentials, `infrahub-token` and `netbox-token`.
+After the containers start, `dev.start` creates each one through the Sync API as the `admin`
+account, or sets its value again when it exists. No Compose file of the stack passes a token of
+a source or a destination to a Sync service.
+
+| Stored credential | Value that `dev.start` stores |
+| --- | --- |
+| `infrahub-token` | `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN` when your shell exports it, otherwise the admin token of the stack's own Infrahub |
+| `netbox-token` | `INFRAHUB_SYNC_DEV_NETBOX_TOKEN` when your shell exports it, otherwise the local NetBox's development token with the `preview` and `demo` presets or while the local NetBox runs |
+
+- A credential with no value is not stored. `dev.start` prints the names it stored.
+- The values go to the Sync API in a request body. The task does not print or log them.
+- The earlier exports `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` and
+  `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` are no longer read.
+- The Sync API of the stack encrypts stored credentials with a fixed development key, and the
+  worker presents a fixed development worker token. Both are in
+  `development/docker-compose.yml`; the shell variables `ENCRYPTION_KEY` and `WORKER_TOKEN`
+  replace them. Never use these defaults outside the stack.
+- To store any other credential that a package of yours names, run
+  `uv run infrahub-sync credentials create <name>`.
+
 ### An Infrahub on your machine or on another server
 
 The worker container reaches your machine at `host.docker.internal`, so an Infrahub that
@@ -307,12 +334,12 @@ port or another server, export its address so that `dev.start` prints it:
 
 ```bash
 export INFRAHUB_SYNC_DEV_INFRAHUB_URL=http://host.docker.internal:8090
-export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<that Infrahub's API token>
+export INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN=<that Infrahub's API token>
 uv run invoke dev.start
 ```
 
-The stack does not know that Infrahub's token, so export
-`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` before `dev.start` creates the worker container.
+The stack does not know that Infrahub's token, so export `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN`
+before `dev.start`, which stores it as the stored credential `infrahub-token`.
 `dev.seed` and `dev.smoke` refuse to run, because they write only to the stack's own Infrahub.
 
 ### An Infrahub on its own Docker network
@@ -336,7 +363,8 @@ In this mode:
   another service name, export `INFRAHUB_SYNC_DEV_INFRAHUB_URL` with its address on that
   network.
 - The stack does not know that Infrahub's admin token. Export
-  `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` before `dev.start`.
+  `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN` before `dev.start`, which stores it as the stored
+  credential `infrahub-token`.
 - `dev.seed` and `dev.smoke` refuse to run, because they write to the stack's own Infrahub and
   do not know the other Infrahub's host address. To run the smoke suite, unset the variable and
   start the stack with its own Infrahub, `uv run invoke dev.infrahub`.
@@ -494,13 +522,14 @@ own Infrahub instead of the one that step 1 starts. To follow that path, read
     uv run invoke netbox.seed --dataset demo
     ```
 
-5. Give the worker both tokens, then start the Sync stack on Infrahub's network. Keep the
-   three exports in the shell that runs the `dev` tasks. If you use another shell, export all
-   three again there:
+5. Export both tokens, then start the Sync stack on Infrahub's network. `dev.start` stores
+   them in the Sync API as the stored credentials `netbox-token` and `infrahub-token`, which the
+   example package names. Keep the three exports in the shell that runs the `dev` tasks. If you
+   use another shell, export all three again there:
 
     ```bash
-    export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000
-    export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="${INFRAHUB_API_TOKEN:?export INFRAHUB_API_TOKEN from step 2 first}"
+    export INFRAHUB_SYNC_DEV_NETBOX_TOKEN=nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000
+    export INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN="${INFRAHUB_API_TOKEN:?export INFRAHUB_API_TOKEN from step 2 first}"
     export INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK=infrahub_default
     uv run invoke dev.start
     ```
@@ -509,7 +538,8 @@ own Infrahub instead of the one that step 1 starts. To follow that path, read
    `it reads NetBox at http://netbox:8080` and `it reaches Infrahub at http://infrahub-server:8000`.
    `dev.start` and `dev.restart` connect the worker again each time they recreate it, and the
    NetBox tasks do the same when NetBox is recreated. If you change a credential later, export
-   the new value and run `uv run invoke dev.start` again.
+   the new value and run `uv run invoke dev.start` again, or run
+   `uv run infrahub-sync credentials set <name>`. The worker is not recreated for it.
 
 6. Write a copy of the example package for this stack, and register it:
 

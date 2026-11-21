@@ -8,7 +8,7 @@ import ReferenceLink from "../../src/components/Card";
 
 In a [configuration package](../configuration-package.mdx), name `slurpitsync` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
-On a Compose deployment, from source or from a release package, the worker receives the `INFRAHUB_SYNC_CREDENTIAL_*` variables this page names. The other environment variables on this page apply only to direct adapter use and do not reach the worker. The worker also receives the credential variables of the other bundled adapters. For `token`, use `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN`. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
+The worker gets the values of the stored credential that the block names from the Sync API for each run. For a registered package, it reads no token, username or password from its environment, and address variables do not replace the declared URLs. The environment variables on this page apply only to direct adapter use. See [Credentials](./choosing-an-adapter.mdx#credentials).
 
 The example package is [`examples/slurpit_to_infrahub/package.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/slurpit_to_infrahub/package.yml).
 
@@ -65,8 +65,7 @@ curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads
 `infrahub-sync` allows defining what gets synchronized from a source to a destination. Register
 `examples/slurpit_to_infrahub/package.yml` — a complete [configuration package](../configuration-package.mdx) —
 directly. Its `configuration:` body matches `config.yml`, kept alongside it for reference only:
-`config.yml`'s `$credential` references resolve only through registration, not through the legacy
-config.yml discovery path.
+the legacy `config.yml` discovery path does not read a stored credential.
 
 <ReferenceLink title="package.yml" url="https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/slurpit_to_infrahub/package.yml" openInNewTab />
 
@@ -77,9 +76,9 @@ The `source.name` is set to `slurpitsync`, instructing `infrahub-sync` to use th
 The settings dictionary is passed directly to the Slurp’it Python SDK for authentication and connection details.
 Some of these parameters may be found in the [Slurp’it SDK Repository](https://gitlab.com/slurpit.io/slurpit_sdk).
 
-Below is a snippet from the example `package.yml` file. Both credentials are declared in a
-top-level `credentials` block and resolved by the service worker from its own environment — no
-credential value is ever written into the registered package:
+Below is a snippet from the example `package.yml` file. Each block names a stored credential,
+and the package holds no value. The worker fills `api_key` from the field `token` of the
+credential that the source block names, so the package does not write `api_key`:
 
 ```yaml
 ---
@@ -88,37 +87,37 @@ configuration:
   name: from-slurpit
   source:
     name: slurpitsync
+    credential: slurpit-api-key
     settings:
       url: "https://<SLURPIT-ENDPOINT>"
-      api_key:
-        $credential: slurpit-api-key
 
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "http://localhost:8000"
-      token:
-        $credential: infrahub-token
   # ... schema_mapping omitted, see the full file
-
-credentials:
-  slurpit-api-key:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
-The worker resolves these references from its own environment. Give both
-`INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` to the custom service
-worker.
+An administrator creates both credentials before the package is registered. The first command
+asks for the Slurp’it API key, the second for the Infrahub token, and neither echoes it:
+
+```bash
+infrahub-sync credentials create slurpit-api-key
+infrahub-sync credentials create infrahub-token
+```
+
+| Key of the block | Required | Description |
+| --- | --- | --- |
+| `credential` | Yes | Name of a stored credential that holds the field `token`: the Slurp’it API key, which fills `api_key`. The setting `token` is not filled. See [Manage stored credentials](../guides/credentials.mdx). |
+
+The worker gets both values from the Sync API for each run, and needs no credential variable in
+its environment.
 
 The bundled [Compose deployment](../compose-deployment.mdx) cannot run this Slurp’it package.
-Its worker uses the bundle's bound image, which does not include the Slurp’it SDK. The worker
-receives `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY`, but registering the package does not install
-the SDK. To run it with a service worker, deploy a worker image that includes the SDK and give
-`INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY` to that worker's environment.
+Its worker uses the bundle's bound image, which does not include the Slurp’it SDK. Registering
+the package does not install the SDK. To run it with a service worker, deploy a worker image that
+includes the SDK.
 
 See [Configuration package](../configuration-package.mdx) for the full envelope reference.
 

@@ -181,6 +181,10 @@ Set both credential variables **before** starting the serve process — it passe
 environment to each run. Keep their real values in your shell or secret manager only:
 never in a file, a flow parameter, or a request body.
 
+This direct Prefect flow runs a `config.yml` file outside a registered package, so it uses no
+stored credential. The Sync API and its worker are different: they read no such variable for a
+registered package, whose blocks name stored credentials with `credential: <name>`.
+
 ## 4. Start the Prefect server
 
 **Terminal A** — this command does not return. It runs the server in the foreground until
