@@ -1,0 +1,37 @@
+tests/dev_stack/test_dev_tasks.py
+  s_58b527396c8cb5::t_642c8302b12a97 17,22-23,976-1105
+tests/test_benchmark_runner.py
+  s_58b527396c8cb5::t_579f973dd733cb 1320-1331,1357-1363
+  s_58b527396c8cb5::t_6c2399860051dc 6
+tasks/bench.py
+  s_58b527396c8cb5::t_53f2e28f28f93d 286-292,294,296-297,314-321
+.github/scripts/nightly_e2e.py
+  s_58b527396c8cb5::t_c2e164f66dea4a 80-82,98,105-106
+tests/test_nightly_e2e.py
+  s_58b527396c8cb5::t_c2e164f66dea4a 5,11
+  s_58b527396c8cb5::t_ccf3b45d213e0b 67-96
+  s_58b527396c8cb5::t_1fde7d2aae5d3e 12
+  s_58b527396c8cb5::t_c15ed248adbe20 97-98
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_c226f1774aabd6 123-125
+tests/dev_stack/conftest.py
+  s_58b527396c8cb5::t_9c68a2b2b46438 1-86
+tasks/dev.py
+  s_58b527396c8cb5::t_ed67672b3c509f 94-95,122-127,129,131-135,795-879,1154-1158,1168,1325-1328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3cb0d07500c35c84a3065201610bc78aaf004711",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
