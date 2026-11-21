@@ -471,8 +471,10 @@ def product(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Product
 
     _sign_the_cli_in(monkeypatch, api, tmp_path)
 
-    # Prefect's home and result storage are under the test's directory. The harness keeps the
-    # database elsewhere, so the places to search are read from Prefect once the harness is in force.
+    # The test asks for a home and a result storage under its own directory. Prefect does not
+    # always follow: the harness keeps the database elsewhere, and a process that ran other
+    # Prefect tests keeps an earlier home. So the places to search are read from Prefect once the
+    # harness is in force.
     home = tmp_path / "prefect-home"
     monkeypatch.setenv("PREFECT_HOME", str(home))
     monkeypatch.setenv("PREFECT_LOCAL_STORAGE_PATH", str(home / "storage"))
@@ -620,11 +622,15 @@ def test_no_output_holds_the_value_of_a_stored_credential(  # noqa: PLR0914, PLR
     assert holding == []
     assert count > 0
     # Prefect's own database is among the files searched: the file that Prefect's settings name,
-    # which holds the flow runs of this test. Its home is the directory the test gave it.
+    # which holds the flow runs of this test.
     searched = product.searched_files()
     assert product.prefect.database.resolve() in searched
     assert product.prefect_flow_runs() >= 2, "Prefect's database does not hold the plan and the apply of this test"
-    assert product.prefect.home.resolve() == (product.root / "prefect-home").resolve()
+    # The home that Prefect resolved holds a file, and the search covered it. In a process that
+    # ran other Prefect tests first, that home is not the `prefect-home` this test asked for:
+    # Prefect keeps the home of an earlier settings context.
+    home = product.prefect.home.resolve()
+    assert [label for path, label in searched.items() if home in path.parents]
 
 
 def _values_of(document: Any, key: str) -> set[str]:  # noqa: ANN401 - a JSON document.

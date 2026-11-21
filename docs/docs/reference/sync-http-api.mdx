@@ -242,10 +242,8 @@ A credential resource holds no value:
 - A caller that is not an administrator receives `403`, code `forbidden`, on the three changing
   routes. The checks name the permission `manage-credentials`, which administrators hold.
 - A `422` answer never repeats the submitted body.
-- The Sync API refuses to start without `INFRAHUB_SYNC_ENCRYPTION_KEY`, so a running Sync API
-  has a key. The code `503 credential-key-not-configured` is the answer to a creation or a
-  change when the application has no key. Only an application that a test builds in its own
-  process, without the variable, returns it.
+- The Sync API does not start without `INFRAHUB_SYNC_ENCRYPTION_KEY`; see
+  [Start the API](#start-the-api).
 - This build has no route that deletes a credential.
 
 ### Worker routes
