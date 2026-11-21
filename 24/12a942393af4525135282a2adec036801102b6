@@ -1,0 +1,21 @@
+infrahub_sync/service/schedules.py
+  s_3e9759cf5f1371::t_6ecea2f560bf67 24-32,1068-1071,1082-1088
+tests/service/test_schedule_routes.py
+  s_3e9759cf5f1371::t_16214c1131bfdd 15,19-24,838-885
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2412a942393af4525135282a2adec036801102b6",
+  "prompts": {},
+  "sessions": {
+    "s_3e9759cf5f1371": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aae1dfb6d21ead577",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
