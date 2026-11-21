@@ -1,0 +1,23 @@
+docs/docs/reference/sync-http-api.mdx
+  s_9369e2c1b4244d::t_f1570597276812 333
+tests/service/test_approval.py
+  s_9369e2c1b4244d::t_dcaa789ed12df1 20-26,224-251
+infrahub_sync/service/service.py
+  s_9369e2c1b4244d::t_a9ad2de9392d66 1020
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a1d38916f85745a396220a4a4bd7a6b7148bbeb8",
+  "prompts": {},
+  "sessions": {
+    "s_9369e2c1b4244d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9f8225f4a8af174b",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
