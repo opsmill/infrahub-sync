@@ -1,0 +1,21 @@
+tests/compose/test_suite_inputs.py
+  s_162ad5b6540700::t_d2110a15d6e6c5 70-96
+tests/test_stored_credential_marker.py
+  s_162ad5b6540700::t_6127154b84bfc1 564-567,571-572
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "78f96e8fcdad284f87f5f4da7f511a57edeade4f",
+  "prompts": {},
+  "sessions": {
+    "s_162ad5b6540700": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a1245f1115a2147c1",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
