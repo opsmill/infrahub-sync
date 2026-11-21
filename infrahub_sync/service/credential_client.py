@@ -76,6 +76,7 @@ CredentialUnavailableReason = Literal[
     "credential-missing",
     "credential-field-missing",
     "credential-undecryptable",
+    "credential-format-removed",
     "release-refused",
 ]
 
@@ -87,6 +88,7 @@ _REASON_OF_CODE: Final[dict[str, CredentialUnavailableReason]] = {
     "credential-not-found": "credential-missing",
     "credential-field-missing": "credential-field-missing",
     "credential-undecryptable": "credential-undecryptable",
+    "credential-format-removed": "credential-format-removed",
 }
 _MESSAGES: Final[dict[CredentialUnavailableReason, str]] = {
     "api-unreachable": "the Sync API could not be reached to release the stored credentials of the run",
@@ -94,6 +96,9 @@ _MESSAGES: Final[dict[CredentialUnavailableReason, str]] = {
     "credential-missing": "a stored credential that the configuration names does not exist",
     "credential-field-missing": "a stored credential does not hold a field that its block needs",
     "credential-undecryptable": "the Sync API cannot decrypt a stored credential with its current key",
+    "credential-format-removed": (
+        "the configuration version of the run uses the removed credential format, so no run of it can start"
+    ),
     "release-refused": "the Sync API refused to release the stored credentials of the run",
 }
 

@@ -120,7 +120,7 @@ _LEGACY_EXECUTION_FIELDS = {
 
 
 # What a run-starting route answers for a version stored in the removed credential format.
-_REMOVED_FORMAT_REFUSAL = (503, "configuration-version-invalid")
+_REMOVED_FORMAT_REFUSAL = (422, "credential-format-removed")
 
 
 def _json_timestamp(value: datetime | None) -> str | None:

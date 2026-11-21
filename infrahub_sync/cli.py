@@ -77,6 +77,11 @@ from infrahub_sync.configuration.conversion import (
     visible_v2_variables,
 )
 from infrahub_sync.configuration.conversion_report import next_step_lines, refusal_lines, report_lines
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+    STORED_VERSION_FORMAT_REMOVED_MESSAGE,
+)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.demo import prepare as demo_prepare
 from infrahub_sync.demo.errors import DemoError
@@ -393,7 +398,20 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         isinstance(error, APIError) and error.code == UNSUPPORTED_STORE_REASON
     ):
         result = (result[0], (*result[1], ("message", UNSUPPORTED_STORE_MESSAGE)))
-    return result[0], (*result[1], *_account_message(error))
+    return result[0], (*result[1], *_removed_format_message(error), *_account_message(error))
+
+
+def _removed_format_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return the fixed message of a refusal for the removed credential format, as one more error field.
+
+    A refused registration says what replaces the format, and a refused run says to register a
+    new version (spec 027, FR-021).
+    """
+    if isinstance(error, ConfigsAPIError) and error.reason == CREDENTIAL_FORMAT_REMOVED_REASON:
+        return (("message", CREDENTIAL_FORMAT_REMOVED_MESSAGE),)
+    if isinstance(error, APIError) and error.code == CREDENTIAL_FORMAT_REMOVED_REASON:
+        return (("message", STORED_VERSION_FORMAT_REMOVED_MESSAGE),)
+    return ()
 
 
 def _account_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:

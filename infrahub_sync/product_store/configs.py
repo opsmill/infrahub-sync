@@ -34,6 +34,7 @@ from infrahub_sync.configuration import (
     ConfigurationPackage,
     ConfigurationPackageParseError,
     CredentialConfigurationError,
+    RemovedCredentialFormatError,
     ValidationFinding,
     collect_findings,
     parse_configuration_package,
@@ -48,6 +49,10 @@ from infrahub_sync.configuration.models import (
     _POINTER_CHARACTER_ESCAPES,
     _require_json_native,
     safe_pointer_component,
+)
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON,
 )
 from infrahub_sync.configuration.schema_validation import (
     DestinationSchemaOptions,
@@ -660,6 +665,20 @@ def _parse(package: Mapping[str, Any], *, refuse_store: bool = True) -> Configur
         )
     try:
         return parse_configuration_package(dict(package))
+    except RemovedCredentialFormatError as exc:
+        # The message of the parse error is fixed text; it names nothing of the package.
+        raise ConfigsValidationError(
+            str(exc),
+            reason=CREDENTIAL_FORMAT_REMOVED_REASON,
+            findings=(
+                ValidationFinding(
+                    code=CREDENTIAL_FORMAT_REMOVED_REASON,
+                    severity="error",
+                    location="",
+                    message=CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+                ),
+            ),
+        ) from None
     except ConfigurationPackageParseError as exc:
         raise ConfigsRequestError(str(exc)) from None
 

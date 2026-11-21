@@ -38,6 +38,7 @@ from infrahub_sync.service.credential_client import (
 from infrahub_sync.service.schedule_admission import EarlierProposedChangesUnreadableError
 from infrahub_sync.service.settings import WORKER_API_URL_ENV, WORKER_TOKEN_ENV, CredentialSettingsError
 from tests.configuration.validation_packages import package_data
+from tests.helpers.removed_credential_format import REMOVED_REFERENCE_NAME, removed_format_content
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
@@ -211,6 +212,37 @@ def test_a_configuration_that_names_no_stored_credential_makes_no_request(monkey
     # No request was made, and the variables of the removed format fill no setting.
     assert "token" not in instance.source.settings
     assert "token" not in instance.destination.settings
+
+
+@pytest.mark.parametrize("stage", ["plan", "apply", "resume", "verify"])
+def test_a_stage_of_a_version_stored_in_the_removed_format_fails_with_that_cause(
+    monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """A run that was queued before the removal fails with the cause that says to register a new version."""
+    _refuse_requests(monkeypatch)
+    package = _package()
+    projection = _Projection(package)
+    removed = removed_format_content(package.declared_content())
+    monkeypatch.setattr(
+        projection,
+        "lookup_configuration_version",
+        lambda config_id, registry_version: LookupResult(
+            value=ConfigurationVersion(
+                config_id=config_id,
+                registry_version=registry_version,
+                package_checksum=projection.binding[2],
+                declared_content=removed,
+                created_at=datetime.now(timezone.utc),
+            )
+        ),
+    )
+    credentials = service_flow._RunCredentials("run-stored-credentials", "flow-run-1")
+
+    with pytest.raises(CredentialUnavailableError) as refused:
+        _resolve(projection, stage, credentials)
+
+    assert (refused.value.reason, refused.value.code) == ("credential-format-removed", "credential-format-removed")
+    assert REMOVED_REFERENCE_NAME not in str(refused.value)
 
 
 @pytest.mark.parametrize("stage", ["apply", "resume", "verify"])

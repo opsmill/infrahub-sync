@@ -34,6 +34,7 @@ from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import (
     ConfigurationPackage,
     ConfigurationPackageParseError,
+    RemovedCredentialFormatError,
     parse_configuration_package,
 )
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError, destination_token
@@ -43,6 +44,7 @@ from infrahub_sync.configuration.credential_admission import (
     named_credentials,
 )
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
+from infrahub_sync.configuration.removed_credential_format import CREDENTIAL_FORMAT_REMOVED_REASON
 from infrahub_sync.configuration.runtime import effective_destination_branch, resolve_runtime_instance
 from infrahub_sync.configuration.storage import (
     UNSUPPORTED_STORE_MESSAGE,
@@ -1046,6 +1048,14 @@ def _worker_execution_context(
         raise ValueError(_REGISTERED_VERSION_UNAVAILABLE)
     try:
         package = parse_configuration_package(registered.declared_content)
+    except RemovedCredentialFormatError:
+        # A run that was queued before the removal of the `credentials` block (spec 027,
+        # FR-021). The Sync API refuses its stored credentials with the same code; the worker
+        # reads the stored version first, so it gives the cause here, with no request.
+        raise CredentialUnavailableError(
+            "credential-format-removed",  # noqa: EM101 - the reason of the error, not its message.
+            code=CREDENTIAL_FORMAT_REMOVED_REASON,
+        ) from None
     except ConfigurationPackageParseError:
         raise ValueError(_REGISTERED_VERSION_INVALID) from None
     if registered.package_checksum != package_checksum or package.checksum() != package_checksum:

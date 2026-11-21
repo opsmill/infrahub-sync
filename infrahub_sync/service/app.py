@@ -23,6 +23,10 @@ from infrahub_sync.client.models import (
     MIN_LIMIT,
     PlanReportPageResource,
 )
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.execution import redaction_scope
 from infrahub_sync.plan.models import PROBLEM_TYPES
@@ -499,6 +503,14 @@ def _lifespan(reconciler: RunLivenessReconciler | None, schedules: ScheduleServi
     return lifespan
 
 
+# The refusals of a configuration route that have a fixed message of their own. Every other
+# refusal answers one general message, and its `reason` names the cause.
+_CONFIGURATION_REFUSAL_MESSAGES = {
+    UNSUPPORTED_STORE_REASON: UNSUPPORTED_STORE_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON: CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+}
+
+
 def create_app(
     service: RunService,
     resolver: PrincipalResolver,
@@ -542,10 +554,8 @@ def create_app(
         envelope = ConfigErrorEnvelope(
             error=ConfigErrorDetail(
                 code=f"configs-{exc.family}",
-                message=(
-                    UNSUPPORTED_STORE_MESSAGE
-                    if exc.reason == UNSUPPORTED_STORE_REASON
-                    else "the configuration service refused the request"
+                message=_CONFIGURATION_REFUSAL_MESSAGES.get(
+                    exc.reason or "", "the configuration service refused the request"
                 ),
                 status=exc.status,
                 family=exc.family,

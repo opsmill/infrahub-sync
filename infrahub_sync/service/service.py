@@ -22,12 +22,20 @@ from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResource, PlanStepPart, PlanStepTimings
-from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration import (
+    ConfigurationPackageParseError,
+    RemovedCredentialFormatError,
+    parse_configuration_package,
+)
 from infrahub_sync.configuration.credential_admission import (
     CREDENTIAL_BLOCKS,
     STAGE_CREDENTIAL_BLOCKS,
     StoredCredentialFinding,
     stored_credential_findings,
+)
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+    STORED_VERSION_FORMAT_REMOVED_MESSAGE,
 )
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
@@ -237,6 +245,19 @@ class ServiceAPIError(Exception):
         # The count of records the plan leaves out, on `left-out-confirmation-required` only.
         self.left_out = left_out
         super().__init__(self.message)
+
+
+def stored_version_refusal(error: ConfigurationPackageParseError, unavailable_message: str) -> ServiceAPIError:
+    """Return the refusal of a worker route for a stored configuration version that cannot be parsed.
+
+    A version stored in the removed credential format answers ``422 credential-format-removed``
+    with fixed text that says to register a new version (spec 027, FR-021). Any other version
+    answers ``500 configuration-version-unavailable`` with ``unavailable_message``. Neither
+    answer holds the text of ``error``, which can quote the stored content.
+    """
+    if isinstance(error, RemovedCredentialFormatError):
+        return ServiceAPIError(422, CREDENTIAL_FORMAT_REMOVED_REASON, STORED_VERSION_FORMAT_REMOVED_MESSAGE)
+    return ServiceAPIError(500, "configuration-version-unavailable", unavailable_message)
 
 
 def page_size_or_refuse(limit: int | None, *, secrets: Sequence[str] = ()) -> int:
@@ -533,9 +554,10 @@ class RunService:
 
         Raises:
             ServiceAPIError: ``404`` for a version that does not exist, ``503`` for one that
-                cannot be read, and ``422`` for an unsupported store, a credential identifier
-                outside the namespace, ``credential-not-found``, ``credential-field-missing``
-                and ``credential-method-unknown``. No refusal holds a value.
+                cannot be read, and ``422`` for an unsupported store, ``credential-format-removed``
+                for a version stored in the removed credential format, ``credential-not-found``,
+                ``credential-field-missing`` and ``credential-method-unknown``. No refusal holds a
+                value.
         """
         stored = self._projection.lookup_configuration_version(config_id, registry_version).value
         if stored is None:
@@ -544,6 +566,10 @@ class RunService:
             )
         try:
             package = parse_configuration_package(stored.declared_content)
+        except RemovedCredentialFormatError:
+            # Stored before the removal of the `credentials` block (spec 027, FR-021): no run of
+            # it can start. The message is fixed text and names nothing of the stored content.
+            raise self._error(422, CREDENTIAL_FORMAT_REMOVED_REASON, STORED_VERSION_FORMAT_REMOVED_MESSAGE) from None
         except ConfigurationPackageParseError:
             raise self._error(
                 503, "configuration-version-invalid", "the registered configuration version is invalid"
@@ -1031,8 +1057,9 @@ class RunService:
     ) -> None:
         """Refuse an approval when the apply it precedes would be refused for a stored credential (FR-008).
 
-        The refusal is recorded, as every refused approval is. A version that cannot be read
-        is left to the plan lookup that follows, and to the apply.
+        The refusal is recorded, as every refused approval is. A version stored in the removed
+        credential format is refused in the same way (FR-021). Any other version that cannot be
+        read is left to the plan lookup that follows, and to the apply.
         """
         binding = run.configuration_binding
         if binding is None:
@@ -1042,6 +1069,17 @@ class RunService:
             return
         try:
             package = parse_configuration_package(stored.declared_content)
+        except RemovedCredentialFormatError:
+            self._audit(
+                run.run_id,
+                actor=principal.actor,
+                operation="approve",
+                reason=reason,
+                outcome=f"refused-{CREDENTIAL_FORMAT_REMOVED_REASON}",
+            )
+            raise self._error(
+                422, CREDENTIAL_FORMAT_REMOVED_REASON, STORED_VERSION_FORMAT_REMOVED_MESSAGE, run_id=run.run_id
+            ) from None
         except ConfigurationPackageParseError:
             return
         refused = self._stored_credential_refusal(package, "approve")

@@ -88,7 +88,7 @@ from .events import (
     credentials_released_event,
 )
 from .failure_cause import failure_class
-from .service import ServiceAPIError
+from .service import ServiceAPIError, stored_version_refusal
 from .settings import ENCRYPTION_KEY_ENV
 
 if TYPE_CHECKING:
@@ -491,7 +491,8 @@ class CredentialActions:
         Raises:
             ServiceAPIError: ``404 run-not-found``; ``409 execution-not-in-progress``;
                 ``422 credential-not-found``, ``422 credential-field-missing`` or
-                ``422 credential-method-unknown``, each with the block; ``500
+                ``422 credential-method-unknown``, each with the block; ``422
+                credential-format-removed``; ``500
                 credential-undecryptable``; ``500 configuration-version-unavailable``; ``503
                 credential-key-not-configured`` when a block names a credential and no key is set.
                 No refusal holds a value.
@@ -566,7 +567,8 @@ class CredentialActions:
 
         Raises:
             ServiceAPIError: ``404 schedule-not-found``; ``500
-                configuration-version-unavailable``; ``422 destination-credential-not-named``
+                configuration-version-unavailable``; ``422 credential-format-removed``;
+                ``422 destination-credential-not-named``
                 when the destination names no stored credential or needs no field of one;
                 ``422 credential-not-found``, ``422 credential-field-missing``, ``422
                 credential-method-unknown``, ``500 credential-undecryptable`` and ``503
@@ -583,11 +585,9 @@ class CredentialActions:
             raise ServiceAPIError(500, "configuration-version-unavailable", _SCHEDULE_VERSION_UNAVAILABLE_MESSAGE)
         try:
             package = parse_configuration_package(version.declared_content)
-        except ConfigurationPackageParseError:
+        except ConfigurationPackageParseError as error:
             # The parse error can quote the declared content; the answer names the fact only.
-            raise ServiceAPIError(
-                500, "configuration-version-unavailable", _SCHEDULE_VERSION_UNAVAILABLE_MESSAGE
-            ) from None
+            raise stored_version_refusal(error, _SCHEDULE_VERSION_UNAVAILABLE_MESSAGE) from None
         name = package.configuration.destination.credential
         entry = None if name is None else self._checked_block("destination", name, package)
         if entry is None:
@@ -653,9 +653,9 @@ class CredentialActions:
             raise ServiceAPIError(500, "configuration-version-unavailable", _VERSION_UNAVAILABLE_MESSAGE)
         try:
             package = parse_configuration_package(version.declared_content)
-        except ConfigurationPackageParseError:
+        except ConfigurationPackageParseError as error:
             # The parse error can quote the declared content; the answer names the fact only.
-            raise ServiceAPIError(500, "configuration-version-unavailable", _VERSION_UNAVAILABLE_MESSAGE) from None
+            raise stored_version_refusal(error, _VERSION_UNAVAILABLE_MESSAGE) from None
         named: list[tuple[CredentialBlock, str, ConfigurationPackage]] = []
         for block in STAGE_BLOCKS[stage]:
             name = getattr(package.configuration, block).credential

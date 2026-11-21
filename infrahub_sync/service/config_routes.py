@@ -23,6 +23,7 @@ from infrahub_sync.client.models import (
     ValidationReportResource,
 )
 from infrahub_sync.configuration.credential_admission import STORED_CREDENTIAL_CODES
+from infrahub_sync.configuration.removed_credential_format import CREDENTIAL_FORMAT_REMOVED_REASON
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.canonical import canonical_json_bytes
@@ -157,9 +158,13 @@ class ConfigurationRoutes:
             if error_type is self._service.ConfigsRequestError:
                 raise ConfigurationAPIError(400, "request", proven_pre_effect=True) from None
             if error_type is self._service.ConfigsValidationError:
-                # The fixed reasons a refusal may name: the unsupported store, and the codes of
-                # a named stored credential that cannot serve its block (spec 027, FR-008).
-                named = error.reason == UNSUPPORTED_STORE_REASON or error.reason in STORED_CREDENTIAL_CODES
+                # The fixed reasons a refusal may name: the unsupported store, the removed
+                # credential format (spec 027, FR-021), and the codes of a named stored
+                # credential that cannot serve its block (FR-008).
+                named = (
+                    error.reason in {UNSUPPORTED_STORE_REASON, CREDENTIAL_FORMAT_REMOVED_REASON}
+                    or error.reason in STORED_CREDENTIAL_CODES
+                )
                 reason = error.reason if named else None
                 raise ConfigurationAPIError(422, "validation", reason=reason, proven_pre_effect=True) from None
             if error_type is self._service.ConfigsNotFoundError:

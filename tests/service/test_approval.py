@@ -23,6 +23,7 @@ from infrahub_sync.service.models import PlanOperationResource, PlanResource, Pl
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.removed_credential_format import REMOVED_REFERENCE_NAME, store_in_removed_format
 from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
@@ -208,6 +209,27 @@ def test_approve_records_the_approval_and_returns_the_run_with_the_plan_summary(
     assert stored.approval is not None
     assert stored.approval.approved_by == account_identifier(projection, "owner")
     assert _outcomes(projection) == ["accepted"]
+
+
+def test_a_version_stored_in_the_removed_credential_format_cannot_be_approved(api: _Api, tmp_path: Path) -> None:
+    """The apply that the approval precedes can never run, so the approval is refused and recorded (FR-021)."""
+    client, projection, _, version = api
+    _stored_run(projection, version)
+    store_in_removed_format(
+        tmp_path.resolve(), version.config_id, version.registry_version, _registered_package().declared_content()
+    )
+
+    response = _approve(client)
+
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert error["code"] == "credential-format-removed"
+    assert "register a new version" in error["message"]
+    assert REMOVED_REFERENCE_NAME not in response.text
+    assert _outcomes(projection) == ["refused-credential-format-removed"]
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    assert stored.approval is None
 
 
 def test_an_approval_and_its_accepted_event_carry_one_clock_reading(tmp_path: Path) -> None:

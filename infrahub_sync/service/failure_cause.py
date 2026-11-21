@@ -563,6 +563,14 @@ def _credential_unavailable_template(link: BaseException | None) -> _Template:
             f"Check {_ENCRYPTION_KEY_ENV} of the Sync API, or ask an administrator to set the value again "
             f"with {change}, {_PLAN_AGAIN}",
         ),
+        # No run of this version can start again, so the next action does not end with a new
+        # plan of the same version, and a resumable run is not told to resume (spec 027, FR-021).
+        "credential-format-removed": (
+            "The configuration version of the run uses the removed `credentials` block or `$credential` "
+            "references, so the Sync API released no stored credential",
+            "Register a new version of the configuration whose adapter blocks name stored credentials with "
+            "`credential: <name>`, then plan with the new version.",
+        ),
     }
     # `release-refused`, and any reason a later client adds: the refusal names its own code.
     refused: _Template = (
@@ -581,7 +589,9 @@ def _templates(fields: dict[str, Any], *, resumable: bool = False, link: BaseExc
     """
     if fields["failure_type"] == "credential_unavailable":
         cause, next_action = _credential_unavailable_template(link)
-        if resumable and next_action is not None:
+        # Only a next action that ends with a new plan becomes a resume: a version in the
+        # removed credential format needs a new version, which a resume cannot use.
+        if resumable and next_action is not None and next_action.endswith(_PLAN_AGAIN):
             next_action = next_action.removesuffix(_PLAN_AGAIN) + _VERIFY_AND_RESUME
         return cause, next_action
     template = _TEMPLATES.get(fields["failure_type"])

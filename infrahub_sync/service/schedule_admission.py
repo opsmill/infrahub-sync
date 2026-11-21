@@ -16,7 +16,12 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Protocol
 
 from infrahub_sync.cache.paths import generate_run_id
-from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration import (
+    ConfigurationPackageParseError,
+    RemovedCredentialFormatError,
+    parse_configuration_package,
+)
+from infrahub_sync.configuration.removed_credential_format import CREDENTIAL_FORMAT_REMOVED_REASON
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.product_store import (
@@ -452,8 +457,9 @@ def _runnable_version(
         return _VERSION_NOT_FOUND
     try:
         package = parse_configuration_package(stored.declared_content)
-    except ConfigurationPackageParseError:
-        return _VERSION_INVALID
+    except ConfigurationPackageParseError as exc:
+        # A version stored before the removal of the `credentials` block has its own code (spec 027, FR-021).
+        return CREDENTIAL_FORMAT_REMOVED_REASON if isinstance(exc, RemovedCredentialFormatError) else _VERSION_INVALID
     if package.checksum() != stored.package_checksum:
         return _VERSION_INVALID
     if package.configuration.store is not None:

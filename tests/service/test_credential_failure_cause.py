@@ -1,6 +1,6 @@
 """The failure cause of a stage that cannot get its stored credential values (spec 027, FR-019).
 
-The worker's client raises ``CredentialUnavailableError`` with one of six reasons. Each reason is
+The worker's client raises ``CredentialUnavailableError`` with one of seven reasons. Each reason is
 recorded as the failure type ``credential_unavailable`` with its own cause and next action. The
 next action of a missing credential names the command that creates it and says that an
 administrator runs it (critique P5). No text of the error reaches the record.
@@ -36,6 +36,8 @@ def _unavailable(reason: str) -> CredentialUnavailableError:
         return CredentialUnavailableError(
             "credential-undecryptable", code="credential-undecryptable", block="destination", name=NAME
         )
+    if reason == "credential-format-removed":
+        return CredentialUnavailableError("credential-format-removed", code="credential-format-removed")
     if reason == "release-refused":
         return CredentialUnavailableError("release-refused", code="execution-not-in-progress")
     assert reason in {"api-unreachable", "worker-token-refused"}
@@ -61,6 +63,21 @@ def test_each_reason_has_its_own_cause_and_next_action(reason: str, cause: str, 
     assert next_action in record["cause"] + record["next_action"]
     assert record["next_action"].endswith("then plan again.")
     # The credential is no system: the failure names neither the source nor the destination.
+    assert record["system"] is None
+
+
+@pytest.mark.parametrize("resumable", [False, True])
+def test_a_version_in_the_removed_credential_format_says_to_register_a_new_version(*, resumable: bool) -> None:
+    record = failure_record("apply", _unavailable("credential-format-removed"), resumable=resumable)
+
+    assert record["failure_type"] == FAILURE_TYPE
+    assert "removed" in record["cause"]
+    assert "`credentials` block" in record["cause"]
+    assert "Register a new version" in record["next_action"]
+    assert "credential: <name>" in record["next_action"]
+    # No run of this version can continue: the next action never says to plan again or to resume.
+    assert "plan again" not in record["next_action"]
+    assert "runs resume" not in record["next_action"]
     assert record["system"] is None
 
 

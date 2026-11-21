@@ -47,6 +47,7 @@ from infrahub_sync.service.schedule_admission import admit_scheduled_start
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.settings import WorkerSettings
 from tests.configuration.validation_packages import SOURCE_CREDENTIAL
+from tests.helpers.removed_credential_format import store_in_removed_format
 from tests.helpers.stored_credentials import (
     TEST_ENCRYPTION_KEY,
     create_stored_credential,
@@ -399,6 +400,16 @@ def test_an_unknown_schedule_is_not_found(states: States) -> None:
     response = states.read(OTHER_SCHEDULE_ID)
 
     _refused(response, 404, "schedule-not-found")
+
+
+def test_a_version_stored_in_the_removed_credential_format_is_refused_before_any_read(states: States) -> None:
+    states.earlier_run("pc-open-1")
+    store_in_removed_format(states.tmp_path, states.api.config_id, 1, _package().declared_content())
+
+    error = _refused(states.read(), 422, "credential-format-removed")
+
+    assert "register a new version" in error["message"]
+    assert states.infrahub.requests == []
 
 
 def test_a_missing_credential_is_refused_with_the_code_of_the_release_route(states: States) -> None:

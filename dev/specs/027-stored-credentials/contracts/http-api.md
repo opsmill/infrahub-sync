@@ -66,7 +66,8 @@ worker route that releases the values of a run.
     - `404 run-not-found`
     - `409 execution-not-in-progress`: no claimed, non-terminal execution `(run_id, flow_run_id)`
     - `422 credential-not-found`, `422 credential-field-missing` (with the block and the field names)
-    - `422 credential-format-removed`: the version uses the removed `credentials` block
+    - `422 credential-format-removed`: the version uses the removed `credentials` block or
+      `$credential` references. The message says to register a new version.
     - `500 credential-undecryptable`: the stored value cannot be decrypted with the current key
 - No `Idempotency-Key`, no `mutation_receipts` row.
 - Each success writes `run_credential_uses` rows and one audit event `credential.released`.
@@ -104,6 +105,8 @@ worker cannot get the destination token for this read. The Sync API does the rea
     - `422 credential-not-found`, `422 credential-field-missing`, `422 credential-method-unknown` (with
       the block and the field names), as on the first worker route
     - `500 credential-undecryptable`, `503 credential-key-not-configured`, as on the first worker route
+    - `422 credential-format-removed`: the schedule's stored version uses the removed `credentials`
+      block or `$credential` references
     - `500 configuration-version-unavailable`: the schedule's stored version cannot be read
     - `424 proposed-change-read-failed`: Infrahub could not be read. `details.failure` is the failure
       class of the read, for example `system_unreachable` or `token_rejected`; the answer never holds the
@@ -133,7 +136,9 @@ Every route outside the two worker routes answers `403 forbidden` to the worker 
     - `credential-not-used`: a block names a credential that its authentication method does not use.
       Configuration validation reports it as an error finding. No test of the registration route checks
       its `reason` yet; it is not known whether the `reason` is this code.
-    - `credential-format-removed`: the code does not produce it yet. T047 to T052 add it.
+    - `credential-format-removed`: the package holds a `credentials` block, empty or not, or a
+      `$credential` reference. The `message` field names `credential: <name>`
+      (`tests/configuration/test_removed_credential_format.py`).
 - `POST /configs/{config_id}/versions/{v}/validate` returns the same findings in the `findings` list of
   its report, each with its code, its location and its message.
 - The findings `credential-not-set-in-worker` and `worker-environment-unknown` are removed.
