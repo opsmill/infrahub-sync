@@ -1,0 +1,31 @@
+tests/test_stored_credential_marker.py
+  s_58b527396c8cb5::t_83c966015c0d29 1-494
+  s_58b527396c8cb5::t_e5f3a9a4bf38c9 495-497
+  s_162ad5b6540700::t_06d1ef29160006 498-586
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_57671a33217b16 157-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a78af98d9c6240d5fe9466815c2afa51867a2aa",
+  "prompts": {},
+  "sessions": {
+    "s_162ad5b6540700": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a1245f1115a2147c1",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
