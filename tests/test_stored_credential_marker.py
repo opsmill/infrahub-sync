@@ -561,9 +561,15 @@ def test_no_output_holds_the_value_of_a_stored_credential(  # noqa: PLR0914, PLR
     assert SOURCE_CREDENTIAL in dump, "the dump does not hold the stored credentials"
     dump_holds_a_marker = _holds_a_marker(dump)
     assert not dump_holds_a_marker
+    # The dump prints a BLOB column as hexadecimal text.
+    lowered = dump.lower()
+    dump_holds_a_marker_in_hex = any(marker.encode().hex() in lowered for marker in MARKERS)
+    assert not dump_holds_a_marker_in_hex
     count, holding = product.files_holding_a_marker()
     assert holding == []
     assert count > 0
+    # Prefect's own database is among the files searched.
+    assert [path.name for path in (product.root / "prefect-home").rglob("*") if path.is_file()]
 
 
 def _values_of(document: Any, key: str) -> set[str]:  # noqa: ANN401 - a JSON document.

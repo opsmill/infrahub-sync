@@ -67,6 +67,33 @@ def test_a_suite_package_parses_and_names_its_stored_credentials(suite: str) -> 
     assert [text for text in REMOVED_FORMAT if text in rendered] == []
 
 
+@pytest.mark.parametrize("suite", sorted(SUITE_PACKAGES))
+def test_the_sync_api_registers_a_suite_package_once_its_credentials_are_stored(
+    suite: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route the suites call admits the package: `POST /configs` answers 201 on the in-process Sync API."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("prefect")
+    pytest.importorskip("cryptography")
+    # The Sync service needs the `service` extra, which Python 3.10 does not install.
+    pytest.importorskip("psycopg")
+    account_api = importlib.import_module("tests.service.account_api")
+    stored = importlib.import_module("tests.helpers.stored_credentials")
+    build, expected = SUITE_PACKAGES[suite]
+    content = build()
+    api = account_api.build_account_api(tmp_path, monkeypatch, credential_key=stored.TEST_ENCRYPTION_KEY)
+    stored.create_stored_credential_names(api.store, *sorted({name for name in expected.values() if name}))
+
+    answer = api.client.post(
+        "/configs",
+        headers={**account_api.bearer(account_api.ADMIN_TOKEN), "Idempotency-Key": f"suite-inputs-{suite}"},
+        json={"package": content, "reason": "suite inputs: register"},
+    )
+
+    code = answer.json().get("error", {}).get("code") if answer.status_code != 201 else None
+    assert answer.status_code == 201, f"the Sync API refused the package of {suite}: {answer.status_code} {code}"
+
+
 @pytest.fixture
 def suite_canaries() -> dict[str, str]:
     """The values the `canaries` fixture of the suites gives a deployment, made the same way."""
