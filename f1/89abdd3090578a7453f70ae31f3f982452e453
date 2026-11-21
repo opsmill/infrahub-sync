@@ -1,0 +1,19 @@
+tests/configuration/test_removed_credential_format.py
+  s_3e9759cf5f1371::t_ff25f3c8846630 170-208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f189abdd3090578a7453f70ae31f3f982452e453",
+  "prompts": {},
+  "sessions": {
+    "s_3e9759cf5f1371": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aae1dfb6d21ead577",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
