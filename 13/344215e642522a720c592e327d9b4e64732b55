@@ -1,0 +1,21 @@
+AGENTS.md
+  s_0a9f0b6318b368::t_c9be152122e25e 112,127
+docs/docs/development/constitution.md
+  s_0a9f0b6318b368::t_78c52065bc8245 107-112,145-147,221
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13344215e642522a720c592e327d9b4e64732b55",
+  "prompts": {},
+  "sessions": {
+    "s_0a9f0b6318b368": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac6b42be7674a2a53",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
