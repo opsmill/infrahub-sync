@@ -41,14 +41,35 @@ The Infrahub Sync repository includes working examples at `examples/netbox_to_in
 
 Models must be synced in dependency order: anything referenced by another model must be synced first. A typical order:
 
-1. Independent objects: tags, locations, manufacturers, device roles, platforms
-2. Rack and site data (depends on locations)
-3. Devices (depends on locations, roles, manufacturers, platforms)
-4. Interfaces (depends on devices)
-5. IP addresses and prefixes (depends on interfaces, VRFs)
-6. VLANs and VLAN groups
+1. Independent objects: tags, locations, manufacturers, device roles, platforms, route targets
+2. IP namespaces, then VRFs (load any route targets before VRFs)
+3. Rack and site data (depends on locations)
+4. IP addresses and prefixes (depends on IP namespaces, VRFs)
+5. Devices (depends on locations, roles, manufacturers, platforms, primary IP addresses)
+6. VLAN groups, then VLANs
+7. LAGs, then physical and virtual interfaces (depends on devices, IP addresses, VLANs; physical interfaces also reference LAGs through `bundle`)
 
 The exact order depends on your schema. See [Sync instance configuration](./reference/config.mdx) for the syntax of the `order` key.
+
+IP namespaces are on that list because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address. Which mapping you need depends on whether your source has a namespace object of its own.
+
+**NetBox and Nautobot 1.x** have none, so the namespace has to be derived. The NetBox example creates one Infrahub IP namespace per VRF name and sends objects with no VRF to Infrahub's built-in `default` namespace. Do the same in your own mapping if your source can hold the same prefix in more than one VRF — otherwise those prefixes all collapse into one Infrahub object and overwrite each other.
+
+**Nautobot 2.0 and later** have [native IPAM namespaces](https://docs.nautobot.com/projects/core/en/stable/user-guide/core-data-model/ipam/namespace/), added in 2.0.0. Map those directly and carry them into the prefix and address identities, as `examples/nautobot-v2_to_infrahub/` does with its `NautobotNamespace` entry mapped from `ipam.namespaces`. Do not derive the namespace from the VRF name there: loading namespaces keyed by VRF name raises `ObjectAlreadyExists` if that name repeats across native namespaces.
+
+### Namespace mapping limitations
+
+The shipped NetBox example requires distinct VRF names. Both `IpamNamespace` and `IpamVRF` load from `ipam.vrfs` and use `identifiers: ["name"]`. A repeated name raises `ObjectAlreadyExists` while loading `IpamNamespace`, stopping the source load before any prefixes or IP addresses are read. The VRFs do not merge into one namespace. Give the VRFs distinct names or change the mapping to preserve their separate identities before retrying.
+
+A VRF named `default` shares Infrahub's built-in namespace with objects that have no VRF. If two prefixes or IP addresses have the same value and resolve to the same namespace, they raise `ObjectAlreadyExists` when that model loads. This can happen within one VRF, between two objects without a VRF, or between an object without a VRF and one in a VRF named `default`. NetBox can hold repeated IP addresses intentionally, so check the source records before changing them. If both records must be kept, change the namespace mapping or destination schema to represent the distinction; changing the sync identifiers alone cannot change Infrahub's namespace-plus-value identity.
+
+These restrictions describe the VRF-derived NetBox example. For Nautobot 2.0 and later, carry the native namespaces as described above.
+
+### Adopt namespaces in an Infrahub that already holds imported data
+
+Changing a mapping or its `identifiers` changes what later runs create and match. It does not move objects an earlier sync already wrote. Only the objects whose resolved namespace changes take on a new identity: a prefix or address that was imported into `default` and still resolves to `default` goes on matching the object already there, while one that now resolves to a VRF-named namespace is created as a new object beside the old one.
+
+The default `SKIP_UNMATCHED_DST` flag leaves those older records in place. Run `infrahub-sync diff` and sync into a branch first, then audit the old objects and the relationships pointing at them before retiring or re-pointing any of them. Infrahub Sync does not migrate them for you, and wiping the destination is not a substitute: it discards Infrahub-only data the sync never owned.
 
 ### Map fields between the source system and Infrahub
 
