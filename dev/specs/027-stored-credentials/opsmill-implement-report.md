@@ -28,6 +28,7 @@ One line per chunk: chunk, tasks, outcome, commits, notes.
 15b | A4 follow-up | Sync API process refuses to start without key or worker token (503 kept inside build_app); worker unchanged (run fails naming both variables; docs say so); marker test fixed (searches Prefect's resolved home and database) | ab4fb381 19f6507c 5c7d919a 11f26774 | lenient start came from chunks 3 and 6 ("until T054"); dev.api now uses build_process_service; tests/image gets throwaway key; worker token minimum is 16 characters per contract and code
 16 | T063-T065 | 3 done | 964f36a1 50cdf84e a1d38916 | credentials_used on every run answer (contract names only GET /runs/{id}); approve answer fixed to carry it; runs show line format chosen by the chunk; frontend types.generated.ts not regenerated (codegen reads a live API on forbidden port 8001)
 17 | T066-T069 + E4 test | 4 done; E4 registration race done (row lock on PostgreSQL READ COMMITTED, write lock on SQLite); E4 run-start race partial (no lock: run accepted, then refused at release with 422, no value released) | ef836f11 b93569be 5b763472 67055ce4 7eb95b58 d117ef7d | schedule create/re-pin takes no lock (R8 leaves it to run start); new service/credential_models.py (Pylint C0302); 204 receipt stores empty body
+18 | T070-T072 | 3 done | 57b2e978 21a1e160 9de5a8ca 5749ffd3 | report already written by chunk 12; help text fixed; 422 configs-validation answer gains details.credentials [{block,name,code,fields}] (contract updated); finding messages name fields and --username; documented refusal output produced by a scratch script, CLI tests use a canned 422
 ```
 
 ## Local-pass evidence
@@ -104,4 +105,7 @@ check-310 after chunk 12|unit 3.10|uv run invoke tests.check-310|2026-11-21T01:1
 17 | service/client/CLI deletion + parity + contract + worker boundary | uv run pytest <6 files> | 2026-11-21T07:32:10Z | n/a | 715 passed
 17 | unit tier | uv run invoke tests.tests-unit | before d117ef7d | n/a | 11504 passed, 4 skipped, 2 xfailed, 0 failed
 17 | check-310 | uv run invoke tests.check-310 | chunk 17 | Python 3.10 | 7699 passed, all three legs
+18 | convert, admission, failure cause, conversion, credentials command | uv run pytest <5 files> -v | 2026-11-21T07:57:55Z | 3 PostgreSQL DSNs | 411 passed
+18 | unit tier | uv run invoke tests.tests-unit | 2026-11-21T08:15:55Z | n/a | 11521 passed, 4 skipped, 2 xfailed, 0 failed
+18 | check-310 | uv run invoke tests.check-310 | chunk 18 | Python 3.10 | 7713 passed, all three legs
 ```
