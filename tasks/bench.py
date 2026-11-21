@@ -287,16 +287,10 @@ class CellStack:
 
         The shipped package names the stored credentials `netbox-token` and `infrahub-token`.
         Once the Sync API runs, both are stored through it with the tokens of the benchmark's
-        NetBox and Infrahub. The Compose file still passes the same tokens to the Sync
-        services in variables.
+        NetBox and Infrahub. No Sync service is given either token in a variable.
         """
         self.require_exclusive_sync()
         netbox_token = netbox.netbox_token(self.netbox_env)
-        env = {
-            dev.NETBOX_CREDENTIAL_VARIABLE: netbox_token,
-            dev.INFRAHUB_CREDENTIAL_VARIABLE: self.infrahub_token,
-        }
-        self.context.config.run.env = env
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             dev._build(self.context, project=netbox.DEV_STACK_PROJECT)  # noqa: SLF001 -- pinned project is private to the runner
             try:

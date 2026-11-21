@@ -106,6 +106,8 @@ required variable INFRAHUB_SYNC_PRODUCT_PASSWORD is missing a value: INFRAHUB_SY
 | `INFRAHUB_SYNC_S3_ACCESS_KEY` | `object-store` and the Sync services |
 | `INFRAHUB_SYNC_S3_SECRET_KEY` | `object-store` and the Sync services |
 | `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | `sync-api`: the password of the `admin` account |
+| `INFRAHUB_SYNC_ENCRYPTION_KEY` | `sync-api`: the key that encrypts stored credentials. 32 bytes, base64-encoded. Changing it is not supported, and without it every stored credential must be entered again. |
+| `INFRAHUB_SYNC_WORKER_TOKEN` | `sync-api` and `sync-worker`: the token of the `worker` account, which reads the values of stored credentials for a run. It follows the rules of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` and must be another value. |
 
 `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is the password of `admin`, the
 administrator account that always exists. It has 12 to 1,024 characters of
@@ -163,6 +165,8 @@ INFRAHUB_SYNC_PREFECT_AUTH_STRING=<random hex>
 INFRAHUB_SYNC_S3_ACCESS_KEY=<random hex>
 INFRAHUB_SYNC_S3_SECRET_KEY=<random hex>
 INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=<admin password, at least 12 characters>
+INFRAHUB_SYNC_ENCRYPTION_KEY=<32 random bytes, base64-encoded>
+INFRAHUB_SYNC_WORKER_TOKEN=<worker token, at least 16 characters, not the admin token>
 
 # An API token of admin, and the same value for the cli service to present
 INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=<admin token, at least 16 characters>
@@ -194,6 +198,8 @@ INFRAHUB_SYNC_PREFECT_AUTH_STRING=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
 INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=$(rand 24)
+INFRAHUB_SYNC_ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)
+INFRAHUB_SYNC_WORKER_TOKEN=$(rand 24)
 INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=$admin_token
 INFRAHUB_SYNC_API_TOKEN=$admin_token
 EOF

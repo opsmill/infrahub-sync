@@ -57,6 +57,8 @@ CREDENTIALS = (
     "INFRAHUB_SYNC_S3_ACCESS_KEY",
     "INFRAHUB_SYNC_S3_SECRET_KEY",
     "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD",
+    "INFRAHUB_SYNC_ENCRYPTION_KEY",
+    "INFRAHUB_SYNC_WORKER_TOKEN",
 )
 # The database bootstrap script: a top-level `configs` entry, mounted where the
 # job's entrypoint runs it.
@@ -102,50 +104,19 @@ FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 HOST_ROUTE = "host.docker.internal=host-gateway"
 ROUTED_SERVICES = {"sync-worker"}
 
-# The source credentials the bundled adapters resolve. Only a run consumes one,
-# and only the worker runs one, so the worker is the only service that may be
-# given either. Naming them here rather than deriving them from the file keeps
-# this a statement of the contract instead of a restatement of the YAML.
-# Spec 015 FR-008: one documented name for each credential setting of each bundled adapter,
-# and every name the shipped examples and adapter pages use, so those packages run unedited.
-# The table is dev/specs/archive/015-compose-store-credentials-ca/contracts/environment-variables.md.
-CREDENTIAL_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
-ADAPTER_CREDENTIAL_NAMES: dict[tuple[str, str], tuple[str, ...]] = {
-    ("aci", "username"): ("CISCO_APIC_USERNAME",),
-    ("aci", "password"): ("CISCO_APIC_PASSWORD",),
-    ("genericrestapi", "token"): ("REST_API_TOKEN", "LIBRENMS_TOKEN", "PEERINGDB_API_KEY"),
-    ("genericrestapi", "username"): ("REST_API_USERNAME", "DEVICE42_USERNAME", "OBSERVIUM_USERNAME"),
-    ("genericrestapi", "password"): ("REST_API_PASSWORD", "DEVICE42_PASSWORD", "OBSERVIUM_PASSWORD"),
-    ("infrahub", "token"): ("INFRAHUB_API_TOKEN", "SOURCE_INFRAHUB_TOKEN"),
-    ("ipfabricsync", "auth"): ("IPF_TOKEN",),
-    ("nautobot", "token"): ("NAUTOBOT_TOKEN",),
-    ("netbox", "token"): ("NETBOX_TOKEN",),
-    ("peeringmanager", "token"): ("PEERING_MANAGER_TOKEN",),
-    ("peeringmanager", "username"): ("PEERING_MANAGER_USERNAME",),
-    ("peeringmanager", "password"): ("PEERING_MANAGER_PASSWORD",),
-    ("prometheus", "token"): ("PROMETHEUS_TOKEN",),
-    ("prometheus", "username"): ("PROMETHEUS_USERNAME",),
-    ("prometheus", "password"): ("PROMETHEUS_PASSWORD",),
-    ("slurpitsync", "api_key"): ("SLURPIT_API_KEY",),
-    ("slurpitsync", "token"): ("SLURPIT_TOKEN",),
-}
-WORKER_CREDENTIAL_SETTINGS = tuple(
-    sorted({f"{CREDENTIAL_PREFIX}{name}" for names in ADAPTER_CREDENTIAL_NAMES.values() for name in names})
-)
-
-# The source credentials the bundled adapters resolve. Only a run consumes one,
-# and only the worker runs one, so the worker is the only service that may be
-# given any of them.
-SOURCE_TOKEN_SETTINGS = tuple(
-    setting for setting in WORKER_CREDENTIAL_SETTINGS if setting != "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
-)
-SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
-
-# The destination credential, and the two services that resolve one. The API
-# resolves it for the destination schema reads it serves; the worker resolves it
-# for a run. Nothing else has a destination to reach.
-DESTINATION_CREDENTIAL = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
-DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
+# Stored credentials (spec 027, contracts/environment.md). The Sync API stores every source
+# and destination credential, encrypted with the key that only it holds. A worker reads the
+# values a run names from the Sync API, at the address below, with the token of the `worker`
+# account, which the API and the worker share. No service is given a credential in a variable
+# with the removed prefix.
+REMOVED_CREDENTIAL_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
+ENCRYPTION_KEY = "INFRAHUB_SYNC_ENCRYPTION_KEY"
+ENCRYPTION_KEY_RECEIVERS = {"sync-api"}
+WORKER_TOKEN = "INFRAHUB_SYNC_WORKER_TOKEN"  # noqa: S105 -- a setting name, not a value
+WORKER_TOKEN_RECEIVERS = {"sync-api", "sync-worker"}
+WORKER_API_URL = "INFRAHUB_SYNC_API_URL"
+WORKER_API_ADDRESS = "http://sync-api:8000"
+ADMIN_TOKEN = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"  # noqa: S105 -- a setting name, not a value
 
 # The opt-in client, and the profile that is the only way to resolve it.
 CLI_SERVICE = "cli"
@@ -950,34 +921,103 @@ def test_the_file_interpolates_no_declared_configuration_setting(model: dict[str
 
 
 # ---------------------------------------------------------------------------
-# The destination credential
+# Stored credentials (spec 027, contracts/environment.md, FR-024)
 # ---------------------------------------------------------------------------
 
 
-def test_the_destination_credential_reaches_the_api_and_the_worker_and_no_job(model: dict[str, Any]) -> None:
-    """Only the two services that resolve a destination are given it."""
-    holders = {
-        name
-        for name, definition in services(model).items()
-        if DESTINATION_CREDENTIAL in (definition.get("environment") or {})
-    }
-
-    assert holders == DESTINATION_CREDENTIAL_RECEIVERS, f"{DESTINATION_CREDENTIAL} is given to {sorted(holders)}"
+def holders_of(resolved: Mapping[str, Any], setting: str) -> set[str]:
+    """Return the services whose environment names `setting`."""
+    return {name for name, definition in services(resolved).items() if setting in (definition.get("environment") or {})}
 
 
-def test_the_destination_credential_is_optional_and_resolves_empty_when_unset(
+def test_only_the_api_is_given_the_encryption_key(cli_model: dict[str, Any]) -> None:
+    """A worker that held the key could decrypt every stored credential, not only those of its run."""
+    holders = holders_of(cli_model, ENCRYPTION_KEY)
+
+    assert holders == ENCRYPTION_KEY_RECEIVERS, f"{ENCRYPTION_KEY} is given to {sorted(holders)}"
+
+
+def test_only_the_api_and_the_worker_are_given_the_worker_token(cli_model: dict[str, Any]) -> None:
+    """The API applies the token of the `worker` account; the worker sends it. No job and no client holds it."""
+    holders = holders_of(cli_model, WORKER_TOKEN)
+
+    assert holders == WORKER_TOKEN_RECEIVERS, f"{WORKER_TOKEN} is given to {sorted(holders)}"
+
+
+def test_the_api_and_the_worker_are_given_the_same_worker_token(
     compose_version: str, contract_environment: dict[str, str]
 ) -> None:
-    """Required interpolation would refuse the resolve before anything is registered."""
+    """Read from raw output and compared privately: a failure names the setting, never the value."""
     del compose_version
-    without = {key: value for key, value in contract_environment.items() if key != DESTINATION_CREDENTIAL}
+    resolved = resolve_privately(contract_environment)
 
-    resolved = resolve_privately(without)
+    given = {name: service(resolved, name)["environment"][WORKER_TOKEN] for name in sorted(WORKER_TOKEN_RECEIVERS)}
 
-    for name in sorted(DESTINATION_CREDENTIAL_RECEIVERS):
-        environment = service(resolved, name)["environment"]
-        assert DESTINATION_CREDENTIAL in environment, f"{DESTINATION_CREDENTIAL} is absent from {name}"
-        assert not environment[DESTINATION_CREDENTIAL], f"{DESTINATION_CREDENTIAL} resolved to a value nobody supplied"
+    same = all(value == contract_environment[WORKER_TOKEN] for value in given.values())
+    assert same, f"{WORKER_TOKEN} does not reach both services with the value of the operator"
+
+
+def test_the_worker_reaches_the_sync_api_by_its_service_name(model: dict[str, Any]) -> None:
+    """The worker reads the values of stored credentials from the API of its own deployment."""
+    environment = services(model)["sync-worker"]["environment"]
+
+    assert environment[WORKER_API_URL] == WORKER_API_ADDRESS
+
+
+def test_no_service_is_given_a_credential_variable(cli_model: dict[str, Any]) -> None:
+    """Every `INFRAHUB_SYNC_CREDENTIAL_*` variable is removed, on every service."""
+    held = sorted(
+        f"{name}: {setting}"
+        for name, definition in services(cli_model).items()
+        for setting in (definition.get("environment") or {})
+        if setting.startswith(REMOVED_CREDENTIAL_PREFIX)
+    )
+
+    assert held == []
+
+
+@pytest.mark.parametrize(
+    "path", [COMPOSE_FILE, DEVELOPMENT_COMPOSE / "docker-compose.yml"], ids=["operator", "development"]
+)
+def test_the_file_names_no_credential_variable(path: Path) -> None:
+    """Read from the text: no comment and no setting keeps a name with the removed prefix."""
+    lines = [
+        number
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if REMOVED_CREDENTIAL_PREFIX in line
+    ]
+
+    assert lines == [], f"{path.name} names {REMOVED_CREDENTIAL_PREFIX}* on lines {lines}"
+
+
+def test_the_api_accepts_the_stored_credential_settings_it_is_given(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """The resolved `sync-api` environment passes the start-up check of the key and the worker token.
+
+    The check refuses a key that is not 32 bytes of base64 and a worker token equal to the
+    token of `admin`. Its refusal names the variable and holds no value.
+    """
+    del compose_version
+    settings = pytest.importorskip("infrahub_sync.service.settings", reason="needs the `service` extra")
+    resolved = resolve_privately({**contract_environment, ADMIN_TOKEN: "contract-admin-account-token"})
+
+    accepted = settings.credential_settings(service(resolved, "sync-api")["environment"])
+
+    assert len(accepted.encryption_key) == settings.ENCRYPTION_KEY_BYTES
+
+
+def test_the_worker_accepts_the_stored_credential_settings_it_is_given(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """The resolved `sync-worker` environment passes the worker's own check of the address and the token."""
+    del compose_version
+    settings = pytest.importorskip("infrahub_sync.service.settings", reason="needs the `service` extra")
+    resolved = resolve_privately(contract_environment)
+
+    accepted = settings.worker_settings(service(resolved, "sync-worker")["environment"])
+
+    assert accepted.api_url == WORKER_API_ADDRESS
 
 
 def test_the_long_running_sync_services_wait_for_that_convergence(model: dict[str, Any]) -> None:
@@ -1083,66 +1123,6 @@ def test_the_cli_service_runs_the_cli_in_the_image_the_deployment_runs(cli_model
 
 
 # ---------------------------------------------------------------------------
-# Source credentials
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
-def test_only_the_worker_is_given_a_source_credential(model: dict[str, Any], setting: str) -> None:
-    """A secret with no receiver is a secret that cannot leak from one.
-
-    An equality over every service, not a check that the worker has it: a source
-    token added to the API, the bootstrap job, or Prefect would fail here even
-    though the worker still worked.
-    """
-    holders = {name for name, definition in services(model).items() if setting in (definition.get("environment") or {})}
-
-    assert holders == SOURCE_TOKEN_RECEIVERS, f"{setting} is given to {sorted(holders)}"
-
-
-@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
-def test_a_source_credential_is_optional_and_resolves_empty_when_unset(
-    contract_environment: dict[str, str], compose_version: str, setting: str
-) -> None:
-    """A deployment that syncs neither source must still start.
-
-    The contract environment supplies no source token, so an interpolation that
-    made one required would have failed the whole resolve, and one that carried
-    a default would show it here.
-    """
-    del compose_version
-    resolved = resolve_privately(contract_environment)
-    environment = service(resolved, "sync-worker")["environment"]
-
-    assert setting in environment, f"{setting} is absent from the worker environment"
-    assert not environment[setting], f"{setting} resolved to a value with no operator input"
-
-
-@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
-def test_a_declared_source_credential_reaches_only_the_worker(
-    contract_environment: dict[str, str], compose_version: str, setting: str
-) -> None:
-    """The operator's value is what the worker is given, and the only thing given it.
-
-    Read from raw output, because a credential-named setting is redacted by name
-    and a redacted model cannot answer which value it carries. Compared
-    privately: the assertions below report service names, never the value.
-    """
-    del compose_version
-    planted = f"contract-{setting.lower().replace('_', '-')}-4f7ab2"
-
-    resolved = resolve_privately({**contract_environment, setting: planted})
-
-    carriers = {
-        name
-        for name, definition in services(resolved).items()
-        if planted in (definition.get("environment") or {}).values()
-    }
-    assert carriers == SOURCE_TOKEN_RECEIVERS, f"{setting} value reached {sorted(carriers)}"
-    assert service(resolved, "sync-worker")["environment"][setting] == planted
-
-
-# ---------------------------------------------------------------------------
 # The team's own S3-compatible store (spec 015, FR-001, FR-002)
 # ---------------------------------------------------------------------------
 
@@ -1194,49 +1174,7 @@ def test_bootstrap_does_not_require_a_left_out_bundled_store(contract_environmen
     assert set(STORE_SERVICES) <= set(resolved)
 
 
-# ---------------------------------------------------------------------------
-# The credential variables of every bundled adapter (spec 015, FR-008)
-# ---------------------------------------------------------------------------
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CREDENTIAL_NAME = re.compile(rf"{CREDENTIAL_PREFIX}[A-Z0-9_]+")
-
-
-def test_the_worker_holds_exactly_the_documented_credential_variables(model: dict[str, Any]) -> None:
-    environment = services(model)["sync-worker"]["environment"]
-
-    held = sorted(name for name in environment if name.startswith(CREDENTIAL_PREFIX))
-    assert held == list(WORKER_CREDENTIAL_SETTINGS)
-    assert len(held) == 24
-
-
-def test_the_list_names_every_credential_setting_of_every_bundled_adapter() -> None:
-    from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
-
-    settings = {
-        (name, path)
-        for name, capabilities in BUILTIN_ADAPTER_CAPABILITIES.items()
-        for path in capabilities.credential_setting_paths
-    }
-
-    assert settings == set(ADAPTER_CREDENTIAL_NAMES)
-
-
-def test_the_list_holds_every_name_the_examples_and_adapter_pages_use() -> None:
-    """A shipped package or a documented one runs on the Compose deployment unedited."""
-    sources = [*REPO_ROOT.glob("examples/*/package.yml"), *REPO_ROOT.glob("docs/docs/adapters/*.mdx")]
-    used = {name for path in sources for name in CREDENTIAL_NAME.findall(path.read_text(encoding="utf-8"))}
-
-    assert sources
-    assert used <= set(WORKER_CREDENTIAL_SETTINGS), sorted(used - set(WORKER_CREDENTIAL_SETTINGS))
-
-
-@pytest.mark.parametrize("setting", WORKER_CREDENTIAL_SETTINGS)
-def test_each_credential_variable_is_optional_in_the_file(setting: str) -> None:
-    """Written `${NAME:-}`: an unset variable resolves empty and the deployment still starts."""
-    text = COMPOSE_FILE.read_text(encoding="utf-8")
-
-    assert f'{setting}: "${{{setting}:-}}"' in text
 
 
 # ---------------------------------------------------------------------------
@@ -1266,3 +1204,59 @@ def test_every_development_image_other_than_the_checkout_build_is_named_by_diges
     )
 
     assert mutable == [], f"these development services are not pinned to a digest: {mutable}"
+
+
+# ---------------------------------------------------------------------------
+# Stored credentials in the development stack (spec 027, contracts/environment.md)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def development_model(compose_version: str) -> dict[str, Any]:
+    """The development file resolved with no shell value, so every setting is its fixed development value.
+
+    Read from raw output: the values are public development values of the file itself.
+    """
+    del compose_version
+    result = compose(
+        ["--profile", "sync", "config", "--format", "json"], files=(DEVELOPMENT_FILE,), inherit_environment=False
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.unredacted())
+
+
+def test_the_development_stack_gives_the_key_to_the_api_alone(development_model: dict[str, Any]) -> None:
+    holders = holders_of(development_model, ENCRYPTION_KEY)
+
+    assert holders == ENCRYPTION_KEY_RECEIVERS, f"{ENCRYPTION_KEY} is given to {sorted(holders)}"
+
+
+def test_the_development_stack_gives_the_worker_token_to_the_api_and_the_worker(
+    development_model: dict[str, Any],
+) -> None:
+    holders = holders_of(development_model, WORKER_TOKEN)
+
+    assert holders == WORKER_TOKEN_RECEIVERS, f"{WORKER_TOKEN} is given to {sorted(holders)}"
+    given = {services(development_model)[name]["environment"][WORKER_TOKEN] for name in WORKER_TOKEN_RECEIVERS}
+    assert len(given) == 1, f"{WORKER_TOKEN} differs between the API and the worker"
+
+
+def test_the_development_api_starts_with_a_key_and_a_worker_token_it_accepts(
+    development_model: dict[str, Any],
+) -> None:
+    """A clean checkout stores credentials: `dev.start` no longer meets `credential-key-not-configured`."""
+    settings = pytest.importorskip("infrahub_sync.service.settings", reason="needs the `service` extra")
+
+    accepted = settings.credential_settings(services(development_model)["sync-api"]["environment"])
+
+    assert len(accepted.encryption_key) == settings.ENCRYPTION_KEY_BYTES
+
+
+def test_the_development_worker_reaches_the_sync_api_with_settings_it_accepts(
+    development_model: dict[str, Any],
+) -> None:
+    settings = pytest.importorskip("infrahub_sync.service.settings", reason="needs the `service` extra")
+
+    accepted = settings.worker_settings(services(development_model)["sync-worker"]["environment"])
+
+    assert accepted.api_url == WORKER_API_ADDRESS

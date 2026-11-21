@@ -144,6 +144,20 @@ class FakeDocker:
         ]
 
 
+def environments_with_a_token(fake: FakeDocker, *tokens: str) -> list[dict[str, str]]:
+    """Return the environments of the recorded commands that hold one of `tokens` or a credential variable.
+
+    No Compose command is given a source or destination credential: the tasks store them through
+    the Sync API after the stack starts (spec 027).
+    """
+    names = {dev.INFRAHUB_CREDENTIAL_VARIABLE, dev.NETBOX_CREDENTIAL_VARIABLE}
+    return [
+        env
+        for env in fake.envs
+        if env and (names & set(env) or set(tokens) & set(env.values()) or any("CREDENTIAL" in name for name in env))
+    ]
+
+
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeDocker:
     monkeypatch.delenv(dev.PRESET_VARIABLE, raising=False)
@@ -344,8 +358,8 @@ def test_dev_start_with_a_current_image_starts_every_profile_without_a_build(
         "docker compose --profile sync --profile infrahub --project-name infrahub-sync-dev "
         "-f development/docker-compose.yml up --detach --wait --wait-timeout 420"
     ]
-    # The worker's Infrahub credential defaults to the stack's own Infrahub admin token.
-    assert {dev.INFRAHUB_CREDENTIAL_VARIABLE: ADMIN_TOKEN} in fake.envs
+    # No command is given the Infrahub token: `dev.start` stores it through the Sync API.
+    assert environments_with_a_token(fake, ADMIN_TOKEN) == []
 
 
 def test_dev_start_with_a_stale_image_builds_first(context: Context, fake: FakeDocker) -> None:
@@ -359,7 +373,7 @@ def test_dev_start_with_a_stale_image_builds_first(context: Context, fake: FakeD
     assert " up --detach --wait " in commands[1]
 
 
-def test_dev_start_keeps_a_credential_the_shell_exports(
+def test_dev_start_passes_no_command_a_credential_the_shell_exports(
     context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, "exported")
@@ -517,7 +531,7 @@ def test_without_a_preset_or_running_infrahub_dev_start_runs_the_sync_preset(
         "docker compose --profile sync --project-name infrahub-sync-dev "
         "-f development/docker-compose.yml up --detach --wait --wait-timeout 420"
     ]
-    # No local Infrahub, so no Infrahub credential defaults to its admin token.
+    # No command is given a credential, with or without a local Infrahub.
     assert all(not env for env in fake.envs)
 
 
@@ -661,7 +675,7 @@ def test_tasks_on_every_container_do_not_probe_the_preset(
     assert not any(" ps --services " in command for command in fake.commands)
 
 
-def test_dev_restart_while_the_local_netbox_runs_keeps_both_credentials(
+def test_dev_restart_while_the_local_netbox_runs_passes_no_credential(
     context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake.netbox_running = True
@@ -669,10 +683,8 @@ def test_dev_restart_while_the_local_netbox_runs_keeps_both_credentials(
 
     _body(dev.dev_restart)(context)
 
-    assert {
-        dev.INFRAHUB_CREDENTIAL_VARIABLE: ADMIN_TOKEN,
-        dev.NETBOX_CREDENTIAL_VARIABLE: "nbt_dev.token",
-    } in fake.envs
+    # The recreated worker reads both credentials from the Sync API, which keeps them.
+    assert environments_with_a_token(fake, ADMIN_TOKEN, "nbt_dev.token") == []
 
 
 def test_a_bare_dev_start_next_to_a_running_netbox_seeds_nothing(
@@ -695,7 +707,7 @@ def test_dev_infrahub_starts_the_infrahub_preset(context: Context, fake: FakeDoc
     _body(dev.dev_infrahub)(context)
 
     assert "--profile sync --profile infrahub " in fake.compose_commands()[0]
-    assert {dev.INFRAHUB_CREDENTIAL_VARIABLE: ADMIN_TOKEN} in fake.envs
+    assert environments_with_a_token(fake, ADMIN_TOKEN) == []
 
 
 def test_dev_preview_starts_netbox_then_the_stack_then_seeds_infrahub(
@@ -719,13 +731,10 @@ def test_dev_preview_starts_netbox_then_the_stack_then_seeds_infrahub(
 
     assert events == ["netbox", "up", "seed http://127.0.0.1:8091"]
     assert "--profile sync --profile infrahub " in fake.compose_commands()[0]
-    assert {
-        dev.INFRAHUB_CREDENTIAL_VARIABLE: ADMIN_TOKEN,
-        dev.NETBOX_CREDENTIAL_VARIABLE: "nbt_dev.token",
-    } in fake.envs
+    assert environments_with_a_token(fake, ADMIN_TOKEN, "nbt_dev.token") == []
 
 
-def test_the_preview_preset_keeps_a_netbox_credential_the_shell_exports(
+def test_the_preview_preset_passes_no_command_a_netbox_credential_the_shell_exports(
     context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(dev.NETBOX_CREDENTIAL_VARIABLE, "exported")
@@ -734,7 +743,7 @@ def test_the_preview_preset_keeps_a_netbox_credential_the_shell_exports(
 
     _body(dev.dev_preview)(context)
 
-    assert all(dev.NETBOX_CREDENTIAL_VARIABLE not in (env or {}) for env in fake.envs)
+    assert environments_with_a_token(fake, "exported") == []
 
 
 def test_dev_seed_without_a_local_infrahub_names_the_preset_to_start(context: Context, fake: FakeDocker) -> None:
@@ -771,10 +780,7 @@ def test_dev_start_with_the_demo_preset_starts_netbox_and_writes_nothing_into_in
 
     assert events == ["netbox"]
     assert "--profile sync --profile infrahub " in fake.compose_commands()[0]
-    assert {
-        dev.INFRAHUB_CREDENTIAL_VARIABLE: ADMIN_TOKEN,
-        dev.NETBOX_CREDENTIAL_VARIABLE: "nbt_dev.token",
-    } in fake.envs
+    assert environments_with_a_token(fake, ADMIN_TOKEN, "nbt_dev.token") == []
 
 
 @pytest.fixture

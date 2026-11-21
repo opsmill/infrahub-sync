@@ -7,6 +7,7 @@ session-scoped stack can be shared by every case that needs one.
 
 from __future__ import annotations
 
+import base64
 import json
 import secrets
 import time
@@ -20,6 +21,7 @@ import pytest
 from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 from tests.compose.conftest import COMPOSE_FILE, PROJECT_PREFIX, compose, start_command
 from tests.compose.redaction import SECRETS, Captured, capture
+from tests.helpers.stored_credentials import create_credentials_through_api
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -52,6 +54,17 @@ POLL_SECONDS = 3
 def canary(kind: str) -> str:
     """Return a throwaway secret whose appearance anywhere is a leak."""
     value = f"canary-{kind}-{secrets.token_hex(12)}"
+    SECRETS.register(value)
+    return value
+
+
+def encryption_key() -> str:
+    """Return a throwaway key of stored credentials: 32 random bytes as base64 text.
+
+    `canary()` cannot make one, because the Sync API refuses a key that is not 32 bytes of
+    base64. The value is registered like a canary, so its appearance anywhere is a leak.
+    """
+    value = base64.b64encode(secrets.token_bytes(32)).decode()
     SECRETS.register(value)
     return value
 
@@ -124,6 +137,21 @@ class Deployment:
             if line.startswith(f"{name}="):
                 return line.split("=", 1)[1]
         return ""
+
+    def store_credentials(self, credentials: Mapping[str, Mapping[str, str]]) -> None:
+        """Store credentials in this deployment's Sync API, as its `admin` account.
+
+        `credentials` maps each name to its fields. Every value is registered at the redaction
+        boundary first. A name that exists gets a new revision, so a call can be repeated.
+        The Sync API must run: call this after `up`, and before a package that names one of
+        the credentials is registered.
+        """
+        SECRETS.register(*(value for fields in credentials.values() for value in fields.values() if value))
+        create_credentials_through_api(self.api, self.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"), credentials)
+
+    def store_destination_token(self, token: str) -> None:
+        """Store `token` as the credential the smoke package names for both of its blocks."""
+        self.store_credentials({SMOKE_CREDENTIAL: {"token": token}})
 
     def up(self, *services: str) -> Captured:
         """Start the named services, or all of them, and wait for their health gates.
@@ -335,7 +363,6 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
     directory: Path,
     *,
     image: str,
-    destination_token: str,
     canaries: Mapping[str, str],
     api_port: int = API_PORT,
     prefect_port: int = PREFECT_PORT,
@@ -348,6 +375,10 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
     API token of the `admin` account a second time as `INFRAHUB_SYNC_API_TOKEN`,
     which is what the `cli` service presents to the API. The passwords are the session's
     canaries, so their appearance anywhere an operator can see is a leak.
+
+    It holds no source or destination credential: the Sync API stores them, encrypted with
+    `INFRAHUB_SYNC_ENCRYPTION_KEY`, and the worker reads them with `INFRAHUB_SYNC_WORKER_TOKEN`.
+    A test stores one with `Deployment.store_credentials` once the Sync API runs.
 
     The S3 access key is a fixed name unless a caller passes one: the external store
     tests start their own store with the same constant.
@@ -367,7 +398,8 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
         "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": canaries["admin_account"],
         "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": canaries["principal"],
         "INFRAHUB_SYNC_API_TOKEN": canaries["principal"],
-        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": destination_token,
+        "INFRAHUB_SYNC_ENCRYPTION_KEY": canaries["encryption_key"],
+        "INFRAHUB_SYNC_WORKER_TOKEN": canaries["worker"],
     }
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / ".env"
@@ -428,15 +460,17 @@ def container_reachable_host() -> str:
 # `infrahub` adapter, so the registered worker resolves them through the
 # installed loader with nothing generated and nothing on a filesystem.
 SMOKE_FIELDS = ("name", "type")
+# The stored credential both blocks of the smoke package name.
+SMOKE_CREDENTIAL = "infrahub-token"
 
 
 def smoke_package(destination_url: str) -> dict[str, Any]:
     """The declared package this suite registers.
 
     Infrahub to Infrahub against the fixture's own instance: `main` as the
-    source, the disposable smoke branch as the destination. The token is a
-    credential reference the worker resolves from its own environment, so no
-    secret value is posted, stored, or echoed.
+    source, the disposable smoke branch as the destination. Both blocks name the
+    stored credential `infrahub-token`, which `Deployment.store_destination_token`
+    creates before the package is registered, so the package holds no value.
     """
     return {
         "format_version": 1,
@@ -444,19 +478,13 @@ def smoke_package(destination_url: str) -> dict[str, Any]:
             "name": "compose-suite-registered",
             "source": {
                 "name": "infrahub",
-                "settings": {
-                    "url": destination_url,
-                    "branch": "main",
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": SMOKE_CREDENTIAL,
+                "settings": {"url": destination_url, "branch": "main"},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": destination_url,
-                    "branch": SMOKE_BRANCH,
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": SMOKE_CREDENTIAL,
+                "settings": {"url": destination_url, "branch": SMOKE_BRANCH},
             },
             "schema_mapping": [
                 {
@@ -466,9 +494,6 @@ def smoke_package(destination_url: str) -> dict[str, Any]:
                     "fields": [{"name": name, "mapping": name} for name in SMOKE_FIELDS],
                 }
             ],
-        },
-        "credentials": {
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
         },
     }
 

@@ -25,8 +25,10 @@ failure reports names.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
+import subprocess  # noqa: S404 -- the probes of this module, run with this interpreter
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -83,7 +85,6 @@ class Source:
     name: str
     url: str
     reference: str
-    identifier: str
     ambient_url_names: tuple[str, ...]
     ambient_token_name: str
     mapping: str
@@ -96,7 +97,6 @@ SOURCES = {
             name="netbox",
             url=NETBOX_URL,
             reference="netbox-token",
-            identifier="INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
             ambient_url_names=("NETBOX_ADDRESS", "NETBOX_URL"),
             ambient_token_name="NETBOX_TOKEN",  # noqa: S106 - the name of a variable, not a value
             mapping="extras.tags",
@@ -105,7 +105,6 @@ SOURCES = {
             name="nautobot",
             url=NAUTOBOT_URL,
             reference="nautobot-token",
-            identifier="INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
             ambient_url_names=("NAUTOBOT_ADDRESS", "NAUTOBOT_URL"),
             ambient_token_name="NAUTOBOT_TOKEN",  # noqa: S106 - the name of a variable, not a value
             mapping="extras.tags",
@@ -116,9 +115,6 @@ SOURCES = {
 # Every environment name any of this touches, cleared before each case so an
 # ambient value on the developer's machine cannot decide an outcome.
 MANAGED_ENVIRONMENT = (
-    "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
-    "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
-    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
     "NETBOX_TOKEN",
     "NETBOX_ADDRESS",
     "NETBOX_URL",
@@ -413,43 +409,48 @@ def test_the_nautobot_adapter_client_carries_the_registered_credential(
 # The same property, proved where it has to hold: inside the shipped image, on
 # the Compose model an operator actually runs. Opt-in under `docker`, and driven
 # through the suite's capture boundary so a canary cannot reach retained output.
+#
+# A worker container is given no source or destination credential (spec 027). For a
+# run it reads the fields of the stored credentials from the Sync API and passes them
+# to the resolver as `released`. The probes below stand at that point: each generates
+# the released values inside the container, so no value crosses the container
+# boundary in either direction, and prints verdicts only.
+
+REMOVED_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
 
 CONTAINER_PROBE = """
-import json, os, socket, sys
+import json, os, secrets, socket, sys
 
 from infrahub_sync.configuration import parse_configuration_package
+from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
 
-declared_url = sys.argv[1]
-source = sys.argv[2]
-reference = f"{source}-token"
-identifier = f"INFRAHUB_SYNC_CREDENTIAL_{source.upper()}_TOKEN"
+package_content = json.loads(sys.argv[1])
+source = package_content["configuration"]["source"]["name"]
+declared_url = package_content["configuration"]["source"]["settings"]["url"]
+release_source = sys.argv[2] == "release-source"
 
-package = parse_configuration_package({
-    "format_version": 1,
-    "configuration": {
-        "name": f"pkg-r1-container-{source}",
-        "source": {"name": source, "settings": {
-            "url": declared_url, "token": {"$credential": reference}}},
-        "destination": {"name": "infrahub", "settings": {
-            "url": "http://infrahub.invalid:8000", "token": {"$credential": "infrahub-token"}}},
-        "schema_mapping": [{"name": "BuiltinTag", "mapping": "extras.tags",
-                            "identifiers": ["name"],
-                            "fields": [{"name": "name", "mapping": "name"}]}],
-    },
-    "credentials": {
-        reference: {"provider": "env", "identifier": identifier},
-        "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
-    },
-})
-instance = resolve_runtime_instance(package, directory="/tmp/infrahub-sync/pkg-r1")
-expected_token = os.environ[identifier]
+# The fields the Sync API would release to this run, generated here: they exist in this
+# process only, and nothing below prints one.
+released_token = secrets.token_hex(24)
+released = {"destination": {"token": secrets.token_hex(24)}}
+if release_source:
+    released["source"] = {"token": released_token}
+
+package = parse_configuration_package(package_content)
+try:
+    instance = resolve_runtime_instance(package, directory="/tmp/infrahub-sync/pkg-r1", released=released)
+except CredentialConfigurationError as refusal:
+    rendered = str(refusal)
+    shown = [fields["token"] for fields in released.values() if fields["token"] in rendered]
+    print("PKG-R1-CONTAINER REFUSED source-block" if "source block" in rendered and not shown else "PKG-R1-CONTAINER FAIL")
+    sys.exit(3)
 
 # The one external answer this probe supplies. Nautobot's client asks for the API
 # version while constructing and returns no object without it. Everything about
 # that request is recorded and judged: the URL, the effective Authorization header
 # the session would actually send, and how many times it happens. Any other URL,
-# any second call, or a header that does not carry the declared credential leaves
+# any second call, or a header that does not carry the released credential leaves
 # the verdicts below false. Nothing raw is printed.
 seen = []
 
@@ -491,27 +492,24 @@ adapter = Adapter(target=source, adapter=instance.source, config=instance)
 # a rendered value would put the credential into whatever retained the output.
 checks = {
     "url_is_declared": adapter.client.base_url == declared_url.rstrip("/") + "/api",
-    "token_is_declared": adapter.client.token == expected_token,
+    "token_is_released": adapter.client.token == released_token,
     "ambient_url_ignored": "ambient" not in adapter.client.base_url,
+    "ambient_token_ignored": adapter.client.token not in set(os.environ.values()),
+    "no_credential_variable": not [name for name in os.environ if name.startswith("INFRAHUB_SYNC_CREDENTIAL_")],
 }
 if source == "nautobot":
     checks["exactly_one_version_get"] = len(seen) == 1
     checks["version_get_url_is_declared"] = bool(seen) and seen[0][0] == expected_version_url
-    checks["version_get_carries_declared_token"] = bool(seen) and seen[0][1] == "Token " + expected_token
+    checks["version_get_carries_released_token"] = bool(seen) and seen[0][1] == "Token " + released_token
 else:
     checks["no_transport_call_during_construction"] = seen == []
-print("PKG-R1-CONTAINER PASS" if all(checks.values()) else "PKG-R1-CONTAINER FAIL")
+failed = sorted(name for name, passed in checks.items() if not passed)
+print("PKG-R1-CONTAINER PASS" if not failed else "PKG-R1-CONTAINER FAIL " + ",".join(failed))
 """
 
 
 def container_environment() -> dict[str, str]:
-    """Every operator input the file needs, with the image under test named.
-
-    Deliberately carries no source token. The whole point of the container proof
-    is that the declared value arrives through the operator's `.env`, so handing
-    it to Compose in the process environment here would make the test pass
-    whether or not `.env` loading works at all.
-    """
+    """Every operator input the file needs, with the image under test named."""
     image = image_settings()
     if not all(image.values()):
         pytest.skip(f"{IMAGE_REPOSITORY_ENV} and {IMAGE_VERSION_ENV} name no built image to run")
@@ -528,35 +526,71 @@ def operator_file(tmp_path: Path, **settings: str) -> Path:
 
 CONTAINER_DECLARED_URL = {"netbox": "http://netbox.invalid:8080", "nautobot": "http://nautobot.invalid:8080"}
 CONTAINER_AMBIENT_URL = "http://ambient.invalid:9999"
-# Distinct per source, so a leak sweep can name which one escaped.
+# What an operator's `.env` of the earlier format still holds. Distinct per source, so a
+# leak sweep can name which one escaped. The worker container must receive neither.
 CONTAINER_TOKENS = {
     "netbox": "pkg-r1-container-netbox-canary-a71f3c",
     "nautobot": "pkg-r1-container-nautobot-canary-c93e05",
 }
 
 
+def container_package(source: str) -> str:
+    """The package of `source` as the JSON text a probe takes, with the container's own source address."""
+    content = package_content(source)
+    content["configuration"]["source"]["settings"]["url"] = CONTAINER_DECLARED_URL[source]
+    return json.dumps(content)
+
+
+def earlier_format_variable(source: str) -> str:
+    """The variable that carried the token of `source` to the worker before stored credentials."""
+    return f"{REMOVED_PREFIX}{source.upper()}_TOKEN"
+
+
+@NEEDS_SERVICE_PROFILE
+@pytest.mark.parametrize("source", sorted(SOURCES))
+@pytest.mark.parametrize("release", ["release-source", "withhold-source"])
+def test_the_container_probe_gives_its_verdict_in_this_interpreter(source: str, release: str) -> None:
+    """The probe itself is checked on the unit tier, so the `docker` cases cannot fail on its own text.
+
+    A child process, because the probe replaces `socket.connect` for the whole interpreter.
+    """
+    result = subprocess.run(  # noqa: S603 -- this interpreter, with the fixed probe text of this module
+        [sys.executable, "-c", CONTAINER_PROBE, container_package(source), release],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env={name: value for name, value in os.environ.items() if not name.startswith(REMOVED_PREFIX)},
+    )
+
+    if release == "release-source":
+        assert result.returncode == 0, result.stderr[-2000:]
+        assert result.stdout.strip() == "PKG-R1-CONTAINER PASS"
+    else:
+        assert result.returncode == 3, result.stderr[-2000:]
+        assert result.stdout.strip() == "PKG-R1-CONTAINER REFUSED source-block"
+
+
 @pytest.mark.docker
 @pytest.mark.parametrize("source", sorted(SOURCES))
-def test_the_worker_container_gives_the_declared_credential_to_the_real_adapter(
-    docker_daemon: None, source: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_the_worker_container_gives_the_released_credential_to_the_real_adapter(
+    docker_daemon: None, source: str, tmp_path: Path
 ) -> None:
     """One `compose run` in the image under test, resolving and constructing for real.
 
-    The declared token reaches Compose only through the operator's `.env`, and is
-    absent from this process's environment, so the case fails if `.env` loading
-    is broken rather than passing on a
-    value Compose was handed directly. A hostile ambient URL is exported into the
-    same container. What the adapter ends up holding is compared inside the
-    container and only verdicts are printed, so the value never reaches anything
+    The probe passes the resolver the fields the Sync API releases to a run, and the real
+    adapter client ends up holding that token. The operator's `.env` still sets the variable
+    that carried the token before stored credentials, and a hostile ambient URL is exported
+    into the same container: the probe's verdict is PASS only when the container holds no
+    `INFRAHUB_SYNC_CREDENTIAL_*` variable and the client ignores the ambient URL. Everything is
+    compared inside the container and only verdicts are printed, so no value reaches anything
     this suite retains.
     """
     del docker_daemon
     profile = SOURCES[source]
     token = CONTAINER_TOKENS[source]
     SECRETS.register(token)
-
-    monkeypatch.delenv(profile.identifier, raising=False)
-    settings = operator_file(tmp_path, **{profile.identifier: token})
+    settings = operator_file(tmp_path, **{earlier_format_variable(source): token})
 
     result = compose(
         [
@@ -572,35 +606,32 @@ def test_the_worker_container_gives_the_declared_credential_to_the_real_adapter(
             "python",
             "-c",
             CONTAINER_PROBE,
-            CONTAINER_DECLARED_URL[source],
-            source,
+            container_package(source),
+            "release-source",
         ],
         environment=container_environment(),
         env_files=(settings,),
     )
 
-    assert profile.identifier not in os.environ, "the token must reach Compose from the operator's .env alone"
     assert result.returncode == 0, result.output
     assert "PKG-R1-CONTAINER PASS" in result.stdout, result.output
-    assert SECRETS.leaked(result.unredacted(), {profile.identifier: token}) == []
+    assert SECRETS.leaked(result.unredacted(), {earlier_format_variable(source): token}) == []
 
 
 @pytest.mark.docker
-def test_a_missing_source_token_fails_the_run_inside_the_container(
-    docker_daemon: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_a_source_credential_that_is_not_released_fails_the_run_inside_the_container(
+    docker_daemon: None, tmp_path: Path
 ) -> None:
-    """The refusal an operator sees names the variable, and the container still started.
+    """The refusal names the block, and no variable of the container can stand in for the stored credential.
 
-    The identifier check reads raw output, because the redaction boundary replaces
-    a credential-shaped *name* and the refusal is built from one — on the redacted
-    stream the very string this asserts is already `[redacted]`. The comparison is
-    therefore reduced to a bool before the assert: pytest rewrites assertions and
-    renders their operands on failure, so an `in` test written inline would put the
-    captured output into the report. Only the bool reaches the assert, and nothing
-    holds the raw text afterwards.
+    The operator's `.env` sets the variable that carried the NetBox token before stored
+    credentials. The run is still refused, because the worker reads a credential from the
+    Sync API only.
     """
     del docker_daemon
-    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", raising=False)
+    token = CONTAINER_TOKENS["netbox"]
+    SECRETS.register(token)
+    settings = operator_file(tmp_path, **{earlier_format_variable("netbox"): token})
 
     result = compose(
         [
@@ -612,73 +643,83 @@ def test_a_missing_source_token_fails_the_run_inside_the_container(
             "python",
             "-c",
             CONTAINER_PROBE,
-            CONTAINER_DECLARED_URL["netbox"],
-            "netbox",
+            container_package("netbox"),
+            "withhold-source",
         ],
         environment=container_environment(),
-        env_files=(operator_file(tmp_path),),
+        env_files=(settings,),
     )
 
-    names_expected_identifier = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN" in result.unredacted()
-
     assert result.returncode != 0
-    assert names_expected_identifier, "the refusal did not name the expected environment identifier"
-    assert "CredentialConfigurationError" in result.output
+    assert "PKG-R1-CONTAINER REFUSED source-block" in result.stdout, result.output
     assert "PKG-R1-CONTAINER PASS" not in result.stdout
+    assert SECRETS.leaked(result.unredacted(), {earlier_format_variable("netbox"): token}) == []
 
 
 # ---------------------------------------------------------------------------
-# Every bundled adapter's credentials reach the worker (spec 015, SC-003)
+# A credential with a user name and a password reaches the adapter settings (spec 015, SC-003)
 # ---------------------------------------------------------------------------
 
 ACI_PACKAGE = Path(__file__).resolve().parents[2] / "examples" / "aci_to_infrahub" / "package.yml"
-ACI_DESTINATION_TOKEN = "spec021-infrahub-canary-77c2"  # noqa: S105 -- a test stand-in, not a credential
-ACI_TOKENS = {
-    "INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME": "spec021-aci-username-canary-5e1d",
-    "INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD": "spec021-aci-password-canary-8b3f",
-}
 
-# Resolves the shipped ACI package's references with the real resolver, inside the worker
-# container, and prints only a verdict.
+# Resolves the shipped ACI package with the real resolver, inside the worker container, from
+# the fields the Sync API releases for a credential of the user name and password kind. The
+# values are generated in the container, and only a verdict is printed.
 ACI_PROBE = """
-import json, os, sys
+import json, os, secrets, sys
 
 from infrahub_sync.configuration import parse_configuration_package
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
 
+released = {
+    "source": {"username": secrets.token_hex(12), "password": secrets.token_hex(24)},
+    "destination": {"token": secrets.token_hex(24)},
+}
 package = parse_configuration_package(json.loads(sys.argv[1]))
-instance = resolve_runtime_instance(package, directory="/tmp/infrahub-sync/spec021-aci")
+instance = resolve_runtime_instance(package, directory="/tmp/infrahub-sync/spec021-aci", released=released)
 settings = instance.source.settings or {}
 checks = {
-    "username": settings.get("username") == os.environ["INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME"],
-    "password": settings.get("password") == os.environ["INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD"],
+    "username": settings.get("username") == released["source"]["username"],
+    "password": settings.get("password") == released["source"]["password"],
+    "destination": (instance.destination.settings or {}).get("token") == released["destination"]["token"],
+    "no_credential_variable": not [name for name in os.environ if name.startswith("INFRAHUB_SYNC_CREDENTIAL_")],
 }
 print("SPEC021-ACI PASS" if all(checks.values()) else "SPEC021-ACI FAIL " + ",".join(k for k, v in checks.items() if not v))
 """
 
 
-@pytest.mark.docker
-def test_the_worker_container_resolves_the_shipped_aci_package_credentials(
-    docker_daemon: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The two ACI variables reach the worker from `.env` alone, and the real resolver uses them."""
-    import json
-
+def aci_package() -> str:
+    """The shipped ACI package as the JSON text the probe takes."""
     import yaml
 
+    return json.dumps(yaml.safe_load(ACI_PACKAGE.read_text(encoding="utf-8")))
+
+
+def test_the_aci_probe_passes_in_this_interpreter() -> None:
+    """The probe and the shipped package are checked on the unit tier; the `docker` case adds the image."""
+    result = subprocess.run(  # noqa: S603 -- this interpreter, with the fixed probe text of this module
+        [sys.executable, "-c", ACI_PROBE, aci_package()],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env={name: value for name, value in os.environ.items() if not name.startswith(REMOVED_PREFIX)},
+    )
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip() == "SPEC021-ACI PASS"
+
+
+@pytest.mark.docker
+def test_the_worker_container_resolves_the_shipped_aci_package_credentials(docker_daemon: None, tmp_path: Path) -> None:
+    """The released user name and password reach the ACI settings in the image, and no variable carries one."""
     del docker_daemon
-    SECRETS.register(*ACI_TOKENS.values())
-    for name in ACI_TOKENS:
-        monkeypatch.delenv(name, raising=False)
-    package = yaml.safe_load(ACI_PACKAGE.read_text(encoding="utf-8"))
-    settings = operator_file(tmp_path, **ACI_TOKENS, INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=ACI_DESTINATION_TOKEN)
 
     result = compose(
-        ["run", "--rm", "--no-deps", "-T", "sync-worker", "python", "-c", ACI_PROBE, json.dumps(package)],
+        ["run", "--rm", "--no-deps", "-T", "sync-worker", "python", "-c", ACI_PROBE, aci_package()],
         environment=container_environment(),
-        env_files=(settings,),
+        env_files=(operator_file(tmp_path),),
     )
 
     assert result.returncode == 0, result.output
     assert "SPEC021-ACI PASS" in result.stdout, result.output
-    assert SECRETS.leaked(result.unredacted(), ACI_TOKENS) == []

@@ -123,11 +123,13 @@ PRESET_VARIABLE = "INFRAHUB_SYNC_DEV_PRESET"
 # tasks store them through the Sync API after the stack starts (`store_development_credentials`).
 INFRAHUB_CREDENTIAL = "infrahub-token"
 NETBOX_CREDENTIAL = "netbox-token"
-# The shell variable whose value, when set, is stored as `infrahub-token`. The Compose file
-# still passes it to the Sync services for a package in the earlier format.
-INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
+# The shell variable whose value, when set, is stored as `infrahub-token`. Only the tasks
+# read it: no Compose file passes a source or destination credential to a Sync service.
+INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN"
 # The same for `netbox-token`.
-NETBOX_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"
+NETBOX_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_DEV_NETBOX_TOKEN"
+# The variable that gives a `sync-worker` the address of the Sync API it reads credential values from.
+WORKER_API_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
 # The variable that gives the Sync API the key it encrypts stored credentials with.
 ENCRYPTION_KEY_VARIABLE = "INFRAHUB_SYNC_ENCRYPTION_KEY"
 # The Sync API's refusal of a credential change while it has no encryption key.
@@ -776,26 +778,10 @@ def _destroy(context: Context, *, project: str = "") -> None:
     compose(context, "down --volumes --remove-orphans", ComposeTarget(project=project, profiles=ALL_PROFILES), pty=True)
 
 
-def _stack_env(settings: DevSettings) -> dict[str, str]:
-    """The shell values the Sync services read, beyond what the shell already sets.
-
-    With the stack's own Infrahub, the worker's Infrahub credential defaults to that
-    Infrahub's initial admin token, so the smoke package can write to it. With the
-    `preview` and `demo` presets, or while the local NetBox runs, the NetBox credential defaults to
-    the local NetBox's development token. A value the shell exports wins.
-    """
-    environment: dict[str, str] = {}
-    if settings.infrahub is not None and not os.environ.get(INFRAHUB_CREDENTIAL_VARIABLE):
-        environment[INFRAHUB_CREDENTIAL_VARIABLE] = settings.infrahub_admin_token
-    if settings.netbox_credential and not os.environ.get(NETBOX_CREDENTIAL_VARIABLE):
-        environment[NETBOX_CREDENTIAL_VARIABLE] = netbox_token(load_netbox_env())
-    return environment
-
-
 def development_credentials(settings: DevSettings) -> dict[str, str]:
     """The token of each stored credential the shipped examples name, by credential name.
 
-    The values are the ones `_stack_env()` gives the Sync services. A value the shell exports
+    A value the shell exports in INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN or INFRAHUB_SYNC_DEV_NETBOX_TOKEN
     wins. Without one, `infrahub-token` is the initial admin token of the stack's own
     Infrahub, and `netbox-token` is the local NetBox's development token with the `preview`
     and `demo` presets or while the local NetBox runs. A credential with no value is left out.
@@ -1063,7 +1049,10 @@ def host_environment(settings: DevSettings, service: Literal["sync-api", "sync-w
     environment["PREFECT_API_URL"] = f"{settings.prefect_url}/api"
     if service == "sync-api":
         environment["INFRAHUB_SYNC_SERVICE_HOST"] = HOST_PROCESS_ADDRESS
-    environment.update(_stack_env(settings))
+    else:
+        # The container reaches the Sync API by its service name; the host process reaches the
+        # loopback publication, where `dev.api` or the `sync-api` container listens.
+        environment[WORKER_API_URL_VARIABLE] = settings.sync_api_url
     return environment
 
 
@@ -1161,7 +1150,7 @@ def _run_stack(context: Context, settings: DevSettings) -> None:
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
-        ComposeTarget(project=settings.project, profiles=settings.profiles, env=_stack_env(settings)),
+        ComposeTarget(project=settings.project, profiles=settings.profiles),
         pty=True,
     )
     _attach_worker(context, settings)
@@ -1211,7 +1200,7 @@ def dev_restart(context: Context) -> None:
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --force-recreate --no-deps {services}",
-        ComposeTarget(project=settings.project, profiles=settings.profiles, env=_stack_env(settings)),
+        ComposeTarget(project=settings.project, profiles=settings.profiles),
         pty=True,
     )
     _attach_worker(context, settings)

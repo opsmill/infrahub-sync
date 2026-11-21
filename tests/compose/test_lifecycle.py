@@ -159,15 +159,14 @@ def started(
 ) -> Iterator[Deployment]:
     """A fresh project of the operator file, written a `.env` and taken to READY.
 
-    The destination credential is supplied for the managed rows below, which do
-    register a package and run against the pinned Infrahub. The start itself
-    needs neither.
+    The destination credential is stored through the Sync API once it runs, for the
+    managed rows below, which do register a package and run against the pinned
+    Infrahub. The start itself needs neither.
     """
     destination = f"http://{container_reachable_host()}:{FIXTURE_INFRAHUB_PORT}"
     environment_file = operator_environment(
         tmp_path_factory.mktemp("lifecycle"),
         image=sync_image,
-        destination_token=infrahub_fixture["token"],
         canaries=canaries,
         api_port=int(API_PORT),
         prefect_port=int(PREFECT_PORT),
@@ -185,6 +184,9 @@ def started(
     assert launched.returncode == 0, launched.stderr[-3000:]
     try:
         wait_until_ready(deployment)
+        # The credential the smoke package names. PostgreSQL keeps it across the stops,
+        # restarts and replacements below, as it keeps the registry.
+        deployment.store_destination_token(infrahub_fixture["token"])
         yield deployment
     finally:
         deployment.down(volumes=True)
