@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 
 class SyncClientError(Exception):
     """Base class for every client-owned failure."""
@@ -90,6 +92,22 @@ class APIError(SyncClientError):
         super().__init__("the Sync API refused the request")
 
 
+@dataclass(frozen=True, slots=True)
+class RefusedCredential:
+    """One stored credential that a refused registration names, with no value.
+
+    ``block`` is ``source`` or ``destination``. ``code`` says what is wrong:
+    ``credential-not-found``, ``credential-field-missing`` or ``credential-method-unknown``.
+    ``fields`` are the fields to supply: every field the block needs when the credential does
+    not exist, and the fields it does not hold otherwise.
+    """
+
+    block: str
+    name: str
+    code: str
+    fields: tuple[str, ...]
+
+
 class ConfigsAPIError(APIError):
     """Expose safe machine fields from a configuration API refusal."""
 
@@ -101,9 +119,12 @@ class ConfigsAPIError(APIError):
         reason: str | None = None,
         *,
         mutation_id: str | None = None,
+        credentials: tuple[RefusedCredential, ...] = (),
     ) -> None:
         self.family = family
         self.reason = reason
+        # Set on a registration refused for the stored credentials it names; empty otherwise.
+        self.credentials = credentials
         super().__init__(status, code, mutation_id=mutation_id)
 
 

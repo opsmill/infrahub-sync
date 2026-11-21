@@ -9,11 +9,11 @@ from datetime import datetime
 from hashlib import sha256
 from math import isfinite
 from time import monotonic, sleep
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 from uuid import uuid4
 
 import httpx
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from typing_extensions import Self
 
 from .errors import (
@@ -24,6 +24,7 @@ from .errors import (
     ConfigsAPIError,
     NotSyncAPIError,
     ProtocolError,
+    RefusedCredential,
     RunTerminalError,
     RunWaitTimeoutError,
     TransportError,
@@ -159,6 +160,46 @@ def _text_list(details: Mapping[str, object] | None, field: str) -> tuple[str, .
     if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
         raise ValueError
     return tuple(cast("list[str]", items))
+
+
+class _RefusedCredentialEntry(BaseModel):
+    """One entry of ``details.credentials`` of a refused registration; any other shape is refused."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    block: Literal["source", "destination"]
+    name: str
+    code: Literal["credential-not-found", "credential-field-missing", "credential-method-unknown"]
+    fields: tuple[str, ...]
+
+    @field_validator("fields", mode="before")
+    @classmethod
+    def _fields_from_a_list(cls, value: object) -> object:
+        # JSON has no tuple, and strict mode takes no list for one.
+        return tuple(value) if isinstance(value, list) else value
+
+
+class _RefusedCredentialDetails(BaseModel):
+    """The ``details`` of a refused registration: ``credentials`` is absent or a list of entries."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    credentials: list[_RefusedCredentialEntry] = []
+
+
+def _refused_credentials(details: Mapping[str, object] | None) -> tuple[RefusedCredential, ...]:
+    """Return the stored credentials that the ``details`` of a refused registration name.
+
+    An answer without ``details``, or whose details hold no ``credentials``, names none.
+
+    Raises:
+        ValidationError: ``credentials`` is not a list of entries with a known block, a name, a
+            known code and a list of field names.
+    """
+    if details is None:
+        return ()
+    parsed = _RefusedCredentialDetails.model_validate(details)
+    return tuple(RefusedCredential(item.block, item.name, item.code, item.fields) for item in parsed.credentials)
 
 
 class SyncClient:  # pylint: disable=too-many-public-methods
@@ -1599,6 +1640,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
                 detail.family,
                 detail.reason,
                 mutation_id=mutation_id,
+                credentials=_refused_credentials(detail.details),
             )
         detail = ErrorEnvelope.model_validate(payload).error
         if detail.status != status:

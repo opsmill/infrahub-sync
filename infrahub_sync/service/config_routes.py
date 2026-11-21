@@ -22,7 +22,7 @@ from infrahub_sync.client.models import (
     RegisteredVersionResource,
     ValidationReportResource,
 )
-from infrahub_sync.configuration.credential_admission import STORED_CREDENTIAL_CODES
+from infrahub_sync.configuration.credential_admission import STORED_CREDENTIAL_CODES, StoredCredentialFinding
 from infrahub_sync.configuration.removed_credential_format import CREDENTIAL_FORMAT_REMOVED_REASON
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
@@ -65,11 +65,22 @@ _MAX_VALIDATION_FINDINGS_PAGE = 256
 class ConfigurationAPIError(Exception):
     """Fixed public representation of one shared configuration-service refusal."""
 
-    def __init__(self, status: int, family: str, *, reason: str | None = None, proven_pre_effect: bool = False) -> None:
+    def __init__(
+        self,
+        status: int,
+        family: str,
+        *,
+        reason: str | None = None,
+        proven_pre_effect: bool = False,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         self.status = status
         self.family = family
         self.reason = reason
         self.proven_pre_effect = proven_pre_effect
+        # Set on a refused registration that names stored credentials which cannot serve their
+        # blocks: `{"credentials": [{"block", "name", "code", "fields"}]}`, with no value.
+        self.details = details
 
 
 def _provider_error_boundary(operation: Any) -> Any:
@@ -166,7 +177,13 @@ class ConfigurationRoutes:
                     or error.reason in STORED_CREDENTIAL_CODES
                 )
                 reason = error.reason if named else None
-                raise ConfigurationAPIError(422, "validation", reason=reason, proven_pre_effect=True) from None
+                raise ConfigurationAPIError(
+                    422,
+                    "validation",
+                    reason=reason,
+                    proven_pre_effect=True,
+                    details=self._stored_credential_details(error.stored_credentials),
+                ) from None
             if error_type is self._service.ConfigsNotFoundError:
                 raise ConfigurationAPIError(404, "not-found", reason=error.reason, proven_pre_effect=True) from None
             if error_type is self._service.ConfigsStorageError:
@@ -174,6 +191,21 @@ class ConfigurationRoutes:
             if error_type is self._service.ConfigsInternalError:
                 raise ConfigurationAPIError(503, "internal") from None
             raise ConfigurationAPIError(503, "configs") from None
+
+    def _stored_credential_details(self, refused: tuple[StoredCredentialFinding, ...]) -> dict[str, Any] | None:
+        """Return the details of a registration refused for its stored credentials, or ``None``.
+
+        One entry for each block whose named credential does not exist or does not hold a field
+        the block needs: the block, the credential name, the code and the field names. A name
+        comes from the package, so it is redacted as the message of a finding is. A block, a
+        code and a field name come from fixed lists. No entry holds a credential value.
+        """
+        if not refused:
+            return None
+        entries = [item.entry() for item in refused]
+        for entry in entries:
+            entry["name"] = configs.redact_public_field("message", str(entry["name"]), self._secrets)
+        return {"credentials": entries}
 
     def register(
         self, package: dict[str, Any], *, actor: str | None = None, reason: str | None = None

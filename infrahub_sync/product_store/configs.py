@@ -43,6 +43,7 @@ from infrahub_sync.configuration import (
 )
 from infrahub_sync.configuration.credential_admission import (
     StoredCredentialCheckError,
+    StoredCredentialFinding,
     stored_credential_findings,
 )
 from infrahub_sync.configuration.models import (
@@ -108,12 +109,22 @@ class ConfigsValidationError(ConfigsError):
     family: ClassVar[str] = "validation"
 
     def __init__(
-        self, message: str, *, findings: tuple[ValidationFinding, ...] = (), reason: str | None = None
+        self,
+        message: str,
+        *,
+        findings: tuple[ValidationFinding, ...] = (),
+        reason: str | None = None,
+        stored_credentials: tuple[StoredCredentialFinding, ...] = (),
     ) -> None:
-        """Keep the structured refusal independent of its display message."""
+        """Keep the structured refusal independent of its display message.
+
+        ``stored_credentials`` holds each block whose named stored credential cannot serve it,
+        in the order source, destination. It is empty for every other refusal.
+        """
         super().__init__(message)
         self.findings = findings
         self.reason = reason
+        self.stored_credentials = stored_credentials
 
 
 class ConfigsNotFoundError(ConfigsError):
@@ -702,7 +713,10 @@ def _validation_refusal(exc: CredentialConfigurationError, package: Configuratio
         # registration's transaction. The reason is the code of the first one.
         stored = tuple(item.finding for item in exc.findings)
         return ConfigsValidationError(
-            str(exc), findings=sort_findings((*findings, *stored)), reason=exc.findings[0].code
+            str(exc),
+            findings=sort_findings((*findings, *stored)),
+            reason=exc.findings[0].code,
+            stored_credentials=exc.findings,
         )
     return ConfigsValidationError(str(exc), findings=findings)
 

@@ -1445,6 +1445,18 @@ class ConfigErrorDetail(_ResourceModel):
     status: int
     family: str
     reason: str | None = None
+    # Set when a registration is refused for the stored credentials it names: one entry for each
+    # block whose credential does not exist or does not hold a field the block needs. Absent
+    # from every other error body.
+    details: dict[str, Any] | None = None
+
+    # No return annotation on purpose, as on `ErrorDetail`.
+    @model_serializer(mode="wrap")
+    def _omit_absent_details(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if self.details is None:
+            data.pop("details", None)
+        return data
 
 
 class ConfigErrorEnvelope(_ResourceModel):

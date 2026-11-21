@@ -120,6 +120,8 @@ def test_registration_refuses_a_credential_that_does_not_exist(projection: Produ
     # The message says who can correct it, and with which command (critique P5).
     assert f"{CREATE_COMMAND} {SOURCE_CREDENTIAL}" in finding.message
     assert "administrator" in finding.message
+    # The message names the fields the credential needs (spec 027, User Story 3).
+    assert "it needs the field token" in finding.message
     assert refused.value.reason == "credential-not-found"
     assert configs.list_configs(projection=projection).items == ()
 
@@ -139,6 +141,19 @@ def test_registration_refuses_a_credential_without_a_field_its_block_needs(proje
     assert SOURCE_CREDENTIAL in finding.message
     assert refused.value.reason == "credential-field-missing"
     assert configs.list_configs(projection=projection).items == ()
+
+
+def test_registration_names_the_command_and_the_fields_of_a_username_and_password_credential(
+    projection: ProductProjection,
+) -> None:
+    _store(projection, DESTINATION_CREDENTIAL)
+
+    with pytest.raises(configs.ConfigsValidationError) as refused:
+        configs.register(package=_package(source=_aci_source()), projection=projection)
+
+    message = _finding(refused.value, "credential-not-found").message
+    assert "it needs the fields username, password" in message
+    assert f"{CREATE_COMMAND} {SOURCE_CREDENTIAL} --username <username>" in message
 
 
 def test_registration_reports_every_block_whose_credential_fails(projection: ProductProjection) -> None:
@@ -350,6 +365,38 @@ def test_the_registration_route_refuses_a_credential_that_does_not_exist(admissi
     assert response.status_code == 422
     error = response.json()["error"]
     assert (error["code"], error["reason"]) == ("configs-validation", "credential-not-found")
+
+
+def test_the_registration_route_names_each_credential_that_fails_and_its_fields(admission: Admission) -> None:
+    # The source credential holds only a token, and the ACI adapter needs a username and a
+    # password. No credential has the name of the destination.
+    package = _package(source=_aci_source())
+    package["configuration"]["destination"]["credential"] = "infrahub-other"
+
+    error = _refused(admission.register(package), "configs-validation")
+
+    assert error["reason"] == "credential-field-missing"
+    assert error["details"] == {
+        "credentials": [
+            {
+                "block": "source",
+                "name": SOURCE_CREDENTIAL,
+                "code": "credential-field-missing",
+                "fields": ["password", "username"],
+            },
+            {"block": "destination", "name": "infrahub-other", "code": "credential-not-found", "fields": ["token"]},
+        ]
+    }
+
+
+def test_a_registration_refused_for_another_reason_has_no_details(admission: Admission) -> None:
+    package = _package()
+    package["credentials"] = {}
+
+    error = _refused(admission.register(package), "configs-validation")
+
+    assert error["reason"] == "credential-format-removed"
+    assert "details" not in error
 
 
 def test_an_account_that_is_not_an_administrator_cannot_register_a_package_that_names_a_credential(

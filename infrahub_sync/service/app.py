@@ -561,6 +561,7 @@ def create_app(
                 status=exc.status,
                 family=exc.family,
                 reason=exc.reason,
+                details=exc.details,
             )
         )
         return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"))

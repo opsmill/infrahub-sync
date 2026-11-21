@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, UnknownCredentialMethodError, credential_field_map
+from .conversion_credentials import create_command, ordered_fields
 from .credentials import CredentialConfigurationError
 from .models import ValidationFinding
 
@@ -54,7 +55,9 @@ class StoredCredentialFinding:
     """What is wrong with the stored credential that one block names: no value is in it.
 
     ``finding`` is the validation finding. ``details`` answers the same facts as the details of
-    a refusal: the block, the credential name and the missing field names.
+    a refusal: the block, the credential name and the missing field names. ``needed_fields``
+    are the fields that the block's adapter and ``auth_method`` need; they are empty when the
+    method is not known.
     """
 
     code: str
@@ -62,6 +65,7 @@ class StoredCredentialFinding:
     name: str
     message: str
     missing_fields: tuple[str, ...] = ()
+    needed_fields: tuple[str, ...] = ()
 
     @property
     def finding(self) -> ValidationFinding:
@@ -79,6 +83,15 @@ class StoredCredentialFinding:
         if self.missing_fields:
             details["fields"] = list(self.missing_fields)
         return details
+
+    def entry(self) -> dict[str, object]:
+        """Return this credential as one entry of the details of a refused registration.
+
+        ``fields`` are the fields to supply, sorted: every field the block needs when the
+        credential does not exist, and the fields it does not hold otherwise. No value is in it.
+        """
+        fields = self.missing_fields if self.code == CREDENTIAL_FIELD_MISSING else self.needed_fields
+        return {"block": self.block, "name": self.name, "code": self.code, "fields": sorted(fields)}
 
 
 def named_credentials(
@@ -101,8 +114,8 @@ def stored_credential_findings(
 ) -> tuple[StoredCredentialFinding, ...]:
     """Return one finding for each of ``blocks`` whose named stored credential cannot serve it.
 
-    - ``credential-not-found``: no credential has the name. The message names the command
-      that creates it and says that an administrator runs it.
+    - ``credential-not-found``: no credential has the name. The message names the fields the
+      credential needs and the command that creates it, and says that an administrator runs it.
     - ``credential-field-missing``: the credential does not hold a field that the block's
       adapter and ``auth_method`` need. The message names the fields.
     - ``credential-method-unknown``: the block's ``auth_method`` is not one its adapter
@@ -132,12 +145,15 @@ def stored_credential_findings(
         if not needed:
             continue
         held = stored_fields(name)
+        needs = tuple(sorted(needed))
         if held is None:
+            listed = ordered_fields(needed)
             message = (
-                f"{block} names the stored credential {name!r}, which does not exist; an administrator "
-                f"can create it with `infrahub-sync credentials create {name}`"
+                f"{block} names the stored credential {name!r}, which does not exist; it needs the "
+                f"field{'' if len(listed) == 1 else 's'} {', '.join(listed)}; an administrator "
+                f"can create it with `{create_command(name, needed)}`"
             )
-            findings.append(StoredCredentialFinding(CREDENTIAL_NOT_FOUND, block, name, message))
+            findings.append(StoredCredentialFinding(CREDENTIAL_NOT_FOUND, block, name, message, needed_fields=needs))
             continue
         missing = tuple(sorted(set(needed) - set(held)))
         if missing:
@@ -146,7 +162,9 @@ def stored_credential_findings(
                 f"{', '.join(missing)}, which adapter {adapter.name!r} needs; an administrator can set "
                 f"them with `infrahub-sync credentials set {name}`"
             )
-            findings.append(StoredCredentialFinding(CREDENTIAL_FIELD_MISSING, block, name, message, missing))
+            findings.append(
+                StoredCredentialFinding(CREDENTIAL_FIELD_MISSING, block, name, message, missing, needed_fields=needs)
+            )
     return tuple(findings)
 
 

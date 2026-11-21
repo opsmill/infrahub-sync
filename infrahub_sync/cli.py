@@ -403,6 +403,7 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         *_removed_format_message(error),
         *_account_message(error),
         *cli_credentials.in_use_fields(error),
+        *cli_credentials.refused_credential_fields(error),
     )
 
 
@@ -969,13 +970,16 @@ def configs_convert(
     without a terminal unless --yes is given.
 
     \b
-    The report names each credential setting that v2 used with the
-    environment variable the Sync worker reads in V3, each address with its origin (a flag, a v2
-    variable, or config.yml), each dropped key with its reason, and notes.
-    It warns when config.yml still holds a literal credential, when the
-    shipped Compose file does not pass a credential variable to the Sync
-    worker, when an address is localhost or 127.0.0.1, and when an address
-    came from a generic variable name.
+    The package names one stored credential in each block that uses
+    authentication, with `credential: <name>`, and holds no credential setting.
+    The report lists each stored credential to create, with the fields it needs
+    (a token, or a username and a password) and its command, for example
+    `infrahub-sync credentials create netbox-token`. An administrator runs each
+    command before the package is registered; the command asks for the value.
+    The report also lists each address with its origin (a flag, a v2 variable,
+    or config.yml), each dropped key with its reason, and notes. It warns when
+    config.yml still holds a literal credential, when an address is localhost
+    or 127.0.0.1, and when an address came from a generic variable name.
 
     \b
     Exit status 1, nothing written, when the configuration has any of:

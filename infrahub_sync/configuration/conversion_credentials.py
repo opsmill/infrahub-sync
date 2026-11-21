@@ -30,6 +30,23 @@ FIELD_ORDER: tuple[CredentialField, ...] = ("username", "password", "token")
 _CREATE_COMMAND = "infrahub-sync credentials create"
 
 
+def ordered_fields(fields: Iterable[str]) -> tuple[str, ...]:
+    """Return ``fields`` in the order username, password, token; any other name follows, sorted."""
+    known = [field for field in FIELD_ORDER if field in fields]
+    return (*known, *sorted(set(fields) - set(FIELD_ORDER)))
+
+
+def create_command(name: str, fields: Iterable[str]) -> str:
+    """Return the command that creates the stored credential ``name`` with ``fields``.
+
+    The command asks for the secret value without echo. A username is not a secret, so a
+    credential that holds one takes it as the option ``--username``; the text ``<username>``
+    stands for it, and no value is in the command.
+    """
+    username = " --username <username>" if "username" in fields else ""
+    return f"{_CREATE_COMMAND} {name}{username}"
+
+
 def credential_name(adapter: str, settings: Iterable[str]) -> str:
     """Return the name of the stored credential that fills ``settings`` of one adapter block.
 
@@ -100,8 +117,7 @@ class CredentialEntry:
     @property
     def command(self) -> str:
         """The command that creates the stored credential; it asks for the secret value without echo."""
-        username = " --username <username>" if "username" in self.fields else ""
-        return f"{_CREATE_COMMAND} {self.name}{username}"
+        return create_command(self.name, self.fields)
 
     @property
     def warnings(self) -> tuple[str, ...]:

@@ -20,12 +20,13 @@ from typing import TYPE_CHECKING, NoReturn
 
 import typer
 
-from infrahub_sync.client import APIError, ClientInputError
+from infrahub_sync.client import APIError, ClientInputError, ConfigsAPIError
 from infrahub_sync.client.models import CREDENTIAL_NAME_PATTERN
+from infrahub_sync.configuration.conversion_credentials import create_command, ordered_fields
 
 if TYPE_CHECKING:
     from infrahub_sync.cli_accounts import CommandSupport
-    from infrahub_sync.client import CredentialResource, SyncClientError
+    from infrahub_sync.client import CredentialResource, RefusedCredential, SyncClientError
 
 # Fixed text for each refusal of the credential routes, by status and code. The client keeps no
 # message text of an answer (see the secret-redaction guideline), so the CLI prints its own text.
@@ -103,6 +104,33 @@ def in_use_fields(error: SyncClientError) -> tuple[tuple[str, object], ...]:
     if not isinstance(error, APIError) or error.configurations is None or error.schedules is None:
         return ()
     return (("configurations", error.configurations or None), ("schedules", error.schedules or None))
+
+
+def _refused_credential_text(refused: RefusedCredential) -> str:
+    """Return one line that says what is wrong with a stored credential a package names, and the command."""
+    fields = ", ".join(ordered_fields(refused.fields))
+    subject = f"{refused.block} names {refused.name}"
+    if refused.code == "credential-not-found":
+        needs = f"; it needs {fields}" if fields else ""
+        command = create_command(refused.name, refused.fields)
+        return f"{subject}, which does not exist{needs}; an administrator creates it with: {command}"
+    if refused.code == "credential-field-missing":
+        return (
+            f"{subject}, which does not hold {fields}; an administrator sets it with: "
+            f"infrahub-sync credentials set {refused.name}"
+        )
+    return f"{subject}, and the auth_method of the block is not one that its adapter accepts"
+
+
+def refused_credential_fields(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return one ``credential`` error field for each stored credential that a refused registration names.
+
+    Each field names the block, the credential, the fields to supply and the command that an
+    administrator runs. Any other error has no such field. No field holds a credential value.
+    """
+    if not isinstance(error, ConfigsAPIError):
+        return ()
+    return tuple(("credential", _refused_credential_text(refused)) for refused in error.credentials)
 
 
 def _fail(message: str) -> NoReturn:
