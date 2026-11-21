@@ -1108,6 +1108,33 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * ConfigErrorDetail
+         * @description Parse the public fields in a configuration API error.
+         */
+        ConfigErrorDetail: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Status */
+            status: number;
+            /** Family */
+            family: string;
+            /** Reason */
+            reason?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ConfigErrorEnvelope
+         * @description Wrap a configuration API error response.
+         */
+        ConfigErrorEnvelope: {
+            error: components["schemas"]["ConfigErrorDetail"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ConfigMutationRequest
          * @description Submit a configuration package with an optional audit reason.
          *
@@ -3625,13 +3652,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description The request does not match the API schema (`ErrorEnvelope`), or the validation refused the package (`ConfigErrorEnvelope`, family `validation`). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
+                    "application/json": components["schemas"]["ErrorEnvelope"] | components["schemas"]["ConfigErrorEnvelope"];
                 };
             };
         };
@@ -3760,13 +3787,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description The request does not match the API schema (`ErrorEnvelope`), or the validation refused the package (`ConfigErrorEnvelope`, family `validation`). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
+                    "application/json": components["schemas"]["ErrorEnvelope"] | components["schemas"]["ConfigErrorEnvelope"];
                 };
             };
         };

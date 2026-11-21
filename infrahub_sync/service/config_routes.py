@@ -48,7 +48,7 @@ from .events import (
     config_event,
 )
 from .liveness import LivenessPolicy
-from .models import ConfigMutationRequest, ErrorEnvelope
+from .models import ConfigErrorEnvelope, ConfigMutationRequest, ErrorEnvelope
 from .paging import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -63,10 +63,18 @@ from .paging import (
 from .service import REASON_REFUSED_MESSAGE, ServiceAPIError, is_free_text
 
 CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-# The errors the two registration routes declare: authentication and authorization, a name or an
-# idempotency key in use, and a request that does not match the API schema.
+# The errors the two registration routes declare: authentication and authorization, and a name or
+# an idempotency key in use. A 422 has two bodies: a request that does not match the API schema is
+# an `ErrorEnvelope`, and a package that the validation refuses is a `ConfigErrorEnvelope`.
 _MUTATION_ERRORS: dict[int | str, dict[str, Any]] = {
-    status: {"model": ErrorEnvelope} for status in (401, 403, 409, 422)
+    **{status: {"model": ErrorEnvelope} for status in (401, 403, 409)},
+    422: {
+        "model": ErrorEnvelope | ConfigErrorEnvelope,
+        "description": (
+            "The request does not match the API schema (`ErrorEnvelope`), or the validation refused "
+            "the package (`ConfigErrorEnvelope`, family `validation`)."
+        ),
+    },
 }
 # Most findings one validation-report page returns, and the default page size.
 _MAX_VALIDATION_FINDINGS_PAGE = 256

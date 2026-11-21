@@ -2512,3 +2512,16 @@ def test_the_registration_routes_declare_the_conflict_refusal(tmp_path: Path) ->
         assert responses["409"]["content"]["application/json"]["schema"] == {
             "$ref": "#/components/schemas/ErrorEnvelope"
         }
+
+
+def test_the_registration_routes_declare_both_bodies_of_a_422(tmp_path: Path) -> None:
+    """A schema refusal is an `ErrorEnvelope`; a package refused by validation is a `ConfigErrorEnvelope`."""
+    client, _projection = _discovery_client(tmp_path)
+    paths = client.get("/openapi.json").json()["paths"]
+
+    for path in ("/configs", "/configs/{config_id}/versions"):
+        schema = paths[path]["post"]["responses"]["422"]["content"]["application/json"]["schema"]
+        assert schema["anyOf"] == [
+            {"$ref": "#/components/schemas/ErrorEnvelope"},
+            {"$ref": "#/components/schemas/ConfigErrorEnvelope"},
+        ], path
