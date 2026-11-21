@@ -1,0 +1,19 @@
+dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md
+  s_0a9f0b6318b368::t_bac6b7ba57c4cc 52-55,73-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "63e061f114dac03cc67c08e9e821872f1d5ea739",
+  "prompts": {},
+  "sessions": {
+    "s_0a9f0b6318b368": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac6b42be7674a2a53",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
