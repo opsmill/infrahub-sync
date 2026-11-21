@@ -5734,6 +5734,31 @@ def test_redaction_removes_a_secret_from_the_text_of_details_and_keeps_its_times
     assert redacted.details.left_out == 7
 
 
+def test_redaction_removes_a_secret_from_the_text_values_of_changes_and_keeps_names_and_numbers() -> None:
+    event = _schedule_event(
+        details={
+            "changes": (
+                {"field": "cron", "before": "0 2 * * * hunter2", "after": "hunter2 0 3 * * *"},
+                {"field": "start_late_by_at_most_seconds", "before": 300, "after": 600},
+            )
+        }
+    )
+
+    redacted = product_store_store._redact_event(event, ("hunter2", "600", "cron"))
+
+    assert redacted.details is not None
+    assert redacted.details.changes is not None
+    text_change, number_change = redacted.details.changes
+    assert isinstance(text_change.before, str)
+    assert isinstance(text_change.after, str)
+    assert "hunter2" not in text_change.before
+    assert "hunter2" not in text_change.after
+    assert text_change.field == "cron"
+    assert number_change.field == "start_late_by_at_most_seconds"
+    assert number_change.before == 300
+    assert number_change.after == 600
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
