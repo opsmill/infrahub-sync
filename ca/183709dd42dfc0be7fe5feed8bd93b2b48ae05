@@ -1,0 +1,23 @@
+dev/specs/027-stored-credentials/contracts/http-api.md
+  s_3e9759cf5f1371::t_5764402ce85e7c 141-142,148-171
+dev/specs/027-stored-credentials/research.md
+  s_3e9759cf5f1371::t_cba9dc2d08dc86 209-218
+dev/specs/027-stored-credentials/tasks.md
+  s_3e9759cf5f1371::t_94ce019a35bd85 140-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca183709dd42dfc0be7fe5feed8bd93b2b48ae05",
+  "prompts": {},
+  "sessions": {
+    "s_3e9759cf5f1371": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aae1dfb6d21ead577",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
