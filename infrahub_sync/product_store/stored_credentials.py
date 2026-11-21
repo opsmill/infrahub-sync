@@ -98,6 +98,23 @@ _SELECT_REVISION = (
     "WHERE credential_id = ? AND revision = ?"
 )
 
+_DELETE_REVISIONS = "DELETE FROM stored_credential_revisions WHERE credential_id = ?"
+_DELETE_CREDENTIAL = "DELETE FROM stored_credentials WHERE credential_id = ?"
+# The configurations whose latest version names the credential. The latest version is the highest
+# one of ``configuration_versions``: the highest one that names a credential can be an older one.
+_SELECT_CONFIGURATIONS_IN_USE = (
+    "SELECT DISTINCT named.config_id FROM configuration_version_credentials named "
+    "WHERE named.credential_name = ? AND named.registry_version = ("
+    "SELECT MAX(versions.registry_version) FROM configuration_versions versions "
+    "WHERE versions.config_id = named.config_id)"
+)
+# The schedules that are not deleted and pin a version that names the credential, latest or not.
+_SELECT_SCHEDULES_IN_USE = (
+    "SELECT DISTINCT schedules.name FROM schedules JOIN configuration_version_credentials named "
+    "ON named.config_id = schedules.config_id AND named.registry_version = schedules.registry_version "
+    "WHERE named.credential_name = ? AND schedules.state <> 'deleted'"
+)
+
 _INSERT_VERSION_CREDENTIAL = (
     "INSERT INTO configuration_version_credentials (config_id, registry_version, block, credential_name) "
     "VALUES (?, ?, ?, ?)"
@@ -142,6 +159,19 @@ class CredentialNameTakenError(ValueError):
 
 class StoredCredentialNotFoundError(LookupError):
     """No stored credential has this name."""
+
+
+class CredentialInUseError(RuntimeError):
+    """The latest version of a configuration, or a schedule that is not deleted, names the credential.
+
+    ``configurations`` holds the identifiers of those configurations and ``schedules`` the names
+    of those schedules, each sorted. The message repeats neither.
+    """
+
+    def __init__(self, configurations: Sequence[str], schedules: Sequence[str]) -> None:
+        self.configurations = tuple(configurations)
+        self.schedules = tuple(schedules)
+        super().__init__("the stored credential is in use")
 
 
 class CredentialIdentifierAllocationError(RuntimeError):
@@ -392,6 +422,52 @@ def set_description(
         msg = "no stored credential has this name"
         raise StoredCredentialNotFoundError(msg)
     return changed
+
+
+def read_in_use(cursor: _Cursor, sql: Sql, name: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the configurations and the schedules that name the credential (FR-010, research R8).
+
+    A configuration names it when its latest version does. A schedule names it when it is not
+    deleted and the version it pins does, also when that version is an older one. The first
+    tuple holds configuration identifiers and the second schedule names, each sorted in Python,
+    so both dialects give the same order.
+    """
+    cursor.execute(sql(_SELECT_CONFIGURATIONS_IN_USE), (name,))
+    configurations = tuple(sorted(str(row[0]) for row in cursor.fetchall()))
+    cursor.execute(sql(_SELECT_SCHEDULES_IN_USE), (name,))
+    schedules = tuple(sorted(str(row[0]) for row in cursor.fetchall()))
+    return configurations, schedules
+
+
+def delete_credential(cursor: _Cursor, sql: Sql, name: str) -> StoredCredential:
+    """Lock the credential, check that nothing current names it, and remove it with every revision.
+
+    The lock is the first statement, before the check. A registration that names the credential
+    takes the same lock first (``lock_and_read_fields``), so one of the two waits for the other
+    to commit: a deletion that waited reads the new version and is refused, and a registration
+    that waited finds no credential and is refused (critique E4). The rows of
+    ``configuration_version_credentials`` and ``run_credential_uses`` stay: they hold the name,
+    so an older version and a run record still show which credential they named.
+
+    Returns:
+        The credential as it was, with its last revision, for the event of the deletion.
+
+    Raises:
+        StoredCredentialNotFoundError: no credential has this name.
+        CredentialInUseError: the latest version of a configuration, or a schedule that is not
+            deleted, names the credential. Nothing was removed.
+    """
+    cursor.execute(sql(_LOCK_CREDENTIAL_BY_NAME), (name,))
+    credential = read_credential_by_name(cursor, sql, name)
+    if credential is None:
+        msg = "no stored credential has this name"
+        raise StoredCredentialNotFoundError(msg)
+    configurations, schedules = read_in_use(cursor, sql, name)
+    if configurations or schedules:
+        raise CredentialInUseError(configurations, schedules)
+    cursor.execute(sql(_DELETE_REVISIONS), (credential.credential_id,))
+    cursor.execute(sql(_DELETE_CREDENTIAL), (credential.credential_id,))
+    return credential
 
 
 def read_revision(cursor: _Cursor, sql: Sql, credential_id: str, revision: int) -> StoredCredentialRevision | None:

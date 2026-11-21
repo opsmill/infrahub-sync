@@ -1311,6 +1311,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         event_for: Callable[[StoredCredential], AuditEvent] | None = None,
     ) -> StoredCredential: ...
 
+    def delete_stored_credential(
+        self, *, name: str, event_for: Callable[[StoredCredential], AuditEvent] | None = None
+    ) -> StoredCredential: ...
+
     def lookup_stored_credential_revision(
         self, credential_id: str, revision: int
     ) -> StoredCredentialRevision | None: ...
@@ -4884,6 +4888,28 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 self._insert_event(cursor, event_for(credential))
             return credential
 
+    def delete_stored_credential(
+        self, *, name: str, event_for: Callable[[StoredCredential], AuditEvent] | None = None
+    ) -> StoredCredential:
+        """Delete a credential that nothing current names, with its revisions and the event, in one transaction.
+
+        The transaction locks the credential row first, as a registration that names the
+        credential does, so the two cannot both pass their check (research R8, critique E4).
+
+        Returns:
+            The credential as it was before the deletion.
+
+        Raises:
+            StoredCredentialNotFoundError: no credential has this name.
+            CredentialInUseError: the latest version of a configuration, or a schedule that is
+                not deleted, names the credential. Nothing was removed and no event was written.
+        """
+        with self._transaction() as cursor:
+            credential = credential_statements.delete_credential(cursor, self._sql, name)
+            if event_for is not None:
+                self._insert_event(cursor, event_for(credential))
+            return credential
+
     def lookup_stored_credential_revision(self, credential_id: str, revision: int) -> StoredCredentialRevision | None:
         """Return one revision of a credential, with its key identifier, nonce and ciphertext."""
         with self._reading() as cursor:
@@ -6293,6 +6319,27 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             now=now,
             event_for=_redacted_event_for(event_for, secrets),
         )
+
+    def delete_stored_credential(
+        self,
+        *,
+        name: str,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Delete a credential that nothing current names, with every revision (FR-010).
+
+        The secret-safe event that ``event_for`` builds is written in the same transaction.
+
+        Returns:
+            The credential as it was before the deletion.
+
+        Raises:
+            StoredCredentialNotFoundError: no credential has this name.
+            CredentialInUseError: the latest version of a configuration, or a schedule that is
+                not deleted, names the credential.
+        """
+        return self._records.delete_stored_credential(name=name, event_for=_redacted_event_for(event_for, secrets))
 
     def lookup_stored_credential_revision(self, credential_id: str, revision: int) -> StoredCredentialRevision | None:
         """Return one revision of a credential, with its key identifier, nonce and ciphertext."""

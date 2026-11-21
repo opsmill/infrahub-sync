@@ -99,6 +99,7 @@ EXPECTED_PUBLIC_NAMES = {
     "ConfigurationVersionPage",
     "ConfigurationVersionSummary",
     "CredentialIdentifierAllocationError",
+    "CredentialInUseError",
     "CredentialNameTakenError",
     "CredentialUse",
     "DBAPIConnection",

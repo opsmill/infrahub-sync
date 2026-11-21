@@ -92,6 +92,7 @@ from infrahub_sync.product_store.store import (
 )
 from infrahub_sync.product_store.stored_credentials import (
     CredentialIdentifierAllocationError,
+    CredentialInUseError,
     CredentialNameTakenError,
     StoredCredentialInvalidError,
     StoredCredentialNotFoundError,
@@ -129,6 +130,7 @@ __all__ = (
     "ConfigurationVersionPage",
     "ConfigurationVersionSummary",
     "CredentialIdentifierAllocationError",
+    "CredentialInUseError",
     "CredentialNameTakenError",
     "CredentialUse",
     "DBAPIConnection",
