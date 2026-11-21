@@ -1,0 +1,23 @@
+tests/dev_stack/smoke/test_netbox_package.py
+  s_58b527396c8cb5::t_776256f9b8ec1c 171-178
+tests/dev_stack/smoke/test_service_api.py
+  s_58b527396c8cb5::t_776256f9b8ec1c 63-66,74-75,79-80
+tests/dev_stack/smoke/test_smoke_request_shapes.py
+  s_58b527396c8cb5::t_776256f9b8ec1c 72-74,76-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a76e866efc3a9340b52a69bf26458e501c2c680d",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
