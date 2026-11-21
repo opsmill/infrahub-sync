@@ -112,6 +112,7 @@ CLI_CLIENT_PARITY = (
     ("credentials create NAME", "create_credential", "POST /credentials"),
     ("credentials set NAME", "set_credential_value", "PUT /credentials/{name}/value"),
     ("credentials describe NAME TEXT", "set_credential_description", "PATCH /credentials/{name}"),
+    ("credentials delete NAME", "delete_credential", "DELETE /credentials/{name}"),
 )
 
 
@@ -179,6 +180,7 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "create_credential",
         "set_credential_value",
         "set_credential_description",
+        "delete_credential",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 

@@ -14,7 +14,14 @@ from typing import Any
 import httpx
 import pytest
 
-from infrahub_sync.client import APIError, ClientInputError, CredentialPage, CredentialResource, SyncClient
+from infrahub_sync.client import (
+    APIError,
+    ClientInputError,
+    CredentialPage,
+    CredentialResource,
+    ProtocolError,
+    SyncClient,
+)
 
 URL = "https://sync.example.test"
 BEARER = "bearer-value-1"
@@ -185,3 +192,79 @@ def test_a_refusal_prints_no_value() -> None:
     leaked = TOKEN_VALUE.strip() in printed or PASSWORD_VALUE in printed
     assert not leaked
     assert raised.value.code == "credential-fields-invalid"
+
+
+def _in_use(details: object) -> httpx.Response:
+    error = {"code": "credential-in-use", "message": "the credential is in use", "status": 409, "details": details}
+    return httpx.Response(409, json={"error": error})
+
+
+def test_delete_credential_sends_the_deletion_with_an_idempotency_key() -> None:
+    recorder = _Recorder(httpx.Response(204))
+
+    deleted = _client(recorder).delete_credential("netbox-lab", idempotency_key="key-4")
+
+    assert deleted is None
+    assert recorder.request.method == "DELETE"
+    assert recorder.request.url.path == "/api/credentials/netbox-lab"
+    assert recorder.request.headers["Idempotency-Key"] == "key-4"
+    assert recorder.request.content == b""
+
+
+def test_delete_credential_without_a_key_gets_a_new_key() -> None:
+    recorder = _Recorder(httpx.Response(204))
+
+    _client(recorder).delete_credential("netbox-lab")
+
+    assert recorder.request.headers["Idempotency-Key"]
+
+
+def test_a_deletion_refused_because_the_credential_is_in_use_names_the_configurations_and_schedules() -> None:
+    recorder = _Recorder(_in_use({"configurations": ["c-2", "c-1"], "schedules": ["from-netbox-nightly"]}))
+
+    with pytest.raises(APIError) as raised:
+        _client(recorder).delete_credential("netbox-lab")
+
+    assert (raised.value.status, raised.value.code) == (409, "credential-in-use")
+    assert raised.value.configurations == ("c-2", "c-1")
+    assert raised.value.schedules == ("from-netbox-nightly",)
+    # The text of the answer is not kept.
+    assert "the credential is in use" not in repr(raised.value) + str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        None,
+        {},
+        {"configurations": ["c-1"]},
+        {"configurations": "c-1", "schedules": []},
+        {"configurations": [1], "schedules": []},
+        {"configurations": [], "schedules": [None]},
+    ],
+)
+def test_an_in_use_refusal_without_its_two_lists_breaks_the_protocol(details: object) -> None:
+    recorder = _Recorder(_in_use(details))
+
+    with pytest.raises(ProtocolError):
+        _client(recorder).delete_credential("netbox-lab")
+
+
+def test_a_deletion_of_a_credential_that_does_not_exist_is_an_api_error() -> None:
+    refusal = {"error": {"code": "credential-not-found", "message": "no such credential", "status": 404}}
+    recorder = _Recorder(httpx.Response(404, json=refusal))
+
+    with pytest.raises(APIError) as raised:
+        _client(recorder).delete_credential("netbox-lab")
+
+    assert (raised.value.status, raised.value.code) == (404, "credential-not-found")
+    assert (raised.value.configurations, raised.value.schedules) == (None, None)
+
+
+def test_a_deletion_of_a_name_outside_the_pattern_is_refused_before_any_request() -> None:
+    recorder = _Recorder(httpx.Response(204))
+
+    with pytest.raises(ClientInputError):
+        _client(recorder).delete_credential("NetBox")
+
+    assert recorder.requests == []

@@ -1254,7 +1254,7 @@ $ infrahub-sync accounts delete-token [OPTIONS] {name} {token_id}
 
 ## `infrahub-sync credentials`
 
-List and view stored credentials. Creating and changing one needs an administrator. No command prints a value.
+List and view stored credentials. Creating, changing and deleting one needs an administrator. No command prints a value.
 
 **Usage**:
 
@@ -1273,6 +1273,7 @@ $ infrahub-sync credentials [OPTIONS] COMMAND [ARGS]...
 * `create`: Create a stored credential with its first...
 * `set`: Replace the value of a stored credential,...
 * `describe`: Change the description of a stored...
+* `delete`: Delete a stored credential and every...
 
 ### `infrahub-sync credentials list`
 
@@ -1381,4 +1382,28 @@ $ infrahub-sync credentials describe [OPTIONS] {name} {text}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials delete`
+
+Delete a stored credential and every revision of its value. This cannot be reversed. Needs an administrator.
+
+The Sync API refuses the deletion while the latest version of a configuration, or a schedule
+that is not deleted, names the credential; the command then prints those configurations and
+schedules and exits 1. An older version does not block the deletion: a run of it is refused
+before it starts. The records of earlier runs keep the name and the revision they used.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials delete [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+
+**Options**:
+
+* `--yes`: Delete without asking for confirmation.
 * `--help`: Show this message and exit.

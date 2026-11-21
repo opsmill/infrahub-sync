@@ -73,6 +73,8 @@ class APIError(SyncClientError):
         run_id: str | None = None,
         mutation_id: str | None = None,
         left_out: int | None = None,
+        configurations: tuple[str, ...] | None = None,
+        schedules: tuple[str, ...] | None = None,
     ) -> None:
         self.status = status
         self.code = code
@@ -80,6 +82,11 @@ class APIError(SyncClientError):
         self.mutation_id = mutation_id
         # Set on a `left-out-confirmation-required` refusal: the count the plan leaves out.
         self.left_out = left_out
+        # Set on a `409 credential-in-use` refusal only: the identifiers of the configurations whose
+        # latest version names the credential, and the names of the schedules that are not deleted
+        # and pin a version that names it. The message text of the answer is not kept.
+        self.configurations = configurations
+        self.schedules = schedules
         super().__init__("the Sync API refused the request")
 
 

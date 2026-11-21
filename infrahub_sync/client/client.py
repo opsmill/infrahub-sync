@@ -143,8 +143,22 @@ _ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
 _CREDENTIAL_NAME = re.compile(CREDENTIAL_NAME_PATTERN)
 _DESCRIPTION_ARG = "description"
 _LIST_CREDENTIALS = "list_credentials"
+# The refusal of a deletion while something current names the credential: its ``details`` hold two lists.
+_CREDENTIAL_IN_USE = (409, "credential-in-use")
 # The value a client built by `SyncClient.without_token` holds in place of a token. It is never sent.
 _NO_TOKEN = "-"
+
+
+def _text_list(details: Mapping[str, object] | None, field: str) -> tuple[str, ...]:
+    """Return one list of texts of the ``details`` of a refusal.
+
+    Raises:
+        ValueError: the details hold no such list, or an item is not a text.
+    """
+    items = None if details is None else details.get(field)
+    if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+        raise ValueError
+    return tuple(cast("list[str]", items))
 
 
 class SyncClient:  # pylint: disable=too-many-public-methods
@@ -778,6 +792,22 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             idempotency_key=self._new_key(idempotency_key),
         )
 
+    def delete_credential(self, name: str, *, idempotency_key: str | None = None) -> None:
+        """Delete a stored credential and every revision of its value. Administrator only.
+
+        The deletion cannot be reversed. A call without ``idempotency_key`` sends a new key.
+
+        Raises:
+            APIError: with ``409 credential-in-use`` when the latest version of a configuration, or
+                a schedule that is not deleted, names the credential. ``configurations`` and
+                ``schedules`` of the error list them, and nothing was deleted.
+        """
+
+        name = self._credential_name(name)
+        self._request_empty(
+            "delete_credential", "DELETE", f"/credentials/{name}", idempotency_key=self._new_key(idempotency_key)
+        )
+
     def me(self) -> PrincipalResource:
         """Return the actor the token authenticates as and whether it is an administrator."""
 
@@ -1393,11 +1423,15 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         *,
         body: Mapping[str, object] | None = None,
         params: dict[str, str | int] | None = None,
+        idempotency_key: str | None = None,
     ) -> None:
         """Send a request whose success answer is ``204`` with no body."""
+        if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key.strip()):
+            raise ClientInputError(_IDEMPOTENCY_KEY_ARG)
         self._require_token()
         self._ensure_compatible()
-        response = self._send(operation, method, path, json=body, params=params or None)
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key is not None else None
+        response = self._send(operation, method, path, headers=headers, json=body, params=params or None)
         if response.status_code != 204:
             self._raise_response_error(response, operation, config_route=False)
 
@@ -1569,6 +1603,14 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         detail = ErrorEnvelope.model_validate(payload).error
         if detail.status != status:
             raise ValueError
+        if (detail.status, detail.code) == _CREDENTIAL_IN_USE:
+            return APIError(
+                detail.status,
+                detail.code,
+                mutation_id=detail.mutation_id,
+                configurations=_text_list(detail.details, "configurations"),
+                schedules=_text_list(detail.details, "schedules"),
+            )
         return APIError(
             detail.status, detail.code, run_id=detail.run_id, mutation_id=detail.mutation_id, left_out=detail.left_out
         )

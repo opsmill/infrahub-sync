@@ -1,4 +1,4 @@
-"""The CLI commands of the stored credentials: list, show, create, set and describe.
+"""The CLI commands of the stored credentials: list, show, create, set, describe and delete.
 
 `infrahub_sync/cli.py` calls `register` once, with the helpers that every command shares. This
 module imports nothing from `cli.py`, so the two modules do not import each other.
@@ -20,12 +20,12 @@ from typing import TYPE_CHECKING, NoReturn
 
 import typer
 
-from infrahub_sync.client import ClientInputError
+from infrahub_sync.client import APIError, ClientInputError
 from infrahub_sync.client.models import CREDENTIAL_NAME_PATTERN
 
 if TYPE_CHECKING:
     from infrahub_sync.cli_accounts import CommandSupport
-    from infrahub_sync.client import CredentialResource
+    from infrahub_sync.client import CredentialResource, SyncClientError
 
 # Fixed text for each refusal of the credential routes, by status and code. The client keeps no
 # message text of an answer (see the secret-redaction guideline), so the CLI prints its own text.
@@ -42,6 +42,10 @@ CREDENTIAL_ERROR_MESSAGES = {
         _CONFLICT,
         "credential-exists",
     ): "a stored credential already has this name; `infrahub-sync credentials set` replaces its value",
+    (_CONFLICT, "credential-in-use"): (
+        "the latest version of a configuration, or a schedule that is not deleted, names this credential, so "
+        "nothing was deleted; register a version that names another credential, or change or delete the schedule"
+    ),
     (_UNPROCESSABLE, "credential-fields-invalid"): (
         "a credential holds a token, a username and a password, or a username and a token; each value is "
         "not empty, is within the length limit of the Sync API and holds no control character"
@@ -64,7 +68,10 @@ _NAME_ARG = "name"
 _CREDENTIAL_NAME = re.compile(CREDENTIAL_NAME_PATTERN)
 
 credentials_app = typer.Typer(
-    help="List and view stored credentials. Creating and changing one needs an administrator. No command prints a value."
+    help=(
+        "List and view stored credentials. Creating, changing and deleting one needs an administrator. "
+        "No command prints a value."
+    )
 )
 
 
@@ -85,6 +92,17 @@ def _support() -> CommandSupport:
 def error_message(status: int, code: str) -> str | None:
     """Return the fixed text of a refusal of a credential route, or ``None`` for any other refusal."""
     return CREDENTIAL_ERROR_MESSAGES.get((status, code))
+
+
+def in_use_fields(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return what names a credential that could not be deleted, as two more error fields.
+
+    ``configurations`` holds configuration identifiers and ``schedules`` schedule names. A list
+    with no entry is shown as ``<none>``. Any other error has no such field.
+    """
+    if not isinstance(error, APIError) or error.configurations is None or error.schedules is None:
+        return ()
+    return (("configurations", error.configurations or None), ("schedules", error.schedules or None))
 
 
 def _fail(message: str) -> NoReturn:
@@ -277,10 +295,38 @@ def credentials_describe(
         support.echo_fields(_credential_fields(credential))
 
 
+@credentials_app.command("delete")
+def credentials_delete(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help=_NAME_HELP),
+    yes: bool = typer.Option(False, "--yes", help="Delete without asking for confirmation."),  # noqa: FBT003
+) -> None:
+    """Delete a stored credential and every revision of its value. This cannot be reversed. Needs an administrator.
+
+    The Sync API refuses the deletion while the latest version of a configuration, or a schedule
+    that is not deleted, names the credential; the command then prints those configurations and
+    schedules and exits 1. An older version does not block the deletion: a run of it is refused
+    before it starts. The records of earlier runs keep the name and the revision they used.
+    """
+    support = _support()
+    with support.client_errors():
+        client = support.client(ctx)
+        _require_name(name)
+        if not yes:
+            if not support.stdin_is_interactive():
+                _fail("standard input is not a terminal, so no confirmation can be asked; pass --yes to delete")
+            prompt = f"Delete the stored credential {name} and every revision of its value? This cannot be reversed"
+            if not typer.confirm(prompt, default=False, err=True):
+                typer.echo("credential not deleted", err=True)
+                raise typer.Exit(1)
+        client.delete_credential(name)
+        support.echo_fields((("credential", name), ("deleted", True)))
+
+
 def register(app: typer.Typer, support: CommandSupport) -> None:
     """Add the `credentials` group to the CLI."""
     _Registered.support = support
     app.add_typer(credentials_app, name="credentials")
 
 
-__all__ = ["CREDENTIAL_ERROR_MESSAGES", "credentials_app", "error_message", "register"]
+__all__ = ["CREDENTIAL_ERROR_MESSAGES", "credentials_app", "error_message", "in_use_fields", "register"]

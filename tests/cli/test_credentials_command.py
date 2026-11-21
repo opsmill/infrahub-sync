@@ -586,6 +586,140 @@ def test_runs_show_makes_a_control_character_of_a_credential_entry_visible(sync_
     assert "\x1b" not in result.stdout
 
 
+# --- delete --------------------------------------------------------------------------------
+
+DELETE_ROUTE = "DELETE /credentials/netbox-lab"
+
+
+def _in_use(sync_api: FakeSyncAPI, *, configurations: list[str], schedules: list[str]) -> None:
+    error = {
+        "code": "credential-in-use",
+        "message": f"refused: {MARKER}",
+        "status": 409,
+        "details": {"configurations": configurations, "schedules": schedules},
+    }
+    sync_api.answers[DELETE_ROUTE] = httpx.Response(409, json={"error": error})
+
+
+def test_delete_with_yes_deletes_without_a_question(sync_api: FakeSyncAPI) -> None:
+    sync_api.answers[DELETE_ROUTE] = httpx.Response(204)
+
+    result = _invoke("credentials", "delete", "netbox-lab", "--yes")
+
+    assert result.exit_code == 0, result.output
+    assert sync_api.routes == [DELETE_ROUTE]
+    assert sync_api.requests[0].headers["Idempotency-Key"]
+    assert result.stdout == "credential: netbox-lab\ndeleted: true\n"
+    assert "Delete" not in result.stderr
+    _assert_no_value(result)
+
+
+@pytest.mark.usefixtures("terminal")
+def test_delete_asks_for_confirmation_and_says_what_is_deleted_and_that_it_cannot_be_reversed(
+    sync_api: FakeSyncAPI,
+) -> None:
+    sync_api.answers[DELETE_ROUTE] = httpx.Response(204)
+
+    result = _invoke("credentials", "delete", "netbox-lab", stdin="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert "Delete the stored credential netbox-lab and every revision of its value?" in result.stderr
+    assert "This cannot be reversed" in result.stderr
+    assert sync_api.routes == [DELETE_ROUTE]
+    assert "deleted: true" in result.stdout
+
+
+@pytest.mark.usefixtures("terminal")
+@pytest.mark.parametrize("answer", ["n\n", "\n"])
+def test_a_declined_confirmation_sends_no_request_and_exits_1(sync_api: FakeSyncAPI, answer: str) -> None:
+    result = _invoke("credentials", "delete", "netbox-lab", stdin=answer)
+
+    assert result.exit_code == 1
+    assert sync_api.routes == []
+    assert "credential not deleted" in result.stderr
+    assert "deleted: true" not in result.stdout
+
+
+def test_delete_without_a_terminal_and_without_yes_exits_2_and_sends_no_request(sync_api: FakeSyncAPI) -> None:
+    result = _invoke("credentials", "delete", "netbox-lab")
+
+    assert result.exit_code == 2
+    assert sync_api.routes == []
+    assert "--yes" in result.stderr
+
+
+@pytest.mark.usefixtures("terminal")
+def test_delete_refuses_a_name_that_no_credential_can_have_before_it_asks(sync_api: FakeSyncAPI) -> None:
+    result = _invoke("credentials", "delete", "NetBox")
+
+    assert result.exit_code == 2
+    assert sync_api.routes == []
+    assert "argument: name" in result.stderr
+    assert "Delete" not in result.stderr
+
+
+def test_a_deletion_refused_because_the_credential_is_in_use_lists_the_configurations_and_schedules(
+    sync_api: FakeSyncAPI,
+) -> None:
+    _in_use(sync_api, configurations=["c-0a1b", "c-2c3d"], schedules=["from-netbox-nightly"])
+
+    result = _invoke("credentials", "delete", "netbox-lab", "--yes")
+
+    assert result.exit_code == 1
+    assert "status: 409" in result.stderr
+    assert "code: credential-in-use" in result.stderr
+    assert "nothing was deleted" in result.stderr
+    assert "configurations: c-0a1b,c-2c3d" in result.stderr
+    assert "schedules: from-netbox-nightly" in result.stderr
+    assert not result.stdout
+    _assert_no_value(result)
+
+
+def test_an_in_use_refusal_with_no_schedule_says_so(sync_api: FakeSyncAPI) -> None:
+    _in_use(sync_api, configurations=["c-0a1b"], schedules=[])
+
+    result = _invoke("credentials", "delete", "netbox-lab", "--yes")
+
+    assert result.exit_code == 1
+    assert "configurations: c-0a1b" in result.stderr
+    assert "schedules: <none>" in result.stderr
+
+
+def test_an_in_use_refusal_makes_a_control_character_of_a_schedule_name_visible(sync_api: FakeSyncAPI) -> None:
+    _in_use(sync_api, configurations=[], schedules=["nightly\x1b[2J"])
+
+    result = _invoke("credentials", "delete", "netbox-lab", "--yes")
+
+    assert result.exit_code == 1
+    assert "\x1b" not in result.stderr
+    assert "schedules: nightly" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "text"),
+    [
+        (403, "forbidden", None),
+        (404, "credential-not-found", "no stored credential has this name"),
+    ],
+)
+def test_a_refused_deletion_exits_1_and_prints_no_text_of_the_answer(
+    sync_api: FakeSyncAPI, status: int, code: str, text: str | None
+) -> None:
+    sync_api.answers[DELETE_ROUTE] = sync_api.error(status, code, f"refused: {MARKER}")
+
+    result = _invoke("credentials", "delete", "netbox-lab", "--yes")
+
+    assert result.exit_code == 1
+    assert f"status: {status}" in result.stderr
+    assert f"code: {code}" in result.stderr
+    if text is None:
+        assert "message:" not in result.stderr
+    else:
+        assert text in result.stderr
+    assert not result.stdout
+    _assert_no_value(result)
+
+
 # --- the surface ---------------------------------------------------------------------------
 
 
@@ -614,6 +748,7 @@ def test_every_credential_command_of_this_group_is_listed() -> None:
         "credentials create",
         "credentials set",
         "credentials describe",
+        "credentials delete",
     } <= paths
 
 
@@ -630,6 +765,7 @@ def test_the_root_help_lists_the_credentials_group() -> None:
         (("credentials", "show"), ("--json",)),
         (("credentials", "create"), ("--description", "--username", "--token-stdin", "--password-stdin")),
         (("credentials", "set"), ("--username", "--token-stdin", "--password-stdin")),
+        (("credentials", "delete"), ("--yes",)),
     ],
 )
 def test_each_command_documents_its_options_and_takes_no_value(

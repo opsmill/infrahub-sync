@@ -398,7 +398,12 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         isinstance(error, APIError) and error.code == UNSUPPORTED_STORE_REASON
     ):
         result = (result[0], (*result[1], ("message", UNSUPPORTED_STORE_MESSAGE)))
-    return result[0], (*result[1], *_removed_format_message(error), *_account_message(error))
+    return result[0], (
+        *result[1],
+        *_removed_format_message(error),
+        *_account_message(error),
+        *cli_credentials.in_use_fields(error),
+    )
 
 
 def _removed_format_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
