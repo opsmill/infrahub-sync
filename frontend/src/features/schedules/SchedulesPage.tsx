@@ -132,7 +132,9 @@ export function SchedulesPage({ show, q = "", config }: SchedulesSearch) {
 
   let main: ReactNode;
   if (tab === "deleted") {
-    main = loading(deleted) ? (
+    // The notice stays above the empty state too: a search can match none of the pages read
+    // while a later page that failed to load holds the schedule searched for.
+    const deletedMain = loading(deleted) ? (
       <div aria-busy="true">
         <output className="sr-only">Loading deleted schedules</output>
         <RowsSkeleton />
@@ -148,16 +150,19 @@ export function SchedulesPage({ show, q = "", config }: SchedulesSearch) {
         )}
       </EmptyPanel>
     ) : (
+      <Group
+        id="schedules-deleted"
+        title="Deleted"
+        hint="Their runs are kept."
+        items={deletedMatches}
+      >
+        {(s) => <RestingRow key={s.schedule_id} s={s} configName={configName(s.config_id)} />}
+      </Group>
+    );
+    main = (
       <>
         <PartialNotice what="deleted schedules" pages={deleted} onLoaded={focusSearch} />
-        <Group
-          id="schedules-deleted"
-          title="Deleted"
-          hint="Their runs are kept."
-          items={deletedMatches}
-        >
-          {(s) => <RestingRow key={s.schedule_id} s={s} configName={configName(s.config_id)} />}
-        </Group>
+        {deletedMain}
       </>
     );
   } else if (liveItems.length === 0 && config) {
