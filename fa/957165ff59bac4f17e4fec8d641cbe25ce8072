@@ -1,0 +1,41 @@
+infrahub_sync/configuration/__init__.py
+  s_3e9759cf5f1371::t_334bdddad7417c 24,37,44
+infrahub_sync/configuration/removed_credential_format.py
+  s_3e9759cf5f1371::t_7fe9bc4951cb1d 4-12,17,74-94
+infrahub_sync/configuration/stored_package.py
+  s_3e9759cf5f1371::t_cbef7f9d0e55c2 1-49
+infrahub_sync/product_store/configs.py
+  s_3e9759cf5f1371::t_a2f13cedc5f961 41,644,651-654,658,672-673,911
+infrahub_sync/service/credential_actions.py
+  s_3e9759cf5f1371::t_6f22699608f2c2 55,587,655
+infrahub_sync/service/flow.py
+  s_3e9759cf5f1371::t_a73c59cd7217a5 38,885,927,1050,1061
+infrahub_sync/service/schedule_admission.py
+  s_3e9759cf5f1371::t_ec608dca38a8a0 22,459,463
+infrahub_sync/service/service.py
+  s_3e9759cf5f1371::t_1f67a22d8edbda 28,568,577,1071
+tests/configuration/test_removed_credential_format.py
+  s_3e9759cf5f1371::t_c0f34b010784cb 25,28,32-33,35,154-202,390-501
+tests/helpers/removed_credential_format.py
+  s_3e9759cf5f1371::t_8d879d4ffd72aa 6-9,17,20-21,54-96
+tests/service/test_approval.py
+  s_3e9759cf5f1371::t_5bea132d1ee50b 26-30,239-263
+tests/service/test_stage_stored_credentials.py
+  s_3e9759cf5f1371::t_5a79ba5258f4bc 41-46,253-286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa957165ff59bac4f17e4fec8d641cbe25ce8072",
+  "prompts": {},
+  "sessions": {
+    "s_3e9759cf5f1371": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aae1dfb6d21ead577",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
