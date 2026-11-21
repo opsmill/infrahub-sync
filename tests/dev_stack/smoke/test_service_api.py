@@ -60,10 +60,10 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
     """The declared package the smoke registers, as `POST /configs` accepts it.
 
     Both adapters are the bundled `infrahub` one, so the registered worker resolves them
-    through the installed loader with nothing generated and nothing on the filesystem. The
-    token is a credential *reference* — the worker resolves
-    `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` from its own environment, so no secret
-    value is ever posted or recorded.
+    through the installed loader with nothing generated and nothing on the filesystem. Each
+    block names the stored credential `infrahub-token`, which `dev.start` stores through the
+    Sync API. The Sync API releases its value to the worker for a run, so no secret value is
+    ever posted or recorded here.
     """
     return {
         "format_version": 1,
@@ -71,15 +71,13 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
             "name": "smoke-registered",
             "source": {
                 "name": "infrahub",
-                "settings": {"url": infrahub_url, "branch": "main", "token": {"$credential": "infrahub-token"}},
+                "credential": "infrahub-token",
+                "settings": {"url": infrahub_url, "branch": "main"},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": infrahub_url,
-                    "branch": SMOKE_BRANCH,
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": "infrahub-token",
+                "settings": {"url": infrahub_url, "branch": SMOKE_BRANCH},
             },
             "schema_mapping": [
                 {
@@ -91,9 +89,6 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
                     "fields": [{"name": name, "mapping": name} for name in SMOKE_FIELDS],
                 }
             ],
-        },
-        "credentials": {
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
         },
     }
 
