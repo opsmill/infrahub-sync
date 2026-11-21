@@ -1,0 +1,49 @@
+docs/docs/development/knowledge/configuration-foundation.md
+  s_58b527396c8cb5::t_c6d6b010ddfb23 9-10,18-19,22-26,29-82,154,174-175,179-180
+docs/docs/development/guidelines/secret-redaction.md
+  s_e3050fc85921ad::t_61708974a0e92e 266-310
+docs/docs/development/guidelines/testing-tiers.md
+  s_e3050fc85921ad::t_9bc1107fce5ed1 328-334,338,371,626-632,721-724
+docs/docs/development/guidelines/testing.md
+  s_e3050fc85921ad::t_67930be999827d 99-105,108
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_e3050fc85921ad::t_cb723c48218970 104-126
+docs/docs/development/guides/adding-an-adapter.md
+  s_e3050fc85921ad::t_0ca8a86a2569d3 122-123,601
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_e3050fc85921ad::t_139d08e470dbe7 74,115-119
+docs/docs/development/knowledge/index.md
+  s_e3050fc85921ad::t_715d08556ecb23 63-64
+docs/docs/development/knowledge/local-accounts.md
+  s_e3050fc85921ad::t_2a3ce5289ade33 175-198
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_e3050fc85921ad::t_51fe2bff394456 109-114
+docs/docs/development/knowledge/repository-tour.md
+  s_e3050fc85921ad::t_e104a3d7da414a 85-88,92-94,99-101,212-243
+docs/docs/development/knowledge/sync-architecture.md
+  s_e3050fc85921ad::t_414e78061f5f60 58-59,307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c48c7576ee803fd780b8dccf5502a5b0373b427",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e3050fc85921ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8d2a5d1d4c62ee09",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
