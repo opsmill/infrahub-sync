@@ -120,6 +120,46 @@ existing pattern; the findings come from the validate route; the contract wordin
 chunk 8b. `test_the_destination_of_a_scheduled_start_is_read_without_a_token` covers the readiness
 read. Then I dispatched chunk 8b for option (c).
 
+### A3. Chunk 13 refuses every earlier version, and T049 stays open (2026-11-21, about 03:00)
+
+**Context.** Chunk 13 refuses any stored version that holds a `credentials` key, including an empty
+one. The earlier build wrote `"credentials": {}` into every version, so every version registered
+before this change is refused with `credential-format-removed`. Its schedules fail at each start, and
+its saved plans cannot be approved or applied. `spec.md:259` refuses only a version that "still uses
+them". The wording "empty or not" in `contracts/http-api.md:139` was written by chunk 13 itself
+(`22eb0d61`). Chunk 13 also left T049 open. Outside a registered package, `select_runtime_credential`
+still reads environment variables, and those include token and password names such as
+`NETBOX_TOKEN` and `CISCO_APIC_PASSWORD`. Inside a registered package it reads the settings only.
+
+**Options for the refusal.** (a) Keep the wider refusal and correct the spec. (b) Ignore an empty
+block when reading a stored version, and refuse only a non-empty block or a `$credential` reference.
+
+**Recommendation sent.** None given in advance; the question was put open.
+
+**Answer.** Check three things first:
+- who wrote "empty or not";
+- whether a stored version keeps its checksum when an empty block is ignored;
+- whether an empty-block version can still get a token by any path.
+
+If narrowing keeps the checksum and such versions can run, narrow the refusal (b) in a follow-up
+chunk. Otherwise keep (a), correct `spec.md:259` and `research.md:209`, and list the upgrade effect
+under Risks. In both cases, T060 and T062 must state the same.
+
+For T049, remove the token, password and username names from the environment loop, keep the
+address reads, or tick T049 with a test if the loop reads addresses only.
+
+The same follow-up chunk also does the following:
+- checks that the read routes (version, runs, results, artifacts) still answer 200 for a version in
+  the removed format;
+- makes schedule creation and change answer `422 credential-format-removed`, not
+  `503 configuration-version-invalid`.
+
+The web interface text for the new code goes to chunk 19.
+
+**What I did next.** "Empty or not" came from chunk 13, so it is not evidence for the wider reading.
+The loop does read token and password names, outside a registered package only. I dispatched chunk
+13b with the checks above.
+
 ## Progress
 
 - 2026-11-20 evening: implementation started.
