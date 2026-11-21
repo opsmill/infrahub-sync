@@ -9,9 +9,11 @@ A result holds either a package mapping or one or more refusals, never both. Eve
 the input is gathered before the result is returned. The registration checks run only when the
 input has no other refusal, so their errors appear once the other refusals are fixed.
 
-The report entries never carry a credential value. A ``CredentialEntry`` names where the v2
-value came from and which V3 variable replaces it; a ``RefusalEntry`` for a credential setting
-holds no value.
+The package names one stored credential in each block that uses authentication
+(``credential: <name>``) and holds no credential setting, no ``credentials`` block and no value
+(spec 027 FR-009). The report entries never carry a credential value. A ``CredentialEntry``
+names the stored credential to create, the fields it needs and where each v2 value came from;
+a ``RefusalEntry`` for a credential setting holds no value.
 
 ``ConversionInputError`` is raised for input that is not a v1 or v2 configuration at all (for
 example a package that already declares ``format_version``); the command maps it to exit
@@ -28,20 +30,29 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
-from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, get_adapter_capabilities
-from .conversion_authentication import UnknownAuthenticationMethodError, UsedCredentials, used_credentials
-from .credentials import COMPOSE_WORKER_CREDENTIAL_SUFFIXES, ENV_CREDENTIAL_PREFIX
-from .models import ConfigurationPackageParseError, parse_configuration_package
+from .capabilities import (
+    BUILTIN_ADAPTER_CAPABILITIES,
+    UnknownCredentialMethodError,
+    credential_field_map,
+)
+from .conversion_authentication import UnknownAuthenticationMethodError, used_credentials
+from .conversion_credentials import (
+    FIELD_ORDER,
+    CredentialEntry,
+    CredentialOrigin,
+    CredentialSettingEntry,
+    check_origin_variable,
+    credential_name,
+)
+from .credentials import COMPOSE_WORKER_CREDENTIAL_VARIABLES as _COMPOSE_WORKER_CREDENTIAL_VARIABLES
+from .models import CREDENTIAL_NAME_PATTERN, ConfigurationPackageParseError, parse_configuration_package
 from .validation import collect_findings
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from .capabilities import AdapterConfigurationCapabilities
+    from .capabilities import AdapterConfigurationCapabilities, CredentialField
     from .models import ValidationFinding
-
-CredentialOrigin = Literal["literal", "placeholder", "variable", "none"]
-"""Where a v2 credential value came from: the file, a ``${NAME}`` placeholder, a variable, or nowhere."""
 
 SettingOrigin = Literal["config.yml", "variable", "--source-url", "--destination-url"]
 """Where the value written for an environment-first setting came from."""
@@ -121,44 +132,16 @@ For ``genericrestapi`` and ``peeringmanager`` the names are v2's defaults; a fil
 """
 
 
-# Built from the prefix so that only ``credentials.py`` spells the namespace out
-# (``test_no_service_setting_uses_the_credential_namespace``); this module never reads them.
-COMPOSE_WORKER_CREDENTIAL_VARIABLES: tuple[str, ...] = tuple(
-    f"{ENV_CREDENTIAL_PREFIX}{suffix}" for suffix in COMPOSE_WORKER_CREDENTIAL_SUFFIXES
-)
+# Kept until the Compose files stop passing credential variables to the worker (spec 027 T053):
+# ``test_conversion_worker_variables`` checks ``docker-compose.yml`` against this name. The
+# conversion itself does not use it.
+COMPOSE_WORKER_CREDENTIAL_VARIABLES: tuple[str, ...] = _COMPOSE_WORKER_CREDENTIAL_VARIABLES
 """The credential variables the ``sync-worker`` service of ``docker-compose.yml`` passes through."""
 
-_INFRAHUB_TOKEN_IDENTIFIER = f"{ENV_CREDENTIAL_PREFIX}INFRAHUB_API_TOKEN"
+_CREDENTIAL_NAME = re.compile(CREDENTIAL_NAME_PATTERN)
 
 _GENERIC_VARIABLES = frozenset({"URL", "ADDRESS"})
 """``genericrestapi``'s default address variables, which other software may also set (research R2)."""
-
-
-class CredentialReference(NamedTuple):
-    """The credential reference name and the V3 environment variable it reads."""
-
-    reference: str
-    identifier: str
-
-
-def credential_reference(adapter: str, setting: str) -> CredentialReference:
-    """Return the reference name and identifier for one credential setting (spec FR-006).
-
-    The reference is ``<adapter>-<setting>`` in lower case with ``_`` changed to ``-``; the
-    identifier is the credential prefix followed by ``<ADAPTER>_<SETTING>`` in upper case. The
-    Infrahub token uses the prefix followed by ``INFRAHUB_API_TOKEN``.
-
-    Raises:
-        UnknownAdapterCapabilitiesError: ``adapter`` is not a bundled adapter.
-        ValueError: ``setting`` is not a credential setting of ``adapter``.
-    """
-    if setting not in get_adapter_capabilities(adapter).credential_setting_paths:
-        msg = f"{setting!r} is not a credential setting of adapter {adapter!r}"
-        raise ValueError(msg)
-    reference = f"{adapter}-{setting}".lower().replace("_", "-")
-    if adapter == "infrahub" and setting == "token":
-        return CredentialReference(reference, _INFRAHUB_TOKEN_IDENTIFIER)
-    return CredentialReference(reference, f"{ENV_CREDENTIAL_PREFIX}{adapter}_{setting}".upper())
 
 
 def _non_credential_variables(adapters: Iterable[str] | None = None) -> tuple[str, ...]:
@@ -200,43 +183,6 @@ class ConversionInputError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
-class CredentialEntry:
-    """One credential setting replaced by a credential reference.
-
-    ``location`` is the setting path, for example ``source.settings.token``. ``origin`` is where
-    the v2 value came from; ``origin_variable`` names the variable for the ``placeholder`` and
-    ``variable`` origins. ``reference`` is the credential reference name written to the package
-    and ``identifier`` the V3 environment variable the reference reads. ``worker_receives`` is
-    true when the Sync worker service in ``docker-compose.yml`` passes ``identifier`` through.
-    The entry never holds the credential value.
-    """
-
-    location: str
-    origin: CredentialOrigin
-    reference: str
-    identifier: str
-    worker_receives: bool
-    origin_variable: str | None = None
-
-    def __post_init__(self) -> None:
-        """Reject a ``placeholder`` or ``variable`` origin that does not name its variable."""
-        _check_origin_variable(self.origin, self.origin_variable)
-
-    @property
-    def warnings(self) -> tuple[str, ...]:
-        """The report warnings for this credential (spec FR-008, FR-009), never a value."""
-        warnings: list[str] = []
-        if self.origin == "literal":
-            warnings.append(f"config.yml still holds a literal value for {self.location}; remove it once V3 works")
-        if not self.worker_receives:
-            warnings.append(
-                f"the Compose file shipped with this version does not pass {self.identifier} to the Sync worker; "
-                "add it to the worker's environment"
-            )
-        return tuple(warnings)
-
-
-@dataclass(frozen=True, slots=True)
 class SettingOriginEntry:
     """One setting that v2 could read from the environment, with the value written and its origin.
 
@@ -253,7 +199,7 @@ class SettingOriginEntry:
 
     def __post_init__(self) -> None:
         """Reject a ``variable`` origin that does not name its variable."""
-        _check_origin_variable(self.origin, self.origin_variable)
+        check_origin_variable(self.origin, self.origin_variable)
 
     @property
     def is_loopback(self) -> bool:
@@ -274,12 +220,6 @@ class SettingOriginEntry:
                 "may set; check that it holds the address v2 used"
             )
         return tuple(warnings)
-
-
-def _check_origin_variable(origin: str, origin_variable: str | None) -> None:
-    if origin in _ORIGINS_WITH_A_VARIABLE and origin_variable is None:
-        msg = f"the {origin} origin needs origin_variable"
-        raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,6 +307,7 @@ _ENV_VARS_SUFFIX = "_env_vars"
 # and Peering Manager, which is built on it and only changes the default names.
 _ENV_VARS_ADAPTERS = frozenset({"genericrestapi", "peeringmanager"})
 _ADAPTER_BLOCK_KEYS = frozenset({"name", "adapter", "settings"})
+_CREDENTIAL_KEY = "credential"
 _ONLY_DESTINATION = "infrahub"
 _CUSTOM_ADAPTER_REASON = "custom adapters are not available in this release (INFP-654, planned for 3.0)"
 _PLACEHOLDER_REASON = (
@@ -374,7 +315,6 @@ _PLACEHOLDER_REASON = (
     "write the value in config.yml"
 )
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
-_ORIGINS_WITH_A_VARIABLE = frozenset({"placeholder", "variable"})
 _ROLE_ORDER: Mapping[str, int] = MappingProxyType({"source": 0, "destination": 1})
 
 _DROP_REASONS: Mapping[str, str] = MappingProxyType(
@@ -384,8 +324,8 @@ _DROP_REASONS: Mapping[str, str] = MappingProxyType(
     }
 )
 _ENV_VARS_REASON = (
-    "V3 does not read the variables this setting names; credentials come from credential references "
-    "and other settings from the package"
+    "V3 does not read the variables this setting names; credentials come from the stored credential "
+    "the block names and other settings from the package"
 )
 _UNREAD_KEY_REASON = "v2 did not read this key"
 _GENERATION_NOTE = "V3 has no generation step; the generated adapter and model files are not needed"
@@ -397,7 +337,7 @@ _FLAGS: Mapping[AdapterRole, _FlagName] = MappingProxyType(
 
 @dataclass(slots=True)
 class _Report:
-    """The report entries and the credentials block gathered while the input is converted."""
+    """The report entries gathered while the input is converted."""
 
     refusals: list[RefusalEntry] = field(default_factory=list)
     credentials: list[CredentialEntry] = field(default_factory=list)
@@ -405,7 +345,6 @@ class _Report:
     dropped: list[DroppedEntry] = field(default_factory=list)
     notes: list[NoteEntry] = field(default_factory=list)
     findings: list[ValidationFinding] = field(default_factory=list)
-    credentials_block: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def result(self, package: dict[str, Any], visible_variables: VisibleVariablesEntry) -> ConversionResult:
         """Return the result: the package only when nothing was refused.
@@ -475,11 +414,7 @@ def convert_v2_configuration(
         else:
             _convert_top_level(key, value, data, configuration, report)
     report.notes.append(NoteEntry(_GENERATION_NOTE))
-    package: dict[str, Any] = {
-        "format_version": 1,
-        "configuration": configuration,
-        "credentials": report.credentials_block,
-    }
+    package: dict[str, Any] = {"format_version": 1, "configuration": configuration}
     if not report.refusals:
         _check_package(package, report)
     names = tuple(name for name in V2_NON_CREDENTIAL_VARIABLES if visible.get(name))
@@ -549,15 +484,23 @@ def _convert_adapter(
         else:
             report.refusals.append(RefusalEntry(f"{role}.adapter", _CUSTOM_ADAPTER_REASON, _printable(adapter)))
     # v2 ignored any other key of the block, so it is dropped and reported like a top-level key.
+    # A ``credential`` key is read below: v2 did not read it either, and V3 gives it a meaning.
     report.dropped.extend(
-        DroppedEntry(f"{role}.{key}", _UNREAD_KEY_REASON) for key in block if key not in _ADAPTER_BLOCK_KEYS
+        DroppedEntry(f"{role}.{key}", _UNREAD_KEY_REASON)
+        for key in block
+        if key not in _ADAPTER_BLOCK_KEYS and key != _CREDENTIAL_KEY
     )
     if capabilities is None:
         # The settings of an adapter V3 does not bundle are not read: any of them could hold
         # a credential, and the name is already refused.
+        if _CREDENTIAL_KEY in block:
+            report.dropped.append(DroppedEntry(f"{role}.{_CREDENTIAL_KEY}", _UNREAD_KEY_REASON))
         converted["settings"] = {}
         return converted
     settings: Mapping[str, Any] = block.get("settings") or {}
+    credential = _convert_block_credential(role, name, block, settings, report)
+    if credential is not None:
+        converted[_CREDENTIAL_KEY] = credential
     converted["settings"] = _convert_settings(role, name, capabilities, settings, visible, flags, report)
     return converted
 
@@ -657,9 +600,12 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
     flags: _Flags,
     report: _Report,
 ) -> dict[str, Any]:
-    """Convert the settings of one bundled adapter, keeping the order of the file."""
+    """Convert the settings of one bundled adapter, keeping the order of the file.
+
+    No credential setting is written: the block's stored credential fills them
+    (``_convert_block_credential``).
+    """
     credential_settings = capabilities.credential_setting_paths
-    used = _used_credentials(role, name, credential_settings, settings, report)
     replaced = _replaced_variables(name, settings)
     environment = _environment_settings(name, replaced)
     flag = flags.for_role(role)
@@ -667,16 +613,13 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
     for key, value in settings.items():
         location = f"{role}.settings.{key}"
         if key in credential_settings:
-            _set_resolved(converted, key, _reference_credential(role, name, key, value, used, report, replaced))
-        elif key in environment:
+            continue
+        if key in environment:
             _set_resolved(converted, key, _resolve(location, environment[key], value, visible, flag, report))
         elif name in _ENV_VARS_ADAPTERS and isinstance(key, str) and key.endswith(_ENV_VARS_SUFFIX):
             report.dropped.append(DroppedEntry(location, _ENV_VARS_REASON))
         elif not _refuse_other_setting(name, key, value, location, report):
             converted[key] = _convert_lineage(role, name, key, value, location, report)
-    for key in credential_settings:
-        if key not in settings:
-            _set_resolved(converted, key, _reference_credential(role, name, key, None, used, report, replaced))
     for key, row in environment.items():
         if key not in settings:
             location = f"{role}.settings.{key}"
@@ -706,78 +649,102 @@ def _set_resolved(settings: dict[str, Any], key: str, value: object) -> None:
         settings[key] = value
 
 
-# --- Credentials (FR-006 to FR-009) -----------------------------------------------------
+# --- Credentials (spec 006 FR-006 to FR-008, spec 027 FR-009) ---------------------------
 
 
-def _used_credentials(
-    role: AdapterRole, name: str, declared: tuple[str, ...], settings: Mapping[str, Any], report: _Report
-) -> UsedCredentials:
-    """Return the credential settings the v2 authentication method of this block used (spec FR-006).
+def _filled_settings(
+    role: AdapterRole, name: str, settings: Mapping[str, Any], report: _Report
+) -> tuple[Mapping[str, CredentialField], str] | None:
+    """Return the settings a stored credential fills in this block, and why it fills no other.
 
-    An ``auth_method`` that v2 did not accept is refused; an ``auth_method`` with a placeholder
-    is already refused as a setting v2 did not read from the environment. Either way every
-    declared setting is kept, so the refusal is the only thing reported.
+    The settings and their fields come from ``credential_field_map``, the table registration
+    checks a named credential against, so the package asks for the fields the report lists.
+    The reason comes from the v2 authentication method (spec 006 FR-006).
+
+    Returns ``None`` when the ``auth_method`` is refused: one that v2 did not accept is refused
+    here, and one that holds a placeholder is already refused as a setting v2 did not read from
+    the environment. The refusal is then the only thing reported for the block's credential.
     """
     method = settings.get("auth_method")
     if _holds_placeholder(method):
-        return UsedCredentials(frozenset(declared), "")
+        return None
+    declared = BUILTIN_ADAPTER_CAPABILITIES[name].credential_setting_paths
     try:
-        return used_credentials(name, declared, settings)
-    except UnknownAuthenticationMethodError as exc:
+        reason = used_credentials(name, declared, settings).reason
+        return credential_field_map(name, settings).settings, reason
+    except (UnknownAuthenticationMethodError, UnknownCredentialMethodError) as exc:
         report.refusals.append(RefusalEntry(f"{role}.settings.auth_method", str(exc), _printable(method)))
-        return UsedCredentials(frozenset(declared), "")
+        return None
 
 
-def _reference_credential(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    role: AdapterRole,
-    name: str,
-    setting: str,
-    value: object,
-    used: UsedCredentials,
-    report: _Report,
-    replaced: frozenset[str],
-) -> dict[str, str] | None:
-    """Return the reference for a credential setting v2 used or the file fills, or note that it has none."""
-    if setting in used.settings or not _is_empty(value):
-        return _convert_credential(role, name, setting, value, report, replaced=replaced)
-    report.notes.append(NoteEntry(f"not referenced: {role}.settings.{setting} ({used.reason})"))
-    return None
+def _convert_block_credential(
+    role: AdapterRole, name: str, block: Mapping[str, Any], settings: Mapping[str, Any], report: _Report
+) -> str | None:
+    """Return the name of the stored credential the block names, or ``None`` when it uses none.
 
-
-def _convert_credential(  # pylint: disable=too-many-arguments
-    role: AdapterRole,
-    name: str,
-    setting: str,
-    value: object,
-    report: _Report,
-    *,
-    replaced: frozenset[str] = frozenset(),
-) -> dict[str, str]:
-    """Replace one credential setting by a reference; the value is read only for its kind."""
-    reference = credential_reference(name, setting)
-    origin, origin_variable = _credential_origin(name, setting, value, replaced)
-    location = f"{role}.settings.{setting}"
-    shared = next((entry.location for entry in report.credentials if entry.reference == reference.reference), None)
+    Every credential setting is left out of the package. A setting the authentication method
+    does not use is noted, and the note says so when config.yml held a value for it: a block
+    whose method needs no credential cannot name one, so that value has no place in the package.
+    The values are read only for their kind.
+    """
+    location = f"{role}.{_CREDENTIAL_KEY}"
+    filled = _filled_settings(role, name, settings, report)
+    if filled is None:
+        return None
+    fills, reason = filled
+    replaced = _replaced_variables(name, settings)
+    for setting in BUILTIN_ADAPTER_CAPABILITIES[name].credential_setting_paths:
+        if setting not in fills:
+            left_out = "" if _is_empty(settings.get(setting)) else "; its value in config.yml is left out"
+            report.notes.append(NoteEntry(f"not referenced: {role}.settings.{setting} ({reason}){left_out}"))
+    if not fills:
+        if _CREDENTIAL_KEY in block:
+            report.dropped.append(DroppedEntry(location, "the block's authentication method needs no credential"))
+        return None
+    credential = _block_credential_name(name, block, tuple(fills), location, report)
+    shared = next((entry.location for entry in report.credentials if entry.name == credential), None)
     if shared is not None:
-        # The source and the destination use the same adapter, so one reference serves both.
+        # The source and the destination use the same adapter, so one stored credential serves both.
         report.notes.append(
             NoteEntry(
-                f"{shared} and {location} share the credential reference {reference.reference} and both read "
-                f"{reference.identifier}; the package cannot give them different values"
+                f"{shared} and {location} name the same stored credential {credential}; to give them "
+                "different values, change one name in the package and create both credentials"
             )
         )
     report.credentials.append(
         CredentialEntry(
             location=location,
-            origin=origin,
-            reference=reference.reference,
-            identifier=reference.identifier,
-            worker_receives=reference.identifier in COMPOSE_WORKER_CREDENTIAL_VARIABLES,
-            origin_variable=origin_variable,
+            name=credential,
+            fields=tuple(field for field in FIELD_ORDER if field in fills.values()),
+            settings=tuple(
+                CredentialSettingEntry(
+                    f"{role}.settings.{setting}",
+                    stored_field,
+                    *_credential_origin(name, setting, settings.get(setting), replaced),
+                )
+                for setting, stored_field in fills.items()
+            ),
         )
     )
-    report.credentials_block[reference.reference] = {"provider": "env", "identifier": reference.identifier}
-    return {"$credential": reference.reference}
+    return credential
+
+
+def _block_credential_name(
+    name: str, block: Mapping[str, Any], filled: tuple[str, ...], location: str, report: _Report
+) -> str:
+    """Return the name the file already gives the block's credential, or the name built for it.
+
+    v2 did not read a ``credential`` key. A file that has one is partly converted already, so a
+    value that can be a credential name is kept. Any other value is dropped and reported.
+    """
+    if _CREDENTIAL_KEY not in block:
+        return credential_name(name, filled)
+    given = block[_CREDENTIAL_KEY]
+    if isinstance(given, str) and _CREDENTIAL_NAME.fullmatch(given) is not None:
+        return given
+    built = credential_name(name, filled)
+    report.dropped.append(DroppedEntry(location, f"the value is not a credential name; the package names {built}"))
+    return built
 
 
 def _credential_origin(

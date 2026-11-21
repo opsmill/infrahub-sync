@@ -50,15 +50,19 @@ def test_yes_writes_the_package_next_to_the_input_after_the_report(config_file: 
     written = yaml.safe_load(package.read_text(encoding="utf-8"))
     assert written["format_version"] == 1
     assert written["configuration"]["name"] == "from-netbox"
-    assert set(written["credentials"]) == {"netbox-token", "infrahub-token"}
+    assert "credentials" not in written
+    assert written["configuration"]["source"]["credential"] == "netbox-token"
+    assert written["configuration"]["destination"]["credential"] == "infrahub-token"
+    assert "token" not in written["configuration"]["source"]["settings"]
+    assert "token" not in written["configuration"]["destination"]["settings"]
+    assert "INFRAHUB_SYNC_CREDENTIAL_" not in stdout
+    assert ".env" not in stdout
     assert stdout.startswith('Converting config.yml (v1 or v2 configuration "from-netbox")')
     sections = ["Credentials (", "Settings taken from", "Notes:", "Next steps:"]
     positions = [stdout.index(section) for section in sections]
     assert positions == sorted(positions)
-    assert (
-        "  1. Set INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN in .env"
-        in stdout
-    )
+    assert "  1. infrahub-sync credentials create netbox-token" in stdout
+    assert "  2. infrahub-sync credentials create infrahub-token" in stdout
     assert f"  3. infrahub-sync configs register {package}" in stdout
     assert set(config_file.parent.iterdir()) == {config_file, package}
 
@@ -78,7 +82,9 @@ def test_report_is_printed_before_the_question_and_nothing_is_written_before_it(
     code, stdout, stderr = _convert(str(config_file))
 
     assert code == 0, stderr
-    assert "Credentials (set these in the Sync deployment's .env file):" in stdout
+    assert "Credentials (create each stored credential before you register the package):" in stdout
+    assert "netbox-token (token)" in stdout
+    assert "infrahub-token (token)" in stdout
     assert package.exists()
 
 

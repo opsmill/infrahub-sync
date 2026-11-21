@@ -56,6 +56,11 @@ COMPOSE_WORKER_CREDENTIAL_SUFFIXES = (
     "SLURPIT_API_KEY",
     "SLURPIT_TOKEN",
 )
+# The same names with the prefix. Built here so that only this module spells the namespace out
+# (`test_no_service_setting_uses_the_credential_namespace`); nothing reads these variables here.
+COMPOSE_WORKER_CREDENTIAL_VARIABLES: tuple[str, ...] = tuple(
+    f"{ENV_CREDENTIAL_PREFIX}{suffix}" for suffix in COMPOSE_WORKER_CREDENTIAL_SUFFIXES
+)
 _ENV_CREDENTIAL_IDENTIFIER = re.compile(rf"^{ENV_CREDENTIAL_PREFIX}[A-Za-z0-9_]+$")
 _REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
 

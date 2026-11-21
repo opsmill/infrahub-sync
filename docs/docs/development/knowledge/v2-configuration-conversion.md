@@ -39,9 +39,11 @@ entries.
   the report.
 - Input that is not a v1 or v2 configuration at all, such as a file that already declares
   `format_version`, raises `ConversionInputError`, which the command maps to exit status 2.
-- No report entry carries a credential value. A `CredentialEntry` names where the v2 value came
-  from and which V3 variable replaces it. A `RefusalEntry` for a credential setting holds no
-  value.
+- The package names one stored credential in each block that uses authentication
+  (`credential: <name>`). It has no credential setting, no `credentials` block and no value.
+- No report entry carries a credential value. A `CredentialEntry` names the stored credential to
+  create, the fields it needs, the command that creates it and where each v2 value came from. A
+  `RefusalEntry` for a credential setting holds no value.
 
 The command passes the conversion only the variables that `visible_v2_variables` returns: the
 `address` and `other` names of `V2_ENVIRONMENT_FIRST`. The conversion never receives a
@@ -57,14 +59,19 @@ follow the current adapters:
   `tests/configuration/test_conversion.py` holds each row a second time and fails when the two
   differ.
 - `V2_AUTHENTICATION_METHODS` and `V2_FIXED_CREDENTIALS`: which credential settings v2 used for
-  each authentication method. A credential setting gets a reference when v2 used it, or when the
-  file holds a value or a placeholder for it.
-- The credential settings themselves come from `credential_setting_paths` in
-  `BUILTIN_ADAPTER_CAPABILITIES`, not from a second table. `credential_reference` names each
-  reference `<adapter>-<setting>` and its variable `INFRAHUB_SYNC_CREDENTIAL_<ADAPTER>_<SETTING>`.
+  each authentication method. The report notes each credential setting the method did not use.
+  When the file holds a value for such a setting, the value is left out and the note says so,
+  because a block whose method needs no credential cannot name one.
+- The settings a stored credential fills, and the fields it needs, come from
+  `credential_field_map` in `capabilities.py`, the function that registration checks a named
+  credential against. `credential_name` builds the name:
+    - `<adapter>-<setting>` when the credential fills one setting, for example `netbox-token`.
+    - `<adapter>-account` when it fills a username and a password, for example `aci-account`.
+    - A `credential` key that the input block already holds is kept when it can be a credential
+      name.
 - `COMPOSE_WORKER_CREDENTIAL_VARIABLES` is built from `COMPOSE_WORKER_CREDENTIAL_SUFFIXES` in
-  `credentials.py`. The report warns when a package needs a variable that the shipped
-  `docker-compose.yml` does not pass to the Sync worker.
+  `credentials.py`, and `conversion.py` imports it again under the same name. The conversion no
+  longer reads it.
   `tests/configuration/test_conversion_worker_variables.py` fails when the Compose file and the
   constant differ; see
   [Pin a code constant to the deployment file it mirrors](../guidelines/testing.md#pin-a-code-constant-to-the-deployment-file-it-mirrors).
