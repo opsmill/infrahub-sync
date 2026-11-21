@@ -3625,6 +3625,15 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description The request sets both or neither of `package` and `document`, or `document` is not a YAML or JSON mapping (`ConfigErrorEnvelope`, family `request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorEnvelope"];
+                };
+            };
             /** @description Unauthorized */
             401: {
                 headers: {
@@ -3758,6 +3767,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description The request sets both or neither of `package` and `document`, or `document` is not a YAML or JSON mapping (`ConfigErrorEnvelope`, family `request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorEnvelope"];
                 };
             };
             /** @description Unauthorized */

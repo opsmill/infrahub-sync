@@ -2534,3 +2534,13 @@ def test_the_registration_routes_declare_both_bodies_of_a_422(tmp_path: Path) ->
             {"$ref": "#/components/schemas/ErrorEnvelope"},
             {"$ref": "#/components/schemas/ConfigErrorEnvelope"},
         ], path
+
+
+def test_the_registration_routes_declare_the_configuration_error_body_of_a_400(tmp_path: Path) -> None:
+    """A request refused before validation, such as a `document` that is not a mapping, is a `ConfigErrorEnvelope`."""
+    client, _projection = _discovery_client(tmp_path)
+    paths = client.get("/openapi.json").json()["paths"]
+
+    for path in ("/configs", "/configs/{config_id}/versions"):
+        schema = paths[path]["post"]["responses"]["400"]["content"]["application/json"]["schema"]
+        assert schema == {"$ref": "#/components/schemas/ConfigErrorEnvelope"}, path
