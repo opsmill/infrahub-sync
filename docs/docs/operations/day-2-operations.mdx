@@ -119,14 +119,19 @@ Moving or renaming the directory starts a different, empty deployment. Set
 
 ## Change credentials
 
-Source and destination tokens belong in `.env`. Packages contain references to them,
-not their values. To add or change a token, edit its line in `.env` as
-[The `.env` file](../compose-deployment#configuration-prerequisites) describes, then
-run `docker compose up -d --wait`, which recreates the services whose environment
-changed. `docker compose restart` keeps the environment the containers already had.
+Source and destination tokens are stored credentials of the Sync API, not lines of `.env`. A
+package names a stored credential and never holds its value. To add a token, an administrator
+runs `infrahub-sync credentials create <name>`; to change one, `infrahub-sync credentials set
+<name>`. No service is recreated, and the next stage that starts uses the new value. See
+[Manage stored credentials](../guides/credentials.mdx).
 
-This release has no tested procedure for rotating the source, destination, database
-and object store credentials.
+`INFRAHUB_SYNC_ENCRYPTION_KEY` and `INFRAHUB_SYNC_WORKER_TOKEN` are lines of `.env`. Changing
+the encryption key is not supported; if it is lost, an administrator sets the value of every
+stored credential again. To change the worker token, edit it and run
+`docker compose up -d --wait`, which recreates `sync-api` and `sync-worker`;
+`docker compose restart` keeps the environment the containers already had.
+
+This release has no tested procedure for rotating the database and object store credentials.
 
 The `admin` account of the Sync API takes its password and its API token from
 `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` in `.env`.

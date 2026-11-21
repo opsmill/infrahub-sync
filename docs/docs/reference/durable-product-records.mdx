@@ -346,12 +346,12 @@ Four tables hold stored credentials and their use. No column holds a value in cl
 | Table | One row for | Content |
 | --- | --- | --- |
 | `stored_credentials` | each credential | Its identifier, its name, its description, its current revision, and the account and time of its creation and of its last change. |
-| `stored_credential_revisions` | each value of a credential | The credential identifier, the revision number, the names of the fields, the identifier of the encryption key, the nonce and the ciphertext, and the account and time of its creation. |
+| `stored_credential_revisions` | each value of a credential | The credential identifier, the revision number, the names of the fields, the identifier of the encryption key, the columns `nonce` and `ciphertext`, and the account and time of its creation. |
 | `configuration_version_credentials` | each block of a registered version that names a credential | The configuration, the version, the block (`source` or `destination`) and the credential name. Written with the version. |
 | `run_credential_uses` | each block whose values a stage execution received | The run, the flow run, the stage, the block, the credential identifier, its name, the revision and the time of the release. |
 
-- **Encryption.** Each revision is one AES-256-GCM ciphertext of the JSON object of its fields,
-  with a random 12-byte nonce. The associated data names the credential identifier and the
+- **Encryption.** Each revision stores the JSON object of its fields, encrypted with AES-256-GCM
+  and a random 12-byte nonce. The associated data names the credential identifier and the
   revision. The key is `INFRAHUB_SYNC_ENCRYPTION_KEY`, which only the Sync API holds. The key
   identifier is the first 8 bytes of the SHA-256 digest of the key, in hexadecimal.
 - **Revisions.** A change of value adds a revision. A change of description does not.

@@ -222,7 +222,7 @@ This is an exception to the rule that start-up changes no existing table.
   later stage would still get values.
 - **For the read before a scheduled start: release values to the worker before a run exists.**
   Rejected: it removes the rule that a value is released only to a run in progress.
-- **For the same read: move it after the claim of the run.** Rejected: the read decides whether
+- **For the same read: move it after the claim of the run.** Rejected: the result of the read determines whether
   a run is created.
 - **For the receipt check: edit the check under its old name.** Rejected: start-up finds a
   check by its name and keeps it, so a database of an earlier build would keep the check that

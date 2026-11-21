@@ -102,11 +102,11 @@ pass:
 Without the first two, the Sync API of such a build starts, but it answers every creation and
 change of a credential with `503 credential-key-not-configured`, and it applies no `worker`
 account, so no worker can get a value and a run of a package that names a stored credential
-fails. The chart change that passes them is a separate change in the `opsmill/infrahub-helm` repository. It
-is not released, and the chart version that will contain it is not known. That change also
-removes `worker.credentials`, `worker.credentialsExistingSecrets` and the
-`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` key, which such a build does not read. The
-sections below describe the published chart.
+fails. The chart does not pass these variables yet. The change belongs to the
+`opsmill/infrahub-helm` repository; it is not released, and the chart version that will contain
+it is not known. Such a build does not read `worker.credentials`,
+`worker.credentialsExistingSecrets` or the `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` key
+of the published chart. The sections below describe the published chart.
 
 With such a build, these rules apply on Kubernetes as on Compose:
 

@@ -109,7 +109,8 @@ Security is enforced at the boundary, and secrets never leak.
 - The Sync API MAY store the credentials of sources and destinations in its database. Each value
   MUST be encrypted with a key that only the Sync API holds. The Sync API MUST release a value
   only through the worker route that releases the values of a run in progress, and only to the
-  `worker` account. No other response, CLI output, web page, log or record MAY contain a value.
+  `worker` account. A value MUST NOT appear in any other response, CLI output, web page, log or
+  record.
 - One exception: Sync MAY display the value of an API token once, to the account that created
   it, in the answer to its creation, and nowhere else.
 - Never print or guess secrets; tracebacks and structured logs MUST NOT contain credentials.

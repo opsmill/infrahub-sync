@@ -348,8 +348,10 @@ The file passes no `INFRAHUB_SYNC_CREDENTIAL_*` variable. A value set under such
   [When the key is lost or replaced](./guides/credentials.mdx#when-the-key-is-lost-or-replaced).
 - **The worker's request is plain HTTP inside the Compose network.** The worker token travels in
   the request and the values travel in the answer, between `sync-worker` and `sync-api`, on the
-  network that Compose creates for the deployment. The file does not publish that traffic on the
-  host. A worker that runs outside this file can use an `https://` address in
+  network that Compose creates for the deployment, without TLS. The worker routes are routes of
+  the Sync API, so they also answer on the published Sync API port, to a caller that holds the
+  worker token; keep `INFRAHUB_SYNC_BIND_ADDRESS` on `127.0.0.1` or put TLS in front of the
+  port. A worker that runs outside this file can use an `https://` address in
   `INFRAHUB_SYNC_API_URL`; it trusts the certificates of
   [a private certificate authority](#trust-a-private-certificate-authority).
 - **To change the worker token**, edit `INFRAHUB_SYNC_WORKER_TOKEN` in `.env` and run
