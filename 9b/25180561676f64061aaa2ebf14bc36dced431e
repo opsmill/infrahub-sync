@@ -1,0 +1,27 @@
+infrahub_sync/product_store/configs.py
+  s_58b527396c8cb5::t_3006378e39afb5 57
+  s_58b527396c8cb5::t_4ad09f1fda93e5 890
+  s_58b527396c8cb5::t_9d0fa7010fa4ed 70
+infrahub_sync/product_store/store.py
+  s_58b527396c8cb5::t_3006378e39afb5 11
+infrahub_sync/service/config_routes.py
+  s_58b527396c8cb5::t_4ad09f1fda93e5 275-276
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_7905349375b9df 141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9b25180561676f64061aaa2ebf14bc36dced431e",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
