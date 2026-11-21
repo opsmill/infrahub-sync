@@ -41,6 +41,7 @@ import os
 import sqlite3
 import sys
 import types
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
@@ -54,7 +55,9 @@ pytest.importorskip("opsmill_prefect_extras")
 # The Sync service and its worker flow need the `service` extra, which Python 3.10 does not install.
 pytest.importorskip("psycopg")
 
+from prefect.settings import get_current_settings
 from prefect.testing.utilities import prefect_test_harness
+from sqlalchemy.engine import make_url
 from structlog.testing import capture_logs
 from typer.testing import CliRunner
 
@@ -84,7 +87,6 @@ from tests.service.execution_fixtures import bind_granting_guard
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from infrahub_sync.configuration import ConfigurationPackage
     from infrahub_sync.product_store import ProductProjection
@@ -191,6 +193,33 @@ class _Records(logging.Handler):
         self.lines.append(self.format(record))
 
 
+@dataclasses.dataclass(frozen=True)
+class PrefectPlaces:
+    """Where Prefect writes during the test, as Prefect's own settings resolve them."""
+
+    home: Path
+    storage: Path
+    database: Path
+
+    @classmethod
+    def resolved(cls) -> PrefectPlaces:
+        """Read the places from the settings in force, inside the test harness.
+
+        They are read from Prefect and not from the variables the test sets: the harness replaces
+        the address of the database, and a place the test only assumed would be searched empty.
+        """
+        settings = get_current_settings()
+        url = settings.server.database.connection_url
+        assert url is not None, "Prefect names no database"
+        database = make_url(url.get_secret_value()).database
+        assert database, "Prefect's database is not a file"
+        return cls(Path(settings.home), Path(settings.results.local_storage_path), Path(database))
+
+    def directories(self) -> tuple[Path, ...]:
+        """Return the directories to search: the home, the result storage and the database's own."""
+        return (self.home, self.storage, self.database.parent)
+
+
 class Product:
     """The Sync API, a worker and the CLI in one process, with every place the test searches."""
 
@@ -202,6 +231,7 @@ class Product:
         submissions: dict[str, dict[str, Any]],
         clients: dict[str, list[str]],
         root: Path,
+        prefect: PrefectPlaces,
     ) -> None:
         self.api = api
         self.answers = answers
@@ -209,6 +239,7 @@ class Product:
         self.submissions = submissions
         self.clients = clients
         self.root = root
+        self.prefect = prefect
         self.cli_output: list[tuple[str, bool]] = []
 
     @property
@@ -298,10 +329,29 @@ class Product:
         with sqlite3.connect(databases[0]) as connection:
             return "\n".join(connection.iterdump())
 
+    def searched_files(self) -> dict[Path, str]:
+        """Return every file the test searches, by resolved path, with a label that holds no content.
+
+        The files are those under the test's directory and those under each directory that Prefect
+        resolved for this test, wherever it is: Prefect's test harness keeps its database in a
+        temporary directory of its own, outside the test's directory and outside ``PREFECT_HOME``.
+        """
+        files: dict[Path, str] = {}
+        for directory in (self.root, *self.prefect.directories()):
+            for path in sorted(directory.rglob("*")):
+                if path.is_file():
+                    files.setdefault(path.resolve(), f"{directory.name}/{path.relative_to(directory)}")
+        return files
+
     def files_holding_a_marker(self) -> tuple[int, list[str]]:
-        """Return the number of files under the test's directory, and those whose bytes hold a marker."""
-        files = sorted(path for path in self.root.rglob("*") if path.is_file())
-        return len(files), [str(path.relative_to(self.root)) for path in files if _holds_a_marker(path.read_bytes())]
+        """Return the number of files searched, and the labels of those whose bytes hold a marker."""
+        files = self.searched_files()
+        return len(files), [label for path, label in files.items() if _holds_a_marker(path.read_bytes())]
+
+    def prefect_flow_runs(self) -> int:
+        """Return the number of flow runs in the database that Prefect's settings name."""
+        with sqlite3.connect(f"{self.prefect.database.resolve().as_uri()}?mode=ro", uri=True) as connection:
+            return int(connection.execute("SELECT count(*) FROM flow_run").fetchone()[0])
 
 
 def _sign_the_cli_in(monkeypatch: pytest.MonkeyPatch, api: AccountApi, tmp_path: Path) -> None:
@@ -421,12 +471,13 @@ def product(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Product
 
     _sign_the_cli_in(monkeypatch, api, tmp_path)
 
-    # Prefect's own files are under the test's directory, so the search of the files covers them.
+    # Prefect's home and result storage are under the test's directory. The harness keeps the
+    # database elsewhere, so the places to search are read from Prefect once the harness is in force.
     home = tmp_path / "prefect-home"
     monkeypatch.setenv("PREFECT_HOME", str(home))
     monkeypatch.setenv("PREFECT_LOCAL_STORAGE_PATH", str(home / "storage"))
     with prefect_test_harness():
-        yield Product(api, answers, transport, submissions, clients, tmp_path)
+        yield Product(api, answers, transport, submissions, clients, tmp_path, PrefectPlaces.resolved())
     _forget_netbox_adapter()
 
 
@@ -568,8 +619,12 @@ def test_no_output_holds_the_value_of_a_stored_credential(  # noqa: PLR0914, PLR
     count, holding = product.files_holding_a_marker()
     assert holding == []
     assert count > 0
-    # Prefect's own database is among the files searched.
-    assert [path.name for path in (product.root / "prefect-home").rglob("*") if path.is_file()]
+    # Prefect's own database is among the files searched: the file that Prefect's settings name,
+    # which holds the flow runs of this test. Its home is the directory the test gave it.
+    searched = product.searched_files()
+    assert product.prefect.database.resolve() in searched
+    assert product.prefect_flow_runs() >= 2, "Prefect's database does not hold the plan and the apply of this test"
+    assert product.prefect.home.resolve() == (product.root / "prefect-home").resolve()
 
 
 def _values_of(document: Any, key: str) -> set[str]:  # noqa: ANN401 - a JSON document.
