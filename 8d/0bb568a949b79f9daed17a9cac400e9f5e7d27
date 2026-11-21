@@ -1,0 +1,21 @@
+frontend/src/domain/schedule-events.ts
+  s_0f3e9b98ad49ab::t_39b34798a8297e 62
+frontend/src/domain/schedule-events.test.ts
+  s_0f3e9b98ad49ab::t_94ac3165cf3557 65-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d0bb568a949b79f9daed17a9cac400e9f5e7d27",
+  "prompts": {},
+  "sessions": {
+    "s_0f3e9b98ad49ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "160719ec-2b7c-46e8-a304-b5a97feb7475",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
