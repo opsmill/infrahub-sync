@@ -1,0 +1,27 @@
+frontend/src/domain/start-times.ts
+  s_0f3e9b98ad49ab::t_71ed2747840a17 62-74
+frontend/src/domain/start-times.test.ts
+  s_0f3e9b98ad49ab::t_6d35544cee5010 4-15
+  s_0f3e9b98ad49ab::t_bd6685b33c0b5b 3
+frontend/src/features/schedules/ScheduleTimeline.tsx
+  s_0f3e9b98ad49ab::t_dd508d449b19e6 10
+frontend/src/features/schedules/ScheduleListParts.tsx
+  s_0f3e9b98ad49ab::t_c125197be22ea1 11
+  s_0f3e9b98ad49ab::t_1913ade1c42aa2 207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "17c75d8298218ef242ff0207f53f481b119a9fe2",
+  "prompts": {},
+  "sessions": {
+    "s_0f3e9b98ad49ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "160719ec-2b7c-46e8-a304-b5a97feb7475",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
