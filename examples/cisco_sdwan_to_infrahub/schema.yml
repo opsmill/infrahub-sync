@@ -1,0 +1,432 @@
+# yaml-language-server: $schema=https://schema.infrahub.app/infrahub/schema/latest.json
+# The four Sdwan nodes this example writes: instance, site, router and configuration group.
+# Their definitions match a complete SD-WAN schema that also models feature templates and
+# policies; relationships to those other nodes are left out, so this file loads on its own.
+---
+version: '1.0'
+nodes:
+- name: Instance
+  namespace: Sdwan
+  label: Instances
+  display_label: name__value
+  human_friendly_id:
+  - name__value
+  order_by:
+  - name__value
+  uniqueness_constraints:
+  - - name__value
+  inherit_from:
+  - CoreArtifactTarget
+  include_in_menu: false
+  attributes:
+  - name: name
+    kind: Text
+    optional: false
+  - name: manager_version
+    kind: Text
+    optional: true
+    parameters:
+      regex: ^\d+(\.\d+)+$
+  - name: management_ip_variable
+    kind: Text
+    label: Management IP Variable
+    optional: true
+    parameters:
+      regex: ^[^"~`$&+,]{1,255}$
+  - name: multi_region_fabric_enabled
+    kind: Boolean
+    optional: true
+  relationships:
+  - name: sites
+    label: Sites
+    peer: SdwanSite
+    kind: Component
+    cardinality: many
+    identifier: sdwan__sites
+    optional: true
+  - name: configuration_groups
+    label: Configuration Groups
+    peer: SdwanConfigurationGroup
+    kind: Component
+    cardinality: many
+    identifier: sdwan__configuration_groups
+    optional: true
+- name: Site
+  namespace: Sdwan
+  label: Site
+  display_label: id_value__value
+  human_friendly_id:
+  - id_value__value
+  order_by:
+  - id_value__value
+  uniqueness_constraints:
+  - - id_value__value
+    - instance
+  include_in_menu: false
+  attributes:
+  - name: id_value
+    kind: Number
+    optional: false
+    parameters:
+      min_value: 1
+      max_value: 4294967295
+  relationships:
+  - name: instance
+    label: Instance
+    peer: SdwanInstance
+    kind: Parent
+    cardinality: one
+    identifier: sdwan__sites
+    optional: false
+  - name: routers
+    label: Routers
+    peer: SdwanRouter
+    kind: Component
+    cardinality: many
+    identifier: sites__routers
+    optional: true
+- name: Router
+  namespace: Sdwan
+  label: Router
+  display_label: chassis_id__value
+  human_friendly_id:
+  - chassis_id__value
+  order_by:
+  - chassis_id__value
+  uniqueness_constraints:
+  - - chassis_id__value
+    - site
+  include_in_menu: false
+  attributes:
+  - name: chassis_id
+    kind: Text
+    optional: false
+  - name: management_ip_variable
+    kind: Text
+    label: Management IP Variable
+    optional: true
+    parameters:
+      regex: ^[^"~`$&+,]{1,255}$
+  - name: configuration_group
+    kind: Text
+    optional: true
+    parameters:
+      regex: ^[^<>!&" ]{1,128}$
+  - name: configuration_group_deploy
+    kind: Boolean
+    optional: true
+  - name: policy_group
+    kind: Text
+    optional: true
+    parameters:
+      regex: ^[^<>!&" ]{1,128}$
+  - name: policy_group_deploy
+    kind: Boolean
+    optional: true
+  - name: tags
+    kind: List
+    optional: true
+  - name: topology_label
+    kind: Text
+    optional: true
+  - name: model
+    kind: Dropdown
+    choices:
+    - name: ASR-1001-HX
+      label: Asr 1001 Hx
+    - name: ASR-1001-X
+      label: Asr 1001 X
+    - name: ASR-1002-HX
+      label: Asr 1002 Hx
+    - name: ASR-1002-X
+      label: Asr 1002 X
+    - name: ASR-1006-X
+      label: Asr 1006 X
+    - name: C1101-4P
+      label: C1101 4 P
+    - name: C1101-4PLTEP
+      label: C1101 4 Pltep
+    - name: C1101-4PLTEPW
+      label: C1101 4 Pltepw
+    - name: C1109-2PLTEGB
+      label: C1109 2 Pltegb
+    - name: C1109-2PLTEUS
+      label: C1109 2 Plteus
+    - name: C1109-2PLTEVZ
+      label: C1109 2 Pltevz
+    - name: C1109-4PLTE2P
+      label: C1109 4 Plte2 P
+    - name: C1109-4PLTE2PW
+      label: C1109 4 Plte2 Pw
+    - name: C1111-4P
+      label: C1111 4 P
+    - name: C1111-4PLTEEA
+      label: C1111 4 Plteea
+    - name: C1111-4PLTELA
+      label: C1111 4 Pltela
+    - name: C1111-4PW
+      label: C1111 4 Pw
+    - name: C1111-8P
+      label: C1111 8 P
+    - name: C1111-8PLTEEA
+      label: C1111 8 Plteea
+    - name: C1111-8PLTEEAW
+      label: C1111 8 Plteeaw
+    - name: C1111-8PLTELA
+      label: C1111 8 Pltela
+    - name: C1111-8PLTELAW
+      label: C1111 8 Pltelaw
+    - name: C1111-8PW
+      label: C1111 8 Pw
+    - name: C1111X-8P
+      label: C1111 X 8 P
+    - name: C1112-8P
+      label: C1112 8 P
+    - name: C1112-8PLTEEA
+      label: C1112 8 Plteea
+    - name: C1112-8PLTEEAWE
+      label: C1112 8 Plteeawe
+    - name: C1112-8PWE
+      label: C1112 8 Pwe
+    - name: C1113-8P
+      label: C1113 8 P
+    - name: C1113-8PLTEEA
+      label: C1113 8 Plteea
+    - name: C1113-8PLTEEAW
+      label: C1113 8 Plteeaw
+    - name: C1113-8PLTELA
+      label: C1113 8 Pltela
+    - name: C1113-8PLTELAWZ
+      label: C1113 8 Pltelawz
+    - name: C1113-8PLTEW
+      label: C1113 8 Pltew
+    - name: C1113-8PM
+      label: C1113 8 Pm
+    - name: C1113-8PMLTEEA
+      label: C1113 8 Pmlteea
+    - name: C1113-8PMWE
+      label: C1113 8 Pmwe
+    - name: C1113-8PW
+      label: C1113 8 Pw
+    - name: C1116-4P
+      label: C1116 4 P
+    - name: C1116-4PLTEEA
+      label: C1116 4 Plteea
+    - name: C1116-4PLTEEAWE
+      label: C1116 4 Plteeawe
+    - name: C1116-4PWE
+      label: C1116 4 Pwe
+    - name: C1117-4P
+      label: C1117 4 P
+    - name: C1117-4PLTEEA
+      label: C1117 4 Plteea
+    - name: C1117-4PLTEEAW
+      label: C1117 4 Plteeaw
+    - name: C1117-4PLTELA
+      label: C1117 4 Pltela
+    - name: C1117-4PLTELAWZ
+      label: C1117 4 Pltelawz
+    - name: C1117-4PM
+      label: C1117 4 Pm
+    - name: C1117-4PMLTEEA
+      label: C1117 4 Pmlteea
+    - name: C1117-4PMLTEEAWE
+      label: C1117 4 Pmlteeawe
+    - name: C1117-4PMWE
+      label: C1117 4 Pmwe
+    - name: C1117-4PW
+      label: C1117 4 Pw
+    - name: C1118-8P
+      label: C1118 8 P
+    - name: C1121-4P
+      label: C1121 4 P
+    - name: C1121-4PLTEP
+      label: C1121 4 Pltep
+    - name: C1121-8P
+      label: C1121 8 P
+    - name: C1121-8PLTEP
+      label: C1121 8 Pltep
+    - name: C1121-8PLTEPW
+      label: C1121 8 Pltepw
+    - name: C1121X-8P
+      label: C1121 X 8 P
+    - name: C1121X-8PLTEP
+      label: C1121 X 8 Pltep
+    - name: C1121X-8PLTEPW
+      label: C1121 X 8 Pltepw
+    - name: C1126-8PLTEP
+      label: C1126 8 Pltep
+    - name: C1126X-8PLTEP
+      label: C1126 X 8 Pltep
+    - name: C1127-8PLTEP
+      label: C1127 8 Pltep
+    - name: C1127-8PMLTEP
+      label: C1127 8 Pmltep
+    - name: C1127X-8PLTEP
+      label: C1127 X 8 Pltep
+    - name: C1127X-8PMLTEP
+      label: C1127 X 8 Pmltep
+    - name: C1128-8PLTEP
+      label: C1128 8 Pltep
+    - name: C1131-8PLTEPW
+      label: C1131 8 Pltepw
+    - name: C1131-8PW
+      label: C1131 8 Pw
+    - name: C1131X-8PLTEPW
+      label: C1131 X 8 Pltepw
+    - name: C1131X-8PW
+      label: C1131 X 8 Pw
+    - name: C1161-8P
+      label: C1161 8 P
+    - name: C1161-8PLTEP
+      label: C1161 8 Pltep
+    - name: C1161X-8P
+      label: C1161 X 8 P
+    - name: C1161X-8PLTEP
+      label: C1161 X 8 Pltep
+    - name: C8000V
+      label: C8000 V
+    - name: C8200-1N-4T
+      label: C8200 1 N 4 T
+    - name: C8200L-1N-4T
+      label: C8200 L 1 N 4 T
+    - name: C8300-1N1S-4T2X
+      label: C8300 1 N1 S 4 T2 X
+    - name: C8300-1N1S-6T
+      label: C8300 1 N1 S 6 T
+    - name: C8300-2N2S-4T2X
+      label: C8300 2 N2 S 4 T2 X
+    - name: C8300-2N2S-6T
+      label: C8300 2 N2 S 6 T
+    - name: C8500-12X
+      label: C8500 12 X
+    - name: C8500-12X4QC
+      label: C8500 12 X4 Qc
+    - name: C8500-20X6C
+      label: C8500 20 X6 C
+    - name: C8500L-8S4X
+      label: C8500 L 8 S4 X
+    - name: IR-1101
+      label: Ir 1101
+    - name: IR-1821
+      label: Ir 1821
+    - name: IR-1831
+      label: Ir 1831
+    - name: IR-1833
+      label: Ir 1833
+    - name: IR-1835
+      label: Ir 1835
+    - name: IR-8140H
+      label: Ir 8140 H
+    - name: IR-8140H-P
+      label: Ir 8140 H P
+    - name: IR-8340
+      label: Ir 8340
+    - name: ISR-4221
+      label: Isr 4221
+    - name: ISR-4221X
+      label: Isr 4221 X
+    - name: ISR-4321
+      label: Isr 4321
+    - name: ISR-4331
+      label: Isr 4331
+    - name: ISR-4351
+      label: Isr 4351
+    - name: ISR-4431
+      label: Isr 4431
+    - name: ISR-4451-X
+      label: Isr 4451 X
+    - name: ISR-4461
+      label: Isr 4461
+    - name: ISR1100-4G-XE
+      label: Isr1100 4 G Xe
+    - name: ISR1100-4GLTEGB-XE
+      label: Isr1100 4 Gltegb Xe
+    - name: ISR1100-4GLTENA-XE
+      label: Isr1100 4 Gltena Xe
+    - name: ISR1100-6G-XE
+      label: Isr1100 6 G Xe
+    - name: ISR1100X-4G-XE
+      label: Isr1100 X 4 G Xe
+    - name: ISR1100X-6G-XE
+      label: Isr1100 X 6 G Xe
+    optional: true
+  - name: device_template
+    kind: Text
+    optional: true
+    parameters:
+      regex: ^[^<>!&" ]{1,128}$
+  - name: device_variables
+    kind: JSON
+    optional: true
+  - name: policy_variables
+    kind: JSON
+    optional: true
+  relationships:
+  - name: site
+    label: Sites
+    peer: SdwanSite
+    kind: Parent
+    cardinality: one
+    identifier: sites__routers
+    optional: false
+- name: ConfigurationGroup
+  namespace: Sdwan
+  label: Configuration Group
+  display_label: name__value
+  human_friendly_id:
+  - name__value
+  order_by:
+  - name__value
+  uniqueness_constraints:
+  - - name__value
+    - instance
+  include_in_menu: false
+  attributes:
+  - name: name
+    kind: Text
+    optional: false
+    parameters:
+      regex: ^[^&<>! "]{1,128}$
+  - name: description
+    kind: Text
+    optional: true
+  - name: cli_profile
+    kind: Text
+    label: CLI Profile
+    optional: true
+    parameters:
+      regex: ^[^&<>! "]{1,128}$
+  - name: other_profile
+    kind: Text
+    optional: true
+    parameters:
+      regex: ^[^&<>! "]{1,128}$
+  - name: policy_object_profile
+    kind: Text
+    optional: true
+    parameters:
+      regex: ^[^&<>! "]{1,128}$
+  - name: service_profile
+    kind: Text
+    optional: true
+    parameters:
+      regex: ^[^&<>! "]{1,128}$
+  - name: system_profile
+    kind: Text
+    optional: false
+    parameters:
+      regex: ^[^&<>! "]{1,128}$
+  - name: transport_profile
+    kind: Text
+    optional: false
+    parameters:
+      regex: ^[^&<>! "]{1,128}$
+  relationships:
+  - name: instance
+    label: Instance
+    peer: SdwanInstance
+    kind: Parent
+    cardinality: one
+    identifier: sdwan__configuration_groups
+    optional: false

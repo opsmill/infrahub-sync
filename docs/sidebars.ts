@@ -35,6 +35,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'adapters/choosing-an-adapter',
         'adapters/aci',
+        'adapters/cisco-sdwan',
         'adapters/device42',
         'adapters/msgraphsync',
         'adapters/genericrestapi',
