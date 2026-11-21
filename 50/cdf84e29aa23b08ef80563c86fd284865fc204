@@ -1,0 +1,29 @@
+dev/specs/027-stored-credentials/quickstart.md
+  s_9369e2c1b4244d::t_878ed2841943c4 45
+dev/specs/027-stored-credentials/tasks.md
+  s_9369e2c1b4244d::t_113570b9396e44 180-182
+docs/docs/guides/credentials.mdx
+  s_9369e2c1b4244d::t_5bac33581abc1a 133-164
+docs/docs/reference/cli.mdx
+  s_9369e2c1b4244d::t_a2dc554fe000ec 615-618
+infrahub_sync/cli.py
+  s_9369e2c1b4244d::t_03ab980378eb2a 1156-1168,2179-2182,2197
+tests/cli/test_credentials_command.py
+  s_9369e2c1b4244d::t_cbc5eb9af22a4f 18-19,533-588
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50cdf84e29aa23b08ef80563c86fd284865fc204",
+  "prompts": {},
+  "sessions": {
+    "s_9369e2c1b4244d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9f8225f4a8af174b",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
