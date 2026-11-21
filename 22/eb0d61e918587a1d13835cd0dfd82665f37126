@@ -1,0 +1,74 @@
+infrahub_sync/cli.py
+  s_58b527396c8cb5::t_81e329a60bc721 80-84,410
+  s_58b527396c8cb5::t_719794479d27f3 401-409,411-414
+infrahub_sync/service/service.py
+  s_58b527396c8cb5::t_81e329a60bc721 25-29,36-39,557-560,569-572,1060-1062,1072-1082
+  s_58b527396c8cb5::t_f0076089d390a7 250-262
+infrahub_sync/service/failure_cause.py
+  s_58b527396c8cb5::t_81e329a60bc721 566-573,592-594
+tests/cli/test_client_commands.py
+  s_58b527396c8cb5::t_cd11c81d59dbf8 1598-1621
+infrahub_sync/product_store/configs.py
+  s_58b527396c8cb5::t_81e329a60bc721 37,53-56,668-681
+tests/service/test_credential_client.py
+  s_58b527396c8cb5::t_c90af41a627daa 251
+  s_58b527396c8cb5::t_29988f0be9580d 464
+infrahub_sync/service/credential_client.py
+  s_58b527396c8cb5::t_81e329a60bc721 79,91,99-101
+tests/product_store/test_unused_worker_environments_table.py
+  s_58b527396c8cb5::t_29988f0be9580d 1-55
+infrahub_sync/service/config_routes.py
+  s_58b527396c8cb5::t_81e329a60bc721 26,161-167
+infrahub_sync/service/schedule_admission.py
+  s_58b527396c8cb5::t_81e329a60bc721 19-24
+  s_58b527396c8cb5::t_719794479d27f3 460-462
+tests/service/test_http_api.py
+  s_58b527396c8cb5::t_cb67ef45727ef0 123
+tests/service/test_approval.py
+  s_58b527396c8cb5::t_29988f0be9580d 26,214-232
+  s_58b527396c8cb5::t_84209edcc0069e 233-234
+infrahub_sync/configuration/__init__.py
+  s_58b527396c8cb5::t_81e329a60bc721 19,35
+infrahub_sync/service/flow.py
+  s_58b527396c8cb5::t_10cf9278bc8305 37,47,1051-1054
+  s_58b527396c8cb5::t_285ac4f1e5922c 1055-1058
+tests/service/test_worker_proposed_change_states_route.py
+  s_58b527396c8cb5::t_0a69bbc09ac350 50,412
+  s_58b527396c8cb5::t_29988f0be9580d 405-411,413-414
+infrahub_sync/service/app.py
+  s_58b527396c8cb5::t_81e329a60bc721 26-29,506-513,557-558
+infrahub_sync/service/credential_actions.py
+  s_58b527396c8cb5::t_719794479d27f3 495,570-571
+  s_58b527396c8cb5::t_f0076089d390a7 91,588,590,656,658
+  s_58b527396c8cb5::t_81e329a60bc721 494
+tests/service/test_stage_stored_credentials.py
+  s_58b527396c8cb5::t_80c1758a221333 41,217-245
+  s_58b527396c8cb5::t_8277678ab4e047 246-247
+dev/specs/027-stored-credentials/contracts/http-api.md
+  s_58b527396c8cb5::t_6af0efc3231dba 69-70,108-109,139-141
+tests/service/test_credential_failure_cause.py
+  s_58b527396c8cb5::t_c90af41a627daa 3,39-40,69-80
+  s_58b527396c8cb5::t_7bea7442c0e9eb 81-83
+tests/configuration/test_removed_credential_format.py
+  s_58b527396c8cb5::t_cb67ef45727ef0 210,262-296
+  s_58b527396c8cb5::t_fd5f651618205d 320-336
+  s_58b527396c8cb5::t_47c40580a6d07e 14-16,32,35-39,148-209,211-261,297-319
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_6af0efc3231dba 137,142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "22eb0d61e918587a1d13835cd0dfd82665f37126",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
