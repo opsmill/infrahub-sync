@@ -325,15 +325,17 @@ Run these commands from the repository root:
    uv run invoke netbox.seed --dataset demo
    ```
 
-2. Start a fresh development stack. The worker resolves the package's `netbox-token` credential
-   from its own environment, so set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` to the token that step 1
-   printed before `dev.infrahub` creates the worker container. `dev.infrahub` sets
-   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` to the stack's Infrahub admin token, and connects
-   the worker to NetBox's network.
+2. Start a fresh development stack. The package names the stored credentials `netbox-token`
+   and `infrahub-token`. Once the Sync API runs, `dev.infrahub` stores both through it:
+   `infrahub-token` with the stack's Infrahub admin token, and `netbox-token` with the local
+   NetBox's development token, because the local NetBox runs. To store another value, export
+   `INFRAHUB_SYNC_DEV_NETBOX_TOKEN` or `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN` before the task; only
+   the tasks read these two variables, and no Sync service receives them. `dev.infrahub` also
+   connects the worker to NetBox's network.
 
    ```bash
    uv run invoke dev.destroy
-   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke dev.infrahub
+   uv run invoke dev.infrahub
    ```
 
 3. Load the schema library into the development stack's Infrahub. The example maps onto the 16 schemas
@@ -366,7 +368,7 @@ Run these commands from the repository root:
    demo and an Infrahub on port 8000. `netbox.demo-package --dev-stack` writes
    `.netbox/from-netbox.local.yml`, a copy that points at the addresses the worker container
    reaches: NetBox at `http://netbox:8080` and Infrahub at `http://infrahub-server:8000`. The
-   mapping and the credential references stay the same. Pass `--infrahub-url` to use another
+   mapping and the stored credential names stay the same. Pass `--infrahub-url` to use another
    Infrahub address.
 
    ```bash
@@ -621,6 +623,13 @@ image you built, and tears it down. The nightly workflow runs the same command; 
 job runs it. Run it by hand when a change touches the Compose deployment. It keeps the
 ordinary Docker and platform skips, so confirm what ran before claiming it passed.
 
+The suite gives `sync-api` a test value of `INFRAHUB_SYNC_ENCRYPTION_KEY`, and gives `sync-api`
+and `sync-worker` a test value of `INFRAHUB_SYNC_WORKER_TOKEN`. The root file sets
+`INFRAHUB_SYNC_API_URL` of the worker itself. No service receives an
+`INFRAHUB_SYNC_CREDENTIAL_*` variable. A test that runs a package creates the stored credentials
+that the package names through the Sync API, with `create_credentials_through_api` in
+`tests/helpers/stored_credentials.py` and the token of `admin`.
+
 The nightly workflow runs the Compose suite once on `linux/amd64` (`ubuntu-22.04`) and once on
 `linux/arm64` (`ubuntu-24.04-arm`) by default, each in its own job. To find out how often the
 suite fails at random, dispatch the workflow with a repeat count: `compose_repeat` (1 to 20)
@@ -709,7 +718,10 @@ Each other variable the root file reads takes its value from the environment of 
 process when it is set there, and a test value otherwise. Export a variable before the class
 starts to change it. For example, `INFRAHUB_SYNC_API_PORT` defaults to `0`, so Docker
 publishes the Sync API on a free loopback port; export a port number to choose the port
-yourself. The test values are not real credentials.
+yourself. The test values are not real credentials. They include a fixed
+`INFRAHUB_SYNC_ENCRYPTION_KEY` and a fixed `INFRAHUB_SYNC_WORKER_TOKEN`
+(`infrahub_sync/testcontainers/helpers.py`). A test creates the stored credentials that its
+package names through the Sync API before it registers the package.
 
 The Infrahub version comes from `infrahub-testcontainers`: by default it is the version of
 the installed `infrahub-testcontainers` package. The `testcontainers` extra requires

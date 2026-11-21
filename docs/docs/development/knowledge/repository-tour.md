@@ -82,18 +82,23 @@ destination-schema checks, or to the schema read of `configs convert --live-sche
 | `capabilities.py` | `AdapterConfigurationCapabilities` and the closed `BUILTIN_ADAPTER_CAPABILITIES` registry |
 | `infrahub_lineage.py` | The parser and validator for an Infrahub destination's `source`, `owner` and `protect` settings |
 | `validation.py` | The finding-producing checks and their fixed execution order |
-| `credentials.py` | What a credential reference is, and how a provider resolves one |
-| `worker_credentials.py` | The names of the credential variables a worker holds, and the `$credential` variables a package references, for `configs validate --branch` |
+| `credentials.py` | How an adapter selects a credential setting at run time (`select_runtime_credential`, which reads no environment variable for a registered package), and how a declared setting name is rendered into a diagnostic |
+| `credential_admission.py` | The check that each stored credential a block names exists and holds the fields the block needs (`credential-not-found`, `credential-field-missing`, `credential-method-unknown`). It reads no store and no value |
+| `removed_credential_format.py` | The refusal of the removed `credentials` block and `$credential` references, and its fixed texts |
+| `stored_package.py` | `parse_stored_configuration_package`: reads the content of a stored version, ignores the empty `credentials` block that an earlier build wrote, and returns the checksum of the content as stored |
 | `schema_validation.py` | The opt-in destination-schema checks |
 | `warnings.py` | Intentional omissions and unqualified optional features |
 | `runtime.py` | Runtime resolution, including the effective destination branch |
-| `conversion.py` | `configs convert`: the pure conversion of a v1 or v2 `config.yml` into a package, the tables of what v2 read from the environment, and the worker's credential variables |
-| `conversion_authentication.py` | Which credential settings each v2 authentication method used, so a converted package references only those |
+| `conversion.py` | `configs convert`: the pure conversion of a v1 or v2 `config.yml` into a package, and the tables of what v2 read from the environment |
+| `conversion_authentication.py` | Which credential settings each v2 authentication method used, so the stored credential that a converted block names needs only those fields |
+| `conversion_credentials.py` | The name of the stored credential that a converted block names, and the report entry that says which credential to create, with which fields and which command |
 | `conversion_live_schema.py` | `configs convert --live-schema`: the destination-schema read without a token, and the fill of an unmapped IP namespace with `default` |
 | `conversion_report.py` | The text of the conversion report, the refusals and the next steps |
 
 [Configuration foundation](configuration-foundation.md) explains the declared identity,
-credential references and the connection-free capability declaration in full.
+the `credential` key of a block and the connection-free capability declaration in full.
+`capabilities.py` also holds `credential_field_map`, which says which stored field fills which
+setting of each adapter.
 
 ### The Sync service and its worker
 
@@ -204,8 +209,38 @@ differs from the request's; the HTTP layer returns `422 invalid-cursor`. `valida
 the limits in `client/models.py` (`DEFAULT_LIMIT` 50, `MAX_LIMIT` 200). ADR 0032 records the
 paging rules.
 
-Each worker publishes the names of its set credential variables to the `worker_environments`
-table on each poll, through `service.storage.service_product_projection`.
+Four service modules carry the stored credentials
+([ADR 0054](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)):
+
+- `credential_routes.py` declares the routes for accounts (`GET /credentials`,
+  `GET /credentials/{name}`, `POST /credentials`, `PUT /credentials/{name}/value` and
+  `PATCH /credentials/{name}`) and the two routes for the `worker` account
+  (`POST /worker/runs/{run_id}/credentials` and
+  `POST /worker/schedules/{schedule_id}/proposed-change-states`). Each route calls one method of
+  `CredentialActions`.
+- `credential_actions.py` holds the requests, the answers, the permission check
+  (`manage-credentials`), the audit events and the two worker actions. `release` checks that a
+  worker claimed the execution and that it has not ended, then decrypts and writes the
+  `run_credential_uses` rows. `proposed_change_states` reads Infrahub with the destination
+  credential of a schedule's stored version and returns the states only.
+- `credential_crypto.py` holds `CredentialCipher`: AES-256-GCM with the key of
+  `INFRAHUB_SYNC_ENCRYPTION_KEY`, the key identifier stored with each revision, and the keyed
+  fingerprint of a credential request. The product store never imports it.
+- `credential_client.py` holds the worker's calls to the two worker routes, their timeout and
+  retries, and `CredentialUnavailableError`, which `failure_cause.py` maps to the failure type
+  `credential_unavailable`.
+
+`auth.py` also applies the `worker` account at start (`apply_worker_account`) and marks its
+principal, which passes the routes under `/worker/` and no other route. `settings.py` reads
+`INFRAHUB_SYNC_ENCRYPTION_KEY` and `INFRAHUB_SYNC_WORKER_TOKEN` for `sync-api`, and
+`INFRAHUB_SYNC_WORKER_TOKEN` and `INFRAHUB_SYNC_API_URL` for each worker. `service/credentials.py`
+is not part of this: it holds the password hashes and the token values of the local accounts.
+
+`product_store/stored_credentials.py` holds the statements of the tables `stored_credentials`,
+`stored_credential_revisions`, `configuration_version_credentials` and `run_credential_uses`. The
+store holds the key identifier, the nonce and the ciphertext of a revision, never a value. No
+code reads or writes the `worker_environments` table of an earlier build; an existing table
+stays in the database.
 
 How the Compose deployment reaches its object store and trusts a private CA:
 

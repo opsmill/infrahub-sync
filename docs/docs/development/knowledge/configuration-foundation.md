@@ -6,8 +6,8 @@ title: "Configuration foundation"
 
 The v3 configuration foundation separates declared configuration from runtime secrets.
 `infrahub_sync.configuration.ConfigurationPackage` is a strict versioned envelope. Its
-checksum covers only declared JSON content, including credential references and
-behavior-affecting package metadata. Generated code, local paths, registry identity, and
+checksum covers only declared JSON content, including the name of the stored credential that
+each adapter block declares and behavior-affecting package metadata. Generated code, local paths, registry identity, and
 resolved secret values never enter the checksum.
 
 Durable or public callers parse untrusted declarations with
@@ -15,41 +15,71 @@ Durable or public callers parse untrusted declarations with
 and reason codes without including rejected values. Calling Pydantic's low-level
 `ConfigurationPackage.model_validate()` directly is reserved for already-trusted data.
 
-Credential-bearing adapter settings use an exact reference node:
+A package never holds a credential value. Each adapter block names one stored credential with
+the optional key `credential`, next to `name` and `settings`:
 
 ```yaml
-token:
-  $credential: netbox-token
+source:
+  name: netbox
+  credential: netbox-token
+  settings:
+    url: https://netbox.example.com
 ```
 
-The package declares what that name means without carrying its value:
+The name matches `CREDENTIAL_NAME_PATTERN` in `configuration/models.py`. The key is serialized
+only when the block declares it, so a package that names no credential keeps the declared
+content and the checksum it had before the key existed. Pointing a block to another credential
+changes the checksum; changing the stored value does not.
 
-```yaml
-credentials:
-  netbox-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
-```
+The Sync API stores the value, encrypted, and releases it to the worker for a run in progress.
+[ADR 0054](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)
+records the decision. The parts in `infrahub_sync/configuration/` are:
 
-An `env` identifier must start with `ENV_CREDENTIAL_PREFIX` (`INFRAHUB_SYNC_CREDENTIAL_`),
-checked twice: validation reports any other name as `malformed-credential-reference`, and
-`EnvironmentCredentialProvider` refuses it at resolution. The worker's environment also
-holds its own storage, database, and Prefect settings, and no service setting uses the
-prefix, so a registered package cannot select one of them. Every name in the namespace
-contains `CREDENTIAL`, so the runner's value-based redaction collects its values.
+- **Which stored field fills which setting.** `credential_field_map` in `capabilities.py` returns,
+  for an adapter and its settings, the stored fields (`token`, `username`, `password`) that the
+  block needs and the setting each one fills. An adapter with an `auth_method` setting needs the
+  fields of that method.
+- **A credential setting is refused in `settings`.** A block that names a credential and also
+  declares one of its credential settings is refused when the package is parsed. A block that
+  names none and holds a value at a credential setting path gets the finding
+  `inline-credential-value`. A block that names a credential that its adapter and `auth_method`
+  do not use gets `credential-not-used`.
+- **The named credential must exist.** `stored_credential_findings` in `credential_admission.py`
+  reports `credential-not-found`, `credential-field-missing` and `credential-method-unknown`. It
+  reads the field names of a credential through a callable and never a value.
+- **Run time.** `resolve_runtime_instance` in `runtime.py` takes the values that the Sync API
+  released for the run and writes them into the credential settings of each block. It marks the
+  settings as registered, and `select_runtime_credential` in `credentials.py` then reads the
+  setting only, never an environment variable.
 
-A `$credential` node is only accepted where a credential is actually resolved: the
-credential setting paths of the adapter filling that role. The same node anywhere else —
-a non-credential setting, a schema-mapping static value — is refused, because nothing would resolve it and the adapter would receive the
-node itself.
+Outside a registered package, `select_runtime_credential` still reads the adapter's environment
+variables, such as `NETBOX_TOKEN`, before the setting. The direct Prefect flow uses that branch:
+`run_remote_request` builds its instance from a v2 file without the registered marker
+(`ADAPTER_CREDENTIAL_ENV_VARS` in `infrahub_sync/execution.py` lists the variables). The Sync
+service and its worker never take that branch for a registered package.
 
-Exactly one function turns a declared setting path into a pointer: `_settings_pointer` in
-`credentials.py`. The declared-content walk builds the same pointer incrementally through
-the same component escaping. This is a contract, not a tidiness preference: the
-allowed-location set and the walk must produce byte-identical strings, or a reference is
-accepted by the per-path check and then refused by the walk as not credential-bearing.
-Any further component that renders these pointers — registry persistence, an API
-response, a CLI diff — calls that function rather than formatting its own.
+### The removed credential format
+
+An earlier build declared a top-level `credentials` block with an `env` provider, and wrote a
+`{"$credential": "<name>"}` node at each credential setting. Both are removed
+(`removed_credential_format.py`):
+
+- `parse_configuration_package` refuses new input that holds a `credentials` key, empty or not,
+  or a `$credential` key in any mapping. The reason names `credential: <name>` and nothing of the
+  refused package.
+- Content read from the product store goes through `parse_stored_configuration_package` in
+  `stored_package.py`. The earlier build wrote an empty `credentials` block into every version,
+  and the stored checksum covers it. The function ignores an empty block and returns the checksum
+  of the content with the block, so such a version keeps the checksum that its runs, its saved
+  plans and its approvals hold. Compare that checksum, not `package.checksum()`, with the stored
+  one.
+- Stored content with a `credentials` block that holds an entry, or with a `$credential`
+  reference, raises `RemovedCredentialFormatError`. The routes that start a stage answer
+  `422 credential-format-removed`.
+
+Exactly one function turns a declared setting path into a finding location: `_settings_pointer`
+in `validation.py`. Any further component that renders these pointers calls that function
+rather than formatting its own.
 
 ### Registry persistence and identity
 
@@ -121,7 +151,7 @@ Bundled declarations live in `infrahub_sync.configuration.capabilities`. Package
 validation refuses adapters without a bundled declaration because Sync cannot prove
 which of their settings are credentials. A future adapter-extension and registration
 surface can contribute the same record through plugin metadata; it must preserve
-contract version 1 and the exact credential-reference rules.
+contract version 1 and the rules for credential settings above.
 
 The version-1 envelope refuses `adapters_path` and per-role `adapter` overrides. Those
 fields select machine-local or arbitrary adapter code whose credential-bearing settings
@@ -141,13 +171,13 @@ Declared `url` and `base_url` must be absolute `http` or `https` URLs; `api_endp
 `endpoint` must be relative paths carrying neither scheme nor authority.
 GenericRESTAPI and PeeringManager packages cannot select alternate URL or credential
 environment variables; their schema-mapping request endpoints must be relative paths
-without authority, user information, queries, or fragments. Use the declared
-credential-reference settings instead. These restrictions apply to the registered
+without authority, user information, queries, or fragments. Name a stored credential in the
+block instead. These restrictions apply to the registered
 package contract without changing the legacy `SyncConfig` runtime surface.
 
 The bundled `examples/` remain legacy filesystem `SyncConfig` inputs, not package
-declarations ready for registration. Before registration, replace credential-bearing values
-and placeholders with declared credential references. Convert non-secret settings and
+declarations ready for registration. Before registration, remove credential-bearing values
+and placeholders from `settings` and name a stored credential in each block. Convert non-secret settings and
 placeholders, such as ACI `url` and `verify`, to valid declared literal values or another
 mechanism supported by a future contract. Explicitly remove fields that legacy `SyncConfig`
 ignored, or deliberately model their behavior in a later contract version; do not silently
