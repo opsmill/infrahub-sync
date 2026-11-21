@@ -130,7 +130,12 @@ Every route outside the two worker routes answers `403 forbidden` to the worker 
 
 - `GET /runs/{run_id}` gains `credentials_used: [{"stage", "block", "name", "revision"}]`.
 - `POST /configs` and `POST /configs/{config_id}/versions` refuse a package that has a credential finding
-  with `422 configs-validation`. The `reason` field of the error names the finding:
+  with `422 configs-validation`. When a named stored credential does not exist or lacks a field, the
+  `details` field of the error holds `{"credentials": [{"block", "name", "code", "fields"}]}`, one entry
+  for each block that fails (`tests/product_store/test_credential_admission.py`). `fields` lists every
+  field the block needs for `credential-not-found`, and the fields the credential lacks for
+  `credential-field-missing`. The CLI prints one `credential` line for each entry (chunk 18, User
+  Story 3). The `reason` field of the error names the finding:
     - `credential-not-found` and `credential-field-missing`: tests of the registration cover both
       (`tests/product_store/test_credential_admission.py`).
     - `credential-not-used`: a block names a credential that its authentication method does not use.

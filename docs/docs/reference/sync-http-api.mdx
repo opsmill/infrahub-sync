@@ -373,7 +373,11 @@ route releases the values to that stage.
 - `POST /configs` and `POST /configs/{config_id}/versions` refuse a package with
   `422 configs-validation` when a block names a credential that does not exist
   (`credential-not-found`) or that lacks a field the block needs (`credential-field-missing`).
-  The `reason` field of the error names the code.
+  The `reason` field of the error names the code of the first such block. The `details` field
+  of the error holds `credentials`, a list with one entry for each such block: `block`
+  (`source` or `destination`), `name`, `code` and `fields`. `fields` lists every field the
+  block needs when the credential does not exist, and the fields the credential lacks
+  otherwise. No entry holds a value. An error with another reason has no `details` field.
 - The same two routes refuse a package that holds a `credentials` key, empty or not, or a
   `$credential` reference, with the reason `credential-format-removed`. The message names
   `credential: <name>`.

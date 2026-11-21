@@ -40,8 +40,8 @@ not, but applying it never removes those objects.
   new identity and empty state. Do not copy an older deployment's instance files, operator
   environment, or secrets, and do not point the new deployment at the old data.
 - **Register the configuration again.** A V2 `config.yml` is not a registered V3 version.
-  Convert it into a package with `configs convert`, supply the credential values on the
-  deployment, and register the package. See
+  Convert it into a package with `configs convert`, create the stored credentials that the
+  package names, and register the package. See
   [Move a V2 configuration to V3](#move-a-v2-configuration-to-v3).
 - **Delete any `store` block.** V3 keeps sync data in memory during a run and refuses
   configurations that declare a sync store, including Redis. If you already registered
@@ -138,10 +138,29 @@ hand in the same way.
    The report has these sections, in this order. A section with nothing to report is left out.
 
    - `Credentials`: for each block that uses authentication, the stored credential that the
-     package names, the fields it needs, and the command that creates it. Below it, each
-     credential setting, where V2 took its value from, and the field of the stored credential
-     that replaces it. The command never reads or prints a value. See
+     package names, the fields it needs in parentheses, and the command that creates it. Below
+     it, each credential setting, where V2 took its value from, and the field of the stored
+     credential that replaces it. The command never reads or prints a value. See
      [Manage stored credentials](./guides/credentials.mdx).
+
+     A stored credential holds either a `token`, or a `username` and a `password`. For a
+     source that uses a username and a password, such as Cisco ACI, the section names one
+     credential with both fields, and its command takes the username as an option. When
+     `config.yml` holds a credential value, the report says `a literal value in config.yml`
+     and adds a warning. It does not print the value, and the package does not hold it:
+
+     ```text
+     Credentials (create each stored credential before you register the package):
+       destination.credential       infrahub-token (token): infrahub-sync credentials create infrahub-token
+       destination.settings.token   a literal value in config.yml -> field token of infrahub-token
+       source.credential            aci-account (username, password): infrahub-sync credentials create aci-account --username <username>
+       source.settings.username     a literal value in config.yml -> field username of aci-account
+       source.settings.password     a literal value in config.yml -> field password of aci-account
+       warning: config.yml still holds a literal value for destination.settings.token; remove it once V3 works
+       warning: config.yml still holds a literal value for source.settings.username; remove it once V3 works
+       warning: config.yml still holds a literal value for source.settings.password; remove it once V3 works
+     ```
+
    - `Settings taken from the environment or the file`: each address, and each other setting
      that V2 read from an environment variable, with the value written and where it came from.
      A warning follows for a `localhost` or `127.0.0.1` address, and for an address taken from a
@@ -169,7 +188,35 @@ hand in the same way.
    ```
 
    An administrator runs the `credentials create` commands. Each one asks for the value and
-   does not echo it. No deployment restart is needed.
+   does not echo it. For a credential with a username and a password, replace `<username>`
+   with the username; the command then asks for the password:
+
+   ```bash
+   infrahub-sync credentials create aci-account --username <username>
+   ```
+
+   No deployment restart is needed.
+
+   When you register the package before a stored credential exists, the Sync API registers
+   nothing, and the command exits with status 1. It prints one `credential` line for each
+   credential that is missing, with the block that names it, the fields it needs and the
+   command that creates it:
+
+   ```text
+   error: configs-api
+   status: 422
+   code: configs-validation
+   family: validation
+   reason: credential-not-found
+   mutation_id: <none>
+   credential: source names netbox-token, which does not exist; it needs token; an administrator creates it with: infrahub-sync credentials create netbox-token
+   credential: destination names infrahub-token, which does not exist; it needs token; an administrator creates it with: infrahub-sync credentials create infrahub-token
+   ```
+
+   When a stored credential exists and does not hold a field that the block needs, the line
+   names the field and the command `infrahub-sync credentials set <name>`, and `reason` is
+   `credential-field-missing`. Create or change the credentials, then run
+   `infrahub-sync configs register package.yml` again.
 
    Then review the first plan before you apply it. When the Sync API requires approval, approve
    the plan with `infrahub-sync approve` before `apply`; `sync` is refused in that mode. See

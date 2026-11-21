@@ -84,7 +84,7 @@ apply, an approval or a resume run the same check and refuse with HTTP 422 and t
 
 | Code | What it means | Where it points |
 | ---- | ------------- | --------------- |
-| `credential-not-found` | No stored credential has the name. The message names the command `infrahub-sync credentials create <name>` and says that an administrator runs it. | `/configuration/<role>/credential` |
+| `credential-not-found` | No stored credential has the name. The message names the fields the credential needs and the command `infrahub-sync credentials create <name>`, and says that an administrator runs it. | `/configuration/<role>/credential` |
 | `credential-field-missing` | The stored credential lacks a field that the block's adapter and `auth_method` need. The message names the fields. | `/configuration/<role>/credential` |
 | `credential-method-unknown` | The block's `auth_method` is not one that its adapter accepts, so the fields it needs are not known. | `/configuration/<role>/credential` |
 
