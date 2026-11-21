@@ -1,0 +1,28 @@
+infrahub_sync/service/schedules.py
+  s_0f3e9b98ad49ab::t_a257f881cf7ed7 90-91,93-94,96-98
+docs/docs/orchestration.mdx
+  s_0f3e9b98ad49ab::t_a257f881cf7ed7 52-57
+docs/docs/reference/sync-http-api.mdx
+  s_0f3e9b98ad49ab::t_a257f881cf7ed7 1486,1522
+frontend/src/api/queries.test.ts
+  s_0f3e9b98ad49ab::t_db3831956bdadd 62-64,66-68
+  s_0f3e9b98ad49ab::t_73dd883c7ea67b 65
+frontend/src/api/queries.ts
+  s_0f3e9b98ad49ab::t_a257f881cf7ed7 788
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e49050ff21ba291a61a19b81416cb789eaa3b111",
+  "prompts": {},
+  "sessions": {
+    "s_0f3e9b98ad49ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "160719ec-2b7c-46e8-a304-b5a97feb7475",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
