@@ -47,8 +47,9 @@ export function ScheduleHistory({
   const history = useInfiniteQuery(scheduleEventsQuery(scheduleId, { includeAll }));
   const newest = useQuery({
     ...scheduleNewestEventsQuery(scheduleId, { includeAll }),
-    // The first page is the newest read; the polling starts once it is shown.
-    enabled: history.isSuccess,
+    // The first page is the newest read; the polling starts once it is shown, and goes on when a
+    // later read of the pages fails, since the pages read before stay shown.
+    enabled: history.data !== undefined,
   });
 
   const pages = useMemo(() => history.data?.pages.map((page) => page.items) ?? [], [history.data]);
