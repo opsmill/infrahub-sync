@@ -1,0 +1,21 @@
+tests/integration/test_isolated_worker_handoff_integration.py
+  s_58b527396c8cb5::t_e219eab014e7e1 52-53,178-181
+tests/configuration/test_validation_core.py
+  s_58b527396c8cb5::t_3195d611173f3a 1088-1113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5194d82679bb0f9a6a943a204086ce85979ea62",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
