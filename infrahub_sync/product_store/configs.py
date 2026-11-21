@@ -38,6 +38,7 @@ from infrahub_sync.configuration import (
     ValidationFinding,
     collect_findings,
     parse_configuration_package,
+    parse_stored_configuration_package,
     sort_findings,
 )
 from infrahub_sync.configuration.credential_admission import (
@@ -640,17 +641,21 @@ def _require_json_native_package(package: object) -> None:
         raise ConfigsRequestError(msg) from None
 
 
-def _parse(package: Mapping[str, Any], *, refuse_store: bool = True) -> ConfigurationPackage:
+def _parse(package: Mapping[str, Any], *, stored: bool = False) -> ConfigurationPackage:
     """Parse declared JSON-native content, requiring exactly that shape before anything else.
 
     Structural acceptance (:func:`_require_json_native_package`) runs first, so only a
     recursively exact JSON-native ``dict`` ever reaches ``parse_configuration_package`` —
     what the store persists is exactly what the shared parser validated, and a hostile or
     merely non-native value is refused as the caller's own input without being invoked.
+
+    ``stored`` is for the content of a registered version, read from the store: its ``store``
+    block is not refused here, and an empty ``credentials`` block, which the build before the
+    removal of that block wrote into every version, is ignored. New input is refused for both.
     """
     _require_json_native_package(package)
     configuration = package.get("configuration")
-    if refuse_store and isinstance(configuration, dict) and configuration.get("store") is not None:
+    if not stored and isinstance(configuration, dict) and configuration.get("store") is not None:
         raise ConfigsValidationError(
             UNSUPPORTED_STORE_MESSAGE,
             reason=UNSUPPORTED_STORE_REASON,
@@ -664,6 +669,8 @@ def _parse(package: Mapping[str, Any], *, refuse_store: bool = True) -> Configur
             ),
         )
     try:
+        if stored:
+            return parse_stored_configuration_package(dict(package)).package
         return parse_configuration_package(dict(package))
     except RemovedCredentialFormatError as exc:
         # The message of the parse error is fixed text; it names nothing of the package.
@@ -901,7 +908,7 @@ def validate(
     if stored is None:
         msg = f"configuration {config_id!r} has no registered version {registry_version} ({lookup.reason})"
         raise ConfigsNotFoundError(msg)
-    parsed = _parse(stored.declared_content, refuse_store=False)
+    parsed = _parse(stored.declared_content, stored=True)
     findings = sort_findings((*collect_findings(parsed, secrets), *_stored_credential_findings(parsed, projection)))
     fingerprint: str | None = None
     if destination_schema is not None:

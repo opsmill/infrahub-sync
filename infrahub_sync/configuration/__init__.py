@@ -21,6 +21,7 @@ from .models import (
     parse_configuration_package,
     sort_findings,
 )
+from .stored_package import StoredConfigurationPackage, parse_stored_configuration_package
 from .validation import collect_findings, validate_package_credentials
 
 __all__ = [
@@ -33,12 +34,14 @@ __all__ = [
     "ConfigurationValidator",
     "CredentialConfigurationError",
     "RemovedCredentialFormatError",
+    "StoredConfigurationPackage",
     "UnknownAdapterCapabilitiesError",
     "ValidationFinding",
     "WriteOperation",
     "collect_findings",
     "get_adapter_capabilities",
     "parse_configuration_package",
+    "parse_stored_configuration_package",
     "sort_findings",
     "validate_package_credentials",
 ]

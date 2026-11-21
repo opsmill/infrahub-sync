@@ -35,7 +35,7 @@ from infrahub_sync.configuration import (
     ConfigurationPackage,
     ConfigurationPackageParseError,
     RemovedCredentialFormatError,
-    parse_configuration_package,
+    parse_stored_configuration_package,
 )
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError, destination_token
 from infrahub_sync.configuration.credential_admission import (
@@ -882,7 +882,7 @@ def _destination_not_ready(
     if stored is None:
         return None
     try:
-        package = parse_configuration_package(stored.declared_content)
+        package = parse_stored_configuration_package(stored.declared_content).package
         branch = effective_destination_branch(package.configuration.destination.settings, None)
         if package.configuration.destination.credential is None:
             runtime_schema_worker.read_destination_schema_snapshot(package, branch)
@@ -924,7 +924,7 @@ def _schedule_package(projection: ProductProjection, schedule: ScheduleRecord) -
     if stored is None:
         cause = "configuration-version-not-found"
         raise EarlierProposedChangesUnreadableError(cause)
-    return parse_configuration_package(stored.declared_content)
+    return parse_stored_configuration_package(stored.declared_content).package
 
 
 def _destination_settings(projection: ProductProjection, schedule: ScheduleRecord) -> Mapping[str, Any]:
@@ -1047,7 +1047,7 @@ def _worker_execution_context(
     if registered is None:
         raise ValueError(_REGISTERED_VERSION_UNAVAILABLE)
     try:
-        package = parse_configuration_package(registered.declared_content)
+        package, stored_checksum = parse_stored_configuration_package(registered.declared_content)
     except RemovedCredentialFormatError:
         # A run that was queued before the removal of the `credentials` block (spec 027,
         # FR-021). The Sync API refuses its stored credentials with the same code; the worker
@@ -1058,7 +1058,7 @@ def _worker_execution_context(
         ) from None
     except ConfigurationPackageParseError:
         raise ValueError(_REGISTERED_VERSION_INVALID) from None
-    if registered.package_checksum != package_checksum or package.checksum() != package_checksum:
+    if registered.package_checksum != package_checksum or stored_checksum != package_checksum:
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
     # A saved-plan apply, a resume and a verify construct the destination only, so they
     # resolve no source credential (spec 016 FR-010: a resume never reads the source).

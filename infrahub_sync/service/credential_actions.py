@@ -52,7 +52,7 @@ import structlog
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from infrahub_sync.client.models import DEFAULT_LIMIT
-from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration import ConfigurationPackageParseError, parse_stored_configuration_package
 from infrahub_sync.configuration.capabilities import (
     DestinationSchemaReadError,
     UnknownCredentialMethodError,
@@ -584,7 +584,7 @@ class CredentialActions:
         if version is None:
             raise ServiceAPIError(500, "configuration-version-unavailable", _SCHEDULE_VERSION_UNAVAILABLE_MESSAGE)
         try:
-            package = parse_configuration_package(version.declared_content)
+            package = parse_stored_configuration_package(version.declared_content).package
         except ConfigurationPackageParseError as error:
             # The parse error can quote the declared content; the answer names the fact only.
             raise stored_version_refusal(error, _SCHEDULE_VERSION_UNAVAILABLE_MESSAGE) from None
@@ -652,7 +652,7 @@ class CredentialActions:
         if version is None:
             raise ServiceAPIError(500, "configuration-version-unavailable", _VERSION_UNAVAILABLE_MESSAGE)
         try:
-            package = parse_configuration_package(version.declared_content)
+            package = parse_stored_configuration_package(version.declared_content).package
         except ConfigurationPackageParseError as error:
             # The parse error can quote the declared content; the answer names the fact only.
             raise stored_version_refusal(error, _VERSION_UNAVAILABLE_MESSAGE) from None

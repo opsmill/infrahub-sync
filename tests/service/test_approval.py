@@ -23,7 +23,11 @@ from infrahub_sync.service.models import PlanOperationResource, PlanResource, Pl
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
-from tests.helpers.removed_credential_format import REMOVED_REFERENCE_NAME, store_in_removed_format
+from tests.helpers.removed_credential_format import (
+    REMOVED_REFERENCE_NAME,
+    store_as_the_earlier_build,
+    store_in_removed_format,
+)
 from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
@@ -230,6 +234,31 @@ def test_a_version_stored_in_the_removed_credential_format_cannot_be_approved(ap
     stored = projection.lookup_run(RUN_ID).value
     assert stored is not None
     assert stored.approval is None
+
+
+def test_a_version_stored_with_an_empty_credentials_block_is_approved_and_applied_by_its_stored_checksum(
+    api: _Api, tmp_path: Path
+) -> None:
+    """The earlier build wrote an empty block into every version; its saved plan stays usable (overnight log A3)."""
+    client, projection, orchestration, version = api
+    checksum = store_as_the_earlier_build(tmp_path.resolve(), version.config_id, version.registry_version)
+    earlier = projection.lookup_configuration_version(version.config_id, version.registry_version).value
+    assert earlier is not None
+    assert earlier.package_checksum == checksum != version.package_checksum
+    _stored_run(projection, earlier)
+
+    approved = _approve(client)
+    applied = client.post(
+        f"/runs/{RUN_ID}/apply",
+        headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "apply-key-1"},
+        json={"expected_checksum": CHECKSUM, "reason": "apply the reviewed plan", "confirm_writes": True},
+    )
+
+    assert approved.status_code == 200, approved.text
+    assert _outcomes(projection) == ["accepted"]
+    assert applied.status_code in {200, 202}, applied.text
+    assert applied.json()["run"]["package_checksum"] == checksum
+    assert [submission["package_checksum"] for submission in orchestration.submissions] == [checksum]
 
 
 def test_an_approval_and_its_accepted_event_carry_one_clock_reading(tmp_path: Path) -> None:

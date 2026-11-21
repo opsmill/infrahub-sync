@@ -38,7 +38,12 @@ from infrahub_sync.service.credential_client import (
 from infrahub_sync.service.schedule_admission import EarlierProposedChangesUnreadableError
 from infrahub_sync.service.settings import WORKER_API_URL_ENV, WORKER_TOKEN_ENV, CredentialSettingsError
 from tests.configuration.validation_packages import package_data
-from tests.helpers.removed_credential_format import REMOVED_REFERENCE_NAME, removed_format_content
+from tests.helpers.removed_credential_format import (
+    REMOVED_REFERENCE_NAME,
+    earlier_build_checksum,
+    earlier_build_content,
+    removed_format_content,
+)
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
@@ -243,6 +248,40 @@ def test_a_stage_of_a_version_stored_in_the_removed_format_fails_with_that_cause
 
     assert (refused.value.reason, refused.value.code) == ("credential-format-removed", "credential-format-removed")
     assert REMOVED_REFERENCE_NAME not in str(refused.value)
+
+
+@pytest.mark.parametrize("stage", ["plan", "sync", "apply", "resume", "verify"])
+def test_a_stage_of_a_version_stored_with_an_empty_credentials_block_runs_with_the_stored_checksum(
+    monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """The earlier build wrote an empty block into every version; the worker reads it (overnight log A3)."""
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "worker-variable-infrahub-value-0001")
+    monkeypatch.setenv("NETBOX_TOKEN", "worker-variable-netbox-value-0001")
+    _refuse_requests(monkeypatch)
+    package = _package(blocks=())
+    projection = _Projection(package)
+    declared = package.declared_content()
+    projection.binding = (projection.binding[0], projection.binding[1], earlier_build_checksum(declared))
+    monkeypatch.setattr(
+        projection,
+        "lookup_configuration_version",
+        lambda config_id, registry_version: LookupResult(
+            value=ConfigurationVersion(
+                config_id=config_id,
+                registry_version=registry_version,
+                package_checksum=projection.binding[2],
+                declared_content=earlier_build_content(declared),
+                created_at=datetime.now(timezone.utc),
+            )
+        ),
+    )
+    credentials = service_flow._RunCredentials("run-stored-credentials", "flow-run-1")
+
+    instance = _resolve(projection, stage, credentials)
+
+    # No value is requested from the Sync API, and no variable of the worker fills a setting.
+    assert "token" not in instance.source.settings
+    assert "token" not in instance.destination.settings
 
 
 @pytest.mark.parametrize("stage", ["apply", "resume", "verify"])

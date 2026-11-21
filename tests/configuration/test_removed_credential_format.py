@@ -22,13 +22,17 @@ from infrahub_sync.configuration import (
     ConfigurationPackage,
     ConfigurationPackageParseError,
     parse_configuration_package,
+    parse_stored_configuration_package,
 )
 from infrahub_sync.configuration.models import RemovedCredentialFormatError
-from tests.configuration.validation_packages import credential_package_data
+from tests.configuration.validation_packages import credential_package_data, package, package_data
 from tests.helpers.removed_credential_format import (
     REMOVED_IDENTIFIER,
     REMOVED_REFERENCE_NAME,
+    earlier_build_checksum,
+    earlier_build_content,
     removed_format_content,
+    store_as_the_earlier_build,
     store_in_removed_format,
 )
 
@@ -145,6 +149,55 @@ def test_a_setting_value_that_only_looks_like_a_reference_name_is_not_the_remove
     package = parse_configuration_package(copy.deepcopy(data))
 
     assert package.configuration.source.settings is not None
+
+
+# ----------------------------------------------------------------------
+# Reading a stored version: an empty `credentials` block is ignored
+# ----------------------------------------------------------------------
+
+
+def test_a_stored_version_with_an_empty_credentials_block_is_read_and_keeps_its_checksum() -> None:
+    """The build before the removal wrote ``"credentials": {}`` into every version (overnight log A3)."""
+    declared = package().declared_content()
+
+    stored = parse_stored_configuration_package(earlier_build_content(declared))
+
+    assert stored.package == package()
+    assert stored.checksum == earlier_build_checksum(declared)
+    assert stored.checksum != stored.package.checksum()
+
+
+def test_a_stored_version_without_a_credentials_block_keeps_the_checksum_of_its_package() -> None:
+    declared = credential_package_data()
+
+    stored = parse_stored_configuration_package(declared)
+
+    assert stored.checksum == stored.package.checksum() == parse_configuration_package(declared).checksum()
+
+
+STORED_VERSIONS_STILL_REFUSED = {
+    **{case: build for case, build in REMOVED_FORMAT_PACKAGES.items() if case != "empty-credentials-block"},
+    "empty-block-and-a-reference": lambda: {**_with_reference_in_settings(), "credentials": {}},
+    "null-credentials-block": lambda: _with_credentials_block(None),  # ty: ignore[invalid-argument-type] - TODO: content that no build wrote.
+    "list-as-credentials-block": lambda: _with_credentials_block([]),  # ty: ignore[invalid-argument-type] - TODO: content that no build wrote.
+}
+
+
+@pytest.mark.parametrize("case", sorted(STORED_VERSIONS_STILL_REFUSED))
+def test_a_stored_version_that_uses_the_removed_format_is_still_refused(case: str) -> None:
+    with pytest.raises(RemovedCredentialFormatError) as refused:
+        parse_stored_configuration_package(STORED_VERSIONS_STILL_REFUSED[case]())
+
+    assert NAMES_THE_NEW_FORMAT in str(refused.value)
+    assert REFERENCE_NAME not in str(refused.value)
+    assert IDENTIFIER not in str(refused.value)
+
+
+def test_a_stored_version_that_is_not_a_package_is_refused_as_any_other_content() -> None:
+    with pytest.raises(ConfigurationPackageParseError) as refused:
+        parse_stored_configuration_package({"credentials": {}, "format_version": 1})
+
+    assert not isinstance(refused.value, RemovedCredentialFormatError)
 
 
 # ----------------------------------------------------------------------
@@ -334,3 +387,115 @@ def test_a_scheduled_start_of_a_version_stored_in_the_removed_format_is_refused(
     refused = schedule_admission._runnable_version(stored.api.store, schedule)  # ty: ignore[invalid-argument-type] - TODO: a stand-in for the schedule record; the function reads three attributes.
 
     assert refused == FORMAT_REMOVED
+
+
+READ_ROUTES = [
+    "/configs",
+    "/configs/{config_id}",
+    "/configs/{config_id}/versions",
+    "/configs/{config_id}/versions/{registry_version}",
+    "/runs",
+    "/runs?config_id={config_id}",
+    "/runs/{run_id}",
+    "/runs/{run_id}/results",
+    "/runs/{run_id}/artifacts",
+    "/runs/{run_id}/artifacts/{artifact_id}",
+    "/runs/{run_id}/logs",
+]
+
+
+@pytest.mark.parametrize("route", READ_ROUTES)
+def test_the_history_of_a_version_stored_in_the_removed_format_stays_visible(
+    stored: _StoredOldVersion, route: str
+) -> None:
+    """A refused version keeps its runs, their results and their artifacts (overnight log A3)."""
+    from tests.service.account_api import ADMIN_TOKEN, bearer
+
+    accepted = stored.start("plan")
+    assert accepted.status_code in {200, 201, 202}, accepted.json()["error"]["code"]
+    run_id = accepted.json()["run"]["run_id"]
+    stored.api.store.publish_artifact(
+        run_id, artifact_id="history-marker", kind="report", media_type="application/json", data=b"{}"
+    )
+    stored.rewrite_to_the_removed_format()
+
+    response = stored.api.client.get(
+        route.format(run_id=run_id, artifact_id="history-marker", **stored.version), headers=bearer(ADMIN_TOKEN)
+    )
+
+    assert response.status_code == 200, response.text[:200]
+    if route.endswith("{registry_version}"):
+        # The stored content is shown as it is; only a run of it is refused.
+        assert "credentials" in response.json()["declared_content"]
+
+
+# ----------------------------------------------------------------------
+# A version that the earlier build stored with an empty `credentials` block
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def earlier(stored: _StoredOldVersion, tmp_path: Path) -> tuple[_StoredOldVersion, str]:
+    """A second configuration that names no stored credential, stored as the earlier build stored it."""
+    from tests.service.account_api import ADMIN_TOKEN, bearer
+
+    data = package_data()
+    data["configuration"]["name"] = "stored-by-the-earlier-build"
+    registered = stored.api.client.post(
+        "/configs",
+        headers={**bearer(ADMIN_TOKEN), "Idempotency-Key": "register-with-the-earlier-build"},
+        json={"package": data, "reason": "register"},
+    )
+    assert registered.status_code == 201, registered.json()["error"]["code"]
+    stored.version = registered.json()["version"]
+    checksum = store_as_the_earlier_build(tmp_path, stored.version["config_id"], stored.version["registry_version"])
+    assert checksum != stored.version["package_checksum"]
+    return stored, checksum
+
+
+@pytest.mark.parametrize("operation", ["plan", "sync"])
+def test_a_run_of_a_version_stored_with_an_empty_credentials_block_starts_with_the_stored_checksum(
+    earlier: tuple[_StoredOldVersion, str], operation: str
+) -> None:
+    version, checksum = earlier
+
+    response = version.start(operation)
+
+    assert response.status_code in {200, 201, 202}, response.json()["error"]["code"]
+    assert response.json()["run"]["package_checksum"] == checksum
+
+
+def test_the_validation_of_a_version_stored_with_an_empty_credentials_block_answers_its_report(
+    earlier: tuple[_StoredOldVersion, str],
+) -> None:
+    from tests.service.account_api import ADMIN_TOKEN, bearer
+
+    version, checksum = earlier
+
+    response = version.api.client.post(
+        f"/configs/{version.version['config_id']}/versions/{version.version['registry_version']}/validate",
+        headers=bearer(ADMIN_TOKEN),
+    )
+
+    assert response.status_code == 200, response.json()["error"]["code"]
+    assert response.json()["package_checksum"] == checksum
+
+
+def test_a_scheduled_start_of_a_version_stored_with_an_empty_credentials_block_is_admitted(
+    earlier: tuple[_StoredOldVersion, str],
+) -> None:
+    from types import SimpleNamespace
+
+    from infrahub_sync.service import schedule_admission
+
+    version, checksum = earlier
+    schedule = SimpleNamespace(
+        config_id=version.version["config_id"],
+        registry_version=version.version["registry_version"],
+        write_target="direct",
+    )
+
+    runnable = schedule_admission._runnable_version(version.api.store, schedule)  # ty: ignore[invalid-argument-type] - TODO: a stand-in for the schedule record; the function reads three attributes.
+
+    assert not isinstance(runnable, str), runnable
+    assert runnable[0] == checksum

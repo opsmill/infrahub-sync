@@ -25,7 +25,7 @@ from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResourc
 from infrahub_sync.configuration import (
     ConfigurationPackageParseError,
     RemovedCredentialFormatError,
-    parse_configuration_package,
+    parse_stored_configuration_package,
 )
 from infrahub_sync.configuration.credential_admission import (
     CREDENTIAL_BLOCKS,
@@ -565,7 +565,7 @@ class RunService:
                 404, "configuration-version-not-found", "the requested configuration version does not exist"
             )
         try:
-            package = parse_configuration_package(stored.declared_content)
+            package, stored_checksum = parse_stored_configuration_package(stored.declared_content)
         except RemovedCredentialFormatError:
             # Stored before the removal of the `credentials` block (spec 027, FR-021): no run of
             # it can start. The message is fixed text and names nothing of the stored content.
@@ -574,7 +574,7 @@ class RunService:
             raise self._error(
                 503, "configuration-version-invalid", "the registered configuration version is invalid"
             ) from None
-        if package.checksum() != stored.package_checksum or (
+        if stored_checksum != stored.package_checksum or (
             expected_checksum is not None and expected_checksum != stored.package_checksum
         ):
             raise self._error(503, "configuration-version-invalid", "the registered configuration version is invalid")
@@ -1068,7 +1068,7 @@ class RunService:
         if stored is None:
             return
         try:
-            package = parse_configuration_package(stored.declared_content)
+            package = parse_stored_configuration_package(stored.declared_content).package
         except RemovedCredentialFormatError:
             self._audit(
                 run.run_id,
