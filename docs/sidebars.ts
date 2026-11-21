@@ -36,6 +36,7 @@ const sidebars: SidebarsConfig = {
         'orchestration',
         'custom-certificates',
         'guides/accounts',
+        'guides/credentials',
       ],
     },
     {
