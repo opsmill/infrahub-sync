@@ -148,3 +148,72 @@ export const setAccountPassword = (name: string, newPassword: string, reason: st
       body: { new_password: newPassword, reason: optional(reason) },
     })
   );
+
+/* ---------- stored credentials ---------- */
+
+/** After a change to a credential, the list of credentials is read again. */
+export function useInvalidateCredentials() {
+  return useInvalidate();
+}
+
+/** `PATCH /credentials/{name}`, for an administrator. The revision of the credential stays. */
+export function useDescribeCredential() {
+  const invalidate = useInvalidate();
+  return $api.useMutation("patch", "/credentials/{name}", { onSettled: invalidate });
+}
+
+/**
+ * `DELETE /credentials/{name}`, for an administrator. It cannot be reversed. The Sync API answers
+ * `409 credential-in-use` while a configuration or a schedule names the credential;
+ * `credentialInUse` reads which ones from that error.
+ */
+export function useDeleteCredential() {
+  const invalidate = useInvalidate();
+  return $api.useMutation("delete", "/credentials/{name}", { onSettled: invalidate });
+}
+
+/**
+ * The fields of a credential value. The Sync API accepts three sets: a token; a username and a
+ * password; a username and a token. A field that is left out is not sent.
+ */
+export interface CredentialFields {
+  username?: string;
+  password?: string;
+  token?: string;
+}
+
+/*
+ * The two requests below carry a credential value, so they call the fetch client directly, as
+ * the requests that carry a password do. The caller clears its form after any answer, and
+ * invalidates the list with `useInvalidateCredentials`.
+ */
+
+/** `POST /credentials`, for an administrator. The answer holds the names of the fields, no value. */
+export const createCredential = (
+  name: string,
+  description: string,
+  fields: CredentialFields,
+  idempotencyKey: string
+) =>
+  sendSecret(() =>
+    fetchClient.POST("/credentials", {
+      params: { header: { "Idempotency-Key": idempotencyKey } },
+      body: { name: name.trim(), description: description.trim(), ...fields },
+    })
+  );
+
+/**
+ * `PUT /credentials/{name}/value`, for an administrator. The fields replace the whole stored set,
+ * and the revision of the credential goes up by one.
+ */
+export const setCredentialValue = (
+  name: string,
+  fields: CredentialFields,
+  idempotencyKey: string
+) =>
+  sendSecret(() =>
+    fetchClient.PUT("/credentials/{name}/value", {
+      params: { path: { name }, header: { "Idempotency-Key": idempotencyKey } },
+      body: fields,
+    })
+  );
