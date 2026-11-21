@@ -1,0 +1,39 @@
+tests/runtime_schema/test_registered_source_declaration.py
+  s_58b527396c8cb5::t_e09c3629f26436 16,39
+tests/runtime_schema/test_worker_path.py
+  s_58b527396c8cb5::t_1561b631b293ad 18
+  s_58b527396c8cb5::t_d905a9a63a24c7 34,49,84,114-117,119-129,156,207,241,333,353,461-462
+tests/plan/test_report_credentials_absent.py
+  s_58b527396c8cb5::t_28f9c8922b588e 7-10,70-71,73-74,109
+tests/runtime_schema/test_stored_credential_execution.py
+  s_58b527396c8cb5::t_c1bf78614c5dde 54,105
+tests/runtime_schema/test_dotted_provenance.py
+  s_58b527396c8cb5::t_e09c3629f26436 186,197-199,205
+tests/adapters/test_aci_verify_precedence.py
+  s_58b527396c8cb5::t_1940f2152ceecf 118-119,126-128
+tests/runtime_schema/test_registered_execution.py
+  s_58b527396c8cb5::t_c1bf78614c5dde 33,227,234,311,324
+  s_58b527396c8cb5::t_e70223ffc0c2c8 44-45
+tests/runtime_schema/test_entry_point_resolution.py
+  s_58b527396c8cb5::t_e09c3629f26436 240,253-255,261
+tests/runtime_schema/test_destination_branch_missing.py
+  s_58b527396c8cb5::t_e09c3629f26436 16,31-32,36,54
+dev/specs/027-stored-credentials/tasks.md
+  s_58b527396c8cb5::t_63285b0b3a784c 122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a1e5bb4d0b530a30e775711bda5cef12c7b51132",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
