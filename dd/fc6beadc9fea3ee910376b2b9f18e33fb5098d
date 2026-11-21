@@ -1,0 +1,121 @@
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_caab93ebf0934a::t_ab2aa3e6796248 43,45-47,49-50
+docs/docs/operations/day-2-operations.mdx
+  s_caab93ebf0934a::t_3ebdc5b9847704 87-95
+docs/docs/orchestration.mdx
+  s_caab93ebf0934a::t_8e16cdab8d9e08 472-481
+docs/docs/quickstart-compose.mdx
+  s_caab93ebf0934a::t_cfc13401890954 57
+docs/docs/reference/config.mdx
+  s_caab93ebf0934a::t_b1cafd5f3c4eb7 97-98,107-109
+docs/docs/reference/prefect-remote-run.mdx
+  s_caab93ebf0934a::t_87d30163d8bce5 76-78
+docs/docs/reference/schema-mapping.mdx
+  s_caab93ebf0934a::t_3ea6b4f2b4cc4d 461
+examples/prefect_remote_run/README.md
+  s_caab93ebf0934a::t_6a4b42e069678f 184-187
+examples/prefect_remote_run/requests/README.md
+  s_caab93ebf0934a::t_6d9ae1f1255076 47-48
+README.md
+  s_0a9f0b6318b368::t_e2b761062e3eae 118-123,145-149,160-162
+docs/docs/adapters/aci.mdx
+  s_cc98ee6fff0697::t_e459ffcf8dc887 11,29,37,44,49-61,64
+docs/docs/adapters/choosing-an-adapter.mdx
+  s_cc98ee6fff0697::t_0d3a01de4eff13 40,42
+docs/docs/adapters/device42.mdx
+  s_cc98ee6fff0697::t_3495e70ab2c615 29,37,45,50-57
+docs/docs/adapters/genericrestapi.mdx
+  s_cc98ee6fff0697::t_09b8e4f6633177 11,27,35,42,58-74,101,162
+docs/docs/adapters/infrahub.mdx
+  s_cc98ee6fff0697::t_64d9112d76b04b 41,46,70,76,107,197,300
+docs/docs/adapters/ipfabric.mdx
+  s_cc98ee6fff0697::t_bd4d0e6e754e9e 11,69,77,83,88-99
+docs/docs/adapters/librenms.mdx
+  s_cc98ee6fff0697::t_1212bee02a374c 31,39,46,51-58
+docs/docs/adapters/nautobot.mdx
+  s_cc98ee6fff0697::t_c0509f45e8e3ad 79,87,94,99-110
+docs/docs/adapters/netbox.mdx
+  s_0a9f0b6318b368::t_5cda4fd8f1ddd7 35,43,49,54-65,71
+docs/docs/adapters/observium.mdx
+  s_cc98ee6fff0697::t_a1562c85381e25 31,39,46,51-58
+docs/docs/adapters/peering-manager.mdx
+  s_0a9f0b6318b368::t_3ed30ef046f136 11,58,66,73,78-89
+docs/docs/adapters/peeringdb.mdx
+  s_cc98ee6fff0697::t_668e1b4d7eda32 30,38,46,51-60
+docs/docs/adapters/prometheus.mdx
+  s_cc98ee6fff0697::t_2460d0a92cec9c 126-131,315-318
+docs/docs/adapters/slurpit.mdx
+  s_cc98ee6fff0697::t_e236b3be398ae1 11,68,79-81,90,96,100-103,105-107,110-115,118-120
+docs/docs/compose-deployment.mdx
+  s_0a9f0b6318b368::t_62b20f6f45b910 112-114,297-298,301-311,314-315,317-320,322-385,390,396,401-402,412-415,427,877-878,883-884,895-896,1012-1015,1025-1028
+docs/docs/configuration-package.mdx
+  s_0a9f0b6318b368::t_4ad92d32a79708 15,21-22,31-32,42-43,48-49,51-56,59-94,99-101,140-142,155-156,193-196,204-207
+docs/docs/creating-a-sync-project.mdx
+  s_0a9f0b6318b368::t_581f7e1060731e 29,35,65,79-80,86-104
+docs/docs/development-stack.mdx
+  s_0a9f0b6318b368::t_4764457bb66296 9-13,87-90,147-149,305-327,337,341-342,366-367,525-528,531-532,541-542
+docs/docs/guides/accounts.mdx
+  s_0a9f0b6318b368::t_1ade7b6edbdc74 40-53,410-411
+docs/docs/kubernetes-deployment.mdx
+  s_0a9f0b6318b368::t_6e5b7ef22db68e 91-121,166,182,385-391
+docs/docs/reference/durable-product-records.mdx
+  s_0a9f0b6318b368::t_3664ec634a8411 34,51-54,64,67,74-90,124,342-388,547-548
+docs/docs/reference/sync-http-api.mdx
+  s_0a9f0b6318b368::t_7e29bb5a0196a4 203-324,409-414,470-476,724,786-790
+docs/docs/running-a-sync.mdx
+  s_0a9f0b6318b368::t_15cd10eb806526 72-82,99-101,114-116
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_5a765fcbb09b15::t_d8dbe36758ac7c 48-49,65-68,70-71,79-81,133-134,140-141,154-155,175-176,182,188,226-227,236,238,260-273,353-354
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_0a9f0b6318b368::t_21003b085665a0 159-160,163,174-175,178,195-199,209-224,226,254-256,480,482-486,489-490,494-499
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_5a765fcbb09b15::t_1bb6916d1ee2a8 44-45,54-57,59-60,68-70,122-123,129-130,143-144,167-169,175,180,213-214,237,239,261-274,354-355
+docs/docs/tutorials/try-the-netbox-demo.mdx
+  s_0a9f0b6318b368::t_2e667fd0fe5f7a 118-128
+docs/docs/use-with-an-ai-agent.mdx
+  s_5a765fcbb09b15::t_b56f23ba772d5a 98,122-124,146,156,161-162
+docs/docs/v2-to-v3.mdx
+  s_0a9f0b6318b368::t_79d473accd5be5 23,122-126,140-144,166-167,171-173,213,215-218,229-236,248
+tests/cli/test_parity_and_closure.py
+  s_0a9f0b6318b368::t_a4462f1ab4fd01 431-433,436-438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddfc6beadc9fea3ee910376b2b9f18e33fb5098d",
+  "prompts": {},
+  "sessions": {
+    "s_0a9f0b6318b368": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac6b42be7674a2a53",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_5a765fcbb09b15": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5c7d58b10f8698db",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_caab93ebf0934a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4133c4fb-4b37-4ec9-b6b3-5b90ff874126",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cc98ee6fff0697": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a605f718d6baf8a70",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
