@@ -109,6 +109,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - `infrahub-sync password` — change the password of your own account; your other sessions end and your API tokens stay.
 - `infrahub-sync tokens list` / `create` / `delete` — manage the API tokens of your own account; `create` prints the value once, and a deleted token is refused afterwards.
 - `infrahub-sync accounts` — manage local accounts (`list`, `create`, `set-password`, `unlock`, `disable`, `enable`, `set-level`, `delete`, `tokens`, `delete-token`); every command needs an administrator, and the `admin` account defined by the environment cannot be changed, except by `accounts unlock`. `accounts delete` cannot be reversed (human approval required).
+- `infrahub-sync credentials` — list and view stored credentials (`list`, `show`; safe), and create or change one (`create`, `set`, `describe`); creating and changing need an administrator, the value is read from a prompt or from `--token-stdin` / `--password-stdin`, and no command prints a value.
 - `infrahub-sync plan` — create a plan run and review its summary (Sync API required). `diff` is a hidden, deprecated alias.
 - `infrahub-sync verify` — run every pre-write check of `apply` against the destination without writing; needs to reach the destination and does not approve the plan (Sync API required).
 - `infrahub-sync approve` — record approval of a run's saved plan by checksum without writing, for a planned run or an interrupted run that can be resumed; required before `apply` or `runs resume` only when the Sync API sets `INFRAHUB_SYNC_REQUIRE_APPROVAL` (Sync API and human approval required).
@@ -123,7 +124,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - `order` overrides the sync sequence of object types; when omitted, infrahub-sync computes
   a write order from schema references instead.
 - Defaults often target `localhost`; adjust for real deployments.
-- Credentials must come from environment variables or a secret manager. Never commit, print, or log secrets. Keep example configs authentic but sanitized.
+- Credentials must come from environment variables, a secret manager, or the stored credentials of the Sync API. A configuration package names a stored credential in each adapter block with `credential: <name>` and never holds a value; the Sync API stores the value encrypted and releases it only to the `worker` account, for a run in progress. Never commit, print, or log secrets. Keep example configs authentic but sanitized.
 
 ## Code Standards
 

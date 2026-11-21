@@ -104,8 +104,12 @@ before a sync hits production.
 
 Security is enforced at the boundary, and secrets never leak.
 
-- Credentials MUST come from environment variables or a secret manager — never committed,
-  printed, or logged.
+- Credentials MUST come from environment variables, a secret manager, or the stored credentials
+  of the Sync API — never committed, printed, or logged.
+- The Sync API MAY store the credentials of sources and destinations in its database. Each value
+  MUST be encrypted with a key that only the Sync API holds. The Sync API MUST release a value
+  only through the worker route that releases the values of a run in progress, and only to the
+  `worker` account. No other response, CLI output, web page, log or record MAY contain a value.
 - One exception: Sync MAY display the value of an API token once, to the account that created
   it, in the answer to its creation, and nowhere else.
 - Never print or guess secrets; tracebacks and structured logs MUST NOT contain credentials.
@@ -138,8 +142,9 @@ reversible.
 
 #### Security requirements
 
-- Credentials only via environment variables or a secret manager; no secrets in code, logs,
-  tracebacks, or example configurations.
+- Credentials only via environment variables, a secret manager, or the stored credentials of the
+  Sync API, which are encrypted in the Sync database and released only through the worker route;
+  no secrets in code, logs, tracebacks, or example configurations.
 - Default to read-only; the mutating `sync` and `apply` commands require explicit approval and
   confirmed targets.
 - Handle authentication failures (401/403) and authorization boundaries explicitly.
@@ -213,4 +218,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.2.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-18
+**Version**: 1.3.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-21
