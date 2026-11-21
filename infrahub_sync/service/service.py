@@ -76,6 +76,7 @@ from .models import (
     ArtifactListResource,
     CancelRunRequest,
     CreateRunRequest,
+    CredentialUsedResource,
     EmittedArtifactListResource,
     EmittedPlanResource,
     EventPage,
@@ -2238,6 +2239,13 @@ class RunService:
             orchestration=tuple(orchestration),
             apply_progress=apply_progress_view(run, operations),
             resumes=run_resumes(run, lambda link: self._resume_receipt(run, link, pending), operations),
+            # The recorded name and revision of each release, never a value (spec 027, FR-003).
+            credentials_used=tuple(
+                CredentialUsedResource(
+                    stage=use.stage, block=use.block, name=use.credential_name, revision=use.revision
+                )
+                for use in self._projection.credential_uses(run.run_id)
+            ),
         )
 
     def _event(

@@ -221,7 +221,8 @@ Four service modules carry the stored credentials
 - `credential_actions.py` holds the requests, the answers, the permission check
   (`manage-credentials`), the audit events and the two worker actions. `release` checks that a
   worker claimed the execution and that it has not ended, then decrypts and writes the
-  `run_credential_uses` rows. `proposed_change_states` reads Infrahub with the destination
+  `run_credential_uses` rows. `RunService` in `service.py` reads those rows into
+  `credentials_used` of each run resource it builds. `proposed_change_states` reads Infrahub with the destination
   credential of a schedule's stored version and returns the states only.
 - `credential_crypto.py` holds `CredentialCipher`: AES-256-GCM with the key of
   `INFRAHUB_SYNC_ENCRYPTION_KEY`, the key identifier stored with each revision, and the keyed

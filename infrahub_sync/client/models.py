@@ -675,17 +675,35 @@ class ResumeResource(_ResourceModel):
         return checked
 
 
+class CredentialUsedResource(_ResourceModel):
+    """The stored credential that one stage of a run received for one block: its name and revision, never a value.
+
+    `stage` is `plan`, `verify`, `apply`, `sync` or `resume`, and `block` is `source` or
+    `destination`. Both are plain strings so the client still reads a value a newer server adds.
+    The name and the revision are the ones recorded when the stage received the values, so they
+    stay after the credential is changed or deleted.
+    """
+
+    stage: str
+    block: str
+    name: str
+    revision: int = Field(ge=1)
+
+
 class RunResource(_ResourceModel):
     """Combine a public run record with its orchestration history.
 
     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
-    predates spec 016; `resumes` is then empty.
+    predates spec 016; `resumes` is then empty. `credentials_used` holds one entry for each
+    block whose stored credential values a stage execution received, oldest first; it is empty
+    for a run whose stages received none, and for a Sync API that predates spec 027.
     """
 
     run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
     apply_progress: ApplyProgressResource | None = None
     resumes: tuple[ResumeResource, ...] = ()
+    credentials_used: tuple[CredentialUsedResource, ...] = ()
 
 
 class ApprovedPlanSummaryResource(_ResourceModel):

@@ -364,8 +364,9 @@ Four tables hold stored credentials and their use. No column holds a value in cl
   that starts later on the same database adds its check back.
 - **The `worker_environments` table.** No code reads or writes it. A database that an earlier
   build created keeps the table, unused.
-- **Run details.** The run routes do not return the rows of `run_credential_uses` in this
-  build.
+- **Run details.** `GET /runs/{run_id}` returns the rows of `run_credential_uses` under
+  `credentials_used`, with the stage, the block, the credential name and the revision of each
+  row. It does not return the credential identifier, the flow run or the time of the release.
 
 ### Versions in the removed credential format
 

@@ -303,6 +303,36 @@ its run exists, so no value can be released for it. The Sync API reads Infrahub 
 - The route writes no audit event. Each read of Infrahub writes one log line with the schedule,
   the credential name and its revision.
 
+### Credentials that a run used
+
+`GET /runs/{run_id}` returns `credentials_used`: one entry for each block whose stored
+credential values a stage of the run received. The Sync API writes an entry when the worker
+route releases the values to that stage.
+
+```json
+"credentials_used": [
+  {"stage": "plan", "block": "destination", "name": "infrahub-token", "revision": 3},
+  {"stage": "plan", "block": "source", "name": "netbox-token", "revision": 1},
+  {"stage": "apply", "block": "destination", "name": "infrahub-token", "revision": 4}
+]
+```
+
+- `stage` is `plan`, `verify`, `apply`, `sync` or `resume`. `block` is `source` or
+  `destination`.
+- `name` and `revision` are the ones recorded at the release. A later change of the value or a
+  deletion of the credential does not change an entry, so a plan and its apply can hold two
+  revisions of one credential.
+- The entries are ordered by the time of the release, oldest first. When a worker asks again
+  for the same stage execution, the new entry replaces the earlier one for that execution and
+  block.
+- The list is empty for a run whose stages received no stored credential: a run of a package
+  that names none, a run whose stage has not started, or a run of a version in the removed
+  format.
+- No entry holds a value.
+- Every other route that answers a run with its orchestration entries returns the same field.
+  An answer that the Sync API replays for a repeated `Idempotency-Key` holds the list as it was
+  at the first answer. `GET /runs` does not return the field.
+
 ### Checks of stored credentials on the other routes
 
 - `POST /configs` and `POST /configs/{config_id}/versions` refuse a package with
