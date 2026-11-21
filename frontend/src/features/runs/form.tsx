@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, useId, useLayoutEffect, useRef } from "react";
 import { cn } from "tailwind-variants";
 
-import { describeError } from "#/api/queries";
+import { type DescribedError, describeError } from "#/api/queries";
 import { FOCUS, Notice } from "#/components/page";
 
 export const INPUT =
@@ -81,18 +81,23 @@ export function ReasonField({
   );
 }
 
-/** The Sync API's refusal, next to the button that sent the request. */
+/**
+ * The Sync API's refusal, next to the button that sent the request. `describe` puts the refusal
+ * in words; the schedule dialogs pass `describeScheduleError`.
+ */
 export function MutationError({
   error,
   currentRunId,
   retryHint,
+  describe = describeError,
 }: {
   error: unknown;
   currentRunId?: string;
   retryHint?: ReactNode;
+  describe?: (error: unknown) => DescribedError;
 }) {
   if (!error) return null;
-  const d = describeError(error);
+  const d = describe(error);
   const detail =
     d.kind === "no-answer" && retryHint
       ? retryHint

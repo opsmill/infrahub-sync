@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -44,7 +45,8 @@ def test_independent_service_projections_share_configurations_runs_and_artifacts
     settings = _settings_or_skip()
     api_projection = service_product_projection(environ=settings)
     worker_projection = service_product_projection(environ=settings)
-    version = api_projection.create_configuration(package())
+    # A name is unique among configurations, and the PostgreSQL store outlives one test.
+    version = api_projection.create_configuration(package(name=f"service-storage-{uuid4().hex}"))
     run_id = f"service-storage-integration-{version.config_id}"
     expected_run = ProductRun(
         run_id=run_id,
@@ -74,7 +76,7 @@ def test_independent_service_projections_share_configurations_runs_and_artifacts
 
 def _publish_bundle_run(projection: ProductProjection, run_id: str, data: bytes) -> None:
     """Create one run carrying a public review artifact and one internal plan bundle."""
-    version = projection.create_configuration(package())
+    version = projection.create_configuration(package(name=f"service-storage-{uuid4().hex}"))
     projection.create_run(
         ProductRun(
             run_id=run_id,

@@ -11,6 +11,7 @@ import { CopyButton, FOCUS, Notice, SectionHeading } from "#/components/page";
 import { BranchBadge, When } from "#/components/run-status";
 import { PLAN_ARTIFACT_ID } from "#/domain/run-steps";
 import type { System } from "#/domain/systems";
+import { RunScheduleLine } from "#/features/schedules/ScheduleLine";
 import { formatAbsolute, formatDuration } from "#/lib/time";
 
 export { PLAN_ARTIFACT_ID };
@@ -252,6 +253,7 @@ export function Details({
   // Older records name no account; the row is then left out.
   if (run.actor)
     rows.push(["Started by", <span className="[overflow-wrap:anywhere]">{run.actor}</span>]);
+  if (run.trigger_type === "scheduled") rows.push(["Schedule", <RunScheduleLine run={run} />]);
   if (run.approval) {
     rows.push([
       "Plan approved by",

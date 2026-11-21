@@ -286,6 +286,48 @@ def test_configs_register_reads_one_package_and_preserves_identity(client: Magic
     assert "idempotency_key: retry-register" in result.output
 
 
+_NAME_IN_USE_MESSAGE = (
+    "message: A configuration named 'from-netbox' already exists (20261120T1249-9d57f620). Did you mean to add "
+    "a new version of it? Register the package as a new version of that configuration."
+)
+
+
+def _name_in_use() -> APIError:
+    return APIError(
+        409,
+        "configuration-name-in-use",
+        details={"config_id": "20261120T1249-9d57f620", "name": "from-netbox"},
+    )
+
+
+def test_configs_register_refused_for_a_name_in_use_prints_the_version_command(
+    client: MagicMock, tmp_path: Path
+) -> None:
+    package = tmp_path / "from netbox.yaml"
+    package.write_text("name: from-netbox\n", encoding="utf-8")
+    client.register_config.side_effect = _name_in_use()
+
+    result = _invoke(client, "configs", "register", str(package))
+
+    assert result.exit_code == 1
+    assert "code: configuration-name-in-use" in result.stderr
+    assert _NAME_IN_USE_MESSAGE in result.stderr
+    assert f"hint: infrahub-sync configs version 20261120T1249-9d57f620 '{package}'" in result.stderr.splitlines()
+
+
+def test_configs_version_refused_for_a_name_in_use_prints_the_message(client: MagicMock, tmp_path: Path) -> None:
+    package = tmp_path / "package.yaml"
+    package.write_text("name: from-netbox\n", encoding="utf-8")
+    client.create_config_version.side_effect = _name_in_use()
+
+    result = _invoke(client, "configs", "version", "edge-sync", str(package))
+
+    assert result.exit_code == 1
+    assert "code: configuration-name-in-use" in result.stderr
+    assert _NAME_IN_USE_MESSAGE in result.stderr
+    assert "hint: infrahub-sync configs version" not in result.stderr
+
+
 def test_configs_version_generates_and_discloses_retry_key(client: MagicMock, tmp_path: Path) -> None:
     package = tmp_path / "package.json"
     package.write_text('{"name": "edge-sync"}', encoding="utf-8")

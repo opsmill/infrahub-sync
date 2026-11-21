@@ -241,7 +241,8 @@ def test_admission_reads_registered_binding_before_allocating_run(
 ) -> None:
     """Admission takes package identity and display name from the immutable registry row."""
     _client, projection, orchestration = service_api
-    version = projection.create_configuration(_registered_package())
+    # The fixture registered the package's name already, and a name is unique.
+    version = projection.create_configuration(_package_variant(name="admitted-inventory"))
     request = CreateRunRequest(
         operation="plan",
         config_id=version.config_id,
@@ -256,7 +257,7 @@ def test_admission_reads_registered_binding_before_allocating_run(
     run = projection.lookup_run(body["run"]["run_id"]).value
     assert run is not None
     assert run.configuration_binding == (version.config_id, version.registry_version, version.package_checksum)
-    assert run.summary["sync_name"] == "registered-inventory"
+    assert run.summary["sync_name"] == "admitted-inventory"
     assert set(orchestration.submissions[0][0]) == {
         "run_id",
         "stage",
@@ -287,7 +288,7 @@ def test_run_creation_refuses_legacy_credential_identifiers_before_reservation(
 ) -> None:
     """Refuse legacy declarations through HTTP without creating or submitting a run."""
     client, projection, orchestration = service_api
-    content = _registered_package().model_dump(mode="json")
+    content = _package_variant(name="legacy-inventory").model_dump(mode="json")
     content["credentials"] = {"netbox-token": {"provider": "env", "identifier": identifier}}
     for role in ("source", "destination"):
         content["configuration"][role]["settings"]["token"] = {"$credential": "netbox-token"}
@@ -373,7 +374,7 @@ def _legacy_source_credential_version(
     projection: ProductProjection, monkeypatch: pytest.MonkeyPatch, *, unused: bool = False
 ) -> ConfigurationVersion:
     """Store a pre-upgrade declaration while retaining a valid destination credential."""
-    content = _registered_package().model_dump(mode="json")
+    content = _package_variant(name="legacy-inventory").model_dump(mode="json")
     content["credentials"]["legacy-source"] = {"provider": "env", "identifier": "LEGACY_SOURCE_TOKEN"}
     if not unused:
         content["configuration"]["source"]["settings"]["token"] = {"$credential": "legacy-source"}
@@ -3006,6 +3007,7 @@ def test_the_client_keeps_a_plan_step_part_and_field_from_a_newer_server() -> No
 _SCHEDULE_OPERATIONS = {
     ("/schedules", "post"),
     ("/schedules", "get"),
+    ("/schedules/next-starts", "post"),
     ("/schedules/{schedule_id}", "get"),
     ("/schedules/{schedule_id}/change", "post"),
     ("/schedules/{schedule_id}/pause", "post"),

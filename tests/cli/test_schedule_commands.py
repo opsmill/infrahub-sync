@@ -27,6 +27,7 @@ from infrahub_sync.client import (
     ScheduleOpenBranchResource,
     SchedulePage,
     ScheduleResource,
+    ScheduleSettingChangeResource,
     SyncClient,
 )
 
@@ -616,6 +617,41 @@ def test_runs_show_prints_the_trigger_type_the_schedule_and_the_scheduled_start(
     assert "trigger_type: scheduled" in result.stdout
     assert f"schedule_id: {SCHEDULE_ID}" in result.stdout
     assert f"scheduled_start_at: {NOW.isoformat()}" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("changes", "printed"),
+    [
+        (
+            (
+                ScheduleSettingChangeResource(field="cron", before="0 2 * * *", after="30 6 * * 1-5"),
+                ScheduleSettingChangeResource(field="write_when_left_out", before=True, after=False),
+            ),
+            'cron="0 2 * * *"->"30 6 * * 1-5" write_when_left_out=true->false',
+        ),
+        ((), "changes=none"),
+    ],
+    ids=["changed", "nothing-changed"],
+)
+def test_events_prints_each_changed_setting_of_a_change_event(
+    client: MagicMock, changes: tuple[ScheduleSettingChangeResource, ...], printed: str
+) -> None:
+    event = EventResource(
+        event_id="e-1",
+        event_type="infrahub_sync.schedule.changed",
+        occurred_at=NOW,
+        actor="operator",
+        operation="schedule-change",
+        outcome="accepted",
+        primary_resource=EventPrimaryResource(kind="schedule", id=SCHEDULE_ID),
+        details=EventDetailsResource(changes=changes),
+    )
+    client.iter_events.return_value = iter((event,))
+
+    result = _invoke(client, "events", "--schedule", NAME)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[0].split("\t")[-1] == printed
 
 
 def test_events_filters_on_a_schedule_and_prints_the_details(client: MagicMock) -> None:

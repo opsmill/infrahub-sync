@@ -27,11 +27,17 @@ _VALID_CONTENT: dict[str, Any] = {
 }
 
 
-def package_data() -> dict[str, Any]:
-    """Return one valid declared package as mutable JSON-native content."""
-    return copy.deepcopy(_VALID_CONTENT)
+def package_data(name: str | None = None) -> dict[str, Any]:
+    """Return one valid declared package as mutable JSON-native content.
+
+    ``name`` replaces the configuration name, since a name is unique among configurations.
+    """
+    data = copy.deepcopy(_VALID_CONTENT)
+    if name is not None:
+        data["configuration"]["name"] = name
+    return data
 
 
-def package(data: dict[str, Any] | None = None) -> ConfigurationPackage:
-    """Parse declared content into a package, defaulting to the valid one."""
-    return ConfigurationPackage.model_validate(package_data() if data is None else data)
+def package(data: dict[str, Any] | None = None, *, name: str | None = None) -> ConfigurationPackage:
+    """Parse declared content into a package, defaulting to the valid one, named ``name`` if given."""
+    return ConfigurationPackage.model_validate(package_data(name) if data is None else data)

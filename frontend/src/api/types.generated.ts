@@ -361,6 +361,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/schedules/next-starts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Schedule Next Starts
+         * @description Return the next start times of a cron expression in a time zone; stores nothing and records no event.
+         *
+         *     The values travel in the body, not in the query string, so a credential typed by mistake
+         *     never reaches the access log. It takes no ``Idempotency-Key``.
+         */
+        post: operations["schedule_next_starts_schedules_next_starts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/schedules/{schedule_id}": {
         parameters: {
             query?: never;
@@ -510,7 +533,7 @@ export interface paths {
         };
         /**
          * List Events
-         * @description Return one page of typed events, oldest first, that match every given filter.
+         * @description Return one page of typed events that match every given filter, oldest first or, for ``desc``, newest first.
          */
         get: operations["list_events_events_get"];
         put?: never;
@@ -1085,6 +1108,33 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * ConfigErrorDetail
+         * @description Parse the public fields in a configuration API error.
+         */
+        ConfigErrorDetail: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Status */
+            status: number;
+            /** Family */
+            family: string;
+            /** Reason */
+            reason?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ConfigErrorEnvelope
+         * @description Wrap a configuration API error response.
+         */
+        ConfigErrorEnvelope: {
+            error: components["schemas"]["ConfigErrorDetail"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ConfigMutationRequest
          * @description Submit a configuration package with an optional audit reason.
          *
@@ -1377,6 +1427,8 @@ export interface components {
             replaced_run_id?: string | null;
             /** Cause */
             cause?: string | null;
+            /** Changes */
+            changes?: components["schemas"]["ScheduleSettingChangeResource"][] | null;
         } & {
             [key: string]: unknown;
         };
@@ -2133,6 +2185,49 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * ScheduleNextStarts
+         * @description The next start times of a cadence, in UTC and in increasing order.
+         *
+         *     ``starts`` holds fewer times than requested when the cadence has fewer starts before
+         *     ``searched_until``.
+         */
+        ScheduleNextStarts: {
+            /** Cron */
+            cron: string;
+            /** Timezone */
+            timezone: string;
+            /** Starts */
+            starts: string[];
+            /**
+             * Searched Until
+             * Format: date-time
+             */
+            searched_until: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleNextStartsRequest
+         * @description Request the next start times of a cron expression in a time zone, before a schedule is saved.
+         *
+         *     `cron` and `timezone` are not validated here, as in `CreateScheduleRequest`: the Sync API
+         *     answers `schedule-cron-invalid` or `schedule-timezone-invalid`.
+         */
+        ScheduleNextStartsRequest: {
+            /** Cron */
+            cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            timezone: string;
+            /**
+             * Count
+             * @default 5
+             */
+            count: number;
+        };
+        /**
          * ScheduleOpenBranchResource
          * @description The most recent branch of a schedule that is open for review, with the run that wrote it.
          */
@@ -2221,6 +2316,24 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleSettingChangeResource
+         * @description One setting that a change of a schedule altered, with its stored value before and after.
+         *
+         *     ``field`` is the name of the setting as the change request names it, such as ``cron`` or
+         *     ``start_late_by_at_most_seconds``; the values are the stored values, such as a version
+         *     number, a cron expression or a number of seconds.
+         */
+        ScheduleSettingChangeResource: {
+            /** Field */
+            field: string;
+            /** Before */
+            before: boolean | number | string;
+            /** After */
+            after: boolean | number | string;
         } & {
             [key: string]: unknown;
         };
@@ -3512,13 +3625,40 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description Validation Error */
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request does not match the API schema (`ErrorEnvelope`), or the validation refused the package (`ConfigErrorEnvelope`, family `validation`). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"] | components["schemas"]["ConfigErrorEnvelope"];
                 };
             };
         };
@@ -3620,13 +3760,40 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description Validation Error */
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request does not match the API schema (`ErrorEnvelope`), or the validation refused the package (`ConfigErrorEnvelope`, family `validation`). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"] | components["schemas"]["ConfigErrorEnvelope"];
                 };
             };
         };
@@ -3831,6 +3998,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    schedule_next_starts_schedules_next_starts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleNextStartsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleNextStarts"];
                 };
             };
             /** @description Unauthorized */
@@ -4477,6 +4722,7 @@ export interface operations {
                 until?: string | null;
                 limit?: string | null;
                 offset?: string | null;
+                order?: "asc" | "desc";
             };
             header?: never;
             path?: never;

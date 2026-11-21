@@ -28,7 +28,7 @@ from prefect.workers.process import ProcessJobConfiguration, ProcessWorker, Proc
 from pydantic import PrivateAttr
 
 from infrahub_sync.configuration.worker_credentials import held_credential_names
-from infrahub_sync.product_store import EarlierProductDatabaseError
+from infrahub_sync.product_store import DuplicateConfigurationNamesError, EarlierProductDatabaseError
 
 from .orchestration import SERVICE_DEFINITION
 from .start_check import StartRefusedError, check_bootstrap_record
@@ -419,9 +419,10 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
                     "The product store did not answer in time; the worker's credential variable names are "
                     "published on a later poll."
                 )
-        except EarlierProductDatabaseError as earlier:
-            # The message names only tables and columns, and says that the database must be
-            # replaced: the worker cannot run any stage on it, so the operator must read it.
+        except (EarlierProductDatabaseError, DuplicateConfigurationNamesError) as earlier:
+            # The message names only tables and columns, or the configurations that share a
+            # name, and says what to do: the worker cannot run any stage on the database, so
+            # the operator must read it.
             self._environment_projection = None
             self._logger.error("%s", earlier)  # noqa: TRY400 - the message is the guidance; a traceback adds nothing.
         except (RuntimeError, ValueError, OSError, sqlite3.Error):

@@ -136,8 +136,76 @@ export const reviewTitle = (name: string, nextVersion: number) =>
 
 export const NEW_CONFIGURATION_TITLE = "Register a new configuration";
 
-/** The warning for a new configuration whose name is in use. Names are not unique (FR-013). */
-export const sameNameText = (name: string) => `A configuration named ${name} already exists.`;
+/** The refusal of a package whose name another configuration has: names are unique. */
+export const sameNameText = (name: string | undefined) =>
+  name
+    ? `A configuration named ${name} already exists.`
+    : "Another configuration already has the name of this package.";
+
+/** Why Register stays disabled while another configuration has the name of the package. */
+export const sameNameHint = (name: string | undefined) =>
+  name
+    ? `Add the package as a new version of ${name} instead.`
+    : "Add the package as a new version of the configuration that has its name instead.";
+
+/** The Sync API error code of a registration refused because another configuration has the name. */
+export const CONFIGURATION_NAME_IN_USE = "configuration-name-in-use";
+
+/**
+ * The configuration that already has the name of the package. `configId` is used only as the
+ * target of "add a new version"; the review step never shows it.
+ */
+export interface NameInUse {
+  configId?: string;
+  name?: string;
+}
+
+/**
+ * The configuration named by a `configuration-name-in-use` refusal, from `details`; nothing for
+ * any other error, including the other 409 refusals (`idempotency-conflict`).
+ */
+export function nameInUseOf(error: unknown): NameInUse | undefined {
+  if (!isEnvelope(error) || error.error.code !== CONFIGURATION_NAME_IN_USE) return undefined;
+  const details = error.error.details;
+  const configId = details?.config_id;
+  const name = details?.name;
+  return {
+    ...(typeof configId === "string" && configId ? { configId } : {}),
+    ...(typeof name === "string" && name ? { name } : {}),
+  };
+}
+
+/**
+ * The configuration, other than `ownConfigId`, that has the name of the package, among the
+ * configurations listed for that name. For a new configuration `ownConfigId` is undefined, so
+ * any listed configuration has the name.
+ */
+export function otherNamesake(
+  items: readonly { config_id: string; name?: string | null }[] | undefined,
+  ownConfigId: string | undefined
+): NameInUse | undefined {
+  const other = items?.find((item) => item.config_id !== ownConfigId);
+  if (!other) return undefined;
+  return { configId: other.config_id, ...(other.name ? { name: other.name } : {}) };
+}
+
+/**
+ * The configuration whose name blocks Register. A `configuration-name-in-use` refusal always
+ * blocks it. The configurations listed for the name block it only before the request is sent:
+ * once it is sent, a configuration listed with that name can be the one the request itself
+ * registered before its answer was lost, and Retry with the same Idempotency-Key returns it.
+ */
+export function blockingNamesake(options: {
+  refused: NameInUse | undefined;
+  namesakes: readonly { config_id: string; name?: string | null }[] | undefined;
+  ownConfigId: string | undefined;
+  checksName: boolean;
+  sent: boolean;
+}): NameInUse | undefined {
+  if (options.refused) return options.refused;
+  if (!options.checksName || options.sent) return undefined;
+  return otherNamesake(options.namesakes, options.ownConfigId);
+}
 
 export const validatingText = (branch: string) => `Validating against branch ${branch}…`;
 

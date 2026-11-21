@@ -24,7 +24,7 @@ from infrahub_sync.client.models import (
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.models import PROBLEM_TYPES
-from infrahub_sync.product_store import Account
+from infrahub_sync.product_store import Account, EventOrder
 
 from .account_routes import account_router
 from .auth import Principal, PrincipalResolver
@@ -298,8 +298,9 @@ def events_router(service: RunService, authenticate: Callable[..., Principal]) -
         until: Annotated[str | None, Query()] = None,
         limit: Annotated[str | None, Query()] = None,
         offset: Annotated[str | None, Query()] = None,
+        order: Annotated[EventOrder, Query()] = "asc",
     ) -> EventPage:
-        """Return one page of typed events, oldest first, that match every given filter."""
+        """Return one page of typed events that match every given filter, oldest first or, for ``desc``, newest first."""
         return service.list_events(
             run_id=run_id,
             config_id=config_id,
@@ -309,6 +310,7 @@ def events_router(service: RunService, authenticate: Callable[..., Principal]) -
             until=_optional_time(until),
             limit=parse_page_limit(limit),
             offset=_page_offset(offset),
+            order=order,
         )
 
     return router

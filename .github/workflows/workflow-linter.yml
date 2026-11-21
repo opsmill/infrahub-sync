@@ -130,7 +130,8 @@ jobs:
       - name: "Linting: rumdl"
         run: "uv run rumdl check ."
 
-  # Biome, the TypeScript check and a production build of the web interface.
+  # Biome, the TypeScript check, the Vitest unit tests and a production build of the
+  # web interface.
   # `@infrahub/ui` comes from the `frontend/vendor/infrahub` submodule, so the
   # checkout fetches it.
   frontend-lint:
@@ -162,6 +163,8 @@ jobs:
         run: pnpm check
       - name: "Linting: TypeScript"
         run: pnpm typecheck
+      - name: "Unit tests: Vitest"
+        run: pnpm test
       - name: "Build"
         run: pnpm build
 

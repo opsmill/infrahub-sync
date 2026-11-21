@@ -22,6 +22,7 @@ import { mappingEntries, removedEntries } from "#/domain/mapping";
 import { type Explanation, explain, type RunState, runState } from "#/domain/run-state";
 import { RunsTable, RunsTableSkeleton } from "#/features/runs/RunsTable";
 import { StartRunDialog, type StartRunTarget } from "#/features/runs/StartRunDialog";
+import { ConfigScheduleLine } from "#/features/schedules/ScheduleLine";
 import { useDocumentTitle } from "#/lib/title";
 
 import { type ConfigurationDetail, useConfigurationDetail } from "./detail";
@@ -296,6 +297,7 @@ export function ConfigurationPage({
               </p>
             )}
             {state && <AppliedLine detail={detail} />}
+            <ConfigScheduleLine configId={configId} name={name} latestVersion={latest} />
           </div>
           {selected !== undefined ? (
             <Button

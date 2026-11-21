@@ -1,0 +1,1 @@
+A configuration name now belongs to one configuration only. `configs register` refuses a package whose name another configuration already has and prints the `configs version` command that adds it to that configuration, and a new version cannot take the name of another configuration; the Sync API answers both with `409 configuration-name-in-use`.

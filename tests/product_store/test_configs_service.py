@@ -274,8 +274,8 @@ def _register_out_of_order(projection: ProductProjection, monkeypatch: pytest.Mo
     clock = iter([created_at for _, created_at in _OUT_OF_ORDER_REGISTRATIONS])
     monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: next(ids))
     monkeypatch.setattr(product_store_store, "datetime", SimpleNamespace(now=lambda tz: next(clock)))  # noqa: ARG005
-    for _ in _OUT_OF_ORDER_REGISTRATIONS:
-        configs_service.register(package=package_data(), projection=projection)
+    for config_id, _ in _OUT_OF_ORDER_REGISTRATIONS:
+        configs_service.register(package=package_data(config_id), projection=projection)
 
 
 def test_list_configs_returns_every_configuration_newest_first_with_a_config_id_tiebreak(
@@ -312,7 +312,7 @@ def test_get_config_and_list_versions_return_one_configurations_own_records(tmp_
         package=changed,
         projection=projection,
     )
-    unrelated = configs_service.register(package=package_data(), projection=projection)
+    unrelated = configs_service.register(package=_renamed_package_data("unrelated"), projection=projection)
 
     summary = configs_service.get_config(
         config_id=registered.version.config_id,
@@ -521,7 +521,7 @@ def test_a_well_typed_identifier_still_gets_the_stores_own_answer(tmp_path: Path
 # raise cannot see which base class production code actually catches. Only the unforeseen
 # arm, which by definition no real dependency reaches, is driven by a monkeypatched raise.
 
-_DECLARED_FAMILIES = frozenset({"request", "validation", "not-found", "storage", "internal"})
+_DECLARED_FAMILIES = frozenset({"request", "validation", "not-found", "name-in-use", "storage", "internal"})
 
 # The text helpers on the service's public surface. Each transforms text the service itself
 # produced - or answers which rule governs one field of it - takes no store and no path, and
@@ -1675,18 +1675,23 @@ def test_configuration_name_follows_the_latest_registered_version(tmp_path: Path
     assert (summary.name, summary.latest_version) == ("renamed", 2)
 
 
-def test_two_configurations_may_share_a_name_and_the_name_filter_returns_both(tmp_path: Path) -> None:
+def test_a_name_another_configuration_has_is_refused_with_that_configuration(tmp_path: Path) -> None:
     projection = _store(tmp_path)
     first = configs_service.register(package=package_data(), projection=projection)
-    second = configs_service.register(package=package_data(), projection=projection)
-    configs_service.register(package=_renamed_package_data("other"), projection=projection)
+    other = configs_service.register(package=_renamed_package_data("other"), projection=projection)
 
+    with pytest.raises(configs_service.ConfigsNameInUseError) as registered:
+        configs_service.register(package=package_data(), projection=projection)
+    with pytest.raises(configs_service.ConfigsNameInUseError) as versioned:
+        configs_service.create_version(
+            config_id=other.configuration.config_id, package=package_data(), projection=projection
+        )
+
+    for refusal in (registered.value, versioned.value):
+        assert refusal.family == "name-in-use"
+        assert (refusal.config_id, refusal.name) == (first.configuration.config_id, "from-netbox")
     page = configs_service.list_configs(projection=projection, name="from-netbox")
-
-    assert first.configuration.config_id != second.configuration.config_id
-    assert {item.config_id for item in page.items} == {first.configuration.config_id, second.configuration.config_id}
-    assert all(item.name == "from-netbox" for item in page.items)
-    assert page.has_more is False
+    assert [item.config_id for item in page.items] == [first.configuration.config_id]
 
 
 # Spec 025 User Story 1 (T005): `check_package` validates a package without registering it.

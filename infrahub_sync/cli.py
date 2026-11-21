@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import sys
 import tempfile
 import unicodedata
@@ -59,6 +60,7 @@ from infrahub_sync.client import (
     ValidationReportResource,
     VerifyRunRequest,
 )
+from infrahub_sync.client.errors import CONFIGURATION_NAME_IN_USE, configuration_name_in_use_message
 from infrahub_sync.client.models import (
     LOG_STAGES,
     MAX_FAILURE_CAUSE_TEXT,
@@ -397,7 +399,25 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         isinstance(error, APIError) and error.code == UNSUPPORTED_STORE_REASON
     ):
         result = (result[0], (*result[1], ("message", UNSUPPORTED_STORE_MESSAGE)))
-    return result[0], (*result[1], *_account_message(error))
+    return result[0], (*result[1], *_name_in_use_message(error), *_account_message(error))
+
+
+def _configuration_with_the_name(error: SyncClientError) -> tuple[str, str] | None:
+    """Return the ID and name of the configuration a ``configuration-name-in-use`` refusal names."""
+    if not isinstance(error, APIError) or isinstance(error, ConfigsAPIError):
+        return None
+    if error.code != CONFIGURATION_NAME_IN_USE or error.details is None:
+        return None
+    config_id, name = error.details.get("config_id"), error.details.get("name")
+    if not isinstance(config_id, str) or not isinstance(name, str):
+        return None
+    return config_id, name
+
+
+def _name_in_use_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return the message of a refusal of a name that another configuration has, as one more field."""
+    named = _configuration_with_the_name(error)
+    return () if named is None else (("message", configuration_name_in_use_message(named[1], named[0])),)
 
 
 def _account_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
@@ -431,12 +451,18 @@ def _forget_refused_session(error: SyncClientError) -> None:
 
 
 @contextmanager
-def _client_errors() -> Iterator[None]:
-    """Map the closed client error taxonomy to stable CLI exit behavior."""
+def _client_errors(hint: Callable[[SyncClientError], str | None] | None = None) -> Iterator[None]:
+    """Map the closed client error taxonomy to stable CLI exit behavior.
+
+    ``hint`` returns a line that says what to do next about the error, or nothing.
+    """
     try:
         yield
     except SyncClientError as error:
         code = _echo_client_error(error)
+        next_step = None if hint is None else hint(error)
+        if next_step is not None:
+            typer.echo(_display(f"hint: {next_step}"), err=True)
         _forget_refused_session(error)
         raise typer.Exit(code) from None
 
@@ -737,8 +763,19 @@ def configs_register(
         help="Retry key. A new key is generated and printed when omitted.",
     ),
 ) -> None:
-    """Register a JSON or YAML configuration package."""
-    with _client_errors():
+    """Register a JSON or YAML configuration package.
+
+    The name of the package must not be the name of another configuration. A refusal prints the
+    command that adds the package as a new version of that configuration instead.
+    """
+
+    def add_as_a_version(error: SyncClientError) -> str | None:
+        named = _configuration_with_the_name(error)
+        if named is None:
+            return None
+        return f"infrahub-sync configs version {shlex.quote(named[0])} {shlex.quote(str(package))}"
+
+    with _client_errors(hint=add_as_a_version):
         key = _idempotency_key(idempotency_key)
         _echo_idempotency_key(key)
         request = cast(
@@ -2433,12 +2470,25 @@ def runs_logs(
 
 
 def _event_details(event: EventResource) -> str | None:
-    """Render the facts of an event as `key=value` pairs, or `None` when it records none."""
+    """Render the facts of an event as `key=value` pairs, or `None` when it records none.
+
+    Each changed setting of a change event is one `<setting>=<before>-><after>` pair, with the
+    values written as JSON, so a cadence with spaces stays one value; `changes=none` when the
+    change altered no stored value.
+    """
     if event.details is None:
         return None
     pairs = []
     for key, value in event.details.model_dump().items():
-        if value is not None:
+        if value is None:
+            continue
+        if key == "changes":
+            pairs.extend(
+                f"{change['field']}={json.dumps(change['before'])}->{json.dumps(change['after'])}" for change in value
+            )
+            if not value:
+                pairs.append("changes=none")
+        else:
             pairs.append(f"{key}={value.isoformat() if isinstance(value, datetime) else value}")
     return " ".join(pairs) or None
 

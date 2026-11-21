@@ -304,9 +304,18 @@ Start-up creates the list indexes, each with `CREATE INDEX IF NOT EXISTS`
 | `product_runs_config_started (config_id, started_at, run_id)` | The run list of one configuration |
 | `product_runs_binding_started (config_id, registry_version, started_at, run_id)` | The run list of one version, and each version's newest run |
 | `product_runs_binding_applied (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'` | Each version's most recently applied run |
-| `configurations_name (name)` | The `name` filter of the configuration list |
 | `configurations_created (created_at, config_id)` | The order of the configuration list |
 | `product_runs_schedule_started (schedule_id, started_at, run_id)` | The run list of one schedule |
+
+A configuration name is unique among configurations: the unique index
+`configurations_name_unique (name)` (`_CONFIGURATION_UNIQUE_INDEXES`) holds the rule and serves the
+`name` filter of the configuration list. A configuration without a name holds `NULL`, which the
+index does not constrain. It replaces the plain index `configurations_name` of an earlier build,
+which start-up drops. `_insert_configuration_version_row` checks the name in the transaction that
+registers a version and raises `ConfigurationNameInUseError`; when two registrations both pass the
+check, the index refuses the second and the same check, run again, names the configuration. Before
+it creates the index, start-up refuses a database where several configurations have one name with
+`DuplicateConfigurationNamesError`, which names them.
 
 The schedule records live in the tables `schedules` and `schedule_branches`. Three unique
 indexes hold their rules: `product_runs_schedule_start (schedule_id, scheduled_start_at)` allows
