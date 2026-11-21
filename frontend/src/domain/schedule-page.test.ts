@@ -251,7 +251,10 @@ describe("runGroups", () => {
   });
 
   it("names the day of a run in the viewer's time zone", () => {
-    expect(runBucket(new Date(NOW - 60_000).toISOString(), NOW)).toBe("Today");
+    // Both instants are local times, so the day boundary is the viewer's midnight in any zone.
+    const now = Date.parse(local(20, 1));
+    expect(runBucket(local(20, 0), now)).toBe("Today");
+    expect(runBucket(new Date(2026, 10, 19, 23, 59).toISOString(), now)).toBe("Yesterday");
   });
 });
 
