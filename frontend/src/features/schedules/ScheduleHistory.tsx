@@ -33,7 +33,8 @@ const TOUCH = "pointer-coarse:h-11";
  * the newest events are read again every 10 seconds without `until` and the ones not listed yet
  * are added above the list, each event once (contracts/http-api.md). When more new events arrive
  * than one read returns and none of them is listed, the pages are read again, so no event is left
- * out between them. A failed read of the newest events shows the stale notice. "Show all events" is kept in the search parameter `events=all`. The
+ * out between them. A failed read of the newest events, or a failed reread of the pages, shows the
+ * stale notice. "Show all events" is kept in the search parameter `events=all`. The
  * section stays for a deleted schedule. An entry names the account as the Sync API returns it.
  */
 export function ScheduleHistory({
@@ -143,13 +144,21 @@ export function ScheduleHistory({
       >
         Newest first
       </SectionHeading>
-      {newest.isError && history.data && (
+      {/* A failed reread of the pages leaves the earlier pages shown, and events can be missing
+          between them and the newest events, so it shows the stale notice too. */}
+      {history.isRefetchError && history.data ? (
+        <StaleNotice
+          error={history.error}
+          updatedAt={history.dataUpdatedAt}
+          onRetry={() => history.refetch()}
+        />
+      ) : newest.isError && history.data ? (
         <StaleNotice
           error={newest.error}
           updatedAt={newest.dataUpdatedAt || history.dataUpdatedAt}
           onRetry={() => newest.refetch()}
         />
-      )}
+      ) : null}
       {body}
     </section>
   );
