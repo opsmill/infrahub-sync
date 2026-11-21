@@ -190,10 +190,10 @@ credential, and the refusal lists them.
 
 **Independent test**: spec User Story 4; FR-010, FR-011.
 
-- [ ] T066 [P] [US4] Write `tests/service/test_credential_deletion.py`: refused by a latest version (lists the configuration), refused by a schedule that is not deleted whose pinned version names it (lists the schedule), allowed when only an older version names it, then a run of that older version refused before it starts; no route renames a credential (FR-010, FR-011)
-- [ ] T067 [US4] Implement the in-use query in `infrahub_sync/product_store/stored_credentials.py` over `configuration_version_credentials`, the latest `registry_version` of each configuration and `schedules` with `state <> 'deleted'` (research R8), and the deletion with the row lock of T034
-- [ ] T068 [US4] Implement `DELETE /credentials/{name}` with `409 credential-in-use` and `details` in `infrahub_sync/service/credential_routes.py` and `credential_actions.py`, with the audit event `credential.deleted`
-- [ ] T069 [US4] Add `credentials delete NAME [--yes]` to `infrahub_sync/cli_credentials.py` with confirmation and the in-use listing, its tests in `tests/cli/test_credentials_command.py`, and a "Delete a credential" section in `docs/docs/guides/credentials.mdx`
+- [X] T066 [P] [US4] Write `tests/service/test_credential_deletion.py`: refused by a latest version (lists the configuration), refused by a schedule that is not deleted whose pinned version names it (lists the schedule), allowed when only an older version names it, then a run of that older version refused before it starts; no route renames a credential (FR-010, FR-011)
+- [X] T067 [US4] Implement the in-use query in `infrahub_sync/product_store/stored_credentials.py` over `configuration_version_credentials`, the latest `registry_version` of each configuration and `schedules` with `state <> 'deleted'` (research R8), and the deletion with the row lock of T034
+- [X] T068 [US4] Implement `DELETE /credentials/{name}` with `409 credential-in-use` and `details` in `infrahub_sync/service/credential_routes.py` and `credential_actions.py`, with the audit event `credential.deleted`
+- [X] T069 [US4] Add `credentials delete NAME [--yes]` to `infrahub_sync/cli_credentials.py` with confirmation and the in-use listing, its tests in `tests/cli/test_credentials_command.py`, and a "Delete a credential" section in `docs/docs/guides/credentials.mdx`
 
 ---
 
