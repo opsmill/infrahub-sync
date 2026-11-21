@@ -14,9 +14,12 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+import yaml
 from invoke import Context
 
 from tasks import dev
+
+from .conftest import CredentialStore, digest
 
 if TYPE_CHECKING:
     from invoke.tasks import Task
@@ -970,3 +973,133 @@ def test_a_preset_with_netbox_passes_the_stack_project_to_netbox(monkeypatch: py
     dev._start_netbox(Context(), settings)
 
     assert calls == [({"COMPOSE_PROJECT_NAME": "netbox-dev"}, "infrahub-sync-024")]
+
+
+# ----- The development credentials are stored through the Sync API (spec 027) ---------------
+
+DEV_ADMIN_TOKEN_DIGEST = digest("infrahub-sync-dev-token")
+
+
+def test_dev_start_stores_the_infrahub_credential_through_the_sync_api_after_the_stack_starts(
+    context: Context, fake: FakeDocker, credential_store: CredentialStore, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _body(dev.dev_start)(context)
+
+    assert " up --detach --wait " in fake.compose_commands()[0]
+    # Signed in as the `admin` account, at the address the stack publishes.
+    assert credential_store.opened == [("http://127.0.0.1:8001", DEV_ADMIN_TOKEN_DIGEST)]
+    assert credential_store.calls == [("create", "infrahub-token", digest(ADMIN_TOKEN))]
+    output = capsys.readouterr()
+    assert "infrahub-token" in output.out
+    assert ADMIN_TOKEN not in output.out + output.err
+
+
+def test_dev_start_replaces_the_value_of_a_credential_that_exists(
+    context: Context, credential_store: CredentialStore
+) -> None:
+    credential_store.existing.add("infrahub-token")
+
+    _body(dev.dev_start)(context)
+
+    assert credential_store.calls == [("set", "infrahub-token", digest(ADMIN_TOKEN))]
+
+
+def test_dev_start_twice_stores_the_same_credential_twice_without_a_refusal(
+    context: Context, credential_store: CredentialStore
+) -> None:
+    _body(dev.dev_start)(context)
+    _body(dev.dev_start)(context)
+
+    assert [call[:2] for call in credential_store.calls] == [("create", "infrahub-token"), ("set", "infrahub-token")]
+
+
+def test_dev_start_stores_the_value_the_shell_exports(
+    context: Context, credential_store: CredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, "exported")
+
+    _body(dev.dev_start)(context)
+
+    assert credential_store.calls == [("create", "infrahub-token", digest("exported"))]
+
+
+def test_dev_preview_stores_the_netbox_credential_too(
+    context: Context, fake: FakeDocker, credential_store: CredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.running = set()
+    monkeypatch.setattr(dev, "netbox_token", lambda _values: "nbt_dev.token")
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: None)
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda *_args: None)
+
+    _body(dev.dev_preview)(context)
+
+    assert credential_store.calls == [
+        ("create", "infrahub-token", digest(ADMIN_TOKEN)),
+        ("create", "netbox-token", digest("nbt_dev.token")),
+    ]
+
+
+def test_the_sync_preset_without_a_token_stores_nothing_and_opens_no_client(
+    context: Context, fake: FakeDocker, credential_store: CredentialStore, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.running = set()
+
+    _body(dev.dev_start)(context, preset="sync")
+
+    assert credential_store.opened == []
+    assert "No development credential to store" in capsys.readouterr().out
+
+
+def test_a_sync_api_without_an_encryption_key_is_reported_and_does_not_stop_the_start(
+    context: Context, credential_store: CredentialStore, capsys: pytest.CaptureFixture[str]
+) -> None:
+    credential_store.refusal = (503, "credential-key-not-configured")
+
+    _body(dev.dev_start)(context)
+
+    output = capsys.readouterr().out
+    assert "INFRAHUB_SYNC_ENCRYPTION_KEY" in output
+    assert "infrahub-token" in output
+    assert ADMIN_TOKEN not in output
+
+
+def test_any_other_refusal_stops_the_start_and_names_the_code_and_the_credential(
+    context: Context, credential_store: CredentialStore
+) -> None:
+    credential_store.refusal = (403, "administrator-required")
+
+    with pytest.raises(dev.DevStackError) as raised:
+        _body(dev.dev_start)(context)
+
+    message = str(raised.value)
+    assert "403 administrator-required" in message
+    assert "infrahub-token" in message
+    assert ADMIN_TOKEN not in message
+
+
+def test_development_credentials_names_what_the_shipped_examples_name(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.netbox_running = True
+    monkeypatch.setattr(dev, "netbox_token", lambda _values: "nbt_dev.token")
+
+    values = dev.development_credentials(dev.dev_settings(context))
+
+    assert list(values) == [dev.INFRAHUB_CREDENTIAL, dev.NETBOX_CREDENTIAL] == ["infrahub-token", "netbox-token"]
+    assert {name: digest(value) for name, value in values.items()} == {
+        "infrahub-token": digest(ADMIN_TOKEN),
+        "netbox-token": digest("nbt_dev.token"),
+    }
+
+
+@pytest.mark.parametrize("example", ["netbox_to_infrahub"])
+def test_the_shipped_example_names_the_credentials_the_tasks_store(example: str) -> None:
+    package = yaml.safe_load((dev.REPO_BASE / "examples" / example / "package.yml").read_text(encoding="utf-8"))
+
+    assert package["configuration"]["source"]["credential"] == dev.NETBOX_CREDENTIAL
+    assert package["configuration"]["destination"]["credential"] == dev.INFRAHUB_CREDENTIAL
+
+
+def test_a_sync_api_without_an_admin_token_cannot_store_credentials() -> None:
+    with pytest.raises(dev.DevStackError, match="INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"):
+        dev.store_development_credentials("http://127.0.0.1:8001", "", {"infrahub-token": "value"})

@@ -283,11 +283,18 @@ class CellStack:
         ).stdout.strip()
 
     def start_sync(self) -> None:
-        """Build the current checkout and start the existing API/worker tasks quietly."""
+        """Build the current checkout, start the existing API/worker tasks quietly, store the credentials.
+
+        The shipped package names the stored credentials `netbox-token` and `infrahub-token`.
+        Once the Sync API runs, both are stored through it with the tokens of the benchmark's
+        NetBox and Infrahub. The Compose file still passes the same tokens to the Sync
+        services in variables.
+        """
         self.require_exclusive_sync()
+        netbox_token = netbox.netbox_token(self.netbox_env)
         env = {
-            "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": netbox.netbox_token(self.netbox_env),
-            "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": self.infrahub_token,
+            dev.NETBOX_CREDENTIAL_VARIABLE: netbox_token,
+            dev.INFRAHUB_CREDENTIAL_VARIABLE: self.infrahub_token,
         }
         self.context.config.run.env = env
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -304,6 +311,14 @@ class CellStack:
                     self.started_sync = bool(self.sync_containers())
                 finally:
                     self.context.deadline = deadline
+        try:
+            dev.store_development_credentials(
+                dev.API_URL,
+                os.environ.get("INFRAHUB_SYNC_API_TOKEN", ""),
+                {dev.NETBOX_CREDENTIAL: netbox_token, dev.INFRAHUB_CREDENTIAL: self.infrahub_token},
+            )
+        except dev.DevStackError as exc:
+            raise BenchmarkError(str(exc)) from exc
         workers = netbox.dev_worker_containers(self.context)
         if len(workers) != 1:
             msg = "expected exactly one benchmark worker"
