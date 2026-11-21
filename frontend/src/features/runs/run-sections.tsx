@@ -250,10 +250,21 @@ export function Details({
     rows.push(["Destination branch", <BranchBadge branch={run.destination_branch} />]);
   }
   rows.push(["Started", formatAbsolute(run.started_at)]);
-  // Older records name no account; the row is then left out.
-  if (run.actor)
+  // A scheduled run names its schedule, then the account it ran as: the schedule's owner when it
+  // started. Older records name no account; the row then names only the schedule, or is left out.
+  if (run.trigger_type === "scheduled") {
+    rows.push([
+      "Started by",
+      <span className="flex min-w-0 flex-col">
+        <RunScheduleLine run={run} />
+        {run.actor && (
+          <span className="text-subtle [overflow-wrap:anywhere]">Account: {run.actor}</span>
+        )}
+      </span>,
+    ]);
+  } else if (run.actor) {
     rows.push(["Started by", <span className="[overflow-wrap:anywhere]">{run.actor}</span>]);
-  if (run.trigger_type === "scheduled") rows.push(["Schedule", <RunScheduleLine run={run} />]);
+  }
   if (run.approval) {
     rows.push([
       "Plan approved by",
