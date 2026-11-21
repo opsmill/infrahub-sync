@@ -232,19 +232,55 @@ A credential resource holds no value:
 | `POST /credentials` | administrator | Takes `{"name", "description"?, "username"?, "password"?, "token"?}`. Returns `201` and the credential at revision 1. |
 | `PUT /credentials/{name}/value` | administrator | Takes `{"username"?, "password"?, "token"?}`, the whole new set of fields. Returns the credential with its revision raised by one. |
 | `PATCH /credentials/{name}` | administrator | Takes `{"description"}`. Returns the credential with the same revision. |
+| `DELETE /credentials/{name}` | administrator | Takes no body. Returns `204` with no body. `404`, code `credential-not-found`, when no credential has the name. `409`, code `credential-in-use`, while something current names the credential. |
 
-- The three changing routes need an `Idempotency-Key` header. The stored answer of a repeated
-  request is the credential resource, which holds no value.
+- The four changing routes need an `Idempotency-Key` header. The stored answer of a repeated
+  request is the credential resource, which holds no value. A repeated deletion with the same key
+  answers `204` again.
 - The accepted sets of fields are `token`; `username` and `password`; `username` and `token`.
   Each value is 1 to 4,096 characters with no control character. Another set or value answers
   `422`, code `credential-fields-invalid`.
 - A second creation with the same name answers `409`, code `credential-exists`.
-- A caller that is not an administrator receives `403`, code `forbidden`, on the three changing
+- A caller that is not an administrator receives `403`, code `forbidden`, on the four changing
   routes. The checks name the permission `manage-credentials`, which administrators hold.
 - A `422` answer never repeats the submitted body.
 - The Sync API does not start without `INFRAHUB_SYNC_ENCRYPTION_KEY`; see
   [Start the API](#start-the-api).
-- This build has no route that deletes a credential.
+- No route changes the name of a credential.
+
+#### Deletion of a credential
+
+`DELETE /credentials/{name}` removes the credential and every revision of its value. It cannot
+be reversed.
+
+The route answers `409`, code `credential-in-use`, and deletes nothing while one of these names
+the credential:
+
+- the latest version of a configuration
+- a schedule that is not deleted, through the version that it pins
+
+`details` lists the configuration identifiers and the schedule names, each sorted:
+
+```json
+{
+  "error": {
+    "code": "credential-in-use",
+    "message": "…",
+    "status": 409,
+    "details": {"configurations": ["c-0a1b2c3d"], "schedules": ["from-netbox-nightly"]}
+  }
+}
+```
+
+- An older version that names the credential does not block the deletion. A request that starts
+  a run of that version then answers `422`, code `credential-not-found`.
+- A run of an older version that started before the deletion receives no value:
+  `POST /worker/runs/{run_id}/credentials` answers `422`, code `credential-not-found`.
+- `credentials_used` of a run keeps the name and the revision of a deleted credential.
+- After a refused deletion, the same `Idempotency-Key` can be sent again once nothing names the
+  credential.
+- The deletion writes the audit event `infrahub_sync.credential.deleted` with the name and the
+  last revision.
 
 ### Worker routes
 
@@ -816,6 +852,7 @@ lists their identifiers.
 | `infrahub-sync credentials create NAME` | `POST /credentials` |
 | `infrahub-sync credentials set NAME` | `PUT /credentials/{name}/value` |
 | `infrahub-sync credentials describe NAME TEXT` | `PATCH /credentials/{name}` |
+| `infrahub-sync credentials delete NAME` | `DELETE /credentials/{name}` |
 | `infrahub-sync runs list --trigger-type TYPE --schedule SCHEDULE` | `GET /runs?trigger_type=TYPE&schedule_id=SCHEDULE_ID` |
 | `infrahub-sync events --schedule SCHEDULE` | `GET /events?related=schedule:SCHEDULE_ID` |
 | `infrahub-sync schedules create` | `POST /schedules` |

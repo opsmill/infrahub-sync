@@ -43,7 +43,7 @@ behavior.
   module imports nothing from `cli.py`. It never takes a password as an argument: it reads it from
   a prompt without echo, or from standard input with `--password-stdin`.
 - `infrahub_sync/cli_credentials.py` — the `credentials` group for stored credentials: `list`,
-  `show`, `create`, `set` and `describe`. `cli.py` calls its `register` once, with the same helpers
+  `show`, `create`, `set`, `describe` and `delete`. `cli.py` calls its `register` once, with the same helpers
   as the account commands. It never takes a value as an argument: it reads it from a prompt without
   echo, or from standard input with `--token-stdin` or `--password-stdin`, and it prints no value.
 - `infrahub_sync/cli_session.py` — the session file that `login` writes: `sessions.json` in the
@@ -213,13 +213,17 @@ Four service modules carry the stored credentials
 ([ADR 0054](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)):
 
 - `credential_routes.py` declares the routes for accounts (`GET /credentials`,
-  `GET /credentials/{name}`, `POST /credentials`, `PUT /credentials/{name}/value` and
-  `PATCH /credentials/{name}`) and the two routes for the `worker` account
+  `GET /credentials/{name}`, `POST /credentials`, `PUT /credentials/{name}/value`,
+  `PATCH /credentials/{name}` and `DELETE /credentials/{name}`) and the two routes for the `worker` account
   (`POST /worker/runs/{run_id}/credentials` and
   `POST /worker/schedules/{schedule_id}/proposed-change-states`). Each route calls one method of
   `CredentialActions`.
-- `credential_actions.py` holds the requests, the answers, the permission check
-  (`manage-credentials`), the audit events and the two worker actions. `release` checks that a
+- `credential_models.py` holds the request and answer models of these routes.
+- `credential_actions.py` holds the permission check (`manage-credentials`), the changes with
+  their mutation receipts and audit events, and the two worker actions. `delete` answers
+  `409 credential-in-use` while the latest version of a configuration, or a schedule that is not
+  deleted, names the credential; the store makes that check and the deletion in one transaction
+  that locks the credential row first, as a registration does. `release` checks that a
   worker claimed the execution and that it has not ended, then decrypts and writes the
   `run_credential_uses` rows. `RunService` in `service.py` reads those rows into
   `credentials_used` of each run resource it builds. `proposed_change_states` reads Infrahub with the destination
