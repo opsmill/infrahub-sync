@@ -170,6 +170,34 @@ registered package and needs the environment reads, and `spec.md:334` says that 
 The read routes answer 200 for a version in the removed format; schedule creation and change answer
 `422 credential-format-removed` (commits `fa957165`, `2412a942`, `ca183709`, `f189abdd`).
 
+### A4. The Sync API starts without the key, and the marker test fails in the full unit tier (2026-11-21, about 06:45)
+
+**Context.** Chunk 15 found that the Sync API starts without `INFRAHUB_SYNC_ENCRYPTION_KEY` or
+`INFRAHUB_SYNC_WORKER_TOKEN` (`serve.py:157`). It logs a warning, answers credential routes with `503
+credential-key-not-configured`, and creates no `worker` account. Only the `:?` guards of the operator
+Compose file require the two settings. `spec.md:152` and `contracts/environment.md` (as written in the
+prep, commit `c0178ca0`) say the Sync API refuses to start and names the missing setting. Chunk 15 wrote
+the documentation and an ADR amendment (`63e061f1`) from the code. Separately, the full unit tier has one
+failure: `tests/test_stored_credential_marker.py` fails on its guard that `prefect-home` holds a file,
+and passes when run alone.
+
+**Recommendation sent.** None given in advance; the question was put open.
+
+**Answer.** Change the code, not the spec: the maintainer confirmed the spec, and the plan for chunk 14
+said both settings become required at start. Put the refusal in the `serve` entry point and keep the 503
+inside the app, so in-process tests do not change. Also check a malformed key, and a worker that starts
+without the token or `INFRAHUB_SYNC_API_URL`. Then correct what chunk 15 wrote from the code. The
+Kubernetes page must say that the published chart cannot start this image until T080; list that under
+Risks. For the marker test, keep the guard: it shows that in the full tier the test searched an empty
+`prefect-home`, so the search may miss where files are written. Fix the test so it searches the
+directory in use, and require a full tier pass at HEAD. Commit a draft report now. Add the
+documentation of `credentials delete` and `credentials_used` to the briefs of chunks 16 and 17, and tell
+each chunk not to start helper agents.
+
+**What I did next.** The prep contract says "`sync-api` refuses to start without it or with another
+length, and names the variable", so the refusal was specified. I committed a draft report and
+dispatched chunk 15b.
+
 ## Progress
 
 - 2026-11-20 evening: implementation started.
