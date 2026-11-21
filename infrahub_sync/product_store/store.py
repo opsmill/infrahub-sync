@@ -1386,14 +1386,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     if self._dialect == "postgresql":
                         cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
                     # Before any statement: SQLite commits each DDL statement on its own, so
-                    # a later refusal would leave the new tables on the earlier database.
+                    # a later refusal would leave the new tables on the earlier database. The
+                    # duplicate names would also make the unique index on the configuration
+                    # name fail with a message that names no configuration.
                     self._refuse_earlier_database(cursor)
+                    self._refuse_duplicate_configuration_names(cursor)
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
-                    # Before the unique index on the configuration name, which the duplicates
-                    # would make fail with a message that names no configuration.
-                    self._refuse_duplicate_configuration_names(cursor)
                     self._ensure_run_listing_indexes(cursor)
                     self._ensure_mutation_receipt_resource_constraint(cursor)
                     self._ensure_configuration_binding_constraint(cursor)
@@ -1432,9 +1432,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if missing:
             raise EarlierProductDatabaseError(missing)
 
-    @staticmethod
-    def _refuse_duplicate_configuration_names(cursor: _Cursor) -> None:
-        """Raise when several configurations have the same name; the check changes nothing."""
+    def _refuse_duplicate_configuration_names(self, cursor: _Cursor) -> None:
+        """Raise when several configurations have the same name; the check changes nothing.
+
+        A database without a ``configurations`` table, or whose table has no ``name`` column,
+        has no configuration name and passes.
+        """
+        statement = _SELECT_SQLITE_TABLE_COLUMNS if self._dialect == "sqlite" else _SELECT_POSTGRESQL_TABLE_COLUMNS
+        cursor.execute(self._sql(statement), ("configurations",))
+        if "name" not in {str(row[0]) for row in cursor.fetchall()}:
+            return
         cursor.execute(_SELECT_DUPLICATE_CONFIGURATION_NAMES)
         duplicates: dict[str, list[str]] = {}
         for name, config_id in cursor.fetchall():

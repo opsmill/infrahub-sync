@@ -3971,10 +3971,12 @@ def test_start_up_refuses_a_database_where_configurations_share_a_name(tmp_path:
     store.create_configuration(_named_configuration_package(""))
     store.create_configuration(_named_configuration_package(""))
     with sqlite3.connect(database) as connection:
-        # The database of an earlier build: the plain index, and two configurations with one name.
+        # The database of an earlier build: the plain index, two configurations with one name,
+        # and no table of a later build.
         connection.execute("DROP INDEX configurations_name_unique")
         connection.execute("CREATE INDEX configurations_name ON configurations (name)")
         connection.execute("UPDATE configurations SET name = 'from-netbox' WHERE config_id = ?", (second.config_id,))
+        connection.execute("DROP TABLE schedule_branches")
 
     with pytest.raises(DuplicateConfigurationNamesError) as refusal:
         SQLiteRunStore(database)
@@ -3987,7 +3989,10 @@ def test_start_up_refuses_a_database_where_configurations_share_a_name(tmp_path:
     assert "register a new version with another name" in message
     with sqlite3.connect(database) as connection:
         indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "configurations_name_unique" not in indexes
+    # SQLite commits each CREATE TABLE on its own, so the refusal comes before any of them.
+    assert "schedule_branches" not in tables
 
 
 def test_start_up_replaces_the_plain_name_index_of_an_earlier_build(tmp_path: Path) -> None:
