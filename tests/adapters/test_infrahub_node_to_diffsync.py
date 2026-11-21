@@ -1,23 +1,35 @@
-"""Tests for InfrahubAdapter.infrahub_node_to_diffsync attribute serialisation.
+"""Tests for InfrahubAdapter.infrahub_node_to_diffsync: attribute values and peer relationships.
 
-These tests exercise the value-transformation logic in
+Most tests exercise the value-transformation logic in
 ``infrahub_sync/adapters/infrahub.py``: which attribute kinds round-trip
 unchanged, which get string-coerced (e.g. ipaddress objects), and which
-must NOT be coerced (e.g. ``kind: List``).
+must NOT be coerced (e.g. ``kind: List``). Their nodes have no
+relationships, so the method's relationship branch is a no-op.
+
+Two tests cover relationships. Their three nodes form a loop: a device whose
+primary IP address points to an interface whose device is that same device.
+The tests run the real method and the real peer resolution on the device.
+Each peer is converted only for its identifiers, so the conversion stops at
+the IP address. Without that filter, the conversion follows the loop until
+Python raises ``RecursionError``. In the second test the IP address's
+identifier is not mapped: the error must list the IP address's other mapped
+fields without looking up the interface.
 
 The tests bypass network setup by constructing the adapter via
 ``__new__`` and supplying only the bits the method touches: ``config``
 and ``schema``, the adapter's own loaded kind-to-schema mapping, plus a
-node-like object exposing ``id``, ``get_kind()`` and one attribute per
-kind. Relationship handling is out of scope here — the fixtures use empty
-``relationships`` so the method's relationship branch is a no-op.
+node-like object exposing ``id``, ``get_kind()`` and one Python attribute
+for each Infrahub attribute or relationship. The relationship tests also
+supply ``client``, whose store holds the three nodes and records each
+lookup, and whose ``get`` fails the test, and one DiffSync model class per
+kind.
 """
 
 from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -27,7 +39,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-from infrahub_sync.adapters.infrahub import InfrahubAdapter
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
 
 # Test constant — extracted to avoid PLR2004 (magic-value) warnings on the
 # repeated literal. 443 is just a representative HTTPS port for the Number
@@ -49,32 +61,102 @@ class FakeAttr:
 
 
 @dataclass
+class FakeAttrSchema:
+    """Stand-in for an attribute schema — the completeness check in ``resolve_peer_node`` reads both fields."""
+
+    name: str
+    optional: bool = False
+
+
+@dataclass
+class FakeRelSchema:
+    """Stand-in for a relationship schema — ``name``, ``peer`` kind and ``cardinality`` are read."""
+
+    name: str
+    peer: str
+    cardinality: str = "one"
+
+
+@dataclass
+class FakeRelatedNode:
+    """Stand-in for ``RelatedNodeSync`` — only ``.id``, the peer's id, is read."""
+
+    id: str
+
+
+@dataclass
 class FakeSchema:
     """Stand-in for the kind schema the adapter holds in its own mapping."""
 
     kind: str
     attribute_names: list[str] = field(default_factory=list)
-    relationships: list = field(default_factory=list)
+    attributes: list[FakeAttrSchema] = field(default_factory=list)
+    relationships: list[FakeRelSchema] = field(default_factory=list)
     relationship_names: list[str] = field(default_factory=list)
 
 
 class FakeNode:
-    """Stand-in for ``InfrahubNodeSync`` exposing the attributes by name."""
+    """Stand-in for ``InfrahubNodeSync`` exposing the attributes and relationships by name.
 
-    def __init__(self, node_id: str, kind: str, attrs: dict[str, Any]) -> None:
+    ``peers`` maps a relationship name to the peer's kind and id. Every
+    attribute is declared required, so a peer whose attributes all hold a
+    value counts as complete and ``resolve_peer_node`` does not fetch it again.
+    """
+
+    def __init__(
+        self,
+        node_id: str,
+        kind: str,
+        attrs: dict[str, Any],
+        peers: dict[str, tuple[str, str]] | None = None,
+    ) -> None:
+        peers = peers or {}
         self.id = node_id
-        self.schema = FakeSchema(kind=kind, attribute_names=list(attrs.keys()))
+        self.schema = FakeSchema(
+            kind=kind,
+            attribute_names=list(attrs.keys()),
+            attributes=[FakeAttrSchema(name=name) for name in attrs],
+            relationships=[FakeRelSchema(name=name, peer=peer_kind) for name, (peer_kind, _) in peers.items()],
+            relationship_names=list(peers.keys()),
+        )
         for name, value in attrs.items():
             setattr(self, name, FakeAttr(value=value))
+        for name, (_, peer_id) in peers.items():
+            setattr(self, name, FakeRelatedNode(id=peer_id))
 
     def get_kind(self) -> str:
         return self.schema.kind
 
 
+class FakeNodeStore:
+    """Stand-in for the SDK node store, keyed by kind and node id. Records each lookup as (kind, id)."""
+
+    def __init__(self, nodes: list[FakeNode]) -> None:
+        self._nodes = {(node.get_kind(), node.id): node for node in nodes}
+        self.lookups: list[tuple[str, str]] = []
+
+    def get(self, *, key: str, kind: str, raise_when_missing: bool = True) -> FakeNode | None:
+        assert raise_when_missing is False
+        self.lookups.append((kind, key))
+        return self._nodes.get((kind, key))
+
+
+class FakeClient:
+    """Stand-in for ``InfrahubClientSync``: holds the store and fails the test on any fetch."""
+
+    def __init__(self, nodes: list[FakeNode]) -> None:
+        self.store = FakeNodeStore(nodes)
+
+    @staticmethod
+    def get(**kwargs: object) -> NoReturn:
+        pytest.fail(f"Unexpected fetch from Infrahub: {kwargs}")
+
+
 class FakeAdapter(InfrahubAdapter):
-    """``InfrahubAdapter`` with its schema mapping narrowed to the fakes these tests hold."""
+    """``InfrahubAdapter`` with its schema mapping and client narrowed to the fakes these tests hold."""
 
     schema: dict[str, FakeSchema]
+    client: FakeClient
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +202,7 @@ def _serialise(adapter: FakeAdapter, node: FakeNode) -> dict[str, Any]:
 
     The method's parameter annotation is ``InfrahubNodeSync``, but the
     function body only reads ``node.id``, ``node.get_kind()`` and per-name
-    attribute managers — all of which ``FakeNode`` provides. The node's
+    attribute and relationship managers — all of which ``FakeNode`` provides. The node's
     schema goes into the adapter's own mapping first, because that mapping
     is where the adapter reads a kind's schema. The type suppression below
     is a single, scoped location rather than once per test.
@@ -413,3 +495,181 @@ def test_adapter_output_constructs_model_with_empty_list() -> None:
     assert isinstance(instance.sans, list)
     assert instance.metadata == {}
     assert isinstance(instance.metadata, dict)
+
+
+# ---------------------------------------------------------------------------
+# Relationship loop: the device's primary IP address points to an interface
+# whose device is the same device. This test runs the real
+# ``infrahub_node_to_diffsync`` and ``_resolve_peer_unique_id``; nothing on
+# the adapter is replaced. As in the adapter that ``infrahub-sync generate``
+# writes, each DiffSync model is a class attribute named after its kind.
+# ---------------------------------------------------------------------------
+
+
+class DeviceModel(DiffSyncModelMixin, DiffSyncModel):
+    """DiffSync model for the device kind of the loop."""
+
+    _modelname = "InfraDevice"
+    _identifiers = ("name",)
+    _attributes = ("primary_ip",)
+
+    name: str
+    primary_ip: str | None = None
+
+
+class IPAddressModel(DiffSyncModelMixin, DiffSyncModel):
+    """DiffSync model for the IP address kind of the loop."""
+
+    _modelname = "IpamIPAddress"
+    _identifiers = ("address",)
+    _attributes = ("interface",)
+
+    address: str
+    interface: str | None = None
+
+
+class InterfaceModel(DiffSyncModelMixin, DiffSyncModel):
+    """DiffSync model for the interface kind of the loop, identified by its device and name."""
+
+    _modelname = "InfraInterface"
+    _identifiers = ("device", "name")
+    _attributes = ()
+
+    device: str
+    name: str
+
+
+class LoopAdapter(FakeAdapter):
+    """Adapter that holds one DiffSync model per kind, read by ``getattr(self, peer_kind)``."""
+
+    InfraDevice = DeviceModel
+    IpamIPAddress = IPAddressModel
+    InfraInterface = InterfaceModel
+
+
+def _make_loop_config(ip_address_fields: list[SchemaMappingField] | None = None) -> SyncConfig:
+    """SyncConfig that maps each kind of the loop with its relationship to the next kind.
+
+    ``ip_address_fields`` replaces the fields mapped for the IP address kind.
+    """
+    if ip_address_fields is None:
+        ip_address_fields = [
+            SchemaMappingField(name="address", mapping="address"),
+            SchemaMappingField(name="interface", mapping="interface", reference="InfraInterface"),
+        ]
+    return SyncConfig(
+        name="test",
+        source=SyncAdapter(name="src", adapter="x:x"),
+        destination=SyncAdapter(name="dst", adapter="x:x"),
+        order=["InfraDevice", "IpamIPAddress", "InfraInterface"],
+        schema_mapping=[
+            SchemaMappingModel(
+                name="InfraDevice",
+                mapping="InfraDevice",
+                identifiers=["name"],
+                fields=[
+                    SchemaMappingField(name="name", mapping="name"),
+                    SchemaMappingField(name="primary_ip", mapping="primary_ip", reference="IpamIPAddress"),
+                ],
+            ),
+            SchemaMappingModel(
+                name="IpamIPAddress",
+                mapping="IpamIPAddress",
+                identifiers=["address"],
+                fields=ip_address_fields,
+            ),
+            SchemaMappingModel(
+                name="InfraInterface",
+                mapping="InfraInterface",
+                identifiers=["device", "name"],
+                fields=[
+                    SchemaMappingField(name="name", mapping="name"),
+                    SchemaMappingField(name="device", mapping="device", reference="InfraDevice"),
+                ],
+            ),
+        ],
+    )
+
+
+def test_relationship_loop_converts_peers_by_identifiers_only() -> None:
+    """A device whose primary IP address sits on one of its own interfaces converts without recursion.
+
+    The IP address is converted only for its identifier, ``address``, so its
+    ``interface`` relationship is not followed. If every relationship of a peer
+    were converted, the conversion would follow device > IP address >
+    interface > device until Python raised ``RecursionError``.
+    """
+    device = FakeNode(
+        node_id="d1",
+        kind="InfraDevice",
+        attrs={"name": "sw1"},
+        peers={"primary_ip": ("IpamIPAddress", "ip1")},
+    )
+    ip_address = FakeNode(
+        node_id="ip1",
+        kind="IpamIPAddress",
+        attrs={"address": ipaddress.IPv4Interface("10.0.0.1/32")},
+        peers={"interface": ("InfraInterface", "if1")},
+    )
+    interface = FakeNode(
+        node_id="if1",
+        kind="InfraInterface",
+        attrs={"name": "eth0"},
+        peers={"device": ("InfraDevice", "d1")},
+    )
+    nodes = [device, ip_address, interface]
+    adapter = LoopAdapter.__new__(LoopAdapter)
+    adapter.config = _make_loop_config()
+    adapter.schema = {node.get_kind(): node.schema for node in nodes}
+    adapter.client = FakeClient(nodes)
+
+    data = _serialise(adapter, device)
+
+    assert data == {"local_id": "d1", "name": "sw1", "primary_ip": "10.0.0.1/32"}
+
+
+def test_peer_missing_identifier_lists_its_mapped_fields_without_resolving_its_peers() -> None:
+    """When an IP address cannot be identified, the error lists its other mapped fields.
+
+    The schema_mapping maps the IP address's ``description`` and ``interface``
+    but not its identifier, ``address``. ``present_keys`` lists ``description``
+    and ``interface``, read from the IP address's schema. The interface is not
+    looked up: resolving it would follow the loop back to the device.
+    """
+    device = FakeNode(
+        node_id="d1",
+        kind="InfraDevice",
+        attrs={"name": "sw1"},
+        peers={"primary_ip": ("IpamIPAddress", "ip1")},
+    )
+    ip_address = FakeNode(
+        node_id="ip1",
+        kind="IpamIPAddress",
+        attrs={"address": ipaddress.IPv4Interface("10.0.0.1/32"), "description": "loopback"},
+        peers={"interface": ("InfraInterface", "if1")},
+    )
+    interface = FakeNode(
+        node_id="if1",
+        kind="InfraInterface",
+        attrs={"name": "eth0"},
+        peers={"device": ("InfraDevice", "d1")},
+    )
+    nodes = [device, ip_address, interface]
+    adapter = LoopAdapter.__new__(LoopAdapter)
+    adapter.config = _make_loop_config(
+        ip_address_fields=[
+            SchemaMappingField(name="description", mapping="description"),
+            SchemaMappingField(name="interface", mapping="interface", reference="InfraInterface"),
+        ]
+    )
+    adapter.schema = {node.get_kind(): node.schema for node in nodes}
+    adapter.client = FakeClient(nodes)
+
+    with pytest.raises(PeerIdentifierError) as excinfo:
+        _serialise(adapter, device)
+
+    err = excinfo.value
+    assert err.peer_kind == "IpamIPAddress"
+    assert err.missing_keys == ("address",)
+    assert err.present_keys == ("local_id", "description", "interface")
+    assert adapter.client.store.lookups == [("IpamIPAddress", "ip1")]
