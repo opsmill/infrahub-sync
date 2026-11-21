@@ -1,0 +1,42 @@
+dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md
+  s_58b527396c8cb5::t_7886b02254fe41 79
+  s_58b527396c8cb5::t_3897782c0c68fa 53-58,76-78
+docs/docs/guides/credentials.mdx
+  s_58b527396c8cb5::t_e564686836b9f1 200
+  s_58b527396c8cb5::t_7886b02254fe41 176
+  s_58b527396c8cb5::t_641aa1d6ff39f9 170-175,202-204
+changelog/+stored-credentials.added.md
+  s_29c678cfcb1898::t_307ad6703cca49 1
+docs/docs/compose-deployment.mdx
+  s_29c678cfcb1898::t_0ca420fe25b583 372-373
+docs/docs/development/knowledge/local-accounts.md
+  s_29c678cfcb1898::t_631e9a04801c05 185-188,190-191
+docs/docs/kubernetes-deployment.mdx
+  s_29c678cfcb1898::t_648c5548f60a81 93,102-109
+docs/docs/reference/sync-http-api.mdx
+  s_29c678cfcb1898::t_45a08aac768bb8 245-248,472-476
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "19f6507c1b83be7afbc49fbfc2665e083bf9b3bb",
+  "prompts": {},
+  "sessions": {
+    "s_29c678cfcb1898": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab07c8716c52d0809",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
