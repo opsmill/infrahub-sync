@@ -49,10 +49,11 @@ UTC. The Sync API refuses the request, and stores nothing, when:
 - the configuration already has a schedule that is not deleted (`schedule-exists-for-configuration`).
   The message names that schedule.
 
-When the Sync API stores the schedule but cannot reach Prefect, it answers
-`503 orchestration-unavailable`. The schedule starts no run until a later request on a schedule,
-or a restart of the Sync API, hands it to Prefect. Until then `schedules show` prints
-`warning: this schedule is not yet handed to the task manager`.
+When the Sync API stores the schedule but cannot confirm that Prefect holds it, it answers
+`503 orchestration-unavailable`. The handover is then not confirmed: Prefect may hold the earlier
+settings of the schedule, the new ones, or no schedule, and starts runs with what it holds. A later
+request on a schedule, or a restart of the Sync API, hands the stored schedule to Prefect. Until
+then `schedules show` prints `warning: this schedule is not yet handed to the task manager`.
 
 The other settings of a schedule are:
 
@@ -314,9 +315,10 @@ and the actions your account can take. Below that, on a wide screen, the page ha
     - for a paused schedule, the reason given when it was paused, with **Resume**.
 
   The card is red for a stopped schedule and amber for a failing one, as on the schedule list. It
-  also warns when the schedule starts no run until it is handed to the task manager
-  (`prefect_synced` is `false`), and names a newer version of the configuration with **Change
-  version** when the sentence does not already. The schedule's history follows the card.
+  also warns when the Sync API could not confirm that the task manager holds the schedule as it is
+  saved (`prefect_synced` is `false`): the task manager may hold the earlier settings, the new ones,
+  or none, and starts runs with what it holds. The card also names a newer version of the
+  configuration with **Change version** when the sentence does not already. The schedule's history follows the card.
 - **On the left**, the settings, each value under its label: the version, the cadence in words
   with its cron expression, the time zone, the write target, whether it writes the records left
   out with who set that and when, the overlap policy and the late-start limit. Then the open review

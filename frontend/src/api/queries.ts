@@ -782,8 +782,10 @@ const SCHEDULE_ERRORS: Record<string, { title: string; detail?: string }> = {
     detail: "Choose a registered version of the configuration.",
   },
   "orchestration-unavailable": {
-    title: "The Sync service saved the schedule, but the task manager did not confirm the change",
-    detail: "Open the schedule page to check its state.",
+    title:
+      "The Sync service saved the change, but could not confirm what the task manager holds for this schedule",
+    detail:
+      "Until a later change to a schedule or a restart of the Sync API hands it over, the task manager may start runs with the earlier settings, with the new ones, or start none. Open the schedule page to check its state.",
   },
   "secret-parameter-refused": {
     title: "A value in this form matches a secret the Sync service holds",

@@ -1480,7 +1480,7 @@ Each route answers with the schedule resource:
   is `null` when the schedule is not active.
 - `waiting_start_at` is the start that waits for a run in progress, under the `queue` policy.
 - `last_run_id` is the schedule's most recent run. `GET /runs/{run_id}` holds its outcome.
-- `prefect_synced` is `false` while the task manager does not hold the schedule as it is stored.
+- `prefect_synced` is `false` while the Sync API has not confirmed that the task manager holds the schedule as it is stored. The task manager may then hold the earlier settings, the new ones, or none, and starts runs with what it holds.
 - `consecutive_failures` is the count of runs in a row that failed, were interrupted or ended
   ambiguous. At 5, the schedule stops with the reason `repeated-failures`.
 - `open_branch` is the schedule's most recent branch whose proposed change is open, with
@@ -1516,7 +1516,7 @@ The schedule routes answer these refusals:
 | 422 | `secret-parameter-refused` | A request field holds a credential. |
 | 422 | `request-invalid` | The body does not match the schema, names `name`, `config_id` or `owner` in a change, or changes nothing. |
 | 503 | `configuration-version-invalid` | The registered configuration version cannot be read. |
-| 503 | `orchestration-unavailable` | The schedule is stored, and either the task manager could not be reached or the product database failed while the schedule was handed to the task manager; the message says which. When the task manager could not be reached, the schedule starts no run until a later request on a schedule, or a restart of the Sync API, hands it over. When the product database failed, the task manager may already hold the schedule and start its runs, but the stored schedule does not record the handover; a later request on a schedule, or a restart of the Sync API, records it. |
+| 503 | `orchestration-unavailable` | The schedule is stored, and either the task manager could not be reached or the product database failed while the schedule was handed to the task manager; the message says which. In both cases the handover is not confirmed: the task manager may hold the earlier settings of the schedule, the new ones, or none, and starts runs with what it holds. A later request on a schedule, or a restart of the Sync API, hands the stored schedule over and records it. |
 
 A resume of a paused schedule, or of a stopped schedule whose reason no longer holds (also
 `repeated-failures`), whose owner's account is disabled or deleted, or that writes to the default branch

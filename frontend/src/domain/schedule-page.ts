@@ -42,7 +42,7 @@ export interface StatusNote {
 }
 
 export const NOT_HANDED_OVER =
-  "This schedule starts no run until the Sync API hands it to the task manager. Restarting the Sync API or changing the schedule hands it over again.";
+  "The Sync API could not confirm that the task manager holds this schedule as it is saved. The task manager may start runs with the earlier settings, with these settings, or start none. Restarting the Sync API or changing a schedule hands it over again.";
 
 const RUNS_STEP: StatusStep = { label: "View the runs", runs: true };
 

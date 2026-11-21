@@ -44,7 +44,7 @@ describe("describeScheduleError", () => {
     [
       "orchestration-unavailable",
       503,
-      "The Sync service saved the schedule, but the task manager did not confirm the change",
+      "The Sync service saved the change, but could not confirm what the task manager holds for this schedule",
     ],
     [
       "secret-parameter-refused",
