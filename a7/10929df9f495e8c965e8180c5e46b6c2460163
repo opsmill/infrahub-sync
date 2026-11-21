@@ -1,0 +1,31 @@
+docs/docs/guides/credentials.mdx
+  s_58b527396c8cb5::t_ae969a6e5cffd1 1-251
+  s_58b527396c8cb5::t_20991542cd72d2 252-254
+  s_0a9f0b6318b368::t_eedb0ad07326ed 255-262
+docs/sidebars.ts
+  s_0a9f0b6318b368::t_d4aa4551f31098 39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a710929df9f495e8c965e8180c5e46b6c2460163",
+  "prompts": {},
+  "sessions": {
+    "s_0a9f0b6318b368": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac6b42be7674a2a53",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
