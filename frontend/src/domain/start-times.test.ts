@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { formatInZone, scheduledForText, startsIn, startTimeText } from "./start-times";
+import { formatInZone, scheduledForText, startsIn, startTimeText, zonedTitle } from "./start-times";
+
+describe("zonedTitle", () => {
+  it("gives the time in the schedule's zone and the zone's name", () => {
+    expect(zonedTitle("2026-07-01T06:00:00Z", "America/New_York")).toBe(
+      "Wed 1 Jul 2026, 02:00 EDT (-04:00) (America/New_York)"
+    );
+  });
+
+  it("gives the zone's name only for a zone the browser does not know", () => {
+    expect(zonedTitle("2026-07-01T06:00:00Z", "Mars/Olympus")).toBe("Mars/Olympus");
+  });
+});
 
 describe("formatInZone", () => {
   it.each<[string, string, string]>([

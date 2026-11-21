@@ -8,7 +8,7 @@ import { WarningIcon } from "#/components/icons";
 import { Bar, CLICKABLE, SectionHeading, STRETCHED, textAction } from "#/components/page";
 import { cadenceWords, formFromCron } from "#/domain/cadence";
 import { type NextStarts, needsAction } from "#/domain/schedule-list";
-import { formatInZone, startsIn } from "#/domain/start-times";
+import { startsIn, zonedTitle } from "#/domain/start-times";
 import { useNow } from "#/lib/time";
 
 import { ScheduleStateLabel } from "./ScheduleStateLabel";
@@ -204,7 +204,7 @@ export function NextStartsPanel({ starts }: { starts: NextStarts }) {
                   >
                     <time
                       dateTime={iso}
-                      title={`${formatInZone(iso, s.timezone)} (${s.timezone})`}
+                      title={zonedTitle(iso, s.timezone)}
                       className="pt-px font-medium text-sm tabular-nums"
                     >
                       {hhmm.format(new Date(iso))}

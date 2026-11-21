@@ -7,7 +7,7 @@ import type { Run, Schedule } from "#/api/types";
 import { StateIcon } from "#/components/icons";
 import { Bar, textAction } from "#/components/page";
 import { noStartWord, type RunLine, runGroups, startGroups } from "#/domain/schedule-page";
-import { formatInZone, startsIn } from "#/domain/start-times";
+import { startsIn, zonedTitle } from "#/domain/start-times";
 import { LINK } from "#/features/runs/form";
 import { useNow } from "#/lib/time";
 import { failureText, type NextStartsRead } from "./NextStarts";
@@ -29,16 +29,6 @@ const weekday = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   month: "short",
 });
-
-/** The schedule's time zone on hover; a zone the browser does not know is named only. */
-function zonedTitle(iso: string, timeZone: string): string {
-  try {
-    return `${formatInZone(iso, timeZone)} (${timeZone})`;
-  } catch (error) {
-    if (!(error instanceof RangeError)) throw error;
-    return timeZone;
-  }
-}
 
 function Time({ iso, timeZone }: { iso: string; timeZone: string }) {
   return (

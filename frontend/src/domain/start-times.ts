@@ -59,6 +59,19 @@ export function formatInZone(iso: string, timeZone: string): string {
   return `${day}, ${time} ${zone}`;
 }
 
+/**
+ * A start time in the schedule's time zone followed by the zone's name, for a hover title. A zone
+ * the browser does not know gives the zone's name only, so the page still renders.
+ */
+export function zonedTitle(iso: string, timeZone: string): string {
+  try {
+    return `${formatInZone(iso, timeZone)} (${timeZone})`;
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return timeZone;
+  }
+}
+
 export interface StartTimeText {
   /** The time in the schedule's time zone. */
   zoned: string;
