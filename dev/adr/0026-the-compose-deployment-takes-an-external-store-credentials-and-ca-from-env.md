@@ -1,6 +1,9 @@
 # 26. The Compose deployment takes an external object store, adapter credentials and CA certificates from `.env`
 
-**Status**: Accepted
+**Status**: Accepted; partly superseded on 2026-11-21 by
+[ADR 0054](0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md) — the Sync API stores adapter credentials, and the Compose files pass no
+`INFRAHUB_SYNC_CREDENTIAL_*` variable to the worker. The decisions on the external object store
+and on CA certificates stand. The body below is unchanged.
 **Date**: 2026-11-13
 **Source**: dev/specs/archive/015-compose-store-credentials-ca/research.md (R1, R3, R4)
 
