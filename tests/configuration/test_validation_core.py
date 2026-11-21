@@ -1085,3 +1085,29 @@ def test_every_frozen_code_is_documented_for_an_operator() -> None:
 
     assert "### Finding codes" in documented
     assert {code for code in FROZEN_CODES if f"`{code}`" not in documented} == set()
+
+
+# No declared content reaches the pointer bound since the reference walk was removed (spec 027):
+# every pointer of the core is a fixed path, or one settings pointer with one bounded component.
+# The bound still guards a pointer that an adapter-owned validator returns, so it is called here.
+_POINTER_BOUND = 256
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        pytest.param("/configuration/source/settings/" + "a" * 300, id="cut-in-plain-text"),
+        pytest.param("/configuration/source/settings/" + "a" * 212 + "~0" * 40, id="cut-on-an-escape"),
+    ],
+)
+def test_a_pointer_past_the_bound_is_cut_to_a_well_formed_pointer_that_keeps_two_defects_apart(prefix: str) -> None:
+    from infrahub_sync.configuration import validation as validation_module
+
+    first = validation_module._finding_location(f"{prefix}/x")
+    second = validation_module._finding_location(f"{prefix}/y")
+
+    assert first != second
+    for location in (first, second):
+        assert len(location) <= _POINTER_BOUND
+        finding = ValidationFinding(code="undeclared-setting", severity="error", location=location, message="m")
+        assert finding.location == location

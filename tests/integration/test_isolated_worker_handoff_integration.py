@@ -49,7 +49,8 @@ from infrahub_sync.product_store.bundle import (
 )
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
 from infrahub_sync.service.storage import service_product_projection
-from tests.configuration.validation_packages import package
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL, credential_package
+from tests.helpers.stored_credentials import create_stored_credential_names
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
@@ -174,7 +175,10 @@ def qualification(tmp_path: Path) -> dict[str, Any]:
     """One registered configuration, its run, and a configuration directory off-checkout."""
     settings = _settings_or_skip()
     projection = service_product_projection(environ=settings)
-    version = projection.create_configuration(package())
+    # The package names a stored credential in each block. The store holds the two names, and the
+    # worker program answers their values in place of the Sync API (`release_run_credentials`).
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    version = projection.create_configuration(credential_package())
     binding = (version.config_id, version.registry_version, version.package_checksum)
     # Outside the repository checkout on purpose: a worker's configuration directory is
     # configuration data, never flow source.
