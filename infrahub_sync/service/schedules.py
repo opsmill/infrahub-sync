@@ -21,7 +21,15 @@ from uuid import uuid4
 import structlog
 from pydantic import ValidationError
 
-from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration import (
+    ConfigurationPackageParseError,
+    RemovedCredentialFormatError,
+    parse_stored_configuration_package,
+)
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+    STORED_VERSION_FORMAT_REMOVED_MESSAGE,
+)
 from infrahub_sync.execution import LiveSecretValues, collect_secret_values, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -1057,8 +1065,10 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         """Return the destination branch that the configuration version declares, or ``None``.
 
         Raises:
-            ServiceAPIError: ``404 configuration-version-not-found``, or ``503
-                configuration-version-invalid`` for a registered version that cannot be read.
+            ServiceAPIError: ``404 configuration-version-not-found``, ``422
+                credential-format-removed`` for a version stored in the removed credential
+                format (spec 027, FR-021), or ``503 configuration-version-invalid`` for any
+                other registered version that cannot be read.
         """
         stored = self._projection.lookup_configuration_version(config_id, registry_version).value
         if stored is None:
@@ -1069,7 +1079,13 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 "the requested configuration version does not exist",
             )
         try:
-            package = parse_configuration_package(stored.declared_content)
+            package = parse_stored_configuration_package(stored.declared_content).package
+        except RemovedCredentialFormatError:
+            # No run of this version can start, so no schedule may name it. The message is fixed
+            # text, the same as on the run routes, and names nothing of the stored content.
+            raise self._refusal(
+                context, 422, CREDENTIAL_FORMAT_REMOVED_REASON, STORED_VERSION_FORMAT_REMOVED_MESSAGE
+            ) from None
         except ConfigurationPackageParseError:
             raise self._refusal(
                 context, 503, "configuration-version-invalid", "the registered configuration version is invalid"

@@ -12,9 +12,16 @@ import pytest
 pytest.importorskip("prefect")
 pytest.importorskip("fastapi")
 
+from infrahub_sync.configuration.removed_credential_format import STORED_VERSION_FORMAT_REMOVED_MESSAGE
 from infrahub_sync.service import serve
 from infrahub_sync.service.schedule_cadence import next_start
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
+from tests.helpers.removed_credential_format import (
+    REMOVED_IDENTIFIER,
+    REMOVED_REFERENCE_NAME,
+    store_as_the_earlier_build,
+    store_in_removed_format,
+)
 from tests.service.schedule_fixtures import (
     ADMIN_TOKEN,
     OTHER_TOKEN,
@@ -828,3 +835,51 @@ def test_a_schedule_that_writes_to_the_default_branch_is_created_when_approval_i
     run_id = api.scheduled_run(created["schedule_id"], datetime(2027, 1, 1, 1, tzinfo=timezone.utc))
     assert api.projection.lookup_schedule_branch(run_id).value is None
     assert api.get(created["schedule_id"])["open_branch"] is None
+
+
+# ----------------------------------------------------------------------
+# A version stored before the removal of the `credentials` block (spec 027, FR-021)
+# ----------------------------------------------------------------------
+
+
+def _format_removed(response: Response) -> None:
+    """Check the refusal that every route gives for a version stored in the removed format."""
+    assert response.status_code == 422, response.text
+    assert _error(response)["code"] == "credential-format-removed"
+    assert _error(response)["message"] == STORED_VERSION_FORMAT_REMOVED_MESSAGE
+    assert REMOVED_REFERENCE_NAME not in response.text
+    assert REMOVED_IDENTIFIER not in response.text
+
+
+def test_create_refuses_a_version_stored_in_the_removed_credential_format(api: ScheduleApi, tmp_path: Path) -> None:
+    store_in_removed_format(tmp_path.resolve(), api.config_id, 1, package().declared_content())
+
+    response = api.client.post("/schedules", json=api.body(), headers=headers())
+
+    _format_removed(response)
+    assert api.client.get("/schedules", headers=READ).json()["items"] == []
+    assert api.orchestration.calls == []
+    assert api.event_types()[-1] == "infrahub_sync.schedule.refused"
+
+
+def test_change_refuses_a_version_stored_in_the_removed_credential_format(api: ScheduleApi, tmp_path: Path) -> None:
+    created = api.create()
+    store_in_removed_format(tmp_path.resolve(), api.config_id, 1, package().declared_content())
+
+    response = api.post(created["schedule_id"], "change", cron="30 3 * * *", timezone="UTC")
+
+    _format_removed(response)
+    assert api.get(created["schedule_id"])["cron"] == created["cron"]
+
+
+def test_create_and_change_accept_a_version_stored_with_an_empty_credentials_block(
+    api: ScheduleApi, tmp_path: Path
+) -> None:
+    """The earlier build wrote an empty block into every version; such a version is still scheduled."""
+    store_as_the_earlier_build(tmp_path.resolve(), api.config_id, 1)
+
+    created = api.create()
+    changed = api.post(created["schedule_id"], "change", cron="30 3 * * *", timezone="UTC")
+
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["cron"] == "30 3 * * *"
