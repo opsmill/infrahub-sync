@@ -496,6 +496,7 @@ def test_configuration_mutation_releases_only_proven_pre_effect_error_families(
         ConfigsNotFoundError = configs_service.ConfigsNotFoundError
         ConfigsStorageError = configs_service.ConfigsStorageError
         ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsNameInUseError = configs_service.ConfigsNameInUseError
         ConfigsError = configs_service.ConfigsError
 
         def __init__(self) -> None:
@@ -594,6 +595,7 @@ def test_concurrent_configuration_mutation_does_not_invoke_service_twice(tmp_pat
         ConfigsNotFoundError = configs_service.ConfigsNotFoundError
         ConfigsStorageError = configs_service.ConfigsStorageError
         ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsNameInUseError = configs_service.ConfigsNameInUseError
         ConfigsError = configs_service.ConfigsError
 
         def __init__(self) -> None:
@@ -683,6 +685,7 @@ def test_unrelated_service_assertion_is_not_reclassified_as_configuration_refusa
         ConfigsNotFoundError = configs_service.ConfigsNotFoundError
         ConfigsStorageError = configs_service.ConfigsStorageError
         ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsNameInUseError = configs_service.ConfigsNameInUseError
         ConfigsError = configs_service.ConfigsError
 
         @staticmethod
@@ -737,6 +740,7 @@ def test_configuration_route_grammar_refuses_hostile_values_before_service_class
         ConfigsNotFoundError = configs_service.ConfigsNotFoundError
         ConfigsStorageError = configs_service.ConfigsStorageError
         ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsNameInUseError = configs_service.ConfigsNameInUseError
         ConfigsError = configs_service.ConfigsError
 
         def __init__(self) -> None:
@@ -830,6 +834,7 @@ def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(tmp
         ConfigsNotFoundError = configs_service.ConfigsNotFoundError
         ConfigsStorageError = configs_service.ConfigsStorageError
         ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsNameInUseError = configs_service.ConfigsNameInUseError
         ConfigsError = configs_service.ConfigsError
 
         @staticmethod
@@ -942,6 +947,7 @@ def test_unknown_configs_subclass_uses_fixed_base_family(tmp_path: Path) -> None
         ConfigsNotFoundError = configs_service.ConfigsNotFoundError
         ConfigsStorageError = configs_service.ConfigsStorageError
         ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsNameInUseError = configs_service.ConfigsNameInUseError
         ConfigsError = configs_service.ConfigsError
 
         @staticmethod
@@ -966,6 +972,7 @@ def test_configs_request_subclass_uses_base_fallback_without_reflecting_metadata
         ConfigsNotFoundError = configs_service.ConfigsNotFoundError
         ConfigsStorageError = configs_service.ConfigsStorageError
         ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsNameInUseError = configs_service.ConfigsNameInUseError
         ConfigsError = configs_service.ConfigsError
 
         @staticmethod
@@ -992,6 +999,7 @@ def test_configs_not_found_subclass_cannot_leak_reason(tmp_path: Path) -> None:
         ConfigsNotFoundError = configs_service.ConfigsNotFoundError
         ConfigsStorageError = configs_service.ConfigsStorageError
         ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsNameInUseError = configs_service.ConfigsNameInUseError
         ConfigsError = configs_service.ConfigsError
 
         @staticmethod
@@ -1026,6 +1034,7 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
         ConfigsNotFoundError = configs_service.ConfigsNotFoundError
         ConfigsStorageError = configs_service.ConfigsStorageError
         ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsNameInUseError = configs_service.ConfigsNameInUseError
         ConfigsError = configs_service.ConfigsError
 
         def __init__(self) -> None:

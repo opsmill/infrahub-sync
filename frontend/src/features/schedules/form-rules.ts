@@ -109,7 +109,7 @@ export function formProblems(check: FormCheck): FormProblem[] {
     else if (!nameAccepted(check.name))
       problems.push({
         field: "name",
-        text: "Change the name: it has a character the Sync API does not accept.",
+        text: "Change the name: use letters, digits, '.', '_' or '-', starting with a letter or digit, up to 128 characters.",
       });
   }
   if (!check.configId) problems.push({ field: "config", text: "Choose a configuration version." });

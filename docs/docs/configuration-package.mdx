@@ -100,7 +100,7 @@ infrahub-sync configs version <config-id> package.yml --reason "update the devic
 - `configs register` always creates a new configuration with a new `config_id`, at version 1.
 - The configuration takes its name from `configuration.name` in the newest version. A name
   belongs to one configuration only. `configs register` refuses a package whose name another
-  configuration already has, so registering the same file again is refused. The refusal names
+  configuration already has, so registering the same named file again is refused. The refusal names
   that configuration and prints the `configs version` command that adds the package to it as a
   new version.
 - `configs version` adds the next version to an existing configuration. A new version can keep

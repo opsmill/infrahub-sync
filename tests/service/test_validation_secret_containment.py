@@ -179,6 +179,7 @@ def _validate_injected(tmp_path: Path, report: ValidationReport) -> dict[str, An
         ConfigsNotFoundError = configs.ConfigsNotFoundError
         ConfigsStorageError = configs.ConfigsStorageError
         ConfigsInternalError = configs.ConfigsInternalError
+        ConfigsNameInUseError = configs.ConfigsNameInUseError
 
         @staticmethod
         def validate(**_kwargs: object) -> ValidationReport:

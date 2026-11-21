@@ -150,7 +150,7 @@ describe("formProblems", () => {
       "a name with a refused character",
       { name: "nightly sync!" },
       "name",
-      "Change the name: it has a character the Sync API does not accept.",
+      "Change the name: use letters, digits, '.', '_' or '-', starting with a letter or digit, up to 128 characters.",
     ],
     ["no configuration", { configId: undefined }, "config", "Choose a configuration version."],
     [

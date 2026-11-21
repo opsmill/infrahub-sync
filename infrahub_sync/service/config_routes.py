@@ -254,7 +254,7 @@ class ConfigurationRoutes:
             return operation(projection=self._projection, **kwargs)
         except self._service.ConfigsError as error:
             error_type = type(error)
-            if error_type is configs.ConfigsNameInUseError:
+            if error_type is self._service.ConfigsNameInUseError:
                 raise ServiceAPIError(
                     409,
                     CONFIGURATION_NAME_IN_USE,

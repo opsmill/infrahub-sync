@@ -124,7 +124,7 @@ export function viewerTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-const relativeFormat = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+const relativeFormat = new Intl.RelativeTimeFormat("en", { numeric: "always" });
 
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["year", 365 * 24 * 60 * 60],

@@ -852,12 +852,15 @@ the later events down by one, so a reader that pages this way can skip one event
 event twice.
 
 With `order=desc`, a new event takes the first position and moves every older event down by one.
-To read older pages without reading an event twice, read the first page without `until`, then
+To read older pages while new events are saved, read the first page without `until`, then
 send with every older page `until` set to just after the `occurred_at` of the first page's newest
 event, and read the newest events again with a request without `until`. `until` keeps only events
 saved before it, so take it from an event the Sync API returned rather than from the reader's
-clock, which can differ from the Sync API's clock. The schedule page of the web interface reads a
-schedule's history this way, with `until` one millisecond after that event:
+clock, which can differ from the Sync API's clock. An event saved after the newest event but
+less than a millisecond after it still falls before `until`, moves the older events down by one
+and can make an older page repeat one event: leave out an event whose `event_id` you have already
+read. The schedule page of the web interface reads a schedule's history this way, with `until` one
+millisecond after that event, and leaves out repeats by `event_id`:
 
 ```text
 GET /events?related=schedule:<schedule_id>&order=desc&limit=50&offset=0

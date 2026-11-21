@@ -1,5 +1,6 @@
 import { Card, Spinner } from "@infrahub/ui";
 import type { ReactNode } from "react";
+import { cn } from "tailwind-variants";
 
 import { cronFields } from "#/domain/cadence";
 import { startGroups } from "#/domain/schedule-page";
@@ -32,9 +33,9 @@ function previewState(cron: string | null, preview: CadencePreview): PreviewStat
   return { kind: "starts", starts: read.data.starts };
 }
 
-function Computing({ as: As }: { as: "li" | "span" }) {
+function Computing({ as: As, className }: { as: "li" | "span"; className?: string }) {
   return (
-    <As className="flex items-center gap-2 text-foreground-muted text-sm">
+    <As className={cn("flex items-center gap-2 text-foreground-muted text-sm", className)}>
       <Spinner aria-hidden="true" className="motion-reduce:animate-none" />
       Computing the next start times…
     </As>
@@ -141,7 +142,7 @@ export function NextStartLine({
       content = <span className="text-danger">No start. {state.text}</span>;
       break;
     case "waiting":
-      return <Computing as="span" />;
+      return <Computing as="span" className={className} />;
     case "failed":
       content = state.text;
       break;

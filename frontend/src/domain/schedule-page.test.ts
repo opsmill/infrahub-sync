@@ -59,6 +59,12 @@ describe("startSentence", () => {
     );
   });
 
+  it("uses the past tense for a start before now", () => {
+    expect(startSentence("2026-11-20T15:00:00Z", "Europe/Paris", NOW)).toBe(
+      "Was due 1 hour ago, Friday 16:00 Paris time."
+    );
+  });
+
   it("writes the city of a time zone with spaces", () => {
     expect(zoneCity("America/Argentina/Buenos_Aires")).toBe("Buenos Aires");
     expect(zoneCity("UTC")).toBe("UTC");

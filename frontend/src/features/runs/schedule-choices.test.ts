@@ -42,6 +42,22 @@ describe("scheduleChoices", () => {
     ]);
   });
 
+  it("names the configuration by its identifier when its name is not known", () => {
+    expect(
+      scheduleChoices({
+        live: [
+          { schedule_id: "s-1", name: "nightly", config_id: "c-netbox" },
+          { schedule_id: "s-2", name: "nightly", config_id: "c-unknown" },
+        ],
+        deleted: [],
+        configNames: NAMES,
+      })
+    ).toEqual([
+      { id: "s-1", label: "nightly", detail: "from-netbox" },
+      { id: "s-2", label: "nightly", detail: "c-unknown" },
+    ]);
+  });
+
   it("keeps a schedule once when both lists have it", () => {
     const s = { schedule_id: "s-1", name: "nightly", config_id: "c-netbox" };
     expect(scheduleChoices({ live: [s], deleted: [s], configNames: NAMES })).toEqual([

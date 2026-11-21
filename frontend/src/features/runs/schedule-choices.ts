@@ -49,7 +49,10 @@ export function scheduleChoices({
   return entries.map(({ schedule, label }) => ({
     id: schedule.schedule_id,
     label,
-    detail: (counts.get(label) ?? 0) > 1 ? configNames.get(schedule.config_id) : undefined,
+    detail:
+      (counts.get(label) ?? 0) > 1
+        ? (configNames.get(schedule.config_id) ?? schedule.config_id)
+        : undefined,
   }));
 }
 

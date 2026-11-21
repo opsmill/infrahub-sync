@@ -52,11 +52,14 @@ export function zoneCity(timeZone: string): string {
 }
 
 /**
- * "Starts in 9 hours, Saturday 02:00 Paris time." The day and time are in the schedule's time
+ * "Starts in 9 hours, Saturday 02:00 Paris time.", or "Was due 1 hour ago, …" for a start in the
+ * past. The day and time are in the schedule's time
  * zone. A time zone the browser does not know leaves them out.
  */
 export function startSentence(iso: string, timeZone: string, now: number): string {
   const rel = startsIn(iso, now);
+  // A next start the task manager has not reached yet can already be in the past.
+  const lead = new Date(iso).getTime() < now ? "Was due" : "Starts";
   let when: string;
   try {
     const parts = new Intl.DateTimeFormat("en-GB", {
@@ -71,9 +74,9 @@ export function startSentence(iso: string, timeZone: string, now: number): strin
     when = `${get("weekday")} ${get("hour")}:${get("minute")}`;
   } catch (error) {
     if (!(error instanceof RangeError)) throw error;
-    return `Starts ${rel}.`;
+    return `${lead} ${rel}.`;
   }
-  return `Starts ${rel}, ${when} ${zoneCity(timeZone)} time.`;
+  return `${lead} ${rel}, ${when} ${zoneCity(timeZone)} time.`;
 }
 
 /** A step for an action, only when the signed-in account may use it. */

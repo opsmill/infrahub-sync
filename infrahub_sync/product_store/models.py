@@ -943,7 +943,7 @@ class EventFilters(BaseModel):
         return value
 
 
-# One page of events, oldest first.
+# One page of events, in the order the ``order`` argument names (``asc``, oldest first, by default).
 EventPage: TypeAlias = StorePage[AuditEvent]
 
 # The order of an event list: ``asc`` oldest first, ``desc`` newest first; both by ``created_at`` then ``event_id``.
