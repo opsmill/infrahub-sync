@@ -62,6 +62,12 @@ describe("eventText", () => {
       "schedule-start",
       "Start skipped: this Sync API requires an approved plan before a write to the default branch",
     ],
+    [
+      "start_skipped",
+      "skipped-owner-not-found",
+      "schedule-start",
+      "Start skipped: the owner's account is disabled or deleted",
+    ],
     ["start_queued", "queued", "schedule-start", "Start waiting for the run in progress"],
     [
       "start_missed",

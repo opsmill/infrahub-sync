@@ -59,6 +59,7 @@ const OUTCOME_TEXTS: Record<string, Record<string, string>> = {
     "skipped-start-waiting": "Start skipped: another start was already waiting",
     "skipped-approval-required":
       "Start skipped: this Sync API requires an approved plan before a write to the default branch",
+    "skipped-owner-not-found": "Start skipped: the owner's account is disabled or deleted",
   },
   [`${SCHEDULE}start_queued`]: { queued: "Start waiting for the run in progress" },
   [`${SCHEDULE}start_missed`]: {
