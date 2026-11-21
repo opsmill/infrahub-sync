@@ -1052,6 +1052,10 @@ def _worker_execution_context(
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
     # A saved-plan apply, a resume and a verify construct the destination only, so they
     # resolve no source credential (spec 016 FR-010: a resume never reads the source).
+    if package.configuration.store is not None:
+        # Refused before the request for the stored credentials: a stage that cannot run
+        # receives no value, and the Sync API records no release for it.
+        raise UnsupportedSyncStoreError
     released: dict[str, Mapping[str, Mapping[str, str]]] = {}
     if named_credentials(package, STAGE_CREDENTIAL_BLOCKS.get(stage, CREDENTIAL_BLOCKS)):
         if credentials is None:
