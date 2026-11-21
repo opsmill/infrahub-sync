@@ -1,6 +1,5 @@
 """HTTP-only adapter for the shared configuration application service."""
 
-import os
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from functools import wraps
@@ -43,7 +42,6 @@ from .events import (
     config_decision_type,
     config_event,
 )
-from .liveness import LivenessPolicy
 from .models import ConfigMutationRequest
 from .paging import (
     DEFAULT_LIMIT,
@@ -133,7 +131,6 @@ class ConfigurationRoutes:
         product_projection: ProductProjection,
         service: Any = configs,
         secrets: tuple[str, ...] = (),
-        worker_liveness_seconds: float | None = None,
     ) -> None:
         self._projection = product_projection
         self._service = service
@@ -141,15 +138,6 @@ class ConfigurationRoutes:
         # Reads the fields of a stored credential for the destination schema read of `validate`;
         # the application sets it, with its encryption key (spec 027, FR-004).
         self._credential_values: Callable[[str], Mapping[str, str]] | None = None
-        # How recently a worker must have published its credential variable names to count as
-        # live: the service liveness rule, from the same setting `serve` reads.
-        self._worker_liveness_seconds = (
-            LivenessPolicy.from_environment(
-                worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10")
-            ).stall_threshold_seconds
-            if worker_liveness_seconds is None
-            else worker_liveness_seconds
-        )
 
     def read_stored_credentials_with(self, credential_values: Callable[[str], Mapping[str, str]]) -> None:
         """Set the function that reads the fields of a stored credential for the destination schema read.
@@ -284,9 +272,8 @@ class ConfigurationRoutes:
         With ``branch``, a destination that names a stored credential is read with its token,
         decrypted inside this request and returned in no finding (spec 027, FR-004).
 
-        With ``branch``, the destination checks run against that Infrahub branch and the
-        package's credential references are compared with what the live workers hold (spec
-        007 FR-034 to FR-036). Without it, validation judges declared content only, as before.
+        With ``branch``, the destination checks run against that Infrahub branch (spec 007
+        FR-034 to FR-036). Without it, validation judges declared content only, as before.
         """
 
         options: dict[str, Any] = {}
@@ -295,7 +282,6 @@ class ConfigurationRoutes:
                 "destination_schema": DestinationSchemaOptions(
                     branch=branch, credential_values=self._credential_values
                 ),
-                "worker_liveness_seconds": self._worker_liveness_seconds,
             }
         report = self._call(
             self._service.validate,

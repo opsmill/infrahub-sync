@@ -59,7 +59,6 @@ from infrahub_sync.product_store.models import (
     StoredCredential,
     StoredCredentialPage,
     StoredCredentialRevision,
-    WorkerEnvironment,
 )
 from infrahub_sync.product_store.store import (
     NO_SAVED_PLAN_MESSAGE,
@@ -182,7 +181,6 @@ __all__ = (
     "StoredCredentialNotFoundError",
     "StoredCredentialPage",
     "StoredCredentialRevision",
-    "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",

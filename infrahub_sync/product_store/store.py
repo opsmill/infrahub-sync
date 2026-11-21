@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -95,7 +95,6 @@ from infrahub_sync.product_store.models import (
     StoredCredential,
     StoredCredentialPage,
     StoredCredentialRevision,
-    WorkerEnvironment,
     already_approved_body,
     approval_error_body,
     not_approvable_message,
@@ -189,9 +188,6 @@ CREATE TABLE IF NOT EXISTS configuration_versions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
-CREATE TABLE IF NOT EXISTS worker_environments (
-    worker_id TEXT PRIMARY KEY, credential_names TEXT NOT NULL, observed_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS accounts (
     account_id TEXT PRIMARY KEY, short_id TEXT NOT NULL UNIQUE, name TEXT, name_key TEXT, password_hash TEXT,
     administrator BOOLEAN NOT NULL DEFAULT FALSE, disabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -639,12 +635,6 @@ manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
 WHERE run_id = ? AND artifact_id = ? AND visibility = ?"""
 _SELECT_CONFIGURATION_BASELINE = """SELECT config_id, source_row_counts, runs_since_full_extract, updated_at
 FROM configuration_baselines WHERE config_id = ?"""
-_UPSERT_WORKER_ENVIRONMENT = """INSERT INTO worker_environments (worker_id, credential_names, observed_at)
-VALUES (?, ?, ?)
-ON CONFLICT (worker_id) DO UPDATE SET credential_names = EXCLUDED.credential_names,
-observed_at = EXCLUDED.observed_at"""
-_SELECT_WORKER_ENVIRONMENTS = """SELECT worker_id, credential_names, observed_at FROM worker_environments
-ORDER BY worker_id"""
 # The table holds one row at most: `record_id` is always 1, so a write for another version or
 # work pool replaces the first. A write for the same version and work pool changes nothing, so
 # a repeated bootstrap on a converged deployment leaves the database as it was (spec 018 FR-010).
@@ -944,11 +934,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]: ...
 
-    def publish_worker_environment(self, environment: WorkerEnvironment) -> None: ...
-
     def write_bootstrap_record(self, record: BootstrapRecord) -> None: ...
-
-    def worker_environments(self) -> tuple[WorkerEnvironment, ...]: ...
 
     def add_prefect_execution(
         self, run_id: str, link: PrefectExecutionLink, *, receipt_id: str, allocate_attempt: bool = False
@@ -2230,18 +2216,6 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             ),
         )
 
-    def publish_worker_environment(self, environment: WorkerEnvironment) -> None:
-        """Replace one worker's published credential variable names (spec 007 FR-035)."""
-        with self._transaction() as cursor:
-            cursor.execute(
-                self._sql(_UPSERT_WORKER_ENVIRONMENT),
-                (
-                    environment.worker_id,
-                    _json(list(environment.credential_names)),
-                    environment.observed_at.isoformat(),
-                ),
-            )
-
     def write_bootstrap_record(self, record: BootstrapRecord) -> None:
         """Replace the one bootstrap record when it names another version or work pool (spec 018 FR-007b)."""
         connection = self._connect()
@@ -2260,22 +2234,6 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
-
-    def worker_environments(self) -> tuple[WorkerEnvironment, ...]:
-        """Return every worker's last published credential variable names, by worker."""
-        with self._reading() as cursor:
-            cursor.execute(self._sql(_SELECT_WORKER_ENVIRONMENTS))
-            rows = cursor.fetchall()
-        return tuple(
-            WorkerEnvironment.model_validate(
-                {
-                    "worker_id": row[0],
-                    "credential_names": tuple(_JSON_LIST_ADAPTER.validate_json(str(row[1]))),
-                    "observed_at": row[2],
-                }
-            )
-            for row in rows
-        )
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
         """Return the configuration's durable safety reference, if a write has set one."""
@@ -6450,22 +6408,6 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return one configuration's durable source-count and full-extract reference."""
         return self._records.lookup_configuration_baseline(config_id)
 
-    def publish_worker_environment(
-        self, worker_id: str, credential_names: Iterable[str], *, observed_at: datetime | None = None
-    ) -> None:
-        """Record the credential variable NAMES one worker holds now; never a value (spec 007 FR-035).
-
-        Each call replaces that worker's previous names, so the record follows the variables
-        the worker holds at its latest poll.
-        """
-        self._records.publish_worker_environment(
-            WorkerEnvironment(
-                worker_id=worker_id,
-                credential_names=tuple(credential_names),
-                observed_at=observed_at or datetime.now(timezone.utc),
-            )
-        )
-
     def write_bootstrap_record(
         self, sync_version: str, work_pool: str, *, completed_at: datetime | None = None
     ) -> BootstrapRecord:
@@ -6484,14 +6426,6 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         )
         self._records.write_bootstrap_record(record)
         return record
-
-    def live_worker_environments(self, *, observed_after: datetime) -> tuple[WorkerEnvironment, ...]:
-        """Return the publications of the workers that published at or after `observed_after`, by worker."""
-        return tuple(
-            environment
-            for environment in self._records.worker_environments()
-            if environment.observed_at >= observed_after
-        )
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
         """Resolve only a published, public, run-owned reference, with explicit unavailability."""

@@ -84,11 +84,6 @@ def _registered(tmp_path: Path, data: dict[str, Any] | None = None) -> tuple[str
         package=credential_package_data() if data is None else data,
         projection=projection,
     )
-    # Until T051 of spec 027 removes the worker environment check, the opt-in adds a
-    # `worker-environment-unknown` warning when no live worker has published its variables.
-    # The package references no variable, so the worker publishes an empty list. T051 removes
-    # this call together with `publish_worker_environment`.
-    projection.publish_worker_environment("worker", [])
     return registered.version.config_id, projection
 
 

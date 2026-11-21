@@ -151,7 +151,6 @@ EXPECTED_PUBLIC_NAMES = {
     "StoredCredentialNotFoundError",
     "StoredCredentialPage",
     "StoredCredentialRevision",
-    "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
