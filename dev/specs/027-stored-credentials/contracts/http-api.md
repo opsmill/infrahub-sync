@@ -138,11 +138,36 @@ Every route outside the two worker routes answers `403 forbidden` to the worker 
       its `reason` yet; it is not known whether the `reason` is this code.
     - `credential-format-removed`: the package holds a `credentials` block, empty or not, or a
       `$credential` reference. The `message` field names `credential: <name>`
-      (`tests/configuration/test_removed_credential_format.py`).
+      (`tests/configuration/test_removed_credential_format.py`). This applies to a package that a
+      user sends for registration. A stored version is read by a different rule, described below.
 - `POST /configs/{config_id}/versions/{v}/validate` returns the same findings in the `findings` list of
   its report, each with its code, its location and its message.
 - The findings `credential-not-set-in-worker` and `worker-environment-unknown` are removed.
 - The run-starting routes (plan, sync, apply, verify, approve, resume) refuse with `422` and the same
   codes before they start a run (FR-008).
+- A version stored before this change is read by this rule (overnight log A3):
+    - The earlier build wrote `"credentials": {}` into every stored version, and the stored checksum
+      covers that block. A stored version whose `credentials` block is empty, and which holds no
+      `$credential` reference, uses nothing that was removed. Every route reads it as before. It keeps
+      its stored checksum, so a user can still approve and apply its saved plans by checksum
+      (`tests/service/test_approval.py`). Such a version names no stored credential, so no value is
+      released for its runs, and a registered run reads no token from a worker variable. Its runs work
+      only when its source and its destination need no token or password.
+    - A stored version whose `credentials` block holds an entry, or which holds a `$credential`
+      reference, is refused with `422 credential-format-removed` and a message that says to register a
+      new version. The routes that refuse it are:
+        - the run-starting routes (plan, sync, apply, verify, approve, resume)
+        - `POST /configs/{config_id}/versions/{v}/validate` (`422 configs-validation`, with
+          `reason: credential-format-removed`)
+        - `POST /schedules` and `POST /schedules/{schedule_id}/change`, when the schedule names such
+          a version. Before this follow-up they answered `503 configuration-version-invalid`
+          (`tests/service/test_schedule_routes.py`).
+        - the two worker routes
+    - The routes that a user reads the history with still answer `200` for such a version:
+      `GET /configs`, `GET /configs/{config_id}`, `GET /configs/{config_id}/versions`,
+      `GET /configs/{config_id}/versions/{v}`, `GET /runs`, `GET /runs/{run_id}`,
+      `GET /runs/{run_id}/results`, `GET /runs/{run_id}/artifacts`,
+      `GET /runs/{run_id}/artifacts/{artifact_id}` and `GET /runs/{run_id}/logs`
+      (`tests/configuration/test_removed_credential_format.py`).
 - The message of `credential-not-found` names the command `infrahub-sync credentials create <name>` and
   says that an administrator runs it.

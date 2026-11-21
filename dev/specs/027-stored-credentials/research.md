@@ -206,9 +206,16 @@ reads the destination token from the same released values.
 codes. The worker route checks again (R5). The Sync API reads the destination schema with the
 decrypted value in its own process (FR-004).
 
-A version stored before this change that still has a `credentials` block or `$credential` references
-cannot be parsed by the new models. The run routes refuse it with the code `credential-format-removed`
-and a message that says to register a new version.
+A version stored before this change that still has a `credentials` block with an entry, or
+`$credential` references, cannot be parsed by the new models. The run routes refuse it with the code
+`credential-format-removed` and a message that says to register a new version.
+
+The earlier build wrote an empty block, `"credentials": {}`, into every stored version, and the stored
+checksum covers it. A version with only that empty block uses nothing that was removed. Reading a
+stored version ignores the empty block and checks the stored checksum against the content with the
+block, so the version keeps its checksum, its saved plans and its approvals (overnight log A3,
+`parse_stored_configuration_package` in `infrahub_sync/configuration/stored_package.py`). A package that a
+user sends for registration is still refused for any `credentials` key, empty or not.
 
 `credential-not-set-in-worker`, `worker-environment-unknown`, `publish_worker_environment`,
 `held_credential_names` and `worker_credentials.py` are removed. The `worker_environments` table

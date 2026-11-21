@@ -137,6 +137,19 @@ tests, nothing uses `INFRAHUB_SYNC_CREDENTIAL_*` or `$credential`.
 - [X] T047 [US1] Write `tests/configuration/test_removed_credential_format.py`: a package with a `credentials` block or a `$credential` reference is refused at parse time with a message that names `credential: <name>`; a stored version in the old format is refused at run start and by the worker route with `credential-format-removed` (FR-021)
 - [X] T048 [US1] Remove `CredentialReference`, `CredentialReferenceNode`, `ConfigurationPackage.credentials` and the `/credentials` diagnostics from `infrahub_sync/configuration/models.py`; add the parse refusal of T047
 - [ ] T049 [US1] Remove `EnvironmentCredentialProvider`, `CredentialProvider`, `provider_for`, `resolve_reference`, `ENV_CREDENTIAL_PREFIX` and `select_runtime_credential`'s environment branch from `infrahub_sync/configuration/credentials.py`, and their exports from `infrahub_sync/configuration/__init__.py`; remove the `$credential` path from `configuration/runtime.py`
+    - Chunk 13b (overnight log A3): every symbol named above is removed, and the `$credential` path of
+      `configuration/runtime.py` is removed. The environment branch of `select_runtime_credential` stays,
+      so this task stays open. A shipped path depends on it: the direct Prefect flow
+      (`infrahub_sync/orchestration/flow.py:214`) calls `run_remote_request`
+      (`infrahub_sync/execution.py:1451`), which builds its instance from a v2 file
+      (`infrahub_sync/execution.py:785`) without the registered-context marker. Its adapters read the
+      address, the token, the username and the password from the variables of the serving process
+      (`ADAPTER_CREDENTIAL_ENV_VARS`, `infrahub_sync/execution.py:204`). `spec.md` ("The direct Prefect
+      flow is not affected") and `plan.md` ("does not change") keep that path as it is. Every registered
+      path builds its instance with `resolve_runtime_instance`, which sets the marker
+      (`infrahub_sync/configuration/runtime.py:111`), so a registered run reads no variable
+      (`tests/configuration/test_runtime.py`, `tests/configuration/test_registered_adapter_authority.py`).
+      To close this task, change its text to keep the environment branch for the direct Prefect flow.
 - [X] T050 [US1] Remove the reference findings that no longer apply (`malformed-credential-reference`, `unknown-credential-provider`, `unknown-credential-reference`) from `infrahub_sync/configuration/validation.py`; keep `inline-credential-value` and `setting-contains-credential-material`
 - [X] T051 [US1] Remove `infrahub_sync/configuration/worker_credentials.py`, the publishing in `infrahub_sync/service/worker.py:382-437`, `publish_worker_environment`, `worker_environments`, `live_worker_environments` and the `worker_environments` statement in `infrahub_sync/product_store/store.py`, `WorkerEnvironment` in `product_store/models.py`, and `credential-not-set-in-worker` and `worker-environment-unknown` in `product_store/configs.py:827-910`; delete `tests/service/test_worker_environment.py` and `tests/product_store/test_worker_environments.py` (FR-022)
 - [X] T052 [US1] Add `credential-format-removed` to the run-start check of T035 and the worker route of T028
