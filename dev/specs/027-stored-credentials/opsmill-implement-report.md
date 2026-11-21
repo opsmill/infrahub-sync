@@ -27,6 +27,7 @@ One line per chunk: chunk, tasks, outcome, commits, notes.
 15 | T057-T062 | 6 done | 030c2a1b 13344215 63e061f1 a710929d 6c48c757 ddfc6bea f651457d 783201dc ee7ca279 | ADR 0054 (0039 superseded, 0026/0040 partly); constitution 1.3.0; docs written from code where code differs from spec (lenient start, A4); unit tier 1 failure (marker test, order-dependent); changelog fragments to delete/reword at release listed
 15b | A4 follow-up | Sync API process refuses to start without key or worker token (503 kept inside build_app); worker unchanged (run fails naming both variables; docs say so); marker test fixed (searches Prefect's resolved home and database) | ab4fb381 19f6507c 5c7d919a 11f26774 | lenient start came from chunks 3 and 6 ("until T054"); dev.api now uses build_process_service; tests/image gets throwaway key; worker token minimum is 16 characters per contract and code
 16 | T063-T065 | 3 done | 964f36a1 50cdf84e a1d38916 | credentials_used on every run answer (contract names only GET /runs/{id}); approve answer fixed to carry it; runs show line format chosen by the chunk; frontend types.generated.ts not regenerated (codegen reads a live API on forbidden port 8001)
+17 | T066-T069 + E4 test | 4 done; E4 registration race done (row lock on PostgreSQL READ COMMITTED, write lock on SQLite); E4 run-start race partial (no lock: run accepted, then refused at release with 422, no value released) | ef836f11 b93569be 5b763472 67055ce4 7eb95b58 d117ef7d | schedule create/re-pin takes no lock (R8 leaves it to run start); new service/credential_models.py (Pylint C0302); 204 receipt stores empty body
 ```
 
 ## Local-pass evidence
@@ -99,4 +100,8 @@ check-310 after chunk 12|unit 3.10|uv run invoke tests.check-310|2026-11-21T01:1
 16 | revisions, approve, runs show (10 tests) | uv run pytest tests/service/test_credential_revisions_on_runs.py tests/service/test_approval.py tests/cli/test_credentials_command.py -k "..." | 2026-11-21T06:45:41Z | SQLite | 10 passed
 16 | unit tier at a1d38916 | uv run invoke tests.tests-unit | 2026-11-21T06:52:54Z | 3 PostgreSQL DSNs | 11438 passed, 4 skipped, 2 xfailed, 0 failed
 16 | check-310 | uv run invoke tests.check-310 | before a1d38916 | Python 3.10 | all three legs passed
+17 | product store incl. 36 deletion cases (12 PostgreSQL) | uv run pytest tests/product_store -m "integration or not integration" | 2026-11-21T07:31:23Z | 3 PostgreSQL DSNs | 1899 passed
+17 | service/client/CLI deletion + parity + contract + worker boundary | uv run pytest <6 files> | 2026-11-21T07:32:10Z | n/a | 715 passed
+17 | unit tier | uv run invoke tests.tests-unit | before d117ef7d | n/a | 11504 passed, 4 skipped, 2 xfailed, 0 failed
+17 | check-310 | uv run invoke tests.check-310 | chunk 17 | Python 3.10 | 7699 passed, all three legs
 ```
