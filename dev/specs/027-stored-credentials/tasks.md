@@ -203,9 +203,9 @@ credential, and the refusal lists them.
 
 **Independent test**: quickstart scenario 7; FR-009, SC-005.
 
-- [ ] T070 [P] [US3] Add to `tests/cli/test_convert_command.py`: the report lists each credential, its fields and the `credentials create` command; `configs register` of a converted package before its credentials exist names each missing credential and its fields
-- [ ] T071 [US3] Change the report printed by `configs convert` in `infrahub_sync/cli.py:916-994` to list the credentials to create with the command for each
-- [ ] T072 [US3] Update `docs/docs/v2-to-v3.mdx` with the report and the commands
+- [X] T070 [P] [US3] Add to `tests/cli/test_convert_command.py`: the report lists each credential, its fields and the `credentials create` command; `configs register` of a converted package before its credentials exist names each missing credential and its fields
+- [X] T071 [US3] Change the report printed by `configs convert` in `infrahub_sync/cli.py:916-994` to list the credentials to create with the command for each
+- [X] T072 [US3] Update `docs/docs/v2-to-v3.mdx` with the report and the commands
 
 ---
 
