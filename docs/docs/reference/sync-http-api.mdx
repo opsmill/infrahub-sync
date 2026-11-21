@@ -242,8 +242,10 @@ A credential resource holds no value:
 - A caller that is not an administrator receives `403`, code `forbidden`, on the three changing
   routes. The checks name the permission `manage-credentials`, which administrators hold.
 - A `422` answer never repeats the submitted body.
-- A Sync API that has no `INFRAHUB_SYNC_ENCRYPTION_KEY` answers every creation and change with
-  `503`, code `credential-key-not-configured`.
+- The Sync API refuses to start without `INFRAHUB_SYNC_ENCRYPTION_KEY`, so a running Sync API
+  has a key. The code `503 credential-key-not-configured` is the answer to a creation or a
+  change when the application has no key. Only an application that a test builds in its own
+  process, without the variable, returns it.
 - This build has no route that deletes a credential.
 
 ### Worker routes
@@ -467,12 +469,11 @@ Also export `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, and optionally
 `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, as [Accounts and API tokens](#accounts-and-api-tokens)
 describes. Without the password, the API does not start.
 
-For stored credentials, export `INFRAHUB_SYNC_ENCRYPTION_KEY` (32 bytes, base64-encoded) and
-`INFRAHUB_SYNC_WORKER_TOKEN`. A value that is set and not accepted stops the start: a key that
-is not base64 or not 32 bytes, or a worker token that breaks the rules of the `admin` token or
-equals it. Without the key, the API starts, logs a warning, and answers every creation and
-change of a credential with `503 credential-key-not-configured`. Without the worker token, the
-API starts and applies no `worker` account, so no worker can get a value.
+Also export `INFRAHUB_SYNC_ENCRYPTION_KEY` (32 bytes, base64-encoded) and
+`INFRAHUB_SYNC_WORKER_TOKEN`. Without either, the API does not start, and the message names the
+missing variable. A value that is not accepted stops the start in the same way: a key that is
+not base64 or not 32 bytes, or a worker token that breaks the rules of the `admin` token or
+equals it. No message holds a value.
 
 The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and any
 network access controls at your ingress boundary. Accounts and tokens authenticate the callers

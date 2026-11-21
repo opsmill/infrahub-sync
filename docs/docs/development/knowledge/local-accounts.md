@@ -182,9 +182,13 @@ It uses the account tables, with no new column: the pair "named `worker` and
 - When `INFRAHUB_SYNC_WORKER_TOKEN` is set, `apply_worker_account` creates the row when it is
   missing, as an active account that is not an administrator and has no password, and keeps one
   environment-managed API token for it, the digest of the variable.
-- When the variable is not set or is empty, `serve.py` applies no `worker` account and logs a
-  warning. The operator `docker-compose.yml` requires the variable, so Compose stops before any
+- When the variable is not set or is empty, a Sync API process refuses to start:
+  `build_process_service` in `serve.py` calls `credential_settings`, and the message names the
+  variable. `main` and the `uvicorn --factory` start of `dev.api` both go through it. The
+  operator `docker-compose.yml` also requires the variable, so Compose stops before any
   container starts without it.
+- `build_app` alone accepts an environment without the variable, for an application that a test
+  builds in its own process. It then applies no `worker` account and logs a warning.
 - `settings.py` applies the rules of the `admin` token to the worker token and stops the start
   when the two tokens are equal. `serve.py` stops the start when an account named `worker`
   exists that the environment does not manage, or when another account already has the worker

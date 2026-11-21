@@ -90,7 +90,7 @@ release that the chart's current `appVersion` names does not contain them.
 
 ### Stored credentials and the chart
 
-A Sync build with stored credentials reads three variables that the published chart does not
+A Sync build with stored credentials requires three variables that the published chart does not
 pass:
 
 - `INFRAHUB_SYNC_ENCRYPTION_KEY` on the Sync API: the key that encrypts stored credentials, 32
@@ -99,12 +99,14 @@ pass:
   account.
 - `INFRAHUB_SYNC_API_URL` on every worker: the address of the Sync API.
 
-Without the first two, the Sync API of such a build starts, but it answers every creation and
-change of a credential with `503 credential-key-not-configured`, and it applies no `worker`
-account, so no worker can get a value and a run of a package that names a stored credential
-fails. The chart does not pass these variables yet. The change belongs to the
-`opsmill/infrahub-helm` repository; it is not released, and the chart version that will contain
-it is not known. Such a build does not read `worker.credentials`,
+The Sync API of such a build refuses to start without `INFRAHUB_SYNC_ENCRYPTION_KEY` or
+`INFRAHUB_SYNC_WORKER_TOKEN`, and its message names the missing variable. The published chart
+does not pass these variables yet, so it cannot start the Sync API of such a build: the Sync API
+container exits at each start until the chart is updated. A worker of such a build starts
+without `INFRAHUB_SYNC_WORKER_TOKEN` and `INFRAHUB_SYNC_API_URL`, but each run of a package that
+names a stored credential fails before it reads the source. The change to the chart belongs to
+the `opsmill/infrahub-helm` repository; it is not released, and the chart version that will
+contain it is not known. Such a build does not read `worker.credentials`,
 `worker.credentialsExistingSecrets` or the `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` key
 of the published chart. The sections below describe the published chart.
 

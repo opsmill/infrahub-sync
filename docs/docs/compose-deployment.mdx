@@ -369,7 +369,8 @@ An earlier build read each token from an `INFRAHUB_SYNC_CREDENTIAL_*` variable o
 which a package named in a `credentials` block. This build removes that format. To upgrade:
 
 1. Add `INFRAHUB_SYNC_ENCRYPTION_KEY` and `INFRAHUB_SYNC_WORKER_TOKEN` to `.env`. Without them
-   Compose stops before any container starts.
+   Compose stops before any container starts, and `sync-api` itself refuses to start without
+   either and names the missing variable.
 2. Run `docker compose up -d --wait`.
 3. Create a stored credential for each token, with `infrahub-sync credentials create <name>`.
 4. In each package that used a secret, replace the `credentials` block and the `$credential`
