@@ -1,0 +1,63 @@
+development/docker-compose.yml
+  s_7b1f8b6ee684e7::t_d3382f6ea27930 277-280
+docker-compose.yml
+  s_7b1f8b6ee684e7::t_d3382f6ea27930 282-285
+infrahub_sync/service/serve.py
+  s_7b1f8b6ee684e7::t_ee008ffcdeed44 6,9,12,21-29,48,50-51,56,61,66-67,117-165,197-199,203-204,239-245,259-261,301
+infrahub_sync/service/app.py
+  s_7b1f8b6ee684e7::t_1974eabc231490 9,23,414-421,429,433-436,503-513
+  s_7b1f8b6ee684e7::t_b796b6fdef509d 514
+tests/service/test_http_api.py
+  s_7b1f8b6ee684e7::t_b3961d5af49e68 41
+  s_7b1f8b6ee684e7::t_173c42645b03b9 1903,1910
+  s_7b1f8b6ee684e7::t_a2d6c641cde629 61,3117,3125,3135
+  s_7b1f8b6ee684e7::t_08fb373df70e67 6-7,87,3110-3116,3118-3124,3126-3134,3136-3165
+dev/specs/029-api-health/verification.md
+  s_7b1f8b6ee684e7::t_0f248942e06947 1-26
+tests/service/test_serve.py
+  s_7b1f8b6ee684e7::t_889b05582af8c4 15,29-32,85,94
+  s_7b1f8b6ee684e7::t_4d4aae87fc760c 54,61
+  s_7b1f8b6ee684e7::t_9a919fc350cf57 6,25
+  s_7b1f8b6ee684e7::t_77e4b2dbb9e131 1-5,7-14,16-24,26-28,33-53,55-60,62-84,86-93
+dev/specs/029-api-health/tasks.md
+  s_7b1f8b6ee684e7::t_fbb35be2fdb126 53-55,64-68
+tests/service/health_fixtures.py
+  s_7b1f8b6ee684e7::t_db065af311d381 1-8,10-12,16-71
+  s_7b1f8b6ee684e7::t_a2d6c641cde629 9,13-15
+tests/service/test_schedule_routes.py
+  s_7b1f8b6ee684e7::t_6e885bf89e4f91 163-164
+  s_6d5c32cbf7b9c0::t_5e24bcd6b3d563 8
+tests/service/test_health_postgresql.py
+  s_7b1f8b6ee684e7::t_7c76e6da2ae07e 1-14,16-24,29-30,32-36,38-47
+  s_7b1f8b6ee684e7::t_889b05582af8c4 15,25-28,31,37
+tests/dev_stack/smoke/test_health.py
+  s_7b1f8b6ee684e7::t_5335fd3e9b8551 1-33
+tests/service/test_serve_site.py
+  s_7b1f8b6ee684e7::t_4d4aae87fc760c 95-96
+tests/service/test_account_presentation.py
+  s_7b1f8b6ee684e7::t_e98585299e62a8 39,223-230,651
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36161b417c6951614d52ba076f3a64763f329458",
+  "prompts": {},
+  "sessions": {
+    "s_6d5c32cbf7b9c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5621fe99b52b21ec",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
