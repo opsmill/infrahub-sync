@@ -414,6 +414,54 @@ def test_guard_contention_names_the_run_that_was_writing_to_the_configuration(
     assert "managed-infrahub-canary" not in str(failure)
 
 
+@pytest.mark.parametrize("stage", ["apply", "sync"])
+def test_the_configuration_write_guard_receives_the_stage_run_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """Critique E1: the managed write path always labels its guard session with its own run."""
+    prepared = _prepare(tmp_path, monkeypatch, stage=stage)
+    original = service_flow._configuration_write_guard
+    calls: list[tuple[str, str]] = []
+
+    def recording_guard(configuration_id: str, run_id: str) -> Any:  # noqa: ANN401 - the guard's own context manager.
+        calls.append((configuration_id, run_id))
+        return original(configuration_id, run_id)
+
+    monkeypatch.setattr(service_flow, "_configuration_write_guard", recording_guard)
+
+    _drive(prepared, stage)
+
+    assert calls == [(prepared.binding[0], prepared.run_id)]
+
+
+@pytest.mark.parametrize("stage", ["apply", "sync"])
+def test_a_contended_failure_looks_up_the_holder_in_the_run_records_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """One contended failure costs one run-record read for its candidate, and no more."""
+    prepared = _prepare(
+        tmp_path,
+        monkeypatch,
+        stage=stage,
+        acquire_failure=_lock_timeout(),
+        holder_label="infrahub-sync-guard:managed-holder",
+    )
+    _open_write_of_another_run(prepared, "managed-holder")
+    original = prepared.projection.write_holder_state
+    calls: list[tuple[str, str]] = []
+
+    def counting(run_id: str, config_id: str) -> Any:  # noqa: ANN401 - the store's own state record.
+        calls.append((run_id, config_id))
+        return original(run_id, config_id)
+
+    monkeypatch.setattr(prepared.projection, "write_holder_state", counting)
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _drive(prepared, stage)
+
+    assert calls == [("managed-holder", prepared.binding[0])]
+
+
 def test_guard_contention_without_another_write_says_the_active_run_is_not_known(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

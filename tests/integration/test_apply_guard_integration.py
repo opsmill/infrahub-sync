@@ -24,6 +24,7 @@ import subprocess  # noqa: S404 - the holder process runs a fixed interpreter an
 import sys
 import textwrap
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -33,6 +34,7 @@ psycopg: Any = pytest.importorskip("psycopg")
 # Imported after the skip: the guard module imports psycopg itself, so a static
 # import here would raise instead of skipping where the service extra is absent.
 from infrahub_sync.service.apply_guard import (  # noqa: E402
+    GUARD_LABEL_PREFIX,
     ApplyGuardContentionError,
     ApplyGuardOwnershipError,
     ApplyGuardReleaseError,
@@ -65,7 +67,8 @@ _HOLDER_SCRIPT = textwrap.dedent(
     from infrahub_sync.service.apply_guard import connect_guard_session, hold_apply_guard
 
     dsn, configuration_id = sys.argv[1], sys.argv[2]
-    with hold_apply_guard(configuration_id, connect=lambda: connect_guard_session(dsn)) as guard:
+    run_id = sys.argv[3] if len(sys.argv) > 3 else None
+    with hold_apply_guard(configuration_id, connect=lambda: connect_guard_session(dsn), run_id=run_id) as guard:
         print(f"HELD {guard.key}", flush=True)
         sys.stdin.readline()
         guard.require_ownership()
@@ -234,10 +237,14 @@ def test_a_body_exception_releases_the_real_lock(dsn: str, admin: _Session) -> N
         assert len(_advisory_holders(admin, _ALPHA_KEY)) == 1
 
 
-def _start_holder(dsn: str, configuration_id: str) -> tuple[subprocess.Popen[str], int]:
-    """Start an independent process holding one configuration's guard, and read its key."""
+def _start_holder(dsn: str, configuration_id: str, run_id: str | None = None) -> tuple[subprocess.Popen[str], int]:
+    """Start an independent process holding one configuration's guard, and read its key.
+
+    With `run_id`, the holder labels its guard session with that run.
+    """
+    arguments = [dsn, configuration_id] if run_id is None else [dsn, configuration_id, run_id]
     child = subprocess.Popen(  # noqa: S603 - fixed interpreter and inline script.
-        [sys.executable, "-c", _HOLDER_SCRIPT, dsn, configuration_id],
+        [sys.executable, "-c", _HOLDER_SCRIPT, *arguments],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -301,3 +308,67 @@ def test_different_configurations_write_concurrently(dsn: str, admin: _Session) 
 
     assert "RELEASED" in stdout, stderr
     assert child.returncode == 0, stderr
+
+
+# --- Naming the holder while another run also waits (spec 028, SC-001) ----------------
+
+_RUN_A = "20261123T1012-aaaaaaaa"
+_RUN_B = "20261123T1012-bbbbbbbb"
+_RUN_C = "20261123T1012-cccccccc"
+_WAITING_DEADLINE_SECONDS = 5.0
+_TIMING_OUT_DEADLINE_SECONDS = 1.0
+_REPETITIONS = 20
+# A session that waits for the key, identified by its label: `pg_locks` lists a waiting
+# request as a row that is not granted.
+_LABELLED_WAITERS = """
+SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.locktype = 'advisory' AND NOT l.granted
+  AND l.classid::bigint = %s AND l.objid::bigint = %s AND l.objsubid = 1
+  AND a.application_name = %s
+"""
+
+
+def _hold_once(dsn: str, run_id: str, deadline_seconds: float) -> bool:
+    """Take the alpha guard as `run_id`, prove the hold, and release it."""
+    with hold_apply_guard(_ALPHA, connect=_connect(dsn), deadline_seconds=deadline_seconds, run_id=run_id) as guard:
+        guard.require_ownership()
+    return True
+
+
+def _wait_until_queued(admin: _Session, key: int, run_id: str) -> None:
+    """Return once the session labelled with `run_id` waits for `key`, without a fixed sleep."""
+    parameters = ((key >> 32) & 0xFFFFFFFF, key & 0xFFFFFFFF, f"{GUARD_LABEL_PREFIX}{run_id}")
+    limit = time.monotonic() + _WAITING_DEADLINE_SECONDS
+    while time.monotonic() < limit:
+        if admin.execute(_LABELLED_WAITERS, parameters).fetchone() == (1,):
+            return
+        time.sleep(0.01)
+    pytest.fail(f"run {run_id} never queued for the guard")
+
+
+@pytest.mark.parametrize("repetition", range(_REPETITIONS))
+def test_the_run_whose_wait_ends_names_the_holder_and_never_the_other_waiter(
+    dsn: str, admin: _Session, repetition: int
+) -> None:
+    """Run A holds the guard; B and C wait. C's wait ends first and names A, never B.
+
+    B waits longer than C, so it is still queued, labelled, when C reads the holder. Only a
+    granted lock is a holder, so B's waiting request must never be read as one.
+    """
+    del repetition
+    child, _ = _start_holder(dsn, _ALPHA, _RUN_A)
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        waiting = pool.submit(_hold_once, dsn, _RUN_B, _WAITING_DEADLINE_SECONDS)
+        _wait_until_queued(admin, _ALPHA_KEY, _RUN_B)
+        with pytest.raises(ApplyGuardContentionError) as caught:
+            _hold_once(dsn, _RUN_C, _TIMING_OUT_DEADLINE_SECONDS)
+    finally:
+        stdout, stderr = _finish_holder(child)
+        pool.shutdown(wait=True)
+
+    assert caught.value.holder_run_id == _RUN_A
+    assert caught.value.holder_run_id != _RUN_B
+    assert waiting.result() is True
+    assert "RELEASED" in stdout, stderr
+    assert _advisory_holders(admin, _ALPHA_KEY) == []

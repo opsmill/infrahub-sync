@@ -86,21 +86,21 @@ in the web interface, and the real PostgreSQL test runs on every pull request.
 
 ### Service tests
 
-- [ ] T011 [US1] Update `tests/service/test_apply_guard.py`: every existing scripted acquisition now expects the
+- [X] T011 [US1] Update `tests/service/test_apply_guard.py`: every existing scripted acquisition now expects the
   `set_config('application_name', ...)` statement first when a run ID is passed; update each script deliberately
   (critique E6). Add: the label statement is sent before `_SET_DEADLINE` and `_ACQUIRE`; a `55P03` on `_ACQUIRE`
   runs `_HOLDER_TIMEOUT` then `_HOLDER` before the session is closed; one row with a valid label sets
   `holder_run_id`; a write that takes the lock runs neither `_HOLDER_TIMEOUT` nor `_HOLDER` (SC-004).
-- [ ] T012 [US1] In `tests/integration/test_apply_guard_integration.py` (`-m integration`,
+- [X] T012 [US1] In `tests/integration/test_apply_guard_integration.py` (`-m integration`,
   `APPLY_GUARD_TEST_POSTGRESQL_DSN`), add the three-session test: run A (a separate OS process, as the existing
   holder test does) holds the guard with `run_id="20261123T1012-aaaaaaaa"`; runs B and C wait with
   `deadline_seconds` of 5 and 1; C's `ApplyGuardContentionError.holder_run_id` equals A's run ID and never B's.
   Repeat 20 times (SC-001).
-- [ ] T013 [P] [US1] Update `tests/service/test_managed_write_guard.py`: replace the `other_write_in_progress`
+- [X] T013 [P] [US1] Update `tests/service/test_managed_write_guard.py`: replace the `other_write_in_progress`
   cases with: a contention error carrying a candidate of the same configuration names it for `apply` and `sync`;
   `_configuration_write_guard` receives the stage's run ID (critique E1); `write_holder_state` is called exactly
   once per contended failure.
-- [ ] T014 [P] [US1] Update `tests/product_store/test_write_admission.py`: replace the two
+- [X] T014 [P] [US1] Update `tests/product_store/test_write_admission.py`: replace the two
   `other_write_in_progress` tests with `write_holder_state` tests (unknown run → `None`; run of another
   configuration → `None`; open claimed write → `writing=True`; terminal or unclaimed write → `writing=False`), on
   SQLite and on PostgreSQL when `PRODUCT_STORE_TEST_POSTGRESQL_DSN` is set.
