@@ -102,7 +102,8 @@ dev/adr/00NN-the-health-endpoint-replaces-status.md
 changelog/                     # +api-health.added.md, +api-status-removed.changed.md
 tests/
 ├── service/test_health.py                 # NEW: unit (classification with recorded texts, rounds, status rule, names, settings)
-├── service/test_health_components.py      # NEW: component, opt-in, real services
+├── service/test_health_postgresql.py      # NEW: skipped unless PRODUCT_STORE_TEST_POSTGRESQL_DSN is set
+├── dev_stack/smoke/test_health.py         # NEW: `smoke` marker, against the running development stack
 ├── service/test_worker_alive.py           # NEW: unit (writer, the healthcheck command on fresh/old/missing/malformed files)
 ├── service/test_http_api.py, test_web_site.py, test_account_presentation.py   # /status → /health
 ├── service/test_liveness_policy.py        # must pass without edits
