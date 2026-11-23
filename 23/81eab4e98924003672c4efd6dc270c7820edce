@@ -1,0 +1,42 @@
+docs/docs/development/guidelines/secret-redaction.md
+  s_30954faa6b52fd::t_ea7d08380c664c 51-58
+docs/docs/running-a-sync.mdx
+  s_30954faa6b52fd::t_feb91f4b94225f 642-664
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_30954faa6b52fd::t_178dfc399ba77a 4,45-46,54-55,93-134
+dev/specs/028-write-lock-holder/research.md
+  s_30954faa6b52fd::t_fc19ca86a50c9d 64-70
+docs/docs/development/knowledge/apply-guard.md
+  s_30954faa6b52fd::t_d1e0933d6d0956 202-206
+  s_30954faa6b52fd::t_1ae102493709d7 103-107
+  s_30954faa6b52fd::t_531db4c641d295 99-102,108-141
+tests/integration/test_apply_guard_integration.py
+  s_30954faa6b52fd::t_47fa78c376de77 440-452
+docs/docs/reference/sync-http-api.mdx
+  s_30954faa6b52fd::t_44645c9ad59385 1017-1025
+docs/docs/development/guidelines/testing-tiers.md
+  s_30954faa6b52fd::t_51221f62cf5ad1 114-119,180-189,199,203
+changelog/+write-guard-names-active-run.changed.md
+  s_30954faa6b52fd::t_0d8ccf0a99bf24 1
+dev/specs/028-write-lock-holder/spec.md
+  s_30954faa6b52fd::t_6482b0153e7438 203-207
+  s_30954faa6b52fd::t_e89c4bc40bb25e 219-221
+dev/specs/028-write-lock-holder/tasks.md
+  s_30954faa6b52fd::t_4c0cf69589f25a 185,191,195,197,200,202,204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2381eab4e98924003672c4efd6dc270c7820edce",
+  "prompts": {},
+  "sessions": {
+    "s_30954faa6b52fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68b2c141-8dbb-4265-a817-fa76f097f99c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
