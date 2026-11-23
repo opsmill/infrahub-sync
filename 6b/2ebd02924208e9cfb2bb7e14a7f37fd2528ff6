@@ -1,0 +1,19 @@
+dev/specs/027-stored-credentials/opsmill-implement-report.md
+  s_58b527396c8cb5::t_f4da4baa836b9f 33,115-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b2ebd02924208e9cfb2bb7e14a7f37fd2528ff6",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
