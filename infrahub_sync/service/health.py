@@ -324,14 +324,20 @@ class HealthChecker:
         return DependencyHealthResource(name=dependency.name, status="up", error="none")
 
     async def _read_pool(self, now: datetime) -> PoolStatus | None:
-        """Read the work pool within the time limit; None when the limit passed.
+        """Read the work pool within the time limit; None when the limit passed or the server was not reached.
 
-        The reader turns every orchestrator failure into an unavailable snapshot itself.
+        The orchestrator's `pool_status` turns a failed read into an unavailable snapshot itself,
+        but the Prefect client is opened before that read, so a connection error can come from it.
         """
         try:
             return await asyncio.wait_for(self._pool_reader(now), self._check_timeout)
-        except TimeoutError:
-            logger.warning("health check failed", component="workers", category=ErrorCategory.TIMEOUT.value)
+        except (TimeoutError, httpx.HTTPError, OSError) as error:
+            logger.warning(
+                "health check failed",
+                component="workers",
+                category=classify_error(error).value,
+                error_type=type(error).__name__,
+            )
             return None
 
 

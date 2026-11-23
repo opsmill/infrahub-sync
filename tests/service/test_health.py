@@ -440,6 +440,19 @@ async def test_a_pool_read_past_the_limit_gives_an_unknown_worker_state() -> Non
     assert report.workers.items == []
 
 
+@pytest.mark.parametrize(
+    "error", [httpx.ConnectError("All connection attempts failed"), ConnectionRefusedError(61, "refused")]
+)
+async def test_a_pool_read_that_cannot_reach_the_server_gives_an_unknown_worker_state(error: Exception) -> None:
+    async def unreachable(_now: datetime) -> PoolStatus:  # noqa: RUF029 - the checker awaits the reader.
+        raise error
+
+    report = await _checker(reader=unreachable).report()
+
+    assert report.workers.state == "unknown"
+    assert report.status == "unhealthy"
+
+
 async def test_fewer_live_workers_than_the_minimum_is_unhealthy() -> None:
     report = await _checker(pool=_pool(_worker(1, WORKER_A, age=timedelta(seconds=5))), minimum=2).report()
 
