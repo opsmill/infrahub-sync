@@ -59,6 +59,7 @@ from infrahub_sync.configuration.worker_credentials import referenced_credential
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redaction_order
 from infrahub_sync.product_store.models import DEFAULT_LIMIT, MAX_REGISTRY_VERSION
 from infrahub_sync.product_store.store import (
+    ConfigurationNameInUseError,
     ConfigurationNotFoundError,
     ConfigurationVersionAllocationError,
     DuplicateConfigurationError,
@@ -127,6 +128,21 @@ class ConfigsNotFoundError(ConfigsError):
     def __init__(self, message: str, *, reason: str = "not-found") -> None:
         super().__init__(message)
         self.reason = reason
+
+
+class ConfigsNameInUseError(ConfigsError):
+    """Another configuration already has the name of the package, so nothing was stored.
+
+    ``config_id`` and ``name`` identify that configuration, so the caller can add the package
+    as a new version of it instead.
+    """
+
+    family: ClassVar[str] = "name-in-use"
+
+    def __init__(self, message: str, *, config_id: str, name: str) -> None:
+        super().__init__(message)
+        self.config_id = config_id
+        self.name = name
 
 
 class ConfigsStorageError(ConfigsError):
@@ -708,6 +724,8 @@ def register(
         )
     except CredentialConfigurationError as exc:
         raise _validation_refusal(exc, parsed) from None
+    except ConfigurationNameInUseError as exc:
+        raise ConfigsNameInUseError(str(exc), config_id=exc.config_id, name=exc.name) from None
     except DuplicateConfigurationError as exc:
         raise ConfigsStorageError(str(exc)) from None
     summary = projection.lookup_configuration(version.config_id).value
@@ -751,6 +769,8 @@ def create_version(
         raise _validation_refusal(exc, parsed) from None
     except ConfigurationNotFoundError as exc:
         raise ConfigsNotFoundError(str(exc)) from None
+    except ConfigurationNameInUseError as exc:
+        raise ConfigsNameInUseError(str(exc), config_id=exc.config_id, name=exc.name) from None
     except ConfigurationVersionAllocationError as exc:
         raise ConfigsStorageError(str(exc)) from None
     return RegisteredVersion(version=version, created=created)

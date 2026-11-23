@@ -22,8 +22,9 @@ without `/api`.
 
 ## Terms
 
-- **Configuration**: a registered sync definition, identified by `config_id`. Its `name` is
-  readable but not unique.
+- **Configuration**: a registered sync definition, identified by `config_id`. Its `name` is the
+  name in its newest version, and no other configuration has it. A configuration without a name
+  has `name: null`.
 - **Configuration version**: one immutable registered revision of a configuration,
   identified by `config_id` and `registry_version`.
 - **Run**: one attempt to synchronize one configuration version to one branch, identified by
@@ -572,9 +573,10 @@ reads a run response that holds a part added by a later release.
 
 Every route below requires `Authorization: Bearer <token>`. Every `POST` route that writes or
 requests a change also requires a non-empty `Idempotency-Key` header and a JSON body;
-`POST /configs/{config_id}/versions/{registry_version}/validate` and `POST /configs/validate`
-are the exceptions, since they store nothing. The first re-checks an already-registered version
-and takes no body. The second takes a JSON body but no `Idempotency-Key` and no `reason`.
+`POST /configs/{config_id}/versions/{registry_version}/validate`, `POST /configs/validate` and
+`POST /schedules/next-starts` are the exceptions, since they store nothing. The first re-checks an
+already-registered version and takes no body. The second takes a JSON body but no
+`Idempotency-Key` and no `reason`. The third computes start times and takes no `Idempotency-Key`.
 
 In the body of every `POST` route that requires an `Idempotency-Key`, `reason` is optional.
 When present, it must be non-empty, and the service records it in the audit history. When it is
@@ -592,8 +594,8 @@ returned unchanged.
 
 | Route | Behavior |
 | --- | --- |
-| `POST /configs` | Register a new configuration package as version 1. Administrator only. The body holds exactly one of `package`, a JSON object, or `document`, the text of a YAML or JSON file, which the service parses and refuses as `POST /configs/validate` does: 400 `request` with the reason `invalid_package`, or 422 `validation` with the reason `v2_configuration`. Both or neither gets 400 `request`. The CLI sends `package`; the web interface sends `document`, so the stored package and its checksum are those of the file that was checked. For idempotency, a `document` is compared as text, and it differs from any `package`. The response names the version by `config_id`, `registry_version`, `package_checksum`, `created_at` and `registered_without_validation`, without its package content. |
-| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The body holds `package` or `document` as for `POST /configs`. The response names the version as `POST /configs` does, without its package content. |
+| `POST /configs` | Register a new configuration package as version 1. Administrator only. The body holds exactly one of `package`, a JSON object, or `document`, the text of a YAML or JSON file, which the service parses and refuses as `POST /configs/validate` does: 400 `request` with the reason `invalid_package`, or 422 `validation` with the reason `v2_configuration`. Both or neither gets 400 `request`. The CLI sends `package`; the web interface sends `document`, so the stored package and its checksum are those of the file that was checked. For idempotency, a `document` is compared as text, and it differs from any `package`. The response names the version by `config_id`, `registry_version`, `package_checksum`, `created_at` and `registered_without_validation`, without its package content. Refused with `409 configuration-name-in-use` when another configuration already has the name of the package. |
+| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The body holds `package` or `document` as for `POST /configs`. The response names the version as `POST /configs` does, without its package content. A new version can keep the configuration's name or rename it, and is refused with `409 configuration-name-in-use` when another configuration already has its name. |
 | `GET /me` | Return the actor that the bearer token authenticates as, its administrator flag, and whether the service requires approval. |
 | `GET /configs` | List registered configurations, newest first, one page at a time. Filter by exact `name`. |
 | `GET /configs/{config_id}` | Return one registered configuration's summary, with its `name` and `latest_version`. |
@@ -631,8 +633,7 @@ returned unchanged.
 
 A configuration value in the CLI can be a `config_id` or a configuration name. The CLI reads
 `GET /configs/{config_id}` first and, when no configuration has that identifier, looks the
-value up as a name. When several configurations share the name, the CLI exits with status 2 and
-lists their identifiers.
+value up as a name. A name belongs to one configuration only.
 
 | CLI command | API action |
 | --- | --- |
@@ -837,13 +838,34 @@ other. An event that records a refusal is saved on its own.
 | `until` | Only events before this time. A date and time with a time zone. |
 | `limit` | Events per page, from 1 to 200. Defaults to 50. |
 | `offset` | The number of matching events to skip. Defaults to 0. |
+| `order` | `asc`, the default, lists events oldest first. `desc` lists them newest first. |
 
 A value outside these rules returns `422 request-invalid`. Events are ordered by
-`occurred_at`, then `event_id`, oldest first. To read new events, send `offset` equal to the
-number of events already read; `infrahub-sync events --follow` reads every 2 seconds this way
-until you stop it. An event saved late with an earlier `occurred_at` than events already read
-takes a position among them and moves the later events down by one, so a reader that pages
-this way can skip one event or read one event twice.
+`occurred_at`, then `event_id`: both ascending with `order=asc` or without `order`, both
+descending with `order=desc`. A request without `order` gets the same answer as before `order`
+existed.
+
+With `order=asc`, read new events by sending `offset` equal to the number of events already read;
+`infrahub-sync events --follow` reads every 2 seconds this way until you stop it. An event saved
+late with an earlier `occurred_at` than events already read takes a position among them and moves
+the later events down by one, so a reader that pages this way can skip one event or read one
+event twice.
+
+With `order=desc`, a new event takes the first position and moves every older event down by one.
+To read older pages while new events are saved, read the first page without `until`, then
+send with every older page `until` set to just after the `occurred_at` of the first page's newest
+event, and read the newest events again with a request without `until`. `until` keeps only events
+saved before it, so take it from an event the Sync API returned rather than from the reader's
+clock, which can differ from the Sync API's clock. An event saved after the newest event but
+less than a millisecond after it still falls before `until`, moves the older events down by one
+and can make an older page repeat one event: leave out an event whose `event_id` you have already
+read. The schedule page of the web interface reads a schedule's history this way, with `until` one
+millisecond after that event, and leaves out repeats by `event_id`:
+
+```text
+GET /events?related=schedule:<schedule_id>&order=desc&limit=50&offset=0
+GET /events?related=schedule:<schedule_id>&order=desc&until=<until>&limit=50&offset=<n>
+```
 
 ```json
 {
@@ -888,6 +910,26 @@ that the event does not use is `null`, and an event that records no fact has `de
 | `branch`, `proposed_change_id` | The branch and the proposed change of a run with branch review. | The events of a proposed change. |
 | `replaced_run_id` | The earlier run whose proposed change or branch was replaced. | `infrahub_sync.schedule.proposed_change_replaced`. |
 | `cause` | A refusal code or a failure class, never text from Infrahub. | `start_failed` and `proposed_change_failed`. |
+| `changes` | The settings whose stored value the change altered: one `{field, before, after}` entry per setting, described below. | `infrahub_sync.schedule.changed`. An event recorded before this key existed has `changes: null`. |
+
+Each entry of `changes` names a setting by its field of `POST /schedules/{schedule_id}/change`
+(`registry_version`, `cron`, `timezone`, `write_target`, `write_when_left_out`, `overlap_policy` or
+`start_late_by_at_most_seconds`) and holds its stored value before and after the change: a version
+number, a cron expression, a time zone name, a write target, `true` or `false`, an overlap policy,
+or a number of seconds. The entries follow the order of that list. A setting that the request sent
+with the value it already had is not listed, and a setting that the change altered without the
+request naming it is listed: a change to `branch-review` turns `write_when_left_out` off. When no
+stored value changed, `changes` is an empty list. A request repeated with the same
+`Idempotency-Key` receives the stored answer and records no second change event:
+
+```json
+"details": {
+  "changes": [
+    {"field": "registry_version", "before": 2, "after": 3},
+    {"field": "start_late_by_at_most_seconds", "before": 1800, "after": 2700}
+  ]
+}
+```
 
 The event types are:
 
@@ -1441,7 +1483,7 @@ Each route answers with the schedule resource:
   is `null` when the schedule is not active.
 - `waiting_start_at` is the start that waits for a run in progress, under the `queue` policy.
 - `last_run_id` is the schedule's most recent run. `GET /runs/{run_id}` holds its outcome.
-- `prefect_synced` is `false` while the task manager does not hold the schedule as it is stored.
+- `prefect_synced` is `false` while the Sync API has not confirmed that the task manager matches the schedule as it is stored; for a deleted schedule, that the task manager holds no schedule for it. The task manager may then still hold the schedule as it was before the last change, and starts runs with what it holds.
 - `consecutive_failures` is the count of runs in a row that failed, were interrupted or ended
   ambiguous. At 5, the schedule stops with the reason `repeated-failures`.
 - `open_branch` is the schedule's most recent branch whose proposed change is open, with
@@ -1477,7 +1519,7 @@ The schedule routes answer these refusals:
 | 422 | `secret-parameter-refused` | A request field holds a credential. |
 | 422 | `request-invalid` | The body does not match the schema, names `name`, `config_id` or `owner` in a change, or changes nothing. |
 | 503 | `configuration-version-invalid` | The registered configuration version cannot be read. |
-| 503 | `orchestration-unavailable` | The schedule is stored, and either the task manager could not be reached or the product database failed while the schedule was handed to the task manager; the message says which. When the task manager could not be reached, the schedule starts no run until a later request on a schedule, or a restart of the Sync API, hands it over. When the product database failed, the task manager may already hold the schedule and start its runs, but the stored schedule does not record the handover; a later request on a schedule, or a restart of the Sync API, records it. |
+| 503 | `orchestration-unavailable` | The schedule is stored, and either the task manager could not be reached or the product database failed while the Sync API matched the task manager to the stored schedules; the message says which. The task manager may then still hold the schedule as it was before the change, also after a deletion, and starts runs with what it holds. The next change to any schedule, or a restart of the Sync API, matches the task manager to the stored schedules again, which removes the task manager's schedule of a deleted schedule, and records the match. |
 
 A resume of a paused schedule, or of a stopped schedule whose reason no longer holds (also
 `repeated-failures`), whose owner's account is disabled or deleted, or that writes to the default branch
@@ -1485,6 +1527,49 @@ while the service requires approval, stores the schedule as stopped with that re
 `409 schedule-stopped`. A take-over of a schedule stopped for
 `owner-not-found` makes it active, unless it writes to the default branch while the service
 requires approval: it then stays stopped with the reason `approval-required`.
+
+#### Next start times of a cron expression
+
+`POST /schedules/next-starts` returns the next start times of a cron expression in a time zone,
+computed by the code that computes a schedule's `next_start_at`. The schedule forms of the web
+interface call it while a person types a cadence. Any authenticated account can call it. It
+stores nothing, records no event, also when it refuses a request, and takes no
+`Idempotency-Key`. The values travel in a JSON body, not in the query string, so a credential
+typed into a field by mistake does not reach the access log.
+
+| Field | Required | Default | Rule |
+| --- | --- | --- | --- |
+| `cron` | yes | | A cron expression with five fields. |
+| `timezone` | no | `UTC` | A time zone name, such as `Europe/Paris`. |
+| `count` | no | `5` | The number of start times, from 1 to 20. |
+
+```json
+{
+  "cron": "0 2 * * *",
+  "timezone": "Europe/Paris",
+  "starts": ["2026-11-20T01:00:00Z", "2026-11-21T01:00:00Z"],
+  "searched_until": "2031-11-23T21:40:00Z"
+}
+```
+
+- `starts` are in UTC, in increasing order, and later than the time of the request.
+- The search ends 1830 days (five years of 366 days) after the time of the request, at
+  `searched_until`. The example answers a request made at 2026-11-19T21:40:00Z. `starts` holds
+  fewer than `count` times when the expression has fewer starts before then, for example
+  `0 0 29 2 *`.
+- An expression that has no start at all, for example `0 0 30 2 *`, is refused with
+  `422 schedule-cron-invalid`, as `POST /schedules` refuses it.
+
+The route answers these refusals:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 422 | `schedule-cron-invalid` | The cron expression is not valid, does not have five fields or has no start. Same message as `POST /schedules`. |
+| 422 | `schedule-timezone-invalid` | The time zone name is not known. Same message as `POST /schedules`. |
+| 422 | `secret-parameter-refused` | `cron` or `timezone` holds a credential. The message names the field and does not repeat its value. |
+| 422 | `request-invalid` | `cron` is absent, or `count` is not an integer from 1 to 20. |
+
+#### Scheduled runs and the run routes
 
 `POST /runs/{run_id}/verify`, `/apply` and `/resume` refuse a scheduled run with branch review
 with `409 scheduled-run-not-appliable`. The schedule's next run replaces it. Its plan and its
@@ -1590,14 +1675,15 @@ Every error uses the same envelope:
 ```
 
 A refusal that has structured context also carries `details`, such as the existing approval
-of `already-approved`. Other errors have no `details` field.
+of `already-approved`, or the `config_id` and `name` of the configuration that already has the
+name of a package in `configuration-name-in-use`. Other errors have no `details` field.
 
 | Status | Meaning |
 | --- | --- |
 | `401` | Missing or invalid authentication. |
 | `403` | The actor does not own the mutation or the schedule and is not an administrator. |
 | `404` | The Sync run, schedule (`schedule-not-found`) or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
-| `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). For approval: a run that cannot be approved (`run-not-approvable`), a plan whose checksum is unconfirmed (`plan-checksum-unverified`), a checksum that differs from the plan's (`checksum-mismatch`), or a second approval (`already-approved`). When the service requires approval: an apply without an approval (`approval-required`) or with a different checksum (`approval-checksum-mismatch`), or a `sync` (`approval-required-for-sync`). For a cancelled run: an `approve` or `apply` (`run-cancelled`), or a second cancel (`run-already-cancelled`). A verify, apply or resume of a scheduled run with branch review (`scheduled-run-not-appliable`). The refusals of a schedule request are listed in [Schedules](#schedules). |
+| `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). For a registration or a new version: a package whose name another configuration already has (`configuration-name-in-use`). For approval: a run that cannot be approved (`run-not-approvable`), a plan whose checksum is unconfirmed (`plan-checksum-unverified`), a checksum that differs from the plan's (`checksum-mismatch`), or a second approval (`already-approved`). When the service requires approval: an apply without an approval (`approval-required`) or with a different checksum (`approval-checksum-mismatch`), or a `sync` (`approval-required-for-sync`). For a cancelled run: an `approve` or `apply` (`run-cancelled`), or a second cancel (`run-already-cancelled`). A verify, apply or resume of a scheduled run with branch review (`scheduled-run-not-appliable`). The refusals of a schedule request are listed in [Schedules](#schedules). |
 | `410` | The retained plan or artifact has expired, or the orchestrator no longer holds a flow run whose log `GET /runs/{run_id}/logs` reads (`log-expired`). |
 | `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved, or the orchestrator cannot be reached to read a run's log (`log-unavailable`). For the account routes: a password check or hash that waited more than 5 seconds for a place, or for another check of the same account name (`sign-in-busy`). |

@@ -1,5 +1,8 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
+import { cronFields } from "#/domain/cadence";
+import { DEFAULT_HISTORY_EVENT_TYPES, untilAfter } from "#/domain/schedule-events";
+
 import { $api, fetchClient } from "./client";
 import { isEnvelope, isTimeout, SyncApiUnavailable } from "./errors";
 import type {
@@ -9,6 +12,9 @@ import type {
   RunLogLine,
   RunResource,
 } from "./types";
+import type { components } from "./types.generated";
+
+type EventPage = components["schemas"]["EventPage"];
 
 /** Lists are re-read on this interval, so a run started elsewhere appears without a reload. */
 export const LIST_REFRESH_MS = 10_000;
@@ -125,6 +131,15 @@ export const runsQuery = (filters: { config_id?: string; registry_version?: numb
     { refetchInterval: poll(LIST_REFRESH_MS) }
   );
 
+/** The newest runs of one schedule, for the timeline of the schedule page. */
+export const scheduleRunsQuery = (scheduleId: string, limit: number) =>
+  $api.queryOptions(
+    "get",
+    "/runs",
+    { params: { query: { schedule_id: scheduleId, limit: String(limit) } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
 /** The newest run of one configuration, for when the newest page of `GET /runs` does not include it. */
 export const latestRunQuery = (configId: string) =>
   $api.queryOptions(
@@ -135,12 +150,12 @@ export const latestRunQuery = (configId: string) =>
   );
 
 /**
- * `GET /runs` 50 runs at a time, newest first, optionally for one configuration. With older pages
- * loaded, every page is read again on each refresh, so the interval grows.
+ * `GET /runs` 50 runs at a time, newest first, optionally for one configuration and one schedule.
+ * With older pages loaded, every page is read again on each refresh, so the interval grows.
  */
-export const runPagesQuery = (config?: string) =>
+export const runPagesQuery = (config?: string, schedule?: string) =>
   infiniteQueryOptions({
-    queryKey: ["get", "/runs", "pages", { config }],
+    queryKey: ["get", "/runs", "pages", { config, schedule }],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam, signal }) => {
       const { data, error } = await fetchClient.GET("/runs", {
@@ -149,6 +164,7 @@ export const runPagesQuery = (config?: string) =>
             limit: "50",
             ...(pageParam ? { cursor: pageParam } : {}),
             ...(config ? { config_id: config } : {}),
+            ...(schedule ? { schedule_id: schedule } : {}),
           },
         },
         signal,
@@ -240,6 +256,167 @@ export const runLogQuery = (runId: string, stage: string) =>
       }
     },
     staleTime: Number.POSITIVE_INFINITY,
+  });
+
+/* ---------- schedules ---------- */
+
+/** The filters of the schedules list. Without `state`, the Sync API leaves deleted schedules out. */
+export interface ScheduleFilters {
+  state?: string;
+  config?: string;
+}
+
+/**
+ * `GET /schedules` 200 schedules at a time, the largest page the Sync API allows, optionally in one
+ * state or for one configuration. With more than one page loaded, every page is read again on each
+ * refresh, so the interval grows.
+ */
+export const schedulePagesQuery = ({ state, config }: ScheduleFilters = {}) =>
+  infiniteQueryOptions({
+    queryKey: ["get", "/schedules", "pages", { state, config }],
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam, signal }) => {
+      const { data, error } = await fetchClient.GET("/schedules", {
+        params: {
+          query: {
+            limit: "200",
+            ...(pageParam ? { cursor: pageParam } : {}),
+            ...(state ? { state } : {}),
+            ...(config ? { config_id: config } : {}),
+          },
+        },
+        signal,
+      });
+      if (error) throw error;
+      return data;
+    },
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    refetchInterval: (query) =>
+      failedFirstRead(query)
+        ? false
+        : (query.state.data?.pages.length ?? 1) > 1
+          ? 30_000
+          : LIST_REFRESH_MS,
+  });
+
+export const scheduleQuery = (scheduleId: string) =>
+  $api.queryOptions(
+    "get",
+    "/schedules/{schedule_id}",
+    { params: { path: { schedule_id: scheduleId } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
+/** The schedule of one configuration, which has at most one schedule that is not deleted. */
+export const configScheduleQuery = (configId: string) =>
+  $api.queryOptions(
+    "get",
+    "/schedules",
+    { params: { query: { config_id: configId, limit: "1" } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
+/**
+ * The next start times of a cron expression in a time zone, as the scheduler computes them. The
+ * values travel in a JSON body so that they never reach an access log. A refusal is shown as it
+ * is, so it is not retried; nothing is asked while the expression does not have five fields or the
+ * time zone is empty (the form asks for a time zone itself).
+ */
+export const nextStartsQuery = (cron: string, timezone: string, count: number) =>
+  queryOptions({
+    queryKey: ["post", "/schedules/next-starts", { cron, timezone, count }] as const,
+    queryFn: async ({ signal }) => {
+      const { data, error } = await fetchClient.POST("/schedules/next-starts", {
+        body: { cron, timezone, count },
+        signal,
+      });
+      if (error) throw error;
+      return data;
+    },
+    staleTime: 60_000,
+    retry: false,
+    enabled: cronFields(cron) !== null && timezone.trim() !== "",
+  });
+
+/** The number of history entries read at a time. */
+const EVENT_PAGE_LIMIT = 50;
+
+/**
+ * One page of a schedule's history, with the `until` every older page of the list uses; `null`
+ * when the first page is empty.
+ */
+export type ScheduleEventPage = EventPage & { until: string | null };
+
+type ScheduleEventPageParam = { offset: number; until: string | null };
+
+/** One read of a schedule's history, newest first; without `until`, the newest events. */
+async function readScheduleEvents(
+  scheduleId: string,
+  includeAll: boolean,
+  { offset, until, signal }: { offset: number; until?: string | null; signal: AbortSignal }
+): Promise<EventPage> {
+  const { data, error } = await fetchClient.GET("/events", {
+    params: {
+      query: {
+        related: [`schedule:${scheduleId}`],
+        order: "desc",
+        ...(until ? { until } : {}),
+        limit: String(EVENT_PAGE_LIMIT),
+        offset: String(offset),
+        ...(includeAll ? {} : { event_type: [...DEFAULT_HISTORY_EVENT_TYPES] }),
+      },
+    },
+    signal,
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * The history of a schedule, newest first, 50 entries at a time. The first page is read without
+ * `until`; every older page uses `until` set to one millisecond after the newest event of the first
+ * page (`untilAfter`), so events recorded later do not shift the offsets of older pages. The time
+ * comes from the events the Sync API returned, not from the browser's clock. Unless `includeAll`,
+ * only the schedule event types are asked for. Events recorded after `until` come from
+ * `scheduleNewestEventsQuery`.
+ */
+export const scheduleEventsQuery = (
+  scheduleId: string,
+  { includeAll = false }: { includeAll?: boolean } = {}
+) =>
+  infiniteQueryOptions({
+    queryKey: ["get", "/events", "schedule", { scheduleId, includeAll }],
+    initialPageParam: { offset: 0, until: null } as ScheduleEventPageParam,
+    queryFn: async ({ pageParam, signal }): Promise<ScheduleEventPage> => {
+      const data = await readScheduleEvents(scheduleId, includeAll, {
+        offset: pageParam.offset,
+        until: pageParam.until,
+        signal,
+      });
+      return { ...data, until: pageParam.until ?? untilAfter(data.items[0]) };
+    },
+    // The offset counts every event the pages returned, repeats included, so no event is skipped.
+    getNextPageParam: (last, pages): ScheduleEventPageParam | undefined =>
+      last.has_more
+        ? {
+            offset: pages.reduce((count, page) => count + page.items.length, 0),
+            until: pages[0].until,
+          }
+        : undefined,
+  });
+
+/**
+ * The newest 50 events of a schedule, read without `until` every 10 seconds (contracts/http-api.md),
+ * so the history can add the events recorded after its first page above the list.
+ */
+export const scheduleNewestEventsQuery = (
+  scheduleId: string,
+  { includeAll = false }: { includeAll?: boolean } = {}
+) =>
+  queryOptions({
+    queryKey: ["get", "/events", "schedule-newest", { scheduleId, includeAll }],
+    queryFn: ({ signal }) => readScheduleEvents(scheduleId, includeAll, { offset: 0, signal }),
+    refetchInterval: poll(LIST_REFRESH_MS),
   });
 
 /* ---------- accounts and tokens ---------- */
@@ -545,4 +722,94 @@ export function describeAccountError(error: unknown): DescribedError {
   }
   const words = ACCOUNT_ERRORS[code];
   return { ...described, title: words.title, detail: words.detail, notFound: false };
+}
+
+/** The refusals whose detail is the Sync API message, because it names the value or the reason. */
+const SCHEDULE_MESSAGE_DETAIL = new Set([
+  "schedule-cron-invalid",
+  "schedule-timezone-invalid",
+  "schedule-stopped",
+  "request-invalid",
+]);
+
+/** Refusals of a schedule read or action, in words. The keys are the Sync API error codes. */
+const SCHEDULE_ERRORS: Record<string, { title: string; detail?: string }> = {
+  forbidden: {
+    title: "Only the owner of this schedule or an administrator can do this",
+    detail: "Ask the owner of this schedule, or an administrator, to make this change.",
+  },
+  "schedule-not-found": {
+    title: "Schedule not found",
+    detail: "Check the schedule ID in the address. The Schedules page lists every schedule.",
+  },
+  "schedule-deleted": {
+    title: "This schedule is deleted",
+    detail: "A deleted schedule accepts no action. Its runs and its history stay available.",
+  },
+  "schedule-stopped": { title: "This schedule cannot be resumed yet" },
+  "schedule-changed": {
+    title: "Another change was saved at the same time. Save again.",
+    detail: "The values you entered are kept.",
+  },
+  "schedule-name-in-use": {
+    title: "A schedule with this name exists",
+    detail: "Choose another name.",
+  },
+  // Not the Sync API message: it holds the identifier of the existing schedule (FR-007, SC-006).
+  "schedule-exists-for-configuration": {
+    title: "This configuration already has a schedule",
+    detail:
+      "A configuration has one schedule that is not deleted. Change or delete that schedule from the Schedules page.",
+  },
+  "approval-required-for-schedule": {
+    title: "This Sync service requires an approved plan before any write",
+    detail: "A schedule cannot write to the default branch here. Choose Branch review.",
+  },
+  "schedule-branch-declared": {
+    title: "The configuration version declares its own destination branch",
+    detail:
+      "A run with branch review would write to that branch without a review. Choose Default branch.",
+  },
+  "schedule-left-out-not-applicable": {
+    title: "Writing when records are left out applies only to the default branch",
+    detail:
+      "A run with branch review always writes the remaining records, and its proposed change states how many were left out.",
+  },
+  "schedule-cron-invalid": { title: "The Sync service refused the cron expression" },
+  "schedule-timezone-invalid": { title: "The Sync service does not know this time zone" },
+  "configuration-version-not-found": {
+    title: "No such version of this configuration",
+    detail: "Choose a registered version of the configuration.",
+  },
+  "orchestration-unavailable": {
+    title:
+      "The Sync service saved the change, but could not confirm what the task manager holds for this schedule",
+    detail:
+      "The Sync service matches the task manager to the saved schedules again at the next change to any schedule or when the Sync API restarts. Until then, the task manager may still hold this schedule as it was before the change, also after a deletion, and start runs with it. Open the schedule page to check its state.",
+  },
+  "secret-parameter-refused": {
+    title: "A value in this form matches a secret the Sync service holds",
+    detail: "Change the value that holds the secret, then try again.",
+  },
+  "request-invalid": { title: "The Sync service refused the values in this form" },
+};
+
+/**
+ * `describeError`, with the refusals of the schedule routes said for the schedule pages. For
+ * `secret-parameter-refused` the Sync API message is never shown, so no value entered is repeated.
+ */
+export function describeScheduleError(error: unknown): DescribedError {
+  const described = describeError(error);
+  const code = described.code;
+  if (described.kind !== "envelope" || !code || !Object.hasOwn(SCHEDULE_ERRORS, code)) {
+    return described;
+  }
+  const words = SCHEDULE_ERRORS[code];
+  const message = isEnvelope(error) ? capitalize(error.error.message) : undefined;
+  return {
+    ...described,
+    title: words.title,
+    detail: SCHEDULE_MESSAGE_DETAIL.has(code) ? message : words.detail,
+    notFound: code === "schedule-not-found",
+  };
 }

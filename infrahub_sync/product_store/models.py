@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Generic, Literal, TypeAlias, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator, model_validator
 
 from infrahub_sync.configuration.worker_credentials import is_credential_name
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
@@ -802,6 +802,30 @@ class PrimaryResource(BaseModel):
     id: str = Field(min_length=1)
 
 
+# The stored settings of a schedule that ``POST /schedules/{schedule_id}/change`` can alter.
+ScheduleSettingName: TypeAlias = Literal[
+    "registry_version",
+    "cron",
+    "timezone",
+    "write_target",
+    "write_when_left_out",
+    "overlap_policy",
+    "start_late_by_at_most_seconds",
+]
+# The stored value of one setting. Strict, so ``True`` and ``1`` read back as they were stored.
+ScheduleSettingValue: TypeAlias = StrictBool | StrictInt | StrictStr
+
+
+class ScheduleSettingChange(BaseModel):
+    """One setting that a change of a schedule altered, with its stored value before and after."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    field: ScheduleSettingName
+    before: ScheduleSettingValue
+    after: ScheduleSettingValue
+
+
 class EventDetails(BaseModel):
     """The facts of one event, under a closed set of keys. A key the event does not use is ``None``.
 
@@ -826,6 +850,9 @@ class EventDetails(BaseModel):
     # The earlier run whose branch or proposed change was replaced.
     replaced_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     cause: str | None = Field(default=None, min_length=1)
+    # The settings whose stored value a change of a schedule altered, in the order of the
+    # change request's fields. Empty when every setting the change sent already had its value.
+    changes: tuple[ScheduleSettingChange, ...] | None = None
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod
@@ -916,8 +943,11 @@ class EventFilters(BaseModel):
         return value
 
 
-# One page of events, oldest first.
+# One page of events, in the order the ``order`` argument names (``asc``, oldest first, by default).
 EventPage: TypeAlias = StorePage[AuditEvent]
+
+# The order of an event list: ``asc`` oldest first, ``desc`` newest first; both by ``created_at`` then ``event_id``.
+EventOrder: TypeAlias = Literal["asc", "desc"]
 
 ACCOUNT_ID_PATTERN = r"^acct_[0-9a-f]{32}$"
 _ACCOUNT_SHORT_ID_PATTERN = r"^[0-9a-f]{8}$"

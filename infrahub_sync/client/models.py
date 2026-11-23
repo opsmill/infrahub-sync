@@ -13,6 +13,7 @@ from pydantic import (
     Field,
     SerializerFunctionWrapHandler,
     StrictBool,
+    StrictInt,
     StringConstraints,
     ValidationError,
     field_validator,
@@ -46,6 +47,10 @@ ScheduleOverlapPolicy = Literal["reject", "queue"]
 # The range of `start_late_by_at_most_seconds`: from one minute to seven days.
 MIN_START_LATE_SECONDS = 60
 MAX_START_LATE_SECONDS = 604800
+
+# The count of start times that `POST /schedules/next-starts` returns by default, and its largest count.
+DEFAULT_NEXT_STARTS = 5
+MAX_NEXT_STARTS = 20
 
 # The recovery signal a refused registered plan carries.
 RecoveryAction = Literal["rebuild", "compatible_version"]
@@ -791,6 +796,19 @@ class EventRelatedResource(_ResourceModel):
     id: str
 
 
+class ScheduleSettingChangeResource(_ResourceModel):
+    """One setting that a change of a schedule altered, with its stored value before and after.
+
+    ``field`` is the name of the setting as the change request names it, such as ``cron`` or
+    ``start_late_by_at_most_seconds``; the values are the stored values, such as a version
+    number, a cron expression or a number of seconds.
+    """
+
+    field: str
+    before: StrictBool | StrictInt | str
+    after: StrictBool | StrictInt | str
+
+
 class EventDetailsResource(_ResourceModel):
     """The facts of one event, under a closed set of keys. A key the event does not use is ``None``.
 
@@ -811,6 +829,9 @@ class EventDetailsResource(_ResourceModel):
     # The earlier run whose branch or proposed change was replaced.
     replaced_run_id: str | None = None
     cause: str | None = None
+    # The settings whose stored value a change of a schedule altered; empty when every setting
+    # the change sent already had its value. Only `infrahub_sync.schedule.changed` holds it.
+    changes: tuple[ScheduleSettingChangeResource, ...] | None = None
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod
@@ -912,6 +933,38 @@ class SchedulePage(_ResourceModel):
 
     items: tuple[ScheduleResource, ...]
     next_cursor: str | None = None
+
+
+class ScheduleNextStartsRequest(_RequestModel):
+    """Request the next start times of a cron expression in a time zone, before a schedule is saved.
+
+    `cron` and `timezone` are not validated here, as in `CreateScheduleRequest`: the Sync API
+    answers `schedule-cron-invalid` or `schedule-timezone-invalid`.
+    """
+
+    cron: str
+    timezone: str = "UTC"
+    count: StrictInt = Field(default=DEFAULT_NEXT_STARTS, ge=1, le=MAX_NEXT_STARTS)
+
+
+class ScheduleNextStarts(_ResourceModel):
+    """The next start times of a cadence, in UTC and in increasing order.
+
+    ``starts`` holds fewer times than requested when the cadence has fewer starts before
+    ``searched_until``.
+    """
+
+    cron: str
+    timezone: str
+    starts: tuple[datetime, ...]
+    searched_until: datetime
+
+    @field_validator("starts", "searched_until")
+    @classmethod
+    def _require_timezone(cls, value: tuple[datetime, ...] | datetime) -> tuple[datetime, ...] | datetime:
+        for item in value if isinstance(value, tuple) else (value,):
+            _timezone(item, _SCHEDULE_TIME_MESSAGE)
+        return value
 
 
 class RunLogLine(_ResourceModel):

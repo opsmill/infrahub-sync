@@ -61,6 +61,7 @@ from infrahub_sync.product_store.models import (
     ConfigurationVersionPage,
     ConfigurationVersionSummary,
     EventFilters,
+    EventOrder,
     EventPage,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
@@ -289,7 +290,8 @@ _UPDATE_LATEST_EXECUTION_CANCELLED = (
 # Indexes for listing runs newest first: unfiltered, filtered by configuration, and filtered
 # by configuration and version; for each version's most recently applied run, a partial index
 # over applied runs only, in the order ``_SELECT_LATEST_VERSION_RUNS`` ranks them; and for the
-# configuration list, its name filter and its ``(created_at, config_id)`` order.
+# configuration list, its ``(created_at, config_id)`` order (the unique index of
+# ``_CONFIGURATION_UNIQUE_INDEXES`` serves its name filter).
 # ``IF NOT EXISTS`` makes each re-run a no-op. SQLite and PostgreSQL both scan an
 # ascending index backwards for a descending order, and both support partial indexes.
 _RUN_LISTING_INDEXES: tuple[str, ...] = (
@@ -299,7 +301,6 @@ _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "ON product_runs (config_id, registry_version, started_at, run_id)",
     "CREATE INDEX IF NOT EXISTS product_runs_binding_applied "
     "ON product_runs (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'",
-    "CREATE INDEX IF NOT EXISTS configurations_name ON configurations (name)",
     "CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at, config_id)",
     # The runs of one schedule, newest first (the ``schedule_id`` filter of the run list).
     "CREATE INDEX IF NOT EXISTS product_runs_schedule_started ON product_runs (schedule_id, started_at, run_id)",
@@ -309,6 +310,20 @@ _RUN_LISTING_INDEXES: tuple[str, ...] = (
 # PostgreSQL both treat NULLs as distinct, so the index does not constrain manual runs. The two
 # partial indexes hold the rules of the schedule itself: a name is unique among schedules that
 # are not deleted, and a configuration has at most one schedule that is not deleted.
+# A name is unique among configurations. A configuration without a name holds NULL, and SQLite
+# and PostgreSQL both treat NULLs as distinct, so the index does not constrain those. The
+# unique index replaces the plain index ``configurations_name`` of an earlier build.
+_CONFIGURATION_UNIQUE_INDEXES: tuple[str, ...] = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS configurations_name_unique ON configurations (name)",
+    "DROP INDEX IF EXISTS configurations_name",
+)
+# Every configuration whose name another configuration also has, which an earlier build allowed.
+_SELECT_DUPLICATE_CONFIGURATION_NAMES = (
+    "SELECT name, config_id FROM configurations WHERE name IN "
+    "(SELECT name FROM configurations WHERE name IS NOT NULL GROUP BY name HAVING COUNT(*) > 1) "
+    "ORDER BY name, config_id"
+)
+_SELECT_CONFIGURATION_WITH_NAME = "SELECT config_id FROM configurations WHERE name = ? AND config_id <> ?"
 _SCHEDULE_UNIQUE_INDEXES: tuple[str, ...] = (
     "CREATE UNIQUE INDEX IF NOT EXISTS product_runs_schedule_start ON product_runs (schedule_id, scheduled_start_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS schedules_name_not_deleted ON schedules (name) WHERE state <> 'deleted'",
@@ -667,6 +682,11 @@ _EVENT_HAS_RESOURCE = (
     "EXISTS (SELECT 1 FROM audit_event_resources AS resource WHERE resource.event_id = audit_events.event_id "
     "AND resource.kind = ? AND resource.resource_id = ?)"
 )
+# The fixed ORDER BY clause of an event list, by its order; no caller text reaches the statement.
+_EVENT_ORDER_CLAUSES: dict[str, str] = {
+    "asc": "ORDER BY created_at, event_id",
+    "desc": "ORDER BY created_at DESC, event_id DESC",
+}
 # Event IDs read per related-resource query, well under SQLite's bound-parameter limit.
 _EVENT_RESOURCE_BATCH = 500
 _SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"
@@ -783,6 +803,24 @@ class EarlierProductDatabaseError(RuntimeError):
         self.missing = {table: tuple(names) for table, names in missing.items()}
 
 
+class DuplicateConfigurationNamesError(RuntimeError):
+    """The product database holds several configurations with the same name.
+
+    An earlier build allowed it; this build requires a name to be unique among configurations.
+    ``duplicates`` maps each such name to the IDs of the configurations that have it.
+    """
+
+    def __init__(self, duplicates: Mapping[str, Sequence[str]]) -> None:
+        names = "; ".join(f"{name!r} ({', '.join(ids)})" for name, ids in duplicates.items())
+        super().__init__(
+            "The product database holds several configurations with the same name, which this build of "
+            f"Infrahub Sync does not allow: {names}. Infrahub Sync does not change the configurations itself. "
+            "With the earlier build, register a new version with another name for all but one configuration "
+            "of each name, or replace the database with a new, empty one. Then start Infrahub Sync again."
+        )
+        self.duplicates = {name: tuple(ids) for name, ids in duplicates.items()}
+
+
 class ProductStoreProviderError(RuntimeError):
     """A driver-neutral durable-provider failure with an optional SQLSTATE."""
 
@@ -821,6 +859,18 @@ class ConfigurationVersionAllocationError(ValueError):
 
 class DuplicateConfigurationError(ValueError):
     """The generated configuration ID already exists."""
+
+
+class ConfigurationNameInUseError(ValueError):
+    """Raised when another configuration already has the name of the package.
+
+    ``config_id`` and ``name`` identify that configuration.
+    """
+
+    def __init__(self, *, config_id: str, name: str) -> None:
+        self.config_id = config_id
+        self.name = name
+        super().__init__(f"a configuration named {name!r} already exists ({config_id})")
 
 
 class ScheduleNotFoundError(ValueError):
@@ -1050,7 +1100,9 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
 
-    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage: ...
+    def list_events(
+        self, filters: EventFilters, *, limit: int, offset: int, order: EventOrder = "asc"
+    ) -> EventPage: ...
 
     def configuration_exists(self, config_id: str) -> bool: ...
 
@@ -1334,8 +1386,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     if self._dialect == "postgresql":
                         cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
                     # Before any statement: SQLite commits each DDL statement on its own, so
-                    # a later refusal would leave the new tables on the earlier database.
+                    # a later refusal would leave the new tables on the earlier database. The
+                    # duplicate names would also make the unique index on the configuration
+                    # name fail with a message that names no configuration.
                     self._refuse_earlier_database(cursor)
+                    self._refuse_duplicate_configuration_names(cursor)
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
@@ -1377,10 +1432,27 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if missing:
             raise EarlierProductDatabaseError(missing)
 
+    def _refuse_duplicate_configuration_names(self, cursor: _Cursor) -> None:
+        """Raise when several configurations have the same name; the check changes nothing.
+
+        A database without a ``configurations`` table, or whose table has no ``name`` column,
+        has no configuration name and passes.
+        """
+        statement = _SELECT_SQLITE_TABLE_COLUMNS if self._dialect == "sqlite" else _SELECT_POSTGRESQL_TABLE_COLUMNS
+        cursor.execute(self._sql(statement), ("configurations",))
+        if "name" not in {str(row[0]) for row in cursor.fetchall()}:
+            return
+        cursor.execute(_SELECT_DUPLICATE_CONFIGURATION_NAMES)
+        duplicates: dict[str, list[str]] = {}
+        for name, config_id in cursor.fetchall():
+            duplicates.setdefault(str(name), []).append(str(config_id))
+        if duplicates:
+            raise DuplicateConfigurationNamesError(duplicates)
+
     @staticmethod
     def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
-        """Create the indexes for listing runs and configurations, and the unique indexes of schedules."""
-        for statement in (*_RUN_LISTING_INDEXES, *_SCHEDULE_UNIQUE_INDEXES):
+        """Create the indexes for listing runs and configurations, and the unique indexes of names."""
+        for statement in (*_RUN_LISTING_INDEXES, *_CONFIGURATION_UNIQUE_INDEXES, *_SCHEDULE_UNIQUE_INDEXES):
             cursor.execute(statement)
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
@@ -3327,10 +3399,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             resources = self._read_event_resources(cursor, rows)
         return tuple(_audit_from_row(row, resources[str(row[0])]) for row in rows)
 
-    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage:
-        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``, oldest first.
+    def list_events(self, filters: EventFilters, *, limit: int, offset: int, order: EventOrder = "asc") -> EventPage:
+        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``.
 
-        Events are ordered by ``created_at`` and then ``event_id``. An event without a type,
+        Events are ordered by ``created_at`` and then ``event_id``: oldest first for ``asc``,
+        newest first, both descending, for ``desc``. An event without a type,
         a request refused for a missing or invalid token, is never listed (research R6).
 
         Raises:
@@ -3361,7 +3434,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             parameters.append(_utc_iso(filters.until))
         statement = (
             f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE {' AND '.join(conditions)} "  # noqa: S608
-            "ORDER BY created_at, event_id LIMIT ? OFFSET ?"
+            f"{_EVENT_ORDER_CLAUSES[order]} LIMIT ? OFFSET ?"
         )
         resources: dict[str, list[tuple[str, str]]] = {}
 
@@ -3388,6 +3461,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """Durably register a brand-new configuration and its first version.
 
         ``registered_without_validation`` marks the version in the same transaction.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has the name of the package.
         """
         config_id = _generate_config_id()
         version = ConfigurationVersion(
@@ -3416,6 +3492,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 # inspect only documented SQLite/PostgreSQL uniqueness markers.
                 connection.rollback()
                 if _is_unique_violation(exc):
+                    # Two registrations can both pass the name check; the unique index refuses
+                    # the second, and the check on a new connection names the configuration.
+                    self._refuse_configuration_name_in_use_now(package.configuration.name or None, config_id)
                     msg = f"Configuration ID {config_id!r} already exists"
                     raise DuplicateConfigurationError(msg) from exc
                 raise
@@ -3441,6 +3520,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         ``None`` when the package declares an empty name. A version marked
         ``registered_without_validation`` gets its mark row after the version row, which the
         mark's foreign key requires.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has ``name``. The check runs after
+                the version row, so a known checksum still answers with its stored version.
         """
         _require_checksum_digests_content(version.package_checksum, version.declared_content)
         cursor.execute(
@@ -3455,6 +3538,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 registration_reason,
             ),
         )
+        self._refuse_configuration_name_in_use(cursor, name, version.config_id)
         if version.registered_without_validation:
             cursor.execute(
                 self._sql(_INSERT_CONFIGURATION_VERSION_UNVALIDATED), (version.config_id, version.registry_version)
@@ -3463,6 +3547,20 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             self._sql(_UPDATE_CONFIGURATION_NAME),
             (name, version.config_id),
         )
+
+    def _refuse_configuration_name_in_use(self, cursor: _Cursor, name: str | None, config_id: str) -> None:
+        """Raise when a configuration other than ``config_id`` has ``name``; no name is never in use."""
+        if name is None:
+            return
+        cursor.execute(self._sql(_SELECT_CONFIGURATION_WITH_NAME), (name, config_id))
+        row = cursor.fetchone()
+        if row is not None:
+            raise ConfigurationNameInUseError(config_id=str(row[0]), name=name)
+
+    def _refuse_configuration_name_in_use_now(self, name: str | None, config_id: str) -> None:
+        """Run the name check on a new connection, after a unique index refused a write."""
+        with self._reading() as cursor:
+            self._refuse_configuration_name_in_use(cursor, name, config_id)
 
     def add_configuration_version(
         self,
@@ -3521,6 +3619,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             existing = self._lookup_configuration_version_by_checksum(config_id, checksum)
             if existing is not None:
                 return existing, False
+            # The unique index on the name refused a registration that passed the name check.
+            self._refuse_configuration_name_in_use_now(package.configuration.name or None, config_id)
             if attempt + 1 == _CONFIGURATION_VERSION_ATTEMPTS:
                 msg = f"Could not allocate a configuration version for {config_id!r}"
                 raise ConfigurationVersionAllocationError(msg) from last_conflict
@@ -5411,13 +5511,15 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return all audit evidence, optionally narrowed to one Sync run."""
         return self._records.audit_events(run_id)
 
-    def list_events(self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> EventPage:
-        """Return one page of typed events matching ``filters``, oldest first.
+    def list_events(
+        self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0, order: EventOrder = "asc"
+    ) -> EventPage:
+        """Return one page of typed events matching ``filters``, oldest first, or newest first for ``desc``.
 
         Raises:
             ValueError: ``limit`` is less than 1 or ``offset`` is negative.
         """
-        return self._records.list_events(filters, limit=limit, offset=offset)
+        return self._records.list_events(filters, limit=limit, offset=offset, order=order)
 
     def create_configuration(
         self,
@@ -5432,6 +5534,9 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
 
         ``registered_by`` and ``registration_reason`` are recorded on the version with every
         value in ``secrets`` redacted, and ``registered_without_validation`` marks it.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has the name of the package.
         """
         validate_package_credentials(package)
         actor, reason = _redacted_registration(registered_by, registration_reason, secrets)
@@ -5457,6 +5562,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         ``registered_by`` and ``registration_reason`` are recorded on a created version with
         every value in ``secrets`` redacted, and ``registered_without_validation`` marks it;
         an identical existing version keeps its own values.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has the name of the package. A
+                package whose checksum the configuration already has returns that version.
         """
         validate_package_credentials(package)
         if not self._records.configuration_exists(config_id):
@@ -6895,6 +7004,20 @@ def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
             key: _redact_ordered_value(value, ordered, numbers=False) if key in _EVENT_DETAILS_TEXT_KEYS else value
             for key, value in details.items()
         }
+        if details.get("changes") is not None:
+            # The text values of a changed setting, such as a cadence or a time zone, are
+            # redacted as the stored schedule is; the setting's name and the numbers are not.
+            redacted["details"]["changes"] = [
+                {
+                    **change,
+                    **{
+                        side: _redact_ordered_value(change[side], ordered, numbers=False)
+                        for side in ("before", "after")
+                        if isinstance(change[side], str)
+                    },
+                }
+                for change in details["changes"]
+            ]
     return AuditEvent.model_validate(redacted)
 
 

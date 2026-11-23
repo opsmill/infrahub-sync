@@ -13,9 +13,9 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, get_args
 from uuid import uuid4
 
 import structlog
@@ -26,6 +26,7 @@ from infrahub_sync.execution import collect_secret_values, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     AuditEvent,
+    EventDetails,
     MutationReceipt,
     ProductProjection,
     ProductStoreProviderError,
@@ -37,12 +38,13 @@ from infrahub_sync.product_store import (
     ScheduleNameInUseError,
     ScheduleNotFoundError,
     ScheduleRecord,
+    ScheduleSettingChange,
 )
-from infrahub_sync.product_store.models import DEFAULT_START_LATE_SECONDS, SCHEDULE_ID_PATTERN
+from infrahub_sync.product_store.models import DEFAULT_START_LATE_SECONDS, SCHEDULE_ID_PATTERN, ScheduleSettingName
 
 from . import schedule_cadence
 from .events import SCHEDULE_START, SCHEDULE_STOPPED, schedule_decision_type, schedule_event
-from .models import EmittedSchedulePage, EmittedScheduleResource
+from .models import EmittedSchedulePage, EmittedScheduleResource, ScheduleNextStarts
 from .orchestration import (
     DeploymentSchedule,
     ObservedDeploymentSchedule,
@@ -57,7 +59,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
 
     from .auth import Principal, PrincipalResolver
-    from .models import ChangeScheduleRequest, CreateScheduleRequest, ScheduleActionRequest
+    from .models import (
+        ChangeScheduleRequest,
+        CreateScheduleRequest,
+        ScheduleActionRequest,
+        ScheduleNextStartsRequest,
+    )
 
 __all__ = ["ScheduleService", "match_prefect_schedules"]
 
@@ -80,15 +87,15 @@ _STOP_ATTEMPTS: Final = 3
 _STOP_RETRY_SECONDS: float = 2.0
 _MATCH_PAGE_SIZE: Final = 200
 _UNAVAILABLE_MESSAGE: Final = (
-    "the schedule is stored, and the task manager could not be reached; the schedule is handed to the "
-    "task manager by a later schedule request or by a restart of the Sync API"
+    "the schedule is stored, and the task manager could not be reached; the Sync API matches the task "
+    "manager to the stored schedules again at the next change to a schedule or at a restart of the Sync API"
 )
-# The same answer when the product database failed while the schedules were handed to the task
-# manager: the task manager was not the dependency that failed.
+# The same answer when the product database failed while the task manager was matched to the stored
+# schedules: the task manager was not the dependency that failed.
 _STORE_UNAVAILABLE_MESSAGE: Final = (
-    "the schedule is stored, and the product database failed while the schedule was handed to the task "
-    "manager; the schedule is handed to the task manager by a later schedule request or by a restart of "
-    "the Sync API"
+    "the schedule is stored, and the product database failed while the task manager was matched to the "
+    "stored schedules; the Sync API matches them again at the next change to a schedule or at a restart "
+    "of the Sync API"
 )
 _MatchFailure = Literal["orchestration", "product-store"]
 # What a stopped schedule needs before a resume is accepted, by the reason it stopped for.
@@ -105,6 +112,42 @@ _RESUME_ACTIONS: Final = {
 
 # The reasons for which the Sync API stops a schedule that cannot run.
 _StopReason = Literal["owner-not-found", "approval-required"]
+
+# How far ahead `POST /schedules/next-starts` searches for start times: 1830 days, five years of
+# 366 days, so the search covers at least five calendar years.
+NEXT_STARTS_SEARCH_WINDOW: Final = timedelta(days=5 * 366)
+
+
+def _secret_message(name: str) -> str:
+    """Return the refusal message of a request value that holds a credential; it never quotes the value."""
+    return f"{name} must not hold a credential"
+
+
+# The stored settings that a change can alter, in the order of the change request's fields.
+_CHANGEABLE_SETTINGS: Final[tuple[ScheduleSettingName, ...]] = get_args(ScheduleSettingName)
+
+
+def _change_details(stored: ScheduleRecord, changed: ScheduleRecord) -> EventDetails:
+    """Return the details of a change event: each setting whose stored value differs, before and after.
+
+    A setting that the request sent with its stored value is not listed. A setting that the
+    change altered without the request naming it, such as ``write_when_left_out`` turned off
+    by a change to branch review, is listed. No credential can be in a value: a change refuses
+    a cadence or a time zone that holds one, and the store redacts the text values as it
+    redacts the schedule.
+    """
+    return EventDetails(
+        changes=tuple(
+            ScheduleSettingChange(field=name, before=getattr(stored, name), after=getattr(changed, name))
+            for name in _CHANGEABLE_SETTINGS
+            if getattr(stored, name) != getattr(changed, name)
+        )
+    )
+
+
+def _cadence_code(error: schedule_cadence.InvalidCadenceError) -> str:
+    """Return the error code that names the refused value of a cadence."""
+    return "schedule-cron-invalid" if error.field == "cron" else "schedule-timezone-invalid"
 
 
 class _StopRequiredError(Exception):
@@ -372,6 +415,32 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         )
         return emitted.model_dump(mode="json")
 
+    def next_starts(self, request: ScheduleNextStartsRequest) -> dict[str, Any]:
+        """Return the next start times of a cadence, as the scheduler computes them (spec 026, FR-031).
+
+        The search ends 1830 days (``NEXT_STARTS_SEARCH_WINDOW``) after the service clock's time. Nothing is stored and no
+        event is recorded, also on a refusal: a person calls this while typing a cadence.
+
+        Raises:
+            ServiceAPIError: ``422 secret-parameter-refused`` when ``cron`` or ``timezone`` holds a
+                known credential, ``422 schedule-cron-invalid`` or ``422 schedule-timezone-invalid``
+                with the message of ``POST /schedules``.
+        """
+        # Checked before the cadence: the cadence messages quote the expression.
+        name = self._secret_value_name(cron=request.cron, timezone=request.timezone)
+        if name is not None:
+            raise self._error(422, "secret-parameter-refused", _secret_message(name))
+        now = self._clock()
+        searched_until = now + NEXT_STARTS_SEARCH_WINDOW
+        try:
+            starts = schedule_cadence.starts_between(request.cron, request.timezone, now, searched_until, request.count)
+        except schedule_cadence.InvalidCadenceError as error:
+            raise self._error(422, _cadence_code(error), error.reason) from None
+        answer = ScheduleNextStarts(
+            cron=request.cron, timezone=request.timezone, starts=starts, searched_until=searched_until
+        )
+        return answer.model_dump(mode="json")
+
     # ------------------------------------------------------------------
     # Requests
     # ------------------------------------------------------------------
@@ -502,7 +571,14 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 merged.update(state="active", state_reason=None)
             return ScheduleRecord.model_validate(merged)
 
-        return await self._act(schedule_id, context, request.model_dump(mode="json"), idempotency_key, changed)
+        return await self._act(
+            schedule_id,
+            context,
+            request.model_dump(mode="json"),
+            idempotency_key,
+            changed,
+            details_of=_change_details,
+        )
 
     async def pause(
         self, schedule_id: str, request: ScheduleActionRequest, principal: Principal, idempotency_key: str
@@ -789,10 +865,14 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         body: dict[str, Any],
         idempotency_key: str,
         decide: Callable[[ScheduleRecord, datetime], ScheduleRecord],
+        *,
+        details_of: Callable[[ScheduleRecord, ScheduleRecord], EventDetails] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         """Run one request on an existing schedule: ``decide`` returns the schedule to store.
 
         ``decide`` returns the schedule that it received when the request changes nothing.
+        ``details_of`` returns the details of the accepted event from the schedule as it was read
+        and the schedule that the write stores; the event is saved with the answer (ADR 0033).
         """
         schedule = self._owned(schedule_id, context)
         context = context.of(schedule)
@@ -827,8 +907,11 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 raise self._released(reserved, self._stopped_refusal(context, required.reason)) from None
             if reserved is None:
                 reserved = self._reserve(receipt, context)
+            # The write below is refused when the stored schedule changed after it was read
+            # (`expected_updated_at`), so when it succeeds, `schedule` holds the values it replaced.
+            details = None if details_of is None else details_of(schedule, wanted)
             if wanted is schedule:
-                return await self._answer(reserved, 200, context, now)
+                return await self._answer(reserved, 200, context, now, details=details)
             wanted = wanted.model_copy(update={"prefect_synced": False, "updated_at": now})
             try:
                 self._projection.update_schedule(wanted, expected_updated_at=schedule.updated_at, secrets=self._secrets)
@@ -838,7 +921,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 assert reread is not None
                 schedule, now = reread, self._clock()
                 continue
-            return await self._answer(reserved, 200, context.of(wanted), now)
+            return await self._answer(reserved, 200, context.of(wanted), now, details=details)
         raise self._released(
             reserved,
             self._refusal(
@@ -1002,13 +1085,19 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             )
         return stored
 
-    async def _answer(
-        self, receipt: MutationReceipt, status: int, context: _Request, now: datetime
+    async def _answer(  # pylint: disable=too-many-arguments
+        self,
+        receipt: MutationReceipt,
+        status: int,
+        context: _Request,
+        now: datetime,
+        *,
+        details: EventDetails | None = None,
     ) -> tuple[int, dict[str, Any]]:
         """Match Prefect to the store, then save the answer of an accepted request with its event.
 
         The event carries ``now``, the time of the request's decision that the schedule record
-        also carries, not the time the match with Prefect ended.
+        also carries, not the time the match with Prefect ended, and ``details``.
 
         Raises:
             ServiceAPIError: ``503 orchestration-unavailable`` when Prefect could not be reached.
@@ -1028,7 +1117,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             response_status=status,
             response_body=self._resource(schedule),
             flow_run_id=None,
-            events=(self._event(context, "accepted", created_at=now),),
+            events=(self._event(context, "accepted", created_at=now, details=details),),
             secrets=self._secrets,
         )
         if failure is not None:
@@ -1041,16 +1130,19 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     # The checks of a create and of a change
     # ------------------------------------------------------------------
 
-    def _refuse_secret_values(self, context: _Request, **values: str | None) -> None:
+    def _secret_value_name(self, **values: str | None) -> str | None:
+        """Return the name of the first value that holds a known credential, or ``None``."""
         for name, value in values.items():
             if value is not None and redact(value, self._secrets) != value:
-                raise self._refusal(
-                    context,
-                    422,
-                    "secret-parameter-refused",
-                    f"{name} must not hold a credential",
-                    outcome="refused-secret-parameter",
-                )
+                return name
+        return None
+
+    def _refuse_secret_values(self, context: _Request, **values: str | None) -> None:
+        name = self._secret_value_name(**values)
+        if name is not None:
+            raise self._refusal(
+                context, 422, "secret-parameter-refused", _secret_message(name), outcome="refused-secret-parameter"
+            )
 
     def _declared_branch(self, context: _Request, config_id: str, registry_version: int) -> str | None:
         """Return the destination branch that the configuration version declares, or ``None``.
@@ -1080,8 +1172,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         try:
             schedule_cadence.validate(cron, timezone_name)
         except schedule_cadence.InvalidCadenceError as error:
-            code = "schedule-cron-invalid" if error.field == "cron" else "schedule-timezone-invalid"
-            raise self._refusal(context, 422, code, error.reason) from None
+            raise self._refusal(context, 422, _cadence_code(error), error.reason) from None
 
     def _require_approval_allows(self, context: _Request, *, write_target: str) -> None:
         """Refuse the write target `default-branch` while the Sync API requires an approved plan."""
@@ -1188,7 +1279,14 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         """Return the schedule resource as the API answers it."""
         return self._emitted(schedule).model_dump(mode="json")
 
-    def _event(self, context: _Request, outcome: str, *, created_at: datetime | None = None) -> AuditEvent:
+    def _event(
+        self,
+        context: _Request,
+        outcome: str,
+        *,
+        created_at: datetime | None = None,
+        details: EventDetails | None = None,
+    ) -> AuditEvent:
         return schedule_event(
             event_type=schedule_decision_type(context.operation, outcome),
             actor=context.actor,
@@ -1199,6 +1297,7 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             config_id=context.config_id,
             registry_version=context.registry_version,
             created_at=self._clock() if created_at is None else created_at,
+            details=details,
         )
 
     def _audit(self, context: _Request, outcome: str) -> None:

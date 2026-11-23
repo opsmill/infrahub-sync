@@ -1473,7 +1473,12 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if detail.status != status:
             raise ValueError
         return APIError(
-            detail.status, detail.code, run_id=detail.run_id, mutation_id=detail.mutation_id, left_out=detail.left_out
+            detail.status,
+            detail.code,
+            run_id=detail.run_id,
+            mutation_id=detail.mutation_id,
+            left_out=detail.left_out,
+            details=detail.details,
         )
 
     @staticmethod

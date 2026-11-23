@@ -289,6 +289,9 @@ $ infrahub-sync configs [OPTIONS] COMMAND [ARGS]...
 
 Register a JSON or YAML configuration package.
 
+The name of the package must not be the name of another configuration. A refusal prints the
+command that adds the package as a new version of that configuration instead.
+
 **Usage**:
 
 ```console

@@ -243,6 +243,79 @@ def test_events_at_the_same_time_are_ordered_by_event_id(events_api: tuple[TestC
 @pytest.mark.parametrize(
     "params",
     [
+        {},
+        {"run_id": "run-a"},
+        {"related": "account:bob"},
+        {"since": "2026-11-06T10:01:00Z", "until": "2026-11-06T10:04:00Z"},
+    ],
+)
+def test_order_desc_returns_the_reverse_of_order_asc_for_the_same_filters(
+    events_api: tuple[TestClient, ProductProjection], params: dict[str, object]
+) -> None:
+    """Spec 026 FR-032: ``desc`` lists the same events, newest first."""
+    client, projection = events_api
+    _seed(projection)
+
+    ascending = client.get("/events", headers=READ, params=params | {"order": "asc"})
+    descending = client.get("/events", headers=READ, params=params | {"order": "desc"})
+    default = client.get("/events", headers=READ, params=params)
+
+    assert descending.status_code == 200, descending.text
+    assert _ids(descending) == list(reversed(_ids(ascending)))
+    assert default.json() == ascending.json()
+
+
+def test_order_desc_orders_events_at_the_same_time_by_event_id_descending(
+    events_api: tuple[TestClient, ProductProjection],
+) -> None:
+    client, projection = events_api
+    for event_id in ("e-c", "e-a", "e-b"):
+        projection.record_audit(_event(event_id, 0))
+    projection.record_audit(_event("e-0", 1))
+
+    assert _ids(client.get("/events", headers=READ, params={"order": "desc"})) == ["e-0", "e-c", "e-b", "e-a"]
+
+
+def test_order_desc_with_a_schedule_and_until_pages_without_overlap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Spec 026 FR-034: the history of a schedule, newest first, read in pages up to a fixed time."""
+    api = schedule_api(monkeypatch, tmp_path)
+    schedule_id = api.create(write_target="default-branch")["schedule_id"]
+    for reason in ("first", "second", "third", "fourth"):
+        action = "pause" if reason in {"first", "third"} else "resume"
+        assert api.post(schedule_id, action, reason=reason).status_code == 200
+    read = {"Authorization": f"Bearer {SCHEDULE_OWNER_TOKEN}"}
+    newest = api.client.get("/events", headers=read, params={"related": f"schedule:{schedule_id}", "order": "desc"})
+    every = [item["event_id"] for item in newest.json()["items"]]
+    assert [item["reason"] for item in newest.json()["items"]] == ["fourth", "third", "second", "first", None]
+    # ``until`` is exclusive: the time of the first read keeps every event recorded after it out.
+    until = datetime.now(timezone.utc).isoformat()
+    assert api.post(schedule_id, "pause", reason="after the first read").status_code == 200
+
+    pages = [
+        api.client.get(
+            "/events",
+            headers=read,
+            params={
+                "related": f"schedule:{schedule_id}",
+                "order": "desc",
+                "until": until,
+                "limit": 2,
+                "offset": offset,
+            },
+        ).json()
+        for offset in (0, 2, 4)
+    ]
+
+    paged = [item["event_id"] for page in pages for item in page["items"]]
+    assert paged == every
+    assert [page["has_more"] for page in pages] == [True, True, False]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
         {"limit": 0},
         {"limit": 201},
         {"limit": "1.0"},
@@ -256,6 +329,8 @@ def test_events_at_the_same_time_are_ordered_by_event_id(events_api: tuple[TestC
         {"related": "account:"},
         {"since": "2026-11-06T10:00:00"},
         {"until": "yesterday"},
+        {"order": "up"},
+        {"order": "DESC"},
     ],
 )
 def test_an_invalid_value_is_refused_with_the_existing_error_body(

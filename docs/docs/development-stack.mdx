@@ -536,8 +536,8 @@ own Infrahub instead of the one that step 1 starts. To follow that path, read
 
    Your own command prints a different value, and it is not the package name. Use the value your command
    printed in place of `<config-id>` in the commands below. If you change the package later, register
-   the change with `configs version <config-id> <package>`. Registering changed content
-   with `configs register` creates a new configuration ID at version 1.
+   the change with `configs version <config-id> <package>`. `configs register` refuses a package
+   whose name another configuration already has, and prints that `configs version` command.
 
 7. Create a destination branch and plan the import:
 

@@ -2,6 +2,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { $api, fetchClient } from "./client";
+import { scheduleQuery } from "./queries";
+import type { Schedule } from "./types";
 
 /**
  * One idempotency key per intent. A dialog keeps its key while it is open, so pressing the
@@ -50,6 +52,70 @@ export function useResumeRun() {
 export function useCancelRun() {
   const invalidate = useInvalidate();
   return $api.useMutation("post", "/runs/{run_id}/cancel", { onSettled: invalidate });
+}
+
+/* ---------- schedules ---------- */
+
+/**
+ * After a success, the returned schedule is written into the cache of its page before the
+ * invalidation reads it again, so the page shows the state the action produced even when a poll
+ * that started before the action answers later.
+ */
+function useStoreSchedule() {
+  const client = useQueryClient();
+  return (schedule: Schedule) =>
+    client.setQueryData(scheduleQuery(schedule.schedule_id).queryKey, schedule);
+}
+
+export function useCreateSchedule() {
+  const invalidate = useInvalidate();
+  const store = useStoreSchedule();
+  return $api.useMutation("post", "/schedules", { onSuccess: store, onSettled: invalidate });
+}
+
+export function useChangeSchedule() {
+  const invalidate = useInvalidate();
+  const store = useStoreSchedule();
+  return $api.useMutation("post", "/schedules/{schedule_id}/change", {
+    onSuccess: store,
+    onSettled: invalidate,
+  });
+}
+
+export function usePauseSchedule() {
+  const invalidate = useInvalidate();
+  const store = useStoreSchedule();
+  return $api.useMutation("post", "/schedules/{schedule_id}/pause", {
+    onSuccess: store,
+    onSettled: invalidate,
+  });
+}
+
+export function useResumeSchedule() {
+  const invalidate = useInvalidate();
+  const store = useStoreSchedule();
+  return $api.useMutation("post", "/schedules/{schedule_id}/resume", {
+    onSuccess: store,
+    onSettled: invalidate,
+  });
+}
+
+export function useDeleteSchedule() {
+  const invalidate = useInvalidate();
+  const store = useStoreSchedule();
+  return $api.useMutation("post", "/schedules/{schedule_id}/delete", {
+    onSuccess: store,
+    onSettled: invalidate,
+  });
+}
+
+export function useTakeOverSchedule() {
+  const invalidate = useInvalidate();
+  const store = useStoreSchedule();
+  return $api.useMutation("post", "/schedules/{schedule_id}/take-over", {
+    onSuccess: store,
+    onSettled: invalidate,
+  });
 }
 
 /* ---------- accounts and tokens ---------- */

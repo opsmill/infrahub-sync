@@ -35,6 +35,7 @@ from infrahub_sync.product_store import (
     AuditEvent,
     DuplicatePrefectExecutionError,
     EventFilters,
+    EventOrder,
     MutationReceipt,
     PrefectExecutionLink,
     ProductProjection,
@@ -1519,8 +1520,9 @@ class RunService:
         until: datetime | None = None,
         limit: int | None = None,
         offset: int = 0,
+        order: EventOrder = "asc",
     ) -> EventPage:
-        """Return one page of typed events, oldest first (spec 012, contracts/events-route.md).
+        """Return one page of typed events, oldest first, or newest first for ``desc`` (spec 012, spec 026).
 
         ``related`` holds ``<kind>:<id>`` values; an event must name every one of them. An
         unknown run or configuration matches no event rather than being refused.
@@ -1545,7 +1547,7 @@ class RunService:
         except ValueError:
             # The message names no value: the query string is the caller's, not the server's.
             raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
-        page = self._projection.list_events(filters, limit=page_size, offset=offset)
+        page = self._projection.list_events(filters, limit=page_size, offset=offset, order=order)
         return public_event_page(page.items, limit=page_size, offset=offset, has_more=page.has_more)
 
     def _stored_related(self, resource: RelatedResource) -> RelatedResource:

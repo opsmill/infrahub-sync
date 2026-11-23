@@ -423,6 +423,34 @@ def test_register_config_403_retains_machine_fields_and_discards_secrets() -> No
     assert raised.value.__cause__ is None
 
 
+def test_register_config_name_in_use_keeps_the_configuration_that_has_the_name() -> None:
+    details = {"config_id": "20261120T1249-9d57f620", "name": "from-netbox"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            409,
+            json={
+                "error": {
+                    "code": "configuration-name-in-use",
+                    "message": "server message",
+                    "status": 409,
+                    "details": details,
+                }
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+    request = ConfigMutationRequest(package={"format_version": 1}, reason="test")
+
+    with pytest.raises(APIError) as raised:
+        client.register_config(request, "key-1")
+
+    assert not isinstance(raised.value, ConfigsAPIError)
+    assert (raised.value.status, raised.value.code, raised.value.details) == (409, "configuration-name-in-use", details)
+
+
 @pytest.mark.parametrize(
     ("response", "error_type"),
     [
