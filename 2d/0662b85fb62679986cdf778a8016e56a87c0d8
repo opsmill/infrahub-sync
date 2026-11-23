@@ -1,0 +1,23 @@
+tests/service/test_compatibility.py
+  s_07b6c028331aa4::t_2a8cb9b66aa885 173-174
+docs/docs/reference/sync-http-api.mdx
+  s_07b6c028331aa4::t_8db01c0ab7b3cd 366-367
+infrahub_sync/service/compatibility.py
+  s_07b6c028331aa4::t_d39a7e1078320d 30,33-34,40-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2d0662b85fb62679986cdf778a8016e56a87c0d8",
+  "prompts": {},
+  "sessions": {
+    "s_07b6c028331aa4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf931166-82be-4314-b85e-f3938ef8ec70",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
