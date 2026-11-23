@@ -1,0 +1,27 @@
+frontend/src/domain/run-state.ts
+  s_30954faa6b52fd::t_9391d180df06b6 226-230
+  s_30954faa6b52fd::t_ba3e33e45a34ed 262-263
+frontend/src/domain/run-state.test.ts
+  s_30954faa6b52fd::t_ff512a83e7915c 18-20
+  s_30954faa6b52fd::t_c52f9bbc03a2d8 1-17,21-49
+frontend/src/features/runs/run-notices.tsx
+  s_30954faa6b52fd::t_2b4d3ea215a47e 152-165
+dev/specs/028-write-lock-holder/tasks.md
+  s_30954faa6b52fd::t_8f5335ad6ad648 122,127-131,133,138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e794e3723b396e255c8d8605c3bd42367c81f27b",
+  "prompts": {},
+  "sessions": {
+    "s_30954faa6b52fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68b2c141-8dbb-4265-a817-fa76f097f99c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
