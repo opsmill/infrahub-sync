@@ -810,10 +810,18 @@ _SELECT_SCHEDULE_OF_ENDED_SYNC = (
     "(SELECT 1 FROM prefect_executions WHERE prefect_executions.run_id = ? "
     "AND prefect_executions.flow_run_id = ? AND prefect_executions.purpose = 'sync')"
 )
-# The newest run of a configuration that has an execution with no terminal verdict.
+# The execution that an automatic resume row interrupted, for the automatic resume that the
+# row started. Bound to the run ID and the flow run ID of the automatic resume.
+_SELECT_EXECUTION_AN_AUTOMATIC_RESUME_RESUMED = (
+    "SELECT interrupted_flow_run_id FROM automatic_resumes WHERE run_id = ? AND resume_flow_run_id = ?"
+)
+# The newest run of a configuration that has an execution with no terminal verdict, or an
+# automatic resume row that is not ``ended`` (spec 030, research R11).
 _SELECT_RUN_WITH_OPEN_EXECUTION = (
-    "SELECT run_id FROM product_runs WHERE config_id = ? AND EXISTS (SELECT 1 FROM prefect_executions "
+    "SELECT run_id FROM product_runs WHERE config_id = ? AND (EXISTS (SELECT 1 FROM prefect_executions "
     "WHERE prefect_executions.run_id = product_runs.run_id AND prefect_executions.terminal_at IS NULL) "
+    "OR EXISTS (SELECT 1 FROM automatic_resumes WHERE automatic_resumes.run_id = product_runs.run_id "
+    "AND automatic_resumes.state <> 'ended')) "
     "ORDER BY started_at DESC, run_id DESC LIMIT 1"
 )
 # The unresolved receipts of a stage operation on the runs of a configuration, newest run
@@ -2163,7 +2171,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         processes move the same row, one of them moves it and the other gets ``False``
         (data-model.md, "State transitions"). ``fields`` must include ``updated_at``. The moved
         row is checked as an `AutomaticResume` before the transaction commits. ``event`` is
-        written in the transaction of the move, and only when the row moved (FR-017).
+        written in the transaction of the move, and only when the row moved (FR-017). A move
+        to ``ended`` with the decision ``no-resume`` counts a scheduled run as one failed run
+        in the same transaction (`_settle_scheduled_run_end`, research R11).
 
         Raises:
             ValueError: ``fields`` names a field that a move cannot set or lacks ``updated_at``,
@@ -2209,6 +2219,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             moved_row = cursor.rowcount == 1
             if moved_row and event is not None:
                 self._insert_event(cursor, event)
+            if moved_row and to_state == "ended" and moved.decision == "no-resume":
+                # The run stays interrupted, so it counts as one failed run (research R11).
+                self._settle_scheduled_run_end(
+                    cursor, run_id, interrupted_flow_run_id, verdict="failed", ended_at=moved.updated_at
+                )
         return moved_row
 
     def commit_claimed_execution(
@@ -2927,10 +2942,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         ``stopped`` with the reason ``repeated-failures``, its Prefect schedule is marked as
         not matching the record, and the event ``infrahub_sync.schedule.stopped`` names the
         run. A paused schedule keeps its state. A run that no schedule started, and a stage
-        that a person starts on a scheduled run, change nothing.
+        that a person starts on a scheduled run, change nothing. The end of an automatic
+        resume counts as the end of the execution its chain of rows interrupted first, so the
+        end of a scheduled run's automatic resume counts as the end of its ``sync`` (spec 030,
+        research R11).
         """
         if verdict == "unchanged":
             return
+        flow_run_id = self._execution_an_automatic_resume_chain_started_from(cursor, run_id, flow_run_id)
         cursor.execute(self._sql(_SELECT_SCHEDULE_OF_ENDED_SYNC), (run_id, run_id, flow_run_id))
         row = cursor.fetchone()
         if row is None:
@@ -2962,6 +2981,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         schedule = self._read_schedule(cursor, schedule_id)
         if schedule is not None:
             self._insert_event(cursor, _schedule_stopped_event(schedule, run_id, ended_at))
+
+    def _execution_an_automatic_resume_chain_started_from(self, cursor: _Cursor, run_id: str, flow_run_id: str) -> str:
+        """Return the execution that the automatic resumes ending in ``flow_run_id`` resumed first.
+
+        An automatic resume is the execution that a row of ``automatic_resumes`` names as its
+        ``resume_flow_run_id``. Its end, and the end of a row that an interrupted automatic
+        resume inserted, count for the execution that the first row of the chain interrupted:
+        for a scheduled run, its ``sync`` (spec 030, research R11). Any other execution,
+        including a resume that a person started, is returned unchanged.
+        """
+        seen = {flow_run_id}
+        while True:
+            cursor.execute(self._sql(_SELECT_EXECUTION_AN_AUTOMATIC_RESUME_RESUMED), (run_id, flow_run_id))
+            row = cursor.fetchone()
+            if row is None or str(row[0]) in seen:
+                return flow_run_id
+            flow_run_id = str(row[0])
+            seen.add(flow_run_id)
 
     def reserve_mutation(
         self,
@@ -4589,11 +4626,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None:
         """Return the newest run of a configuration that is in progress, or ``None`` (research R7).
 
-        A run is in progress when one of its executions has no terminal verdict, or when it
+        A run is in progress when one of its executions has no terminal verdict, when it has
+        an automatic resume row that is not ``ended`` (spec 030, research R11), or when it
         has an unresolved receipt of a stage operation that was created less than
         ``receipt_age_limit`` before ``now``. A run in phase ``planned`` that waits for a
-        person, an interrupted run and an abandoned execution all have a terminal verdict, so
-        they are not in progress. The receipt times are compared as times, not as text.
+        person, an abandoned execution, and an interrupted run with no automatic resume row
+        waiting or running all have a terminal verdict, so they are not in progress. The
+        receipt times are compared as times, not as text.
         """
         with self._reading() as cursor:
             return self._run_in_progress(cursor, config_id, now - receipt_age_limit)

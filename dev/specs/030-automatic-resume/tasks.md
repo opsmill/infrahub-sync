@@ -210,19 +210,19 @@ behind `ProductProjection`.
 
 ### Tests for User Story 3
 
-- [ ] T032 [P] [US3] Tests in `tests/service/test_schedule_admission.py`: a run with a row not `ended` makes the
+- [X] T032 [P] [US3] Tests in `tests/service/test_schedule_admission.py`: a run with a row not `ended` makes the
       overlap policy skip (`reject`) or queue (`queue`) the next start (spec US3 scenario 2).
-- [ ] T033 [P] [US3] Tests in a new `tests/service/test_schedule_automatic_resume.py`: an interrupted scheduled run
+- [X] T033 [P] [US3] Tests in a new `tests/service/test_schedule_automatic_resume.py`: an interrupted scheduled run
       whose automatic resume ends applied sets the failure count to zero; one whose row ends `no-resume` adds one;
       one whose automatic resume ends with a worker-reported failure adds one; a branch-review run gets
       `not-resumable` (spec US3 scenarios 1, 3 and 4, FR-018).
 
 ### Implementation for User Story 3
 
-- [ ] T034 [US3] Change `_run_in_progress` (`_SELECT_RUN_WITH_OPEN_EXECUTION`) in
+- [X] T034 [US3] Change `_run_in_progress` (`_SELECT_RUN_WITH_OPEN_EXECUTION`) in
       `infrahub_sync/product_store/store.py` to also return a run of the configuration that has a row in
       `automatic_resumes` not in state `ended` (research R11).
-- [ ] T035 [US3] Settle the schedule count later in `infrahub_sync/product_store/store.py`: `failed` when a row ends
+- [X] T035 [US3] Settle the schedule count later in `infrahub_sync/product_store/store.py`: `failed` when a row ends
       `no-resume` (in the transaction of `move_automatic_resume`), and, for a resume execution started by
       `AUTOMATIC_RESUME_ACTOR`, `succeeded` or `failed` from its verdict in the transaction that records its end,
       instead of `unchanged` (research R11).

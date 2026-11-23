@@ -21,6 +21,7 @@ from prefect.states import State
 
 from infrahub_sync.product_store import (
     AuditEvent,
+    AutomaticResume,
     ExecutionFinishWriteback,
     LookupResult,
     ProductRun,
@@ -49,13 +50,14 @@ def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ScheduleApi:
     return schedule_api(monkeypatch, tmp_path)
 
 
-def _schedule(
+def _schedule(  # noqa: PLR0913  # pylint: disable=too-many-arguments
     api: ScheduleApi,
     *,
     cron: str = "0 * * * *",
     write_target: str = "default-branch",
     created: datetime = CREATED,
     config_id: str | None = None,
+    overlap_policy: str = "reject",
 ) -> str:
     """Store an active schedule created at ``created``, owned by ``owner``, and return its identifier."""
     schedule_id = f"s-{uuid4().hex}"
@@ -69,6 +71,7 @@ def _schedule(
                 "cron": cron,
                 "timezone": "UTC",
                 "write_target": write_target,
+                "overlap_policy": overlap_policy,
                 "state": "active",
                 "owner": api.account_id("owner"),
                 "created_at": created,
@@ -288,6 +291,76 @@ def test_reject_skips_the_start_and_names_the_run_in_progress(
     )
     assert skipped.details is not None
     assert skipped.details.start_at == T0
+
+
+def _interrupted_with_automatic_resume(api: ScheduleApi, **decision: object) -> str:
+    """A `sync` run of a person whose worker disappeared, with its automatic resume row (spec 030).
+
+    The row waits for the check unless ``decision`` ends it. The run has no execution without a
+    terminal verdict, so only the row can make it a run in progress.
+    """
+    response = api.client.post(
+        "/runs",
+        json={"operation": "sync", "config_id": api.config_id, "registry_version": 1, "confirm_writes": True},
+        headers=headers(OWNER_TOKEN),
+    )
+    assert response.status_code == 202, response.text
+    run_id = response.json()["run"]["run_id"]
+    run = api.projection.lookup_run(run_id).value
+    assert run is not None
+    flow_run_id = run.prefect_executions[-1].flow_run_id
+    assert api.projection.claim_execution(run_id, flow_run_id, worker_id=WORKER_ID)
+    now = datetime.now(timezone.utc)
+    record = AutomaticResume.model_validate(
+        {
+            "run_id": run_id,
+            "interrupted_flow_run_id": flow_run_id,
+            "cause": "rule-8",
+            "state": "waiting-check",
+            "decided_at": now,
+            "updated_at": now,
+            **decision,
+        }
+    )
+    assert api.projection.interrupt_execution(run_id, flow_run_id, terminal_at=now, automatic_resume=record)
+    return run_id
+
+
+@pytest.mark.parametrize("policy", ["reject", "queue"])
+def test_a_run_that_waits_for_its_automatic_resume_is_in_progress(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi, policy: str
+) -> None:
+    """Spec 030, user story 3, scenario 2: the start is skipped or waits while the automatic resume waits."""
+    in_progress = _interrupted_with_automatic_resume(api)
+    schedule_id = _schedule(api, overlap_policy=policy)
+    # No Prefect server: the scheduled state of a start that waits is returned, not stored.
+    monkeypatch.setattr(service_flow, "_run_again_later", lambda state, _lines: state)
+
+    state = _start(monkeypatch, api, schedule_id, T0)
+
+    assert _runs(api, schedule_id) == []
+    if policy == "reject":
+        assert _completed(state)
+        (skipped,) = _events(api, "infrahub_sync.schedule.start_skipped")
+        assert (skipped.run_id, skipped.outcome) == (in_progress, "skipped-run-in-progress")
+    else:
+        assert isinstance(state, State)
+        assert state.is_scheduled()
+        (queued,) = _events(api, "infrahub_sync.schedule.start_queued")
+        assert (queued.run_id, queued.outcome) == (in_progress, "queued")
+
+
+def test_a_run_whose_automatic_resume_row_ended_is_not_in_progress(
+    monkeypatch: pytest.MonkeyPatch, api: ScheduleApi
+) -> None:
+    _interrupted_with_automatic_resume(api, state="ended", decision="no-resume", reason="not-resumable")
+    schedule_id = _schedule(api)
+
+    result = _start(monkeypatch, api, schedule_id, T0)
+
+    assert isinstance(result, dict)
+    assert len(_runs(api, schedule_id)) == 1
+    assert _events(api, "infrahub_sync.schedule.start_skipped") == []
 
 
 def test_a_run_that_a_person_starts_while_the_start_is_decided_skips_the_start(
