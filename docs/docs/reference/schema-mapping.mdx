@@ -159,6 +159,8 @@ Infrahub Sync supports the following 14 filter operations:
 
 Multiple filters on the same model are combined with AND — an object must match all filters to be included.
 
+When the field is empty (`""`) or null, for example a device with no description or with no platform for `platform.name`, `not contains` and `not in` with a string value keep the object. `contains`, `regex`, `is_ip_within`, the four numeric comparisons and `in` with a string value drop it. When the value of `in` or `not in` is a list, the field is compared with the list items, so a list that includes `""` matches an empty field.
+
 ## Transforms and custom Jinja filters
 
 For cases where a field value needs to be transformed during the mapping — uppercase a string, parse a date, compute a derived value — apply a `transforms` entry to the mapping. The transform takes a `field` (the target field name) and an `expression` (a Jinja-compatible expression evaluated against the source object).
