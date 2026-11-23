@@ -526,8 +526,9 @@ point's name. Keep it in a module that does not import the adapter itself, so va
 not load adapter code to read it. The rules:
 
 - **Sources only.** The declaration's `roles` must be exactly `{"source"}`, and it sets none of
-  the destination fields (`destination_schema_validation` and the two destination accessors);
-  the destination stays qualified for the bundled Infrahub adapter alone.
+  the destination fields (`destination_schema_validation`, `destination_schema_accessor` and
+  `destination_access_accessor`); the destination stays qualified for the bundled Infrahub
+  adapter alone.
 - **Bundled adapters win under any spelling.** An installed declaration is never read for a name
   that is, or normalizes to (case, `-` and `_` ignored, as the plugin loader matches), a bundled
   adapter, so a distribution cannot replace or alias one.
