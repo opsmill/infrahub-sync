@@ -458,6 +458,92 @@ def test_a_contended_write_guard_without_a_known_run_says_so() -> None:
     assert "`infrahub-sync runs list`" in recorded["next_action"]
 
 
+_VERIFY_AND_RESUME_ENDING = (
+    "then run `infrahub-sync verify RUN_ID` again, then "
+    "`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`."
+)
+
+
+@pytest.mark.parametrize(
+    ("active_run_id", "active_run_ended", "cause", "next_action"),
+    [
+        pytest.param(
+            "run-holder-1",
+            False,
+            "Sync run run-holder-1 was writing to this configuration and held its write guard for the whole wait, "
+            "so this write did not start and changed nothing",
+            "Check that run with `infrahub-sync runs show run-holder-1` and wait for it to finish, then plan again.",
+            id="named-write-open",
+        ),
+        pytest.param(
+            "run-holder-1",
+            True,
+            "Sync run run-holder-1 held this configuration's write guard for the whole wait although its write has "
+            "ended, so this write did not start and changed nothing",
+            "The guard is released only when the worker of run run-holder-1 stops. Ask the administrator of the "
+            "Sync service to stop or restart that worker, then plan again.",
+            id="named-write-ended",
+        ),
+        pytest.param(
+            None,
+            False,
+            "Another writer held this configuration's write guard for the whole wait, so this write did not start "
+            "and changed nothing. Which Sync run holds the guard is not known",
+            "List the runs of this configuration with `infrahub-sync runs list` and wait for its write to finish, "
+            "then plan again.",
+            id="not-known",
+        ),
+        pytest.param(
+            None,
+            True,
+            "Another writer held this configuration's write guard for the whole wait, so this write did not start "
+            "and changed nothing. Which Sync run holds the guard is not known",
+            "List the runs of this configuration with `infrahub-sync runs list` and wait for its write to finish, "
+            "then plan again.",
+            id="not-known-ended-flag-ignored",
+        ),
+    ],
+)
+def test_a_contended_write_guard_has_one_cause_and_next_action_per_holder_case(
+    active_run_id: str | None,
+    active_run_ended: bool,  # noqa: FBT001
+    cause: str,
+    next_action: str,
+) -> None:
+    """Spec 028 contract: the exact cause and next action of the three holder cases."""
+    recorded = failure_record(
+        "sync", _guard_contention(), active_run_id=active_run_id, active_run_ended=active_run_ended
+    )
+
+    assert recorded["active_run_id"] == active_run_id
+    assert recorded["cause"] == cause
+    assert recorded["next_action"] == next_action
+    assert "active_run_ended" not in recorded
+
+
+def test_a_contended_write_guard_whose_holder_write_ended_never_says_to_wait_for_it() -> None:
+    """US3: a holder whose write has ended is not waited for; its worker must stop."""
+    recorded = failure_record("apply", _guard_contention(), active_run_id="run-holder-1", active_run_ended=True)
+
+    assert "wait for it to finish" not in recorded["next_action"]
+    assert "runs show" not in recorded["next_action"]
+    assert recorded["failure_type"] == "write_guard_contended"
+    assert StageFailureResource.model_validate(recorded).active_run_id == "run-holder-1"
+
+
+def test_a_resume_contended_by_a_holder_whose_write_ended_ends_with_verify_then_resume() -> None:
+    """A failed `runs resume` keeps its saved plan: the ended variant ends with verify, then resume."""
+    recorded = failure_record(
+        "resume", _guard_contention(), resumable=True, active_run_id="run-holder-1", active_run_ended=True
+    )
+
+    assert recorded["next_action"] == (
+        "The guard is released only when the worker of run run-holder-1 stops. Ask the administrator of the "
+        "Sync service to stop or restart that worker, " + _VERIFY_AND_RESUME_ENDING
+    )
+    assert "plan again" not in recorded["next_action"]
+
+
 def test_an_active_run_id_is_recorded_only_for_a_contended_write_guard() -> None:
     """Another failure never carries a run ID it did not look up for."""
     recorded = failure_record("apply", ServerNotReachableError(address="https://x.test"), active_run_id="run-x")

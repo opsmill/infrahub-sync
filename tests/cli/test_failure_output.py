@@ -202,3 +202,34 @@ def test_a_contended_write_prints_the_active_run_and_how_to_check_it(
         "active run: service-run-0",
         f"hint: {_CONTENDED_NEXT_ACTION}",
     ]
+
+
+_ENDED_CAUSE = (
+    "Sync run service-run-0 held this configuration's write guard for the whole wait although its write has "
+    "ended, so this write did not start and changed nothing"
+)
+_ENDED_NEXT_ACTION = (
+    "The guard is released only when the worker of run service-run-0 stops. Ask the administrator of the "
+    "Sync service to stop or restart that worker, then plan again."
+)
+
+
+@pytest.mark.parametrize("stage", ["sync", "apply"])
+def test_a_contended_write_whose_holder_write_ended_prints_how_to_release_the_guard(
+    client: MagicMock,  # noqa: F811 - the imported fixture.
+    stage: str,
+) -> None:
+    """Spec 028 US3: the active run, the cause and the next action, and no wait for the run."""
+    record = {**_contended(stage), "cause": _ENDED_CAUSE, "next_action": _ENDED_NEXT_ACTION}
+
+    output = _failed_command(client, stage, record)
+
+    block = _block(output, stage)
+    assert block == [
+        f"{stage} failed: ApplyGuardContentionError",
+        "failure type: write_guard_contended",
+        f"cause: {_ENDED_CAUSE}",
+        "active run: service-run-0",
+        f"hint: {_ENDED_NEXT_ACTION}",
+    ]
+    assert "wait for it to finish" not in output

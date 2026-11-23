@@ -1545,6 +1545,7 @@ def _failure_evidence(
     secrets: Sequence[str],
     resumable: bool = False,
     active_run_id: str | None = None,
+    active_run_ended: bool = False,
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
 
@@ -1563,6 +1564,8 @@ def _failure_evidence(
 
     `active_run_id` is the run found writing to the same configuration when the write guard
     was contended (`_active_write_run`); `failure_record` records it for that failure only.
+    `active_run_ended` is true when that run's write has ended although it still holds the
+    guard; it selects the cause and next action and is not recorded.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
@@ -1587,7 +1590,17 @@ def _failure_evidence(
     evidence.update(operator_cause(exc, secrets))
     if resumable:
         evidence.update(resumable_next_action(exc, secrets))
-    evidence.update(_structured_cause(stage, exc, secrets, evidence, resumable=resumable, active_run_id=active_run_id))
+    evidence.update(
+        _structured_cause(
+            stage,
+            exc,
+            secrets,
+            evidence,
+            resumable=resumable,
+            active_run_id=active_run_id,
+            active_run_ended=active_run_ended,
+        )
+    )
     if stage in ("verify", *_SAVED_PLAN_WRITE_STAGES):
         # The pre-write check a verify or an apply failed on, by name, so an operator reads
         # which check refuses the apply, and both stages name the same one (SC-004). Both
@@ -1617,6 +1630,7 @@ def _structured_cause(  # pylint: disable=too-many-arguments
     *,
     resumable: bool = False,
     active_run_id: str | None = None,
+    active_run_ended: bool = False,
 ) -> dict[str, Any]:
     """The `failure_record` fields, keeping the cause and next action `operator_cause` recorded.
 
@@ -1625,7 +1639,14 @@ def _structured_cause(  # pylint: disable=too-many-arguments
     error here records `internal_error`.
     """
     try:
-        fields = failure_record(stage, exc, secrets=secrets, resumable=resumable, active_run_id=active_run_id)
+        fields = failure_record(
+            stage,
+            exc,
+            secrets=secrets,
+            resumable=resumable,
+            active_run_id=active_run_id,
+            active_run_ended=active_run_ended,
+        )
     except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.warning("failure record fields could not be built (%s)", type(unexpected).__name__)
         fields = dict.fromkeys(FAILURE_RECORD_KEYS)
@@ -1763,8 +1784,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         # already interrupted, as for a failed `verify` or a resume that failed before its first
         # write: the next step is `verify`, then `runs resume` (spec 016), not a new plan.
         resumable = stored.phase != "cancelled" and (ambiguous or stored.reconciliation_required)
-        # `active_run_ended` is not recorded yet: the template variant that uses it is T025.
-        active_run_id, _active_run_ended = _active_write_run(projection, stored, exc)
+        active_run_id, active_run_ended = _active_write_run(projection, stored, exc)
         evidence = _failure_evidence(
             stage,
             exc,
@@ -1773,6 +1793,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             secrets=secrets,
             resumable=resumable,
             active_run_id=active_run_id,
+            active_run_ended=active_run_ended,
         )
         # The execution that wrote the record: results are merged, so a later execution of the
         # same purpose that never records a failure leaves this record in place (spec 016,

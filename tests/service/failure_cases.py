@@ -48,8 +48,9 @@ if TYPE_CHECKING:
 
 Stage = Literal["plan", "verify", "apply", "sync"]
 # What the run records answer for the candidate of a contended write guard (spec 028, SC-003):
-# a run of the same configuration ("confirmed"), no such run ("rejected"), or a lookup that raised.
-HolderLookup = Literal["confirmed", "rejected", "lookup-raised"]
+# a run of the same configuration whose write has ended ("confirmed") or is still open
+# ("confirmed-writing"), no such run ("rejected"), or a lookup that raised.
+HolderLookup = Literal["confirmed", "confirmed-writing", "rejected", "lookup-raised"]
 
 # A referenced credential of five characters, below the masking pass's minimum length of six
 # (`MIN_SECRET_LENGTH`), so masking cannot hide it.
@@ -392,7 +393,8 @@ CASES: tuple[FailureCase, ...] = (
         "write-guard-contended", "apply", _contended, "write_guard_contended", {"system": None, "active_run_id": None}
     ),
     # The candidate names a run of the same configuration, so the record names it. `active_run_id`
-    # stays `None` in `fields`: a record built without the run records names no run.
+    # stays `None` in `fields`: a record built without the run records names no run. That run has
+    # no open write, so the record carries the "write has ended" cause and next action.
     FailureCase(
         "write-guard-contended-holder-confirmed",
         "apply",
@@ -400,6 +402,15 @@ CASES: tuple[FailureCase, ...] = (
         "write_guard_contended",
         {"system": None, "active_run_id": None},
         holder="confirmed",
+    ),
+    # The same, with a claimed, open write on the named run: the "still writing" variant.
+    FailureCase(
+        "write-guard-contended-holder-writing",
+        "apply",
+        lambda text: _contended(text, HOLDER_RUN_ID),
+        "write_guard_contended",
+        {"system": None, "active_run_id": None},
+        holder="confirmed-writing",
     ),
     # The candidate is a credential that has the shape of a run ID and names no run: the run
     # records reject it, so it must not reach any output.

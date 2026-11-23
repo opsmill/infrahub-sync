@@ -168,16 +168,16 @@ the web interface.
 
 **Independent test**: unit test with a confirmed candidate whose `write_holder_state` has `writing=False` (T026).
 
-- [ ] T025 [US3] In `infrahub_sync/service/failure_cause.py`, add a keyword `active_run_ended: bool = False` to
+- [X] T025 [US3] In `infrahub_sync/service/failure_cause.py`, add a keyword `active_run_ended: bool = False` to
   `failure_record` (not stored as a field) and a third variant of `_guard_contended_template` with the cause and
   next action from `contracts/contended-write-failure.md` ("held this configuration's write guard for the whole
   wait although its write has ended"; "The guard is released only when the worker of run `<id>` stops. Ask the
   administrator of the Sync service to stop or restart that worker, then plan again."). For a `runs resume`
   failure, keep the existing verify-then-resume ending. Pass the flag from `_failure_evidence` in
   `infrahub_sync/service/flow.py`.
-- [ ] T026 [P] [US3] In `tests/service/test_failure_cause.py`, add tests for the three template variants and the
+- [X] T026 [P] [US3] In `tests/service/test_failure_cause.py`, add tests for the three template variants and the
   resume ending of the "ended" variant.
-- [ ] T027 [P] [US3] In `tests/cli/test_failure_output.py`, add a rendering test of the "ended" variant: the CLI
+- [X] T027 [P] [US3] In `tests/cli/test_failure_output.py`, add a rendering test of the "ended" variant: the CLI
   prints `active run: <id>`, the cause and the next action, with no "wait for it to finish".
 
 ## Phase 6: Polish and cross-cutting

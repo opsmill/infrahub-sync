@@ -405,8 +405,19 @@ def _rejected_write_template(fields: dict[str, Any], _where: str, _adapter: str)
 
 
 def _guard_contended_template(fields: dict[str, Any], _where: str, _adapter: str) -> _Template:
-    """A write that did not start: the run that was writing, or that it is not known (ADR 0010)."""
+    """A write that did not start: the run that holds the guard, or that it is not known (ADR 0010).
+
+    A named run whose write has ended (`active_run_ended`) still holds the guard through its
+    worker's session, so the next action names stopping that worker, never waiting for the run.
+    """
     active = fields["active_run_id"]
+    if active and fields.get("active_run_ended"):
+        return (
+            f"Sync run {active} held this configuration's write guard for the whole wait although its write has "
+            "ended, so this write did not start and changed nothing",
+            f"The guard is released only when the worker of run {active} stops. Ask the administrator of the "
+            f"Sync service to stop or restart that worker, {_PLAN_AGAIN}",
+        )
     if active:
         return (
             f"Sync run {active} was writing to this configuration and held its write guard for the whole wait, "
@@ -584,6 +595,7 @@ def failure_record(
     destination_adapter: str = APPLY_DESTINATION_ADAPTER,
     resumable: bool = False,
     active_run_id: str | None = None,
+    active_run_ended: bool = False,
 ) -> dict[str, Any]:
     """The spec 007 fields of a `<stage>_failure` record, and a template cause and next action.
 
@@ -592,7 +604,8 @@ def failure_record(
 
     `active_run_id` is the Sync run the caller found writing to the same configuration, looked
     up in the product store, never read from the error. It is recorded only for
-    `write_guard_contended`.
+    `write_guard_contended`. `active_run_ended` is true when that run's write has ended although
+    its session still holds the guard; it selects the template variant and is not recorded.
 
     Returns every key of `FAILURE_RECORD_KEYS`, `None` where the failure does not name it, and
     `cause` and `next_action` when a template exists for the failure type. The caller keeps the
@@ -631,7 +644,7 @@ def failure_record(
         "field": field_name,
         "active_run_id": _name(active_run_id) if failure_type == "write_guard_contended" else None,
     }
-    cause, next_action = _templates(fields, resumable=resumable)
+    cause, next_action = _templates({**fields, "active_run_ended": active_run_ended}, resumable=resumable)
     recorded = dict(fields)
     if cause:
         recorded["cause"] = _recordable(cause, secrets)
