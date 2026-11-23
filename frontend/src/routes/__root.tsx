@@ -384,9 +384,12 @@ function PlainAnchor({
 
 const PlainLink = createLink(PlainAnchor);
 
-function sectionOf(pathname: string): "configs" | "runs" | "accounts" | "account" | undefined {
+function sectionOf(
+  pathname: string
+): "configs" | "runs" | "credentials" | "accounts" | "account" | undefined {
   if (pathname === "/" || pathname.startsWith("/configs/")) return "configs";
   if (pathname === "/runs" || pathname.startsWith("/runs/")) return "runs";
+  if (pathname === "/credentials") return "credentials";
   if (pathname === "/accounts") return "accounts";
   if (pathname === "/account") return "account";
   return undefined;
@@ -505,6 +508,16 @@ function RootComponent() {
               aria-current={section === "runs" ? "true" : undefined}
             >
               Runs
+            </Link>
+            {/* Every signed-in account views the credentials; only an administrator changes them. */}
+            <Link
+              to="/credentials"
+              activeOptions={{ exact: true, includeSearch: false }}
+              className={NAV}
+              data-current={section === "credentials" ? "" : undefined}
+              aria-current={section === "credentials" ? "true" : undefined}
+            >
+              Credentials
             </Link>
             {administrator && (
               <Link

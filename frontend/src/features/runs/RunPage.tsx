@@ -44,6 +44,7 @@ import { describeSystem, type System } from "#/domain/systems";
 import { useDocumentTitle } from "#/lib/title";
 import { ChangeCount, ChangesDock, type ChangesState, useChangesShortcut } from "./ChangesDock";
 import { ChangesSheet, useChangesSheet } from "./ChangesSheet";
+import { CredentialsUsed } from "./CredentialsUsed";
 import { usePlanDownload } from "./plan-download";
 import {
   ApplyButton,
@@ -672,6 +673,7 @@ export function RunPage({ runId }: { runId: string }) {
           notice={outcome}
         />
         <RunFiles run={run} />
+        <CredentialsUsed used={resource.credentials_used ?? []} />
         <Details run={run} name={name} source={source} destination={destination} />
       </div>
       {dialog === "verify" && <VerifyDialog run={run} onClose={close} onDone={focusHeading} />}
