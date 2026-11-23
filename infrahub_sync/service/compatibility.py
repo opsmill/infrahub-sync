@@ -27,13 +27,20 @@ def installed_server_version() -> str:
 
 
 def installed_sdk_version() -> str | None:
-    """Return the installed ``infrahub-sdk`` version, or ``None`` when its metadata is unavailable.
+    """Return the installed ``infrahub-sdk`` version, or ``None`` when its metadata is unusable.
 
     ``GET /version`` reports it for discovery only, and the Compose healthcheck reads that
-    route, so missing SDK metadata yields ``None`` rather than a failed request.
+    route, so missing or invalid SDK metadata yields ``None`` rather than a failed request.
+    A value is reported only when it is a valid version, the same rule as the server version.
     """
     try:
         installed_version = version("infrahub-sdk")
     except (PackageNotFoundError, ValueError):
         return None
-    return installed_version or None
+    if not installed_version:
+        return None
+    try:
+        Version(installed_version)
+    except InvalidVersion:
+        return None
+    return installed_version

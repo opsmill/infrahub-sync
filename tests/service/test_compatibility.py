@@ -170,8 +170,8 @@ def test_installed_sdk_version_is_none_when_metadata_is_unavailable(
     assert compatibility.installed_sdk_version() is None
 
 
-@pytest.mark.parametrize("metadata_value", [None, ""])
-def test_installed_sdk_version_is_none_for_an_empty_metadata_value(
+@pytest.mark.parametrize("metadata_value", [None, "", " ", "not-a-version", "1..0"])
+def test_installed_sdk_version_is_none_for_an_empty_or_invalid_metadata_value(
     monkeypatch: pytest.MonkeyPatch,
     metadata_value: object,
 ) -> None:

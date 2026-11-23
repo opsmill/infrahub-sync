@@ -363,7 +363,8 @@ unstable API identifier, and the installed Infrahub SDK version:
 ```
 
 `sdk_version` is the version of the `infrahub-sdk` package installed in the `sync-api`
-container. It is `null` when the service cannot read that package's metadata. A Sync API
+container. It is `null` when the service cannot read that package's metadata, or when
+the metadata does not hold a valid version. A Sync API
 older than this field does not return it.
 
 It is a discovery resource only. This server does not yet reject clients based on a
