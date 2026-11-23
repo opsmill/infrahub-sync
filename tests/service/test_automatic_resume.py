@@ -1296,6 +1296,11 @@ def test_a_record_that_ends_without_a_resume_starts_nothing_and_says_why(
     assert len(events) == 1
     assert events[0].details is not None
     assert events[0].details.reason == reason
+    # The run detail states the reason in words, for `runs show` and the run page.
+    detail = step_api[0].get(f"/runs/{run_id}", headers=_headers("read")).json()
+    last = detail["automatic_resumes"][-1]
+    assert (last["reason"], bool(last["reason_text"])) == (reason, True)
+    assert last["reason_text"] != reason
 
 
 def test_a_resume_that_made_no_progress_gets_no_further_automatic_resume(step_api: _StepAPI) -> None:
