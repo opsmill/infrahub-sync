@@ -1,4 +1,4 @@
-import type { AutomaticResume, Resume } from "#/api/types";
+import type { AutomaticResume, Resume, Run } from "#/api/types";
 
 /**
  * The name the Sync API shows for the reserved actor of the automatic resume (spec 030). An
@@ -33,9 +33,14 @@ const startText = (startAfter?: number | null) =>
 
 /**
  * The text of one automatic resume record, line for line as `infrahub-sync runs show` prints it
- * (spec 030 contracts/cli-and-web.md). `number` counts the records from 1, oldest first.
+ * (spec 030 contracts/cli-and-web.md). `number` counts the records from 1, oldest first; `next` is
+ * the advice of `automaticResumeNext`, when the record gets one.
  */
-export function automaticResumeBlock(row: AutomaticResume, number: number): AutomaticResumeBlock {
+export function automaticResumeBlock(
+  row: AutomaticResume,
+  number: number,
+  next?: string
+): AutomaticResumeBlock {
   const ended = row.state === "ended";
   const heading = ended
     ? row.decision === "resume"
@@ -57,11 +62,37 @@ export function automaticResumeBlock(row: AutomaticResume, number: number): Auto
     });
   }
   if (row.reason_text != null) lines.push({ label: "reason", text: row.reason_text });
+  if (next !== undefined) lines.push({ label: "next", text: next });
   return {
     title: `Automatic resume ${number}: ${heading}`,
     notStarted: ended && row.decision !== "resume",
     lines,
   };
+}
+
+/**
+ * What the operator can do after Sync did not resume the run, in the words of the `next:` line of
+ * `infrahub-sync runs show` (spec 030 contracts/cli-and-web.md). Only the latest record gets it,
+ * only when it ended without a resume, and only while the run still has an interrupted write to
+ * resolve. A run that `runs resume` refuses (`not-resumable`) gets no `runs resume` command.
+ */
+export function automaticResumeNext(
+  row: AutomaticResume,
+  latest: boolean,
+  run: Pick<Run, "run_id" | "reconciliation_required">
+): string | undefined {
+  if (
+    !latest ||
+    row.state !== "ended" ||
+    row.decision !== "no-resume" ||
+    !run.reconciliation_required
+  ) {
+    return undefined;
+  }
+  if (row.reason === "not-resumable") {
+    return "create a new plan; `infrahub-sync runs resume` cannot resume this run";
+  }
+  return `run \`infrahub-sync verify ${run.run_id}\`, then a new plan or \`infrahub-sync runs resume ${run.run_id} --expected-checksum CHECKSUM\``;
 }
 
 /** Whether Sync is still deciding or carrying out an automatic resume of the run. */

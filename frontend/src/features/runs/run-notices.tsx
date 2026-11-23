@@ -614,8 +614,17 @@ export function InFlightNotice({ open }: { open: Orchestration }) {
  * One automatic resume record of the run, with the text of `infrahub-sync runs show`: why the
  * write ended, what the check found, where the resume started, or why Sync did not resume.
  */
-export function AutomaticResumeNotice({ row, number }: { row: AutomaticResume; number: number }) {
-  const block = automaticResumeBlock(row, number);
+export function AutomaticResumeNotice({
+  row,
+  number,
+  next,
+}: {
+  row: AutomaticResume;
+  number: number;
+  /** What the operator can do after Sync did not resume the run (`automaticResumeNext`). */
+  next?: string;
+}) {
+  const block = automaticResumeBlock(row, number, next);
   return (
     <Notice
       tone={block.notStarted ? "warning" : "neutral"}

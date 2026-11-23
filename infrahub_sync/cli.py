@@ -33,6 +33,7 @@ from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
     ApproveRunRequest,
+    AutomaticResumeResource,
     CancelRunRequest,
     ChangeScheduleRequest,
     ClientInputError,
@@ -1321,6 +1322,27 @@ def _echo_automatic_resumes(resource: RunResource) -> None:
             typer.echo(f"  resumed {start} by {_AUTOMATIC_RESUME_NAME}")
         if row.reason_text is not None:
             typer.echo(_display(f"  reason: {row.reason_text}"))
+        if number == len(resource.automatic_resumes):
+            advice = _automatic_resume_next(row, resource)
+            if advice is not None:
+                typer.echo(_display(f"  next: {advice}"))
+
+
+def _automatic_resume_next(row: AutomaticResumeResource, resource: RunResource) -> str | None:
+    """What the operator can do after Sync did not resume the run, or `None` (spec 030 contracts/cli-and-web.md).
+
+    Only the latest record gets the line, only when it ended without a resume and the run still
+    has an interrupted write to resolve. A run that `runs resume` refuses (`not-resumable`) needs a
+    new plan, so the line does not name `runs resume`.
+    """
+    if row.state != "ended" or row.decision != "no-resume" or not resource.run.reconciliation_required:
+        return None
+    if row.reason == "not-resumable":
+        return "create a new plan; `infrahub-sync runs resume` cannot resume this run"
+    verify = f"run `infrahub-sync verify {resource.run.run_id}`"
+    return (
+        f"{verify}, then a new plan or `infrahub-sync runs resume {resource.run.run_id} --expected-checksum CHECKSUM`"
+    )
 
 
 def _side_read_text(side: SideRead | None) -> str | None:

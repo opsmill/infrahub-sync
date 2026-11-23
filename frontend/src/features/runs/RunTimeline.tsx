@@ -20,7 +20,7 @@ import {
 import type { System } from "#/domain/systems";
 import { formatAbsolute } from "#/lib/time";
 
-import { resumeEntries } from "./automatic-resume";
+import { automaticResumeNext, resumeEntries } from "./automatic-resume";
 import { PlanReads } from "./PlanReads";
 import { PlanFacts } from "./PlanReview";
 import { AutomaticResumeNotice } from "./run-notices";
@@ -409,12 +409,17 @@ function ResumeRows({ resumes }: { resumes: Resume[] }) {
 }
 
 /** Sync's decisions on resuming the run's interrupted writes without a person, oldest first. */
-function AutomaticResumeNotices({ rows }: { rows: AutomaticResume[] }) {
+function AutomaticResumeNotices({ rows, run }: { rows: AutomaticResume[]; run: Run }) {
   if (rows.length === 0) return null;
   return (
     <div className={cn(STEP_WIDTH, "flex flex-col gap-2")}>
       {rows.map((row, i) => (
-        <AutomaticResumeNotice key={row.interrupted_flow_run_id} row={row} number={i + 1} />
+        <AutomaticResumeNotice
+          key={row.interrupted_flow_run_id}
+          row={row}
+          number={i + 1}
+          next={automaticResumeNext(row, i === rows.length - 1, run)}
+        />
       ))}
     </div>
   );
@@ -542,7 +547,7 @@ export function RunTimeline({
           <StepRows run={run} step={s} className={rowsClass} />
         )}
         {s === resumeStep && <ResumeRows resumes={resumes} />}
-        {s === resumeStep && <AutomaticResumeNotices rows={automaticResumes} />}
+        {s === resumeStep && <AutomaticResumeNotices rows={automaticResumes} run={run} />}
         <div className="flex flex-col gap-1 empty:hidden">
           {glance(s) ? (
             <ChangesGlance run={run} onOpenChanges={onOpenChanges} />
@@ -569,7 +574,7 @@ export function RunTimeline({
     <section aria-labelledby="timeline" className="flex flex-col gap-4">
       <SectionHeading id="timeline" title="Timeline" />
       {notice && noticeIndex < 0 && notice}
-      {!resumeStep && <AutomaticResumeNotices rows={automaticResumes} />}
+      {!resumeStep && <AutomaticResumeNotices rows={automaticResumes} run={run} />}
       <div className="rounded-2xl border border-border-strong p-4">
         <ol aria-labelledby="timeline">{items}</ol>
       </div>

@@ -452,3 +452,63 @@ def test_runs_list_shows_the_automatic_resume_count_of_a_run_that_has_one(client
         f"run-2  edge-sync@1  review  manual  planned  -  operator  {NOW.isoformat()}  auto resumes: 2",
         f"run-1  edge-sync@1  review  manual  planned  -  operator  {NOW.isoformat()}",
     ]
+
+
+# --- the advice after Sync did not resume the run (spec 030 T031) ----------------------------
+
+_NEXT = (
+    f"  next: run `infrahub-sync verify {_RUN_ID}`, then a new plan or "
+    f"`infrahub-sync runs resume {_RUN_ID} --expected-checksum CHECKSUM`"
+)
+
+
+def _not_started(reason: str, **changes: object) -> AutomaticResumeResource:
+    return _automatic("ended", decision="no-resume", reason=reason, reason_text=f"the reason {reason}", **changes)
+
+
+@pytest.mark.parametrize("reason", ["check-found-differs", "approval-missing", "person-took-over", "limit-reached"])
+def test_runs_show_prints_the_next_line_under_the_latest_record_that_did_not_start(
+    client: MagicMock,  # noqa: F811
+    reason: str,
+) -> None:
+    client.get_run.return_value = _with_automatic_resumes(_not_started(reason))
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    reason_line = lines.index(f"  reason: the reason {reason}")
+    assert lines[reason_line + 1] == _NEXT
+
+
+def test_runs_show_does_not_name_runs_resume_for_a_run_it_cannot_resume(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _with_automatic_resumes(_not_started("not-resumable"))
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert "  next: create a new plan; `infrahub-sync runs resume` cannot resume this run" in result.stdout.splitlines()
+
+
+def test_runs_show_prints_the_next_line_only_for_the_latest_record(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _with_automatic_resumes(
+        _not_started("check-found-differs", interrupted_flow_run_id="flow-first"),
+        _automatic("ended", decision="resume", operations_not_checked=0, start_after=5999),
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert not any(line.startswith("  next:") for line in result.stdout.splitlines())
+
+
+def test_runs_show_prints_no_next_line_once_the_run_has_no_interrupted_write(client: MagicMock) -> None:  # noqa: F811
+    resource = _with_automatic_resumes(_not_started("check-found-differs"))
+    client.get_run.return_value = resource.model_copy(
+        update={"run": resource.run.model_copy(update={"phase": "applied", "reconciliation_required": False})}
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert not any(line.startswith("  next:") for line in result.stdout.splitlines())

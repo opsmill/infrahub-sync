@@ -179,22 +179,22 @@ behind `ProductProjection`.
 
 ### Tests for User Story 2
 
-- [ ] T027 [P] [US2] Parametrized test in `tests/service/test_automatic_resume.py` over every reason code of
+- [X] T027 [P] [US2] Parametrized test in `tests/service/test_automatic_resume.py` over every reason code of
       data-model.md: no resume execution starts, the run stays `interrupted`, the row ends `no-resume` with the code,
       and one `automatic_resume_not_started` event is written (SC-002, spec US2 scenarios 1 to 7).
-- [ ] T028 [P] [US2] Test the limits in `tests/service/test_automatic_resume.py`: a resume that ends interrupted with
+- [X] T028 [P] [US2] Test the limits in `tests/service/test_automatic_resume.py`: a resume that ends interrupted with
       no marker progress gets no further row decision `resume`; a fourth interruption after 3 resumes with progress
       ends `limit-reached`; a manual resume after either limit is accepted and creates no row (SC-003, FR-011).
-- [ ] T029 [P] [US2] Test a person taking over in `tests/service/test_resume_run.py`: `verify` or `runs resume` on a
+- [X] T029 [P] [US2] Test a person taking over in `tests/service/test_resume_run.py`: `verify` or `runs resume` on a
       run with a row in `waiting-check` or `waiting-resume` ends the row as `person-took-over` and proceeds; with a
       row in `checking` or `resuming`, the request gets `run-execution-conflict` (FR-019).
 
 ### Implementation for User Story 2
 
-- [ ] T030 [US2] In `verify_run` and `resume_run` of `infrahub_sync/service/service.py`, for a principal that is not
+- [X] T030 [US2] In `verify_run` and `resume_run` of `infrahub_sync/service/service.py`, for a principal that is not
       `AUTOMATIC_RESUME_ACTOR`, end a waiting row as `no-resume`, `person-took-over` with `move_automatic_resume`
       before the receipt is reserved, and write the `automatic_resume_not_started` event (FR-019, research R15).
-- [ ] T031 [US2] Add the `next:` line of [contracts/cli-and-web.md](./contracts/cli-and-web.md) for rows that ended
+- [X] T031 [US2] Add the `next:` line of [contracts/cli-and-web.md](./contracts/cli-and-web.md) for rows that ended
       `no-resume` in `infrahub_sync/cli.py`, and the same advice on the run page notice in
       `frontend/src/features/runs/run-notices.tsx`.
 

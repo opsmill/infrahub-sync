@@ -5,6 +5,7 @@ import type { AutomaticResume, Resume } from "#/api/types";
 import {
   AUTOMATIC_RESUME_NAME,
   automaticResumeBlock,
+  automaticResumeNext,
   automaticResumePending,
   resumeEntries,
 } from "./automatic-resume";
@@ -74,6 +75,45 @@ describe("automaticResumeBlock", () => {
     expect(block.title).toBe(title);
     expect(block.notStarted).toBe(false);
     expect(block.lines.some((l) => l.text === "passed, 0 differs, 3 not checked")).toBe(checked);
+  });
+});
+
+describe("automaticResumeNext", () => {
+  const interrupted = { run_id: "run-1", reconciliation_required: true };
+  const notStarted = (reason: string) =>
+    row({ decision: "no-resume", reason, reason_text: `the reason ${reason}` });
+
+  it("gives the next line of runs show for the latest record that did not start", () => {
+    const next = automaticResumeNext(notStarted("check-found-differs"), true, interrupted);
+    expect(next).toBe(
+      "run `infrahub-sync verify run-1`, then a new plan or `infrahub-sync runs resume run-1 --expected-checksum CHECKSUM`"
+    );
+    expect(text(automaticResumeBlock(notStarted("check-found-differs"), 1, next))).toEqual([
+      "Automatic resume 1: not started",
+      "cause: the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+      "reason: the reason check-found-differs",
+      `next: ${next}`,
+    ]);
+  });
+
+  it("does not name runs resume for a run it cannot resume", () => {
+    expect(automaticResumeNext(notStarted("not-resumable"), true, interrupted)).toBe(
+      "create a new plan; `infrahub-sync runs resume` cannot resume this run"
+    );
+  });
+
+  it.each([
+    ["an earlier record", notStarted("check-found-differs"), false, interrupted],
+    ["a record that started", row({ decision: "resume" }), true, interrupted],
+    ["a record that has not ended", row({ state: "waiting-check" }), true, interrupted],
+    [
+      "a run with no interrupted write",
+      notStarted("check-found-differs"),
+      true,
+      { run_id: "run-1", reconciliation_required: false },
+    ],
+  ])("gives nothing for %s", (_name, record, latest, run) => {
+    expect(automaticResumeNext(record, latest, run)).toBeUndefined();
   });
 });
 
