@@ -167,3 +167,14 @@ def test_a_stage_failure_record_refuses_an_unknown_role_and_a_long_name() -> Non
         StageFailureResource.model_validate({"system": {"role": "middle", "adapter": "netbox"}})
     with pytest.raises(ValidationError):
         StageFailureResource.model_validate({"node_kind": "K" * 129})
+
+
+@pytest.mark.parametrize("value", ["20261123T1012-aaaaaaaa", None])
+def test_a_stage_failure_record_accepts_a_run_id_or_no_active_run(value: str | None) -> None:
+    assert StageFailureResource.model_validate({"active_run_id": value}).active_run_id == value
+
+
+@pytest.mark.parametrize("value", ["", "run 1", "run=1", "-run", "x site=prod (not executed)", "r" * 129])
+def test_a_stage_failure_record_refuses_an_active_run_id_that_is_not_a_run_id(value: str) -> None:
+    with pytest.raises(ValidationError):
+        StageFailureResource.model_validate({"active_run_id": value})

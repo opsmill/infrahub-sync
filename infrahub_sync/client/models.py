@@ -1222,9 +1222,10 @@ class StageFailureResource(_ResourceModel):
     # `None` in a record written before this field existed; `applied_operations` then counts.
     operations_written: int | None = Field(default=None, ge=0)
     failed_operation_detail: FailedOperationDetailResource | None = None
-    # The Sync run that was writing to the same configuration when this write could not take
-    # the configuration's write guard (`write_guard_contended`). `None` when it is not known.
-    active_run_id: str | None = Field(default=None, max_length=MAX_FAILURE_NAME_TEXT)
+    # The Sync run whose session held the configuration's write guard when this write's wait for
+    # it ended (`write_guard_contended`), confirmed in the run records. `None` when it is not known.
+    # Validated like every other run ID, so the CLI and the web interface never name a malformed one.
+    active_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
 
 
 class ResultsResource(_ResourceModel):
