@@ -61,7 +61,7 @@ export function DialogForm({ credential, onClose }: FormProps) {
       title={formTitle(form)}
       ariaLabel={formTitle(form)}
       description={formDescription(form)}
-      error={<FormAnswer form={form} />}
+      error={form.problem || form.error ? <FormAnswer form={form} /> : undefined}
       submitLabel={submitLabel(form)}
       pendingLabel={credential ? "Changing the value" : "Creating the credential"}
       isPending={form.pending}
@@ -250,7 +250,9 @@ export function StepsForm({ credential, onClose }: FormProps) {
       }
       error={
         step === 2 ? (
-          <FormAnswer form={form} />
+          form.problem || form.error ? (
+            <FormAnswer form={form} />
+          ) : undefined
         ) : nameProblem ? (
           <p role="alert" className="text-danger text-sm">
             Give the credential a name that starts with a lowercase letter and holds lowercase

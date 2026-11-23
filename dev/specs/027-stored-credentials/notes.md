@@ -71,13 +71,15 @@ token and the password are password inputs.
 
 Open "Delete" in the "Actions" menu of a row. The Sync API reports the configurations and schedules
 that name a credential only when it refuses the deletion, so each version shows the listing after
-the request.
+the request. In every version the listing is lost when the person leaves the page. A configuration
+link in the listing opens the real configuration page, which reads the Sync API; the sample
+configuration IDs do not exist there.
 
 | Version | Approach | When it fits | Its cost |
 | --- | --- | --- | --- |
-| 1. Dialog | A modal confirmation; a refusal replaces the question with the listing, in the same dialog. Same pattern as the deletion of an account. | Consistency with the Accounts page. | The listing closes with the dialog, so a person who opens a configuration link loses it. |
+| 1. Dialog | A modal confirmation; a refusal replaces the question with the listing, in the same dialog. Same pattern as the deletion of an account. | Consistency with the Accounts page. | The listing covers the list and closes with the dialog. |
 | 2. Type the name | A modal confirmation whose button works only after the person types the name of the credential. | Deployments where a deleted credential stops scheduled runs and a wrong press is costly. | Slower for every deletion, and the name must be typed on a phone too. |
-| 3. On the page | No modal: a confirmation strip opens above the list. After a refusal the listing stays on the page until the person dismisses it. | A person who works through the listed configurations and schedules, then deletes again. | A confirmation that is not modal is easier to overlook, and it moves the list down. |
+| 3. On the page | No modal: a confirmation strip opens above the list. After a refusal the listing stays on the page until the person dismisses it. | A person who reads the listing next to the list, or opens its links in other tabs, then deletes again. | A confirmation that is not modal is easier to overlook, and it moves the list down. |
 
 ### Run details: "Credentials used" (`?screen=used`)
 
