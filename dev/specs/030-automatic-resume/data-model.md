@@ -22,7 +22,7 @@ interruption transaction inserts it.
 | `decided_at` | timestamp | When the row was inserted. |
 | `updated_at` | timestamp | The last move. |
 
-**Reason codes for `no-resume`** (FR-015):
+**Reason codes for `no-resume`** (FR-016):
 
 | Code | Meaning |
 | --- | --- |

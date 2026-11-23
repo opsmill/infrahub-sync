@@ -166,9 +166,9 @@ never count (FR-011).
   transaction (`_settle_scheduled_run_end`). When the same transaction writes a decision row that is not `ended`, it
   settles `unchanged` instead. The count is settled later, once: `failed` when the row ends `no-resume`, `succeeded`
   when the automatic resume ends applied, and `failed` when the automatic resume ends failed. An automatic resume
-  that is itself interrupted writes a new row and the same rule applies again (FR-017).
+  that is itself interrupted writes a new row and the same rule applies again (FR-018).
 - `_run_in_progress` (`_SELECT_RUN_WITH_OPEN_EXECUTION`) also returns a run that has a row not in state `ended`, so
-  the overlap policy skips or queues a start while the automatic resume waits or runs (FR-017).
+  the overlap policy skips or queues a start while the automatic resume waits or runs (FR-018).
 - A scheduled run with branch review is refused by `_refuse_scheduled_branch_review` before any receipt. The
   reconciler checks the same condition first and writes `no-resume`, `not-resumable`, without trying (FR-003).
 
