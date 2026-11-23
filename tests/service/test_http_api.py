@@ -1901,13 +1901,12 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}/approve",
         "/runs/{run_id}/cancel",
         "/health",
-        "/status",
         "/version",
     }
     for path, route in paths.items():
         for operation in route.values():
             # A sign-in presents a name and a password, not a bearer value.
-            if path in {"/health", "/status", "/version", "/auth/sign-in"}:
+            if path in {"/health", "/version", "/auth/sign-in"}:
                 assert "security" not in operation
                 continue
             assert "401" in operation["responses"]

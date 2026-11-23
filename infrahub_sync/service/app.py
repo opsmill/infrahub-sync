@@ -1,7 +1,6 @@
 """FastAPI routing for the stable Sync HTTP contract."""
 
 import logging
-import os
 from asyncio import CancelledError, create_task, sleep
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
@@ -61,7 +60,6 @@ from .models import (
     RunLogPage,
     RunPage,
     RunResource,
-    ServiceStatusResource,
     VerifyRunRequest,
     VersionResource,
 )
@@ -497,11 +495,6 @@ def create_app(
             stability=API_STABILITY,
             sdk_version=installed_sdk_version(),
         )
-
-    @application.get("/status")
-    async def get_status() -> ServiceStatusResource:
-        """Return unauthenticated lifecycle state without provider identifiers."""
-        return await service.status(os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"))
 
     @application.get("/health", response_model=HealthResource, responses={503: {"model": HealthResource}})
     async def get_health() -> JSONResponse:

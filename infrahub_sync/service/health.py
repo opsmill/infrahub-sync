@@ -41,7 +41,7 @@ from infrahub_sync.client.models import (
     WorkersHealthResource,
 )
 
-from .orchestration import PoolStatus, worker_is_live
+from .orchestration import PoolStatus, normalized_pool_status, worker_is_live
 from .storage import s3_client_arguments
 
 if TYPE_CHECKING:
@@ -197,8 +197,12 @@ def workers_health(pool: PoolStatus | None, now: datetime, minimum: int) -> Work
     """Build the worker section of a report from one work-pool read (None when it timed out).
 
     The workers listed are those with a heartbeat within 24 hours of `now`, newest first and
-    then by name; `live_workers` counts those that `worker_is_live` accepts.
+    then by name; `live_workers` counts those that `worker_is_live` accepts. A malformed snapshot
+    counts as a read that failed, so provider detail that breaks the snapshot's rules never
+    reaches the report.
     """
+    if pool is not None:
+        pool = normalized_pool_status(pool)
     if pool is None or not pool.detail_available:
         return WorkersHealthResource(state="unknown", minimum=minimum, live_workers=None, queue_depth=None, items=[])
     items: list[WorkerHealthResource] = []

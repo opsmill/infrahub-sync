@@ -75,9 +75,7 @@ from .models import (
     RunLogPage,
     RunPage,
     RunResource,
-    ServiceStatusResource,
     VerifyRunRequest,
-    WorkerStatusResource,
     public_event_page,
     public_run_log_page,
     public_run_page,
@@ -86,9 +84,7 @@ from .models import (
 from .orchestration import (
     Observation,
     OrchestrationUnavailableError,
-    PoolStatus,
     ServiceOrchestration,
-    normalized_pool_status,
 )
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
 from .plan_step import stage_plan_step
@@ -172,40 +168,6 @@ def _not_resumable_before_plan(run: ProductRun) -> str | None:
     if not run_has_saved_plan(run):
         return NO_SAVED_PLAN_MESSAGE
     return None
-
-
-def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:
-    """Project internal pool evidence into the deliberately small public schema."""
-    snapshot = normalized_pool_status(snapshot)
-    if not snapshot.detail_available:
-        return ServiceStatusResource(
-            service="ready",
-            worker=WorkerStatusResource(
-                state="unavailable", detail_available=False, live_workers=None, queue_depth=None, observed_at=None
-            ),
-        )
-    assert snapshot.queue_depth is not None
-    assert snapshot.observed_at is not None
-    now = snapshot.observed_at
-    live = sum(
-        worker.status == "online"
-        and worker.last_heartbeat is not None
-        and worker.heartbeat_interval_seconds is not None
-        and worker.heartbeat_interval_seconds > 0
-        and max(0.0, (now - worker.last_heartbeat).total_seconds()) <= max(3 * worker.heartbeat_interval_seconds, 30)
-        for worker in snapshot.workers
-    )
-    state = "no-live-worker" if live == 0 else "busy" if snapshot.queue_depth > 0 else "ready"
-    return ServiceStatusResource(
-        service="ready",
-        worker=WorkerStatusResource(
-            state=state,
-            detail_available=True,
-            live_workers=live,
-            queue_depth=snapshot.queue_depth,
-            observed_at=snapshot.observed_at,
-        ),
-    )
 
 
 class ServiceAPIError(Exception):
@@ -1450,11 +1412,6 @@ class RunService:
                 wrote = True
         rendered = self._required_run(run_id) if wrote else run
         return self._resource_with_observations(self._redacted_links(rendered), collected)
-
-    async def status(self, work_pool_name: str) -> ServiceStatusResource:
-        """Return lifecycle-safe pool state without exposing provider identifiers."""
-        snapshot = await self._orchestration.pool_status(work_pool_name, datetime.now(timezone.utc))
-        return _service_status(snapshot)
 
     def list_runs(
         self,

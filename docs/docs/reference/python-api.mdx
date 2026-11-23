@@ -35,7 +35,7 @@ from infrahub_sync.client import SyncClient
 
 with SyncClient.from_environment(timeout=30) as client:
     version = client.get_version()
-    status = client.get_status()
+    health = client.get_health()
 ```
 
 The first protected operation checks `/version` before sending the bearer token. The client

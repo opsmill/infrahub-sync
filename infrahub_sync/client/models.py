@@ -118,7 +118,6 @@ _SCHEDULED_RUN_MESSAGE = "a scheduled run requires its schedule and its schedule
 _MANUAL_RUN_MESSAGE = "a manual run cannot name a schedule or a scheduled start time"
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
-_WORKER_STATUS_MESSAGE = "worker status is invalid"
 _HEALTH_ERROR_MESSAGE = "a component error must be none exactly when the component is up"
 _WORKERS_HEALTH_MESSAGE = "worker details must be present exactly when the worker state is known"
 _ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
@@ -638,44 +637,6 @@ class VersionResource(_ResourceModel):
     # The installed `infrahub-sdk` version; `None` from a server that predates the field, or
     # when the service cannot read the SDK's package metadata.
     sdk_version: str | None = None
-
-
-class WorkerStatusResource(_ResourceModel):
-    """Report bounded worker availability details."""
-
-    state: Literal["ready", "busy", "no-live-worker", "unavailable"]
-    detail_available: bool
-    live_workers: int | None = Field(default=None, ge=0, strict=True)
-    queue_depth: int | None = Field(default=None, ge=0, strict=True)
-    observed_at: datetime | None
-
-    @model_validator(mode="after")
-    def _require_status(self) -> WorkerStatusResource:
-        details = (self.live_workers, self.queue_depth, self.observed_at)
-        if not self.detail_available:
-            if self.state != "unavailable" or any(value is not None for value in details):
-                raise ValueError(_WORKER_STATUS_MESSAGE)
-            return self
-        if self.state == "unavailable" or any(value is None for value in details):
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        assert self.live_workers is not None
-        assert self.queue_depth is not None
-        if self.state == "no-live-worker" and self.live_workers != 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state in {"ready", "busy"} and self.live_workers == 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state == "ready" and self.queue_depth != 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state == "busy" and self.queue_depth == 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        return self
-
-
-class ServiceStatusResource(_ResourceModel):
-    """Report service readiness and worker availability."""
-
-    service: Literal["ready"]
-    worker: WorkerStatusResource
 
 
 class DependencyHealthResource(_ResourceModel):

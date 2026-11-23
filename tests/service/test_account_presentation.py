@@ -648,7 +648,7 @@ def test_a_reason_that_contains_an_identifier_stays_as_typed(api: _Api) -> None:
     assert approved.json()["run"]["approval"]["approved_by"] == _ADMINISTRATOR
 
 
-@pytest.mark.parametrize("path", ["/version", "/status", "/health", "/configs", "/no-such-route"])
+@pytest.mark.parametrize("path", ["/version", "/health", "/configs", "/no-such-route"])
 def test_an_answer_with_no_identifier_makes_no_account_read(api: _Api, path: str) -> None:
     _register(api)
     api.reads.clear()

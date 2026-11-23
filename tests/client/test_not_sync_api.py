@@ -46,14 +46,14 @@ def test_an_html_page_answering_version_is_not_a_sync_api() -> None:
     _assert_body_absent(raised.value)
 
 
-@pytest.mark.parametrize("status", [200, 502])
-def test_an_html_answer_to_get_status_is_not_a_sync_api(status: int) -> None:
+@pytest.mark.parametrize("status", [200, 502, 503])
+def test_an_html_answer_to_get_health_is_not_a_sync_api(status: int) -> None:
     with pytest.raises(NotSyncAPIError) as raised:
-        _client(lambda _request: httpx.Response(status, text=HTML, headers=HTML_HEADERS)).get_status()
+        _client(lambda _request: httpx.Response(status, text=HTML, headers=HTML_HEADERS)).get_health()
 
     assert (raised.value.operation, raised.value.url, raised.value.status) == (
-        "get_status",
-        "http://127.0.0.1:8001/api/status",
+        "get_health",
+        "http://127.0.0.1:8001/api/health",
         status,
     )
     _assert_body_absent(raised.value)

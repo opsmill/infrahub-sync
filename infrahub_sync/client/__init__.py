@@ -79,7 +79,6 @@ from .models import (
     SchedulePage,
     ScheduleResource,
     ScheduleSettingChangeResource,
-    ServiceStatusResource,
     SessionResource,
     SideRead,
     StageReads,
@@ -90,7 +89,6 @@ from .models import (
     VersionResource,
     WorkerHealthResource,
     WorkersHealthResource,
-    WorkerStatusResource,
 )
 
 __all__ = [
@@ -167,7 +165,6 @@ __all__ = [
     "SchedulePage",
     "ScheduleResource",
     "ScheduleSettingChangeResource",
-    "ServiceStatusResource",
     "SessionResource",
     "SideRead",
     "StageReads",
@@ -180,6 +177,5 @@ __all__ = [
     "VerifyRunRequest",
     "VersionResource",
     "WorkerHealthResource",
-    "WorkerStatusResource",
     "WorkersHealthResource",
 ]

@@ -579,8 +579,8 @@ def test_lifespan_continues_after_ordinary_failure_and_cancels_cleanly(tmp_path)
 
 def test_pool_parsing_reports_a_ready_worker_when_freshness_is_exactly_at_the_bound() -> None:
     """A heartbeat exactly three intervals old is still fresh."""
+    from infrahub_sync.service.health import workers_health
     from infrahub_sync.service.orchestration import PrefectOrchestration
-    from infrahub_sync.service.service import _service_status  # noqa: PLC2701 - public status behavior test.
 
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
 
@@ -602,7 +602,8 @@ def test_pool_parsing_reports_a_ready_worker_when_freshness_is_exactly_at_the_bo
     valid = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient(10))).pool_status("pool", now))
 
     assert valid.detail_available
-    assert _service_status(valid).worker.state == "ready"
+    workers = workers_health(valid, now, 1)
+    assert (workers.state, workers.live_workers, workers.queue_depth) == ("known", 1, 0)
 
 
 @pytest.mark.parametrize(
@@ -742,8 +743,8 @@ def test_duplicate_worker_uuid_snapshot_is_unavailable_and_cannot_drive_reconcil
     tmp_path, worker_order: str
 ) -> None:
     """Conflicting records for one worker identity invalidate the whole pool snapshot."""
+    from infrahub_sync.service.health import workers_health
     from infrahub_sync.service.orchestration import PrefectOrchestration
-    from infrahub_sync.service.service import _service_status  # noqa: PLC2701 - public boundary behavior test.
 
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     worker_id = uuid4()
@@ -779,11 +780,11 @@ def test_duplicate_worker_uuid_snapshot_is_unavailable_and_cannot_drive_reconcil
         projection, _Orchestration(snapshot), LivenessPolicy(300, 30, 5), "pool", clock=lambda: now
     )
 
-    status = _service_status(snapshot)
+    reported = workers_health(snapshot, now, 1)
     asyncio.run(reconciler.reconcile_once())
 
     assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
-    assert status.worker.detail_available is False
+    assert reported.state == "unknown"
     stored = projection.lookup_run("run-duplicate-workers").value
     assert stored is not None
     assert stored.prefect_executions[0].stalled_at is None
@@ -844,7 +845,7 @@ def test_malformed_pool_snapshot_is_unavailable_and_causes_no_liveness_transitio
     value: object,
 ) -> None:
     """Provider-supplied invalid worker detail cannot drive status or product state."""
-    from infrahub_sync.service.service import _service_status  # noqa: PLC2701 - public boundary behavior test.
+    from infrahub_sync.service.health import workers_health
 
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     worker: dict[str, object] = {
@@ -883,15 +884,15 @@ def test_malformed_pool_snapshot_is_unavailable_and_causes_no_liveness_transitio
         clock=lambda: now,
     )
 
-    status = _service_status(malformed)
+    workers = workers_health(malformed, now, 1)
     asyncio.run(reconciler.reconcile_once())
 
-    assert status.worker.model_dump() == {
-        "state": "unavailable",
-        "detail_available": False,
+    assert workers.model_dump() == {
+        "state": "unknown",
+        "minimum": 1,
         "live_workers": None,
         "queue_depth": None,
-        "observed_at": None,
+        "items": [],
     }
     run = projection.lookup_run("run-malformed-pool").value
     assert run is not None
@@ -914,48 +915,6 @@ def test_malformed_pool_snapshot_is_unavailable_and_causes_no_liveness_transitio
 def test_pool_status_refuses_count_and_availability_invariant_violations(snapshot: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         PoolStatus(**cast("Any", snapshot))
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {
-            "state": "unavailable",
-            "detail_available": False,
-            "live_workers": 0,
-            "queue_depth": None,
-            "observed_at": None,
-        },
-        {
-            "state": "ready",
-            "detail_available": True,
-            "live_workers": -1,
-            "queue_depth": 0,
-            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
-        },
-        {
-            "state": "busy",
-            "detail_available": True,
-            "live_workers": 1,
-            "queue_depth": 0,
-            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
-        },
-        {
-            "state": "ready",
-            "detail_available": True,
-            "live_workers": True,
-            "queue_depth": 0,
-            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
-        },
-    ],
-)
-def test_public_worker_status_refuses_count_and_availability_invariant_violations(payload: dict[str, object]) -> None:
-    from pydantic import ValidationError
-
-    from infrahub_sync.service.models import WorkerStatusResource
-
-    with pytest.raises(ValidationError):
-        WorkerStatusResource.model_validate(payload)
 
 
 def test_request_time_reconciliation_terminalizes_each_pending_link(tmp_path) -> None:

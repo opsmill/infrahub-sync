@@ -277,14 +277,14 @@ def test_a_program_outside_api_gets_the_envelope(site: TestClient, path: str) ->
     _assert_security_headers(response)
 
 
-# The root of the API sends every client to the status of the service.
+# The root of the API sends every client to the health report of the service.
 @pytest.mark.parametrize("path", ["/api", "/api/"])
 @pytest.mark.parametrize("headers", [HTML, JSON])
-def test_the_api_root_redirects_to_the_status(site: TestClient, path: str, headers: dict[str, str]) -> None:
+def test_the_api_root_redirects_to_the_health_report(site: TestClient, path: str, headers: dict[str, str]) -> None:
     response = site.get(path, headers=headers, follow_redirects=False)
 
     assert response.status_code == 307
-    assert response.headers["location"] == "/api/status"
+    assert response.headers["location"] == "/api/health"
     _assert_security_headers(response)
 
 
@@ -451,6 +451,15 @@ def test_an_unknown_api_path_answers_with_the_api_envelope(real_site: TestClient
     assert response.status_code == 404
     error = response.json()["error"]
     assert (error["code"], error["message"]) == ("not-found", "Not Found")
+
+
+def test_the_removed_status_route_answers_with_the_api_envelope(real_site: TestClient) -> None:
+    # `GET /status` was never released; `GET /health` replaces it.
+    response = real_site.get("/api/status")
+
+    assert response.status_code == 404
+    error = response.json()["error"]
+    assert (error["code"], error["message"], error["status"]) == ("not-found", "Not Found", 404)
 
 
 def test_the_real_api_answers_only_under_api(real_site: TestClient) -> None:

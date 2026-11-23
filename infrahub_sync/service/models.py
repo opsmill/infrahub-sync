@@ -58,12 +58,10 @@ from infrahub_sync.client.models import (
     ScheduleOpenBranchResource,
     SchedulePage,
     ScheduleResource,
-    ServiceStatusResource,
     VerifyRunRequest,
     VersionResource,
     WorkerHealthResource,
     WorkersHealthResource,
-    WorkerStatusResource,
 )
 
 if TYPE_CHECKING:
@@ -113,11 +111,9 @@ __all__ = [
     "ScheduleOpenBranchResource",
     "SchedulePage",
     "ScheduleResource",
-    "ServiceStatusResource",
     "VerifyRunRequest",
     "VersionResource",
     "WorkerHealthResource",
-    "WorkerStatusResource",
     "WorkersHealthResource",
     "bounded_emitted_model",
     "public_event_page",
