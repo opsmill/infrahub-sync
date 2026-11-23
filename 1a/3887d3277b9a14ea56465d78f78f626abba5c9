@@ -1,0 +1,44 @@
+tests/service/test_apply_guard.py
+  s_30954faa6b52fd::t_6612bf7050c425 414-472
+tests/service/test_managed_write_guard.py
+  s_30954faa6b52fd::t_d6f432af4a8316 356-359,361,366-369
+  s_30954faa6b52fd::t_e8d48732b31bc0 506-552
+tests/service/test_failure_cause_credentials.py
+  s_30954faa6b52fd::t_0d467314cda8a9 205-207
+  s_30954faa6b52fd::t_a112588cae651a 54
+  s_30954faa6b52fd::t_79485f46d5b78f 187-188,191-194
+  s_30954faa6b52fd::t_c6bca35fc8ed0e 142-152
+  s_30954faa6b52fd::t_aa50389f06b257 131-141,153-163
+tests/integration/test_apply_guard_integration.py
+  s_30954faa6b52fd::t_1372017a0d8d61 378-554,557-559
+  s_30954faa6b52fd::t_2fede19b64009b 23
+  s_30954faa6b52fd::t_52957502e530db 34-35
+  s_30954faa6b52fd::t_776f34ee7c3eaf 555-556
+tests/service/failure_cases.py
+  s_30954faa6b52fd::t_01a219cd352a97 447
+  s_30954faa6b52fd::t_7d48a6f8f6568d 136-138
+  s_30954faa6b52fd::t_2280d8cc57025c 439
+  s_30954faa6b52fd::t_5d2619de7f286e 50-52
+  s_30954faa6b52fd::t_caa8ee9c2d75b9 228-234
+  s_30954faa6b52fd::t_a85fc9ba53430e 78-80
+  s_30954faa6b52fd::t_2830cdaa07dace 394-397,399-418,421
+  s_30954faa6b52fd::t_1056a411c17ba5 392-393
+dev/specs/028-write-lock-holder/tasks.md
+  s_30954faa6b52fd::t_b7efae19009362 149,152,155,157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a3887d3277b9a14ea56465d78f78f626abba5c9",
+  "prompts": {},
+  "sessions": {
+    "s_30954faa6b52fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68b2c141-8dbb-4265-a817-fa76f097f99c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
