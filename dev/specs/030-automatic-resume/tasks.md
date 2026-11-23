@@ -38,7 +38,7 @@ behind `ProductProjection`.
 
 ### The stored decision
 
-- [ ] T003 Add the record `AutomaticResume` to `infrahub_sync/product_store/models.py` with the fields of
+- [X] T003 Add the record `AutomaticResume` to `infrahub_sync/product_store/models.py` with the fields of
       [data-model.md](./data-model.md): `run_id`, `interrupted_flow_run_id`, `cause` (`Literal["rule-6",
       "rule-8"]`), `worker_name` (nullable), `state` (`Literal["waiting-check", "checking", "waiting-resume",
       "resuming", "ended"]`), `decision` (`Literal["resume", "no-resume"] | None`), `reason` (nullable, one of the
@@ -47,19 +47,19 @@ behind `ProductProjection`.
       and counts only), `operations_not_checked`, `start_after`, `check_flow_run_id`, `resume_flow_run_id`,
       `decided_at`, `updated_at`. Validate that `decision` is `None` unless `state` is `resuming` or `ended`, and that
       `reason` is set exactly when `decision` is `no-resume`.
-- [ ] T004 Add the table `automatic_resumes` to `_SCHEMA` in `infrahub_sync/product_store/store.py`, primary key
+- [X] T004 Add the table `automatic_resumes` to `_SCHEMA` in `infrahub_sync/product_store/store.py`, primary key
       `(run_id, interrupted_flow_run_id)`, with an index on `state` for the rows that are not `ended` (research R14).
       No change to existing tables.
-- [ ] T005 Add to `_RunStore`, `_RelationalRunStore` and `ProductProjection` in
+- [X] T005 Add to `_RunStore`, `_RelationalRunStore` and `ProductProjection` in
       `infrahub_sync/product_store/store.py`: `automatic_resumes_of(run_id)`, `open_automatic_resumes()` (rows not
       `ended`, oldest first), and `move_automatic_resume(run_id, interrupted_flow_run_id, *, from_state, to_state,
       **fields) -> bool`, a compare-and-set on `(run_id, interrupted_flow_run_id, state)` that returns `False` when
       another process moved the row first (data-model.md, "State transitions").
-- [ ] T006 Change `interrupt_execution` in `infrahub_sync/product_store/store.py` to take an optional
+- [X] T006 Change `interrupt_execution` in `infrahub_sync/product_store/store.py` to take an optional
       `automatic_resume: AutomaticResume | None` and insert it in the same transaction as the interruption, only when
       the transition commits (FR-013). When the inserted row is not `ended`, call `_settle_scheduled_run_end` with
       `unchanged` instead of `failed` (research R11).
-- [ ] T007 [P] Tests for T003 to T006 in `tests/product_store/test_automatic_resumes.py`: the record's validation; the
+- [X] T007 [P] Tests for T003 to T006 in `tests/product_store/test_automatic_resumes.py`: the record's validation; the
       insert happens only with a committed interruption; a second interruption of the same execution inserts nothing;
       a compare-and-set from a stale state returns `False`; SQLite and, with `PRODUCT_STORE_TEST_POSTGRESQL_DSN`,
       PostgreSQL.

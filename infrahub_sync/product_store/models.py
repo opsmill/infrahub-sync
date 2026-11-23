@@ -1358,6 +1358,77 @@ class ScheduledStartResult(BaseModel):
         return self
 
 
+# Why the liveness reconciler ended the interrupted write execution: rule 6 (its flow run
+# crashed) or rule 8 (its claiming worker is gone).
+AutomaticResumeCause: TypeAlias = Literal["rule-6", "rule-8"]
+AutomaticResumeState: TypeAlias = Literal["waiting-check", "checking", "waiting-resume", "resuming", "ended"]
+AutomaticResumeDecision: TypeAlias = Literal["resume", "no-resume"]
+# Why an interrupted run was not resumed automatically (spec 030, FR-016).
+AutomaticResumeReason: TypeAlias = Literal[
+    "not-resumable",
+    "approval-missing",
+    "no-progress",
+    "limit-reached",
+    "check-failed",
+    "check-found-differs",
+    "not-picked-up",
+    "refused",
+    "person-took-over",
+]
+# The states in which a decision row holds a decision.
+_DECIDED_AUTOMATIC_RESUME_STATES = frozenset({"resuming", "ended"})
+_AUTOMATIC_RESUME_TIME_MESSAGE = "automatic resume timestamps must include a timezone"
+
+
+class AutomaticResume(BaseModel):
+    """The stored decision on resuming one interrupted write execution without a person (spec 030).
+
+    One record exists for each write execution that the liveness reconciler ended under rule 6
+    or rule 8 while automatic resume was on. ``state`` is where the record is in the sequence
+    check, then resume. ``decision`` is ``resume`` once the automatic resume was submitted, and
+    ``no-resume`` with a ``reason`` when the run was not resumed. ``reason_detail`` holds codes
+    and counts only, never a value read from the source or the destination.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    interrupted_flow_run_id: str = Field(min_length=1)
+    cause: AutomaticResumeCause
+    # The claiming worker's name, when the work pool snapshot had it (rule 8).
+    worker_name: str | None = Field(default=None, min_length=1)
+    state: AutomaticResumeState
+    decision: AutomaticResumeDecision | None = None
+    reason: AutomaticResumeReason | None = None
+    reason_detail: dict[str, StrictStr | StrictInt] | None = None
+    # Operations the check left out because of the limit on checked operations (FR-007).
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    # The progress marker the automatic resume starts after.
+    start_after: int | None = Field(default=None, ge=0)
+    check_flow_run_id: str | None = Field(default=None, min_length=1)
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
+    # When the record was inserted, and when it last moved.
+    decided_at: datetime
+    updated_at: datetime
+
+    @field_validator("decided_at", "updated_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError(_AUTOMATIC_RESUME_TIME_MESSAGE)
+        return value
+
+    @model_validator(mode="after")
+    def _require_consistent_decision(self) -> AutomaticResume:
+        if self.decision is not None and self.state not in _DECIDED_AUTOMATIC_RESUME_STATES:
+            msg = "an automatic resume record holds a decision only in the states resuming and ended"
+            raise ValueError(msg)
+        if (self.decision == "no-resume") is (self.reason is None):
+            msg = "an automatic resume record holds a reason when its decision is no-resume, and only then"
+            raise ValueError(msg)
+        return self
+
+
 T = TypeVar("T")
 
 

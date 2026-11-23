@@ -51,6 +51,8 @@ from infrahub_sync.product_store.models import (
     ApplyProgressSave,
     ArtifactReference,
     AuditEvent,
+    AutomaticResume,
+    AutomaticResumeState,
     BaselineWriteback,
     BootstrapRecord,
     BranchReviewOutcome,
@@ -237,6 +239,14 @@ CREATE TABLE IF NOT EXISTS schedule_branches (
     FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (schedule_id) REFERENCES schedules(schedule_id)
 );
+CREATE TABLE IF NOT EXISTS automatic_resumes (
+    run_id TEXT NOT NULL, interrupted_flow_run_id TEXT NOT NULL, cause TEXT NOT NULL, worker_name TEXT,
+    state TEXT NOT NULL, decision TEXT, reason TEXT, reason_detail TEXT, operations_not_checked INTEGER,
+    start_after INTEGER, check_flow_run_id TEXT, resume_flow_run_id TEXT, decided_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, interrupted_flow_run_id),
+    FOREIGN KEY (run_id, interrupted_flow_run_id) REFERENCES prefect_executions(run_id, flow_run_id)
+);
 """
 # The columns that a build with schedules added to tables that already existed. The store
 # has no migration: a new column is part of its ``CREATE TABLE`` statement and reaches only a
@@ -304,6 +314,8 @@ _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at, config_id)",
     # The runs of one schedule, newest first (the ``schedule_id`` filter of the run list).
     "CREATE INDEX IF NOT EXISTS product_runs_schedule_started ON product_runs (schedule_id, started_at, run_id)",
+    # The automatic resume rows that the liveness reconciler still moves (spec 030, research R14).
+    "CREATE INDEX IF NOT EXISTS automatic_resumes_open ON automatic_resumes (state) WHERE state <> 'ended'",
 )
 # One run for each start of a schedule: two flow runs of the same start cannot both create a
 # run (spec 021, research R2). A manual run holds NULL in both columns, and SQLite and
@@ -754,6 +766,40 @@ _SCHEDULE_BRANCH_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 _SCHEDULE_BRANCH_FIXED_FIELDS = ("schedule_id", "branch", "created_at")
 _EARLIER_BRANCH_STATES: tuple[ScheduleBranchState, ...] = ("pending", "open")
+# The decision rows of automatic resume (spec 030, data-model.md).
+_AUTOMATIC_RESUME_COLUMNS = (
+    "run_id, interrupted_flow_run_id, cause, worker_name, state, decision, reason, reason_detail, "
+    "operations_not_checked, start_after, check_flow_run_id, resume_flow_run_id, decided_at, updated_at"
+)
+_AUTOMATIC_RESUME_FIELDS = tuple(column.strip() for column in _AUTOMATIC_RESUME_COLUMNS.split(","))
+_INSERT_AUTOMATIC_RESUME = (
+    "INSERT INTO automatic_resumes (" + _AUTOMATIC_RESUME_COLUMNS + ") "
+    "VALUES (" + ", ".join("?" for _ in _AUTOMATIC_RESUME_FIELDS) + ")"
+)
+_SELECT_AUTOMATIC_RESUMES = "SELECT " + _AUTOMATIC_RESUME_COLUMNS + " FROM automatic_resumes"  # noqa: S608 - module constants only.
+_AUTOMATIC_RESUME_ORDER = " ORDER BY decided_at, run_id, interrupted_flow_run_id"
+# The fields a move may change. The key, the cause, the worker and the insert time are fixed;
+# the state changes through the move's own arguments.
+_AUTOMATIC_RESUME_MOVABLE_FIELDS = frozenset(
+    {
+        "decision",
+        "reason",
+        "reason_detail",
+        "operations_not_checked",
+        "start_after",
+        "check_flow_run_id",
+        "resume_flow_run_id",
+        "updated_at",
+    }
+)
+# The states a row may move to, by its stored state (data-model.md, "State transitions").
+# ``ended`` is final.
+_AUTOMATIC_RESUME_TRANSITIONS: dict[AutomaticResumeState, frozenset[AutomaticResumeState]] = {
+    "waiting-check": frozenset({"checking", "ended"}),
+    "checking": frozenset({"waiting-resume", "ended"}),
+    "waiting-resume": frozenset({"resuming", "ended"}),
+    "resuming": frozenset({"ended"}),
+}
 # The run of one start of a schedule. Bound to the schedule ID and the start time in UTC.
 _SELECT_RUN_OF_START = "SELECT run_id FROM product_runs WHERE schedule_id = ? AND scheduled_start_at = ?"
 # The schedule of a scheduled run whose ``sync`` execution ended. A stage that a person
@@ -997,7 +1043,27 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
 
     def interrupt_execution(
-        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime,
+        event: AuditEvent | None = None,
+        automatic_resume: AutomaticResume | None = None,
+    ) -> bool: ...
+
+    def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]: ...
+
+    def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]: ...
+
+    def move_automatic_resume(
+        self,
+        run_id: str,
+        interrupted_flow_run_id: str,
+        *,
+        from_state: AutomaticResumeState,
+        to_state: AutomaticResumeState,
+        **fields: object,
     ) -> bool: ...
 
     def commit_claimed_execution(
@@ -2004,10 +2070,31 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             outcome="abandoned",
         )
 
-    def interrupt_execution(
-        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    def interrupt_execution(  # pylint: disable=too-many-arguments
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime,
+        event: AuditEvent | None = None,
+        automatic_resume: AutomaticResume | None = None,
     ) -> bool:
-        """Atomically terminalize an orphaned claimed execution and its product run, with its event."""
+        """Atomically terminalize an orphaned claimed execution and its product run, with its event.
+
+        ``automatic_resume``, when given, is inserted in the same transaction, and only when the
+        execution moves to its interrupted verdict (spec 030, FR-013): a second interruption of
+        the same execution changes nothing and inserts nothing. While the inserted row is not
+        ``ended``, the end of a scheduled run is not counted yet (research R11).
+
+        Raises:
+            ValueError: ``automatic_resume`` names another run or another execution.
+        """
+        if automatic_resume is not None and (automatic_resume.run_id, automatic_resume.interrupted_flow_run_id) != (
+            run_id,
+            flow_run_id,
+        ):
+            msg = "an automatic resume record must name the run and the execution that are interrupted"
+            raise ValueError(msg)
         return self._terminalize_execution(
             run_id,
             flow_run_id,
@@ -2018,7 +2105,82 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             phase="interrupted",
             outcome="ambiguous",
             event=event,
+            automatic_resume=automatic_resume,
         )
+
+    def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows of one run, oldest first."""
+        with self._reading() as cursor:
+            cursor.execute(
+                self._sql(_SELECT_AUTOMATIC_RESUMES + " WHERE run_id = ?" + _AUTOMATIC_RESUME_ORDER), (run_id,)
+            )
+            return tuple(_automatic_resume_from_row(row) for row in cursor.fetchall())
+
+    def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows that are not ``ended``, oldest first."""
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_AUTOMATIC_RESUMES + " WHERE state <> 'ended'" + _AUTOMATIC_RESUME_ORDER))
+            return tuple(_automatic_resume_from_row(row) for row in cursor.fetchall())
+
+    def move_automatic_resume(
+        self,
+        run_id: str,
+        interrupted_flow_run_id: str,
+        *,
+        from_state: AutomaticResumeState,
+        to_state: AutomaticResumeState,
+        **fields: object,
+    ) -> bool:
+        """Move one automatic resume row from ``from_state`` to ``to_state`` and set ``fields``.
+
+        The move is a compare-and-set on the row's key and its state, so when two Sync API
+        processes move the same row, one of them moves it and the other gets ``False``
+        (data-model.md, "State transitions"). ``fields`` must include ``updated_at``. The moved
+        row is checked as an `AutomaticResume` before the transaction commits.
+
+        Raises:
+            ValueError: ``fields`` names a field that a move cannot set or lacks ``updated_at``,
+                the move is not one of the state transitions, or the moved row is not valid.
+        """
+        unknown = set(fields) - _AUTOMATIC_RESUME_MOVABLE_FIELDS
+        if unknown:
+            msg = f"a move of an automatic resume row cannot set {', '.join(sorted(unknown))}"
+            raise ValueError(msg)
+        if "updated_at" not in fields:
+            msg = "a move of an automatic resume row must set updated_at"
+            raise ValueError(msg)
+        if to_state not in _AUTOMATIC_RESUME_TRANSITIONS.get(from_state, frozenset()):
+            msg = f"an automatic resume row in the state {from_state!r} cannot move to the state {to_state!r}"
+            raise ValueError(msg)
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    _SELECT_AUTOMATIC_RESUMES + " WHERE run_id = ? AND interrupted_flow_run_id = ? AND state = ?"
+                ),
+                (run_id, interrupted_flow_run_id, from_state),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return False
+            stored = _automatic_resume_from_row(row)
+            moved = AutomaticResume.model_validate({**stored.model_dump(), **fields, "state": to_state})
+            names = sorted(fields)
+            cursor.execute(
+                self._sql(
+                    "UPDATE automatic_resumes SET state = ?, "  # noqa: S608 - column names from a fixed set.
+                    + ", ".join(f"{name} = ?" for name in names)
+                    + " WHERE run_id = ? AND interrupted_flow_run_id = ? AND state = ?"
+                ),
+                (
+                    to_state,
+                    *(_automatic_resume_column_value(moved, name) for name in names),
+                    run_id,
+                    interrupted_flow_run_id,
+                    from_state,
+                ),
+            )
+            moved_row = cursor.rowcount == 1
+        return moved_row
 
     def commit_claimed_execution(
         self,
@@ -2661,6 +2823,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         phase: str,
         outcome: str,
         event: AuditEvent | None = None,
+        automatic_resume: AutomaticResume | None = None,
     ) -> bool:
         connection = self._connect()
         try:
@@ -2694,13 +2857,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     terminal_outcome=terminal_outcome,
                 )
                 self._keep_interrupted_run_resumable(cursor, run_id)
-                self._settle_scheduled_run_end(
-                    cursor,
-                    run_id,
-                    flow_run_id,
-                    verdict=_scheduled_run_verdict(terminal_state, terminal_outcome),
-                    ended_at=terminal_at,
-                )
+                verdict = _scheduled_run_verdict(terminal_state, terminal_outcome)
+                if automatic_resume is not None:
+                    cursor.execute(self._sql(_INSERT_AUTOMATIC_RESUME), _automatic_resume_values(automatic_resume))
+                    # The schedule counts the run once the automatic resume ends (research R11).
+                    if automatic_resume.state != "ended":
+                        verdict = "unchanged"
+                self._settle_scheduled_run_end(cursor, run_id, flow_run_id, verdict=verdict, ended_at=terminal_at)
                 if event is not None:
                     self._insert_event(cursor, event)
                 connection.commit()
@@ -5186,7 +5349,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         _require_execution_timestamp(effective_terminal_at)
         return self._records.abandon_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
 
-    def interrupt_execution(
+    def interrupt_execution(  # pylint: disable=too-many-arguments
         self,
         run_id: str,
         flow_run_id: str,
@@ -5194,12 +5357,48 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         terminal_at: datetime | None = None,
         event: AuditEvent | None = None,
         secrets: Sequence[str] = (),
+        automatic_resume: AutomaticResume | None = None,
     ) -> bool:
-        """CAS a claimed execution into the terminal interrupted/ambiguous verdict, with its event."""
+        """CAS a claimed execution into the terminal interrupted/ambiguous verdict, with its event.
+
+        ``automatic_resume`` is inserted in the same transaction, only when the verdict is saved
+        (spec 030, FR-013).
+        """
         effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_terminal_at)
         return self._records.interrupt_execution(
-            run_id, flow_run_id, terminal_at=effective_terminal_at, event=_redacted_event(event, secrets)
+            run_id,
+            flow_run_id,
+            terminal_at=effective_terminal_at,
+            event=_redacted_event(event, secrets),
+            automatic_resume=automatic_resume,
+        )
+
+    def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows of one run, oldest first."""
+        return self._records.automatic_resumes_of(run_id)
+
+    def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows that are not ``ended``, oldest first."""
+        return self._records.open_automatic_resumes()
+
+    def move_automatic_resume(
+        self,
+        run_id: str,
+        interrupted_flow_run_id: str,
+        *,
+        from_state: AutomaticResumeState,
+        to_state: AutomaticResumeState,
+        **fields: object,
+    ) -> bool:
+        """Compare-and-set one automatic resume row from ``from_state`` to ``to_state`` with ``fields``.
+
+        ``updated_at`` defaults to the current time. Returns ``False`` when the row is not in
+        ``from_state``, because another process moved it first.
+        """
+        fields.setdefault("updated_at", datetime.now(timezone.utc))
+        return self._records.move_automatic_resume(
+            run_id, interrupted_flow_run_id, from_state=from_state, to_state=to_state, **fields
         )
 
     def commit_claimed_execution(
@@ -6720,6 +6919,37 @@ _SCHEDULE_FIELDS = tuple(name.strip() for name in _SCHEDULE_COLUMNS.split(","))
 
 def _schedule_from_row(row: Sequence[Any]) -> ScheduleRecord:
     return ScheduleRecord.model_validate(dict(zip(_SCHEDULE_FIELDS, row, strict=True)))
+
+
+def _automatic_resume_values(record: AutomaticResume) -> tuple[Any, ...]:
+    return (
+        record.run_id,
+        record.interrupted_flow_run_id,
+        record.cause,
+        record.worker_name,
+        record.state,
+        record.decision,
+        record.reason,
+        None if record.reason_detail is None else _json(record.reason_detail),
+        record.operations_not_checked,
+        record.start_after,
+        record.check_flow_run_id,
+        record.resume_flow_run_id,
+        _utc_iso(record.decided_at),
+        _utc_iso(record.updated_at),
+    )
+
+
+def _automatic_resume_column_value(record: AutomaticResume, name: str) -> Any:
+    """Return the stored form of one field of ``record``, as ``_automatic_resume_values`` writes it."""
+    return _automatic_resume_values(record)[_AUTOMATIC_RESUME_FIELDS.index(name)]
+
+
+def _automatic_resume_from_row(row: Sequence[Any]) -> AutomaticResume:
+    values = dict(zip(_AUTOMATIC_RESUME_FIELDS, row, strict=True))
+    if values["reason_detail"] is not None:
+        values["reason_detail"] = _JSON_MAPPING_ADAPTER.validate_json(str(values["reason_detail"]))
+    return AutomaticResume.model_validate(values)
 
 
 def _schedule_branch_from_row(row: Sequence[Any]) -> ScheduleBranch:

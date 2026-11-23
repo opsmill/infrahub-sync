@@ -28,6 +28,7 @@ from infrahub_sync.product_store import (
     SCHEDULE_START_OPERATION,
     SCHEDULE_STOPPED_EVENT_TYPE,
     AuditEvent,
+    AutomaticResume,
     BranchReviewKept,
     BranchReviewOutcome,
     ConfigurationNotFoundError,
@@ -1328,6 +1329,40 @@ def test_an_interrupted_scheduled_run_counts_as_failed(projection: ProductProjec
     (event,) = _schedule_events(projection, schedule)
     assert (event.run_id, event.created_at) == (run_id, _FIRST_START + 6 * _DAY)
     assert run_id not in run_ids
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected"),
+    [
+        pytest.param({"state": "waiting-check"}, 2, id="automatic-resume-waits"),
+        pytest.param({"state": "ended", "decision": "no-resume", "reason": "not-resumable"}, 3, id="no-resume"),
+    ],
+)
+def test_an_interrupted_scheduled_run_with_an_automatic_resume_counts_later(
+    projection: ProductProjection, decision: dict[str, object], expected: int
+) -> None:
+    """While its automatic resume row is not ended, the interruption leaves the count as it is (spec 030, R11)."""
+    schedule = _created(projection)
+    _failed_runs(projection, schedule, 2)
+    result = _admit(projection, schedule, _FIRST_START + 2 * _DAY)
+    run_id = result.run_id or ""
+    flow_run_id = f"flow-{run_id}"
+    at = _FIRST_START + 3 * _DAY
+    record = AutomaticResume.model_validate(
+        {
+            "run_id": run_id,
+            "interrupted_flow_run_id": flow_run_id,
+            "cause": "rule-6",
+            "decided_at": at,
+            "updated_at": at,
+            **decision,
+        }
+    )
+
+    assert projection.interrupt_execution(run_id, flow_run_id, terminal_at=at, automatic_resume=record)
+
+    stored = _stored(projection, schedule.schedule_id)
+    assert (stored.consecutive_failures, stored.state) == (expected, "active")
 
 
 def test_a_scheduled_run_that_a_person_cancelled_does_not_change_the_count(projection: ProductProjection) -> None:
