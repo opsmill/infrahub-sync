@@ -64,7 +64,8 @@ class _FakeCursor:
         self._row = row
 
     def fetchone(self) -> tuple[Any, ...] | None:
-        return self._row
+        row, self._row = self._row, None
+        return row
 
 
 class _FakeGuardSession:
@@ -76,14 +77,18 @@ class _FakeGuardSession:
         *,
         acquire_failure: BaseException | None = None,
         release_failure: BaseException | None = None,
+        holder_label: str | None = None,
     ) -> None:
         self.events = events
         self.held = True
         self._acquire_failure = acquire_failure
         self._release_failure = release_failure
+        self._holder_label = holder_label
 
     def execute(self, query: str, params: Sequence[Any] | None = None) -> _FakeCursor:
         _ = params
+        if "pg_stat_activity" in query:
+            return _FakeCursor(None if self._holder_label is None else (self._holder_label,))
         if "pg_advisory_lock" in query:
             if self._acquire_failure is not None:
                 raise self._acquire_failure
@@ -147,6 +152,7 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
     release_failure: BaseException | None = None,
     commit_failure: BaseException | None = None,
     engine: Any = None,  # noqa: ANN401 - the double receives the engine's own keyword mapping.
+    holder_label: str | None = None,
 ) -> _ManagedStage:
     """Wire one bound managed run whose guard, schema read, and engine are observable."""
     monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "managed-netbox-canary")
@@ -204,7 +210,9 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
     prepared.projection = projection
 
     def guard_session() -> _FakeGuardSession:
-        session = _FakeGuardSession(events, acquire_failure=acquire_failure, release_failure=release_failure)
+        session = _FakeGuardSession(
+            events, acquire_failure=acquire_failure, release_failure=release_failure, holder_label=holder_label
+        )
         prepared.session = session
         return session
 
@@ -383,7 +391,13 @@ def test_guard_contention_names_the_run_that_was_writing_to_the_configuration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
     """INFP-647: a refused concurrent write identifies the active run, and only by its ID."""
-    prepared = _prepare(tmp_path, monkeypatch, stage=stage, acquire_failure=_lock_timeout())
+    prepared = _prepare(
+        tmp_path,
+        monkeypatch,
+        stage=stage,
+        acquire_failure=_lock_timeout(),
+        holder_label="infrahub-sync-guard:managed-holder",
+    )
     _open_write_of_another_run(prepared, "managed-holder")
 
     with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
@@ -419,13 +433,15 @@ def test_a_failed_lookup_of_the_active_run_still_records_the_contention(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The lookup is best effort: its failure must not cost the run its failure record."""
-    prepared = _prepare(tmp_path, monkeypatch, acquire_failure=_lock_timeout())
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label="infrahub-sync-guard:managed-holder"
+    )
 
-    def unavailable(*_args: object, **_kwargs: object) -> str | None:
+    def unavailable(*_args: object, **_kwargs: object) -> object:
         msg = "the product store did not answer"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(prepared.projection, "other_write_in_progress", unavailable)
+    monkeypatch.setattr(prepared.projection, "write_holder_state", unavailable)
 
     with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
         _apply(prepared)

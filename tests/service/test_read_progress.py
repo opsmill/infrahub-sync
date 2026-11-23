@@ -549,7 +549,7 @@ def test_a_sync_stage_records_waiting_before_it_waits_for_the_write_guard(
     _bind_stage_context(monkeypatch, projection)
     seen: dict[str, Any] = {}
 
-    def _guard(_configuration_id: str) -> None:
+    def _guard(_configuration_id: str, _run_id: str) -> None:
         link = _stored_link(projection)
         seen["reads"] = (link.source_read, link.destination_read)
         raise _StopStageError

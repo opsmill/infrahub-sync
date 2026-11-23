@@ -24,6 +24,7 @@ The guard is inert on its own: nothing in the supported write path calls it yet.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from contextlib import contextmanager, suppress
@@ -55,11 +56,14 @@ MAX_GUARD_LABEL_BYTES = 62
 # also matches before a trailing newline.
 _RUN_ID = re.compile(_IDENTIFIER_PATTERN)
 
+logger = logging.getLogger(__name__)
+
 _LOCK_NOT_AVAILABLE = "55P03"
 _OID_MASK = 0xFFFFFFFF
 
 # `set_config(..., false)` rather than `SET`, because `SET` takes no parameters and
 # the deadline must never be interpolated into the statement text.
+_SET_LABEL = "SELECT set_config('application_name', %s, false)"
 _SET_DEADLINE = "SELECT set_config('lock_timeout', %s, false)"
 _ACQUIRE = "SELECT pg_advisory_lock(%s)"
 # Reads the holder; it never reacquires. `pg_locks` records a single-`bigint`
@@ -73,6 +77,21 @@ SELECT pg_backend_pid(), EXISTS (
 )
 """
 _RELEASE = "SELECT pg_advisory_unlock(%s), pg_backend_pid()"
+# The holder lookup after a lock timeout. It is bounded by its own `statement_timeout`, so
+# a slow catalog read cannot extend a contended failure by more than two seconds.
+_HOLDER_TIMEOUT = "SELECT set_config('statement_timeout', %s, false)"
+_HOLDER_TIMEOUT_MILLISECONDS = "2000"
+# The label of the session that holds this exact key in this database. At most two rows are
+# read: a candidate is taken only when exactly one session holds the key.
+_HOLDER = """
+SELECT a.application_name
+FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.locktype = 'advisory' AND l.granted
+  AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+  AND l.classid::bigint = %s AND l.objid::bigint = %s AND l.objsubid = 1
+  AND l.pid <> pg_backend_pid()
+LIMIT 2
+"""
 
 _DEADLINE_REFUSED = (
     "the configuration write guard deadline must be a finite value from "
@@ -344,6 +363,7 @@ def hold_apply_guard(
     connect: Callable[[], GuardConnection],
     deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
     secrets: Sequence[str] = (),
+    run_id: str | None = None,
 ) -> Iterator[ApplyGuard]:
     """Hold one configuration's advisory write key for exactly the body's duration.
 
@@ -354,6 +374,9 @@ def hold_apply_guard(
     `secrets` adds values — a keyword DSN's password, via `dsn_secret_values` —
     that the environment collector cannot see, so no driver message can carry
     them out through a failure's cause chain.
+
+    `run_id`, when given and writable as a label (`guard_label`), labels the session
+    so that a writer refused by contention can name this run as the holder.
     """
     milliseconds = deadline_milliseconds(deadline_seconds)
     collected = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
@@ -362,6 +385,7 @@ def hold_apply_guard(
         connect=connect,
         milliseconds=milliseconds,
         secrets=collected,
+        run_id=run_id,
     )
     try:
         yield guard
@@ -377,12 +401,22 @@ def _acquire(
     connect: Callable[[], GuardConnection],
     milliseconds: int,
     secrets: tuple[str, ...],
+    run_id: str | None = None,
 ) -> ApplyGuard:
-    """Bound the deadline, take the key, and prove the hold before returning it."""
+    """Label the session, bound the deadline, take the key, and prove the hold before returning it.
+
+    The label is set before the lock request, so a failure to set it fails the acquisition
+    as unavailable and never leaves an unlabelled holder. After a lock timeout, the same
+    session reads the holder's label before it is closed; whatever that read returns, the
+    failure stays a contention failure.
+    """
     failure: ApplyGuardError
     connection: GuardConnection | None = None
+    label = None if run_id is None else guard_label(run_id)
     try:
         connection = connect()
+        if label is not None:
+            connection.execute(_SET_LABEL, (label,))
         connection.execute(_SET_DEADLINE, (str(milliseconds),))
         connection.execute(_ACQUIRE, (key,))
         row = connection.execute(_OWNERSHIP, _lock_columns(key)).fetchone()
@@ -398,7 +432,13 @@ def _acquire(
             return ApplyGuard(connection=connection, key=key, backend_pid=row[0], secrets=secrets)
         failure = _guard_failure(ApplyGuardUnavailableError, _UNPROVEN, None, secrets)
     if connection is not None:
-        _discard(connection)
+        # Outside the handler, so an interrupt during the holder read still discards the
+        # session and is re-raised unchanged.
+        try:
+            if isinstance(failure, ApplyGuardContentionError):
+                failure.holder_run_id = _read_holder(connection, key)
+        finally:
+            _discard(connection)
     _fail(failure)
 
 
@@ -407,6 +447,32 @@ def _acquisition_failure(exc: Exception, secrets: Sequence[str]) -> ApplyGuardEr
     if isinstance(exc, psycopg.Error) and exc.sqlstate == _LOCK_NOT_AVAILABLE:
         return _guard_failure(ApplyGuardContentionError, _CONTENDED, exc, secrets)
     return _guard_failure(ApplyGuardUnavailableError, _UNAVAILABLE.format(type(exc).__name__), exc, secrets)
+
+
+def _read_holder(connection: GuardConnection, key: int) -> str | None:
+    """Return the run ID the session holding `key` is labelled with, or `None`.
+
+    Best effort: every `Exception` from the lookup gives `None`. A candidate is returned
+    only when exactly one other session holds the key and its label parses
+    (`_holder_run_id`). The debug line records only the outcome class, never the label,
+    because any session of the same database account can set its own label.
+    """
+    try:
+        connection.execute(_HOLDER_TIMEOUT, (_HOLDER_TIMEOUT_MILLISECONDS,))
+        cursor = connection.execute(_HOLDER, _lock_columns(key))
+        first = cursor.fetchone()
+        if first is None:
+            outcome, candidate = "no-row", None
+        elif cursor.fetchone() is not None:
+            outcome, candidate = "several-rows", None
+        else:
+            candidate = _holder_run_id(first[0])
+            outcome = "label-rejected" if candidate is None else "named"
+    # One provider boundary: a failed lookup only costs the candidate.
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        outcome, candidate = "lookup-failed", None
+    logger.debug("write guard holder lookup: %s", outcome)
+    return candidate
 
 
 def _discard(connection: GuardConnection) -> None:

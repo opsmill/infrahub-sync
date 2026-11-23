@@ -51,26 +51,26 @@ in the web interface, and the real PostgreSQL test runs on every pull request.
 
 ### Service
 
-- [ ] T005 [US1] In `infrahub_sync/service/apply_guard.py`, add the keyword `run_id: str | None = None` to
+- [X] T005 [US1] In `infrahub_sync/service/apply_guard.py`, add the keyword `run_id: str | None = None` to
   `hold_apply_guard` and `_acquire`. In `_acquire`, right after `connect()` and before `_SET_DEADLINE`, when
   `guard_label(run_id)` is not `None`, run `SELECT set_config('application_name', %s, false)` with the label. A
   failure here is classified by the existing `except Exception` branch as `ApplyGuardUnavailableError` and happens
   before the lock request (critique E4).
-- [ ] T006 [US1] In `infrahub_sync/service/apply_guard.py`, add `_HOLDER_TIMEOUT = "SELECT
+- [X] T006 [US1] In `infrahub_sync/service/apply_guard.py`, add `_HOLDER_TIMEOUT = "SELECT
   set_config('statement_timeout', %s, false)"` with value `"2000"` and the `_HOLDER` query from plan.md Design
   step 2 with `LIMIT 2`, filtered on `locktype = 'advisory'`, `granted`, the current database's OID, the
   `_lock_columns(key)` halves, `objsubid = 1` and `pid <> pg_backend_pid()`. Add `_read_holder(connection, key) ->
   str | None`: set the timeout, run the query, return `_holder_run_id(row[0])` only when exactly one row is
   returned; catch every `Exception`, log at debug level only the outcome class (`named`, `no-row`,
   `several-rows`, `label-rejected`, `lookup-failed`), never the label, and return `None`.
-- [ ] T007 [US1] In `_acquire` / `_acquisition_failure` in `infrahub_sync/service/apply_guard.py`, when the
+- [X] T007 [US1] In `_acquire` / `_acquisition_failure` in `infrahub_sync/service/apply_guard.py`, when the
   failure is a lock timeout (`55P03`), call `_read_holder` on the same connection before `_discard` and set
   `holder_run_id` on the `ApplyGuardContentionError`. The contention error is raised whatever `_read_holder`
   returns.
-- [ ] T008 [US1] In `infrahub_sync/service/flow.py`, change `_configuration_write_guard(configuration_id)` to
+- [X] T008 [US1] In `infrahub_sync/service/flow.py`, change `_configuration_write_guard(configuration_id)` to
   `_configuration_write_guard(configuration_id, run_id)` and pass `run_id` at both call sites in `_execute_stage`
   (`flow.py:1254` apply, `flow.py:1311` sync) and on to `hold_apply_guard(..., run_id=run_id)`.
-- [ ] T009 [US1] In `infrahub_sync/product_store/store.py`, replace `other_write_in_progress(config_id, *,
+- [X] T009 [US1] In `infrahub_sync/product_store/store.py`, replace `other_write_in_progress(config_id, *,
   run_id) -> str | None` with `write_holder_state(run_id: str, config_id: str) -> HolderState | None` on the store
   protocol (~line 1221), the relational store (~line 4432) and `ProductProjection` (~line 5817). One query: it
   returns `None` when the run does not exist or its `config_id` differs; otherwise a `HolderState` (a frozen
@@ -78,7 +78,7 @@ in the web interface, and the real PostgreSQL test runs on every pull request.
   `_SELECT_OTHER_RUN_WITH_OPEN_WRITE` ("an execution whose purpose is in `WRITE_PURPOSES`, that a worker claimed
   and that has no terminal verdict") to that one run. Rename the SQL constant accordingly (SC-004: one read of the
   run records).
-- [ ] T010 [US1] In `infrahub_sync/service/flow.py`, rewrite `_active_write_run(projection, stored, exc)` to
+- [X] T010 [US1] In `infrahub_sync/service/flow.py`, rewrite `_active_write_run(projection, stored, exc)` to
   return `tuple[str | None, bool]` (run ID, ended): read `exc.holder_run_id` only for `ApplyGuardContentionError`;
   reject it when it equals `stored.run_id`; call `projection.write_holder_state(candidate, stored.config_id)` once;
   accept the candidate only when it returns a state; `ended = not state.writing`. Any exception gives

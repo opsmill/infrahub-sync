@@ -10,6 +10,7 @@ import os
 import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from math import isfinite
@@ -770,17 +771,17 @@ _SELECT_RUN_WITH_OPEN_EXECUTION = (
     "WHERE prefect_executions.run_id = product_runs.run_id AND prefect_executions.terminal_at IS NULL) "
     "ORDER BY started_at DESC, run_id DESC LIMIT 1"
 )
-# Another run of a configuration with a write execution that a worker claimed and that has no
-# terminal verdict, the one claimed first. Bound with the configuration ID, the run to leave
-# out, then ``WRITE_PURPOSES``. A worker claims its execution before any other work, so an
-# execution that no worker claimed cannot hold the configuration's write guard.
-_SELECT_OTHER_RUN_WITH_OPEN_WRITE = (
-    "SELECT product_runs.run_id FROM product_runs JOIN prefect_executions "  # noqa: S608 - placeholders only.
-    "ON prefect_executions.run_id = product_runs.run_id "
-    "WHERE product_runs.config_id = ? AND product_runs.run_id <> ? "
+# One run of a configuration, and whether it has a write execution that a worker claimed and
+# that has no terminal verdict. No row when the run does not exist or belongs to another
+# configuration. Bound with ``WRITE_PURPOSES``, then the run ID, then the configuration ID.
+# A worker claims its execution before any other work, so an execution that no worker
+# claimed cannot hold the configuration's write guard.
+_SELECT_RUN_WRITE_STATE = (
+    "SELECT EXISTS (SELECT 1 FROM prefect_executions "  # noqa: S608 - placeholders only.
+    "WHERE prefect_executions.run_id = product_runs.run_id "
     "AND prefect_executions.terminal_at IS NULL AND prefect_executions.claimed_at IS NOT NULL "
-    f"AND prefect_executions.purpose IN ({', '.join('?' for _ in WRITE_PURPOSES)}) "
-    "ORDER BY prefect_executions.claimed_at, product_runs.run_id LIMIT 1"
+    f"AND prefect_executions.purpose IN ({', '.join('?' for _ in WRITE_PURPOSES)})) "
+    "FROM product_runs WHERE product_runs.run_id = ? AND product_runs.config_id = ?"
 )
 # The unresolved receipts of a stage operation on the runs of a configuration, newest run
 # first. Built from ``_ARBITRATED_OPERATIONS``, bound after the configuration ID.
@@ -793,6 +794,17 @@ _SELECT_UNRESOLVED_STAGE_RECEIPTS = (
 )
 # The status of the receipt that the admission of a scheduled start writes already accepted.
 _SCHEDULED_START_STATUS = 202
+
+
+@dataclass(frozen=True)
+class HolderState:
+    """What the run records say about the run named as a write guard's holder.
+
+    ``writing`` is true while that run has a write execution that a worker claimed and that
+    has no terminal verdict.
+    """
+
+    writing: bool
 
 
 class DuplicateRunError(ValueError):
@@ -1218,7 +1230,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None: ...
 
-    def other_write_in_progress(self, config_id: str, *, run_id: str) -> str | None: ...
+    def write_holder_state(self, run_id: str, config_id: str) -> HolderState | None: ...
 
     def create_account(
         self,
@@ -4429,18 +4441,18 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 return str(run_id)
         return None
 
-    def other_write_in_progress(self, config_id: str, *, run_id: str) -> str | None:
-        """Return another run of a configuration whose write has not ended, or ``None``.
+    def write_holder_state(self, run_id: str, config_id: str) -> HolderState | None:
+        """Return whether one run of a configuration still has an open write, in one read.
 
-        A write is an execution whose purpose is in ``WRITE_PURPOSES``, that a worker claimed and
-        that has no terminal verdict. ``run_id`` is left out. When several runs match, the one
-        whose execution was claimed first is returned. The store does not know which session holds the
-        configuration's write guard, so the result is the likeliest holder, not a proof.
+        ``None`` when the run does not exist or belongs to another configuration. Otherwise
+        ``HolderState.writing`` is true when the run has an execution whose purpose is in
+        ``WRITE_PURPOSES``, that a worker claimed and that has no terminal verdict.
         """
         with self._reading() as cursor:
-            cursor.execute(self._sql(_SELECT_OTHER_RUN_WITH_OPEN_WRITE), (config_id, run_id, *WRITE_PURPOSES))
+            cursor.execute(self._sql(_SELECT_RUN_WRITE_STATE), (*WRITE_PURPOSES, run_id, config_id))
             row = cursor.fetchone()
-        return None if row is None else str(row[0])
+        # PostgreSQL returns a boolean and SQLite an integer.
+        return None if row is None else HolderState(writing=bool(row[0]))
 
     def create_account(
         self,
@@ -5814,13 +5826,13 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """
         return self._records.run_in_progress(config_id, now, receipt_age_limit)
 
-    def other_write_in_progress(self, config_id: str, *, run_id: str) -> str | None:
-        """Return another run of a configuration whose write has not ended, or ``None``.
+    def write_holder_state(self, run_id: str, config_id: str) -> HolderState | None:
+        """Return whether one run of a configuration still has an open write.
 
-        ``run_id`` is left out. The result is the likeliest holder of the configuration's
-        write guard, not a proof: see `_RelationalRunStore.other_write_in_progress`.
+        ``None`` when the run does not exist or belongs to another configuration: see
+        `_RelationalRunStore.write_holder_state`.
         """
-        return self._records.other_write_in_progress(config_id, run_id=run_id)
+        return self._records.write_holder_state(run_id, config_id)
 
     def create_account(
         self,

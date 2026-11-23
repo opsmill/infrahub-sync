@@ -1054,8 +1054,8 @@ def _destination_report(
     return result
 
 
-def _configuration_write_guard(configuration_id: str) -> AbstractContextManager[ApplyGuard]:
-    """Return the hold of one registered configuration's write guard.
+def _configuration_write_guard(configuration_id: str, run_id: str) -> AbstractContextManager[ApplyGuard]:
+    """Return the hold of one registered configuration's write guard, labelled with `run_id`.
 
     Everything destination-sensitive belongs inside that hold: the live schema read, the
     runtime models built from it, and every operation dispatched against them. A snapshot
@@ -1063,9 +1063,12 @@ def _configuration_write_guard(configuration_id: str) -> AbstractContextManager[
     been changing, so it cannot gate a write that happens after the wait.
 
     The dedicated session it opens is the guard's alone. It is never handed to an adapter
-    or to the product store.
+    or to the product store. Its label names `run_id`, so a write refused by contention can
+    name this run as the holder.
     """
-    return hold_apply_guard(configuration_id, connect=service_guard_session, secrets=service_guard_secrets())
+    return hold_apply_guard(
+        configuration_id, connect=service_guard_session, secrets=service_guard_secrets(), run_id=run_id
+    )
 
 
 def resume_start_after(projection: ProductProjection, run_id: str) -> int | None:
@@ -1251,7 +1254,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             expected_checksum=expected_checksum,
             base_directory=scratch.root,
         )
-        with _configuration_write_guard(parameter_binding[0]) as guard:
+        with _configuration_write_guard(parameter_binding[0], run_id) as guard:
             ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
             # The live schema read, and the comparison it exists for, both under the guard
             # and both before any adapter is constructed: the registered pre-write gate.
@@ -1308,7 +1311,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     else:
         # One guard across planning, verification, and the write it approves: a plan
         # generated outside it could go stale behind another writer before being applied.
-        with _configuration_write_guard(parameter_binding[0]) as guard:
+        with _configuration_write_guard(parameter_binding[0], run_id) as guard:
             ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
             if branch_review is not None:
                 _create_run_branch(branch_review, instance.destination.settings or {})
@@ -1646,21 +1649,30 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
     return carried if isinstance(carried, ApplyRecord) else record
 
 
-def _active_write_run(projection: ProductProjection, stored: ProductRun, exc: Exception) -> str | None:
-    """The run writing to the same configuration when this write could not take its guard.
+def _active_write_run(projection: ProductProjection, stored: ProductRun, exc: Exception) -> tuple[str | None, bool]:
+    """The run that held the configuration's write guard when this write could not take it.
 
-    Looked up only for `ApplyGuardContentionError`, and only in the product store: the guard's
-    own session and the error's text are never read. The value is a run ID or `None`. A lookup
-    that fails records `None`, so the failure record is still stored and says the run is not
+    Returns `(run_id, ended)`, or `(None, False)` when the run is not known. Only an
+    `ApplyGuardContentionError` carries a candidate: the run ID parsed from the holding
+    session's label. The candidate is accepted only when it is not the failing run and the
+    run records hold a run of the same configuration with that ID; `ended` says that run no
+    longer has a claimed, open write. The error's text is never read. A lookup that fails
+    gives `(None, False)`, so the failure record is still stored and says the run is not
     known.
     """
     if not isinstance(exc, ApplyGuardContentionError) or stored.config_id is None:
-        return None
+        return None, False
+    candidate = exc.holder_run_id
+    if candidate is None or candidate == stored.run_id:
+        return None, False
     try:
-        return projection.other_write_in_progress(stored.config_id, run_id=stored.run_id)
+        state = projection.write_holder_state(candidate, stored.config_id)
     except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.warning("the run that holds the write guard could not be looked up (%s)", type(unexpected).__name__)
-        return None
+        return None, False
+    if state is None:
+        return None, False
+    return candidate, not state.writing
 
 
 @dataclass(frozen=True)
@@ -1751,6 +1763,8 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         # already interrupted, as for a failed `verify` or a resume that failed before its first
         # write: the next step is `verify`, then `runs resume` (spec 016), not a new plan.
         resumable = stored.phase != "cancelled" and (ambiguous or stored.reconciliation_required)
+        # `active_run_ended` is not recorded yet: the template variant that uses it is T025.
+        active_run_id, _active_run_ended = _active_write_run(projection, stored, exc)
         evidence = _failure_evidence(
             stage,
             exc,
@@ -1758,7 +1772,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             record=record,
             secrets=secrets,
             resumable=resumable,
-            active_run_id=_active_write_run(projection, stored, exc),
+            active_run_id=active_run_id,
         )
         # The execution that wrote the record: results are merged, so a later execution of the
         # same purpose that never records a failure leaves this record in place (spec 016,

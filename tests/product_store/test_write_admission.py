@@ -843,20 +843,21 @@ def _open_write(
     return flow_run_id
 
 
-def test_other_write_in_progress_names_the_first_other_write_of_the_configuration(
+def test_write_holder_state_reports_a_claimed_open_write_of_the_configuration(
     projection: ProductProjection,
 ) -> None:
-    """A contended write names the run that was writing first, never itself (INFP-647)."""
+    """A run of the configuration with a claimed write that has not ended is writing."""
     config_id = _rid("guard-holder-config")
     _open_write(projection, _rid("guard-holder"), config_id=config_id, purpose="apply")
     _open_write(projection, _rid("guard-second-waiter"), config_id=config_id, purpose="sync")
-    _open_write(projection, _rid("guard-contended"), config_id=config_id, purpose="sync")
 
-    assert projection.other_write_in_progress(config_id, run_id=_rid("guard-contended")) == _rid("guard-holder")
-    assert projection.other_write_in_progress(config_id, run_id=_rid("guard-holder")) == _rid("guard-second-waiter")
+    for run_id in (_rid("guard-holder"), _rid("guard-second-waiter")):
+        state = projection.write_holder_state(run_id, config_id)
+        assert state is not None
+        assert state.writing is True
 
 
-def test_other_write_in_progress_ignores_reads_ended_writes_and_other_configurations(
+def test_write_holder_state_ignores_reads_ended_writes_and_other_configurations(
     projection: ProductProjection,
 ) -> None:
     """A verify takes no write guard, and neither an unclaimed nor an ended write holds one."""
@@ -886,4 +887,9 @@ def test_other_write_in_progress_ignores_reads_ended_writes_and_other_configurat
         writeback=ExecutionMergeWriteback(results={}),
     )
 
-    assert projection.other_write_in_progress(config_id, run_id=_rid("guard-alone")) is None
+    assert projection.write_holder_state(_rid("guard-elsewhere"), config_id) is None
+    assert projection.write_holder_state(_rid("guard-unknown"), config_id) is None
+    for run_id in (reading, _rid("guard-unclaimed"), ended_run):
+        state = projection.write_holder_state(run_id, config_id)
+        assert state is not None
+        assert state.writing is False
