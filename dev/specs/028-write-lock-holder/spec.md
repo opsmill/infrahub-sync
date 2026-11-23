@@ -95,8 +95,9 @@ time. The failure names that run and the next action does not say to wait for it
 **Acceptance Scenarios**:
 
 1. **Given** the session that holds the lock is labelled with run A, and A's record shows that A has ended,
-   **When** C's wait ends, **Then** C's failure names A, says that A has ended, and its next action tells the
-   operator to contact the administrator of the Sync service instead of waiting.
+   **When** C's wait ends, **Then** C's failure names A, says that A's write has ended, and its next action tells
+   the operator that the lock is released only when the worker of run A stops, so the administrator of the Sync
+   service must stop or restart that worker, then plan again.
 
 ---
 
@@ -129,7 +130,10 @@ time. The failure names that run and the next action does not say to wait for it
 - **FR-005**: The failure record MUST store only the run ID in `active_run_id`, never the raw label or any other
   value read from the database session.
 - **FR-006**: A failure of the holder lookup MUST NOT replace or change the `write_guard_contended` failure; the
-  failure is stored with the run not known.
+  failure is stored with the run not known. The lookup MUST end within a short, fixed time (2 seconds); a lookup
+  that takes longer gives "not known".
+- **FR-006a**: The service MUST name a run only when exactly one session holds that configuration's lock in the
+  Sync service's database; any other result gives "not known".
 - **FR-007**: When the named run's record shows that it has ended, the failure MUST say so, and its next action
   MUST NOT tell the operator to wait for that run.
 - **FR-008**: The lookup of the run from the run records (the earliest claimed write that has not ended) MUST be
@@ -156,8 +160,8 @@ time. The failure names that run and the next action does not say to wait for it
 
 ### Measurable Outcomes
 
-- **SC-001**: In the test with one run holding the lock and two runs waiting, the run whose wait ends names the
-  holding run in 100% of repetitions and never names the other waiting run.
+- **SC-001**: In the test with one run holding the lock and two runs waiting, repeated 20 times, the run whose
+  wait ends names the holding run every time and never names the other waiting run.
 - **SC-002**: In every case where the holder cannot be proven (no label, a label in another format, a label that
   may be cut short, a run that does not exist or belongs to another configuration, a failed lookup, a lock
   released before the lookup), the failure says the run is not known, and no case names a wrong run.
@@ -176,5 +180,10 @@ time. The failure names that run and the next action does not say to wait for it
 - The write lock stays a PostgreSQL advisory lock as described in
   `docs/docs/development/knowledge/apply-guard.md`; this feature does not change how the lock is taken or
   released.
+- The web interface reads the same failure record through the Sync API, so it receives the same `active_run_id`,
+  cause and next action. No change to the web interface is in scope.
+- Any session that uses the service's database account can set a label. The check in the run records limits a
+  false label to a real run of the same configuration; only the Sync service uses that account. This remaining
+  risk is accepted and recorded in the secret-redaction guideline and in ADR 0021.
 - The real PostgreSQL tests follow the existing opt-in integration tests of the write lock
   (`tests/integration/test_apply_guard_integration.py`, `APPLY_GUARD_TEST_POSTGRESQL_DSN`).

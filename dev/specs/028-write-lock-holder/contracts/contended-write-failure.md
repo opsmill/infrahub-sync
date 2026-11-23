@@ -22,7 +22,7 @@ and printed by the CLI after `sync`, `apply` and `runs resume`.
 | Case | Cause | Next action |
 |---|---|---|
 | Holder named, its write still open | Sync run `<id>` was writing to this configuration and held its write guard for the whole wait, so this write did not start and changed nothing | Check that run with `infrahub-sync runs show <id>` and wait for it to finish, then plan again. |
-| Holder named, its write has ended | Sync run `<id>` held this configuration's write guard for the whole wait although its write has ended, so this write did not start and changed nothing | Ask the administrator of the Sync service to check the worker of run `<id>`, then plan again. |
+| Holder named, its write has ended | Sync run `<id>` held this configuration's write guard for the whole wait although its write has ended, so this write did not start and changed nothing | The guard is released only when the worker of run `<id>` stops. Ask the administrator of the Sync service to stop or restart that worker, then plan again. |
 | Holder not known | Another writer held this configuration's write guard for the whole wait, so this write did not start and changed nothing. Which Sync run holds the guard is not known | List the runs of this configuration with `infrahub-sync runs list` and wait for its write to finish, then plan again. |
 
 For a failed `runs resume`, "then plan again." is replaced by the existing verify-then-resume step.

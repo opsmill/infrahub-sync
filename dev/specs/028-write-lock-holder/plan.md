@@ -127,7 +127,15 @@ imports the product store.
      AND l.pid <> pg_backend_pid()
    ```
 
-   Any exception from this query is swallowed (logged by type name only) and gives no candidate (FR-006).
+   Before the query, the session sets `statement_timeout` to 2000 ms with `set_config` (as `_SET_DEADLINE` does);
+   a timeout gives no candidate (FR-006, critique E2). The query reads at most two rows (`LIMIT 2`); a candidate
+   is taken only when exactly one row is returned (FR-006a, critique E3). Any exception from these statements is
+   swallowed and gives no candidate (FR-006). A debug log line records only the outcome class (named, no row,
+   several rows, label rejected, lookup failed), never the label (critique E8).
+
+   A failure of the label statement in step 1 happens before the lock request and fails the write as
+   `ApplyGuardUnavailableError`, like any other acquisition failure (critique E4). `_configuration_write_guard`
+   always passes the run ID; only the existing integration tests call `hold_apply_guard` without it (critique E1).
 3. **Parse the label (FR-003, FR-004).** `_holder_run_id(label)` returns a run ID only when the label is shorter
    than 63 bytes, starts with the exact prefix, and the rest matches the run ID pattern; otherwise `None`. The
    raw label never leaves this function (FR-005).
@@ -143,10 +151,16 @@ imports the product store.
    relational store and `ProductProjection`.
 7. **Templates (FR-007, FR-009).** `_guard_contended_template` gets a third variant when the holder's write has
    ended: the cause names the run and says its write has ended but its session still held the lock; the next
-   action says to ask the administrator of the Sync service to check that run's worker, then plan again. The
+   action says the lock is released only when that run's worker stops, so the administrator of the Sync service
+   must stop or restart that worker, then plan again (critique P1). The
    "ended" flag is passed to `failure_record` as a keyword and is not stored as a new field (research R6).
-8. **Documentation (FR-010, FR-011).** Correct `secret-redaction.md` and `apply-guard.md`; add the "ended" output
-   example to `running-a-sync.mdx`; record the ADR 0021 decision.
+8. **Documentation (FR-010, FR-011).** Correct `secret-redaction.md` and `apply-guard.md`, including the
+   accepted risk that a session of the same account can set a label (critique E5); add the "ended" output example
+   to `running-a-sync.mdx`; amend ADR 0021 (research R7).
+9. **Tests.** The scripted fake session's expected statement order changes in every existing acquisition test of
+   `tests/service/test_apply_guard.py`; update them deliberately (critique E6). The integration test repeats the
+   three-session case 20 times (SC-001) and prints the server's `track_activities` setting with any "not known"
+   result (critique E7).
 
 ## Complexity Tracking
 
