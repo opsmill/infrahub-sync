@@ -1,7 +1,150 @@
-# Implementation report: spec 027, stored credentials (DRAFT)
+# Implementation report: spec 027, stored credentials
 
-Status: draft, updated after each chunk. Base commit `e73deca4`. Branch `027-stored-credentials`. Not pushed.
-Advisor decisions are recorded in [overnight-log.md](overnight-log.md).
+Status: INCOMPLETE. 72 of 81 tasks are done. The other 9 wait for a decision by the maintainer or
+need the development stack (listed under "Not done").
+
+- Branch `027-stored-credentials`, in the worktree `.worktrees/027-stored-credentials`.
+- Base commit `e73deca4`, head commit `6b2ebd02` before this report: 80 commits. Nothing is pushed
+  and no pull request is open.
+- The run started on 2026-11-20 in the evening and ended on 2026-11-23. It stopped three times on usage
+  limits and was resumed each time.
+- The full unit tier at `491979a4` (the last code commit): 11521 passed, 0 failed.
+
+Sources: [spec.md](spec.md), [tasks.md](tasks.md), [overnight-log.md](overnight-log.md) (each advisor
+question, its answer and what was done next), [notes.md](notes.md) (the prototypes).
+
+## 1. Done
+
+- **Storing and releasing credentials (US1).** An administrator creates, changes and describes a
+  credential through the Sync API, the CLI group `infrahub-sync credentials`, and (prototype only) the
+  web interface. The Sync API stores the value encrypted with AES-256-GCM. A configuration package
+  names a credential with `credential: <name>` in each adapter block. The worker receives values only
+  through `POST /api/worker/runs/{run_id}/credentials`, for a claimed execution in progress.
+- **Removal of the old format.** The `credentials` block, `$credential` references, the environment
+  provider of the Sync service and the publishing of worker credential variables are removed. A version
+  stored by the earlier build is still read when its `credentials` block is empty. A version that used
+  the old format for a secret is refused with `422 credential-format-removed`. Its run history stays
+  visible.
+- **Start-up settings.** The Sync API refuses to start without `INFRAHUB_SYNC_ENCRYPTION_KEY` or
+  `INFRAHUB_SYNC_WORKER_TOKEN`, or with a malformed value, and names the variable. The three Compose
+  files, `dev.api` and the test helpers provide both.
+- **Revisions on runs (US2).** Each run answer includes `credentials_used` (stage, block, name,
+  revision). `runs show` prints a "Credentials used" section.
+- **Deletion (US4).** `DELETE /credentials/{name}` and `credentials delete NAME [--yes]`. Deletion is
+  refused with `409 credential-in-use` while the latest version of a configuration, or a schedule that
+  is not deleted, names the credential.
+- **Conversion report (US3).** `configs convert` writes `credential:` names and lists each credential
+  to create with its command. A registration that names a missing credential lists each missing
+  credential and its fields.
+- **Records.** ADR 0054 (0039 superseded, 0026 and 0040 partly superseded), constitution 1.3.0,
+  `AGENTS.md`, a user guide `docs/docs/guides/credentials.mdx`, the deployment, adapter, upgrade and
+  reference pages, the README and two changelog fragments.
+- **Web interface, first step.** The queries, actions and error descriptions (T073). Prototypes with
+  three versions for each of four screens at `/proto/credentials` (T074).
+
+## 2. Blocked
+
+Nothing was blocked by a critical blocker. Four items wait for a decision that is yours:
+
+- **T074 to T079: choose one prototype version per screen.** Open `/proto/credentials` and record
+  the choices in [notes.md](notes.md). Recommended next step: pick, then run T075 to T079. Remove the
+  prototype route before the branch is merged; the steps are in `notes.md`.
+- **T080: the Helm chart pull request in `opsmill/infrahub-helm`.** It was not opened, because it
+  needs your request. Until the chart passes the three new variables, the published chart cannot start
+  this image, because the Sync API refuses to start without them. Recommended answer: ask for the
+  pull request before this branch is released.
+- **T049: the environment reads of `select_runtime_credential`.** The direct Prefect flow
+  (`infrahub_sync/orchestration/flow.py:214`, `infrahub_sync/execution.py:785`) builds adapters outside
+  a registered package and still reads variables such as `NETBOX_TOKEN`. `spec.md:334` says that flow
+  does not change. Removing the reads would break it. Recommended answer: change T049 to keep the
+  environment reads for the direct Prefect flow only; a note is under T049 in `tasks.md`.
+- **Changelog fragments that describe removed behavior.** Not changed. Recommended at release:
+  - delete `+credential-env-prefix.security.md`, `+legacy-credential-run-admission.fixed.md`,
+    `+legacy-credential-saved-plans.changed.md` and `+ai-agent-page-source-pin.housekeeping.md`;
+  - reword `+validate-branch.added.md`, `+compose-store-credentials-ca.added.md` and
+    `+v2-configuration-conversion.added.md`;
+  - check `+upgrade-steps.changed.md`.
+
+## 3. Advisor decisions
+
+Each one is written out in [overnight-log.md](overnight-log.md).
+
+- **A1. Start-up replaces the receipt check of an existing table.** Kept. Two limits:
+  - an earlier build that starts later adds its old check back;
+  - two builds on one database at the same time can leave both checks in place.
+- **A2. A scheduled start with branch review reads earlier proposed changes before a run exists.**
+  Added the second worker route `POST /api/worker/schedules/{schedule_id}/proposed-change-states`: the
+  Sync API reads Infrahub itself and returns the states only.
+- **A3. Every earlier version was refused, and T049 stayed open.** The refusal was narrowed. A stored
+  version with an empty `credentials` block is read and keeps its stored checksum; a test pins a
+  checksum the earlier build wrote. T049 stays open (see "Blocked").
+- **A4. The Sync API started without the key, and the marker test failed in the full tier.** The code
+  was changed to match the spec: the process refuses to start. The marker test now searches the
+  directories Prefect resolves.
+
+## 4. Not done
+
+- T049, T074 to T080: see "Blocked".
+- **T081, partly done.** Format, lint, `ruff`, `ty` (31 warnings, exit 0), the CLI help checks and the
+  unit tier pass. Scenarios 3 to 7 of [quickstart.md](quickstart.md) need the development stack, which
+  another session used during this run, so they were not run.
+- **Test tiers that were not run.** They need Docker images built from this checkout or a live stack.
+  Only their collection was checked:
+  - `uv run pytest -m compose tests/compose` (64 tests)
+  - `uv run pytest -m docker tests/compose` (6 tests)
+  - `uv run pytest -m docker tests/image` (68 tests)
+  - `uv run pytest -m integration tests/integration` (70 tests)
+  - `uv run invoke dev.smoke` (25 tests)
+- **The review skill `speckit-review-run`** was no longer available in the session. A single review
+  agent (Opus) reviewed the diff instead; its findings are in section 5.
+- **`emil-ui-review`** was not run on the prototypes.
+
+## 5. Risks
+
+Review findings (none high; neither was fixed):
+
+| Severity | File | Finding |
+| --- | --- | --- |
+| Medium | `infrahub_sync/product_store/store.py:3784`, `infrahub_sync/service/schedules.py:419`, `:497` | Creating a schedule, or changing its pinned version, does not check that the version's credentials exist and takes no credential lock. A schedule can pin an older version whose credential was deleted; each start then fails with `credential-not-found`. A credential created later with the same name is then used by that schedule. |
+| Low | `infrahub_sync/service/credential_actions.py:208` | A value shorter than 6 characters is stored, but the redaction registry ignores values under 6 characters (`execution.py:131`). An adapter error that quotes such a value would show it in the run log. |
+
+Recommended answer for both: check the credentials and take the lock when a schedule is created or
+re-pinned; refuse values shorter than 6 characters at creation, or document the limit.
+
+Other risks:
+
+- **Upgrade.** Every version that used a secret through the old format must be registered again with
+  `credential:` names. Its schedules fail at each start, and its saved plans cannot be approved or
+  applied, until then. Registering the same file again creates a new version with a new checksum.
+- **A run start takes no credential lock.** A deletion during a run start lets the run be accepted,
+  then refused at release with `422`. No value is released.
+- **Receipt check at start-up (A1).** An earlier build started later on the same database probably
+  fails on PostgreSQL once a credential receipt exists. The alternative is to refuse an earlier
+  database at start-up.
+- **The worker boundary has two routes (A2).** The second route reads Infrahub on `main` with a stored
+  token. Its read can take up to 60 seconds, while the worker client waits 10 seconds, 3 times.
+- **The worker starts without its settings.** It does not refuse to start. Each run that names a
+  stored credential then fails, with a cause that names both variables.
+- **The Helm chart.** The published chart cannot start this image until T080.
+- **The key cannot be changed, and losing it means re-entering every credential.** This is documented.
+- **Tests written after their code.** Chunks 8, 8b, 12, 14, 18 and 19 wrote some tests after the code;
+  each chunk's ledger line names them.
+- **One request reached the other session's API.** During chunk 10, one test sent a GET request to
+  `localhost:8000` and received `401`. The test was fixed, and later chunks checked ports first.
+- **Not verified here.** The frontend generated types come from an in-process OpenAPI document, not
+  from a running API. The web interface has no text for the run failure cause `credential-missing`.
+- **`tests/test_benchmark_runner.py`** failed once and passed on the next run, earlier in the run.
+- **Not done in this run:** a full `emil-ui-review` of the prototypes; the `adr-index.mdx` page lacks
+  ADRs 0051 to 0053 (this was so before the change).
+
+## Suggested next steps
+
+1. Pick the prototype versions in `notes.md`, then run T075 to T079.
+2. Decide T049's text and the changelog fragments.
+3. Fix the medium review finding on schedules.
+4. Build the image and run the Compose, Docker, integration and smoke tiers, and scenarios 3 to 7 of
+   `quickstart.md`, on the development stack.
+5. Ask for the Helm pull request (T080), then open the pull request for this branch.
 
 ## Chunk ledger
 
@@ -35,7 +178,8 @@ One line per chunk: chunk, tasks, outcome, commits, notes.
 
 ## Local-pass evidence
 
-One line per run: chunk, tests, command, time (UTC), environment, result line.
+One line per run: chunk, tests, command, time (UTC), environment, result line. The lines marked
+`NOT RUN` list the tiers that need Docker images or the development stack.
 
 ```text
 tests/service/test_credential_settings.py (43)|unit|uv run pytest tests/service/test_credential_settings.py -q|2026-11-20T16:16:50Z|n/a|43 passed in 0.13s
