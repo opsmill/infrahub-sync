@@ -211,11 +211,22 @@ def _person_took_over(api: _StepAPI, run_id: str) -> None:
     assert response.status_code == 202, response.json()
 
 
+def _resume_not_picked_up(api: _StepAPI, run_id: str) -> None:
+    """No worker picks up the automatic resume: its abandoned execution and the record's end count once."""
+    _passed_check(api, run_id)
+    _step(api)
+    resume = _record(api, run_id).resume_flow_run_id
+    assert resume is not None
+    assert api[1].abandon_execution(run_id, resume)
+    _step(api)
+
+
 @pytest.mark.parametrize(
     ("ends", "reason"),
     [
         pytest.param(_check_found_differs, "check-found-differs", id="check-found-differs"),
         pytest.param(_person_took_over, "person-took-over", id="person-took-over"),
+        pytest.param(_resume_not_picked_up, "not-picked-up", id="resume-not-picked-up"),
     ],
 )
 def test_a_record_that_ends_without_a_resume_adds_one_failed_run(
