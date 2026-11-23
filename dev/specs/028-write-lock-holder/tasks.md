@@ -146,15 +146,15 @@ web interface then shows no link.
 
 **Independent test**: real PostgreSQL, a holder without a label gives "not known" (T024).
 
-- [ ] T021 [US2] In `tests/service/test_apply_guard.py`, add unit cases where `_read_holder` returns `None` and
+- [X] T021 [US2] In `tests/service/test_apply_guard.py`, add unit cases where `_read_holder` returns `None` and
   the contention error is still raised unchanged: no row, two rows, a label with another prefix, a 63-byte label,
   the timeout statement raising, the query raising (FR-006, FR-006a).
-- [ ] T022 [US2] In `tests/service/test_managed_write_guard.py`, add flow cases that store `write_guard_contended`
+- [X] T022 [US2] In `tests/service/test_managed_write_guard.py`, add flow cases that store `write_guard_contended`
   with `active_run_id` `None`: candidate equals the failing run; `write_holder_state` returns `None` (unknown run,
   or a run of another configuration); `write_holder_state` raises.
-- [ ] T023 [P] [US2] In `tests/service/failure_cases.py`, extend the shared contended case so the secret-leak
+- [X] T023 [P] [US2] In `tests/service/failure_cases.py`, extend the shared contended case so the secret-leak
   checks run with a candidate that is confirmed, one that is rejected, and a lookup that raised (SC-003).
-- [ ] T024 [US2] In `tests/integration/test_apply_guard_integration.py`, add: a holder without a label → `None`; a
+- [X] T024 [US2] In `tests/integration/test_apply_guard_integration.py`, add: a holder without a label → `None`; a
   holder whose label is set by hand to 63 bytes → `None`; a holder that releases the lock between the waiter's
   timeout and its lookup → `None` (best effort: assert never a wrong run ID); a holder connected with a second,
   non-superuser account created by the test, and a waiter connected with a third account → `None` or A's run ID,

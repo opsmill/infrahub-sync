@@ -353,17 +353,20 @@ def test_guard_contention_touches_no_destination_and_creates_no_success_evidence
     assert run.outcome == "failed"
 
 
-def _open_write_of_another_run(prepared: _ManagedStage, run_id: str) -> None:
-    """Record another run of the same configuration whose `sync` execution has not ended."""
+def _open_write_of_another_run(
+    prepared: _ManagedStage, run_id: str, binding: tuple[str, int, str] | None = None
+) -> None:
+    """Record another run whose `sync` execution has not ended, of `binding` or this stage's configuration."""
     projection = prepared.projection
+    config_id, registry_version, package_checksum = prepared.binding if binding is None else binding
     projection.create_run(
         ProductRun(
             run_id=run_id,
             operation="sync",
-            configuration_reference=f"{prepared.binding[0]}@{prepared.binding[1]}",
-            config_id=prepared.binding[0],
-            registry_version=prepared.binding[1],
-            package_checksum=prepared.binding[2],
+            configuration_reference=f"{config_id}@{registry_version}",
+            config_id=config_id,
+            registry_version=registry_version,
+            package_checksum=package_checksum,
             actor="owner",
             started_at=datetime.now(timezone.utc),
             phase="accepted",
@@ -498,6 +501,53 @@ def test_a_failed_lookup_of_the_active_run_still_records_the_contention(
     assert run.outcome == "failed"
     failure = run.results["apply_failure"]
     assert (failure["failure_type"], failure["active_run_id"]) == ("write_guard_contended", None)
+
+
+@pytest.mark.parametrize("candidate", ["failing-run", "unknown-run", "other-configuration"])
+def test_a_candidate_the_run_records_do_not_confirm_is_recorded_as_not_known(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, candidate: str
+) -> None:
+    """FR-003, FR-005, R5: only a run of the same configuration, other than the failing one, is named.
+
+    The failing run's own ID is refused before the run records are read. A label naming a run
+    that does not exist, or a run of another configuration with an open write, is refused by the
+    run records (`write_holder_state` returns `None`).
+    """
+    label_run_id = {
+        "failing-run": "managed-apply",
+        "unknown-run": "managed-unknown",
+        "other-configuration": "managed-elsewhere",
+    }[candidate]
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label=f"infrahub-sync-guard:{label_run_id}"
+    )
+    assert prepared.run_id == "managed-apply"
+    if candidate == "other-configuration":
+        other = prepared.projection.create_configuration(package(name="other-configuration"))
+        assert other.config_id != prepared.binding[0]
+        _open_write_of_another_run(
+            prepared, label_run_id, (other.config_id, other.registry_version, other.package_checksum)
+        )
+    original = prepared.projection.write_holder_state
+    answers: list[object] = []
+
+    def recording(run_id: str, config_id: str) -> Any:  # noqa: ANN401 - the store's own state record.
+        state = original(run_id, config_id)
+        answers.append(state)
+        return state
+
+    monkeypatch.setattr(prepared.projection, "write_holder_state", recording)
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    run = _stored(prepared)
+    assert run.outcome == "failed"
+    failure = run.results["apply_failure"]
+    assert (failure["failure_type"], failure["active_run_id"]) == ("write_guard_contended", None)
+    assert "Which Sync run holds the guard is not known" in failure["cause"]
+    assert label_run_id not in str(failure)
+    assert answers == ([] if candidate == "failing-run" else [None])
 
 
 def test_a_failure_before_the_first_dispatch_stays_an_ordinary_failed_run(

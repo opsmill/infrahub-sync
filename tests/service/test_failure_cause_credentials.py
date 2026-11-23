@@ -51,7 +51,7 @@ from tests.cli.test_client_commands import (
 )
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
-from tests.service.failure_cases import CASES, CREDENTIALS, ERROR_TEXT, FailureCase, forbidden_values
+from tests.service.failure_cases import CASES, CREDENTIALS, ERROR_TEXT, HOLDER_RUN_ID, FailureCase, forbidden_values
 from tests.service.test_http_api import _FakeOrchestration, _registered_package
 
 if TYPE_CHECKING:
@@ -128,6 +128,39 @@ def _service(tmp_path: Path) -> tuple[ProductProjection, TestClient, str]:
     return projection, TestClient(create_app(service, resolver)), flow_run_id
 
 
+def _arrange_holder(projection: ProductProjection, case: FailureCase, monkeypatch: pytest.MonkeyPatch) -> str | None:
+    """Make the run records answer the case's holder candidate as the case says; return the run named.
+
+    "confirmed" records the candidate as a run of the failing run's configuration. "rejected"
+    records nothing, so no run has the candidate's ID. "lookup-raised" makes the lookup raise an
+    error whose text holds both credentials.
+    """
+    if case.holder == "confirmed":
+        failing = projection.lookup_run(RUN_ID).value
+        assert failing is not None
+        projection.create_run(
+            ProductRun(
+                run_id=HOLDER_RUN_ID,
+                operation="sync",
+                configuration_reference=failing.configuration_reference,
+                config_id=failing.config_id,
+                registry_version=failing.registry_version,
+                package_checksum=failing.package_checksum,
+                actor=failing.actor,
+                started_at=failing.started_at,
+                phase="accepted",
+            )
+        )
+        return HOLDER_RUN_ID
+    if case.holder == "lookup-raised":
+
+        def raising(*_args: object, **_kwargs: object) -> object:
+            raise RuntimeError(ERROR_TEXT)
+
+        monkeypatch.setattr(projection, "write_holder_state", raising)
+    return None
+
+
 def _record(projection: ProductProjection, flow_run_id: str, case: FailureCase) -> service_flow.RecordedFailure:
     """Record the case's failure for the claimed run, the way the worker does, with no secret list."""
     recorded = service_flow._record_failure(
@@ -151,9 +184,14 @@ def test_no_credential_reaches_the_api_the_cli_or_the_run_artifact(
     case: FailureCase,
     tmp_path: Path,
     client: MagicMock,  # noqa: F811 - the imported fixture.
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     projection, api, flow_run_id = _service(tmp_path)
-    recorded = _record(projection, flow_run_id, case)
+    named = _arrange_holder(projection, case, monkeypatch)
+    with caplog.at_level(logging.DEBUG):
+        recorded = _record(projection, flow_run_id, case)
+    _assert_absent(caplog.text, "the worker log")
 
     run_response = api.get(f"/runs/{RUN_ID}", headers=HEADERS)
     results_response = api.get(f"/runs/{RUN_ID}/results", headers=HEADERS)
@@ -164,6 +202,9 @@ def test_no_credential_reaches_the_api_the_cli_or_the_run_artifact(
     stored_failure = ResultsResource.model_validate(results_response.json()).stage_failure(case.stage)
     assert stored_failure is not None
     assert stored_failure.failure_type == case.failure_type
+    if case.holder is not None:
+        # Each holder variant reaches its own path: only a confirmed candidate is named.
+        assert stored_failure.active_run_id == named
     assert run_response.json()["run"]["results"][f"{case.stage}_failure"]["failure_type"] == case.failure_type
     _assert_absent(run_response.content, "GET /runs/{run_id}")
     _assert_absent(results_response.content, "GET /runs/{run_id}/results")

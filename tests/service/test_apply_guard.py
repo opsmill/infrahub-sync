@@ -411,6 +411,65 @@ def test_one_holder_row_with_a_valid_label_names_the_holding_run() -> None:
     assert caught.value.holder_run_id == _OTHER_RUN_ID
 
 
+_CONTENDED_TEXT = "another writer holds this configuration's write guard"
+_LOOKUP_CANARY = "holder-lookup-canary-51c3"
+
+
+@pytest.mark.parametrize(
+    ("holder_rows", "failure_site", "failure"),
+    [
+        pytest.param((), None, None, id="no-row"),
+        pytest.param(
+            [(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",), (f"{GUARD_LABEL_PREFIX}{_GENERATED_RUN_ID}",)],
+            None,
+            None,
+            id="two-rows",
+        ),
+        pytest.param([(f"infrahub-sync-other:{_OTHER_RUN_ID}",)], None, None, id="another-prefix"),
+        # A tail that matches the run-ID pattern, so only the length rule rejects the label.
+        pytest.param([(f"{GUARD_LABEL_PREFIX}{'a' * 43}",)], None, None, id="63-bytes"),
+        pytest.param(
+            [(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)],
+            "'statement_timeout'",
+            psycopg.errors.QueryCanceled(_LOOKUP_CANARY),
+            id="timeout-statement-raises",
+        ),
+        pytest.param(
+            [(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)],
+            "pg_stat_activity",
+            psycopg.OperationalError(_LOOKUP_CANARY),
+            id="query-raises",
+        ),
+        pytest.param(
+            [(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)],
+            "pg_stat_activity",
+            RuntimeError(_LOOKUP_CANARY),
+            id="query-raises-a-non-driver-error",
+        ),
+    ],
+)
+def test_a_holder_that_cannot_be_proven_leaves_the_contention_error_unchanged(
+    holder_rows: Sequence[tuple[Any, ...]], failure_site: str | None, failure: Exception | None
+) -> None:
+    """FR-006, FR-006a: no candidate, and the contention failure keeps its type and text."""
+    session = _FakeSession(holder_rows=holder_rows)
+    session.failures["pg_advisory_lock"] = psycopg.errors.LockNotAvailable("timed out")
+    if failure_site is not None and failure is not None:
+        session.failures[failure_site] = failure
+
+    with pytest.raises(ApplyGuardContentionError) as caught:
+        _Hold(session).run()
+
+    assert type(caught.value) is ApplyGuardContentionError
+    assert str(caught.value) == _CONTENDED_TEXT
+    assert caught.value.holder_run_id is None
+    assert session.close_calls == 1
+    assert session.sequence[-1] == _CLOSE
+    assert _LOOKUP_CANARY not in _reachable_text(caught.value)
+    if failure_site == "'statement_timeout'":
+        assert session.executed("pg_stat_activity") == []
+
+
 def test_a_write_that_takes_the_lock_never_looks_up_a_holder() -> None:
     """SC-004: the holder lookup costs nothing on a write whose wait did not end in a timeout."""
     session = _FakeSession(holder_rows=[(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)])
