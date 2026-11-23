@@ -144,15 +144,66 @@ replacement if a version is too close to the one it continues:
 
 ## How to remove the prototype
 
-Delete `frontend/proto/` and `frontend/src/proto/credentials/`. Nothing else imports them, and no
-route of the web interface lists them. `pnpm build` builds `index.html` only, so the prototype is
-not part of the built web interface.
+The prototype was removed after the maintainer picked the versions below. `frontend/proto/` and
+`frontend/src/proto/credentials/` are deleted, and its development server is stopped. No Vite
+setting served it, so no configuration changed. The sections above describe what the prototype
+offered; the chosen versions are built in `frontend/src/features/credentials/`,
+`frontend/src/routes/credentials.tsx` and `frontend/src/features/runs/CredentialsUsed.tsx`.
 
 ## Choices
 
-The maintainer records one version per screen here, and what was rejected and why.
+The maintainer picked one version per screen. The maintainer gave no reason for a rejection; each
+rejected version below names the cost that the tables above record for it.
 
-- Credentials page: list:
-- Create and change-value forms:
-- Delete confirmation:
-- Run details: "Credentials used":
+- Credentials page: list: version 3, "Find".
+    - A search field over the name, the description and the account that last changed the value.
+    - The fields set as a filter, with the count of each set: "All", "Token", "Username and
+      password", "Username and token".
+    - Two orders: "By name" and "Last changed first". The page opens with "By name", as the
+      prototype did; the maintainer did not say which order the page opens with.
+    - One row per credential: the name, the description on one line with the whole text in the
+      tooltip of the line, then the fields set, the revision, and when and by whom the value last
+      changed.
+    - An administrator views one "Actions" menu per row: "Change value", "Edit description",
+      "Delete".
+    - Rejected: "Table", which scrolls sideways on a narrow window and where a long name takes four
+      lines; "Rows that open", where columns cannot be compared and each look at the facts takes one
+      press. Reason not given by the maintainer.
+- Create and change-value forms: version 3, "In the row".
+    - No overlay: the form takes the place of the row it changes, or opens above the first row for a
+      new credential. Escape cancels.
+    - The field choice is one line of three radio buttons: "Token", "Username and password",
+      "Username and token". The token and the password are password inputs.
+    - After each answer the token, the password and the username are cleared; the name, the
+      description and the field choice stay.
+    - Rejected: "Dialog", which covers the list; "Side sheet", a taller form whose sheet covers the
+      whole page on a phone. Reason not given by the maintainer.
+- Delete confirmation: version 2, "In the row".
+    - No overlay: the row turns into the question "Delete `<name>`?", then, on
+      `409 credential-in-use`, into the refusal with the listing of configurations and schedules.
+    - The listing stays in the row until the person presses "Dismiss"; "Try again" sends the
+      deletion again.
+    - Rejected: "Dialog", where the listing covers the list and closes with the dialog; "Guided
+      sheet", which asks for more reading for each deletion and whose steps repeat the listing.
+      Reason not given by the maintainer.
+- Run details: "Credentials used": version 3, "Stage grid".
+    - One row per block and credential, one column per stage, the revision in each cell.
+    - A revision that differs from the one the first stage read is marked, and a stage that read
+      nothing shows a dash.
+    - Rejected: "Table", where a credential that three stages read takes three rows and a change of
+      revision must be found by reading; "In the details", where the stages are a list of words and
+      the reads are part of the "Details" section instead of a section of their own. Reason not
+      given by the maintainer.
+
+## Follow-up of spec 025: the drop-area offer (T078)
+
+Spec 025 is not merged on the base of this branch: `dev/specs/` has no `025` directory and
+`frontend/src` has no drop area. The offer of contracts/web-interface.md is therefore a follow-up
+of spec 025. When the drop area exists, for each `credential-not-found` finding:
+
+- an administrator views "Create credential `<name>`", which opens the create form of the
+  Credentials page with the name filled in;
+- another account views "Ask an administrator to create the credential `<name>`."
+
+`credentialFindings` in `frontend/src/api/queries.ts` already reads the findings from a refused
+registration.
