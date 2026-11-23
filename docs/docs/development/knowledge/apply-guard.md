@@ -120,8 +120,9 @@ closed, `_read_holder` reads the holder on the same session:
    row, two rows, a rejected label or any exception gives `None`. The failure stays an
    `ApplyGuardContentionError` in every case, and its `holder_run_id` carries the candidate.
 
-Before that read, the guard also stamps `wait_started_at` on the error: the time of the lock
-timeout minus the deadline the guard used.
+The guard also stamps `wait_started_at` on the error: the time it took immediately before it
+sent the lock request. That time is never later than the real start of the wait, so a holder
+whose write ended during the wait is not reported as ended.
 
 When a service write fails with that error, `_active_write_run` in
 `infrahub_sync/service/flow.py` makes one read of the run records,

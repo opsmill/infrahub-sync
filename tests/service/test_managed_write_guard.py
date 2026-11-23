@@ -509,13 +509,18 @@ def test_a_holder_whose_write_ended_during_the_wait_is_reported_as_writing(
     """Finding 1: a holder may release the lock and record its verdict after this write's lock timeout.
 
     Its write ended after this write started waiting, so the failure must not tell the operator to
-    stop a worker that is healthy.
+    stop a worker that is healthy. The guard's clock is fixed at the wait start, and the holder's
+    write ends one second later.
     """
+    from infrahub_sync.service import apply_guard
+
+    wait_started_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    monkeypatch.setattr(apply_guard, "_utc_now", lambda: wait_started_at)
     prepared = _prepare(
         tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label="infrahub-sync-guard:managed-holder"
     )
     _open_write_of_another_run(prepared, "managed-holder")
-    _end_write_of_another_run(prepared, "managed-holder", datetime.now(timezone.utc))
+    _end_write_of_another_run(prepared, "managed-holder", wait_started_at + timedelta(seconds=1))
 
     with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
         _apply(prepared)

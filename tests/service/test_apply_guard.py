@@ -10,7 +10,7 @@ facts that fake assumes — that a session-level `lock_timeout` bounds
 from __future__ import annotations
 
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import pytest
@@ -19,6 +19,7 @@ pytest.importorskip("psycopg")
 
 import psycopg
 
+from infrahub_sync.service import apply_guard
 from infrahub_sync.service.apply_guard import (
     DEFAULT_DEADLINE_SECONDS,
     GUARD_LABEL_PREFIX,
@@ -412,21 +413,35 @@ def test_one_holder_row_with_a_valid_label_names_the_holding_run() -> None:
     assert caught.value.holder_run_id == _OTHER_RUN_ID
 
 
-@pytest.mark.parametrize("deadline_seconds", [DEFAULT_DEADLINE_SECONDS, 120.0])
-def test_a_lock_timeout_records_when_the_wait_started_from_the_deadline_it_used(deadline_seconds: float) -> None:
-    """Finding 1: the wait started the deadline the guard used before the lock timeout."""
+def test_a_lock_timeout_records_the_time_taken_immediately_before_the_lock_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wait start is read after the deadline is set and before the lock request is sent.
+
+    A time taken at the lock timeout, minus the deadline, can be later than the real start
+    of the wait, which would report a holder that finished during the wait as ended.
+    """
     session = _FakeSession(holder_rows=[(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)])
     session.failures["pg_advisory_lock"] = psycopg.errors.LockNotAvailable("timed out")
+    stamped = datetime(2026, 11, 23, 9, 30, tzinfo=timezone.utc)
 
-    before = datetime.now(timezone.utc)
+    def clock() -> datetime:
+        session.sequence.append(_CLOCK_READ)
+        return stamped
+
+    monkeypatch.setattr(apply_guard, "_utc_now", clock)
+
     with pytest.raises(ApplyGuardContentionError) as caught:
-        _Hold(session, deadline_seconds=deadline_seconds).run()
-    after = datetime.now(timezone.utc)
+        _Hold(session).run()
 
-    started = caught.value.wait_started_at
-    assert started is not None
-    deadline = timedelta(seconds=deadline_seconds)
-    assert before - deadline <= started <= after - deadline
+    assert caught.value.wait_started_at == stamped
+    assert session.sequence.count(_CLOCK_READ) == 1
+    clock_read = session.sequence.index(_CLOCK_READ)
+    assert "'lock_timeout'" in session.sequence[clock_read - 1]
+    assert "pg_advisory_lock" in session.sequence[clock_read + 1]
+
+
+_CLOCK_READ = "<clock read>"
 
 
 _CONTENDED_TEXT = "another writer holds this configuration's write guard"

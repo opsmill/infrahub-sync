@@ -1711,7 +1711,7 @@ def _active_write_run(projection: ProductProjection, stored: ProductRun, exc: Ex
 def _wait_started_at(exc: ApplyGuardContentionError) -> datetime:
     """When the failing write started waiting for the guard.
 
-    The guard stamps it as the time of the lock timeout minus the deadline it used. Without
+    The guard stamps it as the time it took immediately before sending the lock request. Without
     that stamp, the earliest moment the wait can have started is used: now, minus the largest
     accepted deadline and the holder lookup's own bound. An earlier start reports fewer runs
     as ended, so the estimate errs toward "writing".

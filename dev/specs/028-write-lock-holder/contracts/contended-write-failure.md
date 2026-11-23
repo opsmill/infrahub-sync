@@ -30,8 +30,8 @@ For a failed `runs resume`, "then plan again." is replaced by the existing verif
 Note (2026-11-23, review): the causes say which run held the guard when the wait ended, not "for the
 whole wait", because another waiter can take the lock between the original holder's release and the
 lookup. A named holder gets the "ended" variant only when its run records have no open claimed write
-and its last write ended before this write started waiting (the lock timeout minus the deadline the
-guard used); every other named holder gets the "writing" variant.
+and its last write ended before this write started waiting (the time the guard took immediately
+before it sent the lock request); every other named holder gets the "writing" variant.
 
 ## CLI lines
 

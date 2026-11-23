@@ -28,7 +28,7 @@ import logging
 import math
 import re
 from contextlib import contextmanager, suppress
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 import psycopg
@@ -129,8 +129,8 @@ class ApplyGuardContentionError(ApplyGuardError):
     the key when the wait ended, or `None` when the label is absent, unreadable, or not
     well formed. It is not confirmed against the run records.
 
-    `wait_started_at` is when this writer started waiting for the key, in UTC: the time of
-    the lock timeout minus the deadline the guard used. `None` when the guard did not set it.
+    `wait_started_at` is when this writer started waiting for the key, in UTC: the time the
+    guard took immediately before it sent the lock request. `None` when the guard did not set it.
     """
 
     def __init__(
@@ -420,12 +420,15 @@ def _acquire(
     """
     failure: ApplyGuardError
     connection: GuardConnection | None = None
+    wait_started_at: datetime | None = None
     label = None if run_id is None else guard_label(run_id)
     try:
         connection = connect()
         if label is not None:
             connection.execute(_SET_LABEL, (label,))
         connection.execute(_SET_DEADLINE, (str(milliseconds),))
+        # Taken before the request, so it is never later than the real start of the wait.
+        wait_started_at = _utc_now()
         connection.execute(_ACQUIRE, (key,))
         row = connection.execute(_OWNERSHIP, _lock_columns(key)).fetchone()
     # One provider boundary; every class is classified rather than escaping.
@@ -444,12 +447,16 @@ def _acquire(
         # session and is re-raised unchanged.
         try:
             if isinstance(failure, ApplyGuardContentionError):
-                # Stamped before the holder read, so the read's own time cannot move it.
-                failure.wait_started_at = datetime.now(timezone.utc) - timedelta(milliseconds=milliseconds)
+                failure.wait_started_at = wait_started_at
                 failure.holder_run_id = _read_holder(connection, key)
         finally:
             _discard(connection)
     _fail(failure)
+
+
+def _utc_now() -> datetime:
+    """Return the current time in UTC. Tests replace it to record when the guard reads it."""
+    return datetime.now(timezone.utc)
 
 
 def _acquisition_failure(exc: Exception, secrets: Sequence[str]) -> ApplyGuardError:
