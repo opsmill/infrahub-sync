@@ -33,3 +33,21 @@ Compose variables caused:
 - `docs/docs/compose-deployment.mdx` must name every variable that `docker-compose.yml` reads. The
   two health settings were added to its table of settings and to its list of start-up refusals.
   T044 rewrites the status section of that page.
+
+## T028: User Story 2 gate (2026-11-23)
+
+- `uv run pytest tests/service/test_worker_alive.py tests/compose -q -m "not compose"`: 426 passed,
+  6 skipped and 64 deselected at 2026-11-23T22:24:43Z. The 20 new tests are in
+  `tests/service/test_worker_alive.py` (16) and `tests/compose/test_worker_healthcheck.py` (4,
+  which read the Compose files only).
+- `uv run invoke lint` exited 0 (ty reports 31 warnings, the same count as before this change).
+  `uv run ruff check .` passed.
+- The offline unit tier (`uv run invoke tests.tests-unit`) passed, 11255 passed and 12 skipped at
+  2026-11-23T22:31:43Z.
+- `docker compose -f development/docker-compose.yml --profile sync config --format json` renders
+  the `sync-worker` healthcheck command unchanged, equal to `WORKER_HEALTHCHECK_COMMAND`: the
+  command contains no `$` for Compose to interpolate.
+- Not run: the container scenarios of quickstart scenario 2 (`docker compose ps` shows
+  `sync-worker` `unhealthy` after `docker compose pause sync-worker`) and scenario 4 (the worker
+  stays `healthy` while `postgres` is stopped). The running development stack belongs to another
+  worktree and session, so it was not restarted with this branch's Compose file.

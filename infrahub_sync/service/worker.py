@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import os
 import signal
 import sqlite3
@@ -23,6 +24,7 @@ import httpx
 from prefect.client.schemas.objects import Worker, WorkerStatus
 from prefect.exceptions import ObjectNotFound
 from prefect.logging.loggers import PrefectLogAdapter
+from prefect.settings import get_current_settings
 from prefect.utilities.processutils import command_to_string, get_sys_executable
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker, ProcessWorkerResult
 from pydantic import PrivateAttr
@@ -34,6 +36,7 @@ from .orchestration import SERVICE_DEFINITION
 from .start_check import StartRefusedError, check_bootstrap_record
 from .storage import service_product_projection
 from .trust_store import TrustStoreError, install_custom_ca_bundle
+from .worker_alive import alive_file_path, run_alive_writer
 
 if TYPE_CHECKING:
     import logging
@@ -598,6 +601,33 @@ async def run_until_terminated(start: Callable[[], Awaitable[object]]) -> None:
         loop.remove_signal_handler(signal.SIGTERM)
 
 
+async def run_with_alive_file(start: Callable[[], Awaitable[object]], interval_seconds: int) -> None:
+    """Run `start()` with the alive-file writer beside it, and stop the writer when it returns.
+
+    The writer is an asyncio task of this process only; it calls neither Prefect, PostgreSQL
+    nor the Sync API, so the Compose healthcheck that reads its file reports this process and
+    nothing else (spec 029, research R-7).
+    """
+    writer = asyncio.create_task(run_alive_writer(interval_seconds, alive_file_path(os.environ)))
+    try:
+        await start()
+    finally:
+        writer.cancel()
+        # The writer only ends by this cancellation; waiting for it keeps the task from
+        # outliving the worker. `gather` with `return_exceptions` collects that cancellation
+        # instead of raising it into this task.
+        await asyncio.gather(writer, return_exceptions=True)
+
+
+def _heartbeat_interval_seconds() -> int:
+    """Return the worker's heartbeat interval: `PREFECT_WORKER_HEARTBEAT_SECONDS`, 30 by default.
+
+    Read from the local Prefect settings; no server is called.
+    """
+    # Whole seconds, at least one: the file holds an integer, and a zero would spin the writer.
+    return max(1, math.ceil(get_current_settings().worker.heartbeat_seconds))
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -629,7 +659,8 @@ def main(
             name=service_worker_name(),
             create_pool_if_not_found=False,
         )
-        asyncio.run(run_until_terminated(worker.start))
+        interval_seconds = _heartbeat_interval_seconds()
+        asyncio.run(run_until_terminated(lambda: run_with_alive_file(worker.start, interval_seconds)))
     return 0
 
 

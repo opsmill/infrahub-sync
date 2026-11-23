@@ -353,6 +353,31 @@ services:
     # on this machine that has no Compose network to join, and it costs nothing when unused.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Looks only at this worker's own process: its event loop writes the alive file on a
+    # timer that calls no other service, so an outage of PostgreSQL or Prefect leaves this
+    # container healthy, and a paused or hung process makes it unhealthy (spec 029, R-7).
+    # The command is WORKER_HEALTHCHECK_COMMAND in infrahub_sync/service/worker_alive.py.
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-I"
+        - "-c"
+        - |-
+          import os, sys, time
+          path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "infrahub-sync-worker-alive")
+          try:
+              fields = open(path, encoding="ascii").read().split()
+          except (OSError, ValueError):
+              sys.exit("worker alive file is missing or unreadable")
+          if len(fields) != 2 or not all(field.isdigit() for field in fields):
+              sys.exit("worker alive file is malformed")
+          if time.time() - int(fields[0]) > max(3 * int(fields[1]), 30):
+              sys.exit("worker alive file is older than its limit")
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
 configs:
   # Read once, when Postgres initializes an empty data directory. Adding a database
