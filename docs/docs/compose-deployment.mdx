@@ -1267,9 +1267,9 @@ interval of 10 seconds and the default check timeout of 3 seconds:
 | The worker process hangs | The `sync-worker` container `unhealthy` after 50 seconds |
 | The object store or the Prefect server stops | `503` within 2 seconds |
 | PostgreSQL stops | `503` at the next request |
-| PostgreSQL is paused | `503` after 4 seconds, with the error `timeout` |
+| PostgreSQL is paused | `503` within 4 seconds, with the error `timeout` |
 | The object store or the Prefect server starts again | `200` within 3 seconds |
-| PostgreSQL starts again | `200` after 9 seconds |
+| PostgreSQL starts again | `200` within 9 seconds |
 | The worker container restarts | `200` once the new worker has sent its first heartbeat; the previous worker stays listed as `stale` |
 
 A longer heartbeat interval lengthens the worker times in proportion.

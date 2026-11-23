@@ -3,7 +3,8 @@
 - Feature: `GET /api/health`, the worker container health check, removal of `GET /api/status`
 - Spec directory: `dev/specs/029-api-health`
 - Branch: `029-api-health`
-- Base commit: `a688a6bb` (end of preparation)
+- Base commit: `a688a6bb` (end of preparation); the branch was then rebased onto
+  `origin/feature/v3-develop` at `64df778c` before the first push
 - Head commit: `bb75fe89` before this report
 - Wall-clock time: about 3 hours (2026-11-23, 20:50 to 23:55 UTC)
 - Result: DONE. All 52 tasks are ticked, every new or changed test has local-pass evidence, and
@@ -47,6 +48,7 @@ environment column says otherwise.
 | Review-fix tests in `test_health.py` (3 new, 6 renamed), `test_worker_alive.py` (2), `tests/dev_stack/test_dev_tasks.py` (5) | unit | `uv run pytest <id> -v -p no:randomly` | 2026-11-23T23:40:26Z | n/a | `PASSED` for each |
 | `tests/service/test_http_api.py::test_head_health_answers_the_status_and_headers_of_get_without_a_body[True|False]` | unit | same | 2026-11-23T23:49:59Z | n/a | `2 passed, 1 warning in 1.72s` |
 | `tests/compose` with the `compose` marker (64 tests, including the changed `lifecycle.py` and `test_lifecycle.py`) | e2e | `INFRAHUB_SYNC_COMPOSE_PROJECT_PREFIX=sync029 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test-029 uv run --extra testcontainers pytest -m compose tests/compose` | started 2026-11-23T23:06:39Z | Image built from this branch; own Compose projects | `2 failed, 62 passed`; the two failures pass alone: `2 passed in 175.75s` (see below) |
+| PostgreSQL paused and stopped, re-run after the review fixes | e2e (manual) | scratch script on Compose project `sync029-qs` | 2026-11-23T23:56:04Z to 23:57:14Z | Image built from the rebased branch | `503` within 4.1 s when paused; `200` 5.3 s after a restart |
 | Quickstart scenarios 1–9 and SIGSTOP (T051) | e2e (manual) | scratch script on Compose project `sync029-qs` | 2026-11-23T23:27:03Z to 23:37:43Z; names and HEAD after the fixes at about 23:55Z | Root `docker-compose.yml`, image built from this branch | Recorded in `verification.md` |
 
 Gates at the end of chunk 7 and after the review fixes: `uv run invoke format` clean;
@@ -57,8 +59,10 @@ typecheck and build pass; rumdl, Vale and the Docusaurus build clean.
 
 The two `compose` failures are `configuration-name-in-use` (409): two tests register
 `compose-suite-registered` in the session-wide deployment after another test registered it.
-Run alone, both pass. This branch does not change configuration registration, so the order
-problem is in the base branch. The nightly workflow that runs this suite last ran in October.
+Run alone, both pass. This branch does not change configuration registration, but it does edit
+`tests/compose/lifecycle.py` (the worker state helper), and the suite was not run on the base
+branch, so the cause is likely but not verified to be in the base branch. The nightly workflow
+that runs this suite last ran in October.
 
 ## Review findings
 
@@ -98,7 +102,7 @@ Review mode: command (/code-review)
 ## Suggested next steps
 
 1. Open the pull request into `feature/v3-develop` as a draft and watch CI.
-2. Fix the test-order problem of the `compose` suite (`compose-suite-registered` registered twice)
-   in a separate change on the base branch.
+2. Run the `compose` suite on the base branch to confirm the test-order problem
+   (`compose-suite-registered` registered twice), then fix it in a separate change.
 3. Decide whether `spec.md` US1-2 and the contract should be updated to the measured PostgreSQL
    behavior (`unknown` at once).

@@ -205,3 +205,7 @@ The first `docker compose up -d --wait sync-api` with `INFRAHUB_SYNC_HEALTH_MIN_
 ### The `compose` test suite
 
 `INFRAHUB_SYNC_COMPOSE_PROJECT_PREFIX=sync029 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test-029 uv run --extra testcontainers pytest -m compose tests/compose` (started 2026-11-23T23:06:39Z): 62 passed, 2 failed. Both failures were `configuration-name-in-use` (409): `test_a_plan_apply_and_separate_sync_run_through_the_replacement_worker` and `test_a_registered_plan_runs_through_the_deployed_worker` register `compose-suite-registered` in the session-wide deployment after another test registered it. Run alone, the two tests passed (2 passed). This branch does not change configuration registration.
+
+### PostgreSQL re-run after the review fixes (image rebuilt from the rebased branch, 2026-11-23T23:56:04Z)
+
+The database check no longer sets `statement_timeout`; the round's time limit bounds it. Three pauses of `postgres` gave `503` with `database=down/timeout` 4.1 s, 3.2 s and 3.1 s after the pause, and `200` 1.1 s after each unpause. Stopping `postgres` gave `503` at once (`database=down/name_resolution_failed`, `task_manager_db=down/unavailable`, `workers=unknown`); `sync-worker` stayed `healthy`; `200` came 5.3 s after `postgres` started.
