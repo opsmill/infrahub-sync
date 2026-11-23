@@ -1,0 +1,44 @@
+# Data Model: Name the run that holds a configuration's write lock
+
+No table, column or migration changes. The entities below are values held in memory, in PostgreSQL session
+state, or in the existing failure record.
+
+## Write-lock session label
+
+- **Where**: `application_name` of the dedicated guard session (PostgreSQL session state; ends with the session).
+- **Value**: `infrahub-sync-guard:<run_id>`.
+- **Written when**: after the session opens, before `lock_timeout` is set and before `pg_advisory_lock`.
+- **Written only if**: the run ID matches the run ID pattern and the whole label is at most 62 bytes.
+- **Read when**: by another write's session, after its lock wait timed out.
+- **Accepted only if**: at most 62 bytes, exact prefix, the rest matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
+
+## `ApplyGuardContentionError.holder_run_id`
+
+- **Type**: `str | None`.
+- **Meaning**: a candidate run ID parsed from the holder's label. Not yet confirmed.
+- **Never holds**: the raw label, a process ID, a database or account name.
+
+## Confirmed holder (in `flow.py`)
+
+- **Accepted when**: candidate is not the failing run's ID; `lookup_run(candidate)` finds a run; that run's
+  `config_id` equals the failing run's `config_id`.
+- **`ended`**: `not run_write_in_progress(candidate)`.
+- **Otherwise**: not known (`None`).
+
+## Failure record of a contended write (existing, from `cf9f13b6`/`a50d5780`)
+
+| Field | Value |
+|---|---|
+| `failure_type` | `write_guard_contended` |
+| `error_type` | `ApplyGuardContentionError` (unchanged) |
+| `active_run_id` | confirmed run ID, or `null` |
+| `cause`, `next_action` | from `_guard_contended_template`, one of three variants: named and writing; named and ended; not known |
+
+## Store method change
+
+| Removed | Added |
+|---|---|
+| `other_write_in_progress(config_id, *, run_id) -> str \| None` | `run_write_in_progress(run_id) -> bool` |
+
+Same rule for "open write": an execution whose purpose is in `WRITE_PURPOSES`, claimed by a worker, with no
+terminal verdict.
