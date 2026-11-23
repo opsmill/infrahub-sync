@@ -253,10 +253,10 @@ behind `ProductProjection`.
       `uv run --extra dev towncrier create -c "…" +automatic-resume.added.md`.
 - [X] T042 Add `infrahub-sync runs resume` to the list of CLI commands in `AGENTS.md` and mention automatic resume in
       it (spec 016 `EXTRACTED.md` noted the missing entry).
-- [ ] T043 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`,
+- [X] T043 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`,
       the frontend checks in `frontend/` (`pnpm lint`, `pnpm test`), and the CLI sanity commands of `AGENTS.md`.
-- [ ] T044 Run the preview stack check and the refusal cases of [quickstart.md](./quickstart.md) (SC-001, SC-002) and
-      record the result in `dev/specs/030-automatic-resume/run-report.md`.
+- [X] T044 Run the preview stack check and the refusal cases of [quickstart.md](./quickstart.md) (SC-001, SC-002) and
+      record the result in `dev/specs/030-automatic-resume/run-report.md` (preview stack deferred, see run-report.md).
 
 ---
 
