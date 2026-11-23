@@ -15,14 +15,18 @@ run-ID-shaped value and a length that cannot have been cut short, and attaches t
 belongs to the same configuration), checks whether it still has an open write, and stores only the run ID in
 `active_run_id`. The guess from the run records (`other_write_in_progress`, added by `cf9f13b6`/`a50d5780`) is
 removed. The failure template gets a third variant for a holder whose write has ended. A real PostgreSQL
-integration test proves "A holds, B and C wait, C names A" and the "not known" cases.
+integration test proves "A holds, B and C wait, C names A" and the "not known" cases. It runs on every pull
+request in the existing "Product store on PostgreSQL" CI job, which already starts a PostgreSQL service
+container, and stays in the nightly job (FR-013). The web interface's failure notice links to the named run with
+the same "Open run" link the run page already uses for other runs (FR-014).
 
 ## Technical Context
 
 **Language/Version**: Python 3.11–3.13 (Sync service profile; the guard module is service-only)
 
 **Primary Dependencies**: psycopg 3 (guard session), the product store (`infrahub_sync/product_store/store.py`),
-Typer CLI (`infrahub_sync/cli.py`), Pydantic client models (`infrahub_sync/client/models.py`)
+Typer CLI (`infrahub_sync/cli.py`), Pydantic client models (`infrahub_sync/client/models.py`); the web
+interface (React and TanStack Router, `frontend/`); GitHub Actions (`.github/workflows/workflow-tests.yml`)
 
 **Storage**: PostgreSQL for the write lock; the run records are in the product store (SQLite or PostgreSQL). The
 write lock always needs PostgreSQL (`service_guard_session`).
@@ -30,20 +34,25 @@ write lock always needs PostgreSQL (`service_guard_session`).
 **Testing**: pytest. Unit tier with the scripted fake session in `tests/service/test_apply_guard.py`;
 flow tests in `tests/service/test_managed_write_guard.py`; failure template tests in
 `tests/service/test_failure_cause.py` and the shared secret-leak cases in `tests/service/failure_cases.py`; CLI
-rendering in `tests/cli/test_failure_output.py`; opt-in real PostgreSQL tests in
-`tests/integration/test_apply_guard_integration.py` (`-m integration`, `APPLY_GUARD_TEST_POSTGRESQL_DSN`).
+rendering in `tests/cli/test_failure_output.py`; real PostgreSQL tests in
+`tests/integration/test_apply_guard_integration.py` (`-m integration`, `APPLY_GUARD_TEST_POSTGRESQL_DSN`), run
+by `invoke tests.tests-product-store-postgresql`, which fails on any skip, an unset DSN or an empty selection;
+web interface tests with Vitest (`frontend/src/domain/*.test.ts`, `pnpm test`).
 
 **Target Platform**: The Sync service worker (Linux container) and the CLI.
 
 **Project Type**: Single Python package with a service, a worker and a CLI.
 
-**Performance Goals**: The holder lookup is one query, run only after the wait has already failed (SC-004).
+**Performance Goals**: At most two reads, run only after the wait has already failed: one on the lock session
+(holder and label) and one of the run records (`write_holder_state`, a single
+query, see Design step 6). Nothing is added to a write that takes the lock (SC-004).
 
 **Constraints**: No secret, database address, account name or raw label may reach the failure record, a log line
 or the CLI output. A lookup failure never replaces the contention error. The label must be set before the lock
 request.
 
-**Scale/Scope**: About six source files and six test files; one ADR decision; three documentation pages.
+**Scale/Scope**: About six source files and six test files; two web interface files and one web test; one CI
+workflow and one invoke task; one ADR decision; four documentation pages.
 
 ## Constitution Check
 
@@ -55,7 +64,7 @@ request.
 | II. Sync idempotency and safety | The lock is taken and released as before; a write still changes nothing when its wait fails. | Pass |
 | III. Pattern consistency | Reuses the guard's existing key halves (`_lock_columns`), sanitized failures (`_guard_failure`), the fixed failure templates and the existing integration tier. | Pass |
 | IV. Type safety and explicit contracts | The candidate run ID is a typed attribute of `ApplyGuardContentionError`; `active_run_id` keeps its client model type. | Pass |
-| V. Test discipline | Unit tests for parsing and every "not known" case; a real PostgreSQL test for the three-session case (FR acceptance). | Pass |
+| V. Test discipline | Unit tests for parsing and every "not known" case; a real PostgreSQL test for the three-session case, run on every pull request (FR-013); Vitest cases for the web link. | Pass |
 | VI. Security, secrets, and input boundaries | The label is untrusted input: exact prefix, run ID pattern, length limit, then confirmation in the run records. Only the run ID is stored. The secret-redaction guideline is corrected. | Pass |
 | VII. Simplicity and maintainability | No new table, no migration; the earlier guess is removed rather than kept as a fallback. | Pass |
 
@@ -85,8 +94,14 @@ dev/specs/028-write-lock-holder/
 infrahub_sync/service/apply_guard.py      # label the session; read and parse the holder's label on 55P03
 infrahub_sync/service/flow.py             # pass run_id to the guard; confirm the candidate in the run records
 infrahub_sync/service/failure_cause.py    # third template variant: holder whose write has ended
-infrahub_sync/product_store/store.py      # replace other_write_in_progress with run_write_in_progress(run_id)
+infrahub_sync/product_store/store.py      # replace other_write_in_progress with write_holder_state(run_id, config_id)
 infrahub_sync/cli.py                      # unchanged output line; check texts only
+frontend/src/domain/run-state.ts          # FailureDetail.activeRunId read from the failure record
+frontend/src/features/runs/run-notices.tsx  # "Open run" link to the named run in the failure notice
+frontend/src/domain/run-state.test.ts     # new Vitest cases for activeRunId
+.github/workflows/workflow-tests.yml      # set APPLY_GUARD_TEST_POSTGRESQL_DSN in the PostgreSQL job
+tasks/tests.py                            # add the write-lock integration tests to tests-product-store-postgresql
+docs/docs/development/guidelines/testing-tiers.md
 docs/docs/development/knowledge/apply-guard.md
 docs/docs/development/guidelines/secret-redaction.md
 docs/docs/running-a-sync.mdx
@@ -142,13 +157,15 @@ imports the product store.
 4. **Carry the candidate.** `ApplyGuardContentionError` gets `holder_run_id: str | None`, set by
    `_acquisition_failure`. Its message is unchanged.
 5. **Confirm in the run records (FR-003, FR-007).** `_active_write_run` in `flow.py` reads
-   `exc.holder_run_id`; rejects it when it equals the failing run's ID; calls `projection.lookup_run(candidate)`
-   and accepts it only when the run exists and its `config_id` equals the failing run's `config_id`. It then
-   calls `projection.run_write_in_progress(candidate)` to learn whether that run still has a claimed, open write.
-   It returns `(run_id, ended)` or `(None, False)`. Any lookup exception gives `(None, False)`.
-6. **Remove the guess (FR-008).** `other_write_in_progress` and its SQL are replaced by
-   `run_write_in_progress(run_id) -> bool` (same WHERE clause restricted to one run), on the store protocol, the
-   relational store and `ProductProjection`.
+   `exc.holder_run_id`; rejects it when it equals the failing run's ID; calls
+   `projection.write_holder_state(candidate, config_id)` (step 6) and accepts it only when the run exists and its
+   `config_id` equals the failing run's `config_id`. The same call tells whether that run still has a claimed, open write. It returns `(run_id, ended)` or `(None, False)`. Any
+   lookup exception gives `(None, False)`.
+6. **Remove the guess (FR-008), one run-record read (SC-004).** `other_write_in_progress` and its SQL are
+   replaced by `write_holder_state(run_id, config_id) -> HolderState | None` on the store protocol, the relational
+   store and `ProductProjection`. One query returns `None` when the run does not exist or belongs to another
+   configuration, otherwise whether the run still has a claimed, open write (same WHERE clause as before,
+   restricted to one run). Step 5 uses this one call instead of `lookup_run` plus a second query.
 7. **Templates (FR-007, FR-009).** `_guard_contended_template` gets a third variant when the holder's write has
    ended: the cause names the run and says its write has ended but its session still held the lock; the next
    action says the lock is released only when that run's worker stops, so the administrator of the Sync service
@@ -161,6 +178,18 @@ imports the product store.
    `tests/service/test_apply_guard.py`; update them deliberately (critique E6). The integration test repeats the
    three-session case 20 times (SC-001) and prints the server's `track_activities` setting with any "not known"
    result (critique E7).
+10. **Web interface (FR-014).** `failureDetail` in `run-state.ts` reads `active_run_id` from the failure record
+    into `FailureDetail.activeRunId` (only when it is a non-empty string). The failure notice in
+    `run-notices.tsx` adds the existing "Open run" link (`<Link to="/runs/$runId">`, as in the notice that already
+    names another run) when `activeRunId` is set. The cause and next action are the texts the service stores, so
+    the "not known" and "has ended" cases need no web-only wording. The web interface never shows a raw label;
+    it only receives the run ID. Vitest cases cover a named run, an absent field and a non-string value. This is a
+    link inside an existing notice, not a new screen, so no `emil-prototype` round is planned (research R11).
+11. **Pull-request CI (FR-013).** The "Product store on PostgreSQL" job in `workflow-tests.yml` already runs on
+    every pull request that changes Sync files, with a PostgreSQL 16 service container. It also sets
+    `APPLY_GUARD_TEST_POSTGRESQL_DSN` to the same server, and `tests-product-store-postgresql` adds
+    `tests/integration/test_apply_guard_integration.py` to its selection, so a skip fails the job. The job keeps
+    its name and the nightly job keeps its own run (research R10).
 
 ## Complexity Tracking
 

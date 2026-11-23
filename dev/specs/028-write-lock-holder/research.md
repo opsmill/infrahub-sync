@@ -66,16 +66,18 @@ All facts below were checked on branch `028-write-lock-holder` (from `fix/write-
 
 - **Decision**: Any session of the same account can run `SET application_name`. Accept the label only with the
   exact prefix and a run-ID-shaped value (R2), then confirm in the run records that the run exists and has the same
-  `config_id` as the failing run (`ProductProjection.lookup_run`). Never accept the failing run's own ID. Store
+  `config_id` as the failing run (`ProductProjection.write_holder_state`, R6). Never accept the failing run's own ID. Store
   only the run ID.
 - **Rationale**: Spec FR-003, FR-005. The run records are the authority for run IDs; the label is only a pointer.
 
 ## R6. A holder whose write has ended
 
-- **Decision**: Replace `other_write_in_progress(config_id, *, run_id)` with `run_write_in_progress(run_id) ->
-  bool`, which applies the same rule (an execution of a write purpose that a worker claimed and that has no
-  terminal verdict) to one run. When it returns `False`, the template says the run's write has ended. Do not add
-  a stored field for this; the cause and the next action carry it.
+- **Decision**: Replace `other_write_in_progress(config_id, *, run_id)` with
+  `write_holder_state(run_id, config_id) -> HolderState | None`. One query returns `None` when the run does not
+  exist or belongs to another configuration; otherwise it applies the same rule (an execution of a write purpose
+  that a worker claimed and that has no terminal verdict) to that one run and reports whether the write is still
+  open. When it is not, the template says the run's write has ended. Do not add a stored field for this; the
+  cause and the next action carry it. (Clarification 2026-11-23: one read of the run records, SC-004.)
 - **Rationale**: `ProductRun.finished_at` is not a safe signal: a run that was interrupted and is now being
   resumed already has a record from its earlier stage. The open-write rule is what commit `a50d5780` already used.
   Keeping the record's field list to `active_run_id` keeps ADR 0021's field list change minimal.
@@ -106,3 +108,34 @@ All facts below were checked on branch `028-write-lock-holder` (from `fix/write-
 
 - `failure_type` `write_guard_contended`, `active_run_id` in `FAILURE_RECORD_KEYS`, `StageFailureResource`, the
   CLI line `active run: <run_id>` (`cli.py:1588`) and the `runs resume` hint variant stay as they are.
+
+## R10. Running the PostgreSQL tests on every pull request
+
+- **Decision**: Reuse the "Product store on PostgreSQL" job of `.github/workflows/workflow-tests.yml`. It runs on
+  every pull request that changes Sync files (`needs.files-changed.outputs.sync`), starts a `postgres:16-alpine`
+  service container, sets `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, and runs `invoke tests.tests-product-store-postgresql`,
+  which fails on any skip, an unset DSN or an empty selection (`tasks/tests.py`). Set
+  `APPLY_GUARD_TEST_POSTGRESQL_DSN` to the same server in that job, and add
+  `tests/integration/test_apply_guard_integration.py` to the task's selection and its DSN check. The nightly job
+  (`.github/scripts/nightly_e2e.py`) keeps setting the DSN for its own run.
+- **Rationale**: Clarification 2026-11-23 (FR-013). The job already has the container, the gate against silent
+  skips and the trigger; a second job would duplicate them. The existing write-lock integration tests use a
+  disposable database and terminate only their own backends, so they can share the server with the product store
+  tests.
+- **Alternatives considered**: A separate job only for the write lock. Rejected: a second PostgreSQL container
+  and a second skip gate for the same trigger. Running the tests only when service files change (option C of the
+  clarification). Rejected by the clarification.
+
+## R11. Showing the holder in the web interface
+
+- **Decision**: `failureDetail` (`frontend/src/domain/run-state.ts`) reads `active_run_id` from the failure record
+  into `FailureDetail.activeRunId`, only when it is a non-empty string. The failure notice
+  (`frontend/src/features/runs/run-notices.tsx`) shows the existing "Open run" link
+  (`<Link to="/runs/$runId">`, already used by the notice that names another run) when `activeRunId` is set. The
+  cause and the next action are the texts the service stores, so the "not known" and "has ended" cases need no
+  web-only wording, and the web interface shows the same meaning as the CLI.
+- **Rationale**: Clarification 2026-11-23 (FR-014). The web interface already shows the failure's cause and next
+  action; the only missing part is the link. Reusing the existing link keeps one style for "go to another run".
+- **Alternatives considered**: A new `active_run_ended` field so the web interface can word the "ended" case
+  itself. Rejected (R6): the stored cause already says it. A prototype round with `emil-prototype`. Not planned:
+  this is one link inside an existing notice, not a new screen.

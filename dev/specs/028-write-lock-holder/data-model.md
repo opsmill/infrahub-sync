@@ -20,9 +20,9 @@ state, or in the existing failure record.
 
 ## Confirmed holder (in `flow.py`)
 
-- **Accepted when**: candidate is not the failing run's ID; `lookup_run(candidate)` finds a run; that run's
-  `config_id` equals the failing run's `config_id`.
-- **`ended`**: `not run_write_in_progress(candidate)`.
+- **Accepted when**: candidate is not the failing run's ID, and `write_holder_state(candidate, config_id)`
+  returns a state (the run exists and its `config_id` equals the failing run's `config_id`).
+- **`ended`**: the returned state says the run has no claimed, open write.
 - **Otherwise**: not known (`None`).
 
 ## Failure record of a contended write (existing, from `cf9f13b6`/`a50d5780`)
@@ -38,7 +38,15 @@ state, or in the existing failure record.
 
 | Removed | Added |
 |---|---|
-| `other_write_in_progress(config_id, *, run_id) -> str \| None` | `run_write_in_progress(run_id) -> bool` |
+| `other_write_in_progress(config_id, *, run_id) -> str \| None` | `write_holder_state(run_id, config_id) -> HolderState \| None` |
 
-Same rule for "open write": an execution whose purpose is in `WRITE_PURPOSES`, claimed by a worker, with no
+One query. `None` when the run does not exist or belongs to another configuration. `HolderState.writing` uses the
+same rule for "open write": an execution whose purpose is in `WRITE_PURPOSES`, claimed by a worker, with no
 terminal verdict.
+
+## Web interface: `FailureDetail.activeRunId`
+
+- **Where**: `frontend/src/domain/run-state.ts`, read by `failureDetail` from the run's failure record.
+- **Type**: `string | undefined`; set only when `active_run_id` is a non-empty string.
+- **Used by**: the failure notice in `frontend/src/features/runs/run-notices.tsx`, which links to
+  `/runs/$runId` with that ID.
