@@ -1,0 +1,59 @@
+tests/service/test_account_presentation.py
+  s_7b1f8b6ee684e7::t_7ad1e88e0b6b2b 651
+tests/dev_stack/smoke/test_config_lifecycle.py
+  s_7b1f8b6ee684e7::t_5f688dcdfd8f99 199,208,210-212,258,284-286,324
+infrahub_sync/client/client.py
+  s_7b1f8b6ee684e7::t_bd7a7b18f6ec6e 60,265-266,268-274,276,278,280,282-286,288
+infrahub_sync/service/health.py
+  s_7b1f8b6ee684e7::t_640016dea77406 44,200-202,204-205
+tests/client/test_not_sync_api.py
+  s_7b1f8b6ee684e7::t_6d8e9a94b37932 49-50,52,55-56
+tests/service/test_liveness_policy.py
+  s_7b1f8b6ee684e7::t_2af70e9f5fc29b 783,787
+  s_7b1f8b6ee684e7::t_640016dea77406 582,605-606,746,848,887,890-892,895
+tests/compose/test_lifecycle.py
+  s_7b1f8b6ee684e7::t_1a1daf305f9471 36,46,125
+tests/service/test_web_site.py
+  s_7b1f8b6ee684e7::t_7ad1e88e0b6b2b 280,283,287
+  s_7b1f8b6ee684e7::t_4111d575dc2f43 456-462
+  s_7b1f8b6ee684e7::t_d0df2edcbda240 463-464
+tests/client/test_client.py
+  s_7b1f8b6ee684e7::t_6d8e9a94b37932 56-71,272,314,331,520-521,525-538,540-561,576-609
+  s_7b1f8b6ee684e7::t_c303c57bed4cfb 522-523,539
+  s_7b1f8b6ee684e7::t_01a7b24d61ca36 524
+dev/specs/029-api-health/tasks.md
+  s_7b1f8b6ee684e7::t_e136a3f4fc6729 107-109,111,115-118
+tests/dev_stack/smoke/test_evidence.py
+  s_7b1f8b6ee684e7::t_5f688dcdfd8f99 69
+tests/compose/lifecycle.py
+  s_7b1f8b6ee684e7::t_1a1daf305f9471 205-212,247-268,270-271
+docs/docs/compose-deployment.mdx
+  s_7b1f8b6ee684e7::t_7495a9dc9befed 1147
+docs/docs/reference/python-api.mdx
+  s_7b1f8b6ee684e7::t_7495a9dc9befed 38
+infrahub_sync/service/web.py
+  s_7b1f8b6ee684e7::t_de90718d0bdfa9 4,47,223
+tests/service/test_http_api.py
+  s_7b1f8b6ee684e7::t_7ad1e88e0b6b2b 1909
+tasks/dev.py
+  s_7b1f8b6ee684e7::t_b4e9778e28a10d 36,1006,1008-1012,1016-1017,1019,1022-1031,1033-1034,1175
+tests/dev_stack/test_deps_mode.py
+  s_7b1f8b6ee684e7::t_c912cb5852a77c 460,462-464,468,470,480,482-483,487-489
+  s_7b1f8b6ee684e7::t_455e906c08036e 117-134,136,140-141,148,446,454,459,461,465-467,471-479,481,484-486,494,499-511,517-518
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b325f4f8be664c119a0d2ea5ced2584008c22671",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
