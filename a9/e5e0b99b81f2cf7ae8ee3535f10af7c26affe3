@@ -1,0 +1,40 @@
+frontend/src/features/credentials/CredentialDelete.tsx
+  s_58b527396c8cb5::t_7e2f36c4997434 3,75-78,86-87,105-107
+  s_58b527396c8cb5::t_5d9fb2788f8292 1-2,4-74,79-85,88-104,108-182
+frontend/src/features/credentials/CredentialsPage.tsx
+  s_58b527396c8cb5::t_4898344d965695 1-8,10-368
+  s_58b527396c8cb5::t_027cee17ea730c 9
+frontend/src/features/runs/CredentialsUsed.tsx
+  s_58b527396c8cb5::t_027cee17ea730c 76-80,145-146
+  s_58b527396c8cb5::t_6967e7eceee817 1-75,81-144,147-154
+frontend/src/routes/credentials.tsx
+  s_58b527396c8cb5::t_bb1d64d6588e6f 1-14
+frontend/src/features/credentials/fields.ts
+  s_58b527396c8cb5::t_2f2dedb4c822a0 1-41,43-55
+  s_58b527396c8cb5::t_fded25154b0f9a 42
+frontend/src/features/runs/RunPage.tsx
+  s_58b527396c8cb5::t_82e4ac4c4f3357 47,676
+frontend/src/features/credentials/CredentialForm.tsx
+  s_58b527396c8cb5::t_0891958c6924af 1-422
+frontend/src/routes/__root.tsx
+  s_58b527396c8cb5::t_ef1f7d32537a86 387-389,392,512-520
+  s_58b527396c8cb5::t_1034d6efe38a37 521
+frontend/src/routeTree.gen.ts
+  s_58b527396c8cb5::t_ef1f7d32537a86 15,35-39,60,69,79,90,99,108,118,147-153,182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a9e5e0b99b81f2cf7ae8ee3535f10af7c26affe3",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
