@@ -61,3 +61,26 @@ Compose variables caused:
   `compose`-marked test ran either; on a machine where no other stack runs, the command is
   `uv run pytest tests/compose -m compose`. Only the development Compose file was rendered with
   `docker compose config`; the root file needs its required passwords set to render.
+
+## T042: User Story 3 gate, web interface (2026-11-23)
+
+- `frontend/src/api/types.generated.ts` was regenerated with `openapi-typescript` (the tool that
+  `pnpm codegen:openapi` runs) from the OpenAPI document of `create_app(...)` built from this
+  branch's code, written to a file with `app.openapi()`. No running Sync API was used. The
+  difference to the previous file is limited to `/status` becoming `/health`, the removal of
+  `ServiceStatusResource` and `WorkerStatusResource`, and the addition of `HealthResource`,
+  `DependencyHealthResource`, `WorkersHealthResource` and `WorkerHealthResource`. No test or CI
+  job compares the generated types with the backend schema.
+- `cd frontend && pnpm test`: 15 files, 419 tests passed at 2026-11-23T22:55:44Z (the baseline
+  was 13 files and 410 tests; the new files are `src/domain/worker-state.test.ts` and
+  `src/api/health-query.test.ts`).
+- `pnpm lint` and `pnpm check` (Biome): 125 files checked, no findings.
+- `pnpm build` failed before and after this change with `Can't resolve '@infrahub/ui/styles.css'`:
+  the `frontend/vendor/infrahub` submodule is not initialized in this worktree. `pnpm typecheck`
+  fails for the same reason; it reports no error in a line this change touched.
+- `uv run pytest tests -q -m "not integration and not smoke and not docker and not compose"`:
+  11264 passed, 12 skipped, 629 deselected, 2 xfailed, started at 2026-11-23T22:56:07Z.
+- `uv run invoke lint` exited 0; its 31 ty warnings are unused `ty: ignore` comments in files
+  this change does not touch. `uv run ruff check .` passed.
+- Not run: the web interface in a browser against a Sync API built from this branch. The running
+  development stack belongs to another worktree and session.

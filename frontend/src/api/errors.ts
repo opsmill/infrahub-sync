@@ -1,4 +1,4 @@
-import type { ApiErrorBody } from "./types";
+import type { ApiErrorBody, HealthReport } from "./types";
 
 /** A GET request the Sync API has not answered after this time is aborted. */
 export const REQUEST_TIMEOUT_MS = 20_000;
@@ -11,6 +11,22 @@ export function isEnvelope(value: unknown): value is ApiErrorBody {
     "error" in value &&
     typeof value.error === "object" &&
     value.error !== null
+  );
+}
+
+/**
+ * True for the body of `GET /health`, which the Sync API also sends with a 503 when a component is
+ * down. Only the fields the page reads are checked.
+ */
+export function isHealthReport(value: unknown): value is HealthReport {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "status" in value &&
+    "workers" in value &&
+    "timestamp" in value &&
+    typeof value.workers === "object" &&
+    value.workers !== null
   );
 }
 
