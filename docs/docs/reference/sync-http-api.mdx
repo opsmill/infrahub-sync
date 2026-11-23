@@ -355,12 +355,17 @@ server-discovery routes. They intentionally disclose neither a configured work-p
 name, worker or run identity, credential, nor Prefect endpoint. All run and
 configuration routes remain bearer-authenticated.
 
-`GET /version` returns the installed server version and the currently supported
-unstable API identifier:
+`GET /version` returns the installed server version, the currently supported
+unstable API identifier, and the installed Infrahub SDK version:
 
 ```json
-{"server_version":"<installed version>","api_versions":["v3-unstable"],"stability":"unstable"}
+{"server_version":"<installed version>","api_versions":["v3-unstable"],"stability":"unstable","sdk_version":"<installed infrahub-sdk version>"}
 ```
+
+`sdk_version` is the version of the `infrahub-sdk` package installed in the `sync-api`
+container. It is `null` when the service cannot read that package's metadata, or when
+the metadata does not hold a valid version. A Sync API
+older than this field does not return it.
 
 It is a discovery resource only. This server does not yet reject clients based on a
 claimed compatibility range.
