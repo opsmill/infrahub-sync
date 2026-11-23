@@ -20,7 +20,9 @@ import psycopg
 
 from infrahub_sync.service.apply_guard import (
     DEFAULT_DEADLINE_SECONDS,
+    GUARD_LABEL_PREFIX,
     MAX_DEADLINE_SECONDS,
+    MAX_GUARD_LABEL_BYTES,
     MIN_DEADLINE_SECONDS,
     ApplyGuard,
     ApplyGuardContentionError,
@@ -29,9 +31,12 @@ from infrahub_sync.service.apply_guard import (
     ApplyGuardOwnershipError,
     ApplyGuardReleaseError,
     ApplyGuardUnavailableError,
+    _guard_failure,  # noqa: PLC2701 - the failure builder under test is private.
+    _holder_run_id,  # noqa: PLC2701 - the label parser under test is private.
     advisory_lock_key,
     deadline_milliseconds,
     dsn_secret_values,
+    guard_label,
     hold_apply_guard,
 )
 
@@ -871,3 +876,74 @@ def test_a_close_failure_after_a_confirmed_unlock_leaves_the_guard_permanently_r
     assert hold.guard is not None
     assert hold.guard.retired is True
     assert session.close_calls == 1
+
+
+# --- Write-lock session label (spec 028) ---------------------------------------------
+
+_GENERATED_RUN_ID = "20261123T1012-3fa1b2c4"
+
+
+def test_holder_run_id_reads_a_generated_run_id_after_the_exact_prefix() -> None:
+    assert _holder_run_id(f"infrahub-sync-guard:{_GENERATED_RUN_ID}") == _GENERATED_RUN_ID
+
+
+def test_guard_label_round_trips_a_generated_run_id() -> None:
+    label = guard_label(_GENERATED_RUN_ID)
+    assert label == f"{GUARD_LABEL_PREFIX}{_GENERATED_RUN_ID}"
+    assert _holder_run_id(label) == _GENERATED_RUN_ID
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        pytest.param(f"infrahub-sync-guards:{_GENERATED_RUN_ID}", id="wrong-prefix"),
+        pytest.param(f"Infrahub-sync-guard:{_GENERATED_RUN_ID}", id="prefix-case"),
+        pytest.param(_GENERATED_RUN_ID, id="no-prefix"),
+        pytest.param("", id="empty"),
+        pytest.param(GUARD_LABEL_PREFIX, id="prefix-only"),
+        pytest.param(None, id="none"),
+        pytest.param(b"infrahub-sync-guard:20261123T1012-3fa1b2c4", id="bytes"),
+        pytest.param(42, id="int"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}run 1", id="space"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}run=1", id="equals"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}{_GENERATED_RUN_ID}\n", id="trailing-newline"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}-run", id="leading-dash"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}{'a' * 43}", id="63-bytes"),
+    ],
+)
+def test_holder_run_id_rejects_a_label_that_is_not_well_formed(label: object) -> None:
+    assert _holder_run_id(label) is None
+
+
+def test_holder_run_id_accepts_a_label_of_exactly_62_bytes() -> None:
+    run_id = "a" * (MAX_GUARD_LABEL_BYTES - len(GUARD_LABEL_PREFIX))
+    assert _holder_run_id(f"{GUARD_LABEL_PREFIX}{run_id}") == run_id
+
+
+@pytest.mark.parametrize("length", [43, 44, 128])
+def test_guard_label_refuses_a_run_id_of_43_or_more_characters(length: int) -> None:
+    assert guard_label("a" * length) is None
+
+
+def test_guard_label_writes_a_run_id_of_42_characters() -> None:
+    label = guard_label("a" * 42)
+    assert label is not None
+    assert len(label.encode("utf-8")) == MAX_GUARD_LABEL_BYTES
+
+
+@pytest.mark.parametrize("run_id", ["", "run 1", "run=1", "-run", "r\u00e9sum\u00e9"])
+def test_guard_label_refuses_a_run_id_outside_the_pattern(run_id: str) -> None:
+    assert guard_label(run_id) is None
+
+
+def test_contention_error_has_no_holder_run_id_by_default() -> None:
+    assert ApplyGuardContentionError("contended").holder_run_id is None
+
+
+def test_guard_failure_carries_a_holder_run_id_on_contention_only() -> None:
+    contended = _guard_failure(ApplyGuardContentionError, "contended", None, (), holder_run_id=_GENERATED_RUN_ID)
+    assert isinstance(contended, ApplyGuardContentionError)
+    assert contended.holder_run_id == _GENERATED_RUN_ID
+    assert str(contended) == "contended"
+    unavailable = _guard_failure(ApplyGuardUnavailableError, "unavailable", None, (), holder_run_id=_GENERATED_RUN_ID)
+    assert not hasattr(unavailable, "holder_run_id")

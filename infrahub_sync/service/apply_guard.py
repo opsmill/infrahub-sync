@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -33,6 +34,7 @@ from psycopg import conninfo
 from typing_extensions import LiteralString
 
 from infrahub_sync.execution import MIN_SECRET_LENGTH, collect_secret_values, sanitize_exception_chain
+from infrahub_sync.product_store.models import _IDENTIFIER_PATTERN
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -42,6 +44,16 @@ ADVISORY_KEY_PREFIX = "infrahub-sync:apply:v1:"
 DEFAULT_DEADLINE_SECONDS = 30.0
 MIN_DEADLINE_SECONDS = 0.001
 MAX_DEADLINE_SECONDS = 300.0
+
+# The write-lock session label: this prefix followed by the holding run's ID. A label
+# longer than 62 bytes is never written and never accepted, because PostgreSQL
+# truncates `application_name` at `NAMEDATALEN - 1` (63 bytes in a standard build),
+# so a 63-byte label may be the cut-off form of a longer one.
+GUARD_LABEL_PREFIX = "infrahub-sync-guard:"
+MAX_GUARD_LABEL_BYTES = 62
+# The run records' identifier pattern. `fullmatch` rather than `match`, because `$`
+# also matches before a trailing newline.
+_RUN_ID = re.compile(_IDENTIFIER_PATTERN)
 
 _LOCK_NOT_AVAILABLE = "55P03"
 _OID_MASK = 0xFFFFFFFF
@@ -90,7 +102,16 @@ class ApplyGuardUnavailableError(ApplyGuardError):
 
 
 class ApplyGuardContentionError(ApplyGuardError):
-    """Another writer held the configuration's key for the whole deadline."""
+    """Another writer held the configuration's key for the whole deadline.
+
+    `holder_run_id` is a candidate run ID parsed from the holding session's label, or
+    `None` when the label is absent, unreadable, or not well formed. It is not
+    confirmed against the run records.
+    """
+
+    def __init__(self, message: str, *, holder_run_id: str | None = None) -> None:
+        super().__init__(message)
+        self.holder_run_id = holder_run_id
 
 
 class ApplyGuardOwnershipError(ApplyGuardError):
@@ -138,6 +159,41 @@ def deadline_milliseconds(seconds: float) -> int:
     if not MIN_DEADLINE_SECONDS <= seconds <= MAX_DEADLINE_SECONDS:
         _fail(ApplyGuardDeadlineError(_DEADLINE_REFUSED))
     return math.ceil(seconds * 1000)
+
+
+def guard_label(run_id: str) -> str | None:
+    """Return the session label that names `run_id`, or `None` when it cannot be written.
+
+    The label is written only when the run ID matches the run records' identifier
+    pattern and the whole label is at most `MAX_GUARD_LABEL_BYTES` bytes, so a label
+    that is written can always be parsed back to the same run ID.
+    """
+    if _RUN_ID.fullmatch(run_id) is None:
+        return None
+    label = GUARD_LABEL_PREFIX + run_id
+    if len(label.encode("utf-8")) > MAX_GUARD_LABEL_BYTES:
+        return None
+    return label
+
+
+def _holder_run_id(label: object) -> str | None:
+    """Parse the holding run's ID from one untrusted session label.
+
+    Any session of the same database account can set its own label, so the label is
+    accepted only when it is a `str` of at most `MAX_GUARD_LABEL_BYTES` UTF-8 bytes,
+    starts with the exact prefix, and the rest matches the run ID pattern. The raw
+    label never leaves this function, so it cannot reach a message or a record.
+    """
+    if not isinstance(label, str):
+        return None
+    if len(label.encode("utf-8", errors="surrogatepass")) > MAX_GUARD_LABEL_BYTES:
+        return None
+    if not label.startswith(GUARD_LABEL_PREFIX):
+        return None
+    run_id = label[len(GUARD_LABEL_PREFIX) :]
+    if _RUN_ID.fullmatch(run_id) is None:
+        return None
+    return run_id
 
 
 def dsn_secret_values(dsn: str) -> tuple[str, ...]:
@@ -374,9 +430,18 @@ def _guard_failure(
     message: str,
     cause: BaseException | None,
     secrets: Sequence[str],
+    *,
+    holder_run_id: str | None = None,
 ) -> ApplyGuardError:
-    """Build one guard failure whose cause chain is a redacted, rebuilt copy."""
-    error = error_type(message)
+    """Build one guard failure whose cause chain is a redacted, rebuilt copy.
+
+    `holder_run_id` applies only to a contention failure; it is ignored otherwise.
+    """
+    error = (
+        ApplyGuardContentionError(message, holder_run_id=holder_run_id)
+        if error_type is ApplyGuardContentionError
+        else error_type(message)
+    )
     error.__cause__ = None if cause is None else sanitize_exception_chain(cause, secrets)
     error.__suppress_context__ = True
     return error

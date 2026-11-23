@@ -27,7 +27,7 @@ Stories 1 and 2, FR-013), unit tests for every "not known" case, and Vitest case
 
 ## Phase 2: Foundational (blocks every user story)
 
-- [ ] T002 In `infrahub_sync/service/apply_guard.py`, add the label constants and parser: `GUARD_LABEL_PREFIX =
+- [X] T002 In `infrahub_sync/service/apply_guard.py`, add the label constants and parser: `GUARD_LABEL_PREFIX =
   "infrahub-sync-guard:"`, `MAX_GUARD_LABEL_BYTES = 62`, a run ID pattern equal to
   `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (import it from `infrahub_sync/product_store/models.py` if it can be
   imported without a cycle, otherwise duplicate it with a comment naming the source), `guard_label(run_id) -> str |
@@ -35,9 +35,9 @@ Stories 1 and 2, FR-013), unit tests for every "not known" case, and Vitest case
   `_holder_run_id(label: object) -> str | None` (returns the run ID only when `label` is a `str`, its UTF-8 length
   is at most 62 bytes, it starts with the exact prefix, and the rest matches the pattern; the raw label never
   leaves this function).
-- [ ] T003 In `infrahub_sync/service/apply_guard.py`, add `holder_run_id: str | None = None` to
+- [X] T003 In `infrahub_sync/service/apply_guard.py`, add `holder_run_id: str | None = None` to
   `ApplyGuardContentionError` (keep its message `_CONTENDED` unchanged) and let `_guard_failure` callers set it.
-- [ ] T004 [P] Unit tests for T002 in `tests/service/test_apply_guard.py`: exact prefix and a generated run ID
+- [X] T004 [P] Unit tests for T002 in `tests/service/test_apply_guard.py`: exact prefix and a generated run ID
   (`20261123T1012-3fa1b2c4`) give the run ID; wrong prefix, empty, `None`, a non-`str`, a run ID with a space or
   `=`, and a 63-byte label give `None`; `guard_label` returns `None` for a run ID of 43 or more characters.
 
