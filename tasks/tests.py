@@ -42,20 +42,23 @@ def tests_integration(context: Context) -> None:
 
 @task
 def tests_product_store_postgresql(context: Context) -> None:
-    """Run the product store's and the admission race's PostgreSQL integration tests and fail if any is skipped.
+    """Run the PostgreSQL integration tests of the product store, the admission race and the write lock.
 
-    Requires ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``. Plain ``pytest -m integration`` skips these
-    tests when the driver or server is missing; this task turns every skip, an unset DSN, and an
-    empty selection into a failure. See docs/docs/development/guidelines/testing-tiers.md.
+    Requires ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` and ``APPLY_GUARD_TEST_POSTGRESQL_DSN``; both may
+    name the same disposable server. Plain ``pytest -m integration`` skips these tests when the
+    driver or server is missing; this task turns every skip, an unset DSN, and an empty selection
+    into a failure. See docs/docs/development/guidelines/testing-tiers.md.
     """
-    if not os.environ.get("PRODUCT_STORE_TEST_POSTGRESQL_DSN"):
-        print("PRODUCT_STORE_TEST_POSTGRESQL_DSN is not set; refusing to run without a PostgreSQL server.")
-        raise Exit(code=1)
+    for name in ("PRODUCT_STORE_TEST_POSTGRESQL_DSN", "APPLY_GUARD_TEST_POSTGRESQL_DSN"):
+        if not os.environ.get(name):
+            print(f"{name} is not set; refusing to run without a PostgreSQL server.")
+            raise Exit(code=1)
     with tempfile.TemporaryDirectory() as directory:
         report = Path(directory) / "junit.xml"
         with context.cd(MAIN_DIRECTORY):
             result = context.run(
                 "pytest -m integration tests/product_store tests/service/test_apply_versus_verify_race.py "
+                "tests/integration/test_apply_guard_integration.py "
                 f"-p no:cacheprovider -q --no-cov -rs --junitxml={shlex.quote(str(report))}",
                 warn=True,
                 pty=True,

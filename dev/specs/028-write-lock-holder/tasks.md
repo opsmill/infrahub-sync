@@ -107,11 +107,11 @@ in the web interface, and the real PostgreSQL test runs on every pull request.
 
 ### Pull-request CI (FR-013)
 
-- [ ] T015 [P] [US1] In `tasks/tests.py`, extend `tests_product_store_postgresql`: refuse to run when
+- [X] T015 [P] [US1] In `tasks/tests.py`, extend `tests_product_store_postgresql`: refuse to run when
   `APPLY_GUARD_TEST_POSTGRESQL_DSN` is unset (same message style as the existing DSN check), add
   `tests/integration/test_apply_guard_integration.py` to the pytest selection, and update its docstring. The task
   still fails on any skip, an unset DSN or an empty selection.
-- [ ] T016 [US1] In `.github/workflows/workflow-tests.yml`, job `product-store-postgresql`, set
+- [X] T016 [US1] In `.github/workflows/workflow-tests.yml`, job `product-store-postgresql`, set
   `APPLY_GUARD_TEST_POSTGRESQL_DSN` to the same value as `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, and update the job's
   comment to say it also runs the write-lock integration tests. Keep the job name, the trigger
   (`needs.files-changed.outputs.sync`) and the service container unchanged. Leave `.github/scripts/nightly_e2e.py`
