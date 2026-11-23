@@ -9,23 +9,28 @@ procedure in the [Compose deployment guide](../compose-deployment).
 
 ## Check health and status
 
-Run `docker compose ps` to see each container and the health of PostgreSQL, the object
-store, and Prefect. Then ask the Sync API whether a worker is live:
+Run `docker compose ps` to see each container and its health. The `sync-worker`
+container turns `unhealthy` when the worker process stops running, for example when it
+is paused or hung. Then ask the Sync API whether its components are up and a worker is
+live:
 
 ```sh
-curl -s http://127.0.0.1:8001/api/status
+curl -s http://127.0.0.1:8001/api/health
 ```
 
-The response's `worker.state` is one of three values:
+The answer is `200` with `status` `healthy`, or `503` with `status` `unhealthy`:
 
-| `worker.state` | Meaning | Next action |
+| What the response shows | Meaning | Next action |
 | --- | --- | --- |
-| `ready` | A registered worker sends heartbeats and can take a run. | None. A live worker does not check a registered source or destination. |
-| `busy` | A registered worker sends heartbeats and is running work. | None. |
-| `no-live-worker` | No worker has sent a heartbeat recently. A stopped, paused, or hung worker causes this state. | Read the worker logs, then run `docker compose restart sync-api sync-worker`. |
+| `status` is `healthy` | Every component is up and at least one worker is live. | None. A live worker does not check a registered source or destination. |
+| An entry of `dependencies` is `down` | That component cannot be reached or cannot serve requests; its `error` names the reason. In Compose, `database` and `task_manager_db` are both in the `postgres` service, so they go down together. | Read the logs of that service, then start it again with `docker compose up -d --wait`. |
+| `workers.live_workers` is below `workers.minimum` | No worker, or too few, has sent a heartbeat recently. A stopped, paused or hung worker causes this. | Read the worker logs, then run `docker compose restart sync-api sync-worker`. |
+| `workers.state` is `unknown` | The Sync API could not read the work pool from Prefect. | Check `task_manager` and `task_manager_db` first. |
 
-If no container is running at all, run `docker compose up -d --wait`. See the
-[status procedure](../compose-deployment#status) for the details of each state.
+A worker listed as `stale` after a restart is the record of the previous worker and does
+not make the answer `503`. If no container is running at all, run
+`docker compose up -d --wait`. See the [status procedure](../compose-deployment#status)
+for every field and error category.
 
 `docker compose logs --no-color --tail 200` prints the last 200 lines of each service.
 Credentials are removed from run failures before they are printed. See the
@@ -48,7 +53,7 @@ Before planned maintenance, ask everyone who submits runs to this deployment to 
 submitting new runs. Then check each run you know of with
 `infrahub-sync runs show RUN_ID`, and wait until its
 `execution_state` is `completed`, `failed`, `cancelled`, `abandoned`, or `interrupted`.
-A `ready` worker says nothing about runs still executing. If you cannot account for
+A live worker says nothing about runs still executing. If you cannot account for
 every submitted run, postpone the maintenance.
 
 After you resume the deployment,

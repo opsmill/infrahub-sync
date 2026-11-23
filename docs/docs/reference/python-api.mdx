@@ -42,6 +42,12 @@ The first protected operation checks `/version` before sending the bearer token.
 requires the server to declare `v3-unstable` and caches a successful compatibility check for that
 client instance.
 
+`get_health()` reads `GET /api/health` without a token. It returns a `HealthResource` for both a
+`200` and a `503` answer, so read `health.status` (`healthy` or `unhealthy`), `health.dependencies`
+and `health.workers` to find the cause. A `503` that carries an error envelope instead of a report
+raises `APIError`; any other answer raises `ProtocolError`. See
+[`GET /health`](./sync-http-api.mdx#get-health) for every field.
+
 ## Register and inspect configurations
 
 Configuration mutations require an idempotency key. A reason is optional; when given, it is

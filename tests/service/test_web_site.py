@@ -269,7 +269,7 @@ def test_head_of_a_page_path_answers_the_entry_page_headers(site: TestClient) ->
 
 
 # Row 6: anything else.
-@pytest.mark.parametrize("path", ["/version", "/status", "/runs", "/favicon.png"])
+@pytest.mark.parametrize("path", ["/version", "/health", "/runs", "/favicon.png"])
 def test_a_program_outside_api_gets_the_envelope(site: TestClient, path: str) -> None:
     response = site.get(path, headers=JSON)
 

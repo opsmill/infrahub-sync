@@ -200,6 +200,28 @@ differs from the request's; the HTTP layer returns `422 invalid-cursor`. `valida
 the limits in `client/models.py` (`DEFAULT_LIMIT` 50, `MAX_LIMIT` 200). ADR 0032 records the
 paging rules.
 
+Two service modules report the health of a deployment (spec 029,
+[ADR 0055](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0055-the-health-endpoint-replaces-status.md)):
+
+- `health.py` builds the answer of `GET /api/health`. `HealthChecker` runs the four component
+  checks (`database_check`, `object_store_check`, `task_manager_check`,
+  `task_manager_db_check`) and the read of the work pool at the same time, each under
+  `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`, and reuses the report of a round for one second after it
+  ended. `classify_error` maps a failure to one of seven categories; it reads the error text only
+  to choose a category and never logs or returns it. `workers_health` lists the workers with a
+  heartbeat in the last 24 hours, decides `live` or `stale` with `worker_is_live` from
+  `orchestration.py`, and shows a name that is not `infrahub-sync-worker-<uuid>` as `other`.
+  `overall_status` applies `INFRAHUB_SYNC_HEALTH_MIN_WORKERS`.
+- `worker_alive.py` holds the worker's alive file. `run_alive_writer` writes
+  `<epoch seconds> <interval seconds>` to `$TMPDIR/infrahub-sync-worker-alive` every heartbeat
+  interval, on a timer that calls no other service. `WORKER_HEALTHCHECK_COMMAND` is the
+  standard-library command that the `sync-worker` health check of both Compose files runs; a test
+  checks that both files carry exactly that text.
+
+`worker_is_live` in `orchestration.py` is the only copy of the worker liveness rule: Prefect
+reports the worker online and its last heartbeat is within `max(3 × heartbeat interval, 30)`
+seconds. The health report and `_owner_is_fresh` in `liveness.py` both call it.
+
 Each worker publishes the names of its set credential variables to the `worker_environments`
 table on each poll, through `service.storage.service_product_projection`.
 

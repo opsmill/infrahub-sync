@@ -98,7 +98,7 @@ its containers, so after a code change run `uv run invoke dev.restart`.
 
 ```bash
 curl -sf http://127.0.0.1:8001/api/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/api/status
+curl -sf http://127.0.0.1:8001/api/health
 ```
 
 The `sync` preset starts with no source and no destination, and `infrahub` adds an empty local

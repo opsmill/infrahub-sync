@@ -67,7 +67,7 @@ S3 credentials use Boto3's standard credential-provider chain.
 
 Every caller of the Sync API acts as an account stored in the product database. A request
 presents an API token or a session token in `Authorization: Bearer <token>`, except to
-`POST /auth/sign-in`, `GET /status` and `GET /version`, which take no token. A person gets a
+`POST /auth/sign-in`, `GET /health` and `GET /version`, which take no token. A person gets a
 session token by signing in with the account name and password. A script uses an API token
 that an account created.
 
@@ -348,11 +348,11 @@ of the application. They do not replace transport security.
 Open `http://127.0.0.1:8000/api/docs`, select **Authorize**, and enter an API token or a
 session token without the `Bearer` prefix. Swagger UI adds the complete `Authorization` header.
 
-## Discovery and liveness
+## Discovery and health
 
-`GET /status` and `GET /version` are the two unauthenticated lifecycle and
-server-discovery routes. They intentionally disclose neither a configured work-pool
-name, worker or run identity, credential, nor Prefect endpoint. All run and
+`GET /health` and `GET /version` are the two unauthenticated lifecycle and
+server-discovery routes. They disclose neither a configured work-pool
+name, run identity, credential, nor Prefect endpoint. All run and
 configuration routes remain bearer-authenticated.
 
 `GET /version` returns the installed server version, the currently supported
@@ -370,28 +370,129 @@ older than this field does not return it.
 It is a discovery resource only. This server does not yet reject clients based on a
 claimed compatibility range.
 
-`GET /status` describes the configured work pool without exposing its identity:
+### `GET /health`
+
+`GET /health` reports whether the Sync API can serve requests: it checks the four components
+that the Sync API depends on and reads the work pool. It takes no parameter, no body and no
+token. `GET /api` and `GET /api/` redirect to it with `307`.
+
+| Status | When |
+| --- | --- |
+| `200` | `status` is `healthy`: every component is `up`, the work pool was read, and at least `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` workers are live. |
+| `503` | `status` is `unhealthy`: any other case. |
+
+Both answers carry the same JSON body, `Content-Type: application/json` and
+`Cache-Control: no-store`. The body never contains a host name, an IP address, a credential
+name or value, an error message or the Sync version. If the route itself fails, the answer is
+the `503` `service-unavailable` error envelope instead of a report.
 
 ```json
 {
-  "service": "ready",
-  "worker": {
-    "state": "ready",
-    "detail_available": true,
+  "status": "healthy",
+  "dependencies": [
+    {"name": "database", "status": "up", "error": "none"},
+    {"name": "object_store", "status": "up", "error": "none"},
+    {"name": "task_manager", "status": "up", "error": "none"},
+    {"name": "task_manager_db", "status": "up", "error": "none"}
+  ],
+  "workers": {
+    "state": "known",
+    "minimum": 1,
     "live_workers": 1,
     "queue_depth": 0,
-    "observed_at": "2026-08-29T12:00:00+00:00"
-  }
+    "items": [
+      {
+        "name": "infrahub-sync-worker-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11",
+        "state": "live",
+        "last_heartbeat": "2026-11-23T10:15:02Z"
+      },
+      {
+        "name": "infrahub-sync-worker-8b1d7e40-2c9f-4e0a-a6b3-5f2e9c7d1b08",
+        "state": "stale",
+        "last_heartbeat": "2026-11-23T09:41:57Z"
+      }
+    ]
+  },
+  "timestamp": "2026-11-23T10:15:09Z"
 }
 ```
 
-The worker state is `ready` when at least one fresh ONLINE worker has no queued
-runs, `busy` when one is fresh and the queue is non-empty, and `no-live-worker`
-when pool detail was read but no worker is fresh. A fresh worker has a heartbeat no
-older than `max(3 × heartbeat interval, 30 seconds)`. If Prefect cannot provide a
-usable pool result, the state is `unavailable`, `detail_available` is `false`, and
-`live_workers`, `queue_depth`, and `observed_at` are all `null`. This value-free
-response does not expose provider errors or values.
+In this example the second worker is the record of a worker that ran before a restart. A
+stale worker is listed and does not change `status`.
+
+The fields of the report:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `healthy` or `unhealthy`, as the table of status codes above describes. |
+| `dependencies` | Exactly four entries, always in this order: `database` (the product database in PostgreSQL), `object_store` (the S3-compatible bucket), `task_manager` (the Prefect server) and `task_manager_db` (the database of the Prefect server, as the Prefect server reports it). |
+| `dependencies[].status` | `up`, or `down` when the check failed or did not end within `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` seconds. |
+| `dependencies[].error` | `none` when the component is `up`; otherwise one of the error categories below. |
+| `workers.state` | `known` when the work pool was read; `unknown` when it could not be read within the time limit. `unknown` makes the answer `503`. |
+| `workers.minimum` | The value of `INFRAHUB_SYNC_HEALTH_MIN_WORKERS`. |
+| `workers.live_workers` | The number of listed workers whose state is `live`. `null` when `workers.state` is `unknown`. |
+| `workers.queue_depth` | The number of runs that are due and that no worker has claimed. `null` when `workers.state` is `unknown`. |
+| `workers.items` | The workers of the pool that sent a heartbeat in the last 24 hours, newest heartbeat first, then by name. Empty when `workers.state` is `unknown`. |
+| `workers.items[].name` | The worker name `infrahub-sync-worker-<uuid>` that the Sync worker registers at each start, or `other` for a worker of the pool with any other name. |
+| `workers.items[].state` | `live` when the Prefect server reports the worker online and its last heartbeat is no older than `max(3 × heartbeat interval, 30 seconds)`; `stale` otherwise. |
+| `workers.items[].last_heartbeat` | The time of the worker's last heartbeat. |
+| `timestamp` | When the round of checks started. |
+
+The error categories of `dependencies[].error`:
+
+| Category | Meaning |
+| --- | --- |
+| `none` | The component is up. |
+| `timeout` | No answer within `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` seconds. A paused container gives this. |
+| `connection_refused` | The address was reached, but nothing listens on the port. |
+| `connection_closed` | The connection was opened and then closed by the other side. |
+| `name_resolution_failed` | The host name does not resolve. A stopped Compose container gives this. |
+| `unavailable` | The component answered but cannot serve requests: a Prefect `503`, a missing bucket, refused object-store credentials or a refused database login. |
+| `unknown_error` | Any other failure. |
+
+Two settings of the API process control the checks. A value outside its range stops the Sync
+API at start with a message that names the variable.
+
+| Variable | Default | Rule |
+| --- | --- | --- |
+| `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` | `3` | The number of seconds that each component check and the read of the work pool may take. A whole number from 1 to 60. |
+| `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` | `1` | The answer is `503` when fewer workers than this number are live. A whole number of at least 1. |
+
+All checks of one round run at the same time, so a round takes at most about
+`INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` seconds. Each API process reuses the result of a round for
+one second after the round ended, so many callers that poll at the same time cause at most one
+round per second.
+
+Use `GET /health` as a readiness signal for monitoring and alerting, not as a liveness probe
+that restarts the Sync API. The components are shared: when PostgreSQL or the Prefect server
+stops, every Sync API process answers `503`, and a liveness probe would restart all of them
+without fixing the cause. Set the probe's own timeout above
+`INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`, so that a slow component is reported as `down` in the
+body instead of as a probe timeout. The `sync-api` container health check of the Compose
+deployment uses `GET /version` for this reason.
+
+A monitoring check needs only the status code. With `curl`, `-f` makes the command fail on
+`503`:
+
+```bash
+curl -fsS --max-time 10 "$INFRAHUB_SYNC_API_URL/api/health" > /dev/null
+```
+
+In Uptime Kuma, add an HTTP monitor on `<Sync API address>/api/health` with the accepted status
+codes `200-299` and a request timeout above `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`. With the
+Prometheus blackbox exporter, use an `http` module that accepts only `200`:
+
+```yaml
+modules:
+  sync_health:
+    prober: http
+    timeout: 10s
+    http:
+      valid_status_codes: [200]
+```
+
+To find the cause of a `503`, read the body: the component with `status` `down` and its
+`error`, or the `workers` section.
 
 Each submitted Prefect execution is claimed by its worker before it resolves a
 configuration or builds adapters. The API derives the stall threshold as

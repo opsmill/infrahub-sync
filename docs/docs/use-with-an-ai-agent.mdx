@@ -22,8 +22,8 @@ you ran, and its sanitized output. For example:
 
 ```text
 Use $infrahub-sync-deployment to interpret this synthetic status result:
-docker compose ps shows every service healthy, and /status reports
-worker.state no-live-worker. Explain what it establishes, what is still
+docker compose ps shows every service healthy, and /api/health answers 503
+with workers.live_workers 0. Explain what it establishes, what is still
 unknown, and which operator procedure I should follow next. Do not run
 commands or contact the deployment. Ask for missing non-secret details.
 ```

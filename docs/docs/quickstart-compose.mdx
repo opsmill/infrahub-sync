@@ -6,7 +6,7 @@ Start Infrahub Sync from a release in three steps: fetch `docker-compose.yml`,
 write a `.env` beside it, and start it. The deployment includes the Sync API,
 worker, Prefect, PostgreSQL, and object storage. You can start it before you have
 supplied a source, destination, configuration, or source credentials. This page
-ends when a worker reports `ready` and you choose a source tutorial.
+ends when the Sync API reports `healthy` and you choose a source tutorial.
 
 ## Before you start
 
@@ -88,15 +88,15 @@ including the image version, is listed in
 
 ```sh
 docker compose up -d --wait --wait-timeout 420
-curl -s http://127.0.0.1:8001/api/status
+curl -s http://127.0.0.1:8001/api/health
 ```
 
 `up -d --wait` pulls the images and returns once every service is healthy. In the
-`/status` response, `worker.state` must be `ready`. If it reads `no-live-worker`,
-wait a few seconds and repeat the request. If `up` fails, see
+`/api/health` response, `status` must be `healthy` and `workers.live_workers` at
+least 1. If `status` reads `unhealthy`, wait a few seconds and repeat the request. If `up` fails, see
 [Compose operator troubleshooting](./operations/compose-troubleshooting.mdx).
 
-A `ready` worker confirms the deployment is running; it does not check a source or
+A `healthy` answer confirms the deployment is running; it does not check a source or
 destination.
 
 The same address serves the Sync web interface: open `http://127.0.0.1:8001` in a
