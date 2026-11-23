@@ -84,8 +84,9 @@ is safe to repeat (ADR 0027).
   credential. Ownership accepts it only for `verify` on a run whose row is `waiting-check`, and
   for `resume` on a run whose row is `waiting-resume`.
 - **A person takes over.** A `verify` or `runs resume` from a person while a row waits
-  (`waiting-check` or `waiting-resume`) ends the row as `person-took-over`, and the request then
-  proceeds as before. The event names the person as its actor. When the automatic submission of
+  (`waiting-check` or `waiting-resume`) ends the row as `person-took-over` once its receipt is
+  reserved and not refused, and the request then proceeds as before. A refused request, such as a
+  resume refused with `verify-required`, leaves the row waiting. The event names the person as its actor. When the automatic submission of
   that row already has a receipt, the person's request is refused with
   `409 run-execution-conflict`. While a row is `checking` or `resuming`, a person's request is
   refused with the same code, because an execution of the run is unfinished.

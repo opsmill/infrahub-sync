@@ -270,8 +270,8 @@ Sync API does not resume it or the resume fails.
 While the Sync API waits for a live worker, run `infrahub-sync verify RUN_ID` or
 `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM` yourself. The Sync API stops its
 automatic resume with the reason `person-took-over`, and your request runs as usual. The Sync API
-stops it before the last checks of your request, so a `runs resume` that is then refused with
-`verify-required`, because no `verify` passed, also stops the automatic resume. When the Sync
+stops it only once it accepts your request: a `runs resume` that is refused, for example with
+`verify-required` because no `verify` passed, leaves the automatic resume waiting. When the Sync
 API is already submitting its check or resume, or while its check or resume runs, your request is
 refused with `run-execution-conflict`. Wait for that step to end, then view the run with
 `runs show`.

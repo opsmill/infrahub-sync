@@ -1663,10 +1663,13 @@ def test_a_person_takes_over_a_record_that_waits_for_a_live_worker(
     assert later.refusal == "forbidden"
 
 
-def test_a_person_resume_before_any_check_ends_the_record_and_is_refused_as_today(
+def test_a_person_resume_before_any_check_is_refused_as_today_and_leaves_the_record_waiting(
     takeover_api: _TakeOverAPI,
 ) -> None:
-    """A `runs resume` with no `verify` after the interruption still needs one (spec 016, FR-012)."""
+    """A `runs resume` with no `verify` after the interruption still needs one (spec 016, FR-012).
+
+    The refused request does not take over, so Sync still checks and resumes the run.
+    """
     client, projection, orchestration, _service = takeover_api
     run_id = _run_with_row(takeover_api, "waiting-check")
 
@@ -1675,7 +1678,8 @@ def test_a_person_resume_before_any_check_ends_the_record_and_is_refused_as_toda
     assert response.status_code == 409
     assert _error_code(response) == "verify-required"
     assert _resume_submissions(orchestration) == []
-    assert _automatic_row(projection, run_id).reason == "person-took-over"
+    row = _automatic_row(projection, run_id)
+    assert (row.state, row.reason) == ("waiting-check", None)
 
 
 @pytest.mark.parametrize(

@@ -1438,8 +1438,8 @@ and the service records `infrahub_sync.run.automatic_resume_started` and
 
 A `POST /runs/{run_id}/verify` or `POST /runs/{run_id}/resume` from a person while an entry is
 `waiting-check` or `waiting-resume` ends that entry as `no-resume`, `person-took-over`, and is
-then handled as usual. The entry ends before the last checks of the request, so a resume refused
-with `409 verify-required` also ends it. When the service is already submitting the check or the resume of that
+then handled as usual. The entry ends only when the service accepts the request, so a request
+that is refused, such as a resume refused with `409 verify-required`, leaves the entry waiting. When the service is already submitting the check or the resume of that
 entry, or while an entry is `checking` or `resuming`, the request is refused with
 `409 run-execution-conflict`.
 

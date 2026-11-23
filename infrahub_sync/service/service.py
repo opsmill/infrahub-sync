@@ -160,6 +160,11 @@ def _refusal_code(receipt: MutationReceipt) -> str | None:
     return code if isinstance(code, str) else None
 
 
+def _stored_refusal(receipt: MutationReceipt) -> bool:
+    """Whether the reservation answered the request with a stored refusal instead of admitting it."""
+    return receipt.state == "accepted" and receipt.response_status is not None and receipt.response_status >= 400
+
+
 def _reservation_outcome(receipt: MutationReceipt) -> str:
     """Name what an already-answered receipt is: a replay, or this run's stored refusal."""
     assert receipt.response_status is not None  # an accepted receipt always stores its status.
@@ -586,7 +591,7 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
             # `run-execution-conflict`, which the audit history records. Reading its plan first
             # would answer 503 instead (research R14).
             self._plan(run_id)
-        self._take_over_automatic_resume(run, principal, "verify", request.reason)
+        self._refuse_during_automatic_submission(run, principal, "verify", request.reason)
         receipt = self._reserve_existing(
             run,
             principal,
@@ -595,6 +600,8 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
             reason=request.reason,
             body=body,
         )
+        if not _stored_refusal(receipt):
+            self._take_over_automatic_resume(run, principal)
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
     async def apply_run(
@@ -752,13 +759,15 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
                 outcome="refused-checksum",
             )
         self._require_left_out_confirmation(run_id, plan, request, principal, operation)
-        self._take_over_automatic_resume(run, principal, operation, request.reason)
+        self._refuse_during_automatic_submission(run, principal, operation, request.reason)
         requested = self._run_receipt(
             run_id, principal, idempotency_key, operation=operation, reason=request.reason, body=body
         )
         reserved, created = self._projection.reserve_resume(run_id, requested, secrets=self._secrets)
         self._require_matching_receipt(reserved, requested)
         refusal = _refusal_code(reserved) if reserved.state == "accepted" else None
+        if refusal is None:
+            self._take_over_automatic_resume(run, principal)
         if created and refusal is not None:
             # The store answered the request with its refusal; the event records which one.
             self._audit(
@@ -801,25 +810,17 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
             return SubmissionOutcome(refusal=error.code)
         return self._submission_outcome(principal, idempotency_key, status, body)
 
-    def _take_over_automatic_resume(
+    def _refuse_during_automatic_submission(
         self, run: ProductRun, principal: Principal, operation: str, reason: str | None
     ) -> None:
-        """End the run's automatic resume record that waits for a live worker, because a person acts (FR-019).
+        """Refuse a person's `verify` or `runs resume` while Sync submits the automatic check or resume (FR-019).
 
         Called by `verify_run` and `resume_run` for a principal that is not the reserved actor,
-        after every refusal that reserves nothing and before the receipt is reserved, so the
-        person's request then proceeds as it does today (research R15). The record ends as
-        `no-resume`, `person-took-over`, with its `automatic_resume_not_started` event in the
-        same transaction; the event names the person as its actor.
-
-        The reconciler submits first and moves the record second. A record that still waits
-        but whose automatic check or resume already has a receipt is therefore being submitted:
-        the person does not take over, and the request is refused with `run-execution-conflict`,
-        so the automatic execution keeps its record and the reconciler's move still succeeds.
-        In one Sync API process the lookup and the move run with no await between them, so
-        the reconciler cannot reserve its receipt in between. Two Sync API processes can
-        still interleave there; the reconciler then logs the automatic execution it submitted
-        after the person took over (`RunLivenessReconciler._after_submission`).
+        after every refusal that reserves nothing and before the receipt is reserved. The
+        reconciler submits first and moves the record second. A record that still waits but
+        whose automatic check or resume already has a receipt is therefore being submitted:
+        the person does not take over, and the request is refused, so the automatic execution
+        keeps its record and the reconciler's move still succeeds.
 
         Raises:
             ServiceAPIError: ``409 run-execution-conflict`` while the automatic check or resume
@@ -846,6 +847,28 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
                     reason=reason,
                     outcome="refused-run-execution-conflict",
                 )
+
+    def _take_over_automatic_resume(self, run: ProductRun, principal: Principal) -> None:
+        """End the run's automatic resume record that waits for a live worker, because a person acts (FR-019).
+
+        Called by `verify_run` and `resume_run` once the person's receipt is reserved and not
+        refused, so a request that the reservation refuses leaves the record waiting and the
+        reconciler still checks and resumes the run. The person's request then proceeds as it
+        does today (research R15). The record ends as `no-resume`, `person-took-over`, with its
+        `automatic_resume_not_started` event in the same transaction; the event names the
+        person as its actor.
+
+        `_refuse_during_automatic_submission` runs before the reservation. In one Sync API
+        process the check, the reservation and this move run with no await between them, so
+        the reconciler cannot reserve its receipt in between. Two Sync API processes can
+        still interleave there; the reconciler then logs the automatic execution it submitted
+        after the person took over (`RunLivenessReconciler._after_submission`).
+        """
+        if principal.actor == AUTOMATIC_RESUME_ACTOR:
+            return
+        for row in self._projection.automatic_resumes_of(run.run_id):
+            if row.state not in {"waiting-check", "waiting-resume"}:
+                continue
             now = datetime.now(timezone.utc)
             ended = row.model_copy(
                 update={"state": "ended", "decision": "no-resume", "reason": "person-took-over", "updated_at": now}

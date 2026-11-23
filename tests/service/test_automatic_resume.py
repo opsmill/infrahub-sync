@@ -1395,6 +1395,53 @@ def test_a_person_waits_while_the_automatic_resume_is_being_submitted(step_api: 
     assert len(orchestration.stage_submissions("resume")) == 1
 
 
+def test_a_refused_person_resume_leaves_the_record_waiting(step_api: _StepAPI) -> None:
+    """A person's `runs resume` without a passing `verify` is refused: Sync still checks and resumes the run."""
+    client, projection, orchestration, _service = step_api
+    run_id = _interrupted_with_record(step_api)
+
+    response = client.post(
+        f"/runs/{run_id}/resume",
+        headers=_headers("person-resume"),
+        json={"expected_checksum": _PLAN_CHECKSUM, "confirm_writes": True},
+    )
+
+    assert response.status_code == 409, response.json()
+    assert response.json()["error"]["code"] == "verify-required"
+    assert _record(step_api, run_id).state == "waiting-check"
+    assert [
+        event for event in projection.audit_events(run_id) if event.event_type == RUN_AUTOMATIC_RESUME_NOT_STARTED
+    ] == []
+    _step(step_api)
+    assert _record(step_api, run_id).state == "checking"
+    assert len(orchestration.stage_submissions("verify")) == 1
+
+
+def test_a_refused_person_verify_leaves_the_record_waiting(step_api: _StepAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reservation stores a refusal on the person's `verify` receipt: the record keeps waiting for its check."""
+    client, projection, _orchestration, _service = step_api
+    run_id = _interrupted_with_record(step_api)
+    reserve_mutation = projection.reserve_mutation
+
+    def refuse(receipt, **options):  # noqa: ANN003 - the projection's own signature.
+        stored, created = reserve_mutation(receipt, **options)
+        refused = stored.model_copy(
+            update={
+                "state": "accepted",
+                "response_status": 409,
+                "response_body": {"error": {"code": "run-execution-conflict", "message": "refused", "status": 409}},
+            }
+        )
+        return refused, created
+
+    monkeypatch.setattr(projection, "reserve_mutation", refuse)
+
+    response = client.post(f"/runs/{run_id}/verify", headers=_headers("person-verify"), json={})
+
+    assert response.status_code == 409, response.json()
+    assert _record(step_api, run_id).state == "waiting-check"
+
+
 def test_a_take_over_by_another_process_during_the_submission_is_logged(
     step_api: _StepAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:

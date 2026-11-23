@@ -58,8 +58,10 @@ the actor `sync:automatic-resume`.
 ## Refusals
 
 No new refusal. A manual `POST /runs/{run_id}/resume` while a row is in `checking` or `resuming` gets the existing
-`run-execution-conflict`. While a row is in `waiting-check` or `waiting-resume`, a manual resume or `verify` ends the
-row as `no-resume`, `person-took-over`, and the manual request proceeds as today: a person who acts takes over.
+`run-execution-conflict`. While a row is in `waiting-check` or `waiting-resume`, a manual resume or `verify` that the
+service accepts ends the row as `no-resume`, `person-took-over`, and the manual request proceeds as today: a person who
+acts takes over. A manual request that is refused, such as a resume refused with `verify-required`, leaves the row
+waiting.
 
 ## Settings
 
