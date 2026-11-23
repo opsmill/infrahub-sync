@@ -55,11 +55,13 @@ from infrahub_sync.product_store.models import (
 
 from .auth import Principal
 from .credentials import contains_token_prefix
-from .events import RUN_CANCELLED, account_event, run_decision_type, run_event
+from .events import RUN_CANCELLED, account_event, automatic_resume_event, run_decision_type, run_event
 from .liveness import (
     AUTOMATIC_RESUME_ACTOR,
     CancellationSelectionUnavailableError,
     SubmissionOutcome,
+    automatic_check_key,
+    automatic_resume_key,
     select_cancellable_execution,
 )
 from .models import (
@@ -584,6 +586,7 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
             # `run-execution-conflict`, which the audit history records. Reading its plan first
             # would answer 503 instead (research R14).
             self._plan(run_id)
+        self._take_over_automatic_resume(run, principal, "verify", request.reason)
         receipt = self._reserve_existing(
             run,
             principal,
@@ -749,6 +752,7 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
                 outcome="refused-checksum",
             )
         self._require_left_out_confirmation(run_id, plan, request, principal, operation)
+        self._take_over_automatic_resume(run, principal, operation, request.reason)
         requested = self._run_receipt(
             run_id, principal, idempotency_key, operation=operation, reason=request.reason, body=body
         )
@@ -796,6 +800,68 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
         except ServiceAPIError as error:
             return SubmissionOutcome(refusal=error.code)
         return self._submission_outcome(principal, idempotency_key, status, body)
+
+    def _take_over_automatic_resume(
+        self, run: ProductRun, principal: Principal, operation: str, reason: str | None
+    ) -> None:
+        """End the run's automatic resume record that waits for a live worker, because a person acts (FR-019).
+
+        Called by `verify_run` and `resume_run` for a principal that is not the reserved actor,
+        after every refusal that reserves nothing and before the receipt is reserved, so the
+        person's request then proceeds as it does today (research R15). The record ends as
+        `no-resume`, `person-took-over`, with its `automatic_resume_not_started` event in the
+        same transaction; the event names the person as its actor.
+
+        The reconciler submits first and moves the record second. A record that still waits
+        but whose automatic check or resume already has a receipt is therefore being submitted:
+        the person does not take over, and the request is refused with `run-execution-conflict`,
+        so the automatic execution keeps its record and the reconciler's move still succeeds.
+        In one Sync API process the lookup and the move run with no await between them, so
+        the reconciler cannot reserve its receipt in between. Two Sync API processes can
+        still interleave there; the reconciler then logs the automatic execution it submitted
+        after the person took over (`RunLivenessReconciler._after_submission`).
+
+        Raises:
+            ServiceAPIError: ``409 run-execution-conflict`` while the automatic check or resume
+                of a waiting record is being submitted.
+        """
+        if principal.actor == AUTOMATIC_RESUME_ACTOR:
+            return
+        for row in self._projection.automatic_resumes_of(run.run_id):
+            if row.state == "waiting-check":
+                key, step = automatic_check_key(row), "check"
+            elif row.state == "waiting-resume":
+                key, step = automatic_resume_key(row), "resume"
+            else:
+                continue
+            submitted = self._projection.lookup_mutation(AUTOMATIC_RESUME_ACTOR, sha256(key.encode()).hexdigest()).value
+            if submitted is not None and (submitted.response_status is None or submitted.response_status < 400):
+                raise self._refusal(
+                    409,
+                    "run-execution-conflict",
+                    f"Sync is submitting the automatic {step} of this run; wait for it to end",
+                    run_id=run.run_id,
+                    actor=principal.actor,
+                    operation=operation,
+                    reason=reason,
+                    outcome="refused-run-execution-conflict",
+                )
+            now = datetime.now(timezone.utc)
+            ended = row.model_copy(
+                update={"state": "ended", "decision": "no-resume", "reason": "person-took-over", "updated_at": now}
+            )
+            # A `False` move means another Sync API process moved the record first; the
+            # reservation below then meets its unfinished execution, as any request does.
+            self._projection.move_automatic_resume(
+                run.run_id,
+                row.interrupted_flow_run_id,
+                from_state=row.state,
+                to_state="ended",
+                event=automatic_resume_event(ended, run, actor=principal.actor, created_at=now),
+                decision="no-resume",
+                reason="person-took-over",
+                updated_at=now,
+            )
 
     def _admitted_left_out(self, run: ProductRun) -> bool:
         """Whether the write that the run's waiting automatic resume record names confirmed the left-out records.

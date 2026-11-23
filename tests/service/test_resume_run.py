@@ -20,6 +20,7 @@ saved plan's stored order: position 5,999 is the 6,000th operation.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -33,6 +34,8 @@ pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 pytest.importorskip("fastapi")
 
+from fastapi.testclient import TestClient
+
 from infrahub_sync.execution import RunResult
 from infrahub_sync.plan.errors import OperationApplyFailedError, StaleDestinationIdError
 from infrahub_sync.plan.models import ApplyRecord
@@ -40,6 +43,8 @@ from infrahub_sync.potenda import Potenda
 from infrahub_sync.potenda.apply_progress import ApplyProgressLostError
 from infrahub_sync.product_store import (
     ApplyProgress,
+    AutomaticResume,
+    AutomaticResumeState,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     LookupResult,
@@ -50,15 +55,22 @@ from infrahub_sync.product_store import (
     local_product_projection,
 )
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service.app import create_app
 from infrahub_sync.service.apply_progress import StoreApplyProgressObserver
+from infrahub_sync.service.events import RUN_AUTOMATIC_RESUME_NOT_STARTED
 from infrahub_sync.service.flow import resume_start_after, service_sync_run
+from infrahub_sync.service.liveness import automatic_check_key, automatic_resume_key
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.resume_view import apply_progress_view, run_resumes, uncertain_window
-from infrahub_sync.service.service import PLAN_ARTIFACT_ID, _PlanLayoutCache  # noqa: PLC2701  # the cache under test
+from infrahub_sync.service.service import (
+    PLAN_ARTIFACT_ID,
+    RunService,
+    _PlanLayoutCache,  # noqa: PLC2701  # the cache under test
+)
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.configuration.validation_packages import package
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
-from tests.service.accounts import account_identifier
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import bind_granting_guard
 from tests.service.test_http_api import (
     _PLAN_WORKER_ID,
@@ -67,6 +79,7 @@ from tests.service.test_http_api import (
     OWNER_TOKEN,
     _create,
     _FakeOrchestration,
+    _registered_package,
     _settle_open_executions,
     service_api,  # noqa: F401 - the fixture is used by name.
 )
@@ -74,7 +87,6 @@ from tests.service.test_http_api import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from fastapi.testclient import TestClient
     from httpx import Response
 
     from infrahub_sync.plan.models import PlannedOperation
@@ -163,10 +175,20 @@ def _latest_flow_run_id(projection: ProductProjection, run_id: str) -> str:
     return run.prefect_executions[-1].flow_run_id
 
 
-def _interrupted_run(
-    api: _API, *, total: int = _TOTAL, marker: int | None = _MARKER, left_out: int = 0, approve: bool = False
+def _interrupted_run(  # noqa: PLR0913  # pylint: disable=too-many-arguments
+    api: _API,
+    *,
+    total: int = _TOTAL,
+    marker: int | None = _MARKER,
+    left_out: int = 0,
+    approve: bool = False,
+    automatic_resume: bool = False,
 ) -> str:
-    """A planned run whose apply saved `marker` and was then interrupted by the liveness monitor."""
+    """A planned run whose apply saved `marker` and was then interrupted by the liveness monitor.
+
+    With `automatic_resume`, the interruption inserts an automatic resume record that waits for
+    the check, as the liveness reconciler does when the setting is on (spec 030).
+    """
     client, projection, _orchestration = api
     run_id = _create(client).json()["run"]["run_id"]
     _publish_plan(projection, run_id, total=total, left_out=left_out)
@@ -200,7 +222,20 @@ def _interrupted_run(
             )
             == "saved"
         )
-    assert projection.interrupt_execution(run_id, flow_run_id)
+    now = datetime.now(timezone.utc)
+    record = (
+        AutomaticResume(
+            run_id=run_id,
+            interrupted_flow_run_id=flow_run_id,
+            cause="rule-8",
+            state="waiting-check",
+            decided_at=now,
+            updated_at=now,
+        )
+        if automatic_resume
+        else None
+    )
+    assert projection.interrupt_execution(run_id, flow_run_id, automatic_resume=record)
     stored = projection.lookup_run(run_id).value
     assert stored is not None
     assert stored.reconciliation_required is True
@@ -1523,3 +1558,149 @@ def test_a_failed_resume_names_the_operation_and_the_window_ends_with_it(
         ("BuiltinTag", 6000, 101, 399),
         ("BuiltinStatus", 0, 0, 3500),
     ]
+
+
+# --- a person takes over a waiting automatic resume (spec 030, FR-019) ------------------------
+
+_TakeOverAPI = tuple["TestClient", ProductProjection, _FakeOrchestration, RunService]
+
+
+@pytest.fixture
+def takeover_api(tmp_path: Path) -> _TakeOverAPI:
+    """The API of `service_api`, with its `RunService`, which submits the automatic steps."""
+    projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(
+        projection,
+        {"owner": {"token": OWNER_TOKEN}, "admin": {"token": ADMIN_TOKEN, "administrator": True}},
+        environment_token=True,
+    ).resolver
+    orchestration = _FakeOrchestration()
+    version = projection.create_configuration(_registered_package())
+    service = RunService(projection, orchestration, secrets=resolver.secret_values)
+    client = TestClient(create_app(service, resolver))
+    client.app.state.run_binding = version
+    return client, projection, orchestration, service
+
+
+def _automatic_row(projection: ProductProjection, run_id: str) -> AutomaticResume:
+    (row,) = projection.automatic_resumes_of(run_id)
+    return row
+
+
+def _move_row(projection: ProductProjection, run_id: str, to_state: AutomaticResumeState, **fields: Any) -> None:  # noqa: ANN401 - the movable fields of the store.
+    row = _automatic_row(projection, run_id)
+    assert projection.move_automatic_resume(
+        run_id,
+        row.interrupted_flow_run_id,
+        from_state=row.state,
+        to_state=to_state,
+        updated_at=datetime.now(timezone.utc),
+        **fields,
+    )
+
+
+def _run_with_row(api: _TakeOverAPI, state: str) -> str:
+    """An interrupted run whose automatic resume record is in `state`, reached as the reconciler reaches it."""
+    _client, projection, _orchestration, service = api
+    run_id = _interrupted_run(api[:3], automatic_resume=True)
+    if state == "waiting-check":
+        return run_id
+    check = asyncio.run(service.submit_check(run_id, automatic_check_key(_automatic_row(projection, run_id))))
+    assert check.flow_run_id is not None
+    _move_row(projection, run_id, "checking", check_flow_run_id=check.flow_run_id)
+    if state == "checking":
+        return run_id
+    _settle_open_executions(projection, run_id)
+    _move_row(projection, run_id, "waiting-resume", operations_not_checked=0)
+    if state == "waiting-resume":
+        return run_id
+    resume = asyncio.run(service.submit_resume(run_id, automatic_resume_key(_automatic_row(projection, run_id))))
+    assert resume.flow_run_id is not None
+    _move_row(
+        projection, run_id, "resuming", decision="resume", start_after=_MARKER, resume_flow_run_id=resume.flow_run_id
+    )
+    assert state == "resuming"
+    return run_id
+
+
+def _person_request(client: TestClient, run_id: str, operation: str) -> Response:
+    if operation == "verify":
+        return client.post(f"/runs/{run_id}/verify", headers=_headers("person-verify"), json={})
+    return _resume(client, run_id, key="person-resume")
+
+
+@pytest.mark.parametrize(
+    ("state", "operation", "status"),
+    [
+        ("waiting-check", "verify", 202),
+        ("waiting-resume", "verify", 202),
+        ("waiting-resume", "resume", 202),
+    ],
+)
+def test_a_person_takes_over_a_record_that_waits_for_a_live_worker(
+    takeover_api: _TakeOverAPI, state: str, operation: str, status: int
+) -> None:
+    """FR-019: the record ends `person-took-over` with one event, and the request proceeds as today."""
+    client, projection, orchestration, service = takeover_api
+    run_id = _run_with_row(takeover_api, state)
+    submissions = len(orchestration.submissions)
+
+    response = _person_request(client, run_id, operation)
+
+    assert response.status_code == status, response.json()
+    assert len(orchestration.submissions) == submissions + 1
+    row = _automatic_row(projection, run_id)
+    assert (row.state, row.decision, row.reason) == ("ended", "no-resume", "person-took-over")
+    [event] = [event for event in projection.audit_events(run_id) if event.operation == "automatic-resume"]
+    assert (event.event_type, event.actor) == (
+        RUN_AUTOMATIC_RESUME_NOT_STARTED,
+        account_identifier(projection, "owner"),
+    )
+    assert event.details is not None
+    assert event.details.model_dump(exclude_none=True) == {"cause": "rule-8", "reason": "person-took-over"}
+    # The reserved actor no longer acts on the run: the record waits for nothing.
+    later = asyncio.run(service.submit_check(run_id, "automatic-check:after-take-over"))
+    assert later.refusal == "forbidden"
+
+
+def test_a_person_resume_before_any_check_ends_the_record_and_is_refused_as_today(
+    takeover_api: _TakeOverAPI,
+) -> None:
+    """A `runs resume` with no `verify` after the interruption still needs one (spec 016, FR-012)."""
+    client, projection, orchestration, _service = takeover_api
+    run_id = _run_with_row(takeover_api, "waiting-check")
+
+    response = _person_request(client, run_id, "resume")
+
+    assert response.status_code == 409
+    assert _error_code(response) == "verify-required"
+    assert _resume_submissions(orchestration) == []
+    assert _automatic_row(projection, run_id).reason == "person-took-over"
+
+
+@pytest.mark.parametrize(
+    ("state", "operation", "code"),
+    [
+        ("checking", "verify", "run-execution-conflict"),
+        ("checking", "resume", "run-not-resumable"),
+        ("resuming", "verify", "run-execution-conflict"),
+        ("resuming", "resume", "run-execution-conflict"),
+    ],
+)
+def test_a_person_is_refused_while_the_automatic_check_or_resume_runs(
+    takeover_api: _TakeOverAPI, state: str, operation: str, code: str
+) -> None:
+    """FR-019: refused as any request on a run with an unfinished execution; the record does not move."""
+    client, projection, orchestration, _service = takeover_api
+    run_id = _run_with_row(takeover_api, state)
+    submissions = len(orchestration.submissions)
+
+    response = _person_request(client, run_id, operation)
+
+    assert response.status_code == 409
+    assert _error_code(response) == code
+    assert len(orchestration.submissions) == submissions
+    assert _automatic_row(projection, run_id).state == state
+    assert [
+        event for event in projection.audit_events(run_id) if event.event_type == RUN_AUTOMATIC_RESUME_NOT_STARTED
+    ] == []

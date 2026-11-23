@@ -4,19 +4,22 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from structlog.testing import capture_logs
 
 pytest.importorskip("prefect")
 
 from infrahub_sync.product_store import (
     PLAN_ARTIFACT_ID,
+    WRITE_PURPOSES,
     ApplyProgress,
     ArtifactReference,
     AutomaticResume,
+    AutomaticResumeReason,
     PrefectExecutionLink,
     ProductRun,
     local_product_projection,
@@ -34,7 +37,9 @@ from infrahub_sync.service.liveness import (
     AUTOMATIC_RESUME_LIMIT,
     LivenessPolicy,
     RunLivenessReconciler,
+    SubmissionOutcome,
     automatic_check_key,
+    automatic_resume_key,
     decide_automatic_resume,
 )
 from infrahub_sync.service.models import ApplyRunRequest, ResumeRunRequest, VerifyRunRequest
@@ -1103,3 +1108,333 @@ def test_the_limit_reason_counts_the_earlier_automatic_resumes() -> None:
 
     assert view[-1].reason_text == f"the run already received {AUTOMATIC_RESUME_LIMIT} automatic resumes, the limit"
     assert [entry.reason_text for entry in view[:-1]] == [None] * AUTOMATIC_RESUME_LIMIT
+
+
+# --- user story 2: an automatic resume that does not start, and why (T027 to T029) ---------------
+
+
+def _rule_8(api: _StepAPI) -> None:
+    """The claiming worker stops sending heartbeats: past the grace period, rule 8 ends its execution."""
+    _client, projection, orchestration, service = api
+    orchestration.pool = "offline"
+    later = datetime.now(timezone.utc) + timedelta(minutes=2)
+    reconciler = RunLivenessReconciler(
+        projection, orchestration, LivenessPolicy(300, 30, 5), "pool", clock=lambda: later, submitter=service
+    )
+    asyncio.run(reconciler.reconcile_once())
+    orchestration.pool = "live"
+
+
+def _resumed_by_sync(api: _StepAPI, run_id: str, *, progress: bool) -> str:
+    """Step the waiting record through a passing check to a submitted resume, which a worker claims.
+
+    With ``progress``, the resume saves a marker after the one it started after. Returns the
+    resume's flow run.
+    """
+    projection = api[1]
+    _passed_check(api, run_id)
+    _step(api)
+    resuming = _record(api, run_id)
+    assert (resuming.state, resuming.decision) == ("resuming", "resume")
+    flow_run_id = resuming.resume_flow_run_id
+    assert flow_run_id is not None
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_STEP_WORKER_ID)
+    if progress:
+        position = (resuming.start_after or 0) + 5
+        marker = ApplyProgress(position=position, operation_id=f"op_{position:016x}", total=_STEP_TOTAL, saved_at=NOW)
+        assert projection.record_apply_progress(run_id, flow_run_id, marker) == "saved"
+    return flow_run_id
+
+
+def _not_resumable(api: _StepAPI, _monkeypatch: pytest.MonkeyPatch) -> str:
+    """A `sync` run whose worker stopped while it was still planning: it saved no plan."""
+    client, projection, _orchestration, _service = api
+    version = client.app.state.run_binding
+    created = client.post(
+        "/runs",
+        headers=_headers("sync-key"),
+        json={
+            "operation": "sync",
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
+            "confirm_writes": True,
+        },
+    )
+    assert created.status_code == 202, created.json()
+    run_id = created.json()["run"]["run_id"]
+    assert projection.claim_execution(run_id, _latest_flow_run_id(projection, run_id), worker_id=_STEP_WORKER_ID)
+    _rule_8(api)
+    return run_id
+
+
+def _approval_missing(api: _StepAPI, monkeypatch: pytest.MonkeyPatch) -> str:
+    """The site requires approval from the interruption on, and the run's plan has none."""
+    client, projection, _orchestration, _service = api
+    run_id = _planned_run(api)
+    applied = client.post(
+        f"/runs/{run_id}/apply",
+        headers=_headers("apply-key"),
+        json={"expected_checksum": _PLAN_CHECKSUM, "confirm_writes": True},
+    )
+    assert applied.status_code == 202, applied.json()
+    assert projection.claim_execution(run_id, _latest_flow_run_id(projection, run_id), worker_id=_STEP_WORKER_ID)
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+    _rule_8(api)
+    return run_id
+
+
+def _no_progress(api: _StepAPI, _monkeypatch: pytest.MonkeyPatch) -> str:
+    """The automatic resume is itself interrupted before it saved a marker after its start."""
+    run_id = _interrupted_with_record(api)
+    _resumed_by_sync(api, run_id, progress=False)
+    _rule_8(api)
+    return run_id
+
+
+def _limit_reached(api: _StepAPI, _monkeypatch: pytest.MonkeyPatch) -> str:
+    """Three automatic resumes, each with progress, each interrupted; then a fourth interruption."""
+    run_id = _interrupted_with_record(api)
+    for _ in range(AUTOMATIC_RESUME_LIMIT):
+        _resumed_by_sync(api, run_id, progress=True)
+        _rule_8(api)
+    return run_id
+
+
+def _check_failed(api: _StepAPI, _monkeypatch: pytest.MonkeyPatch) -> str:
+    run_id = _interrupted_with_record(api)
+    _step(api)
+    checking = _record(api, run_id)
+    _finish(
+        api[1],
+        run_id,
+        checking.check_flow_run_id,
+        failed=True,
+        results={"verify_failure": {"failure_type": "SchemaMismatchError", "flow_run_id": checking.check_flow_run_id}},
+    )
+    _step(api)
+    return run_id
+
+
+def _check_found_differs(api: _StepAPI, _monkeypatch: pytest.MonkeyPatch) -> str:
+    run_id = _interrupted_with_record(api)
+    _step(api)
+    _finish(api[1], run_id, _record(api, run_id).check_flow_run_id, results=_verification("differs", "matches"))
+    _step(api)
+    return run_id
+
+
+def _not_picked_up(api: _StepAPI, _monkeypatch: pytest.MonkeyPatch) -> str:
+    run_id = _interrupted_with_record(api)
+    _step(api)
+    check_flow_run_id = _record(api, run_id).check_flow_run_id
+    assert check_flow_run_id is not None
+    assert api[1].abandon_execution(run_id, check_flow_run_id)
+    _step(api)
+    return run_id
+
+
+def _refused(api: _StepAPI, monkeypatch: pytest.MonkeyPatch) -> str:
+    run_id = _interrupted_with_record(api)
+    _passed_check(api, run_id)
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+    _step(api)
+    return run_id
+
+
+def _person_took_over(api: _StepAPI, _monkeypatch: pytest.MonkeyPatch) -> str:
+    client = api[0]
+    run_id = _interrupted_with_record(api)
+    response = client.post(f"/runs/{run_id}/verify", headers=_headers("person-verify"), json={})
+    assert response.status_code == 202, response.json()
+    return run_id
+
+
+_NOT_STARTED = {
+    "not-resumable": _not_resumable,
+    "approval-missing": _approval_missing,
+    "no-progress": _no_progress,
+    "limit-reached": _limit_reached,
+    "check-failed": _check_failed,
+    "check-found-differs": _check_found_differs,
+    "not-picked-up": _not_picked_up,
+    "refused": _refused,
+    "person-took-over": _person_took_over,
+}
+
+
+def test_every_reason_code_has_a_not_started_case() -> None:
+    """A new reason code fails here until the parametrized test below covers it."""
+    assert set(_NOT_STARTED) == set(get_args(AutomaticResumeReason))
+
+
+@pytest.mark.parametrize("reason", list(_NOT_STARTED))
+def test_a_record_that_ends_without_a_resume_starts_nothing_and_says_why(
+    step_api: _StepAPI, monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    """SC-002 and spec US2 scenarios 1 to 7: no resume starts, the run stays interrupted, one event."""
+    _client, projection, orchestration, _service = step_api
+    run_id = _NOT_STARTED[reason](step_api, monkeypatch)
+
+    row = _record(step_api, run_id)
+    assert (row.state, row.decision, row.reason) == ("ended", "no-resume", reason)
+    # No resume starts afterwards, even with a live worker and more loops.
+    submissions = len(orchestration.submissions)
+    _step(step_api)
+    _step(step_api)
+    assert len(orchestration.submissions) == submissions
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    assert run.reconciliation_required is True
+    assert all(link.terminal_at is not None for link in run.prefect_executions if link.purpose in WRITE_PURPOSES)
+    # The only resume executions are those of earlier records whose decision was `resume`.
+    resumes = [link.flow_run_id for link in run.prefect_executions if link.purpose == "resume"]
+    rows = projection.automatic_resumes_of(run_id)
+    assert resumes == [earlier.resume_flow_run_id for earlier in rows if earlier.decision == "resume"]
+    events = [
+        event for event in projection.audit_events(run_id) if event.event_type == RUN_AUTOMATIC_RESUME_NOT_STARTED
+    ]
+    assert len(events) == 1
+    assert events[0].details is not None
+    assert events[0].details.reason == reason
+
+
+def test_a_resume_that_made_no_progress_gets_no_further_automatic_resume(step_api: _StepAPI) -> None:
+    """SC-003, FR-009: one automatic resume, interrupted with no new marker; the next record ends `no-progress`."""
+    orchestration = step_api[2]
+    run_id = _no_progress(step_api, pytest.MonkeyPatch())
+
+    rows = step_api[1].automatic_resumes_of(run_id)
+    assert [(row.decision, row.reason) for row in rows] == [("resume", None), ("no-resume", "no-progress")]
+    _step(step_api)
+    assert len(orchestration.stage_submissions("resume")) == 1
+
+
+def test_a_fourth_interruption_after_three_resumes_with_progress_reaches_the_limit(step_api: _StepAPI) -> None:
+    """SC-003, FR-010: three automatic resumes, each past its marker; the fourth record ends `limit-reached`."""
+    _client, projection, orchestration, _service = step_api
+    run_id = _limit_reached(step_api, pytest.MonkeyPatch())
+
+    rows = projection.automatic_resumes_of(run_id)
+    assert [(row.decision, row.reason) for row in rows] == [
+        *[("resume", None)] * AUTOMATIC_RESUME_LIMIT,
+        ("no-resume", "limit-reached"),
+    ]
+    _step(step_api)
+    assert len(orchestration.stage_submissions("resume")) == AUTOMATIC_RESUME_LIMIT
+
+
+@pytest.mark.parametrize("limit", ["no-progress", "limit-reached"])
+def test_a_manual_resume_after_a_limit_is_accepted_and_creates_no_record(step_api: _StepAPI, limit: str) -> None:
+    """FR-011: manual resumes stay available after either limit and do not count toward them."""
+    client, projection, _orchestration, _service = step_api
+    run_id = _NOT_STARTED[limit](step_api, pytest.MonkeyPatch())
+    rows = projection.automatic_resumes_of(run_id)
+
+    verified = client.post(f"/runs/{run_id}/verify", headers=_headers("manual-verify"), json={})
+    assert verified.status_code == 202, verified.json()
+    _settle_open_executions(projection, run_id)
+    resumed = client.post(
+        f"/runs/{run_id}/resume",
+        headers=_headers("manual-resume"),
+        json={"expected_checksum": _PLAN_CHECKSUM, "confirm_writes": True},
+    )
+
+    assert resumed.status_code == 202, resumed.json()
+    assert projection.automatic_resumes_of(run_id) == rows
+    detail = client.get(f"/runs/{run_id}", headers=_headers("read")).json()
+    assert detail["automatic_resume_count"] == sum(row.decision == "resume" for row in rows)
+
+
+# --- a person acts while the reconciler is submitting (FR-019, research R15) --------------------
+
+
+def test_a_person_waits_while_the_automatic_check_is_being_submitted(step_api: _StepAPI) -> None:
+    """The check was submitted and the record not moved yet: the person is refused, the record keeps its check."""
+    client, _projection, orchestration, service = step_api
+    run_id = _interrupted_with_record(step_api)
+    submitted = asyncio.run(service.submit_check(run_id, automatic_check_key(_record(step_api, run_id))))
+    assert submitted.flow_run_id is not None
+
+    response = client.post(f"/runs/{run_id}/verify", headers=_headers("person-verify"), json={})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "run-execution-conflict"
+    _step(step_api)
+    checking = _record(step_api, run_id)
+    assert (checking.state, checking.check_flow_run_id) == ("checking", submitted.flow_run_id)
+    assert len(orchestration.stage_submissions("verify")) == 1
+
+
+def test_a_person_waits_while_the_automatic_resume_is_being_submitted(step_api: _StepAPI) -> None:
+    client, _projection, orchestration, service = step_api
+    run_id = _interrupted_with_record(step_api)
+    _passed_check(step_api, run_id)
+    submitted = asyncio.run(service.submit_resume(run_id, automatic_resume_key(_record(step_api, run_id))))
+    assert submitted.flow_run_id is not None
+
+    response = client.post(
+        f"/runs/{run_id}/resume",
+        headers=_headers("person-resume"),
+        json={"expected_checksum": _PLAN_CHECKSUM, "confirm_writes": True},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "run-execution-conflict"
+    _step(step_api)
+    resuming = _record(step_api, run_id)
+    assert (resuming.state, resuming.decision, resuming.resume_flow_run_id) == (
+        "resuming",
+        "resume",
+        submitted.flow_run_id,
+    )
+    assert len(orchestration.stage_submissions("resume")) == 1
+
+
+def test_a_take_over_by_another_process_during_the_submission_is_logged(
+    step_api: _StepAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another Sync API process ends the record between the submission and the move: the step logs it."""
+    _client, projection, _orchestration, service = step_api
+    run_id = _interrupted_with_record(step_api)
+    submit_check = service.submit_check
+
+    async def submit_then_take_over(run: str, key: str) -> SubmissionOutcome:
+        outcome = await submit_check(run, key)
+        row = _record(step_api, run)
+        assert projection.move_automatic_resume(
+            run,
+            row.interrupted_flow_run_id,
+            from_state="waiting-check",
+            to_state="ended",
+            decision="no-resume",
+            reason="person-took-over",
+            updated_at=datetime.now(timezone.utc),
+        )
+        return outcome
+
+    monkeypatch.setattr(service, "submit_check", submit_then_take_over)
+
+    with capture_logs() as logs:
+        _step(step_api)
+
+    ended = _record(step_api, run_id)
+    assert (ended.state, ended.reason, ended.check_flow_run_id) == ("ended", "person-took-over", None)
+    [lost] = [entry for entry in logs if entry["event"] == "automatic resume submitted after a person took over"]
+    assert (lost["log_level"], lost["run_id"]) == ("warning", run_id)
+    assert lost["flow_run_id"] == _latest_flow_run_id(projection, run_id)
+
+
+def test_a_record_another_reconciler_moved_first_is_not_logged_as_a_take_over(
+    step_api: _StepAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projection = step_api[1]
+    run_id = _interrupted_with_record(step_api)
+    stale = projection.open_automatic_resumes()
+    _step(step_api)
+    monkeypatch.setattr(projection, "open_automatic_resumes", lambda: stale)
+
+    with capture_logs() as logs:
+        _step(step_api)
+
+    assert _record(step_api, run_id).state == "checking"
+    assert [entry for entry in logs if entry["log_level"] == "warning"] == []

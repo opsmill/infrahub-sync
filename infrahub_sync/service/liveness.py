@@ -367,9 +367,17 @@ class RunLivenessReconciler:
         now: datetime,
         **fields: object,
     ) -> None:
-        """Record a submission: the move to ``to_state``, or the end of the record as ``refused``."""
+        """Record a submission: the move to ``to_state``, or the end of the record as ``refused``.
+
+        When the submission was accepted but the move fails because a person took over the
+        record in between (FR-019), which only another Sync API process can do (see
+        ``RunService._take_over_automatic_resume``), the automatic execution runs anyway: it
+        is logged with its flow run, and the run's executions and receipts show it with the
+        reserved actor. A record that another reconciler moved first is not logged.
+        """
         if outcome.flow_run_id is not None:
-            self._move(row, to_state, now, **fields)
+            if not self._move(row, to_state, now, **fields):
+                self._log_lost_take_over(row, outcome.flow_run_id)
             return
         if outcome.refusal in _RETRIED_REFUSALS:
             logger.info(
@@ -380,6 +388,25 @@ class RunLivenessReconciler:
             )
             return
         self._end(row, "refused", now, reason_detail={"code": str(outcome.refusal)})
+
+    def _log_lost_take_over(self, row: AutomaticResume, flow_run_id: str) -> None:
+        """Log an automatic execution submitted after a person ended ``row`` as ``person-took-over``."""
+        current = next(
+            (
+                stored
+                for stored in self._projection.automatic_resumes_of(row.run_id)
+                if stored.interrupted_flow_run_id == row.interrupted_flow_run_id
+            ),
+            None,
+        )
+        if current is None or current.reason != "person-took-over":
+            return
+        logger.warning(
+            "automatic resume submitted after a person took over",
+            run_id=row.run_id,
+            state=row.state,
+            flow_run_id=flow_run_id,
+        )
 
     def _step_checking(self, row: AutomaticResume, now: datetime) -> None:
         """End the check step once the check's execution has a verdict (research R7, FR-006, FR-007)."""
