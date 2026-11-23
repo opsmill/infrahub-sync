@@ -29,6 +29,7 @@ One line per chunk: chunk, tasks, outcome, commits, notes.
 16 | T063-T065 | 3 done | 964f36a1 50cdf84e a1d38916 | credentials_used on every run answer (contract names only GET /runs/{id}); approve answer fixed to carry it; runs show line format chosen by the chunk; frontend types.generated.ts not regenerated (codegen reads a live API on forbidden port 8001)
 17 | T066-T069 + E4 test | 4 done; E4 registration race done (row lock on PostgreSQL READ COMMITTED, write lock on SQLite); E4 run-start race partial (no lock: run accepted, then refused at release with 422, no value released) | ef836f11 b93569be 5b763472 67055ce4 7eb95b58 d117ef7d | schedule create/re-pin takes no lock (R8 leaves it to run start); new service/credential_models.py (Pylint C0302); 204 receipt stores empty body
 18 | T070-T072 | 3 done | 57b2e978 21a1e160 9de5a8ca 5749ffd3 | report already written by chunk 12; help text fixed; 422 configs-validation answer gains details.credentials [{block,name,code,fields}] (contract updated); finding messages name fields and --username; documented refusal output produced by a scratch script, CLI tests use a canned 422
+19 | T073-T074 | T073 done; T074 prototypes built, waits for maintainer choice (notes.md); T075-T078 not started | fe8f1817 a8bd85e0 6e06156a | types generated from in-process app.openapi() (no port 8000/8001); frontend/vendor/infrahub submodule initialised; prototype route /proto/credentials must be removed before merge; spec 025 not found, no drop-area offer
 ```
 
 ## Local-pass evidence
@@ -108,4 +109,6 @@ check-310 after chunk 12|unit 3.10|uv run invoke tests.check-310|2026-11-21T01:1
 18 | convert, admission, failure cause, conversion, credentials command | uv run pytest <5 files> -v | 2026-11-21T07:57:55Z | 3 PostgreSQL DSNs | 411 passed
 18 | unit tier | uv run invoke tests.tests-unit | 2026-11-21T08:15:55Z | n/a | 11521 passed, 4 skipped, 2 xfailed, 0 failed
 18 | check-310 | uv run invoke tests.check-310 | chunk 18 | Python 3.10 | 7713 passed, all three legs
+19 | frontend checks | pnpm check; pnpm typecheck; pnpm build (in frontend/) | 2026-11-23T09:06:33Z | Node, pnpm | Checked 89 files, no fixes; tsc no error; built in 542ms
+19 | prototype browser check | node scratchpad/c19/verify.cjs | 2026-11-23T09:06:19Z | headless Chromium, Vite on 127.0.0.1:5199, API answered in browser | 24 steps ok, no console or page error
 ```
