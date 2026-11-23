@@ -231,7 +231,8 @@ version. Remove the prototype route and the picker before the phase ends.
 
 ## Phase 10: Polish and cross-cutting concerns
 
-- [ ] T080 Open the Helm chart pull request in `opsmill/infrahub-helm` (`charts/infrahub-sync/values.yaml`: add `credentials.encryptionKey` (API only) and `credentials.workerToken` (API and worker), remove `credentials.infrahubApiToken`, `worker.credentials` and `worker.credentialsExistingSecrets`, and the matching templates and tests); only when the user asks for a pull request (FR-024)
+- [X] T080 Open the Helm chart pull request in `opsmill/infrahub-helm` (`charts/infrahub-sync/values.yaml`: add `credentials.encryptionKey` (API only) and `credentials.workerToken` (API and worker), remove `credentials.infrahubApiToken`, `worker.credentials` and `worker.credentialsExistingSecrets`, and the matching templates and tests); only when the user asks for a pull request (FR-024)
+    - Done in the existing pull request opsmill/infrahub-helm#129 (commit `9ec3b72`), with a new value `worker.apiUrl`. Unit tests: 197 passed; the end-to-end test was not run after the change.
 - [ ] T081 Run the full verification (`uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, the CLI sanity commands of `AGENTS.md`, `uv run ty check .`) and the development-stack scenarios 3 to 7 of `quickstart.md`
 
 ---
