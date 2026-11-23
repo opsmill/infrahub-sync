@@ -1,0 +1,27 @@
+changelog/+compose-store-credentials-ca.added.md
+  s_58b527396c8cb5::t_13aba4cde84070 1
+changelog/+credential-env-provider.removed.md
+  s_58b527396c8cb5::t_1dee6c49d97915 1
+changelog/+upgrade-steps.changed.md
+  s_58b527396c8cb5::t_0b0e803749e924 1
+changelog/+v2-configuration-conversion.added.md
+  s_58b527396c8cb5::t_a0b330f348a797 1
+changelog/+validate-branch.added.md
+  s_58b527396c8cb5::t_4daf28be70bd29 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82bfcdda1391d9ed2c5440cb4b5288d1d164a6e9",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
