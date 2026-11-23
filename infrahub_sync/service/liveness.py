@@ -348,9 +348,10 @@ class RunLivenessReconciler:
                 self._step_checking(row, now)
             elif row.state == "waiting-resume":
                 if live and self._submitter is not None:
-                    # Read before the submission, so the marker is the one the resume starts after.
-                    start_after = self._start_after(row.run_id)
                     outcome = await self._submitter.submit_resume(row.run_id, automatic_resume_key(row))
+                    # Read from the resume execution, so a replayed submission whose resume has
+                    # already saved a marker still records the marker the resume started after.
+                    start_after = self._start_after(row.run_id, outcome.flow_run_id)
                     self._after_submission(
                         row,
                         outcome,
@@ -466,10 +467,21 @@ class RunLivenessReconciler:
             return run, None
         return run, next((link for link in run.prefect_executions if link.flow_run_id == flow_run_id), None)
 
-    def _start_after(self, run_id: str) -> int | None:
-        """The run's highest saved progress marker: where the resume starts after (`resume_start_after`)."""
+    def _start_after(self, run_id: str, resume_flow_run_id: str | None) -> int | None:
+        """The progress marker the resume execution ``resume_flow_run_id`` started after.
+
+        The worker saves each marker of a resume with the position it started after. A resume
+        that saved no marker yet started after the run's highest saved marker
+        (`resume_start_after`), which no other write can have moved since, because the run has
+        one write admission. Both are read from one lookup of the run.
+        """
         run = self._projection.lookup_run(run_id).value
-        marker = None if run is None else run_apply_progress(run)
+        if run is None:
+            return None
+        link = next((link for link in run.prefect_executions if link.flow_run_id == resume_flow_run_id), None)
+        if link is not None and link.apply_progress is not None:
+            return link.apply_progress.start_after
+        marker = run_apply_progress(run)
         return None if marker is None else marker.position
 
     def _move(self, row: AutomaticResume, to_state: AutomaticResumeState, now: datetime, **fields: object) -> bool:

@@ -784,6 +784,37 @@ def test_a_restart_between_the_submission_and_the_move_submits_once(step_api: _S
     assert [link.purpose for link in run.prefect_executions].count("verify") == 1
 
 
+def test_a_replayed_resume_submission_records_the_marker_the_resume_started_after(step_api: _StepAPI) -> None:
+    """The resume saved a marker before the replay moved the record: `start_after` is where it started (FR-009)."""
+    _client, projection, _orchestration, service = step_api
+    run_id = _interrupted_with_record(step_api)
+    _passed_check(step_api, run_id)
+    submitted = asyncio.run(service.submit_resume(run_id, automatic_resume_key(_record(step_api, run_id))))
+    assert submitted.flow_run_id is not None
+    assert projection.claim_execution(run_id, submitted.flow_run_id, worker_id=_STEP_WORKER_ID)
+    position = _STEP_MARKER + 5
+    marker = ApplyProgress(
+        position=position,
+        operation_id=f"op_{position:016x}",
+        total=_STEP_TOTAL,
+        start_after=_STEP_MARKER,
+        saved_at=NOW,
+    )
+    assert projection.record_apply_progress(run_id, submitted.flow_run_id, marker) == "saved"
+
+    _step(step_api)
+
+    resuming = _record(step_api, run_id)
+    assert (resuming.state, resuming.resume_flow_run_id, resuming.start_after) == (
+        "resuming",
+        submitted.flow_run_id,
+        _STEP_MARKER,
+    )
+    _rule_8(step_api)
+    rows = projection.automatic_resumes_of(run_id)
+    assert (rows[-1].state, rows[-1].reason) == ("waiting-check", None)
+
+
 def test_an_unconfirmed_submission_is_tried_again_with_the_same_key(step_api: _StepAPI) -> None:
     """Prefect accepted the check but the answer was lost: the record waits, and the next loop replays."""
     _client, projection, orchestration, _service = step_api
