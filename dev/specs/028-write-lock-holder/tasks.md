@@ -119,19 +119,23 @@ in the web interface, and the real PostgreSQL test runs on every pull request.
 
 ### Web interface (FR-014)
 
-- [ ] T017 [P] [US1] Make the web interface's API types know `active_run_id` on the stage failure: regenerate
+- [X] T017 [P] [US1] Make the web interface's API types know `active_run_id` on the stage failure: regenerate
   `frontend/src/api/types.generated.ts` with `pnpm codegen:openapi` against a running Sync API of this branch; if
   no API can be started, add the field by hand exactly as the OpenAPI schema of `StageFailureResource` in
   `infrahub_sync/client/models.py` declares it (`string | null`), with a comment that the next regeneration
   replaces it.
-- [ ] T018 [US1] In `frontend/src/domain/run-state.ts`, add `activeRunId?: string` to `FailureDetail` and set it
+  Outcome: no change to `types.generated.ts`. The Sync API's OpenAPI schema types a run's `results` as
+  `dict[str, Any]` and no route returns `StageFailureResource`, so a regeneration from this branch's app is
+  identical to the committed file and has no `active_run_id`. `failureDetail` reads the failure record as loose
+  JSON, so it needs no generated type.
+- [X] T018 [US1] In `frontend/src/domain/run-state.ts`, add `activeRunId?: string` to `FailureDetail` and set it
   in `failureDetail` only when the failure record's `active_run_id` is a non-empty string. Depends on T017.
-- [ ] T019 [US1] In `frontend/src/features/runs/run-notices.tsx`, in the failure notice, show the existing
+- [X] T019 [US1] In `frontend/src/features/runs/run-notices.tsx`, in the failure notice, show the existing
   "Open run" link (`<Link to="/runs/$runId" params={{ runId: f.activeRunId }} className={OPEN_RUN}>`, as in the
   notice that already names another run) when `f.activeRunId` is set. Add no web-only wording; the stored cause and
   next action carry the "not known" and "has ended" cases (contracts/contended-write-failure.md, "Web interface").
   Depends on T018.
-- [ ] T020 [P] [US1] Add `frontend/src/domain/run-state.test.ts` (Vitest): `failureDetail` sets `activeRunId` for a
+- [X] T020 [P] [US1] Add `frontend/src/domain/run-state.test.ts` (Vitest): `failureDetail` sets `activeRunId` for a
   failure record with `active_run_id: "20261123T1012-aaaaaaaa"`, and leaves it unset when the field is `null`,
   absent, an empty string or a number. Depends on T018.
 
