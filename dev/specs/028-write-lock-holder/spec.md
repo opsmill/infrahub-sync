@@ -152,6 +152,7 @@ time. The failure names that run and the next action does not say to wait for it
   Sync service's database; any other result gives "not known".
 - **FR-007**: When the named run's record shows that it has ended, the failure MUST say so, and its next action
   MUST NOT tell the operator to wait for that run.
+  - Note (2026-11-23, review): the run counts as ended only when the run records have no claimed, open write for the run and its latest claimed write ended (`HolderState.write_ended_at`) before this write started waiting (the lock timeout minus the deadline the guard used, stamped as `ApplyGuardContentionError.wait_started_at`). A holder that released the lock and recorded its verdict during the wait gets the "writing" variant. The causes say which run held the guard when the wait ended, not "for the whole wait".
 - **FR-008**: The lookup of the run from the run records (the earliest claimed write that has not ended) MUST be
   removed, not kept as a fallback.
 - **FR-009**: The CLI output for a contended write MUST stay as it is on branch `fix/write-guard-names-active-run`

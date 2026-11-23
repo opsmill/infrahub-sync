@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 Stage = Literal["plan", "verify", "apply", "sync"]
 # What the run records answer for the candidate of a contended write guard (spec 028, SC-003):
-# a run of the same configuration whose write has ended ("confirmed") or is still open
+# a run of the same configuration whose write ended before the wait began ("confirmed") or is still open
 # ("confirmed-writing"), no such run ("rejected"), or a lookup that raised.
 HolderLookup = Literal["confirmed", "confirmed-writing", "rejected", "lookup-raised"]
 
@@ -393,8 +393,9 @@ CASES: tuple[FailureCase, ...] = (
         "write-guard-contended", "apply", _contended, "write_guard_contended", {"system": None, "active_run_id": None}
     ),
     # The candidate names a run of the same configuration, so the record names it. `active_run_id`
-    # stays `None` in `fields`: a record built without the run records names no run. That run has
-    # no open write, so the record carries the "write has ended" cause and next action.
+    # stays `None` in `fields`: a record built without the run records names no run. That run's
+    # write ended before the wait began, so the record carries the "write had ended" cause and
+    # next action.
     FailureCase(
         "write-guard-contended-holder-confirmed",
         "apply",

@@ -10,6 +10,7 @@ facts that fake assumes — that a session-level `lock_timeout` bounds
 from __future__ import annotations
 
 import traceback
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import pytest
@@ -409,6 +410,23 @@ def test_one_holder_row_with_a_valid_label_names_the_holding_run() -> None:
         _Hold(session).run()
 
     assert caught.value.holder_run_id == _OTHER_RUN_ID
+
+
+@pytest.mark.parametrize("deadline_seconds", [DEFAULT_DEADLINE_SECONDS, 120.0])
+def test_a_lock_timeout_records_when_the_wait_started_from_the_deadline_it_used(deadline_seconds: float) -> None:
+    """Finding 1: the wait started the deadline the guard used before the lock timeout."""
+    session = _FakeSession(holder_rows=[(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)])
+    session.failures["pg_advisory_lock"] = psycopg.errors.LockNotAvailable("timed out")
+
+    before = datetime.now(timezone.utc)
+    with pytest.raises(ApplyGuardContentionError) as caught:
+        _Hold(session, deadline_seconds=deadline_seconds).run()
+    after = datetime.now(timezone.utc)
+
+    started = caught.value.wait_started_at
+    assert started is not None
+    deadline = timedelta(seconds=deadline_seconds)
+    assert before - deadline <= started <= after - deadline
 
 
 _CONTENDED_TEXT = "another writer holds this configuration's write guard"

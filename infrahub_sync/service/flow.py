@@ -102,7 +102,13 @@ from infrahub_sync.runtime_schema.errors import RuntimeSchemaError
 from infrahub_sync.utils import PlanApplier
 
 from . import branch_review as review_ops
-from .apply_guard import ApplyGuard, ApplyGuardContentionError, hold_apply_guard
+from .apply_guard import (
+    HOLDER_LOOKUP_TIMEOUT_SECONDS,
+    MAX_DEADLINE_SECONDS,
+    ApplyGuard,
+    ApplyGuardContentionError,
+    hold_apply_guard,
+)
 from .apply_progress import StoreApplyProgressObserver
 from .checkpoints import (
     CheckpointUnavailableError,
@@ -1562,10 +1568,11 @@ def _failure_evidence(
     `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
     (spec 016); a template's next action then names `verify` and `runs resume`.
 
-    `active_run_id` is the run found writing to the same configuration when the write guard
-    was contended (`_active_write_run`); `failure_record` records it for that failure only.
-    `active_run_ended` is true when that run's write has ended although it still holds the
-    guard; it selects the cause and next action and is not recorded.
+    `active_run_id` is the run that held the configuration's write guard when this write's
+    wait for it ended (`_active_write_run`): the candidate comes from the label of the session
+    that held the lock and is confirmed in the run records. `failure_record` records it for
+    that failure only. `active_run_ended` is true when that run's write had ended before this
+    write started waiting; it selects the cause and next action and is not recorded.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
@@ -1671,15 +1678,19 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
 
 
 def _active_write_run(projection: ProductProjection, stored: ProductRun, exc: Exception) -> tuple[str | None, bool]:
-    """The run that held the configuration's write guard when this write could not take it.
+    """The run that held the configuration's write guard when this write's wait for it ended.
 
     Returns `(run_id, ended)`, or `(None, False)` when the run is not known. Only an
-    `ApplyGuardContentionError` carries a candidate: the run ID parsed from the holding
-    session's label. The candidate is accepted only when it is not the failing run and the
-    run records hold a run of the same configuration with that ID; `ended` says that run no
-    longer has a claimed, open write. The error's text is never read. A lookup that fails
-    gives `(None, False)`, so the failure record is still stored and says the run is not
-    known.
+    `ApplyGuardContentionError` carries a candidate: the run ID parsed from the label of the
+    session that held the lock. The candidate is accepted only when it is not the failing run
+    and the run records hold a run of the same configuration with that ID. The error's text
+    is never read. A lookup that fails gives `(None, False)`, so the failure record is still
+    stored and says the run is not known.
+
+    `ended` is true only when the run has no claimed, open write and its last write ended
+    before this write started waiting (`_wait_started_at`). A run whose write ended during the
+    wait may have released the lock and recorded its verdict after the lock timeout, so it is
+    reported as writing; telling the operator to stop a healthy worker would be wrong.
     """
     if not isinstance(exc, ApplyGuardContentionError) or stored.config_id is None:
         return None, False
@@ -1688,12 +1699,26 @@ def _active_write_run(projection: ProductProjection, stored: ProductRun, exc: Ex
         return None, False
     try:
         state = projection.write_holder_state(candidate, stored.config_id)
+        if state is None:
+            return None, False
+        ended = not state.writing and state.write_ended_at is not None and state.write_ended_at < _wait_started_at(exc)
     except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.warning("the run that holds the write guard could not be looked up (%s)", type(unexpected).__name__)
         return None, False
-    if state is None:
-        return None, False
-    return candidate, not state.writing
+    return candidate, ended
+
+
+def _wait_started_at(exc: ApplyGuardContentionError) -> datetime:
+    """When the failing write started waiting for the guard.
+
+    The guard stamps it as the time of the lock timeout minus the deadline it used. Without
+    that stamp, the earliest moment the wait can have started is used: now, minus the largest
+    accepted deadline and the holder lookup's own bound. An earlier start reports fewer runs
+    as ended, so the estimate errs toward "writing".
+    """
+    if exc.wait_started_at is not None:
+        return exc.wait_started_at
+    return datetime.now(timezone.utc) - timedelta(seconds=MAX_DEADLINE_SECONDS + HOLDER_LOOKUP_TIMEOUT_SECONDS)
 
 
 @dataclass(frozen=True)

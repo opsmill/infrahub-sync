@@ -85,6 +85,7 @@ All facts below were checked on branch `028-write-lock-holder` (from `fix/write-
   that a worker claimed and that has no terminal verdict) to that one run and reports whether the write is still
   open. When it is not, the template says the run's write has ended. Do not add a stored field for this; the
   cause and the next action carry it. (Clarification 2026-11-23: one read of the run records, SC-004.)
+- **Note (2026-11-23, review)**: The same read also returns `write_ended_at`, and the run counts as ended only when the run records have no claimed, open write for the run and its latest claimed write ended (`HolderState.write_ended_at`) before this write started waiting (the lock timeout minus the deadline the guard used, stamped as `ApplyGuardContentionError.wait_started_at`). A holder that released the lock and recorded its verdict during the wait gets the "writing" variant. The causes say which run held the guard when the wait ended, not "for the whole wait".
 - **Rationale**: `ProductRun.finished_at` is not a safe signal: a run that was interrupted and is now being
   resumed already has a record from its earlier stage. The open-write rule is what commit `a50d5780` already used.
   Keeping the record's field list to `active_run_id` keeps ADR 0021's field list change minimal.

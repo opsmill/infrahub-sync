@@ -418,7 +418,7 @@ def test_a_record_load_failure_keeps_plan_again_on_a_resumable_run() -> None:
 
 
 def _guard_contention() -> BaseException:
-    """The write guard's refusal after another writer held it for the whole wait."""
+    """The write guard's refusal after its wait for another writer's hold ended."""
     apply_guard = pytest.importorskip("infrahub_sync.service.apply_guard")
     return apply_guard.ApplyGuardContentionError("another writer holds this configuration's write guard")
 
@@ -470,16 +470,17 @@ _VERIFY_AND_RESUME_ENDING = (
         pytest.param(
             "run-holder-1",
             False,
-            "Sync run run-holder-1 was writing to this configuration and held its write guard for the whole wait, "
-            "so this write did not start and changed nothing",
+            "Sync run run-holder-1 was writing to this configuration and held its write guard when this write's "
+            "wait for the guard ended, so this write did not start and changed nothing",
             "Check that run with `infrahub-sync runs show run-holder-1` and wait for it to finish, then plan again.",
             id="named-write-open",
         ),
         pytest.param(
             "run-holder-1",
             True,
-            "Sync run run-holder-1 held this configuration's write guard for the whole wait although its write has "
-            "ended, so this write did not start and changed nothing",
+            "Sync run run-holder-1 held this configuration's write guard when this write's wait for the guard "
+            "ended, although its write had ended before that wait began, so this write did not start and "
+            "changed nothing",
             "The guard is released only when the worker of run run-holder-1 stops. Ask the administrator of the "
             "Sync service to stop or restart that worker, then plan again.",
             id="named-write-ended",
@@ -487,8 +488,8 @@ _VERIFY_AND_RESUME_ENDING = (
         pytest.param(
             None,
             False,
-            "Another writer held this configuration's write guard for the whole wait, so this write did not start "
-            "and changed nothing. Which Sync run holds the guard is not known",
+            "Another writer held this configuration's write guard when this write's wait for the guard ended, "
+            "so this write did not start and changed nothing. Which Sync run holds the guard is not known",
             "List the runs of this configuration with `infrahub-sync runs list` and wait for its write to finish, "
             "then plan again.",
             id="not-known",
@@ -496,8 +497,8 @@ _VERIFY_AND_RESUME_ENDING = (
         pytest.param(
             None,
             True,
-            "Another writer held this configuration's write guard for the whole wait, so this write did not start "
-            "and changed nothing. Which Sync run holds the guard is not known",
+            "Another writer held this configuration's write guard when this write's wait for the guard ended, "
+            "so this write did not start and changed nothing. Which Sync run holds the guard is not known",
             "List the runs of this configuration with `infrahub-sync runs list` and wait for its write to finish, "
             "then plan again.",
             id="not-known-ended-flag-ignored",

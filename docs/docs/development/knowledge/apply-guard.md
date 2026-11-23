@@ -104,7 +104,9 @@ failure to set the label fails the acquisition as unavailable, so a labelled wri
 the key without its label. `guard_label` sets no label when the run ID is not of the run
 records' form or the label would be longer than 62 bytes, because PostgreSQL cuts
 `application_name` at 63 bytes in a standard build and a cut label could name another run. A
-holder without a label is reported as not known.
+holder without a label is reported as not known. So a run whose ID is longer than 42 characters,
+or a holder on a worker that runs a release without the label (during an upgrade), is never
+named.
 
 A write that takes the lock reads nothing more. After a lock timeout, and before the session is
 closed, `_read_holder` reads the holder on the same session:
@@ -118,16 +120,29 @@ closed, `_read_holder` reads the holder on the same session:
    row, two rows, a rejected label or any exception gives `None`. The failure stays an
    `ApplyGuardContentionError` in every case, and its `holder_run_id` carries the candidate.
 
+Before that read, the guard also stamps `wait_started_at` on the error: the time of the lock
+timeout minus the deadline the guard used.
+
 When a service write fails with that error, `_active_write_run` in
 `infrahub_sync/service/flow.py` makes one read of the run records,
 `ProductProjection.write_holder_state(candidate, config_id)`. It accepts the candidate only when
 it is not the failing run's own ID and the run records hold a run with that ID for the same
-configuration. The state also says whether that run's write has ended: a run whose write has
-ended can still hold the key while its worker keeps the session open. The failure record holds
-the run ID as `active_run_id`, with the failure type `write_guard_contended`, and `None` when the
-candidate is missing or rejected or the read fails. Its cause and next action come from one of
-three templates: the run is writing, its write has ended (stop or restart that worker), or the
-run is not known.
+configuration. The same read returns `HolderState`: `writing`, true while the run has a claimed
+write execution with no terminal verdict, and `write_ended_at`, the latest terminal time of its
+claimed write executions. A run whose write has ended can still hold the key while its worker
+keeps the session open. The run is reported as ended only when `writing` is false and
+`write_ended_at` is earlier than `wait_started_at`. A holder can release the key and record its
+verdict after the lock timeout and before this read; its write ended during the wait, so it is
+reported as writing, and the operator is not told to stop a healthy worker. When the error has no
+`wait_started_at`, the wait is taken to have started `MAX_DEADLINE_SECONDS` plus the 2-second
+lookup bound before the failure is recorded, which reports fewer runs as ended.
+
+The failure record holds the run ID as `active_run_id`, with the failure type
+`write_guard_contended`, and `None` when the candidate is missing or rejected or the read fails.
+Its cause and next action come from one of three templates: the run is writing, its write had
+ended before the wait began (stop or restart that worker), or the run is not known. Each cause
+says which run held the guard when this write's wait ended, not for the whole wait: another
+waiter can take the key between the original holder's release and the lookup.
 
 The earlier guess from the run records, the other write of the same configuration that a worker
 claimed first (`other_write_in_progress`), is removed: it could name a run that did not hold the

@@ -15,7 +15,7 @@ own unit suite drives. Its provider facts are proven against a real server in
 from __future__ import annotations
 
 import ast
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +36,7 @@ from infrahub_sync.plan.models import ApplyRecord  # noqa: E402
 from infrahub_sync.plan.review import read_saved_plan  # noqa: E402
 from infrahub_sync.plan.writer import write_plan_artifact  # noqa: E402
 from infrahub_sync.product_store import (  # noqa: E402
+    ExecutionMergeWriteback,
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
@@ -353,6 +354,9 @@ def test_guard_contention_touches_no_destination_and_creates_no_success_evidence
     assert run.outcome == "failed"
 
 
+_HOLDER_FLOW_RUN_ID = "c1d2e3f4-0000-4000-8000-000000000001"
+
+
 def _open_write_of_another_run(
     prepared: _ManagedStage, run_id: str, binding: tuple[str, int, str] | None = None
 ) -> None:
@@ -375,18 +379,17 @@ def _open_write_of_another_run(
     admitted, _created = projection.reserve_mutation(
         _receipt(f"m-{run_id}", run_id=run_id, operation="sync"), admit_write=True
     )
-    flow_run_id = "c1d2e3f4-0000-4000-8000-000000000001"
     projection.add_prefect_execution(
         run_id,
         PrefectExecutionLink(
-            flow_run_id=flow_run_id, purpose="sync", attempt=1, submitted_at=datetime.now(timezone.utc)
+            flow_run_id=_HOLDER_FLOW_RUN_ID, purpose="sync", attempt=1, submitted_at=datetime.now(timezone.utc)
         ),
         receipt_id=admitted.receipt_id,
     )
     projection.complete_mutation(
-        admitted.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id=flow_run_id
+        admitted.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id=_HOLDER_FLOW_RUN_ID
     )
-    assert projection.claim_execution(run_id, flow_run_id, worker_id=WORKER_ID)
+    assert projection.claim_execution(run_id, _HOLDER_FLOW_RUN_ID, worker_id=WORKER_ID)
 
 
 @pytest.mark.parametrize("stage", ["apply", "sync"])
@@ -463,6 +466,114 @@ def test_a_contended_failure_looks_up_the_holder_in_the_run_records_exactly_once
         _drive(prepared, stage)
 
     assert calls == [("managed-holder", prepared.binding[0])]
+
+
+def _end_write_of_another_run(prepared: _ManagedStage, run_id: str, ended_at: datetime) -> None:
+    """Record the verdict of the write `_open_write_of_another_run` opened, ended at `ended_at`."""
+    assert prepared.projection.commit_claimed_execution(
+        run_id,
+        _HOLDER_FLOW_RUN_ID,
+        worker_id=WORKER_ID,
+        terminal_at=ended_at,
+        terminal_state="failed",
+        terminal_outcome="failed",
+        writeback=ExecutionMergeWriteback(results={}),
+    )
+
+
+_ENDED_CAUSE_FRAGMENT = "although its write had ended before that wait began"
+
+
+def test_a_holder_whose_write_ended_before_the_wait_began_is_reported_as_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that ended its write an hour before this write started waiting, and still holds the guard."""
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label="infrahub-sync-guard:managed-holder"
+    )
+    _open_write_of_another_run(prepared, "managed-holder")
+    _end_write_of_another_run(prepared, "managed-holder", datetime.now(timezone.utc) - timedelta(hours=1))
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    failure = _stored(prepared).results["apply_failure"]
+    assert failure["active_run_id"] == "managed-holder"
+    assert _ENDED_CAUSE_FRAGMENT in failure["cause"]
+    assert "stop or restart that worker" in failure["next_action"]
+
+
+def test_a_holder_whose_write_ended_during_the_wait_is_reported_as_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 1: a holder may release the lock and record its verdict after this write's lock timeout.
+
+    Its write ended after this write started waiting, so the failure must not tell the operator to
+    stop a worker that is healthy.
+    """
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label="infrahub-sync-guard:managed-holder"
+    )
+    _open_write_of_another_run(prepared, "managed-holder")
+    _end_write_of_another_run(prepared, "managed-holder", datetime.now(timezone.utc))
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    failure = _stored(prepared).results["apply_failure"]
+    assert failure["active_run_id"] == "managed-holder"
+    assert "Sync run managed-holder was writing to this configuration" in failure["cause"]
+    assert _ENDED_CAUSE_FRAGMENT not in failure["cause"]
+    assert "`infrahub-sync runs show managed-holder`" in failure["next_action"]
+
+
+def test_a_holder_with_no_open_write_and_no_write_end_time_is_reported_as_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a time at which the holder's write ended, the records cannot show that it ended first."""
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label="infrahub-sync-guard:managed-holder"
+    )
+    config_id, registry_version, package_checksum = prepared.binding
+    prepared.projection.create_run(
+        ProductRun(
+            run_id="managed-holder",
+            operation="sync",
+            configuration_reference=f"{config_id}@{registry_version}",
+            config_id=config_id,
+            registry_version=registry_version,
+            package_checksum=package_checksum,
+            actor="owner",
+            started_at=datetime.now(timezone.utc),
+            phase="accepted",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    failure = _stored(prepared).results["apply_failure"]
+    assert failure["active_run_id"] == "managed-holder"
+    assert "Sync run managed-holder was writing to this configuration" in failure["cause"]
+    assert _ENDED_CAUSE_FRAGMENT not in failure["cause"]
+
+
+def test_a_contention_error_without_a_wait_start_assumes_the_largest_deadline() -> None:
+    """Without the guard's stamp, the wait is taken to have started as early as it could have."""
+    from infrahub_sync.service.apply_guard import (
+        HOLDER_LOOKUP_TIMEOUT_SECONDS,
+        MAX_DEADLINE_SECONDS,
+        ApplyGuardContentionError,
+    )
+
+    stamped = datetime(2026, 11, 23, 9, tzinfo=timezone.utc)
+    assert service_flow._wait_started_at(ApplyGuardContentionError("x", wait_started_at=stamped)) == stamped
+
+    before = datetime.now(timezone.utc)
+    started = service_flow._wait_started_at(ApplyGuardContentionError("x"))
+    after = datetime.now(timezone.utc)
+    earliest = timedelta(seconds=MAX_DEADLINE_SECONDS + HOLDER_LOOKUP_TIMEOUT_SECONDS)
+    assert before - earliest <= started <= after - earliest
 
 
 def test_guard_contention_without_another_write_says_the_active_run_is_not_known(

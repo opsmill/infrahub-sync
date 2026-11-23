@@ -1004,7 +1004,7 @@ is `null` or absent:
       `branch_delete_failed`, `proposed_change_open_failed`, `proposed_change_read_failed`,
       `proposed_change_close_failed`;
     - a write that did not start because another write of the same configuration held its write
-      guard for the whole wait: `write_guard_contended`;
+      guard when the wait for it ended: `write_guard_contended`;
     - any other error: `internal_error`.
 - `system`: `{"role": "source" or "destination", "adapter": <name>}`.
 - `error_code`, `node_kind`, `attribute` and `infrahub_message`: Infrahub's error code, node
@@ -1015,10 +1015,11 @@ is `null` or absent:
 - `operations_total` and `failed_operation_detail`: for a stopped apply, the number of
   operations in the plan, and the `action`, `kind` and `identity` of the failed operation.
 - `active_run_id`: for `write_guard_contended`, the ID of the Sync run whose database session
-  held the configuration's write guard for the whole wait. Sync reads it from that session and
+  held the configuration's write guard when the wait ended. Sync reads it from that session and
   keeps it only when its run records hold a run with that ID for the same configuration. It is
-  also set when that run's write has ended but its worker still holds the guard; the `cause`
-  then says the write has ended, and the `next_action` says to stop or restart that worker.
+  also set when that run's write had ended before the wait began but its worker still holds the
+  guard; the `cause` then says the write had ended, and the `next_action` says to stop or restart
+  that worker.
   While the run is still writing, the `next_action` names `infrahub-sync runs show <run_id>`.
   It is `null` when Sync cannot prove which run holds the guard, and the `cause` then says that
   the run is not known. The CLI prints it as `active run: <run_id>`, and the web interface links

@@ -28,6 +28,7 @@ import logging
 import math
 import re
 from contextlib import contextmanager, suppress
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 import psycopg
@@ -80,7 +81,8 @@ _RELEASE = "SELECT pg_advisory_unlock(%s), pg_backend_pid()"
 # The holder lookup after a lock timeout. It is bounded by its own `statement_timeout`, so
 # a slow catalog read cannot extend a contended failure by more than two seconds.
 _HOLDER_TIMEOUT = "SELECT set_config('statement_timeout', %s, false)"
-_HOLDER_TIMEOUT_MILLISECONDS = "2000"
+HOLDER_LOOKUP_TIMEOUT_SECONDS = 2
+_HOLDER_TIMEOUT_MILLISECONDS = str(HOLDER_LOOKUP_TIMEOUT_SECONDS * 1000)
 # The label of the session that holds this exact key in this database. At most two rows are
 # read: a candidate is taken only when exactly one session holds the key.
 _HOLDER = """
@@ -121,16 +123,22 @@ class ApplyGuardUnavailableError(ApplyGuardError):
 
 
 class ApplyGuardContentionError(ApplyGuardError):
-    """Another writer held the configuration's key for the whole deadline.
+    """The wait for the configuration's key ended before this writer could take it.
 
-    `holder_run_id` is a candidate run ID parsed from the holding session's label, or
-    `None` when the label is absent, unreadable, or not well formed. It is not
-    confirmed against the run records.
+    `holder_run_id` is a candidate run ID parsed from the label of the session that held
+    the key when the wait ended, or `None` when the label is absent, unreadable, or not
+    well formed. It is not confirmed against the run records.
+
+    `wait_started_at` is when this writer started waiting for the key, in UTC: the time of
+    the lock timeout minus the deadline the guard used. `None` when the guard did not set it.
     """
 
-    def __init__(self, message: str, *, holder_run_id: str | None = None) -> None:
+    def __init__(
+        self, message: str, *, holder_run_id: str | None = None, wait_started_at: datetime | None = None
+    ) -> None:
         super().__init__(message)
         self.holder_run_id = holder_run_id
+        self.wait_started_at = wait_started_at
 
 
 class ApplyGuardOwnershipError(ApplyGuardError):
@@ -436,6 +444,8 @@ def _acquire(
         # session and is re-raised unchanged.
         try:
             if isinstance(failure, ApplyGuardContentionError):
+                # Stamped before the holder read, so the read's own time cannot move it.
+                failure.wait_started_at = datetime.now(timezone.utc) - timedelta(milliseconds=milliseconds)
                 failure.holder_run_id = _read_holder(connection, key)
         finally:
             _discard(connection)

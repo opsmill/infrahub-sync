@@ -771,17 +771,19 @@ _SELECT_RUN_WITH_OPEN_EXECUTION = (
     "WHERE prefect_executions.run_id = product_runs.run_id AND prefect_executions.terminal_at IS NULL) "
     "ORDER BY started_at DESC, run_id DESC LIMIT 1"
 )
-# One run of a configuration, and whether it has a write execution that a worker claimed and
-# that has no terminal verdict. No row when the run does not exist or belongs to another
-# configuration. Bound with ``WRITE_PURPOSES``, then the run ID, then the configuration ID.
-# A worker claims its execution before any other work, so an execution that no worker
-# claimed cannot hold the configuration's write guard.
+# One run of a configuration and its write executions that a worker claimed: one row per such
+# execution with its flow run ID and terminal time, or one row with both empty when it has none.
+# No row when the run does not exist or belongs to another configuration. Bound with
+# ``WRITE_PURPOSES``, then the run ID, then the configuration ID. A worker claims its execution
+# before any other work, so an execution that no worker claimed cannot hold the configuration's
+# write guard. The terminal times are compared in Python, not as text: they are written with
+# ``isoformat()``, so their offsets are not guaranteed to be the same.
 _SELECT_RUN_WRITE_STATE = (
-    "SELECT EXISTS (SELECT 1 FROM prefect_executions "  # noqa: S608 - placeholders only.
-    "WHERE prefect_executions.run_id = product_runs.run_id "
-    "AND prefect_executions.terminal_at IS NULL AND prefect_executions.claimed_at IS NOT NULL "
-    f"AND prefect_executions.purpose IN ({', '.join('?' for _ in WRITE_PURPOSES)})) "
-    "FROM product_runs WHERE product_runs.run_id = ? AND product_runs.config_id = ?"
+    "SELECT prefect_executions.flow_run_id, prefect_executions.terminal_at "  # noqa: S608 - placeholders only.
+    "FROM product_runs LEFT JOIN prefect_executions "
+    "ON prefect_executions.run_id = product_runs.run_id AND prefect_executions.claimed_at IS NOT NULL "
+    f"AND prefect_executions.purpose IN ({', '.join('?' for _ in WRITE_PURPOSES)}) "
+    "WHERE product_runs.run_id = ? AND product_runs.config_id = ?"
 )
 # The unresolved receipts of a stage operation on the runs of a configuration, newest run
 # first. Built from ``_ARBITRATED_OPERATIONS``, bound after the configuration ID.
@@ -801,10 +803,12 @@ class HolderState:
     """What the run records say about the run named as a write guard's holder.
 
     ``writing`` is true while that run has a write execution that a worker claimed and that
-    has no terminal verdict.
+    has no terminal verdict. ``write_ended_at`` is the latest terminal time of the run's claimed
+    write executions, in UTC, or ``None`` when none of them has ended.
     """
 
     writing: bool
+    write_ended_at: datetime | None = None
 
 
 class DuplicateRunError(ValueError):
@@ -4446,13 +4450,25 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         ``None`` when the run does not exist or belongs to another configuration. Otherwise
         ``HolderState.writing`` is true when the run has an execution whose purpose is in
-        ``WRITE_PURPOSES``, that a worker claimed and that has no terminal verdict.
+        ``WRITE_PURPOSES``, that a worker claimed and that has no terminal verdict, and
+        ``HolderState.write_ended_at`` is the latest terminal time of those claimed write
+        executions, in UTC.
         """
         with self._reading() as cursor:
             cursor.execute(self._sql(_SELECT_RUN_WRITE_STATE), (*WRITE_PURPOSES, run_id, config_id))
-            row = cursor.fetchone()
-        # PostgreSQL returns a boolean and SQLite an integer.
-        return None if row is None else HolderState(writing=bool(row[0]))
+            rows = cursor.fetchall()
+        if not rows:
+            return None
+        writing = False
+        ended: list[datetime] = []
+        for flow_run_id, terminal_at in rows:
+            if flow_run_id is None:
+                continue
+            if terminal_at is None:
+                writing = True
+            else:
+                ended.append(datetime.fromisoformat(str(terminal_at)).astimezone(timezone.utc))
+        return HolderState(writing=writing, write_ended_at=max(ended, default=None))
 
     def create_account(
         self,
@@ -5827,7 +5843,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         return self._records.run_in_progress(config_id, now, receipt_age_limit)
 
     def write_holder_state(self, run_id: str, config_id: str) -> HolderState | None:
-        """Return whether one run of a configuration still has an open write.
+        """Return whether one run of a configuration still has an open write, and when its write last ended.
 
         ``None`` when the run does not exist or belongs to another configuration: see
         `_RelationalRunStore.write_holder_state`.

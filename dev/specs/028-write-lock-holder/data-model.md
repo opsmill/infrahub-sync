@@ -23,6 +23,8 @@ state, or in the existing failure record.
 - **Accepted when**: candidate is not the failing run's ID, and `write_holder_state(candidate, config_id)`
   returns a state (the run exists and its `config_id` equals the failing run's `config_id`).
 - **`ended`**: the returned state says the run has no claimed, open write.
+  - Note (2026-11-23, review): `HolderState` is `writing: bool` and `write_ended_at: datetime | None` (the latest
+    terminal time of the run's claimed write executions, in UTC). The run counts as ended only when the run records have no claimed, open write for the run and its latest claimed write ended (`HolderState.write_ended_at`) before this write started waiting (the lock timeout minus the deadline the guard used, stamped as `ApplyGuardContentionError.wait_started_at`). A holder that released the lock and recorded its verdict during the wait gets the "writing" variant. The causes say which run held the guard when the wait ended, not "for the whole wait".
 - **Otherwise**: not known (`None`).
 
 ## Failure record of a contended write (existing, from `cf9f13b6`/`a50d5780`)

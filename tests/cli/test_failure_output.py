@@ -165,8 +165,8 @@ def test_infrahub_message_is_printed_with_its_control_characters_made_visible(
 
 
 _CONTENDED_CAUSE = (
-    "Sync run service-run-0 was writing to this configuration and held its write guard for the whole wait, "
-    "so this write did not start and changed nothing"
+    "Sync run service-run-0 was writing to this configuration and held its write guard when this write's "
+    "wait for the guard ended, so this write did not start and changed nothing"
 )
 _CONTENDED_NEXT_ACTION = (
     "Check that run with `infrahub-sync runs show service-run-0` and wait for it to finish, then plan again."
@@ -205,8 +205,8 @@ def test_a_contended_write_prints_the_active_run_and_how_to_check_it(
 
 
 _ENDED_CAUSE = (
-    "Sync run service-run-0 held this configuration's write guard for the whole wait although its write has "
-    "ended, so this write did not start and changed nothing"
+    "Sync run service-run-0 held this configuration's write guard when this write's wait for the guard "
+    "ended, although its write had ended before that wait began, so this write did not start and changed nothing"
 )
 _ENDED_NEXT_ACTION = (
     "The guard is released only when the worker of run service-run-0 stops. Ask the administrator of the "

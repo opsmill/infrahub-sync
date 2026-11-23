@@ -37,7 +37,12 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from infrahub_sync.client import ResultsResource, RunResource
-from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
+from infrahub_sync.product_store import (
+    ExecutionMergeWriteback,
+    PrefectExecutionLink,
+    ProductRun,
+    local_product_projection,
+)
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.run_artifact import run_markdown
@@ -131,9 +136,9 @@ def _service(tmp_path: Path) -> tuple[ProductProjection, TestClient, str]:
 def _arrange_holder(projection: ProductProjection, case: FailureCase, monkeypatch: pytest.MonkeyPatch) -> str | None:
     """Make the run records answer the case's holder candidate as the case says; return the run named.
 
-    "confirmed" records the candidate as a run of the failing run's configuration, with no open
-    write. "confirmed-writing" also gives it a claimed sync execution with no verdict, an open
-    write. "rejected" records nothing, so no run has the candidate's ID. "lookup-raised" makes
+    "confirmed" records the candidate as a run of the failing run's configuration whose claimed
+    sync execution ended long before the wait began. "confirmed-writing" gives it a claimed sync
+    execution with no verdict, an open write. "rejected" records nothing, so no run has the candidate's ID. "lookup-raised" makes
     the lookup raise an error whose text holds both credentials.
     """
     if case.holder in {"confirmed", "confirmed-writing"}:
@@ -152,14 +157,23 @@ def _arrange_holder(projection: ProductProjection, case: FailureCase, monkeypatc
                 phase="accepted",
             )
         )
-        if case.holder == "confirmed-writing":
-            holder_flow_run_id = str(uuid5(NAMESPACE_URL, HOLDER_RUN_ID))
-            append_execution(
-                projection,
+        holder_flow_run_id = str(uuid5(NAMESPACE_URL, HOLDER_RUN_ID))
+        append_execution(
+            projection,
+            HOLDER_RUN_ID,
+            PrefectExecutionLink(flow_run_id=holder_flow_run_id, purpose="sync", attempt=1),
+        )
+        assert projection.claim_execution(HOLDER_RUN_ID, holder_flow_run_id, worker_id=WORKER_ID)
+        if case.holder == "confirmed":
+            assert projection.commit_claimed_execution(
                 HOLDER_RUN_ID,
-                PrefectExecutionLink(flow_run_id=holder_flow_run_id, purpose="sync", attempt=1),
+                holder_flow_run_id,
+                worker_id=WORKER_ID,
+                terminal_at=datetime(2026, 11, 11, 12, 5, tzinfo=timezone.utc),
+                terminal_state="failed",
+                terminal_outcome="failed",
+                writeback=ExecutionMergeWriteback(results={}),
             )
-            assert projection.claim_execution(HOLDER_RUN_ID, holder_flow_run_id, worker_id=WORKER_ID)
         return HOLDER_RUN_ID
     if case.holder == "lookup-raised":
 
@@ -214,8 +228,9 @@ def test_no_credential_reaches_the_api_the_cli_or_the_run_artifact(
     if case.holder is not None:
         # Each holder variant reaches its own path: only a confirmed candidate is named.
         assert stored_failure.active_run_id == named
-        # A named run with no open write gets the "write has ended" variant (spec 028, US3).
-        ended = "although its write has ended" in (stored_failure.cause or "")
+        # A named run whose write ended before the wait began gets the "write had ended" variant
+        # (spec 028, US3).
+        ended = "although its write had ended" in (stored_failure.cause or "")
         assert ended == (case.holder == "confirmed")
     assert run_response.json()["run"]["results"][f"{case.stage}_failure"]["failure_type"] == case.failure_type
     _assert_absent(run_response.content, "GET /runs/{run_id}")

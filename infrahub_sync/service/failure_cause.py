@@ -298,7 +298,7 @@ _GUARD_CONTENTION = ("infrahub_sync.service.apply_guard", "ApplyGuardContentionE
 
 
 def _is_guard_contention(link: BaseException) -> bool:
-    """Whether `link` is the write guard's refusal after another writer held it for the whole wait."""
+    """Whether `link` is the write guard's refusal after its wait for another writer's hold ended."""
     return (type(link).__module__, type(link).__name__) == _GUARD_CONTENTION
 
 
@@ -407,26 +407,29 @@ def _rejected_write_template(fields: dict[str, Any], _where: str, _adapter: str)
 def _guard_contended_template(fields: dict[str, Any], _where: str, _adapter: str) -> _Template:
     """A write that did not start: the run that holds the guard, or that it is not known (ADR 0010).
 
-    A named run whose write has ended (`active_run_ended`) still holds the guard through its
-    worker's session, so the next action names stopping that worker, never waiting for the run.
+    A named run whose write had ended before this write started waiting (`active_run_ended`)
+    still holds the guard through its worker's session, so the next action names stopping that
+    worker, never waiting for the run. Each cause says who held the guard when this write's wait
+    ended, not for the whole wait: the holder can change during the wait.
     """
     active = fields["active_run_id"]
     if active and fields.get("active_run_ended"):
         return (
-            f"Sync run {active} held this configuration's write guard for the whole wait although its write has "
-            "ended, so this write did not start and changed nothing",
+            f"Sync run {active} held this configuration's write guard when this write's wait for the guard "
+            "ended, although its write had ended before that wait began, so this write did not start and "
+            "changed nothing",
             f"The guard is released only when the worker of run {active} stops. Ask the administrator of the "
             f"Sync service to stop or restart that worker, {_PLAN_AGAIN}",
         )
     if active:
         return (
-            f"Sync run {active} was writing to this configuration and held its write guard for the whole wait, "
-            "so this write did not start and changed nothing",
+            f"Sync run {active} was writing to this configuration and held its write guard when this write's "
+            "wait for the guard ended, so this write did not start and changed nothing",
             f"Check that run with `infrahub-sync runs show {active}` and wait for it to finish, {_PLAN_AGAIN}",
         )
     return (
-        "Another writer held this configuration's write guard for the whole wait, so this write did not start "
-        "and changed nothing. Which Sync run holds the guard is not known",
+        "Another writer held this configuration's write guard when this write's wait for the guard ended, "
+        "so this write did not start and changed nothing. Which Sync run holds the guard is not known",
         f"List the runs of this configuration with `infrahub-sync runs list` and wait for its write to finish, "
         f"{_PLAN_AGAIN}",
     )
@@ -602,10 +605,12 @@ def failure_record(
     `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
     (spec 016): the next action then names `verify` and `runs resume`, not a new plan.
 
-    `active_run_id` is the Sync run the caller found writing to the same configuration, looked
-    up in the product store, never read from the error. It is recorded only for
-    `write_guard_contended`. `active_run_ended` is true when that run's write has ended although
-    its session still holds the guard; it selects the template variant and is not recorded.
+    `active_run_id` is the Sync run that held the configuration's write guard when the wait
+    ended: the caller takes the candidate from the label of the session that held the lock and
+    confirms it in the run records. It is recorded only for `write_guard_contended`.
+    `active_run_ended` is true when that run's write had ended before this write started
+    waiting, although its session still held the guard; it selects the template variant and is
+    not recorded.
 
     Returns every key of `FAILURE_RECORD_KEYS`, `None` where the failure does not name it, and
     `cause` and `next_action` when a template exists for the failure type. The caller keeps the

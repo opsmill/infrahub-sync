@@ -36,7 +36,7 @@ from infrahub_sync.product_store import (
     ProductRun,
 )
 from infrahub_sync.product_store.models import RunApproval
-from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
+from infrahub_sync.product_store.store import FileArtifactStore, HolderState, PostgreSQLRunStore, SQLiteRunStore
 from tests.product_store.postgresql_isolation import postgresql_schema_fixture
 
 if TYPE_CHECKING:
@@ -855,6 +855,42 @@ def test_write_holder_state_reports_a_claimed_open_write_of_the_configuration(
         state = projection.write_holder_state(run_id, config_id)
         assert state is not None
         assert state.writing is True
+
+
+def test_write_holder_state_reports_when_the_run_last_ended_a_claimed_write(
+    projection: ProductProjection,
+) -> None:
+    """Spec 028 finding 1: the same read returns when the run's claimed write ended, in UTC.
+
+    The end is written with a non-UTC offset, so the store must convert it, not pass the text on.
+    A run whose write is still open, and a run with no write, have no end time.
+    """
+    config_id = _rid("guard-ended-at-config")
+    run_id = _rid("guard-ended-at")
+    flow_run_id = _open_write(projection, run_id, config_id=config_id, purpose="apply")
+    assert projection.commit_claimed_execution(
+        run_id,
+        flow_run_id,
+        worker_id=_WORKER_ID,
+        terminal_at=datetime(2026, 11, 23, 9, 30, tzinfo=timezone(timedelta(hours=-1))),
+        terminal_state="failed",
+        terminal_outcome="failed",
+        writeback=ExecutionMergeWriteback(results={}),
+    )
+    still_open = _rid("guard-not-ended")
+    _open_write(projection, still_open, config_id=config_id, purpose="sync")
+    never_written = _rid("guard-never-wrote")
+    projection.create_run(_run(never_written).model_copy(update={"config_id": config_id}))
+
+    state = projection.write_holder_state(run_id, config_id)
+    assert state is not None
+    assert state.writing is False
+    ended_at = state.write_ended_at
+    assert ended_at == datetime(2026, 11, 23, 10, 30, tzinfo=timezone.utc)
+    assert ended_at is not None
+    assert ended_at.utcoffset() == timedelta(0)
+    assert projection.write_holder_state(still_open, config_id) == HolderState(writing=True, write_ended_at=None)
+    assert projection.write_holder_state(never_written, config_id) == HolderState(writing=False, write_ended_at=None)
 
 
 def test_write_holder_state_ignores_reads_ended_writes_and_other_configurations(
