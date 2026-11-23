@@ -161,7 +161,7 @@ behind `ProductProjection`.
 - [X] T025 [US1] Print one block per row in `runs show` and the `auto resumes` column in `runs list` in
       `infrahub_sync/cli.py`, as [contracts/cli-and-web.md](./contracts/cli-and-web.md) shows; test in
       `tests/cli/test_runs_resume.py`.
-- [ ] T026 [US1] Regenerate `frontend/src/api/types.generated.ts` with `pnpm codegen:openapi` against a local Sync API,
+- [X] T026 [US1] Regenerate `frontend/src/api/types.generated.ts` with `pnpm codegen:openapi` against a local Sync API,
       then show the rows as notices in `frontend/src/features/runs/run-notices.tsx` and the display name on resume
       entries in `frontend/src/features/runs/RunTimeline.tsx`; hide the resume action in
       `frontend/src/features/runs/RunActions.tsx` while a row is not `ended`. Add Vitest cases next to the changed

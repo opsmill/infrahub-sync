@@ -42,6 +42,7 @@ import {
 import { runStepList } from "#/domain/run-steps";
 import { describeSystem, type System } from "#/domain/systems";
 import { useDocumentTitle } from "#/lib/title";
+import { automaticResumePending } from "./automatic-resume";
 import { ChangeCount, ChangesDock, type ChangesState, useChangesShortcut } from "./ChangesDock";
 import { ChangesSheet, useChangesSheet } from "./ChangesSheet";
 import { usePlanDownload } from "./plan-download";
@@ -468,7 +469,13 @@ export function RunPage({ runId }: { runId: string }) {
   const needsApproval = me.data?.approval_required === true && !run.approval;
   const wouldApprove = (applicable || resumable) && !run.approval;
   const wouldApply = applicable && !needsApproval;
-  const wouldResume = resumable && !resumeNeedsCheck && !needsApproval;
+  // While Sync decides or carries out an automatic resume, the run offers no resume of its own
+  // (spec 030 contracts/cli-and-web.md); after a decision not to resume, it does again.
+  const wouldResume =
+    resumable &&
+    !resumeNeedsCheck &&
+    !needsApproval &&
+    !automaticResumePending(resource.automatic_resumes);
   const planVariant: "primary" | "outline" | undefined =
     !configId || running || latestVersion === undefined
       ? undefined
@@ -670,6 +677,8 @@ export function RunPage({ runId }: { runId: string }) {
           destination={destination}
           focus={focus}
           notice={outcome}
+          resumes={resource.resumes}
+          automaticResumes={resource.automatic_resumes}
         />
         <RunFiles run={run} />
         <Details run={run} name={name} source={source} destination={destination} />

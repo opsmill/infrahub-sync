@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import type { Plan, Run } from "#/api/types";
+import type { AutomaticResume, Plan, Resume, Run } from "#/api/types";
 import { ArrowRightIcon, ChevronRightIcon, InfoIcon, StateIcon } from "#/components/icons";
 import { expandChevron, FOCUS, SectionHeading } from "#/components/page";
 import { BranchBadge, CHANGE_TONE, STEP_TONE, STEP_WORD } from "#/components/run-status";
@@ -20,12 +20,14 @@ import {
 import type { System } from "#/domain/systems";
 import { formatAbsolute } from "#/lib/time";
 
+import { resumeEntries } from "./automatic-resume";
 import { PlanReads } from "./PlanReads";
 import { PlanFacts } from "./PlanReview";
+import { AutomaticResumeNotice } from "./run-notices";
 import type { PlanRequest } from "./run-sections";
 import { StepLog } from "./StepLog";
-import { STEP_WIDTH, StepRows } from "./StepRows";
-import { clock, stepNode, WaitTime } from "./step-time";
+import { Row, STEP_GRID, STEP_WIDTH, StepRows } from "./StepRows";
+import { clock, clockSeconds, stepNode, WaitTime } from "./step-time";
 
 /* ---------- reaching a step from the strip ---------- */
 
@@ -377,6 +379,47 @@ function StartFacts({
   );
 }
 
+/* ---------- resumes ---------- */
+
+/**
+ * One row per resume of the interrupted write, with the account that asked for it as the Sync API
+ * names it: a person's account, or "Sync (automatic resume)".
+ */
+function ResumeRows({ resumes }: { resumes: Resume[] }) {
+  const entries = resumeEntries(resumes);
+  if (entries.length === 0) return null;
+  return (
+    <dl className={STEP_GRID}>
+      {entries.map((e) => (
+        <Row
+          key={e.key}
+          label={e.title}
+          state={e.outcome}
+          result={
+            <>
+              {e.start}, requested by{" "}
+              <span className="text-foreground [overflow-wrap:anywhere]">{e.actor}</span>
+            </>
+          }
+          clock={clockSeconds(e.requestedAt)}
+        />
+      ))}
+    </dl>
+  );
+}
+
+/** Sync's decisions on resuming the run's interrupted writes without a person, oldest first. */
+function AutomaticResumeNotices({ rows }: { rows: AutomaticResume[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className={cn(STEP_WIDTH, "flex flex-col gap-2")}>
+      {rows.map((row, i) => (
+        <AutomaticResumeNotice key={row.interrupted_flow_run_id} row={row} number={i + 1} />
+      ))}
+    </div>
+  );
+}
+
 /* ---------- timeline ---------- */
 
 /**
@@ -394,6 +437,8 @@ export function RunTimeline({
   source,
   destination,
   notice,
+  resumes = [],
+  automaticResumes = [],
   focus,
   onOpenChanges,
 }: {
@@ -406,6 +451,10 @@ export function RunTimeline({
   destination?: System;
   /** Why the run failed, ended without running a step, or waits: shown under that step. */
   notice?: ReactNode;
+  /** The resumes of the run's interrupted write, shown under the apply step. */
+  resumes?: Resume[];
+  /** Sync's decisions on resuming the write without a person, shown under the apply step. */
+  automaticResumes?: AutomaticResume[];
   focus: StepFocus;
   /** Opens the changes sheet. */
   onOpenChanges: () => void;
@@ -444,6 +493,9 @@ export function RunTimeline({
   ];
 
   const shown = steps.filter(inTimeline);
+  // The resumes continue the write, so they sit under the last apply step, or above the timeline
+  // when it shows none.
+  const resumeStep = [...shown].reverse().find((s) => s.kind === "apply");
   for (const s of shown) {
     const wait = reviewWait(s);
     const sentence = stepSentence(s);
@@ -489,6 +541,8 @@ export function RunTimeline({
         ) : (
           <StepRows run={run} step={s} className={rowsClass} />
         )}
+        {s === resumeStep && <ResumeRows resumes={resumes} />}
+        {s === resumeStep && <AutomaticResumeNotices rows={automaticResumes} />}
         <div className="flex flex-col gap-1 empty:hidden">
           {glance(s) ? (
             <ChangesGlance run={run} onOpenChanges={onOpenChanges} />
@@ -515,6 +569,7 @@ export function RunTimeline({
     <section aria-labelledby="timeline" className="flex flex-col gap-4">
       <SectionHeading id="timeline" title="Timeline" />
       {notice && noticeIndex < 0 && notice}
+      {!resumeStep && <AutomaticResumeNotices rows={automaticResumes} />}
       <div className="rounded-2xl border border-border-strong p-4">
         <ol aria-labelledby="timeline">{items}</ol>
       </div>
