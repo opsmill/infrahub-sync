@@ -20,7 +20,7 @@ Stories 1 and 2, FR-013), unit tests for every "not known" case, and Vitest case
 
 ## Phase 1: Setup
 
-- [ ] T001 Run `uv sync --extra dev --extra prefect --extra service` in the work directory (a bare `uv run` created
+- [X] T001 Run `uv sync --extra dev --extra prefect --extra service` in the work directory (a bare `uv run` created
   a base-only `.venv` there) and `pnpm install --frozen-lockfile` in `frontend/`. Confirm
   `uv run pytest tests/service/test_apply_guard.py tests/service/test_managed_write_guard.py -q` and
   `pnpm test` in `frontend/` pass before any change (baseline).
