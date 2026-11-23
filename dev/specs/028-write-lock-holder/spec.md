@@ -25,6 +25,20 @@ run records: the other run of the same configuration whose write was claimed fir
 guess. It can name a run that is itself waiting, or a run whose worker stopped without ending its record. This
 feature replaces the guess with the run that holds the lock.
 
+## Clarifications
+
+### Session 2026-11-23
+
+- Q: Must the real-PostgreSQL test (A holds the lock, B and C wait, C names A) pass on every pull request, or is
+  the nightly run enough? → A: Run the new PostgreSQL tests on every pull request, with a PostgreSQL service
+  container in CI, and keep them in the nightly job too.
+- Q: Should the web interface link to the run that holds the lock on the failed run's page? → A: Yes. The web
+  interface is treated like the CLI: it names the holding run with a link to that run's page, and shows the "not
+  known" and "has ended" cases.
+- Q: How many extra database reads may a failed write make to name the holding run? → A: At most two: one on
+  the lock session (holder and label) and one of the run records (run, configuration and whether its write has
+  ended); none for a write that takes the lock.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - An operator sees which run blocked their write (Priority: P1)
@@ -50,6 +64,8 @@ C wait for it. When C's wait ends, C's failure record and the CLI output name A,
    never B.
 3. **Given** run A holds the lock, **When** an `apply` or a `runs resume` of run C times out, **Then** C names A
    in the same way, and the `runs resume` hint still names `verify` and then `runs resume`.
+4. **Given** C's failure names A, **When** an operator views run C in the web interface, **Then** the failure
+   notice names run A with a link to A's run page, and the next action is the same as the CLI's.
 
 ---
 
@@ -147,6 +163,14 @@ time. The failure names that run and the next action does not say to wait for it
   the `write_guard_contended` type and the `active_run_id` field MUST be recorded, with its reason.
 - **FR-012**: Refusing a second write when it is submitted is out of scope (ADR 0010). A write still waits for the
   lock and fails only when the wait ends.
+- **FR-013**: The real-PostgreSQL tests of this feature MUST run on every pull request, against a PostgreSQL
+  service container in CI, and MUST also stay in the nightly end-to-end job. A pull request whose holder lookup
+  fails these tests MUST NOT show green checks.
+- **FR-014**: The web interface MUST show a contended write the same way the CLI does. When a run is named, the
+  failure notice of the failed run names it with a link to that run's page. When the run is not known, or its
+  write has ended, the notice shows the same meaning as the CLI's "not known" and "has ended" texts. The web
+  interface reads only the failure record the Sync API returns (`active_run_id`, cause, next action); it never
+  reads the session label.
 
 ### Key Entities
 
@@ -167,8 +191,9 @@ time. The failure names that run and the next action does not say to wait for it
   released before the lookup), the failure says the run is not known, and no case names a wrong run.
 - **SC-003**: The failure record and the CLI output for a contended write contain no database address, account
   name, password or raw session label; the shared secret-leak test cases pass for the new failure cases.
-- **SC-004**: The holder lookup adds no more than one database query to a write that has already failed, and adds
-  nothing to a write that takes the lock.
+- **SC-004**: The holder lookup adds at most two database reads to a write whose wait has ended: one on the lock
+  session (which session holds the lock and its label) and one of the run records (whether the run exists, belongs
+  to the same configuration, and whether its write has ended). It adds nothing to a write that takes the lock.
 
 ## Assumptions
 
@@ -181,9 +206,13 @@ time. The failure names that run and the next action does not say to wait for it
   `docs/docs/development/knowledge/apply-guard.md`; this feature does not change how the lock is taken or
   released.
 - The web interface reads the same failure record through the Sync API, so it receives the same `active_run_id`,
-  cause and next action. No change to the web interface is in scope.
+  cause and next action. Today it shows the cause and the next action
+  (`frontend/src/domain/run-state.ts`, `frontend/src/features/runs/run-notices.tsx`) but no link to another run;
+  FR-014 adds the link and the "not known" and "has ended" cases.
 - Any session that uses the service's database account can set a label. The check in the run records limits a
   false label to a real run of the same configuration; only the Sync service uses that account. This remaining
   risk is accepted and recorded in the secret-redaction guideline and in ADR 0021.
-- The real PostgreSQL tests follow the existing opt-in integration tests of the write lock
-  (`tests/integration/test_apply_guard_integration.py`, `APPLY_GUARD_TEST_POSTGRESQL_DSN`).
+- The real PostgreSQL tests follow the existing integration tests of the write lock
+  (`tests/integration/test_apply_guard_integration.py`, `APPLY_GUARD_TEST_POSTGRESQL_DSN`). Today those tests run
+  only in the nightly end-to-end job (`.github/scripts/nightly_e2e.py`); this feature adds a pull-request CI job
+  that sets the DSN for the new tests (FR-013).
