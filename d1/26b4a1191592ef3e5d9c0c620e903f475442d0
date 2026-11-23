@@ -1,0 +1,34 @@
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_30954faa6b52fd::t_7a80e4ecfd3f42 124-128
+docs/docs/development/guidelines/testing-tiers.md
+  s_30954faa6b52fd::t_7a80e4ecfd3f42 180-182
+dev/specs/028-write-lock-holder/research.md
+  s_30954faa6b52fd::t_7a80e4ecfd3f42 67-68
+dev/specs/028-write-lock-holder/spec.md
+  s_30954faa6b52fd::t_7a80e4ecfd3f42 207-208
+docs/docs/development/guidelines/secret-redaction.md
+  s_30954faa6b52fd::t_7a80e4ecfd3f42 55-57
+docs/docs/reference/sync-http-api.mdx
+  s_30954faa6b52fd::t_67bc89ebd535ca 1021-1022
+  s_30954faa6b52fd::t_7a80e4ecfd3f42 1017-1020
+docs/docs/running-a-sync.mdx
+  s_30954faa6b52fd::t_7a80e4ecfd3f42 632
+docs/docs/development/knowledge/apply-guard.md
+  s_30954faa6b52fd::t_67bc89ebd535ca 111-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d126b4a1191592ef3e5d9c0c620e903f475442d0",
+  "prompts": {},
+  "sessions": {
+    "s_30954faa6b52fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68b2c141-8dbb-4265-a817-fa76f097f99c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
