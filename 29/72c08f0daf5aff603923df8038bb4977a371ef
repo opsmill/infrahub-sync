@@ -1,0 +1,21 @@
+tests/test_filter_operations.py
+  s_5f27265e25740c::t_2456b17bee4705 1-7,9,13-14,17,19,21-23,29-30,33-34,69-71,73-79
+  s_5f27265e25740c::t_21c0b762f1f3f3 8,10-12,15-16,18,20,24-28,31-32,68,72
+  s_5f27265e25740c::t_7eb6c69f24d7f0 35-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2972c08f0daf5aff603923df8038bb4977a371ef",
+  "prompts": {},
+  "sessions": {
+    "s_5f27265e25740c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6ad081ec-f96e-46c2-9664-e18f8c9d1bbf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
