@@ -28,7 +28,10 @@ The liveness monitor already tells these cases apart from the others. It ends an
 (`infrahub_sync/service/liveness.py`):
 
 - **Rule 2**: the operator asked to cancel, the worker did not confirm, and the deadline passed.
-- **Rule 6**: the execution is claimed and Prefect reports its flow run as ended.
+- **Rule 6**: the execution is claimed and Prefect reports its flow run as ended. Only the Prefect state `crashed`
+  means that the worker's process ended. The state `failed` means the flow raised an error that the worker could not
+  record, `cancelled` means a person cancelled it in Prefect, and `completed` means the flow ended without recording
+  its end.
 - **Rule 8**: the execution is claimed and its worker is no longer fresh: the worker pool does not report it online
   with a heartbeat inside `max(3 * heartbeat interval, 30)` seconds.
 
@@ -40,7 +43,8 @@ one exception to that rule, for rules 6 and 8 only.
 
 ### Terms used in this specification
 
-- **Worker disappeared**: the liveness monitor ended a run's write execution under rule 6 or rule 8.
+- **Worker disappeared**: the liveness monitor ended a run's write execution under rule 6 with the Prefect state
+  `crashed`, or under rule 8.
 - **Automatic resume**: a resume execution of a run that Sync starts itself, with no account, after the worker
   disappeared. It applies the run's saved plan from the progress marker, as a resume started with `runs resume` does.
 - **Automatic check**: the check that Sync runs before an automatic resume. It is the same check as `verify` on an
@@ -87,7 +91,9 @@ one exception to that rule, for rules 6 and 8 only.
   so the existing rule "a resume needs a passing `verify` newer than the latest write execution" (ADR 0027) holds
   unchanged.
 - Q: Does the setting apply to runs interrupted before it was turned on? → A: No. Sync decides once, when the liveness
-  monitor ends the execution, using the setting at that moment.
+  monitor ends the execution, using the setting at that moment. While it is off, Sync records nothing.
+- Q: Which Prefect states of rule 6 count? → A: Only `crashed`. `failed` is an error the worker raised (critique E1).
+- Q: What happens when a person acts while Sync waits for a worker? → A: The person takes over (FR-019).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -116,7 +122,7 @@ that a new plan of the same configuration version shows 0 creates and 0 updates.
    resume is shown with "Sync (automatic resume)" in place of an account, with its cause ("the worker
    `infrahub-sync-worker-…` stopped sending heartbeats"), with the result of the automatic check, and with the number
    of automatic resumes of the run.
-3. **Given** a run interrupted under rule 6 (Prefect reports the flow run as ended), **When** the automatic check
+3. **Given** a run interrupted under rule 6 (Prefect reports the flow run as `crashed`), **When** the automatic check
    passes, **Then** Sync starts an automatic resume in the same way as under rule 8.
 4. **Given** a site with automatic resume turned on and no live worker, **When** a run is interrupted under rule 8,
    **Then** Sync submits no resume while no worker is live, and submits it once a worker is live. The waiting resume
@@ -203,10 +209,14 @@ worker, and check the run's result, the schedule's failure count and the skipped
   failure.
 - **The automatic check leaves operations out because of the 2,000-operation limit.** The resume starts when no
   checked operation `differs`, and the run detail states how many operations were not checked (FR-007).
-- **The setting is turned off while a resume is waiting for a worker.** The stored decision stays; the waiting resume
+- **The setting is turned off while a decision waits for a worker.** The stored decision stays; the waiting check or resume
   is submitted. The setting is read only when Sync decides.
-- **The setting is turned on while runs are already interrupted.** Those runs are not resumed automatically. The
-  decision for them was "no resume, automatic resume turned off".
+- **The setting is turned on while runs are already interrupted.** Those runs are not resumed automatically and show
+  no decision, as before the setting was turned on.
+- **A person runs `verify` or `runs resume` while Sync waits for a live worker.** The person takes over: the decision
+  ends as "not started: a person took over", and the person's request proceeds as today (FR-019). While the automatic
+  check or the automatic resume is running, the person's request is refused as today, because the run has an
+  unfinished execution.
 - **An automatic resume is itself interrupted by a disappearing worker.** The same rules apply again, inside the limits
   of FR-009 and FR-010.
 - **A `sync` worker disappears while it is still planning.** The run saved no plan, so it is not resumable (spec 016,
@@ -221,7 +231,8 @@ worker, and check the run's result, the schedule's failure count and the skipped
 #### Which runs are resumed
 
 - **FR-001**: The system MUST consider an automatic resume only for a run whose write execution (apply, `sync` or
-  resume) the liveness monitor ended under rule 6 or rule 8.
+  resume) the liveness monitor ended under rule 6 with the Prefect state `crashed`, or under rule 8. A flow run that
+  Prefect reports as `failed`, `cancelled` or `completed` MUST NOT be considered.
 - **FR-002**: The system MUST NOT consider an automatic resume for a run whose execution ended because of a
   cancellation (rules 1 and 2, and the cancellation recovery of the request), or because its worker reported a
   failure itself.
@@ -229,7 +240,9 @@ worker, and check the run's result, the schedule's failure count and the skipped
   `runs resume` under spec 016 and spec 021. A run that saved no plan, a cancelled run, and a scheduled run that writes
   to a branch it created are never resumed automatically.
 - **FR-004**: A site-wide setting of the Sync API MUST turn automatic resume on or off. It MUST be off by default.
-  The system reads it when it decides, so a run interrupted while it was off is not resumed automatically later.
+  The system reads it when the liveness monitor ends the execution, so a run interrupted while it was off is not
+  resumed automatically later. While the setting is off, the system MUST record no decision and no event, so a site
+  that did not turn the feature on sees no change.
 
 #### The automatic check, the approval and the confirmation
 
@@ -272,8 +285,9 @@ worker, and check the run's result, the schedule's failure count and the skipped
   account.
 - **FR-016**: The run detail in the Sync API, `runs show` and the run page MUST show, for each interrupted execution
   of the run, the decision and its reason, and the number of automatic resumes the run received. The reasons for "no
-  resume" are: automatic resume turned off, run not resumable, check failed (naming the check), check found `differs`
-  (with the count), approval missing, previous automatic resume made no progress, and limit of 3 reached.
+  resume" are: run not resumable, check failed (naming the check), check found `differs` (with the count), approval
+  missing, previous automatic resume made no progress, limit of 3 reached, the check or the resume was not picked up
+  by a worker, and a person took over.
 - **FR-017**: The system MUST record a run event for each decision, with the reason and, for a "resume" decision, the
   number of operations the automatic check did not check.
 
@@ -284,9 +298,16 @@ worker, and check the run's result, the schedule's failure count and the skipped
   run waits for or runs an automatic resume, it MUST count as in progress for the overlap policy, and a start time
   that arrives then is skipped and recorded with that reason.
 
+#### A person takes over
+
+- **FR-019**: When a person runs `verify` or `runs resume` on a run whose decision is waiting for a live worker, the
+  system MUST end the decision as "not started: a person took over" and MUST then handle the request as it does
+  today. While the automatic check or the automatic resume runs, the system MUST refuse the person's request as it
+  refuses any request on a run with an unfinished execution.
+
 #### Governance
 
-- **FR-019**: Principle I of the constitution MUST be amended with a second named case, automatic resume, on the
+- **FR-020**: Principle I of the constitution MUST be amended with a second named case, automatic resume, on the
   pattern of the schedule case: the explicit instruction is the interrupted run's own write and the site's setting;
   the target servers are those of the saved plan; the human approval is the approval of the interrupted run. A new
   decision record MUST amend ADR 0027 and the liveness monitor's rule that an execution is never replayed.

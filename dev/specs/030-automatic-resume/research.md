@@ -22,16 +22,22 @@ process.
 
 ## R2. Which rule 6 endings count as "worker disappeared"
 
-**Decision**: Rule 6 counts only when Prefect reports the flow run as `crashed` or `failed`. A flow run that Prefect
-reports as `cancelled` or `completed` while the execution has no verdict does not count.
+**Decision**: Rule 6 counts only when Prefect reports the flow run as `crashed`. A flow run that Prefect reports as
+`failed`, `cancelled` or `completed` while the execution has no verdict does not count.
 
-**Reason**: `cancelled` means a person cancelled the flow run in Prefect, outside the Sync API, and FR-002 excludes
-cancellations. `completed` with no verdict means the worker ended its flow without recording its end, which is a
-defect, not a lost worker. A worker that recorded its own failure sets `terminal_at` first, so the reconciler never
-sees it (`reconcile_execution` returns early when `terminal_at` is set).
+**Reason**: Prefect sets `crashed` when the flow's process or its infrastructure ended. `failed` means the flow
+raised an error: the worker was running and reported a failure, but its failure record did not reach the store, for
+example because the store was unreachable. FR-002 excludes a failure the worker reported (critique E1). `cancelled`
+means a person cancelled the flow run in Prefect, outside the Sync API, and FR-002 excludes cancellations.
+`completed` with no verdict means the worker ended its flow without recording its end, which is a defect, not a lost
+worker. A worker that recorded its own failure sets `terminal_at` first, so the reconciler never sees it
+(`reconcile_execution` returns early when `terminal_at` is set).
 
-**Rejected**: every terminal Prefect state (`_TERMINAL_STATES`). It would resume a run that a person cancelled in
-the Prefect interface.
+**Rejected**:
+
+- Every terminal Prefect state (`_TERMINAL_STATES`). It would resume a run that a person cancelled in the Prefect
+  interface.
+- `crashed` and `failed`. It would resume a run whose worker raised an error it could not record.
 
 ## R3. How the decision is driven: a stored state machine stepped by the reconciler
 
@@ -44,7 +50,15 @@ considered. The row moves through these states, each move a compare-and-set on t
 4. `resuming`: the resume execution is submitted.
 5. `ended`: final. The row keeps the decision (`resume` or `no-resume`) and its reason.
 
-Each loop of the reconciler, after its existing pass, steps every row that is not `ended`.
+Each loop of the reconciler (`reconcile_once`, the background loop), after its existing pass, steps every row that
+is not `ended`. The request-time `reconcile_run`, which runs before a run is rendered, may insert a row, because the
+insert is part of the interruption transaction, but it never steps a row: a `GET` request never submits a flow run
+(critique E4).
+
+The reconciler reaches `RunService` through a narrow protocol defined in `liveness.py`, `AutomaticResumeSubmitter`,
+with `submit_check(run_id, key)` and `submit_resume(run_id, key, start_after)`. `RunService` satisfies it, and
+`serve.py`, where the reconciler is built, wires it. `service.py` already imports from `liveness.py`, so a direct
+import back would be a cycle (critique E2).
 
 **Reason**: Each step is short and repeatable, and the state is in the store, so a restart of the Sync API continues
 where it stopped (FR-014). A compare-and-set on the row lets several Sync API processes run the loop at the same time:
@@ -120,14 +134,18 @@ now)`, so that `/status` and, later, `/api/health` (INFP-663) use it too.
 time limit (rule 4, `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS`, 300 seconds by default). Not submitting until a worker
 is live means the waiting time does not count against that limit (FR-012).
 
+A pool snapshot that is not available (`pool.detail_available` false) counts as "no live worker", and the row waits
+(critique E3).
+
 **Note**: If a submitted check or resume is abandoned anyway (the only live worker stopped right after the
 submission), the row ends `no-resume` with the reason `not-picked-up`. A person can still resume.
 
 ## R9. The setting
 
 **Decision**: `INFRAHUB_SYNC_AUTOMATIC_RESUME`, parsed by `_parse_flag` in `infrahub_sync/service/settings.py` like
-`INFRAHUB_SYNC_REQUIRE_APPROVAL`, default `false`. The reconciler reads it when it writes the decision row. A row
-already past `waiting-check` keeps going after the setting is turned off.
+`INFRAHUB_SYNC_REQUIRE_APPROVAL`, default `false`. The reconciler reads it when the interruption happens. While it is
+off, no row and no event is written, so a site that did not turn it on sees no change (critique P1). A row already
+written keeps going after the setting is turned off.
 
 **Reason**: One flag, the same parsing rules, the same place as the other site-wide settings (FR-004).
 
@@ -176,7 +194,7 @@ column changes on existing tables. Pre-release V3 databases are recreated, not m
 ## R15. A person acts while an automatic resume waits
 
 **Decision**: When a person runs `verify` or `runs resume` on a run whose row is in `waiting-check` or
-`waiting-resume`, the request ends the row as `no-resume`, `refused`, in its own transaction, and then proceeds as
+`waiting-resume`, the request ends the row as `no-resume`, `person-took-over` (FR-019), in its own transaction, and then proceeds as
 today. While the row is in `checking` or `resuming`, the person's request is refused with the existing
 `run-execution-conflict`, because an execution of the run is unfinished.
 

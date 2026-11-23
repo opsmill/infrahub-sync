@@ -26,7 +26,6 @@ interruption transaction inserts it.
 
 | Code | Meaning |
 | --- | --- |
-| `turned-off` | `INFRAHUB_SYNC_AUTOMATIC_RESUME` was off when the reconciler decided. |
 | `not-resumable` | `runs resume` would refuse the run: no saved plan, cancelled, or a scheduled run with branch review. |
 | `approval-missing` | The site requires approval and the run's plan has none. |
 | `no-progress` | The previous automatic resume of the run did not move the progress marker forward. |
@@ -35,6 +34,7 @@ interruption transaction inserts it.
 | `check-found-differs` | The check reported at least one `differs`. `reason_detail` holds the count. |
 | `not-picked-up` | The submitted check or resume was abandoned because no worker claimed it in time. |
 | `refused` | `verify_run` or `resume_run` refused the request. `reason_detail` holds the refusal code. |
+| `person-took-over` | A person ran `verify` or `runs resume` while the row waited for a live worker (FR-019). |
 
 ### State transitions
 
@@ -46,7 +46,7 @@ insert ─► waiting-check ─► checking ─► waiting-resume ─► resumin
              └─────────────────────┴─────────────────────┴─────────────────────────┘
 ```
 
-- **Insert**: in the interruption transaction. When `turned-off`, `not-resumable`, `approval-missing`, `no-progress`
+- **Insert**: in the interruption transaction. While `INFRAHUB_SYNC_AUTOMATIC_RESUME` is off, no row is inserted (FR-004). When `not-resumable`, `approval-missing`, `no-progress`
   or `limit-reached` applies, the row is inserted directly as `ended`, `no-resume`.
 - **`waiting-check` → `checking`**: in a loop of the reconciler whose pool snapshot has a live worker. The submission
   uses the idempotency key `automatic-check:<run_id>:<interrupted_flow_run_id>` (research R4).

@@ -13,7 +13,7 @@ Automatic resume 1: started
   resumed after operation 6000 by Sync (automatic resume)
 
 Automatic resume 2: not started
-  cause: Prefect reported the flow run as ended
+  cause: Prefect reported the flow run as crashed
   reason: the check found 1 node that differs from the plan
   next: run `infrahub-sync verify RUN_ID`, then a new plan or `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`
 ```

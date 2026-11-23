@@ -37,7 +37,7 @@ with the matching reason:
 
 | Condition | Expected reason |
 | --- | --- |
-| `INFRAHUB_SYNC_AUTOMATIC_RESUME=false` | automatic resume is turned off |
+| `INFRAHUB_SYNC_AUTOMATIC_RESUME=false` | no block at all; the run shows no automatic resume |
 | Change one node of the plan in Infrahub after step 4 | the check found 1 node that differs from the plan |
 | `INFRAHUB_SYNC_REQUIRE_APPROVAL=true` and no `approve` | approval is missing |
 | `infrahub-sync runs cancel RUN_ID` instead of killing the worker | no row; cancellations are not considered |

@@ -29,10 +29,10 @@ The run resource gains two fields.
 }
 ```
 
-- `automatic_resumes` is empty for a run that no reconciler ever considered, including every run of a site with
-  the setting off before this change.
+- `automatic_resumes` is empty for a run that no reconciler ever considered, including every run interrupted while
+  the setting was off (FR-004).
 - `cause_text` and `reason_text` are fixed English sentences built from the codes of
-  [data-model.md](../data-model.md). For rule 6: "Prefect reported the flow run as ended". For rule 8: "the worker
+  [data-model.md](../data-model.md). For rule 6: "Prefect reported the flow run as crashed". For rule 8: "the worker
   `<name>` stopped sending heartbeats", or "the claiming worker stopped sending heartbeats" when the name is not known.
 - `reason_text` for `check-found-differs` names the count, for example "the check found 1 node that differs from the
   plan". For `check-failed` it names the failed check or the cause.
@@ -59,7 +59,7 @@ the actor `sync:automatic-resume`.
 
 No new refusal. A manual `POST /runs/{run_id}/resume` while a row is in `checking` or `resuming` gets the existing
 `run-execution-conflict`. While a row is in `waiting-check` or `waiting-resume`, a manual resume or `verify` ends the
-row as `no-resume`, `refused`, and the manual request proceeds as today: a person who acts takes over.
+row as `no-resume`, `person-took-over`, and the manual request proceeds as today: a person who acts takes over.
 
 ## Settings
 

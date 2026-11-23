@@ -4,8 +4,8 @@
 
 ## Summary
 
-When the liveness reconciler ends a write execution because its worker disappeared (rule 6 with a `crashed` or
-`failed` flow run, or rule 8), the product store records a decision for that execution in the same transaction. When
+When the liveness reconciler ends a write execution because its worker disappeared (rule 6 with a `crashed` flow
+run, or rule 8), the product store records a decision for that execution in the same transaction. When
 the site turned automatic resume on and the run qualifies, the reconciler then steps a stored state machine on its
 next loops: it waits for a live worker, submits the automatic check through `RunService.verify_run`, reads the
 check's result, and submits the resume through `RunService.resume_run`. Both submissions use the reserved actor
@@ -39,12 +39,14 @@ appearing (the check) plus the check's own duration.
 **Constraints**:
 
 - The API stays `v3-unstable`; every response change is additive.
-- With the setting off (the default), nothing changes for operators, apart from rows ending `turned-off` and their
-  events. Every existing test passes unchanged.
+- With the setting off (the default), nothing changes for operators: no row and no event is written (FR-004).
+  Every existing test passes unchanged.
 - No secret, source value or destination value in a decision row, an event, a log or an error
   (`docs/docs/development/guidelines/secret-redaction.md`). Rows hold codes, counts and identifiers only.
 - The vendored `opsmill_prefect_extras` stays byte-identical.
 - No HTTP credential can resolve to the actor `sync:automatic-resume`.
+- Only the background loop (`reconcile_once`) submits a check or a resume; request-time reconciliation never does.
+- Each row move writes one structured log line with the run identifier, the state and the reason code, never a value.
 
 **Scale/Scope**: about 10 source files, 10 test files, 4 documentation pages, the constitution, 1 ADR, the web run
 page.
@@ -53,7 +55,7 @@ page.
 
 | Principle | Status |
 | --- | --- |
-| I. Read-only and dry-run by default | Crossed, justified. An automatic resume is a write that no person starts at that moment. The spec requires an amendment that adds automatic resume as a named case (FR-019, research R13). The write is behind a flag that is off by default, which meets "New mutating behavior MUST ship behind explicit flags". |
+| I. Read-only and dry-run by default | Crossed, justified. An automatic resume is a write that no person starts at that moment. The spec requires an amendment that adds automatic resume as a named case (FR-020, research R13). The write is behind a flag that is off by default, which meets "New mutating behavior MUST ship behind explicit flags". |
 | II. Sync idempotency and safety | Pass. A resume repeats only convergent upserts (ADR 0012, ADR 0013). The check stops the resume on any `differs`. Exactly-once submission (research R4). |
 | III. Adapter symmetry and pattern consistency | Pass. No adapter change. The submission reuses `verify_run` and `resume_run`. |
 | IV. Type safety and explicit contracts | Pass. New Pydantic fields; the HTTP contract is in contracts/. |
@@ -99,7 +101,7 @@ infrahub_sync/
 │   ├── presentation.py   # shows the reserved actor as "Sync (automatic resume)"
 │   ├── events.py         # the two new event types
 │   ├── models.py         # run resource fields (service side)
-│   └── app.py            # passes the RunService to the reconciler
+│   └── serve.py          # wires RunService into the reconciler as its AutomaticResumeSubmitter
 ├── client/models.py      # run resource fields (client side)
 └── cli.py                # runs show and runs list output
 frontend/src/features/runs/   # run page notices and the resume action rule
