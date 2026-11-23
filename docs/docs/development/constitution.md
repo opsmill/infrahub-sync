@@ -35,8 +35,8 @@ The non-mutating path is the default path, and applying changes is always a deli
 - Automatic resume is the second case in which a write runs with no person present: after the
   worker of an `apply`, a `sync` or a resume disappeared, the Sync API resumes that run's saved
   plan by itself. It applies only to an execution that Prefect reports as crashed, or whose
-  worker stopped sending heartbeats, and only while the Sync API runs with
-  `INFRAHUB_SYNC_AUTOMATIC_RESUME` on.
+  worker stopped sending heartbeats, and only when the Sync API ran with
+  `INFRAHUB_SYNC_AUTOMATIC_RESUME` on at the time of the interruption.
     - The explicit user instruction is the interrupted run's own write, which a person or a
       schedule started, together with the site's setting, which an operator turned on.
     - The target servers are those of the run's saved plan. A resume never reads the source and

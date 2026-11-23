@@ -816,7 +816,7 @@ resume a run, and the limits are described in
 [Automatic resume of an interrupted write](./operations/day-2-operations.mdx#automatic-resume-of-an-interrupted-write).
 
 `infrahub-sync runs show RUN_ID` prints one block for each interrupted write that the Sync API
-considered, oldest first, after the progress lines:
+recorded for automatic resume, oldest first, after the progress lines:
 
 ```text
 Automatic resume 1: started
@@ -830,7 +830,7 @@ Automatic resume 2: not started
   next: run `infrahub-sync verify RUN_ID`, then a new plan or `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`
 ```
 
-- The first line gives the state: `started` or `not started` once the Sync API is done, and
+- The first line gives the state: `started` or `not started` once the automatic resume ended, and
   `waiting for a live worker to run the check`, `checking`, `waiting for a live worker to
   resume` or `resuming` before.
 - `cause` says why the write was interrupted.
@@ -843,7 +843,10 @@ Automatic resume 2: not started
 
 The resume lines of `runs show` and the run page of the web interface name
 `Sync (automatic resume)` as the actor of an automatic resume. `infrahub-sync runs list` adds
-`auto resumes: N` to a run that the Sync API resumed.
+`auto resumes: N` to a run that the Sync API resumed. The event list records
+`infrahub_sync.run.automatic_resume_started` when the Sync API submits a resume, and
+`infrahub_sync.run.automatic_resume_not_started`, with the reason code, when it does not resume
+the run; see [List events](./reference/sync-http-api.mdx#list-events).
 
 While the Sync API waits for a live worker, your own `verify` or `runs resume` stops the
 automatic resume, and its block then says that a person ran `verify` or `runs resume` while the

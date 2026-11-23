@@ -290,7 +290,7 @@ class RunLivenessReconciler:
     the rules ``reconcile_once`` steps the records through
     ``step_automatic_resumes``. It submits a new `verify` and then a new resume
     through ``submitter``, never the ended execution itself. A rule 6 ending in
-    any other Prefect state, and every other rule, records nothing.
+    any other Prefect state, and every other rule, writes no automatic resume record.
     """
 
     def __init__(  # pylint: disable=too-many-arguments

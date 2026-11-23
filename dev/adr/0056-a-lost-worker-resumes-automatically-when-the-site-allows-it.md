@@ -32,10 +32,11 @@ is safe to repeat (ADR 0027).
   Sync API. It is off by default and takes the values of `INFRAHUB_SYNC_REQUIRE_APPROVAL`. A
   value that is not accepted stops the Sync API at startup. The reconciler reads it when it ends
   an execution. While it is off, the reconciler records nothing for automatic resume, so a site
-  that does not turn it on sees no change.
-- **Which endings count.** The reconciler considers a write (`apply`, `sync` or `resume`)
-  that it ends under rule 6 only when Prefect reports the flow run as `crashed`, and every
-  write that it ends under rule 8. `failed` means that the flow raised an error the worker could
+  that does not turn it on keeps the behavior of ADR 0027. A row recorded while the setting was
+  on continues after the setting is turned off.
+- **Which endings count.** The reconciler records a write (`apply`, `sync` or `resume`) for
+  automatic resume when it ends the write under rule 8, or under rule 6 when Prefect reports the
+  flow run as `crashed`. `failed` means that the flow raised an error the worker could
   not record, `cancelled` means that a person cancelled the flow run in Prefect, and `completed`
   without a verdict is a defect; none of them means that the worker disappeared. A failure that
   the worker recorded itself never reaches the reconciler.
@@ -122,7 +123,7 @@ no execution is replayed.
   limit.
 - The reconciler reads the position the resume starts after before it submits. After a restart
   between the submission and the move, the next loop reads the position again, later than the
-  true start. The next decision can then end as `no-progress` although the resume moved the
+  true start. The next row can then end as `no-progress` although the resume moved the
   marker, which leaves the run for a person instead of resuming it.
 - When a scheduled run's resume ends before its flow run is recorded on the row (a restart
   between the submission and the move), the schedule does not count that run.
@@ -132,12 +133,12 @@ no execution is replayed.
 
 ## Alternatives considered
 
-**A separate background task decides.** It would need its own rule for which process leads, and
+**A separate background task records the rows.** It would need its own rule for which process leads, and
 it would read the interruption after the fact, with no way to tell rule 6 from rule 8. The
-reconciler is the one place that knows the cause, and it writes the row in the transaction that
+reconciler is the one place that holds the cause, and it writes the row in the transaction that
 ends the execution.
 
-**The worker decides.** A worker that disappeared cannot decide anything about its own run.
+**The worker records the rows.** A worker that disappeared cannot record anything about its own run.
 
 **Every terminal Prefect state of rule 6 counts.** It would resume a run that a person cancelled
 in the Prefect interface. Counting `crashed` and `failed` would resume a run whose worker raised

@@ -1388,7 +1388,7 @@ by default, takes the values of `INFRAHUB_SYNC_REQUIRE_APPROVAL`, and any other 
 service at startup. While it is off, the service records nothing about automatic resume.
 
 `GET /runs/{run_id}` returns one entry under `automatic_resumes` for each interrupted write that
-the service considered, oldest first, and the number of automatic resumes the run received under
+the service recorded for automatic resume, oldest first, and the number of automatic resumes the run received under
 `automatic_resume_count`. Both are empty for a run that no automatic resume concerns:
 
 ```json
@@ -1422,7 +1422,7 @@ the service considered, oldest first, and the number of automatic resumes the ru
 | `operations_not_checked` | The uncertain operations that the check did not read, beyond its limit of 2,000. |
 | `start_after` | The position the automatic resume started after. |
 | `check_flow_run_id`, `resume_flow_run_id` | The flow runs of the check and of the resume, once submitted. |
-| `decided_at`, `updated_at` | When the service considered the write, and when the entry last changed. |
+| `decided_at`, `updated_at` | When the service recorded the entry, and when the entry last changed. |
 
 The reason codes are `not-resumable`, `approval-missing`, `no-progress`, `limit-reached`,
 `check-failed`, `check-found-differs`, `not-picked-up`, `refused` and `person-took-over`; see
@@ -1438,7 +1438,8 @@ and the service records `infrahub_sync.run.automatic_resume_started` and
 
 A `POST /runs/{run_id}/verify` or `POST /runs/{run_id}/resume` from a person while an entry is
 `waiting-check` or `waiting-resume` ends that entry as `no-resume`, `person-took-over`, and is
-then handled as usual. When the service is already submitting the check or the resume of that
+then handled as usual. The entry ends before the last checks of the request, so a resume refused
+with `409 verify-required` also ends it. When the service is already submitting the check or the resume of that
 entry, or while an entry is `checking` or `resuming`, the request is refused with
 `409 run-execution-conflict`.
 

@@ -188,7 +188,7 @@ run that the Sync API started to resume before you turned the setting off contin
 
 ### When the Sync API resumes a run
 
-The Sync API considers a write that it ended for one of two causes:
+The Sync API resumes a write that it ended for one of two causes:
 
 - Prefect reported the flow run of the write as crashed. A flow run that Prefect reports as failed,
   cancelled or completed is not resumed.
@@ -212,7 +212,7 @@ the web interface and the event list show as their actor. Each step is submitted
 the Sync API restarts between two steps.
 
 `infrahub-sync runs show RUN_ID` prints one block for each interrupted write that the Sync API
-considered, oldest first. A block shows the state while the Sync API waits or runs a step, for
+recorded for automatic resume, oldest first. A block shows the state while the Sync API waits or runs a step, for
 example `waiting for a live worker to run the check`, and the result once it ends:
 
 ```text
@@ -238,7 +238,7 @@ plan or run `runs resume` yourself. The reason codes are in `GET /runs/{run_id}`
 | `no-progress` | The previous automatic resume of the run did not move the progress marker forward. |
 | `limit-reached` | The run already received 3 automatic resumes. |
 | `check-failed` | The check failed, for example because the destination was unreachable. The reason names the cause. |
-| `check-found-differs` | The check reported one or more nodes as `differs`. A resume would write the plan's values over them, so a person decides. |
+| `check-found-differs` | The check reported one or more nodes as `differs`. A resume would write the plan's values over them, so a person reviews them. |
 | `not-picked-up` | No worker picked up the check or the resume in time. |
 | `refused` | The Sync API refused the check or the resume, for example because a condition of `runs resume` was not met. The reason names the code. |
 | `person-took-over` | A person ran `verify` or `runs resume` while the Sync API waited for a live worker. |
@@ -269,11 +269,13 @@ Sync API does not resume it or the resume fails.
 
 While the Sync API waits for a live worker, run `infrahub-sync verify RUN_ID` or
 `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM` yourself. The Sync API stops its
-automatic resume with the reason `person-took-over`, and your request runs as usual. When the Sync
+automatic resume with the reason `person-took-over`, and your request runs as usual. The Sync API
+stops it before the last checks of your request, so a `runs resume` that is then refused with
+`verify-required`, because no `verify` passed, also stops the automatic resume. When the Sync
 API is already submitting its check or resume, or while its check or resume runs, your request is
 refused with `run-execution-conflict`. Wait for that step to end, then view the run with
 `runs show`.
 
-Setting `INFRAHUB_SYNC_AUTOMATIC_RESUME=false` stops the Sync API from considering new
-interrupted writes. It does not stop a run that the Sync API already considered: take that run
-over as described above.
+Setting `INFRAHUB_SYNC_AUTOMATIC_RESUME=false` stops the Sync API from recording new
+interrupted writes for automatic resume. It does not stop a run that it already recorded: take
+that run over as described above.
