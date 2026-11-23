@@ -1,0 +1,19 @@
+dev/specs/029-api-health/alignment-check.md
+  s_7b1f8b6ee684e7::t_d54b399b2625bf 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a688a6bbb51fa1594a3456225829bfc96c7b23a6",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
