@@ -14,6 +14,7 @@ from infrahub_sync.product_store import (
     SCHEDULE_START_OPERATION,
     SCHEDULE_STOPPED_EVENT_TYPE,
     AuditEvent,
+    AutomaticResume,
     EventDetails,
     ProductRun,
     RelatedResource,
@@ -34,6 +35,12 @@ _STAGE_SUCCESS_TYPES = {
 }
 RUN_CANCELLED = f"{_RUN_PREFIX}cancelled"
 RUN_FAILED = f"{_RUN_PREFIX}failed"
+# The decision on resuming an interrupted write without a person (spec 030, FR-017): Sync
+# submitted the resume, or the decision ended without a resume. Their operation is
+# ``AUTOMATIC_RESUME_OPERATION`` and their details hold codes and counts only.
+RUN_AUTOMATIC_RESUME_STARTED = f"{_RUN_PREFIX}automatic_resume_started"
+RUN_AUTOMATIC_RESUME_NOT_STARTED = f"{_RUN_PREFIX}automatic_resume_not_started"
+AUTOMATIC_RESUME_OPERATION = "automatic-resume"
 CONFIG_REGISTERED = f"{_CONFIG_PREFIX}registered"
 CONFIG_VERSION_REGISTERED = f"{_CONFIG_PREFIX}version_registered"
 # A version request whose content matches an existing version returns that version.
@@ -221,6 +228,47 @@ def run_event(  # pylint: disable=too-many-arguments
         related=related_resources(
             actor, config_id=config_id, registry_version=registry_version, branch=branch, schedule_id=schedule_id
         ),
+        details=details,
+    )
+
+
+def automatic_resume_event(
+    row: AutomaticResume, run: ProductRun | None, *, actor: str, created_at: datetime
+) -> AuditEvent:
+    """Build the event of an automatic resume decision ``row``, once it started or ended without a resume.
+
+    A row with the decision ``resume`` records ``automatic_resume_started`` with the cause, the
+    marker the resume starts after, the operations the check left out and the resume's flow run.
+    A row with the decision ``no-resume`` records ``automatic_resume_not_started`` with the cause,
+    the reason code and its codes and counts (FR-017). ``actor`` is the reserved actor of the
+    automatic resume, which the caller passes so that this module does not depend on the reconciler.
+
+    Raises:
+        ValueError: ``row`` holds no decision yet.
+    """
+    if row.decision == "resume":
+        event_type = RUN_AUTOMATIC_RESUME_STARTED
+        details = EventDetails(
+            cause=row.cause,
+            start_after=row.start_after,
+            operations_not_checked=row.operations_not_checked,
+            resume_flow_run_id=row.resume_flow_run_id,
+        )
+    elif row.decision == "no-resume":
+        event_type = RUN_AUTOMATIC_RESUME_NOT_STARTED
+        details = EventDetails(cause=row.cause, reason=row.reason, reason_detail=row.reason_detail)
+    else:
+        msg = "an automatic resume record without a decision has no event"
+        raise ValueError(msg)
+    return run_event(
+        row.run_id,
+        run,
+        event_type=event_type,
+        actor=actor,
+        operation=AUTOMATIC_RESUME_OPERATION,
+        reason=None,
+        outcome=row.decision,
+        created_at=created_at,
         details=details,
     )
 

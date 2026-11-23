@@ -26,7 +26,7 @@ from infrahub_sync.product_store.models import (  # noqa: TC001 - runtime annota
     AutomaticResumeState,
 )
 
-from .events import RUN_CANCELLED, RUN_FAILED, run_event
+from .events import RUN_CANCELLED, RUN_FAILED, automatic_resume_event, run_event
 from .orchestration import (
     Observation,
     PoolStatus,
@@ -442,12 +442,23 @@ class RunLivenessReconciler:
         return None if marker is None else marker.position
 
     def _move(self, row: AutomaticResume, to_state: AutomaticResumeState, now: datetime, **fields: object) -> bool:
-        """Compare-and-set ``row`` from its state to ``to_state``; write one log line when it moved."""
+        """Compare-and-set ``row`` from its state to ``to_state``; write one log line when it moved.
+
+        The move to ``resuming`` and every end without a resume write their run event in the
+        transaction of the move, so only the process that moved the row writes it (FR-017).
+        """
+        event = None
+        if to_state == "resuming" or (to_state == "ended" and fields.get("decision") == "no-resume"):
+            decided = row.model_copy(update={**fields, "state": to_state, "updated_at": now})
+            event = automatic_resume_event(
+                decided, self._projection.lookup_run(row.run_id).value, actor=AUTOMATIC_RESUME_ACTOR, created_at=now
+            )
         moved = self._projection.move_automatic_resume(
             row.run_id,
             row.interrupted_flow_run_id,
             from_state=row.state,
             to_state=to_state,
+            event=event,
             updated_at=now,
             **fields,
         )
@@ -579,12 +590,19 @@ class RunLivenessReconciler:
                 now,
                 branch_review=branch_review,
             )
+        # A record that ends at once, without a check, records its event with the interruption (FR-017).
+        decision_event = (
+            automatic_resume_event(automatic_resume, run, actor=AUTOMATIC_RESUME_ACTOR, created_at=now)
+            if automatic_resume is not None and automatic_resume.decision == "no-resume"
+            else None
+        )
         self._projection.interrupt_execution(
             run.run_id,
             link.flow_run_id,
             terminal_at=now,
             event=self._interrupted_event(run, link, now),
             automatic_resume=automatic_resume,
+            automatic_resume_event=decision_event,
         )
 
     def _interrupted_event(self, run: ProductRun, link: PrefectExecutionLink, now: datetime) -> AuditEvent:

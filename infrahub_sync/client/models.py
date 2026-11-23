@@ -479,6 +479,9 @@ class PublicRunResource(_ResourceModel):
     scheduled_start_at: datetime | None = None
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
+    # How many times Sync resumed the run's interrupted write without a person (spec 030).
+    # A Sync API that predates spec 030 returns no value, and the run reads as never resumed.
+    automatic_resume_count: int = Field(default=0, ge=0)
 
     @field_validator("started_at", "finished_at", "scheduled_start_at")
     @classmethod
@@ -739,17 +742,53 @@ class ResumeResource(_ResourceModel):
         return checked
 
 
+class AutomaticResumeResource(_ResourceModel):
+    """Sync's decision on resuming one interrupted write without a person (spec 030 contracts/http-api.md).
+
+    `state` is `waiting-check`, `checking`, `waiting-resume`, `resuming` or `ended`. `decision` is
+    `resume` once Sync submitted the resume, and `no-resume` with a `reason` code when it did not.
+    `cause_text` and `reason_text` are fixed English sentences built from the codes. The fields
+    are plain strings, so a client still reads a code that a later Sync API adds.
+    """
+
+    interrupted_flow_run_id: str
+    cause: str
+    cause_text: str
+    state: str
+    decision: str | None = None
+    reason: str | None = None
+    reason_text: str | None = None
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    start_after: int | None = Field(default=None, ge=0)
+    check_flow_run_id: str | None = None
+    resume_flow_run_id: str | None = None
+    decided_at: datetime
+    updated_at: datetime
+
+    @field_validator("decided_at", "updated_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _EXECUTION_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+
 class RunResource(_ResourceModel):
     """Combine a public run record with its orchestration history.
 
     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
-    predates spec 016; `resumes` is then empty.
+    predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
+    resuming the run's interrupted writes without a person, oldest first, and
+    `automatic_resume_count` the number of them whose decision is `resume` (spec 030). Both are
+    empty for a run that no decision concerns, and for a Sync API that predates spec 030.
     """
 
     run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
     apply_progress: ApplyProgressResource | None = None
     resumes: tuple[ResumeResource, ...] = ()
+    automatic_resumes: tuple[AutomaticResumeResource, ...] = ()
+    automatic_resume_count: int = Field(default=0, ge=0)
 
 
 class ApprovedPlanSummaryResource(_ResourceModel):
@@ -832,6 +871,14 @@ class EventDetailsResource(_ResourceModel):
     # The settings whose stored value a change of a schedule altered; empty when every setting
     # the change sent already had its value. Only `infrahub_sync.schedule.changed` holds it.
     changes: tuple[ScheduleSettingChangeResource, ...] | None = None
+    # The events of an automatic resume (spec 030), whose `cause` is `rule-6` or `rule-8`:
+    # the reason code of an automatic resume that did not start, with its codes and counts,
+    # and the marker, the operations the check left out and the flow run of one that started.
+    reason: str | None = None
+    reason_detail: dict[str, StrictInt | str] | None = None
+    start_after: int | None = Field(default=None, ge=0)
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    resume_flow_run_id: str | None = None
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod

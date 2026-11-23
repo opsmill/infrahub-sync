@@ -853,6 +853,15 @@ class EventDetails(BaseModel):
     # The settings whose stored value a change of a schedule altered, in the order of the
     # change request's fields. Empty when every setting the change sent already had its value.
     changes: tuple[ScheduleSettingChange, ...] | None = None
+    # The events of an automatic resume (spec 030): ``cause`` holds `rule-6` or `rule-8`.
+    # The reason code of an automatic resume that did not start, and its codes and counts.
+    reason: str | None = Field(default=None, min_length=1)
+    reason_detail: dict[StrictStr, StrictStr | StrictInt] | None = None
+    # The progress marker the automatic resume starts after, the operations its check left
+    # out, and the flow run of the resume.
+    start_after: int | None = Field(default=None, ge=0)
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod

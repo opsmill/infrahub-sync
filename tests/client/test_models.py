@@ -480,6 +480,12 @@ def test_the_details_of_an_event_declare_only_the_closed_keys() -> None:
         "replaced_run_id",
         "cause",
         "changes",
+        # The events of an automatic resume (spec 030).
+        "reason",
+        "reason_detail",
+        "start_after",
+        "operations_not_checked",
+        "resume_flow_run_id",
     }
     assert EventDetailsResource().model_dump() == dict.fromkeys(EventDetailsResource.model_fields)
 

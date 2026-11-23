@@ -1050,9 +1050,12 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         terminal_at: datetime,
         event: AuditEvent | None = None,
         automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool: ...
 
     def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]: ...
+
+    def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]: ...
 
     def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]: ...
 
@@ -1063,6 +1066,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         from_state: AutomaticResumeState,
         to_state: AutomaticResumeState,
+        event: AuditEvent | None = None,
         **fields: object,
     ) -> bool: ...
 
@@ -2078,6 +2082,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         terminal_at: datetime,
         event: AuditEvent | None = None,
         automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool:
         """Atomically terminalize an orphaned claimed execution and its product run, with its event.
 
@@ -2085,6 +2090,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         execution moves to its interrupted verdict (spec 030, FR-013): a second interruption of
         the same execution changes nothing and inserts nothing. While the inserted row is not
         ``ended``, the end of a scheduled run is not counted yet (research R11).
+        ``automatic_resume_event`` is the event of that decision, written with the row (FR-017).
 
         Raises:
             ValueError: ``automatic_resume`` names another run or another execution.
@@ -2106,6 +2112,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             outcome="ambiguous",
             event=event,
             automatic_resume=automatic_resume,
+            automatic_resume_event=automatic_resume_event,
         )
 
     def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]:
@@ -2115,6 +2122,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 self._sql(_SELECT_AUTOMATIC_RESUMES + " WHERE run_id = ?" + _AUTOMATIC_RESUME_ORDER), (run_id,)
             )
             return tuple(_automatic_resume_from_row(row) for row in cursor.fetchall())
+
+    def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]:
+        """Return, for each run of ``run_ids`` that has any, the number of rows whose decision is ``resume``."""
+        counts: dict[str, int] = {}
+        unique = tuple(dict.fromkeys(run_ids))
+        with self._reading() as cursor:
+            for start in range(0, len(unique), _EVENT_RESOURCE_BATCH):
+                batch = unique[start : start + _EVENT_RESOURCE_BATCH]
+                placeholders = ", ".join("?" for _ in batch)
+                cursor.execute(
+                    self._sql(
+                        "SELECT run_id, COUNT(*) FROM automatic_resumes "  # noqa: S608 - placeholders only.
+                        f"WHERE decision = 'resume' AND run_id IN ({placeholders}) GROUP BY run_id"
+                    ),
+                    batch,
+                )
+                counts.update({str(run_id): int(count) for run_id, count in cursor.fetchall()})
+        return counts
 
     def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]:
         """Return the automatic resume rows that are not ``ended``, oldest first."""
@@ -2129,6 +2154,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         from_state: AutomaticResumeState,
         to_state: AutomaticResumeState,
+        event: AuditEvent | None = None,
         **fields: object,
     ) -> bool:
         """Move one automatic resume row from ``from_state`` to ``to_state`` and set ``fields``.
@@ -2136,7 +2162,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         The move is a compare-and-set on the row's key and its state, so when two Sync API
         processes move the same row, one of them moves it and the other gets ``False``
         (data-model.md, "State transitions"). ``fields`` must include ``updated_at``. The moved
-        row is checked as an `AutomaticResume` before the transaction commits.
+        row is checked as an `AutomaticResume` before the transaction commits. ``event`` is
+        written in the transaction of the move, and only when the row moved (FR-017).
 
         Raises:
             ValueError: ``fields`` names a field that a move cannot set or lacks ``updated_at``,
@@ -2180,6 +2207,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 ),
             )
             moved_row = cursor.rowcount == 1
+            if moved_row and event is not None:
+                self._insert_event(cursor, event)
         return moved_row
 
     def commit_claimed_execution(
@@ -2824,6 +2853,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         outcome: str,
         event: AuditEvent | None = None,
         automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool:
         connection = self._connect()
         try:
@@ -2866,6 +2896,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 self._settle_scheduled_run_end(cursor, run_id, flow_run_id, verdict=verdict, ended_at=terminal_at)
                 if event is not None:
                     self._insert_event(cursor, event)
+                if automatic_resume is not None and automatic_resume_event is not None:
+                    self._insert_event(cursor, automatic_resume_event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -5358,11 +5390,12 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         event: AuditEvent | None = None,
         secrets: Sequence[str] = (),
         automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool:
         """CAS a claimed execution into the terminal interrupted/ambiguous verdict, with its event.
 
-        ``automatic_resume`` is inserted in the same transaction, only when the verdict is saved
-        (spec 030, FR-013).
+        ``automatic_resume`` and its ``automatic_resume_event`` are inserted in the same
+        transaction, only when the verdict is saved (spec 030, FR-013, FR-017).
         """
         effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_terminal_at)
@@ -5372,11 +5405,16 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             terminal_at=effective_terminal_at,
             event=_redacted_event(event, secrets),
             automatic_resume=automatic_resume,
+            automatic_resume_event=_redacted_event(automatic_resume_event, secrets),
         )
 
     def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]:
         """Return the automatic resume rows of one run, oldest first."""
         return self._records.automatic_resumes_of(run_id)
+
+    def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]:
+        """Return, for each run of ``run_ids`` that has any, the number of automatic resumes it received."""
+        return self._records.automatic_resume_counts(run_ids)
 
     def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]:
         """Return the automatic resume rows that are not ``ended``, oldest first."""
@@ -5389,16 +5427,18 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         *,
         from_state: AutomaticResumeState,
         to_state: AutomaticResumeState,
+        event: AuditEvent | None = None,
         **fields: object,
     ) -> bool:
         """Compare-and-set one automatic resume row from ``from_state`` to ``to_state`` with ``fields``.
 
         ``updated_at`` defaults to the current time. Returns ``False`` when the row is not in
-        ``from_state``, because another process moved it first.
+        ``from_state``, because another process moved it first. ``event`` is written with the
+        move, and only when the row moved.
         """
         fields.setdefault("updated_at", datetime.now(timezone.utc))
         return self._records.move_automatic_resume(
-            run_id, interrupted_flow_run_id, from_state=from_state, to_state=to_state, **fields
+            run_id, interrupted_flow_run_id, from_state=from_state, to_state=to_state, event=event, **fields
         )
 
     def commit_claimed_execution(

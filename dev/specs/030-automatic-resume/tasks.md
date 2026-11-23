@@ -137,28 +137,28 @@ behind `ProductProjection`.
 
 ### Tests for User Story 1
 
-- [ ] T019 [P] [US1] End-to-end unit test in `tests/service/test_automatic_resume.py`: an apply interrupted at marker
+- [X] T019 [P] [US1] End-to-end unit test in `tests/service/test_automatic_resume.py`: an apply interrupted at marker
       6,000 of 10,000 under rule 8, a live worker, a passing check with 0 `differs` → one resume execution that starts
       after 6,000, run phase `applied`, `reconciliation_required` cleared, `automatic_resume_count` 1 (spec US1
       scenarios 1 and 3).
-- [ ] T020 [P] [US1] Test in `tests/service/test_account_presentation.py` that the account name middleware shows
+- [X] T020 [P] [US1] Test in `tests/service/test_account_presentation.py` that the account name middleware shows
       `sync:automatic-resume` as `Sync (automatic resume)` in `actor` fields and event related resources.
 
 ### Implementation for User Story 1
 
-- [ ] T021 [P] [US1] Add `AUTOMATIC_RESUME_DISPLAY_NAME = "Sync (automatic resume)"` and the rule that shows it for
+- [X] T021 [P] [US1] Add `AUTOMATIC_RESUME_DISPLAY_NAME = "Sync (automatic resume)"` and the rule that shows it for
       `AUTOMATIC_RESUME_ACTOR` to `infrahub_sync/service/presentation.py`; no account lookup for that value.
-- [ ] T022 [P] [US1] Add the event types `infrahub_sync.run.automatic_resume_started` and
+- [X] T022 [P] [US1] Add the event types `infrahub_sync.run.automatic_resume_started` and
       `infrahub_sync.run.automatic_resume_not_started` to `infrahub_sync/service/events.py`, operation
       `automatic-resume`, with the details of [contracts/http-api.md](./contracts/http-api.md). T015 writes them on
       the move to `resuming` and on every end as `no-resume` (FR-017).
-- [ ] T023 [US1] Add `automatic_resumes` and `automatic_resume_count` to the run resource and the run summary in
+- [X] T023 [US1] Add `automatic_resumes` and `automatic_resume_count` to the run resource and the run summary in
       `infrahub_sync/service/models.py` and the run rendering in `infrahub_sync/service/service.py`, with
       `cause_text` and `reason_text` built from the codes as [contracts/http-api.md](./contracts/http-api.md) states
       (FR-016).
-- [ ] T024 [P] [US1] Add the same fields to `infrahub_sync/client/models.py`, and test them in
+- [X] T024 [P] [US1] Add the same fields to `infrahub_sync/client/models.py`, and test them in
       `tests/client/test_resume.py`.
-- [ ] T025 [US1] Print one block per row in `runs show` and the `auto resumes` column in `runs list` in
+- [X] T025 [US1] Print one block per row in `runs show` and the `auto resumes` column in `runs list` in
       `infrahub_sync/cli.py`, as [contracts/cli-and-web.md](./contracts/cli-and-web.md) shows; test in
       `tests/cli/test_runs_resume.py`.
 - [ ] T026 [US1] Regenerate `frontend/src/api/types.generated.ts` with `pnpm codegen:openapi` against a local Sync API,

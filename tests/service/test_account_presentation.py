@@ -31,8 +31,16 @@ from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import StoreAccountResolver
 from infrahub_sync.service.config_routes import ConfigurationRoutes
 from infrahub_sync.service.credentials import digest, new_api_token
+from infrahub_sync.service.events import RUN_AUTOMATIC_RESUME_STARTED, run_event
+from infrahub_sync.service.liveness import AUTOMATIC_RESUME_ACTOR
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
-from infrahub_sync.service.presentation import ACCOUNT_FIELDS, RELATED_KEY, account_identifiers, present_accounts
+from infrahub_sync.service.presentation import (
+    ACCOUNT_FIELDS,
+    AUTOMATIC_RESUME_DISPLAY_NAME,
+    RELATED_KEY,
+    account_identifiers,
+    present_accounts,
+)
 from infrahub_sync.service.schedules import ScheduleService
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.configuration.validation_packages import package_data
@@ -681,4 +689,89 @@ def test_an_artifact_is_downloaded_byte_for_byte_with_no_account_read(api: _Api)
     assert artifact.status_code == 200
     assert artifact.content == data
     assert artifact.headers["digest"] == f"sha-256={sha256(data).hexdigest()}"
+    assert api.reads == []
+
+
+# --- the reserved actor of the automatic resume (spec 030, T020) ------------------------------
+
+
+def test_the_automatic_resume_is_shown_with_its_display_name() -> None:
+    assert AUTOMATIC_RESUME_DISPLAY_NAME == "Sync (automatic resume)"
+
+
+def test_present_accounts_shows_the_reserved_actor_without_an_account_read() -> None:
+    """The reserved actor is no account: it is shown by name in `actor` and related resources, with no read."""
+    reader = _Reader()
+    body = {
+        "resumes": [{"actor": AUTOMATIC_RESUME_ACTOR}],
+        "related": [{"kind": "account", "id": AUTOMATIC_RESUME_ACTOR}, {"kind": "run", "id": AUTOMATIC_RESUME_ACTOR}],
+        "reason": AUTOMATIC_RESUME_ACTOR,
+    }
+
+    presented = present_accounts(body, reader)
+
+    assert presented == {
+        "resumes": [{"actor": AUTOMATIC_RESUME_DISPLAY_NAME}],
+        "related": [
+            {"kind": "account", "id": AUTOMATIC_RESUME_DISPLAY_NAME},
+            {"kind": "run", "id": AUTOMATIC_RESUME_ACTOR},
+        ],
+        "reason": AUTOMATIC_RESUME_ACTOR,
+    }
+    assert reader.calls == []
+    assert account_identifiers(body) == set()
+
+
+def test_present_accounts_reads_only_the_accounts_next_to_the_reserved_actor() -> None:
+    reader = _Reader()
+    body = {"items": [{"actor": AUTOMATIC_RESUME_ACTOR}, {"actor": _ID_A}]}
+
+    presented = present_accounts(body, reader)
+
+    assert presented == {"items": [{"actor": AUTOMATIC_RESUME_DISPLAY_NAME}, {"actor": "Alice"}]}
+    assert reader.calls == [[_ID_A]]
+
+
+def test_a_run_answer_shows_the_automatic_resume_by_name(api: _Api) -> None:
+    """The answer holds no account identifier, so the middleware must still find the reserved actor."""
+    _planned_run(api, actor=AUTOMATIC_RESUME_ACTOR)
+    resume = ResumeResource(actor=AUTOMATIC_RESUME_ACTOR, requested_at=_T0, reason=None)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(service_module, "run_resumes", lambda *_args, **_kwargs: (resume,))
+        answer = api.client.get(f"/runs/{_RUN_ID}", headers=api.owner_headers)
+
+    assert answer.status_code == 200, answer.text
+    assert _MARK not in answer.text
+    assert AUTOMATIC_RESUME_ACTOR not in answer.text
+    body = answer.json()
+    assert body["run"]["actor"] == AUTOMATIC_RESUME_DISPLAY_NAME
+    assert [entry["actor"] for entry in body["resumes"]] == [AUTOMATIC_RESUME_DISPLAY_NAME]
+    assert api.reads == []
+
+
+def test_an_event_of_the_automatic_resume_shows_it_by_name(api: _Api) -> None:
+    _planned_run(api)
+    api.store.record_audit(
+        run_event(
+            _RUN_ID,
+            None,
+            event_type=RUN_AUTOMATIC_RESUME_STARTED,
+            actor=AUTOMATIC_RESUME_ACTOR,
+            operation="automatic-resume",
+            reason=None,
+            outcome="resume",
+            created_at=_T0,
+        )
+    )
+    api.reads.clear()
+
+    answer = api.client.get(
+        "/events", headers=api.owner_headers, params={"run_id": _RUN_ID, "event_type": RUN_AUTOMATIC_RESUME_STARTED}
+    )
+
+    assert answer.status_code == 200, answer.text
+    assert AUTOMATIC_RESUME_ACTOR not in answer.text
+    [event] = answer.json()["items"]
+    assert event["actor"] == AUTOMATIC_RESUME_DISPLAY_NAME
+    assert _values(event, RELATED_KEY) == [AUTOMATIC_RESUME_DISPLAY_NAME]
     assert api.reads == []

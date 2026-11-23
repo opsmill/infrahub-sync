@@ -1349,18 +1349,23 @@ def test_public_run_resource_is_a_self_contained_projection_of_the_product_run_c
     )
     public_run = public_run_resource(product_run)
     projected_field = "prefect_executions"
+    # Read from the run's automatic resume records, not from the run record (spec 030).
+    derived_fields = {"automatic_resume_count"}
     product_fields = set(ProductRun.model_fields)
 
     assert not issubclass(PublicRunResource, ProductRun)
-    assert set(PublicRunResource.model_fields) == product_fields
-    assert public_run.model_dump(exclude={projected_field}) == product_run.model_dump(exclude={projected_field})
+    assert set(PublicRunResource.model_fields) == product_fields | derived_fields
+    assert public_run.model_dump(exclude={projected_field, *derived_fields}) == product_run.model_dump(
+        exclude={projected_field}
+    )
+    assert public_run.automatic_resume_count == 0
 
     openapi = client.get("/openapi.json").json()
     public_schema = openapi["components"]["schemas"]["PublicRunResource"]
     product_app = FastAPI()
     product_app.add_api_route("/product-run", lambda: product_run, response_model=ProductRun)
     product_schema = product_app.openapi()["components"]["schemas"]["ProductRun"]
-    assert set(public_schema["properties"]) == product_fields
+    assert set(public_schema["properties"]) == product_fields | derived_fields
     assert set(public_schema.get("required", ())) - {projected_field} == set(product_schema.get("required", ())) - {
         projected_field
     }

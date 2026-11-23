@@ -102,6 +102,8 @@ from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
 from .resume_view import (
     apply_progress_view,
+    automatic_resume_count,
+    automatic_resume_view,
     run_has_saved_plan,
     run_is_resumable,
     run_resumes,
@@ -1592,7 +1594,8 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
         page = self._projection.list_runs(run_filters, after=after, limit=page_size)
         last = page.items[-1] if page.has_more else None
         next_cursor = None if last is None else timestamp_cursor(last.started_at, last.run_id, filters)
-        return public_run_page(page.items, next_cursor)
+        counts = self._projection.automatic_resume_counts([run.run_id for run in page.items])
+        return public_run_page(page.items, next_cursor, counts)
 
     def list_events(  # pylint: disable=too-many-arguments
         self,
@@ -2232,11 +2235,15 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
                 )
             )
         operations = self._plan_operations(run)
+        automatic_resumes = self._projection.automatic_resumes_of(run.run_id)
+        count = automatic_resume_count(automatic_resumes)
         return RunResource(
-            run=public_run_resource(run),
+            run=public_run_resource(run, automatic_resume_count=count),
             orchestration=tuple(orchestration),
             apply_progress=apply_progress_view(run, operations),
             resumes=run_resumes(run, lambda link: self._resume_receipt(run, link, pending), operations),
+            automatic_resumes=automatic_resume_view(automatic_resumes),
+            automatic_resume_count=count,
         )
 
     def _event(

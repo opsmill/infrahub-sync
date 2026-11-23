@@ -21,10 +21,14 @@ from infrahub_sync.product_store import (
     ProductRun,
     local_product_projection,
 )
-from infrahub_sync.product_store.models import ExecutionMergeWriteback, RunApproval
+from infrahub_sync.product_store.models import ExecutionFinishWriteback, ExecutionMergeWriteback, RunApproval
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import Principal, Resolution
-from infrahub_sync.service.events import RUN_FAILED
+from infrahub_sync.service.events import (
+    RUN_AUTOMATIC_RESUME_NOT_STARTED,
+    RUN_AUTOMATIC_RESUME_STARTED,
+    RUN_FAILED,
+)
 from infrahub_sync.service.liveness import (
     AUTOMATIC_RESUME_ACTOR,
     AUTOMATIC_RESUME_LIMIT,
@@ -35,6 +39,7 @@ from infrahub_sync.service.liveness import (
 )
 from infrahub_sync.service.models import ApplyRunRequest, ResumeRunRequest, VerifyRunRequest
 from infrahub_sync.service.orchestration import Observation, PoolStatus, PoolWorker
+from infrahub_sync.service.resume_view import automatic_resume_view
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from infrahub_sync.service.settings import AUTOMATIC_RESUME_ENV, REQUIRE_APPROVAL_ENV
 from tests.service.accounts import seed_accounts
@@ -48,6 +53,8 @@ from tests.service.test_http_api import (
 )
 from tests.service.test_liveness_policy import _Orchestration
 from tests.service.test_resume_run import _CHECKSUM as _PLAN_CHECKSUM
+from tests.service.test_resume_run import _MARKER as _E2E_MARKER
+from tests.service.test_resume_run import _TOTAL as _E2E_TOTAL
 from tests.service.test_resume_run import _headers, _latest_flow_run_id, _publish_plan
 
 if TYPE_CHECKING:
@@ -382,6 +389,18 @@ def test_rule_8_writes_an_ended_record_for_a_run_without_a_required_approval(
 
     (row,) = projection.automatic_resumes_of(RUN_ID)
     assert (row.state, row.decision, row.reason) == ("ended", "no-resume", "approval-missing")
+    # A record that ends at once records its event with the interruption (FR-017).
+    [event] = [
+        event for event in projection.audit_events(RUN_ID) if event.event_type == RUN_AUTOMATIC_RESUME_NOT_STARTED
+    ]
+    assert (event.actor, event.operation, event.outcome, event.reason) == (
+        AUTOMATIC_RESUME_ACTOR,
+        "automatic-resume",
+        "no-resume",
+        None,
+    )
+    assert event.details is not None
+    assert event.details.model_dump(exclude_none=True) == {"cause": "rule-8", "reason": "approval-missing"}
 
 
 @pytest.mark.parametrize("purpose", ["plan", "verify"])
@@ -635,6 +654,15 @@ def test_a_check_that_reports_differs_ends_the_record(step_api: _StepAPI) -> Non
     assert ended.reason_detail == {"differs": 2}
     assert ended.operations_not_checked == 7
     assert step_api[2].stage_submissions("resume") == []
+    # The end without a resume records one event with the reason and the count (FR-017).
+    events = [event for event in projection.audit_events(run_id) if event.operation == "automatic-resume"]
+    assert [event.event_type for event in events] == [RUN_AUTOMATIC_RESUME_NOT_STARTED]
+    assert events[0].details is not None
+    assert events[0].details.model_dump(exclude_none=True) == {
+        "cause": "rule-8",
+        "reason": "check-found-differs",
+        "reason_detail": {"differs": 2},
+    }
 
 
 def test_a_check_that_left_operations_out_still_lets_the_resume_start(step_api: _StepAPI) -> None:
@@ -873,3 +901,205 @@ def test_an_http_request_cannot_act_as_the_reserved_actor(step_api: _StepAPI) ->
     assert response.json()["error"]["code"] == "unauthenticated"
     assert orchestration.stage_submissions("verify") == []
     assert any(event.reason == "reserved-actor" for event in projection.audit_events())
+
+
+# --- user story 1, end to end (T019) -------------------------------------------------------
+
+
+def _apply_whose_worker_stopped(api: _StepAPI) -> tuple[str, str]:
+    """A run whose apply saved the marker at position 5,999 of 10,000, then lost its worker under rule 8.
+
+    Returns the run and the interrupted apply's flow run.
+    """
+    client, projection, orchestration, service = api
+    run_id = _create(client).json()["run"]["run_id"]
+    _publish_plan(projection, run_id, total=_E2E_TOTAL)
+    _settle_open_executions(projection, run_id)
+    applied = client.post(
+        f"/runs/{run_id}/apply",
+        headers=_headers("apply-key"),
+        json={"expected_checksum": _PLAN_CHECKSUM, "confirm_writes": True},
+    )
+    assert applied.status_code == 202, applied.json()
+    flow_run_id = _latest_flow_run_id(projection, run_id)
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_STEP_WORKER_ID)
+    marker = ApplyProgress(position=_E2E_MARKER, operation_id=f"op_{_E2E_MARKER:016x}", total=_E2E_TOTAL, saved_at=NOW)
+    assert projection.record_apply_progress(run_id, flow_run_id, marker) == "saved"
+    # The worker stops sending heartbeats: past the grace period, rule 8 ends the apply.
+    orchestration.pool = "offline"
+    later = datetime.now(timezone.utc) + timedelta(minutes=2)
+    reconciler = RunLivenessReconciler(
+        projection, orchestration, LivenessPolicy(300, 30, 5), "pool", clock=lambda: later, submitter=service
+    )
+    asyncio.run(reconciler.reconcile_once())
+    return run_id, flow_run_id
+
+
+def _complete_applied(projection: ProductProjection, run_id: str, flow_run_id: str | None) -> None:
+    """End a submitted resume as a worker that applied the rest of the plan does."""
+    assert flow_run_id is not None
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_STEP_WORKER_ID)
+    finished_at = datetime.now(timezone.utc)
+    assert projection.commit_claimed_execution(
+        run_id,
+        flow_run_id,
+        worker_id=_STEP_WORKER_ID,
+        terminal_at=finished_at,
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=ExecutionFinishWriteback(
+            phase="applied", outcome="applied", finished_at=finished_at, summary={}, results={}
+        ),
+    )
+
+
+def test_an_apply_whose_worker_stopped_ends_applied_with_one_automatic_resume(step_api: _StepAPI) -> None:
+    """Spec 030 US1 scenarios 1 and 3: rule 8, a passing check, one resume after the marker, the run applied.
+
+    The apply saved the marker of its 6,000th operation (position 5,999) of 10,000. The worker
+    stops sending heartbeats; the liveness reconciler ends the apply under rule 8 and, once a
+    worker is live, submits the check and then one resume, which a worker completes.
+    """
+    client, projection, orchestration, _service = step_api
+    run_id, apply_flow_run_id = _apply_whose_worker_stopped(step_api)
+    (row,) = projection.automatic_resumes_of(run_id)
+    assert (row.cause, row.worker_name, row.state) == ("rule-8", "w", "waiting-check")
+    assert orchestration.stage_submissions("verify") == []
+
+    # A new worker is live: the check runs and reports no `differs`.
+    orchestration.pool = "live"
+    checking = _passed_check(step_api, run_id)
+    assert checking.state == "waiting-resume"
+
+    # One resume starts after the saved marker; a worker completes it.
+    _step(step_api)
+    resuming = _record(step_api, run_id)
+    assert (resuming.state, resuming.start_after) == ("resuming", _E2E_MARKER)
+    _complete_applied(projection, run_id, resuming.resume_flow_run_id)
+    _step(step_api)
+    _step(step_api)
+
+    assert len(orchestration.stage_submissions("verify")) == 1
+    assert len(orchestration.stage_submissions("resume")) == 1
+    detail = client.get(f"/runs/{run_id}", headers=_headers("read")).json()
+    assert (detail["run"]["phase"], detail["run"]["reconciliation_required"]) == ("applied", False)
+    assert (detail["automatic_resume_count"], detail["run"]["automatic_resume_count"]) == (1, 1)
+    [automatic] = detail["automatic_resumes"]
+    assert automatic == {
+        "interrupted_flow_run_id": apply_flow_run_id,
+        "cause": "rule-8",
+        "cause_text": "the worker w stopped sending heartbeats",
+        "state": "ended",
+        "decision": "resume",
+        "reason": None,
+        "reason_text": None,
+        "operations_not_checked": 0,
+        "start_after": _E2E_MARKER,
+        "check_flow_run_id": checking.check_flow_run_id,
+        "resume_flow_run_id": resuming.resume_flow_run_id,
+        "decided_at": automatic["decided_at"],
+        "updated_at": automatic["updated_at"],
+    }
+    [resume] = detail["resumes"]
+    assert (resume["actor"], resume["start_after"]) == ("Sync (automatic resume)", _E2E_MARKER)
+    listed = client.get("/runs", headers=_headers("list")).json()["items"]
+    assert [item["automatic_resume_count"] for item in listed if item["run_id"] == run_id] == [1]
+
+    events = client.get("/events", headers=_headers("events"), params={"run_id": run_id}).json()["items"]
+    [started] = [event for event in events if event["operation"] == "automatic-resume"]
+    assert (started["event_type"], started["actor"], started["outcome"]) == (
+        RUN_AUTOMATIC_RESUME_STARTED,
+        "Sync (automatic resume)",
+        "resume",
+    )
+    assert {key: value for key, value in started["details"].items() if value is not None} == {
+        "cause": "rule-8",
+        "start_after": _E2E_MARKER,
+        "operations_not_checked": 0,
+        "resume_flow_run_id": resuming.resume_flow_run_id,
+    }
+
+
+# --- the sentences of the run detail (T023) ------------------------------------------------
+
+
+def _ended(reason: str, **changes: object) -> AutomaticResume:
+    return AutomaticResume.model_validate(
+        {
+            "run_id": RUN_ID,
+            "interrupted_flow_run_id": FLOW_RUN_ID,
+            "cause": "rule-8",
+            "state": "ended",
+            "decision": "no-resume",
+            "reason": reason,
+            "decided_at": NOW,
+            "updated_at": NOW,
+            **changes,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("row", "cause_text"),
+    [
+        (_ended("no-progress", cause="rule-6"), "Prefect reported the flow run as crashed"),
+        (
+            _ended("no-progress", worker_name="infrahub-sync-worker-3b2f"),
+            "the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+        ),
+        (_ended("no-progress"), "the claiming worker stopped sending heartbeats"),
+    ],
+    ids=["rule-6", "rule-8-with-the-worker-name", "rule-8-without-the-worker-name"],
+)
+def test_the_cause_text_names_the_rule_and_the_worker(row: AutomaticResume, cause_text: str) -> None:
+    [view] = automatic_resume_view((row,))
+    assert view.cause_text == cause_text
+
+
+@pytest.mark.parametrize(
+    ("row", "reason_text"),
+    [
+        (
+            _ended("check-found-differs", reason_detail={"differs": 1}),
+            "the check found 1 node that differs from the plan",
+        ),
+        (
+            _ended("check-found-differs", reason_detail={"differs": 3}),
+            "the check found 3 nodes that differ from the plan",
+        ),
+        (
+            _ended("check-failed", reason_detail={"cause": "SchemaMismatchError"}),
+            "the automatic check failed: SchemaMismatchError",
+        ),
+        (
+            _ended("refused", reason_detail={"code": "forbidden"}),
+            "the Sync API refused the automatic check with the code forbidden",
+        ),
+        (
+            _ended("refused", reason_detail={"code": "run-not-resumable"}, check_flow_run_id="flow-check"),
+            "the Sync API refused the automatic resume with the code run-not-resumable",
+        ),
+        (_ended("not-picked-up", check_flow_run_id="flow-check"), "no worker picked up the automatic check in time"),
+        (
+            _ended("not-picked-up", check_flow_run_id="flow-check", resume_flow_run_id="flow-resume"),
+            "no worker picked up the automatic resume in time",
+        ),
+        (_ended("approval-missing"), "the site requires approval and the run's plan has no recorded approval"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_the_reason_text_names_the_reason_with_its_codes_and_counts(row: AutomaticResume, reason_text: str) -> None:
+    [view] = automatic_resume_view((row,))
+    assert view.reason_text == reason_text
+
+
+def test_the_limit_reason_counts_the_earlier_automatic_resumes() -> None:
+    rows = (
+        *(_resumed(f"flow-resume-{index}") for index in range(AUTOMATIC_RESUME_LIMIT)),
+        _ended("limit-reached", interrupted_flow_run_id="flow-last"),
+    )
+
+    view = automatic_resume_view(rows)
+
+    assert view[-1].reason_text == f"the run already received {AUTOMATIC_RESUME_LIMIT} automatic resumes, the limit"
+    assert [entry.reason_text for entry in view[:-1]] == [None] * AUTOMATIC_RESUME_LIMIT

@@ -1286,6 +1286,43 @@ def _echo_apply_progress(resource: RunResource) -> None:
         )
 
 
+# What `runs show` prints for the reserved actor of the automatic resume, as the Sync API shows it
+# (spec 030). The CLI does not import the service package, so the name is repeated here.
+_AUTOMATIC_RESUME_NAME = "Sync (automatic resume)"
+# What `runs show` prints for an automatic resume record that has not ended.
+_AUTOMATIC_RESUME_STATES = {
+    "waiting-check": "waiting for a live worker to run the check",
+    "checking": "checking",
+    "waiting-resume": "waiting for a live worker to resume",
+    "resuming": "resuming",
+}
+
+
+def _echo_automatic_resumes(resource: RunResource) -> None:
+    """Print one block per automatic resume record of the run, oldest first (spec 030 contracts/cli-and-web.md).
+
+    The lines hold codes, counts and the fixed sentences the Sync API builds from them, never a
+    value from the plan.
+    """
+    for number, row in enumerate(resource.automatic_resumes, start=1):
+        if row.state != "ended":
+            heading = _AUTOMATIC_RESUME_STATES.get(row.state, row.state)
+        else:
+            heading = "started" if row.decision == "resume" else "not started"
+        typer.echo("")
+        typer.echo(_display(f"Automatic resume {number}: {heading}"))
+        typer.echo(_display(f"  cause: {row.cause_text}"))
+        # The check passed once the record waits for the resume, or once the resume started.
+        if row.state in {"waiting-resume", "resuming"} or row.decision == "resume":
+            not_checked = row.operations_not_checked or 0
+            typer.echo(f"  check: passed, 0 differs, {not_checked} not checked")
+        if row.decision == "resume":
+            start = "from the first operation" if row.start_after is None else f"after operation {row.start_after}"
+            typer.echo(f"  resumed {start} by {_AUTOMATIC_RESUME_NAME}")
+        if row.reason_text is not None:
+            typer.echo(_display(f"  reason: {row.reason_text}"))
+
+
 def _side_read_text(side: SideRead | None) -> str | None:
     """Render one side's read state as `key=value` pairs, leaving out the keys with no value."""
     if side is None:
@@ -2087,6 +2124,9 @@ def _run_row(run: PublicRunResource) -> str:
         run.actor or "-",
         run.started_at.isoformat(),
     )
+    # Only a run that Sync resumed without a person has the column (spec 030).
+    if run.automatic_resume_count:
+        columns = (*columns, f"auto resumes: {run.automatic_resume_count}")
     return _display("  ".join(columns))
 
 
@@ -2112,7 +2152,10 @@ def runs_list(  # pylint: disable=too-many-arguments
     limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
     all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
 ) -> None:
-    """List runs, newest first: run, configuration@version, branch, trigger type, phase, outcome, actor, start time."""
+    """List runs, newest first: run, configuration@version, branch, trigger type, phase, outcome, actor, start time.
+
+    A run that Sync resumed without a person adds `auto resumes: N`, the number of automatic resumes.
+    """
     with _client_errors():
         if version is not None and config is None:
             raise ClientInputError(_VERSION_ARG)
@@ -2294,6 +2337,8 @@ def runs_show(
     and the recorded deletes between them; while a first apply or `sync` runs, none are uncertain. A `resume`
     line counts the creates and updates that resume wrote; the `written:` line of a failed write counts those of
     every execution of the run.
+    Then one `Automatic resume N:` block per decision of Sync on resuming the run's interrupted write without a
+    person: whether it started, its cause, the result of its check, where it resumed, and why it did not start.
     Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
     scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
     """
@@ -2302,6 +2347,7 @@ def runs_show(
     _echo_run(resource)
     _echo_reads(resource)
     _echo_apply_progress(resource)
+    _echo_automatic_resumes(resource)
     scheduled_start = resource.run.scheduled_start_at
     _echo_fields(
         (
