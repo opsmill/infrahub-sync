@@ -119,6 +119,8 @@ _MANUAL_RUN_MESSAGE = "a manual run cannot name a schedule or a scheduled start 
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
 _WORKER_STATUS_MESSAGE = "worker status is invalid"
+_HEALTH_ERROR_MESSAGE = "a component error must be none exactly when the component is up"
+_WORKERS_HEALTH_MESSAGE = "worker details must be present exactly when the worker state is known"
 _ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
 _ARTIFACT_OWNER_MESSAGE = "every artifact reference must belong to the product record's run ID"
 _EXECUTION_IDS_MESSAGE = "execution IDs must be unique within a product record"
@@ -674,6 +676,64 @@ class ServiceStatusResource(_ResourceModel):
 
     service: Literal["ready"]
     worker: WorkerStatusResource
+
+
+class DependencyHealthResource(_ResourceModel):
+    """Report whether one component of the Sync API answered its health check."""
+
+    name: Literal["database", "object_store", "task_manager", "task_manager_db"]
+    status: Literal["up", "down"]
+    error: Literal[
+        "none",
+        "timeout",
+        "connection_refused",
+        "connection_closed",
+        "name_resolution_failed",
+        "unavailable",
+        "unknown_error",
+    ]
+
+    @model_validator(mode="after")
+    def _require_error_for_down(self) -> DependencyHealthResource:
+        if (self.status == "up") != (self.error == "none"):
+            raise ValueError(_HEALTH_ERROR_MESSAGE)
+        return self
+
+
+class WorkerHealthResource(_ResourceModel):
+    """Report one worker that sent a heartbeat within the last 24 hours."""
+
+    name: str
+    state: Literal["live", "stale"]
+    last_heartbeat: datetime
+
+
+class WorkersHealthResource(_ResourceModel):
+    """Report the workers of the work pool, or that the work pool could not be read."""
+
+    state: Literal["known", "unknown"]
+    minimum: int = Field(ge=1, strict=True)
+    live_workers: int | None = Field(ge=0, strict=True)
+    queue_depth: int | None = Field(ge=0, strict=True)
+    items: list[WorkerHealthResource]
+
+    @model_validator(mode="after")
+    def _require_details_when_known(self) -> WorkersHealthResource:
+        if self.state == "unknown":
+            if self.live_workers is not None or self.queue_depth is not None or self.items:
+                raise ValueError(_WORKERS_HEALTH_MESSAGE)
+        elif self.live_workers is None or self.queue_depth is None:
+            raise ValueError(_WORKERS_HEALTH_MESSAGE)
+        return self
+
+
+class HealthResource(_ResourceModel):
+    """Report the health of the Sync API's components and of its workers."""
+
+    status: Literal["healthy", "unhealthy"]
+    dependencies: list[DependencyHealthResource]
+    workers: WorkersHealthResource
+    timestamp: datetime
 
 
 class PrincipalResource(_ResourceModel):
