@@ -28,7 +28,6 @@ function InUseList({ inUse }: { inUse: CredentialInUse }) {
                 <Link
                   to="/configs/$configId"
                   params={{ configId }}
-                  target="_blank"
                   className={cn(LINK, "[overflow-wrap:anywhere]")}
                 >
                   {configId}

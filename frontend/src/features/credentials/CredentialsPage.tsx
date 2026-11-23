@@ -296,7 +296,6 @@ export function CredentialsPage() {
               ref={createRef}
               size="sm"
               variant="primary"
-              isDisabled={open?.action === "create"}
               onPress={() => {
                 setDeleted(undefined);
                 setOpen({ action: "create" });

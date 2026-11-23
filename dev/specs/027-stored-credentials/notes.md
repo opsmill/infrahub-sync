@@ -1,25 +1,20 @@
 # Notes: web interface prototypes of stored credentials (T074)
 
-T074 built three versions of each screen behind a picker. The maintainer picks one version per
-screen and records it under [Choices](#choices). T075 to T078 start only after that.
+T074 built three versions of each screen behind a picker. The maintainer picked one version per
+screen; [Choices](#choices) records them. T075 to T077 built the chosen versions, T078 is recorded
+as a follow-up of spec 025, and the prototype is removed.
 
 This is the second round. The first round placed the prototype inside the signed-in page frame,
 which reads the Sync API, so it could not be opened without a running Sync service. The second round
 keeps four versions from the first round and replaces the other eight; see
 [Versions kept from the first round](#versions-kept-from-the-first-round).
 
-## How to open the prototype
+## How the prototype was opened
 
-The prototype is a page of its own that only the Vite development server serves. It needs no Sync
-API and no sign-in, and it sends no request: the list, the answers to each change and the refusals
-are sample data held in the browser tab.
-
-1. In `frontend/`, start the development server on a free port, for example
-   `pnpm exec vite dev --port 5310 --strictPort`.
-2. Open `http://localhost:5310/proto/credentials`.
-
-The address keeps the screen, the version and what is open, so a link to one state can be shared,
-for example `/proto/credentials?screen=form&v=2&open=value:netbox-lab&answer=key`.
+The prototype is removed; see [How to remove the prototype](#how-to-remove-the-prototype). It was a
+page of its own that only the Vite development server served, at `/proto/credentials`. It needed no
+Sync API and no sign-in, and it sent no request: the list, the answers to each change and the
+refusals were sample data held in the browser tab.
 
 Controls of the prototype, which are not part of the design:
 
@@ -123,24 +118,27 @@ replacement if a version is too close to the one it continues:
   block and say when the value changed during the run. This round moves them into the "Details"
   card instead of a section of their own.
 
-## Not built
+## Not built in the prototype
 
 - The drop-area offer "Create credential `<name>`" (T078). Spec 025 is not merged on this branch:
-  `dev/specs/` has no `025` directory and `frontend/src` has no drop area.
+  `dev/specs/` has no `025` directory and `frontend/src` has no drop area. See
+  [Follow-up of spec 025](#follow-up-of-spec-025-the-drop-area-offer-t078).
 - A link from a schedule name in the in-use listing. The web interface has no page for one schedule,
-  so the listing shows schedule names as text and configuration IDs as links.
-- A link from a credential name in "Credentials used" to the Credentials page. The route
-  `/credentials` does not exist before T075.
-- The "Credentials" entry of the navigation. It belongs to T075. The prototype draws a copy of the
-  page frame with that entry, and its other links lead to the real pages.
+  so the listing shows schedule names as text and configuration IDs as links. This is still the case
+  in the built page.
+- A link from a credential name in "Credentials used" to the Credentials page, and the "Credentials"
+  entry of the navigation. T075 and T077 added both.
 
-## Decisions to confirm with the choice
+## Decisions that the maintainer did not confirm
 
-- "The form is cleared after each request": the prototype clears the token, the password and the
+- "The form is cleared after each request": the built form clears the token, the password and the
   username after every answer, and keeps the name, the description and the field choice, so a person
   can correct a refused request. It is not known whether the contract means the whole form.
-- Each sample request ignores `Idempotency-Key`. The actions of T073 (`createCredential`,
-  `setCredentialValue`, `useDescribeCredential`, `useDeleteCredential`) send it.
+- Each create or change-value request, and each press of "Delete" or "Try again", sends a new
+  `Idempotency-Key`: the values are cleared after every answer, so each request is a new intent, and
+  "Try again" must not replay a stored refusal. "Edit description" keeps one key until the
+  description changes.
+- The list opens with the order "By name", as the prototype did.
 
 ## How to remove the prototype
 
