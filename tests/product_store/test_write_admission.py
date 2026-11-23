@@ -824,3 +824,58 @@ def test_a_withdrawn_run_refuses_an_apply_reservation_but_still_admits_a_verify(
     assert (refused.state, refused.response_status) == ("accepted", 409)
     assert _refusal_code(refused) == _CONFLICT_CODE
     assert verify.state == "reserved"
+
+
+def _open_write(projection: ProductProjection, run_id: str, *, config_id: str, purpose: str) -> str:
+    """Create a run of `config_id` and append one write execution that has not ended."""
+    run = _run(run_id, operation="sync" if purpose == "sync" else "plan")
+    projection.create_run(run.model_copy(update={"config_id": config_id}))
+    admitted = _admit_write(projection, run_id, f"m-{run_id}", operation=purpose)
+    flow_run_id = f"flow-{run_id}"
+    projection.add_prefect_execution(run_id, _link(flow_run_id, purpose=purpose), receipt_id=admitted.receipt_id)
+    projection.complete_mutation(
+        admitted.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id=flow_run_id
+    )
+    return flow_run_id
+
+
+def test_other_write_in_progress_names_the_first_other_write_of_the_configuration(
+    projection: ProductProjection,
+) -> None:
+    """A contended write names the run that was writing first, never itself (INFP-647)."""
+    config_id = _rid("guard-holder-config")
+    _open_write(projection, _rid("guard-holder"), config_id=config_id, purpose="apply")
+    _open_write(projection, _rid("guard-second-waiter"), config_id=config_id, purpose="sync")
+    _open_write(projection, _rid("guard-contended"), config_id=config_id, purpose="sync")
+
+    assert projection.other_write_in_progress(config_id, run_id=_rid("guard-contended")) == _rid("guard-holder")
+    assert projection.other_write_in_progress(config_id, run_id=_rid("guard-holder")) == _rid("guard-second-waiter")
+
+
+def test_other_write_in_progress_ignores_reads_ended_writes_and_other_configurations(
+    projection: ProductProjection,
+) -> None:
+    """A plan or verify takes no write guard, and an ended write no longer holds one."""
+    config_id = _rid("guard-quiet-config")
+    _open_write(projection, _rid("guard-alone"), config_id=config_id, purpose="sync")
+    _open_write(projection, _rid("guard-elsewhere"), config_id=_rid("guard-other-config"), purpose="apply")
+    reading = _rid("guard-reading")
+    projection.create_run(_run(reading).model_copy(update={"config_id": config_id}))
+    verify = _reserve_read(projection, reading, "m-verify", operation="verify")
+    projection.add_prefect_execution(
+        reading, _link("flow-guard-verify", purpose="verify"), receipt_id=verify.receipt_id
+    )
+    ended_run = _rid("guard-ended")
+    ended = _open_write(projection, ended_run, config_id=config_id, purpose="apply")
+    projection.claim_execution(ended_run, ended, worker_id=_WORKER_ID)
+    projection.commit_claimed_execution(
+        ended_run,
+        ended,
+        worker_id=_WORKER_ID,
+        terminal_at=datetime.now(timezone.utc),
+        terminal_state="failed",
+        terminal_outcome="failed",
+        writeback=ExecutionMergeWriteback(results={}),
+    )
+
+    assert projection.other_write_in_progress(config_id, run_id=_rid("guard-alone")) is None

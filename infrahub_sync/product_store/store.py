@@ -770,6 +770,18 @@ _SELECT_RUN_WITH_OPEN_EXECUTION = (
     "WHERE prefect_executions.run_id = product_runs.run_id AND prefect_executions.terminal_at IS NULL) "
     "ORDER BY started_at DESC, run_id DESC LIMIT 1"
 )
+# Another run of a configuration with a write execution that has no terminal verdict, the one
+# submitted first. Bound with the configuration ID, the run to leave out, then
+# ``WRITE_PURPOSES``. An execution with no submission time is left out, because SQLite and
+# PostgreSQL order a missing value differently.
+_SELECT_OTHER_RUN_WITH_OPEN_WRITE = (
+    "SELECT product_runs.run_id FROM product_runs JOIN prefect_executions "  # noqa: S608 - placeholders only.
+    "ON prefect_executions.run_id = product_runs.run_id "
+    "WHERE product_runs.config_id = ? AND product_runs.run_id <> ? "
+    "AND prefect_executions.terminal_at IS NULL AND prefect_executions.submitted_at IS NOT NULL "
+    f"AND prefect_executions.purpose IN ({', '.join('?' for _ in WRITE_PURPOSES)}) "
+    "ORDER BY prefect_executions.submitted_at, product_runs.run_id LIMIT 1"
+)
 # The unresolved receipts of a stage operation on the runs of a configuration, newest run
 # first. Built from ``_ARBITRATED_OPERATIONS``, bound after the configuration ID.
 _SELECT_UNRESOLVED_STAGE_RECEIPTS = (
@@ -1205,6 +1217,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     ) -> ScheduledStartResult: ...
 
     def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None: ...
+
+    def other_write_in_progress(self, config_id: str, *, run_id: str) -> str | None: ...
 
     def create_account(
         self,
@@ -4415,6 +4429,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 return str(run_id)
         return None
 
+    def other_write_in_progress(self, config_id: str, *, run_id: str) -> str | None:
+        """Return another run of a configuration whose write has not ended, or ``None``.
+
+        A write is an execution whose purpose is in ``WRITE_PURPOSES`` and that has no terminal
+        verdict. ``run_id`` is left out. When several runs match, the one whose execution was
+        submitted first is returned. The store does not know which session holds the
+        configuration's write guard, so the result is the likeliest holder, not a proof.
+        """
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_OTHER_RUN_WITH_OPEN_WRITE), (config_id, run_id, *WRITE_PURPOSES))
+            row = cursor.fetchone()
+        return None if row is None else str(row[0])
+
     def create_account(
         self,
         *,
@@ -5786,6 +5813,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         a stage operation created less than ``receipt_age_limit`` before ``now``.
         """
         return self._records.run_in_progress(config_id, now, receipt_age_limit)
+
+    def other_write_in_progress(self, config_id: str, *, run_id: str) -> str | None:
+        """Return another run of a configuration whose write has not ended, or ``None``.
+
+        ``run_id`` is left out. The result is the likeliest holder of the configuration's
+        write guard, not a proof: see `_RelationalRunStore.other_write_in_progress`.
+        """
+        return self._records.other_write_in_progress(config_id, run_id=run_id)
 
     def create_account(
         self,

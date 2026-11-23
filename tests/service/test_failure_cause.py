@@ -417,6 +417,54 @@ def test_a_record_load_failure_keeps_plan_again_on_a_resumable_run() -> None:
     assert recorded["next_action"].endswith("then plan again.")
 
 
+def _guard_contention() -> BaseException:
+    """The write guard's refusal after another writer held it for the whole wait."""
+    apply_guard = pytest.importorskip("infrahub_sync.service.apply_guard")
+    return apply_guard.ApplyGuardContentionError("another writer holds this configuration's write guard")
+
+
+@pytest.mark.parametrize(
+    ("resumable", "ending"),
+    [
+        pytest.param(False, "then plan again.", id="not-resumable"),
+        pytest.param(
+            True,
+            "then run `infrahub-sync verify RUN_ID` again, then "
+            "`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`.",
+            id="resumable",
+        ),
+    ],
+)
+def test_a_contended_write_guard_names_the_active_run(resumable: bool, ending: str) -> None:  # noqa: FBT001
+    """INFP-647: the record names the run that was writing, from the caller's lookup only."""
+    recorded = failure_record("apply", _guard_contention(), resumable=resumable, active_run_id="run-holder-1")
+
+    assert recorded["failure_type"] == "write_guard_contended"
+    assert recorded["system"] is None
+    assert recorded["active_run_id"] == "run-holder-1"
+    assert recorded["cause"].startswith("Sync run run-holder-1 was writing to this configuration")
+    assert recorded["next_action"].startswith("Check that run with `infrahub-sync runs show run-holder-1`")
+    assert recorded["next_action"].endswith(ending)
+    assert StageFailureResource.model_validate(recorded).active_run_id == "run-holder-1"
+
+
+def test_a_contended_write_guard_without_a_known_run_says_so() -> None:
+    """No run found writing: the record says the holder is not known, and names no run."""
+    recorded = failure_record("sync", _guard_contention())
+
+    assert recorded["failure_type"] == "write_guard_contended"
+    assert recorded["active_run_id"] is None
+    assert recorded["cause"].endswith("Which Sync run holds the guard is not known")
+    assert "`infrahub-sync runs list`" in recorded["next_action"]
+
+
+def test_an_active_run_id_is_recorded_only_for_a_contended_write_guard() -> None:
+    """Another failure never carries a run ID it did not look up for."""
+    recorded = failure_record("apply", ServerNotReachableError(address="https://x.test"), active_run_id="run-x")
+
+    assert recorded["active_run_id"] is None
+
+
 @pytest.mark.parametrize(
     ("inner", "expected"),
     [

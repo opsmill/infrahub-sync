@@ -96,6 +96,16 @@ failure with SQLSTATE `55P03` becomes `ApplyGuardContentionError`. Other provide
 instances during acquisition become `ApplyGuardUnavailableError`, distinguishing lock
 contention from a connection or provider failure.
 
+The guard does not know which run holds the key. When a service write fails with
+`ApplyGuardContentionError`, `_record_failure` in `infrahub_sync/service/flow.py` asks the
+product store for another run of the same configuration with a write execution (`apply`,
+`sync` or `resume`) that has not ended, the one submitted first
+(`ProductProjection.other_write_in_progress`). The failure record holds that run ID as
+`active_run_id`, with the failure type `write_guard_contended`, and `None` when the store finds
+no such run or the lookup fails. The run ID is the likeliest holder, not a proof: the store
+records executions, not guard sessions. The guard session and the error text are never read for
+it.
+
 ### Proving ownership without reacquiring
 
 `ApplyGuard.require_ownership` queries `pg_locks` and checks both the backend process ID

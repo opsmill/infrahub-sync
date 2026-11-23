@@ -1147,12 +1147,15 @@ FailureType = Literal[
     "proposed_change_open_failed",
     "proposed_change_read_failed",
     "proposed_change_close_failed",
+    "write_guard_contended",
     "internal_error",
 ]
 """The failure type names a stage failure record holds (spec 007 data-model.md, FR-014).
 
 The seven names from `destination_default_branch_not_main` to `proposed_change_close_failed` are
 the failures of the branch review operations of a scheduled run (spec 021, research R15).
+`write_guard_contended` is a write that did not start because another writer held the
+configuration's write guard for the whole wait (ADR 0010).
 """
 
 FAILURE_TYPES: tuple[FailureType, ...] = get_args(FailureType)
@@ -1219,6 +1222,9 @@ class StageFailureResource(_ResourceModel):
     # `None` in a record written before this field existed; `applied_operations` then counts.
     operations_written: int | None = Field(default=None, ge=0)
     failed_operation_detail: FailedOperationDetailResource | None = None
+    # The Sync run that was writing to the same configuration when this write could not take
+    # the configuration's write guard (`write_guard_contended`). `None` when it is not known.
+    active_run_id: str | None = Field(default=None, max_length=MAX_FAILURE_NAME_TEXT)
 
 
 class ResultsResource(_ResourceModel):

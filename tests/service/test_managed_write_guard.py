@@ -345,6 +345,95 @@ def test_guard_contention_touches_no_destination_and_creates_no_success_evidence
     assert run.outcome == "failed"
 
 
+def _open_write_of_another_run(prepared: _ManagedStage, run_id: str) -> None:
+    """Record another run of the same configuration whose `sync` execution has not ended."""
+    projection = prepared.projection
+    projection.create_run(
+        ProductRun(
+            run_id=run_id,
+            operation="sync",
+            configuration_reference=f"{prepared.binding[0]}@{prepared.binding[1]}",
+            config_id=prepared.binding[0],
+            registry_version=prepared.binding[1],
+            package_checksum=prepared.binding[2],
+            actor="owner",
+            started_at=datetime.now(timezone.utc),
+            phase="accepted",
+        )
+    )
+    admitted, _created = projection.reserve_mutation(
+        _receipt(f"m-{run_id}", run_id=run_id, operation="sync"), admit_write=True
+    )
+    projection.add_prefect_execution(
+        run_id,
+        PrefectExecutionLink(
+            flow_run_id="c1d2e3f4-0000-4000-8000-000000000001",
+            purpose="sync",
+            attempt=1,
+            submitted_at=datetime.now(timezone.utc),
+        ),
+        receipt_id=admitted.receipt_id,
+    )
+
+
+@pytest.mark.parametrize("stage", ["apply", "sync"])
+def test_guard_contention_names_the_run_that_was_writing_to_the_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """INFP-647: a refused concurrent write identifies the active run, and only by its ID."""
+    prepared = _prepare(tmp_path, monkeypatch, stage=stage, acquire_failure=_lock_timeout())
+    _open_write_of_another_run(prepared, "managed-holder")
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _drive(prepared, stage)
+
+    failure = _stored(prepared).results[f"{stage}_failure"]
+    assert failure["error_type"] == "ApplyGuardContentionError"
+    assert failure["failure_type"] == "write_guard_contended"
+    assert failure["active_run_id"] == "managed-holder"
+    assert "Sync run managed-holder was writing to this configuration" in failure["cause"]
+    assert "`infrahub-sync runs show managed-holder`" in failure["next_action"]
+    assert failure["next_action"].endswith("then plan again.")
+    assert "managed-netbox-canary" not in str(failure)
+    assert "managed-infrahub-canary" not in str(failure)
+
+
+def test_guard_contention_without_another_write_says_the_active_run_is_not_known(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failing run's own open execution is never named as the run that holds the guard."""
+    prepared = _prepare(tmp_path, monkeypatch, acquire_failure=_lock_timeout())
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    failure = _stored(prepared).results["apply_failure"]
+    assert failure["failure_type"] == "write_guard_contended"
+    assert failure["active_run_id"] is None
+    assert "Which Sync run holds the guard is not known" in failure["cause"]
+
+
+def test_a_failed_lookup_of_the_active_run_still_records_the_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lookup is best effort: its failure must not cost the run its failure record."""
+    prepared = _prepare(tmp_path, monkeypatch, acquire_failure=_lock_timeout())
+
+    def unavailable(*_args: object, **_kwargs: object) -> str | None:
+        msg = "the product store did not answer"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(prepared.projection, "other_write_in_progress", unavailable)
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    run = _stored(prepared)
+    assert run.outcome == "failed"
+    failure = run.results["apply_failure"]
+    assert (failure["failure_type"], failure["active_run_id"]) == ("write_guard_contended", None)
+
+
 def test_a_failure_before_the_first_dispatch_stays_an_ordinary_failed_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

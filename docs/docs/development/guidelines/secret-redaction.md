@@ -48,6 +48,8 @@ and of its immediate cause, and only these fields:
 - the permission or message Infrahub returns with a 403, as before
 - the kind, the source record and the field that a typed Sync error names
 - the operations written, the operation count of the plan and the operation that failed
+- for a write that could not take the configuration's write guard, the ID of the run the
+  product store records as writing to the same configuration
 - text from a fixed template filled with the fields above, setting names, kind names, node
   names, account names, branch names and IDs
 

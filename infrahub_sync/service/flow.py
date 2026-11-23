@@ -102,7 +102,7 @@ from infrahub_sync.runtime_schema.errors import RuntimeSchemaError
 from infrahub_sync.utils import PlanApplier
 
 from . import branch_review as review_ops
-from .apply_guard import ApplyGuard, hold_apply_guard
+from .apply_guard import ApplyGuard, ApplyGuardContentionError, hold_apply_guard
 from .apply_progress import StoreApplyProgressObserver
 from .checkpoints import (
     CheckpointUnavailableError,
@@ -1541,6 +1541,7 @@ def _failure_evidence(
     record: ApplyRecord | None,
     secrets: Sequence[str],
     resumable: bool = False,
+    active_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
 
@@ -1556,6 +1557,9 @@ def _failure_evidence(
 
     `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
     (spec 016); a template's next action then names `verify` and `runs resume`.
+
+    `active_run_id` is the run found writing to the same configuration when the write guard
+    was contended (`_active_write_run`); `failure_record` records it for that failure only.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
@@ -1580,7 +1584,7 @@ def _failure_evidence(
     evidence.update(operator_cause(exc, secrets))
     if resumable:
         evidence.update(resumable_next_action(exc, secrets))
-    evidence.update(_structured_cause(stage, exc, secrets, evidence, resumable=resumable))
+    evidence.update(_structured_cause(stage, exc, secrets, evidence, resumable=resumable, active_run_id=active_run_id))
     if stage in ("verify", *_SAVED_PLAN_WRITE_STAGES):
         # The pre-write check a verify or an apply failed on, by name, so an operator reads
         # which check refuses the apply, and both stages name the same one (SC-004). Both
@@ -1602,8 +1606,14 @@ def _failure_evidence(
     return evidence
 
 
-def _structured_cause(
-    stage: str, exc: Exception, secrets: Sequence[str], recorded: Mapping[str, Any], *, resumable: bool = False
+def _structured_cause(  # pylint: disable=too-many-arguments
+    stage: str,
+    exc: Exception,
+    secrets: Sequence[str],
+    recorded: Mapping[str, Any],
+    *,
+    resumable: bool = False,
+    active_run_id: str | None = None,
 ) -> dict[str, Any]:
     """The `failure_record` fields, keeping the cause and next action `operator_cause` recorded.
 
@@ -1612,7 +1622,7 @@ def _structured_cause(
     error here records `internal_error`.
     """
     try:
-        fields = failure_record(stage, exc, secrets=secrets, resumable=resumable)
+        fields = failure_record(stage, exc, secrets=secrets, resumable=resumable, active_run_id=active_run_id)
     except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.warning("failure record fields could not be built (%s)", type(unexpected).__name__)
         fields = dict.fromkeys(FAILURE_RECORD_KEYS)
@@ -1634,6 +1644,23 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
     """
     carried = getattr(exc, "apply_record", None)
     return carried if isinstance(carried, ApplyRecord) else record
+
+
+def _active_write_run(projection: ProductProjection, stored: ProductRun, exc: Exception) -> str | None:
+    """The run writing to the same configuration when this write could not take its guard.
+
+    Looked up only for `ApplyGuardContentionError`, and only in the product store: the guard's
+    own session and the error's text are never read. The value is a run ID or `None`. A lookup
+    that fails records `None`, so the failure record is still stored and says the run is not
+    known.
+    """
+    if not isinstance(exc, ApplyGuardContentionError) or stored.config_id is None:
+        return None
+    try:
+        return projection.other_write_in_progress(stored.config_id, run_id=stored.run_id)
+    except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        logger.warning("the run that holds the write guard could not be looked up (%s)", type(unexpected).__name__)
+        return None
 
 
 @dataclass(frozen=True)
@@ -1725,7 +1752,13 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         # write: the next step is `verify`, then `runs resume` (spec 016), not a new plan.
         resumable = stored.phase != "cancelled" and (ambiguous or stored.reconciliation_required)
         evidence = _failure_evidence(
-            stage, exc, outcome=terminal_outcome, record=record, secrets=secrets, resumable=resumable
+            stage,
+            exc,
+            outcome=terminal_outcome,
+            record=record,
+            secrets=secrets,
+            resumable=resumable,
+            active_run_id=_active_write_run(projection, stored, exc),
         )
         # The execution that wrote the record: results are merged, so a later execution of the
         # same purpose that never records a failure leaves this record in place (spec 016,

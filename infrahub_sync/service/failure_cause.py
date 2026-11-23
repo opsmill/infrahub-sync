@@ -82,6 +82,7 @@ FAILURE_RECORD_KEYS = (
     "infrahub_message",
     "record",
     "field",
+    "active_run_id",
 )
 
 
@@ -291,6 +292,16 @@ _TRANSPORT_FIRST_TYPES: frozenset[str] = frozenset(
 )
 
 
+# The guard's contention error, matched by its module and class name: `apply_guard` imports the
+# PostgreSQL driver, which an install without the service runtimes does not have.
+_GUARD_CONTENTION = ("infrahub_sync.service.apply_guard", "ApplyGuardContentionError")
+
+
+def _is_guard_contention(link: BaseException) -> bool:
+    """Whether `link` is the write guard's refusal after another writer held it for the whole wait."""
+    return (type(link).__module__, type(link).__name__) == _GUARD_CONTENTION
+
+
 def failure_class(exc: BaseException) -> FailureType:
     """The failure type of an error, from the fixed table, else `internal_error`.
 
@@ -303,6 +314,9 @@ def failure_class(exc: BaseException) -> FailureType:
 def _classify(exc: BaseException) -> _Classified:
     """Map the cause chain to one failure type through the fixed table, else `internal_error`."""
     explicit = tuple(cause_chain(exc, follow_context=False))
+    contended = next((link for link in explicit if _is_guard_contention(link)), None)
+    if contended is not None:
+        return _Classified("write_guard_contended", contended)
     for errors, failure_type in _TYPED_ERRORS:
         link = next((link for link in explicit if isinstance(link, errors)), None)
         if link is not None:
@@ -390,6 +404,23 @@ def _rejected_write_template(fields: dict[str, Any], _where: str, _adapter: str)
     return cause, None
 
 
+def _guard_contended_template(fields: dict[str, Any], _where: str, _adapter: str) -> _Template:
+    """A write that did not start: the run that was writing, or that it is not known (ADR 0010)."""
+    active = fields["active_run_id"]
+    if active:
+        return (
+            f"Sync run {active} was writing to this configuration and held its write guard for the whole wait, "
+            "so this write did not start and changed nothing",
+            f"Check that run with `infrahub-sync runs show {active}` and wait for it to finish, {_PLAN_AGAIN}",
+        )
+    return (
+        "Another writer held this configuration's write guard for the whole wait, so this write did not start "
+        "and changed nothing. Which Sync run holds the guard is not known",
+        f"List the runs of this configuration with `infrahub-sync runs list` and wait for its write to finish, "
+        f"{_PLAN_AGAIN}",
+    )
+
+
 def _record_load_template(fields: dict[str, Any], _where: str, _adapter: str) -> _Template:
     record = fields["record"] or {}
     cause = f"A {record.get('kind')} record (source ID {record.get('source_id')}) could not be loaded"
@@ -425,6 +456,7 @@ _RESUMABLE_TYPES = frozenset(
         "permission_missing",
         "tls_certificate_rejected",
         "credential_missing",
+        "write_guard_contended",
     }
 )
 # The failure types whose fix is in a source record or a transform: a new plan is needed even on
@@ -440,6 +472,7 @@ _NEXT_START = "then wait for the next start of the schedule."
 # next action (`PlanArtifactError`) leaves the next action to `operator_cause`.
 _TEMPLATES: dict[str, Callable[[dict[str, Any], str, str], _Template]] = {
     "destination_rejected_write": _rejected_write_template,
+    "write_guard_contended": _guard_contended_template,
     "system_unreachable": lambda _f, where, adapter: (
         f"{where} could not be reached",
         _REACH.format(adapter=adapter),
@@ -550,11 +583,16 @@ def failure_record(
     secrets: Sequence[str] = (),
     destination_adapter: str = APPLY_DESTINATION_ADAPTER,
     resumable: bool = False,
+    active_run_id: str | None = None,
 ) -> dict[str, Any]:
     """The spec 007 fields of a `<stage>_failure` record, and a template cause and next action.
 
     `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
     (spec 016): the next action then names `verify` and `runs resume`, not a new plan.
+
+    `active_run_id` is the Sync run the caller found writing to the same configuration, looked
+    up in the product store, never read from the error. It is recorded only for
+    `write_guard_contended`.
 
     Returns every key of `FAILURE_RECORD_KEYS`, `None` where the failure does not name it, and
     `cause` and `next_action` when a template exists for the failure type. The caller keeps the
@@ -591,6 +629,7 @@ def failure_record(
         else None,
         "record": _record_reference(link),
         "field": field_name,
+        "active_run_id": _name(active_run_id) if failure_type == "write_guard_contended" else None,
     }
     cause, next_action = _templates(fields, resumable=resumable)
     recorded = dict(fields)

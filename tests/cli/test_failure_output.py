@@ -162,3 +162,43 @@ def test_infrahub_message_is_printed_with_its_control_characters_made_visible(
 
     assert "\x1b" not in output
     assert "Infrahub message: planned\\x1b[2J is not valid" in _block(output, "apply")
+
+
+_CONTENDED_CAUSE = (
+    "Sync run service-run-0 was writing to this configuration and held its write guard for the whole wait, "
+    "so this write did not start and changed nothing"
+)
+_CONTENDED_NEXT_ACTION = (
+    "Check that run with `infrahub-sync runs show service-run-0` and wait for it to finish, then plan again."
+)
+
+
+def _contended(stage: str) -> dict[str, Any]:
+    """The record of a write that could not take the configuration's write guard (INFP-647)."""
+    return {
+        "stage": stage,
+        "outcome": "failed",
+        "error_type": "ApplyGuardContentionError",
+        "cause_type": "LockNotAvailable",
+        "failure_type": "write_guard_contended",
+        "system": None,
+        "active_run_id": "service-run-0",
+        "cause": _CONTENDED_CAUSE,
+        "next_action": _CONTENDED_NEXT_ACTION,
+    }
+
+
+@pytest.mark.parametrize("stage", ["sync", "apply"])
+def test_a_contended_write_prints_the_active_run_and_how_to_check_it(
+    client: MagicMock,  # noqa: F811 - the imported fixture.
+    stage: str,
+) -> None:
+    output = _failed_command(client, stage, _contended(stage))
+
+    assert _block(output, stage) == [
+        f"{stage} failed: ApplyGuardContentionError",
+        "failure type: write_guard_contended",
+        f"cause: {_CONTENDED_CAUSE}",
+        "active run: service-run-0",
+        f"hint: {_CONTENDED_NEXT_ACTION}",
+    ]
