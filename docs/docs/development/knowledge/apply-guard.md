@@ -99,7 +99,7 @@ contention from a connection or provider failure.
 The guard does not know which run holds the key. When a service write fails with
 `ApplyGuardContentionError`, `_record_failure` in `infrahub_sync/service/flow.py` asks the
 product store for another run of the same configuration with a write execution (`apply`,
-`sync` or `resume`) that has not ended, the one submitted first
+`sync` or `resume`) that a worker claimed and that has not ended, the one claimed first
 (`ProductProjection.other_write_in_progress`). The failure record holds that run ID as
 `active_run_id`, with the failure type `write_guard_contended`, and `None` when the store finds
 no such run or the lookup fails. The run ID is the likeliest holder, not a proof: the store

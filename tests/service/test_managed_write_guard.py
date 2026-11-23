@@ -364,16 +364,18 @@ def _open_write_of_another_run(prepared: _ManagedStage, run_id: str) -> None:
     admitted, _created = projection.reserve_mutation(
         _receipt(f"m-{run_id}", run_id=run_id, operation="sync"), admit_write=True
     )
+    flow_run_id = "c1d2e3f4-0000-4000-8000-000000000001"
     projection.add_prefect_execution(
         run_id,
         PrefectExecutionLink(
-            flow_run_id="c1d2e3f4-0000-4000-8000-000000000001",
-            purpose="sync",
-            attempt=1,
-            submitted_at=datetime.now(timezone.utc),
+            flow_run_id=flow_run_id, purpose="sync", attempt=1, submitted_at=datetime.now(timezone.utc)
         ),
         receipt_id=admitted.receipt_id,
     )
+    projection.complete_mutation(
+        admitted.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id=flow_run_id
+    )
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=WORKER_ID)
 
 
 @pytest.mark.parametrize("stage", ["apply", "sync"])

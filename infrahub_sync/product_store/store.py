@@ -770,17 +770,17 @@ _SELECT_RUN_WITH_OPEN_EXECUTION = (
     "WHERE prefect_executions.run_id = product_runs.run_id AND prefect_executions.terminal_at IS NULL) "
     "ORDER BY started_at DESC, run_id DESC LIMIT 1"
 )
-# Another run of a configuration with a write execution that has no terminal verdict, the one
-# submitted first. Bound with the configuration ID, the run to leave out, then
-# ``WRITE_PURPOSES``. An execution with no submission time is left out, because SQLite and
-# PostgreSQL order a missing value differently.
+# Another run of a configuration with a write execution that a worker claimed and that has no
+# terminal verdict, the one claimed first. Bound with the configuration ID, the run to leave
+# out, then ``WRITE_PURPOSES``. A worker claims its execution before any other work, so an
+# execution that no worker claimed cannot hold the configuration's write guard.
 _SELECT_OTHER_RUN_WITH_OPEN_WRITE = (
     "SELECT product_runs.run_id FROM product_runs JOIN prefect_executions "  # noqa: S608 - placeholders only.
     "ON prefect_executions.run_id = product_runs.run_id "
     "WHERE product_runs.config_id = ? AND product_runs.run_id <> ? "
-    "AND prefect_executions.terminal_at IS NULL AND prefect_executions.submitted_at IS NOT NULL "
+    "AND prefect_executions.terminal_at IS NULL AND prefect_executions.claimed_at IS NOT NULL "
     f"AND prefect_executions.purpose IN ({', '.join('?' for _ in WRITE_PURPOSES)}) "
-    "ORDER BY prefect_executions.submitted_at, product_runs.run_id LIMIT 1"
+    "ORDER BY prefect_executions.claimed_at, product_runs.run_id LIMIT 1"
 )
 # The unresolved receipts of a stage operation on the runs of a configuration, newest run
 # first. Built from ``_ARBITRATED_OPERATIONS``, bound after the configuration ID.
@@ -4432,9 +4432,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     def other_write_in_progress(self, config_id: str, *, run_id: str) -> str | None:
         """Return another run of a configuration whose write has not ended, or ``None``.
 
-        A write is an execution whose purpose is in ``WRITE_PURPOSES`` and that has no terminal
-        verdict. ``run_id`` is left out. When several runs match, the one whose execution was
-        submitted first is returned. The store does not know which session holds the
+        A write is an execution whose purpose is in ``WRITE_PURPOSES``, that a worker claimed and
+        that has no terminal verdict. ``run_id`` is left out. When several runs match, the one
+        whose execution was claimed first is returned. The store does not know which session holds the
         configuration's write guard, so the result is the likeliest holder, not a proof.
         """
         with self._reading() as cursor:

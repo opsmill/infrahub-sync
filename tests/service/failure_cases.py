@@ -40,6 +40,7 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.potenda import SideLoadError
 from infrahub_sync.runtime_schema.errors import DestinationSchemaUnavailableError
+from infrahub_sync.service.apply_guard import ApplyGuardContentionError
 from tests.adapters.test_infrahub_planned_write import SITE_KIND, RecordingClient, make_adapter, server_operation
 
 if TYPE_CHECKING:
@@ -370,6 +371,15 @@ CASES: tuple[FailureCase, ...] = (
         "apply",
         lambda text: _chained(LeftOutConfirmationRequiredError(2, run_id="run-failure-case"), RuntimeError(text)),
         "apply_refused",
+    ),
+    FailureCase(
+        "write-guard-contended",
+        "apply",
+        lambda text: _chained(
+            ApplyGuardContentionError("another writer holds this configuration's write guard"), RuntimeError(text)
+        ),
+        "write_guard_contended",
+        {"system": None, "active_run_id": None},
     ),
     FailureCase("unknown-class", "plan", RuntimeError, "internal_error"),
     FailureCase(

@@ -626,6 +626,24 @@ When the destination branch does not exist, the `cause:` line names the branch, 
 `hint:` line says to create it or to start the run with `--branch <existing branch>`. A
 failure to read the destination schema also prints a `cause:` and a `hint:` line.
 
+Sync writes to one configuration from one run at a time. When a `sync`, `apply` or `runs resume`
+waits 30 seconds for another write of the same configuration to finish and it does not, the
+write does not start and changes nothing. The command prints the failure type
+`write_guard_contended` and the other run's ID:
+
+```text
+apply failed: ApplyGuardContentionError
+failure type: write_guard_contended
+cause: Sync run <run_id> was writing to this configuration and held its write guard for the whole wait, ...
+active run: <run_id>
+hint: Check that run with `infrahub-sync runs show <run_id>` and wait for it to finish, then plan again.
+```
+
+The `cause:` line is shortened here. Sync finds the other run in its run records. When it finds
+none, the output has no `active run:` line, the `cause:` line says that the run is not known, and
+the `hint:` line names `infrahub-sync runs list`. When the refused write is a `runs resume`, the
+`hint:` line names `infrahub-sync verify` and `infrahub-sync runs resume` instead of a new plan.
+
 `infrahub-sync runs logs RUN_ID` prints the lines that Sync wrote during the run, including
 the ERROR line that holds the cause and the next step. It reads them through the Sync API.
 

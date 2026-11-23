@@ -1016,7 +1016,7 @@ is `null` or absent:
   operations in the plan, and the `action`, `kind` and `identity` of the failed operation.
 - `active_run_id`: for `write_guard_contended`, the ID of the Sync run that was writing to the
   same configuration. Sync reads it from its run records, not from the write guard, so it is the
-  write of that configuration submitted first that has not ended. It is `null` when Sync finds
+  write of that configuration that a worker started first and that has not ended. It is `null` when Sync finds
   no such run, and the `cause` then says that the run is not known. The CLI prints it as
   `active run: <run_id>`, and the `next_action` names `infrahub-sync runs show <run_id>`.
 

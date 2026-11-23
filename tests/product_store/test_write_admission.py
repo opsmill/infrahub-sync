@@ -826,7 +826,9 @@ def test_a_withdrawn_run_refuses_an_apply_reservation_but_still_admits_a_verify(
     assert verify.state == "reserved"
 
 
-def _open_write(projection: ProductProjection, run_id: str, *, config_id: str, purpose: str) -> str:
+def _open_write(
+    projection: ProductProjection, run_id: str, *, config_id: str, purpose: str, claimed: bool = True
+) -> str:
     """Create a run of `config_id` and append one write execution that has not ended."""
     run = _run(run_id, operation="sync" if purpose == "sync" else "plan")
     projection.create_run(run.model_copy(update={"config_id": config_id}))
@@ -836,6 +838,8 @@ def _open_write(projection: ProductProjection, run_id: str, *, config_id: str, p
     projection.complete_mutation(
         admitted.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id=flow_run_id
     )
+    if claimed:
+        assert projection.claim_execution(run_id, flow_run_id, worker_id=_WORKER_ID)
     return flow_run_id
 
 
@@ -855,19 +859,23 @@ def test_other_write_in_progress_names_the_first_other_write_of_the_configuratio
 def test_other_write_in_progress_ignores_reads_ended_writes_and_other_configurations(
     projection: ProductProjection,
 ) -> None:
-    """A plan or verify takes no write guard, and an ended write no longer holds one."""
+    """A verify takes no write guard, and neither an unclaimed nor an ended write holds one."""
     config_id = _rid("guard-quiet-config")
     _open_write(projection, _rid("guard-alone"), config_id=config_id, purpose="sync")
     _open_write(projection, _rid("guard-elsewhere"), config_id=_rid("guard-other-config"), purpose="apply")
+    _open_write(projection, _rid("guard-unclaimed"), config_id=config_id, purpose="apply", claimed=False)
     reading = _rid("guard-reading")
     projection.create_run(_run(reading).model_copy(update={"config_id": config_id}))
     verify = _reserve_read(projection, reading, "m-verify", operation="verify")
     projection.add_prefect_execution(
         reading, _link("flow-guard-verify", purpose="verify"), receipt_id=verify.receipt_id
     )
+    projection.complete_mutation(
+        verify.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id="flow-guard-verify"
+    )
+    assert projection.claim_execution(reading, "flow-guard-verify", worker_id=_WORKER_ID)
     ended_run = _rid("guard-ended")
     ended = _open_write(projection, ended_run, config_id=config_id, purpose="apply")
-    projection.claim_execution(ended_run, ended, worker_id=_WORKER_ID)
     projection.commit_claimed_execution(
         ended_run,
         ended,
