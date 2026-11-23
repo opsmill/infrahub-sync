@@ -8,24 +8,39 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-from infrahub_sync.product_store import (  # noqa: TC001 - runtime protocol boundary.
+from infrahub_sync.product_store import (
+    WRITE_PURPOSES,
     AuditEvent,
+    AutomaticResume,
+    AutomaticResumeReason,
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
+    run_apply_progress,
 )
+from infrahub_sync.product_store.models import AutomaticResumeCause  # noqa: TC001 - runtime annotation.
 
 from .events import RUN_CANCELLED, RUN_FAILED, run_event
 from .orchestration import (
     Observation,
     PoolStatus,
+    PoolWorker,
     ServiceOrchestration,
     normalized_pool_status,
+    worker_is_live,
 )
+from .resume_view import run_has_saved_plan
+from .settings import approval_required, automatic_resume_enabled
 
 RUN_ADMISSION_TTL_ENV = "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"
+# The actor of the check and the resume that Sync submits by itself; never an account (research R5).
+AUTOMATIC_RESUME_ACTOR = "sync:automatic-resume"
+# How many automatic resumes one run receives at most (FR-010).
+AUTOMATIC_RESUME_LIMIT = 3
 _POLICY_ERROR = "service liveness settings are invalid"
 _TERMINAL_STATES = frozenset({"completed", "failed", "crashed", "cancelled"})
+# The one Prefect state under rule 6 that means the worker disappeared (research R2).
+_WORKER_LOST_STATE = "crashed"
 
 
 class CancellationSelectionUnavailableError(RuntimeError):
@@ -85,6 +100,98 @@ class LivenessPolicy:
 def age(now: datetime, anchor: datetime) -> float:
     """Return non-negative elapsed seconds; clock reversal cannot accelerate a verdict."""
     return max(0.0, (now - anchor).total_seconds())
+
+
+def live_workers(pool: PoolStatus, now: datetime) -> tuple[PoolWorker, ...]:
+    """Return the pool's live workers: online, with a heartbeat within ``max(3 * interval, 30)`` seconds.
+
+    A snapshot without worker detail has no live worker (research R8, critique E3).
+    """
+    if not pool.detail_available:
+        return ()
+    return tuple(worker for worker in pool.workers if worker_is_live(worker, now))
+
+
+def decide_automatic_resume(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    run: ProductRun,
+    link: PrefectExecutionLink,
+    cause: AutomaticResumeCause,
+    worker_name: str | None,
+    previous_rows: tuple[AutomaticResume, ...],
+    now: datetime,
+    *,
+    branch_review: bool = False,
+) -> AutomaticResume | None:
+    """Decide whether Sync resumes the interrupted write execution ``link`` by itself (spec 030).
+
+    Returns ``None``, so that no record and no event is written, when automatic resume is off
+    (FR-004) or ``link`` is not a write (``apply``, ``sync`` or ``resume``). Otherwise returns
+    the record to insert with the interruption: ``waiting-check``, or ``ended`` with decision
+    ``no-resume`` and the first reason that applies, in the order of ``_no_resume_reason``.
+
+    ``previous_rows`` are the run's earlier records. ``branch_review`` is whether the run is a
+    scheduled run with branch review, which the caller reads from the store (research R11).
+    """
+    if not automatic_resume_enabled() or link.purpose not in WRITE_PURPOSES:
+        return None
+    reason = _no_resume_reason(run, link, previous_rows, branch_review=branch_review)
+    return AutomaticResume(
+        run_id=run.run_id,
+        interrupted_flow_run_id=link.flow_run_id,
+        cause=cause,
+        worker_name=worker_name or None,
+        state="waiting-check" if reason is None else "ended",
+        decision=None if reason is None else "no-resume",
+        reason=reason,
+        decided_at=now,
+        updated_at=now,
+    )
+
+
+def _no_resume_reason(
+    run: ProductRun,
+    link: PrefectExecutionLink,
+    previous_rows: tuple[AutomaticResume, ...],
+    *,
+    branch_review: bool,
+) -> AutomaticResumeReason | None:
+    """The first reason not to resume the run automatically, or ``None`` (research R10, R11, R12).
+
+    The order is: not resumable, approval missing, no progress, limit reached.
+    """
+    # The checks of `runs resume` that do not depend on the interruption being recorded yet:
+    # a saved plan, not cancelled, and not a scheduled run with branch review.
+    if not run_has_saved_plan(run) or run.phase == "cancelled" or branch_review:
+        return "not-resumable"
+    # An approval is always recorded for the saved plan's checksum (`RunService.approve_run`),
+    # and a run's plan never changes, so a recorded approval matches the plan.
+    if approval_required() and run.approval is None:
+        return "approval-missing"
+    if _automatic_resume_made_no_progress(run, link, previous_rows):
+        return "no-progress"
+    if sum(row.decision == "resume" for row in previous_rows) >= AUTOMATIC_RESUME_LIMIT:
+        return "limit-reached"
+    return None
+
+
+def _automatic_resume_made_no_progress(
+    run: ProductRun, link: PrefectExecutionLink, previous_rows: tuple[AutomaticResume, ...]
+) -> bool:
+    """Whether ``link`` is an automatic resume that ended without passing the marker it started after (FR-009).
+
+    A resume that started after no marker made progress once any marker is saved, position 0
+    included. A write that is not an automatic resume is never judged here.
+    """
+    previous = next(
+        (row for row in previous_rows if row.decision == "resume" and row.resume_flow_run_id == link.flow_run_id),
+        None,
+    )
+    if previous is None:
+        return False
+    marker = run_apply_progress(run)
+    if marker is None:
+        return True
+    return previous.start_after is not None and marker.position <= previous.start_after
 
 
 class RunLivenessReconciler:
@@ -223,17 +330,52 @@ class RunLivenessReconciler:
                 self._projection.mark_execution_stalled(run_id, link.flow_run_id, stalled_at=now)
             return observed
         if observed.available and observed.state in _TERMINAL_STATES:
-            self._projection.interrupt_execution(
-                run_id, link.flow_run_id, terminal_at=now, event=self._interrupted_event(refreshed_run, link, now)
-            )
+            # Only a crashed flow run means the worker disappeared; a failure the worker raised,
+            # a cancellation in Prefect and a completion get no automatic resume (research R2).
+            self._interrupt(refreshed_run, link, now, cause="rule-6" if observed.state == _WORKER_LOST_STATE else None)
             return observed
         if link.claimed_at is None or age(now, link.claimed_at) < self._policy.stall_threshold_seconds:
             return observed
         if pool.detail_available and not _owner_is_fresh(link.claiming_worker_id, pool, now):
-            self._projection.interrupt_execution(
-                run_id, link.flow_run_id, terminal_at=now, event=self._interrupted_event(refreshed_run, link, now)
+            self._interrupt(
+                refreshed_run, link, now, cause="rule-8", worker_name=_worker_name(link.claiming_worker_id, pool)
             )
         return observed
+
+    def _interrupt(
+        self,
+        run: ProductRun,
+        link: PrefectExecutionLink,
+        now: datetime,
+        *,
+        cause: AutomaticResumeCause | None,
+        worker_name: str | None = None,
+    ) -> None:
+        """End ``link`` as ``interrupted``, with the automatic resume decision when ``cause`` is given.
+
+        The decision record is written in the same transaction as the interruption (research R1).
+        """
+        automatic_resume = None
+        if cause is not None and link.purpose in WRITE_PURPOSES and automatic_resume_enabled():
+            branch_review = (
+                run.trigger_type == "scheduled" and self._projection.lookup_schedule_branch(run.run_id).available
+            )
+            automatic_resume = decide_automatic_resume(
+                run,
+                link,
+                cause,
+                worker_name,
+                self._projection.automatic_resumes_of(run.run_id),
+                now,
+                branch_review=branch_review,
+            )
+        self._projection.interrupt_execution(
+            run.run_id,
+            link.flow_run_id,
+            terminal_at=now,
+            event=self._interrupted_event(run, link, now),
+            automatic_resume=automatic_resume,
+        )
 
     def _interrupted_event(self, run: ProductRun, link: PrefectExecutionLink, now: datetime) -> AuditEvent:
         """Build the `run.failed` event of an interrupted stage, outcome `ambiguous` (data-model.md).
@@ -277,9 +419,12 @@ def _owner_is_fresh(worker_id: str | None, pool: PoolStatus, now: datetime) -> b
     for worker in pool.workers:
         if worker.worker_id != worker_id or worker.status != "online":
             continue
-        if worker.last_heartbeat is None or worker.heartbeat_interval_seconds is None:
-            return False
-        if worker.heartbeat_interval_seconds <= 0:
-            return False
-        return age(now, worker.last_heartbeat) <= max(3 * worker.heartbeat_interval_seconds, 30)
+        return worker_is_live(worker, now)
     return False
+
+
+def _worker_name(worker_id: str | None, pool: PoolStatus) -> str | None:
+    """The name the pool snapshot gives the claiming worker, or ``None`` when it has none."""
+    if worker_id is None:
+        return None
+    return next((worker.name for worker in pool.workers if worker.worker_id == worker_id), None)

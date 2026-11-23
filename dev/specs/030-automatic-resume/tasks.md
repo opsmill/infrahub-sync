@@ -66,11 +66,11 @@ behind `ProductProjection`.
 
 ### The live worker rule and the decision
 
-- [ ] T008 Move the freshness rule of `_owner_is_fresh` in `infrahub_sync/service/liveness.py` into
+- [X] T008 Move the freshness rule of `_owner_is_fresh` in `infrahub_sync/service/liveness.py` into
       `live_workers(pool, now) -> tuple[...]`: workers with status `online` and a heartbeat within
       `max(3 * heartbeat_interval_seconds, 30)` seconds. `_owner_is_fresh` uses it. A snapshot with
       `detail_available` false has no live worker (research R8, critique E3).
-- [ ] T009 Add to `infrahub_sync/service/liveness.py` the constants `AUTOMATIC_RESUME_ACTOR = "sync:automatic-resume"`
+- [X] T009 Add to `infrahub_sync/service/liveness.py` the constants `AUTOMATIC_RESUME_ACTOR = "sync:automatic-resume"`
       and `AUTOMATIC_RESUME_LIMIT = 3`, and a pure function `decide_automatic_resume(run, link, cause, worker_name,
       previous_rows, now) -> AutomaticResume | None`. It returns `None` when `automatic_resume_enabled()` is false or
       `link.purpose` is not a write (`apply`, `sync`, `resume`). Otherwise it returns a row inserted as `ended`,
@@ -79,12 +79,12 @@ behind `ProductProjection`.
       (`approval_required()` and no recorded approval for the plan's checksum), `no-progress` (the previous row's
       resume ended without the run's highest marker passing that row's `start_after`), `limit-reached` (3 earlier rows
       with decision `resume`). Else a row in `waiting-check` (research R10, R11, R12).
-- [ ] T010 Change `reconcile_execution` in `infrahub_sync/service/liveness.py`: at rule 6, only when the observed state
+- [X] T010 Change `reconcile_execution` in `infrahub_sync/service/liveness.py`: at rule 6, only when the observed state
       is `crashed`, and at rule 8, build the row with `decide_automatic_resume` and pass it to
       `interrupt_execution` (cause `rule-6` or `rule-8`; for rule 8, the claiming worker's name from the pool
       snapshot when present). A rule 6 ending with `failed`, `cancelled` or `completed` passes no row (FR-001,
       research R2).
-- [ ] T011 [P] Tests for T008 to T010 in `tests/service/test_liveness_policy.py` and
+- [X] T011 [P] Tests for T008 to T010 in `tests/service/test_liveness_policy.py` and
       `tests/service/test_automatic_resume.py`: `live_workers` with online, offline, stale and missing heartbeats;
       every reason of T009 in its order; rule 6 with each Prefect state; rule 8; a plan or `verify` execution gets no
       row; the setting off writes no row and no event (FR-004).
