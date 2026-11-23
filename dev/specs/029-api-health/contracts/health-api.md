@@ -59,7 +59,12 @@ version. A failure inside the endpoint itself is answered with the existing 503
 The second worker is the record of a worker that ran before a restart. It is listed and does not
 change the status.
 
-### 503, PostgreSQL stopped
+### 503, PostgreSQL stopped (Compose, first 30 seconds)
+
+In the Compose deployment the Prefect database runs in the same PostgreSQL, so `task_manager_db`
+is down too. After the liveness threshold (30 seconds by default) the workers also turn `stale`,
+because Prefect can no longer record their heartbeats; the reading of the pool may then fail and
+report `unknown`.
 
 ```json
 {
@@ -68,7 +73,7 @@ change the status.
     {"name": "database", "status": "down", "error": "name_resolution_failed"},
     {"name": "object_store", "status": "up", "error": "none"},
     {"name": "task_manager", "status": "up", "error": "none"},
-    {"name": "task_manager_db", "status": "up", "error": "none"}
+    {"name": "task_manager_db", "status": "down", "error": "unavailable"}
   ],
   "workers": {"state": "known", "minimum": 1, "live_workers": 1, "queue_depth": 0, "items": ["…"]},
   "timestamp": "2026-11-23T10:16:40Z"
@@ -117,20 +122,23 @@ report.status            # "healthy" | "unhealthy"
 report.workers.live_workers
 ```
 
-Any other status code, or a body that does not match, raises `ProtocolError`, as `get_status()`
-did. `get_status()`, `ServiceStatusResource` and `WorkerStatusResource` are removed.
+A 503 that carries the error envelope instead of a report raises the client's existing error for
+an error envelope. Any other status code, or a body that does not match, raises `ProtocolError`,
+as `get_status()` did. `get_status()`, `ServiceStatusResource` and `WorkerStatusResource` are removed.
 
 ## Worker container healthcheck
 
 ```yaml
 healthcheck:
-  test: ["CMD", "python", "-m", "infrahub_sync.service.worker_health"]
+  test: ["CMD", "python", "-I", "-c", "<WORKER_HEALTHCHECK_COMMAND>"]
   interval: 10s
   timeout: 5s
   retries: 3
   start_period: 60s
 ```
 
-Exit 0 when the worker recorded a heartbeat with a resolved identity within
-`max(3 × PREFECT_WORKER_HEARTBEAT_SECONDS, 30)` seconds; exit 1 otherwise. Prints one line naming
-the reason on failure, with no path outside the container's scratch directory and no credential.
+Exit 0 when the worker's own timer wrote `$TMPDIR/infrahub-sync-worker-alive` within
+`max(3 × interval, 30)` seconds, the interval being the one written in the file; exit 1 otherwise
+(missing, malformed or old file). The check depends on no other service: an outage of PostgreSQL
+or Prefect leaves the worker container `healthy`. Prints one line naming the reason on failure,
+with no credential.

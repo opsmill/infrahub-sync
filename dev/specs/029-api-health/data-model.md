@@ -38,7 +38,7 @@ HTTP status: 200 when `status` is `healthy`, 503 otherwise. Header `Cache-Contro
 
 | Field | Type | Rule |
 | --- | --- | --- |
-| `name` | string | The Prefect worker name, `infrahub-sync-worker-<uuid>` for the Sync worker entrypoint. |
+| `name` | string | The Prefect worker name when it is `infrahub-sync-worker-<uuid>`, as the Sync worker entrypoint registers; `other` for any other name (spec FR-013). |
 | `state` | `live` \| `stale` | `live` when `worker_is_live(worker, timestamp)` holds (research R-5). |
 | `last_heartbeat` | date-time with offset | Only workers with a heartbeat within 24 hours of `timestamp` are listed. |
 
@@ -58,8 +58,9 @@ copy of the rule.
 
 A value outside its range stops the Sync API at start with a message that names the variable.
 
-## Worker heartbeat file (internal)
+## Worker alive file (internal)
 
-`/tmp/infrahub-sync/worker-heartbeat` in the worker container: the time of the last heartbeat
-that ended with a resolved worker identity, as seconds since the epoch. Written by the worker,
-read only by `python -m infrahub_sync.service.worker_health`. Lost when the container stops.
+`$TMPDIR/infrahub-sync-worker-alive` in the worker container (`TMPDIR=/tmp/infrahub-sync` in the
+image, a tmpfs in Compose): `<epoch seconds> <interval seconds>`, written by the worker's own timer
+every heartbeat interval, independent of Prefect. Read only by `WORKER_HEALTHCHECK_COMMAND`, which
+passes when `now - time <= max(3 × interval, 30)`. Lost when the container stops.

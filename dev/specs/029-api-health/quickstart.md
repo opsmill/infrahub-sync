@@ -37,7 +37,10 @@ for i in $(seq 1 8); do sleep 5; health; done    # 40 s
 ```
 
 Expected: `503` within 60 s of the pause, the worker listed as `stale`; `200` within 30 s of the
-unpause. `dc ps sync-worker` shows `unhealthy` while paused, after the healthcheck retries (US2).
+unpause. `dc ps sync-worker` shows `unhealthy` while paused, after the healthcheck retries (US2;
+Docker Desktop reports a paused container `unhealthy`). On a Linux engine, also test US2 by
+stopping only the Python process: `dc exec sync-worker sh -c 'kill -STOP $(pgrep -f infrahub_sync.service.worker)'`,
+then `kill -CONT` the same way.
 
 ## Scenario 3: worker restart leaves a stale record (US1-4, SC-005)
 
@@ -60,7 +63,11 @@ dc pause postgres; health; dc unpause postgres   # 503 after about 3 s, database
 
 Expected: the stopped component is `down` with `name_resolution_failed` (or
 `connection_refused`), the paused one with `timeout`. With `prefect-server` stopped,
-`task_manager` and `task_manager_db` are `down` and `workers.state` is `unknown`.
+`task_manager` and `task_manager_db` are `down` and `workers.state` is `unknown`. With `postgres`
+stopped, `database` and `task_manager_db` are `down` (one PostgreSQL holds both databases), and
+after 30 seconds the workers turn `stale`; `dc ps sync-worker` stays `healthy`. Record the measured
+recovery times; the documentation states them. For PostgreSQL, wait 30 s instead of 15 s before
+the second `health`.
 
 ## Scenario 5: minimum of two workers (US1-5)
 

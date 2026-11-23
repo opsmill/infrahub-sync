@@ -47,8 +47,11 @@ unreachable database is found only when a run waits or fails.
    as `stale` with the time of its last heartbeat; **and When** the worker resumes, **Then**
    within 30 seconds the answer is 200 again.
 2. **Given** a healthy deployment, **When** the operator stops `postgres`, **Then** within 5
-   seconds `GET /api/health` answers 503 with `database` `down` and an error category; **and
-   When** PostgreSQL is restored, **Then** within 15 seconds the answer is 200 again.
+   seconds `GET /api/health` answers 503 with `database` `down` and an error category. In the
+   Compose deployment the Prefect database runs in the same PostgreSQL, so `task_manager_db` is
+   `down` too, and after 30 seconds the workers turn `stale` because Prefect can no longer record
+   their heartbeats. **When** PostgreSQL is restored, **Then** within 30 seconds the answer is
+   200 again.
 3. **Given** a healthy deployment, **When** the operator stops the object store, or the Prefect
    server, **Then** within 5 seconds the answer is 503 and names that component.
 4. **Given** a healthy deployment with one worker, **When** the operator runs
@@ -67,25 +70,29 @@ unreachable database is found only when a run waits or fails.
 ### User Story 2 - A hung worker container shows as unhealthy in Docker (Priority: P2)
 
 An operator who runs `docker compose ps` sees the `sync-worker` container as `unhealthy` when the
-worker process no longer sends heartbeats, instead of `running`.
+worker process is paused or hung, instead of `running`. The check looks only at the worker's own
+process: an outage of PostgreSQL, the object store or Prefect does not make the worker container
+unhealthy, because `/api/health` already reports those, and a container that turns unhealthy for
+another container's fault sends the operator to the wrong place.
 
 **Why this priority**: it closes the gap the Compose documentation describes ("a paused or hung
 worker keeps looking `running` to Docker") for operators who look at Docker first. The P1
 endpoint already reports the same failure, so this story adds a second view of it.
 
-**Independent Test**: on the development stack, make the worker stop sending heartbeats while its
-process stays alive, then read `docker compose ps`.
+**Independent Test**: on the development stack, pause `sync-worker` (Docker Desktop reports a
+paused container `unhealthy`; tested on 2026-11-23), or stop the worker's Python process with
+`SIGSTOP`, then read `docker compose ps`.
 
 **Acceptance Scenarios**:
 
-1. **Given** a running worker, **When** it has not recorded a successful heartbeat for longer
-   than the liveness threshold, **Then** Docker reports the `sync-worker` container as
-   `unhealthy`.
-2. **Given** an `unhealthy` worker, **When** its heartbeats resume, **Then** Docker reports it as
+1. **Given** a running worker, **When** its process has not run for longer than the liveness
+   threshold (paused, stopped with `SIGSTOP`, or its event loop blocked), **Then** Docker reports
+   the `sync-worker` container as `unhealthy`.
+2. **Given** an `unhealthy` worker, **When** its process runs again, **Then** Docker reports it as
    `healthy` again at the next healthcheck.
-3. **Given** a healthy worker and an unreachable PostgreSQL, **When** Docker runs the worker's
-   healthcheck, **Then** the result depends only on the worker's own heartbeats, not on
-   PostgreSQL.
+3. **Given** a healthy worker and an unreachable PostgreSQL or Prefect server, **When** Docker runs
+   the worker's healthcheck, **Then** the worker container stays `healthy`; `/api/health` reports
+   the outage.
 
 ---
 
@@ -170,8 +177,9 @@ live worker; call `SyncClient.get_health()`; request `/api` and follow the redir
   this decision for `GET /api/health` and for the liveness monitor of the Sync API, so that the
   two cannot disagree.
 - **FR-007**: The answer MUST be 503 when `live_workers` is below the setting
-  `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` (whole number, default 1, minimum 1). A `stale` worker MUST
-  NOT cause 503 on its own.
+  `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` (whole number, default 1, minimum 1), and when the workers
+  could not be read (state `unknown`), because the minimum cannot then be confirmed. A `stale`
+  worker MUST NOT cause 503 on its own.
 - **FR-008**: `GET /api/health` MUST answer without authentication. The response MUST NOT contain
   a host name, an IP address, a credential name or value, an error message, or the Sync version.
 - **FR-009**: The Sync API MUST stop serving `GET /api/status`, and every reader MUST move to
@@ -184,11 +192,21 @@ live worker; call `SyncClient.get_health()`; request `/api` and follow the redir
 - **FR-010**: The healthcheck of the `sync-api` Compose service MUST stay on `/api/version`, so
   that the container's health reflects only the Sync API process.
 - **FR-011**: The `sync-worker` Compose service MUST have a healthcheck that fails when the worker
-  process has not recorded a successful heartbeat within the liveness threshold of FR-006, and
-  that does not depend on PostgreSQL, the object store or the Sync API.
+  process has not run within the liveness threshold of FR-006 (`max(3 × heartbeat interval, 30)`
+  seconds), and that does not depend on PostgreSQL, the object store, the Prefect server or the
+  Sync API. The worker records that it runs on its own timer, not through a Prefect heartbeat,
+  because in the Compose deployment a Prefect heartbeat depends on the PostgreSQL that also holds
+  the product database.
 - **FR-012**: The documentation MUST describe `GET /api/health`: each field, each error category,
-  the meaning of 200 and 503, the two settings, and an example of a monitoring check. The pages
-  that describe `/api/status` MUST describe `/api/health` instead.
+  the meaning of 200 and 503, the two settings, and an example of a monitoring check. It MUST say
+  that the endpoint is a readiness signal for monitoring, not a liveness probe (an outage of a
+  shared component would restart every Sync API), and that a probe's own timeout must exceed
+  `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`. The pages that describe `/api/status` MUST describe
+  `/api/health` instead.
+- **FR-013**: A worker name MUST appear in the response only when it has the form
+  `infrahub-sync-worker-<uuid>` that the Sync worker registers. Any other worker of the pool is
+  listed with the name `other`, so that a name chosen outside Sync never reaches an
+  unauthenticated caller.
 
 ### Key Entities
 
@@ -204,11 +222,16 @@ live worker; call `SyncClient.get_health()`; request `/api` and follow the redir
 
 ### Measurable Outcomes
 
+The worker timings below hold with the Compose default `PREFECT_WORKER_HEARTBEAT_SECONDS=10`;
+a longer interval lengthens them in proportion.
+
 - **SC-001**: When a worker stops or hangs, the health answer becomes 503 within 60 seconds.
 - **SC-002**: When PostgreSQL, the object store or the Prefect server stops or hangs, the health
   answer becomes 503 within 5 seconds.
-- **SC-003**: After a component recovers, the health answer is 200 again within 15 seconds; after
-  a worker recovers, within 30 seconds.
+- **SC-003**: After the object store or the Prefect server recovers, the health answer is 200 again
+  within 15 seconds; after PostgreSQL or a worker recovers, within 30 seconds, because the
+  workers must send a heartbeat again. These are targets to measure on the development stack, and
+  the measured values go into the documentation.
 - **SC-004**: For every failure in SC-001 and SC-002, an operator can name the failed component or
   worker from the response alone.
 - **SC-005**: Restarting a worker causes no 503 once the new worker has sent its first heartbeat.
@@ -225,7 +248,13 @@ live worker; call `SyncClient.get_health()`; request `/api` and follow the redir
 - A read check on the product store finds an unreachable or refusing database. It does not find a
   database that accepts reads but refuses writes, for example with a full disk.
 - The web interface health page is a separate piece of work, built on `GET /api/health` by the
-  product owner.
+  product owner. Until then the page frame and the start dialog show the same worker information
+  as today, derived from the `workers` section, and do not show component outages.
+- In the Compose deployment the product database and the Prefect database run in one PostgreSQL
+  container, so a PostgreSQL outage shows as `database` and `task_manager_db` down, and the
+  workers turn `stale` after the liveness threshold.
+- The Kubernetes chart (spec 018) probes the Sync API on `/version` and Prefect on `/api/health`,
+  not `/api/status`, so removing `/api/status` does not break it.
 - The planned automatic resume of an apply after its worker disappears will use the shared
   liveness function of FR-006.
 
