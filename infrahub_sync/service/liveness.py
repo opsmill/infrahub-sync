@@ -7,6 +7,9 @@ from collections.abc import Callable  # noqa: TC003 - constructor default is eva
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Any, Protocol
+
+import structlog
 
 from infrahub_sync.product_store import (
     WRITE_PURPOSES,
@@ -18,7 +21,10 @@ from infrahub_sync.product_store import (
     ProductRun,
     run_apply_progress,
 )
-from infrahub_sync.product_store.models import AutomaticResumeCause  # noqa: TC001 - runtime annotation.
+from infrahub_sync.product_store.models import (  # noqa: TC001 - runtime annotations.
+    AutomaticResumeCause,
+    AutomaticResumeState,
+)
 
 from .events import RUN_CANCELLED, RUN_FAILED, run_event
 from .orchestration import (
@@ -41,6 +47,51 @@ _POLICY_ERROR = "service liveness settings are invalid"
 _TERMINAL_STATES = frozenset({"completed", "failed", "crashed", "cancelled"})
 # The one Prefect state under rule 6 that means the worker disappeared (research R2).
 _WORKER_LOST_STATE = "crashed"
+# Refusal codes of a submission that a later loop tries again with the same idempotency key:
+# Prefect did not confirm the submission, and the receipt stays reserved for the next try.
+_RETRIED_REFUSALS = frozenset({"orchestration-unavailable"})
+
+logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SubmissionOutcome:
+    """What one automatic submission gave: the flow run identifier, or the code of the refusal."""
+
+    flow_run_id: str | None = None
+    refusal: str | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse an outcome that is both, or neither, a submission and a refusal."""
+        if (self.flow_run_id is None) == (self.refusal is None):
+            msg = "a submission outcome holds a flow run identifier or a refusal code, and only one of them"
+            raise ValueError(msg)
+
+
+class AutomaticResumeSubmitter(Protocol):
+    """Submits the automatic check and the automatic resume of a run (research R3, critique E2).
+
+    ``RunService`` implements it. The protocol lives here because ``service.py`` imports this
+    module, so the liveness reconciler cannot import ``RunService`` back.
+    """
+
+    async def submit_check(self, run_id: str, idempotency_key: str) -> SubmissionOutcome:
+        """Submit the automatic check (a `verify`) of the run with this idempotency key."""
+        ...
+
+    async def submit_resume(self, run_id: str, idempotency_key: str) -> SubmissionOutcome:
+        """Submit the automatic resume of the run with this idempotency key."""
+        ...
+
+
+def automatic_check_key(row: AutomaticResume) -> str:
+    """The idempotency key of the automatic check that ``row`` decides (research R4)."""
+    return f"automatic-check:{row.run_id}:{row.interrupted_flow_run_id}"
+
+
+def automatic_resume_key(row: AutomaticResume) -> str:
+    """The idempotency key of the automatic resume that ``row`` decides (research R4)."""
+    return f"automatic-resume:{row.run_id}:{row.interrupted_flow_run_id}"
 
 
 class CancellationSelectionUnavailableError(RuntimeError):
@@ -231,11 +282,14 @@ class RunLivenessReconciler:
     request-time cancellation recovery in ``RunService.cancel_run``, at
     the same inclusive deadline as rule 2. Those competing reconciliation and
     request-time paths use the durable compare-and-set, so only one of them
-    commits a verdict. No writer submits or resubmits work: an execution is
-    never replayed after any verdict.
+    commits a verdict. No rule submits or resubmits work: an execution is
+    never replayed after any verdict. The one exception is the automatic resume
+    of spec 030: after its rules, ``reconcile_once`` steps the automatic resume
+    records through ``step_automatic_resumes``, which submits a new `verify`
+    and a new resume through ``submitter``, never the ended execution itself.
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         projection: ProductProjection,
         orchestration: ServiceOrchestration,
@@ -243,12 +297,15 @@ class RunLivenessReconciler:
         work_pool_name: str,
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        submitter: AutomaticResumeSubmitter | None = None,
     ) -> None:
         self._projection = projection
         self._orchestration = orchestration
         self._policy = policy
         self._work_pool_name = work_pool_name
         self._clock = clock
+        # Without a submitter, the automatic resume records wait and nothing is submitted.
+        self._submitter = submitter
 
     @property
     def cadence_seconds(self) -> float:
@@ -256,11 +313,164 @@ class RunLivenessReconciler:
         return self._policy.cadence_seconds
 
     async def reconcile_once(self) -> None:
-        """Apply one bounded snapshot to every non-terminal execution."""
+        """Apply one bounded snapshot to every non-terminal execution, then step the automatic resumes."""
         now = self._clock()
         pool = await self._orchestration.pool_status(self._work_pool_name, now)
         for run_id, link in self._projection.pending_executions():
             await self.reconcile_execution(run_id, link, pool, now)
+        # Only the background loop steps the records: a request that renders a run
+        # (`reconcile_run`) never submits a flow run (critique E4).
+        await self.step_automatic_resumes(pool, now)
+
+    async def step_automatic_resumes(self, pool: PoolStatus, now: datetime) -> None:
+        """Move every automatic resume record that is not ``ended`` one step, when it can move (research R3).
+
+        A record that waits for the check or for the resume moves only when ``pool`` has a live
+        worker (research R8, FR-012). The submission comes first, with the record's
+        idempotency key, and the compare-and-set to ``checking`` or ``resuming`` second, with
+        the flow run identifier: a restart or another Sync API process between the two repeats
+        the submission with the same key, which replays the same receipt (FR-014).
+        """
+        rows = self._projection.open_automatic_resumes()
+        if not rows:
+            return
+        live = bool(live_workers(normalized_pool_status(pool), now))
+        for row in rows:
+            if row.state == "waiting-check":
+                if live and self._submitter is not None:
+                    outcome = await self._submitter.submit_check(row.run_id, automatic_check_key(row))
+                    self._after_submission(row, outcome, "checking", now, check_flow_run_id=outcome.flow_run_id)
+            elif row.state == "checking":
+                self._step_checking(row, now)
+            elif row.state == "waiting-resume":
+                if live and self._submitter is not None:
+                    # Read before the submission, so the marker is the one the resume starts after.
+                    start_after = self._start_after(row.run_id)
+                    outcome = await self._submitter.submit_resume(row.run_id, automatic_resume_key(row))
+                    self._after_submission(
+                        row,
+                        outcome,
+                        "resuming",
+                        now,
+                        decision="resume",
+                        start_after=start_after,
+                        resume_flow_run_id=outcome.flow_run_id,
+                    )
+            elif row.state == "resuming":
+                self._step_resuming(row, now)
+
+    def _after_submission(
+        self,
+        row: AutomaticResume,
+        outcome: SubmissionOutcome,
+        to_state: AutomaticResumeState,
+        now: datetime,
+        **fields: object,
+    ) -> None:
+        """Record a submission: the move to ``to_state``, or the end of the record as ``refused``."""
+        if outcome.flow_run_id is not None:
+            self._move(row, to_state, now, **fields)
+            return
+        if outcome.refusal in _RETRIED_REFUSALS:
+            logger.info(
+                "automatic resume submission not confirmed, next loop tries again",
+                run_id=row.run_id,
+                state=row.state,
+                reason=outcome.refusal,
+            )
+            return
+        self._end(row, "refused", now, reason_detail={"code": str(outcome.refusal)})
+
+    def _step_checking(self, row: AutomaticResume, now: datetime) -> None:
+        """End the check step once the check's execution has a verdict (research R7, FR-006, FR-007)."""
+        run, link = self._execution(row.run_id, row.check_flow_run_id)
+        if run is None or link is None:
+            self._end(row, "check-failed", now, reason_detail={"cause": "execution-not-found"})
+            return
+        if link.terminal_at is None:
+            return
+        if link.terminal_state == "abandoned":
+            self._end(row, "not-picked-up", now)
+            return
+        if link.terminal_state != "completed":
+            self._end(row, "check-failed", now, reason_detail={"cause": _check_failure_cause(run, link)})
+            return
+        verification = run.results.get("verification")
+        report: dict[str, Any] = verification if isinstance(verification, dict) else {}
+        operations = report.get("operations")
+        differs = sum(
+            1
+            for entry in (operations if isinstance(operations, list) else ())
+            if isinstance(entry, dict) and entry.get("state") == "differs"
+        )
+        truncated = report.get("operations_truncated")
+        not_checked = truncated if isinstance(truncated, int) and truncated > 0 else 0
+        if differs:
+            self._end(
+                row,
+                "check-found-differs",
+                now,
+                reason_detail={"differs": differs},
+                operations_not_checked=not_checked,
+            )
+            return
+        self._move(row, "waiting-resume", now, operations_not_checked=not_checked)
+
+    def _step_resuming(self, row: AutomaticResume, now: datetime) -> None:
+        """End the record once the resume's execution has a verdict; an abandoned resume ends ``not-picked-up``."""
+        run, link = self._execution(row.run_id, row.resume_flow_run_id)
+        if run is not None and link is not None and link.terminal_at is None:
+            return
+        if link is not None and link.terminal_state == "abandoned":
+            self._end(row, "not-picked-up", now)
+            return
+        # Any other verdict ends the record with its decision `resume`. A resume that ended
+        # `interrupted` under rule 6 or rule 8 already has the next record (data-model.md).
+        self._move(row, "ended", now)
+
+    def _execution(self, run_id: str, flow_run_id: str | None) -> tuple[ProductRun | None, PrefectExecutionLink | None]:
+        """The run and its execution ``flow_run_id``, each ``None`` when the store has none."""
+        run = self._projection.lookup_run(run_id).value
+        if run is None or flow_run_id is None:
+            return run, None
+        return run, next((link for link in run.prefect_executions if link.flow_run_id == flow_run_id), None)
+
+    def _start_after(self, run_id: str) -> int | None:
+        """The run's highest saved progress marker: where the resume starts after (`resume_start_after`)."""
+        run = self._projection.lookup_run(run_id).value
+        marker = None if run is None else run_apply_progress(run)
+        return None if marker is None else marker.position
+
+    def _move(self, row: AutomaticResume, to_state: AutomaticResumeState, now: datetime, **fields: object) -> bool:
+        """Compare-and-set ``row`` from its state to ``to_state``; write one log line when it moved."""
+        moved = self._projection.move_automatic_resume(
+            row.run_id,
+            row.interrupted_flow_run_id,
+            from_state=row.state,
+            to_state=to_state,
+            updated_at=now,
+            **fields,
+        )
+        if moved:
+            logger.info(
+                "automatic resume moved",
+                run_id=row.run_id,
+                state=to_state,
+                reason=fields.get("reason"),
+            )
+        return moved
+
+    def _end(
+        self,
+        row: AutomaticResume,
+        reason: AutomaticResumeReason,
+        now: datetime,
+        *,
+        reason_detail: dict[str, str | int] | None = None,
+        **fields: object,
+    ) -> bool:
+        """End ``row`` with the decision ``no-resume`` and ``reason``."""
+        return self._move(row, "ended", now, decision="no-resume", reason=reason, reason_detail=reason_detail, **fields)
 
     async def reconcile_run(self, run_id: str) -> dict[str, Observation]:
         """Refresh every pending link of one requested run before it is rendered.
@@ -421,6 +631,22 @@ def _owner_is_fresh(worker_id: str | None, pool: PoolStatus, now: datetime) -> b
             continue
         return worker_is_live(worker, now)
     return False
+
+
+def _check_failure_cause(run: ProductRun, link: PrefectExecutionLink) -> str:
+    """The failure class of a check that did not complete, never its message text.
+
+    The worker records a failed `verify` under ``results["verify_failure"]`` with its flow run
+    identifier. An execution that the reconciler or a cancellation ended has none, and its
+    verdict names the cause.
+    """
+    evidence = run.results.get("verify_failure")
+    if isinstance(evidence, dict) and evidence.get("flow_run_id") == link.flow_run_id:
+        for key in ("failure_type", "error_type"):
+            value = evidence.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return f"execution-{link.terminal_state}"
 
 
 def _worker_name(worker_id: str | None, pool: PoolStatus) -> str | None:

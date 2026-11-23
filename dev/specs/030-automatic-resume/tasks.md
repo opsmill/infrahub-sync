@@ -91,20 +91,20 @@ behind `ProductProjection`.
 
 ### The reconciler step and the submitter
 
-- [ ] T012 Define the protocol `AutomaticResumeSubmitter` in `infrahub_sync/service/liveness.py` with
+- [X] T012 Define the protocol `AutomaticResumeSubmitter` in `infrahub_sync/service/liveness.py` with
       `async submit_check(run_id: str, idempotency_key: str) -> SubmissionOutcome` and `async submit_resume(run_id:
       str, idempotency_key: str) -> SubmissionOutcome`, where the outcome is the flow run identifier or a refusal
       code. `RunLivenessReconciler.__init__` takes an optional submitter (research R3, critique E2).
-- [ ] T013 Implement the protocol on `RunService` in `infrahub_sync/service/service.py`: `submit_check` calls
+- [X] T013 Implement the protocol on `RunService` in `infrahub_sync/service/service.py`: `submit_check` calls
       `verify_run` and `submit_resume` calls `resume_run` with a `Principal(actor=AUTOMATIC_RESUME_ACTOR)`, the
       idempotency keys `automatic-check:<run_id>:<interrupted_flow_run_id>` and
       `automatic-resume:<run_id>:<interrupted_flow_run_id>`, the saved plan's checksum, and `confirm_left_out` copied
       from the receipt that admitted the interrupted write (research R4, R6). A `ServiceAPIError` becomes a refusal
       outcome with its code.
-- [ ] T014 Change `_owned_run` in `infrahub_sync/service/service.py` to accept `AUTOMATIC_RESUME_ACTOR` only for a run
+- [X] T014 Change `_owned_run` in `infrahub_sync/service/service.py` to accept `AUTOMATIC_RESUME_ACTOR` only for a run
       with a row in `waiting-check` or `waiting-resume`; any other run refuses it with `forbidden` as today (research
       R5).
-- [ ] T015 Add `step_automatic_resumes(pool, now)` to `RunLivenessReconciler` in `infrahub_sync/service/liveness.py`
+- [X] T015 Add `step_automatic_resumes(pool, now)` to `RunLivenessReconciler` in `infrahub_sync/service/liveness.py`
       and call it at the end of `reconcile_once` only, never from `reconcile_run` (critique E4). For each row of
       `open_automatic_resumes()`:
       `waiting-check` with a live worker → move to `checking` with `check_flow_run_id`, then `submit_check`;
@@ -115,14 +115,14 @@ behind `ProductProjection`.
       decision `resume`, then `submit_resume`; `resuming` whose resume execution has a verdict → end. An abandoned
       check or resume ends `not-picked-up`; a refusal ends `refused` with the code (research R8). Each move writes one
       structlog line with the run identifier, the state and the reason code.
-- [ ] T016 Wire the submitter in `infrahub_sync/service/serve.py`, where `RunLivenessReconciler` is built: pass the
+- [X] T016 Wire the submitter in `infrahub_sync/service/serve.py`, where `RunLivenessReconciler` is built: pass the
       `RunService` instance.
-- [ ] T017 [P] Tests for T012 to T016 in `tests/service/test_automatic_resume.py`, with a scripted pool snapshot and
+- [X] T017 [P] Tests for T012 to T016 in `tests/service/test_automatic_resume.py`, with a scripted pool snapshot and
       fake orchestration: each state move; no submission without a live worker; a restart between the move to
       `checking` and the submission submits once (same idempotency key replays the receipt, SC-005); two reconcilers
       stepping the same row submit once; `reconcile_run` never submits; the reserved actor is refused for a run with
       no waiting row.
-- [ ] T018 [P] Add the two-reconciler case to `tests/product_store/test_postgresql_isolation.py`: two connections
+- [X] T018 [P] Add the two-reconciler case to `tests/product_store/test_postgresql_isolation.py`: two connections
       compare-and-set the same row, one wins (FR-014).
 
 **Checkpoint**: an interrupted run with the setting on gets a row, and the background loop drives it to a resume.

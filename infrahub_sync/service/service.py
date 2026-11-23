@@ -53,9 +53,15 @@ from infrahub_sync.product_store.models import (
     not_approvable_message,
 )
 
+from .auth import Principal
 from .credentials import contains_token_prefix
 from .events import RUN_CANCELLED, account_event, run_decision_type, run_event
-from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
+from .liveness import (
+    AUTOMATIC_RESUME_ACTOR,
+    CancellationSelectionUnavailableError,
+    SubmissionOutcome,
+    select_cancellable_execution,
+)
 from .models import (
     ApplyRunRequest,
     ApprovedPlanSummaryResource,
@@ -109,8 +115,6 @@ if TYPE_CHECKING:
 
     from infrahub_sync.configuration import ConfigurationPackage
     from infrahub_sync.product_store import Account
-
-    from .auth import Principal
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +210,10 @@ def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:
             observed_at=snapshot.observed_at,
         ),
     )
+
+
+# The state an automatic resume record must be in for the reserved actor to run each operation.
+_AUTOMATIC_RESUME_WAITING_STATES = {"verify": "waiting-check", "resume": "waiting-resume"}
 
 
 class ServiceAPIError(Exception):
@@ -355,7 +363,7 @@ class AccountAccess:
         return None if account is None else account.account_id
 
 
-class RunService:
+class RunService:  # pylint: disable=too-many-public-methods  # the routes and the automatic resume submitter
     """Direct application service; Prefect owns all execution mechanics."""
 
     def __init__(
@@ -752,6 +760,83 @@ class RunService:
             )
             return self._stored_response(reserved)
         return await self._resume_or_replay(reserved, parameters, principal, request.reason)
+
+    async def submit_check(self, run_id: str, idempotency_key: str) -> SubmissionOutcome:
+        """Submit the automatic check of the run: a `verify` by the reserved actor (spec 030, research R4).
+
+        Implements ``AutomaticResumeSubmitter``. The same key replays the same receipt, so a
+        repeated call submits nothing new.
+        """
+        principal = Principal(actor=AUTOMATIC_RESUME_ACTOR)
+        try:
+            status, body = await self.verify_run(run_id, VerifyRunRequest(), principal, idempotency_key)
+        except ServiceAPIError as error:
+            return SubmissionOutcome(refusal=error.code)
+        return self._submission_outcome(principal, idempotency_key, status, body)
+
+    async def submit_resume(self, run_id: str, idempotency_key: str) -> SubmissionOutcome:
+        """Submit the automatic resume of the run by the reserved actor (spec 030, research R4, R6).
+
+        Implements ``AutomaticResumeSubmitter``. The request names the saved plan's checksum and
+        confirms the writes; it confirms the records the plan leaves out only when the
+        interrupted write was admitted with that confirmation (`_admitted_left_out`).
+        """
+        principal = Principal(actor=AUTOMATIC_RESUME_ACTOR)
+        try:
+            run = self._required_run(run_id)
+            plan = self._plan(run_id)
+            request = ResumeRunRequest(
+                expected_checksum=plan.checksum,
+                confirm_writes=True,
+                confirm_left_out=plan.summary.left_out > 0 and self._admitted_left_out(run),
+            )
+            status, body = await self.resume_run(run_id, request, principal, idempotency_key)
+        except ServiceAPIError as error:
+            return SubmissionOutcome(refusal=error.code)
+        return self._submission_outcome(principal, idempotency_key, status, body)
+
+    def _admitted_left_out(self, run: ProductRun) -> bool:
+        """Whether the write that the run's waiting automatic resume record names confirmed the left-out records.
+
+        The mutation receipt stores a fingerprint of its request, not the request, so the
+        confirmation is read from how the write was admitted (research R6): an `apply` or a
+        `resume` of a plan that leaves out records is admitted only with the confirmation, which
+        its receipt holds; a manual `sync` cannot confirm and stops before it writes; a scheduled
+        `sync` writes when its schedule's left-out setting is on.
+        """
+        row = next(
+            (row for row in self._projection.automatic_resumes_of(run.run_id) if row.state == "waiting-resume"), None
+        )
+        link = (
+            None
+            if row is None
+            else next(
+                (link for link in run.prefect_executions if link.flow_run_id == row.interrupted_flow_run_id), None
+            )
+        )
+        if link is None:
+            return False
+        if link.purpose in {"apply", "resume"}:
+            return self._projection.lookup_mutation_for_execution(run.run_id, link.flow_run_id, link.purpose).available
+        if link.purpose == "sync" and run.trigger_type == "scheduled" and run.schedule_id is not None:
+            schedule = self._projection.lookup_schedule(run.schedule_id).value
+            return schedule is not None and schedule.write_when_left_out
+        return False
+
+    def _submission_outcome(
+        self, principal: Principal, idempotency_key: str, status: int, body: dict[str, Any]
+    ) -> SubmissionOutcome:
+        """The flow run identifier of an accepted submission, read from its receipt, or the refusal's code."""
+        if status >= 400:
+            error = body.get("error")
+            code = error.get("code") if isinstance(error, dict) else None
+            return SubmissionOutcome(refusal=code if isinstance(code, str) else "refused")
+        key_digest = sha256(idempotency_key.encode()).hexdigest()
+        receipt = self._projection.lookup_mutation(principal.actor, key_digest).value
+        if receipt is None or receipt.flow_run_id is None:
+            # Not confirmed yet: the next loop repeats the call with the same key.
+            return SubmissionOutcome(refusal="orchestration-unavailable")
+        return SubmissionOutcome(flow_run_id=receipt.flow_run_id)
 
     def _refuse_cancelled(self, run: ProductRun, principal: Principal, operation: str, reason: str | None) -> None:
         """Refuse to approve or apply a run in phase ``cancelled``, before any receipt is reserved.
@@ -1910,18 +1995,28 @@ class RunService:
 
     def _owned_run(self, run_id: str, principal: Principal, operation: str, reason: str | None) -> ProductRun:
         run = self._required_run(run_id)
-        if not principal.administrator and run.actor != principal.actor:
-            raise self._refusal(
-                403,
-                "forbidden",
-                "only the initiating actor or an administrator may mutate this run",
-                run_id=run_id,
-                actor=principal.actor,
-                operation=operation,
-                reason=reason,
-                outcome="refused-authorization",
-            )
-        return run
+        if principal.actor == AUTOMATIC_RESUME_ACTOR:
+            # The reserved actor of the automatic check and resume acts only on a run whose
+            # automatic resume record waits for that step: `verify` while it waits for the check,
+            # `resume` while it waits for the resume (research R5). It is never the run's actor
+            # and never an administrator, so it does not reach the rule below.
+            waiting = _AUTOMATIC_RESUME_WAITING_STATES.get(operation)
+            if waiting is not None and any(
+                row.state == waiting for row in self._projection.automatic_resumes_of(run_id)
+            ):
+                return run
+        elif principal.administrator or run.actor == principal.actor:
+            return run
+        raise self._refusal(
+            403,
+            "forbidden",
+            "only the initiating actor or an administrator may mutate this run",
+            run_id=run_id,
+            actor=principal.actor,
+            operation=operation,
+            reason=reason,
+            outcome="refused-authorization",
+        )
 
     def _required_run(self, run_id: str) -> ProductRun:
         result = self._projection.lookup_run(run_id)
