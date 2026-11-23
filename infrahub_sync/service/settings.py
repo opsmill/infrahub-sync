@@ -13,6 +13,10 @@ directory is logged and treated as unset.
 ``admin`` account. They are read once, when the served application is built, and a value that is
 not accepted stops the service. ``INFRAHUB_SYNC_SESSION_IDLE_SECONDS`` is the period without
 activity after which a session ends. No message of this module contains a value.
+
+``INFRAHUB_SYNC_AUTOMATIC_RESUME`` makes the Sync service resume an interrupted ``apply`` without a
+person. It is off unless set, it is read again each time an ``apply`` is found interrupted, and it
+is validated once when the application is created, like ``INFRAHUB_SYNC_REQUIRE_APPROVAL``.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 REQUIRE_APPROVAL_ENV = "INFRAHUB_SYNC_REQUIRE_APPROVAL"
+AUTOMATIC_RESUME_ENV = "INFRAHUB_SYNC_AUTOMATIC_RESUME"
 WEB_DIRECTORY_ENV = "INFRAHUB_SYNC_WEB_DIRECTORY"
 ADMIN_ACCOUNT_PASSWORD_ENV = "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"
 ADMIN_ACCOUNT_TOKEN_ENV = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"
@@ -80,6 +85,15 @@ def approval_required() -> bool:
         ValueError: ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that is not accepted.
     """
     return _parse_flag(REQUIRE_APPROVAL_ENV, os.environ.get(REQUIRE_APPROVAL_ENV))
+
+
+def automatic_resume_enabled() -> bool:
+    """Return whether this site resumes an interrupted ``apply`` without a person.
+
+    Raises:
+        ValueError: ``INFRAHUB_SYNC_AUTOMATIC_RESUME`` holds a value that is not accepted.
+    """
+    return _parse_flag(AUTOMATIC_RESUME_ENV, os.environ.get(AUTOMATIC_RESUME_ENV))
 
 
 def web_directory() -> Path | None:
@@ -207,4 +221,5 @@ def validate_settings() -> None:
         ValueError: A setting holds a value that is not accepted; the message names the variable.
     """
     approval_required()
+    automatic_resume_enabled()
     session_idle_seconds()

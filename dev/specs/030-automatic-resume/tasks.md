@@ -26,10 +26,10 @@ behind `ProductProjection`.
 
 ## Phase 1: Setup
 
-- [ ] T001 Add the setting `INFRAHUB_SYNC_AUTOMATIC_RESUME` to `infrahub_sync/service/settings.py`: a constant
+- [X] T001 Add the setting `INFRAHUB_SYNC_AUTOMATIC_RESUME` to `infrahub_sync/service/settings.py`: a constant
       `AUTOMATIC_RESUME_ENV` and a function `automatic_resume_enabled()` that uses `_parse_flag`, like
       `approval_required()`, default `false`; an unknown value raises `ValueError` naming the variable (research R9).
-- [ ] T002 [P] Test T001 in `tests/service/test_settings_automatic_resume.py`: unset, `true`, `false`, and an
+- [X] T002 [P] Test T001 in `tests/service/test_settings_automatic_resume.py`: unset, `true`, `false`, and an
       unknown value, parametrized.
 
 ---
