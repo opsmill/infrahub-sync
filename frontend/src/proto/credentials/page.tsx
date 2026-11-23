@@ -1,9 +1,8 @@
 /* PROTOTYPE (spec 027, T074). The Credentials page around one list version, one form version and one delete version. */
 import { Button } from "@infrahub/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ComponentType, useRef, useState } from "react";
+import { type ComponentType, type ReactNode, useRef, useState } from "react";
 
-import { credentialsQuery } from "#/api/queries";
 import type { Credential } from "#/api/types";
 import { Bar, CODE_CHIP, EmptyPanel, ErrorPanel, Notice } from "#/components/page";
 
@@ -16,22 +15,35 @@ import {
   type ListProps,
 } from "./shared";
 
+/** What is open on the page. The harness keeps it in the address, so it survives a version change. */
+export type Open = { action: "create" } | { action: Action; name: string };
+
+export type Placement = "overlay" | "row";
+
 export function CredentialsPage({
   administrator,
   dataset,
   List,
   Form,
+  formPlacement,
   Delete,
+  deletePlacement,
+  open,
+  onOpen,
 }: {
   administrator: boolean;
   dataset: Dataset;
   List: ComponentType<ListProps>;
   Form: ComponentType<FormProps>;
+  formPlacement: Placement;
   Delete: ComponentType<DeleteProps>;
+  deletePlacement: Placement;
+  open: Open | undefined;
+  onOpen: (open: Open | undefined) => void;
 }) {
   const client = useQueryClient();
-  // The key of the T073 query, with the sample list in place of the request.
-  const queryKey = [...credentialsQuery().queryKey, "prototype", dataset];
+  // A key of the prototype only, with the sample list in place of the request.
+  const queryKey = ["prototype", "credentials", dataset];
   const credentials = useQuery<Credential[]>({
     queryKey,
     queryFn: () => listCredentials(dataset),
@@ -40,14 +52,11 @@ export function CredentialsPage({
   });
   const headingRef = useRef<HTMLHeadingElement>(null);
   const createRef = useRef<HTMLButtonElement>(null);
-  const [creating, setCreating] = useState(false);
-  const [open, setOpen] = useState<{ action: Action; credential: Credential }>();
   const [deleted, setDeleted] = useState<string>();
 
   /** Reads the list again and returns focus to the control that opened the form. */
   function close(name?: string) {
-    setOpen(undefined);
-    setCreating(false);
+    onOpen(undefined);
     void client.invalidateQueries({ queryKey });
     requestAnimationFrame(() => {
       const trigger = name
@@ -58,11 +67,37 @@ export function CredentialsPage({
   }
 
   const list = credentials.data ?? [];
-  const newCredential = (
-    <Button ref={createRef} size="sm" variant="primary" onPress={() => setCreating(true)}>
-      New credential
-    </Button>
-  );
+  const target =
+    open && open.action !== "create" ? list.find((c) => c.name === open.name) : undefined;
+  // Only an administrator can open a form; another account never views one.
+  const canOpen = administrator && credentials.data !== undefined;
+
+  let overlay: ReactNode = null;
+  let slot: ListProps["slot"];
+  if (canOpen && open?.action === "create") {
+    const node = <Form onClose={() => close()} />;
+    if (formPlacement === "row") slot = { at: null, node };
+    else overlay = node;
+  } else if (canOpen && target && open?.action === "value") {
+    const node = <Form credential={target} onClose={() => close(target.name)} />;
+    if (formPlacement === "row") slot = { at: target.name, node };
+    else overlay = node;
+  } else if (canOpen && target && open?.action === "delete") {
+    const node = (
+      <Delete
+        credential={target}
+        onClose={() => close(target.name)}
+        onDeleted={() => {
+          setDeleted(target.name);
+          close();
+        }}
+      />
+    );
+    if (deletePlacement === "row") slot = { at: target.name, node };
+    else overlay = node;
+  } else if (canOpen && target && open?.action === "describe") {
+    overlay = <DescribeDialog credential={target} onClose={() => close(target.name)} />;
+  }
 
   return (
     <>
@@ -75,7 +110,16 @@ export function CredentialsPage({
           >
             Credentials
           </h1>
-          {administrator && newCredential}
+          {administrator && (
+            <Button
+              ref={createRef}
+              size="sm"
+              variant="primary"
+              onPress={() => onOpen({ action: "create" })}
+            >
+              New credential
+            </Button>
+          )}
         </div>
         <p className="max-w-[80ch] text-pretty text-foreground-muted">
           The tokens and passwords that the Sync service reads when a run connects to a source or a
@@ -99,50 +143,38 @@ export function CredentialsPage({
             }
           />
         )}
-        {creating && <Form onClose={() => close()} />}
-        {open?.action === "value" && (
-          <Form credential={open.credential} onClose={() => close(open.credential.name)} />
-        )}
-        {open?.action === "delete" && (
-          <Delete
-            credential={open.credential}
-            onClose={() => close(open.credential.name)}
-            onDeleted={() => {
-              setDeleted(open.credential.name);
-              close();
-            }}
-          />
-        )}
         {credentials.isError && !credentials.data ? (
           <ErrorPanel error={credentials.error} onRetry={() => void credentials.refetch()} />
         ) : credentials.isPending ? (
           <div aria-busy="true" className="flex flex-col gap-2">
-            <Bar className="h-10 w-full" />
-            <Bar className="h-10 w-full" />
-            <Bar className="h-10 w-full" />
+            <span className="sr-only">Loading the credentials</span>
+            <Bar className="h-12 w-full" />
+            <Bar className="h-12 w-full" />
+            <Bar className="h-12 w-full" />
           </div>
-        ) : list.length === 0 ? (
+        ) : list.length === 0 && !slot ? (
           <EmptyPanel title="No credentials yet">
             <p className="max-w-[60ch] text-pretty text-foreground-muted">
               {administrator
                 ? "Create a credential for each source and destination that needs a token or a password. Then name it in the configuration."
                 : "A configuration that needs a token or a password names a credential. Ask an administrator to create one."}
             </p>
+            {administrator && (
+              <Button size="sm" variant="outline" onPress={() => onOpen({ action: "create" })}>
+                New credential
+              </Button>
+            )}
           </EmptyPanel>
         ) : (
           <List
             credentials={list}
             administrator={administrator}
-            onAction={(action, credential) => {
-              setCreating(false);
-              setOpen({ action, credential });
-            }}
+            onAction={(action, credential) => onOpen({ action, name: credential.name })}
+            slot={slot}
           />
         )}
       </div>
-      {open?.action === "describe" && (
-        <DescribeDialog credential={open.credential} onClose={() => close(open.credential.name)} />
-      )}
+      {overlay}
     </>
   );
 }

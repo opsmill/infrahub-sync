@@ -1,7 +1,8 @@
 /*
- * PROTOTYPE (spec 027, T074). Throwaway: nothing outside src/proto and src/routes/proto.credentials.tsx
- * imports this directory. It sends no request: the credentials below are sample data held in the
- * memory of the tab, and each "request" is answered here with the body the Sync API would return.
+ * PROTOTYPE (spec 027, T074). Throwaway: only frontend/proto/credentials.html loads this directory,
+ * and the production build does not include that page. It sends no request: the credentials below
+ * are sample data held in the memory of the tab, and each "request" is answered here with the body
+ * the Sync API would return.
  */
 import type { CredentialFields, SecretResult } from "#/api/actions";
 import type { ApiErrorBody, Credential, CredentialUsed } from "#/api/types";
@@ -47,7 +48,7 @@ const LONG_DESCRIPTION =
 
 const SAMPLE: Credential[] = [
   {
-    name: "aci-fabric-emea-production-read-only-service-account-2026-q4",
+    name: "aci-fabric-emea-production-read-only-service-account-ams-26-q4",
     description: LONG_DESCRIPTION,
     fields: ["username", "password"],
     revision: 12,
@@ -108,7 +109,7 @@ const IN_USE: Record<string, { configurations: string[]; schedules: string[] }> 
     configurations: ["netbox-to-infrahub", "netbox-lab-devices-and-interfaces", "aci-to-infrahub"],
     schedules: ["nightly-netbox", "aci-every-6-hours"],
   },
-  "aci-fabric-emea-production-read-only-service-account-2026-q4": {
+  "aci-fabric-emea-production-read-only-service-account-ams-26-q4": {
     configurations: ["aci-to-infrahub"],
     schedules: [],
   },
@@ -288,7 +289,7 @@ export const USED: Record<UsedSample, CredentialUsed[]> = {
     {
       stage: "plan",
       block: "source",
-      name: "aci-fabric-emea-production-read-only-service-account-2026-q4",
+      name: "aci-fabric-emea-production-read-only-service-account-ams-26-q4",
       revision: 11,
     },
     { stage: "plan", block: "destination", name: "infrahub-main", revision: 3 },

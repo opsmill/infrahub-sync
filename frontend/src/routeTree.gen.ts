@@ -13,7 +13,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as ConfigsConfigIdRouteImport } from './routes/configs.$configId'
-import { Route as ProtoCredentialsRouteImport } from './routes/proto.credentials'
 import { Route as RunsIndexRouteImport } from './routes/runs.index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
 
@@ -37,11 +36,6 @@ const ConfigsConfigIdRoute = ConfigsConfigIdRouteImport.update({
   path: '/configs/$configId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProtoCredentialsRoute = ProtoCredentialsRouteImport.update({
-  id: '/proto/credentials',
-  path: '/proto/credentials',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const RunsIndexRoute = RunsIndexRouteImport.update({
   id: '/runs/',
   path: '/runs/',
@@ -58,7 +52,6 @@ export interface FileRoutesByFullPath {
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
-  '/proto/credentials': typeof ProtoCredentialsRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/runs/': typeof RunsIndexRoute
 }
@@ -67,7 +60,6 @@ export interface FileRoutesByTo {
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
-  '/proto/credentials': typeof ProtoCredentialsRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/runs': typeof RunsIndexRoute
 }
@@ -77,7 +69,6 @@ export interface FileRoutesById {
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
-  '/proto/credentials': typeof ProtoCredentialsRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/runs/': typeof RunsIndexRoute
 }
@@ -88,7 +79,6 @@ export interface FileRouteTypes {
     | '/account'
     | '/accounts'
     | '/configs/$configId'
-    | '/proto/credentials'
     | '/runs/$runId'
     | '/runs/'
   fileRoutesByTo: FileRoutesByTo
@@ -97,7 +87,6 @@ export interface FileRouteTypes {
     | '/account'
     | '/accounts'
     | '/configs/$configId'
-    | '/proto/credentials'
     | '/runs/$runId'
     | '/runs'
   id:
@@ -106,7 +95,6 @@ export interface FileRouteTypes {
     | '/account'
     | '/accounts'
     | '/configs/$configId'
-    | '/proto/credentials'
     | '/runs/$runId'
     | '/runs/'
   fileRoutesById: FileRoutesById
@@ -116,7 +104,6 @@ export interface RootRouteChildren {
   AccountRoute: typeof AccountRoute
   AccountsRoute: typeof AccountsRoute
   ConfigsConfigIdRoute: typeof ConfigsConfigIdRoute
-  ProtoCredentialsRoute: typeof ProtoCredentialsRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
   RunsIndexRoute: typeof RunsIndexRoute
 }
@@ -151,13 +138,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConfigsConfigIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/proto/credentials': {
-      id: '/proto/credentials'
-      path: '/proto/credentials'
-      fullPath: '/proto/credentials'
-      preLoaderRoute: typeof ProtoCredentialsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/runs/': {
       id: '/runs/'
       path: '/runs'
@@ -180,7 +160,6 @@ const rootRouteChildren: RootRouteChildren = {
   AccountRoute: AccountRoute,
   AccountsRoute: AccountsRoute,
   ConfigsConfigIdRoute: ConfigsConfigIdRoute,
-  ProtoCredentialsRoute: ProtoCredentialsRoute,
   RunsRunIdRoute: RunsRunIdRoute,
   RunsIndexRoute: RunsIndexRoute,
 }

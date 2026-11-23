@@ -1,6 +1,5 @@
 /* PROTOTYPE (spec 027, T074). Parts that every version shares, so the versions differ only on their axis. */
-import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { cn } from "tailwind-variants";
 
 import type { CredentialFields } from "#/api/actions";
@@ -39,6 +38,11 @@ export interface ListProps {
   credentials: Credential[];
   administrator: boolean;
   onAction: (action: Action, credential: Credential) => void;
+  /**
+   * A form or a confirmation shown inside the list, for the versions that work in the row: in place
+   * of the row of `at`, or above the first row when `at` is null.
+   */
+  slot?: { at: string | null; node: ReactNode };
 }
 
 /** What a form version receives: a new credential, or a new value for an existing one. */
@@ -66,6 +70,12 @@ export function CredentialError({ error, id }: { error: unknown; id?: string }) 
   );
 }
 
+/**
+ * The address of a configuration page of the web interface. The prototype has no router, so this is
+ * a plain link; it opens the real page, which needs a signed-in session and a Sync API.
+ */
+export const configHref = (configId: string) => `/configs/${encodeURIComponent(configId)}`;
+
 /** The configurations and schedules that name a credential. Schedules have no page yet, so they are not links. */
 export function InUseList({ inUse }: { inUse: CredentialInUse }) {
   return (
@@ -76,13 +86,9 @@ export function InUseList({ inUse }: { inUse: CredentialInUse }) {
           <ul className="mt-1 flex flex-col">
             {inUse.configurations.map((configId) => (
               <li key={configId} className="flex min-h-6 pointer-coarse:min-h-11 items-center">
-                <Link
-                  to="/configs/$configId"
-                  params={{ configId }}
-                  className={cn(LINK, "[overflow-wrap:anywhere]")}
-                >
+                <a href={configHref(configId)} className={cn(LINK, "[overflow-wrap:anywhere]")}>
                   {configId}
-                </Link>
+                </a>
               </li>
             ))}
           </ul>
