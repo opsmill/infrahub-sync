@@ -54,7 +54,7 @@ def _write_alive_file(path: Path, text: str) -> None:
     """Write `text` to `path` through a temporary file, so a reader never sees a partial line."""
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     temporary.write_text(text, encoding="ascii")
-    Path(temporary).replace(path)
+    temporary.replace(path)
 
 
 async def run_alive_writer(

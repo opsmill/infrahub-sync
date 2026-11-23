@@ -40,14 +40,24 @@ Compose variables caused:
   6 skipped and 64 deselected at 2026-11-23T22:24:43Z. The 20 new tests are in
   `tests/service/test_worker_alive.py` (16) and `tests/compose/test_worker_healthcheck.py` (4,
   which read the Compose files only).
-- `uv run invoke lint` exited 0 (ty reports 31 warnings, the same count as before this change).
+- `uv run invoke lint` exited 0. ty reports 31 diagnostics; the baseline before this change was not
+  measured.
   `uv run ruff check .` passed.
 - The offline unit tier (`uv run invoke tests.tests-unit`) passed, 11255 passed and 12 skipped at
   2026-11-23T22:31:43Z.
 - `docker compose -f development/docker-compose.yml --profile sync config --format json` renders
   the `sync-worker` healthcheck command unchanged, equal to `WORKER_HEALTHCHECK_COMMAND`: the
   command contains no `$` for Compose to interpolate.
+- Follow-up: the two passing boundary cases (29 s and 59 s old) first wrote `int(time.time())`,
+  which could fail when the fraction of the second plus the check's start-up time passed one
+  second. They now write `math.ceil(time.time())`; 200 runs of the 29 s case all passed.
+  `test_main_runs_the_worker_inside_the_sigterm_handler` now checks that `main` starts the writer,
+  with `TMPDIR` in a temporary directory. The same command then gave 432 passed, 6 skipped and 64
+  deselected at 2026-11-23T22:34:36Z.
 - Not run: the container scenarios of quickstart scenario 2 (`docker compose ps` shows
   `sync-worker` `unhealthy` after `docker compose pause sync-worker`) and scenario 4 (the worker
   stays `healthy` while `postgres` is stopped). The running development stack belongs to another
-  worktree and session, so it was not restarted with this branch's Compose file.
+  worktree and session, so it was not restarted with this branch's Compose file. No
+  `compose`-marked test ran either; on a machine where no other stack runs, the command is
+  `uv run pytest tests/compose -m compose`. Only the development Compose file was rendered with
+  `docker compose config`; the root file needs its required passwords set to render.

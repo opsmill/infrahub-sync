@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import subprocess  # noqa: S404 -- the healthcheck runs as its own process, as Docker runs it
 import sys
@@ -106,7 +107,8 @@ def _write_alive(tmp_path: Path, text: str) -> None:
     ids=["now", "29s-old-interval-10", "59s-old-interval-20"],
 )
 def test_the_healthcheck_passes_for_a_recent_file(tmp_path: Path, age: int, interval: int) -> None:
-    _write_alive(tmp_path, f"{int(time.time()) - age} {interval}")
+    # Rounded up, so the age the check computes is at most `age` plus its own start-up time.
+    _write_alive(tmp_path, f"{math.ceil(time.time()) - age} {interval}")
 
     result = _run_healthcheck(tmp_path)
 
@@ -121,6 +123,9 @@ def test_the_healthcheck_fails_for_a_file_older_than_the_limit(tmp_path: Path) -
     result = _run_healthcheck(tmp_path)
 
     assert result.returncode == 1
+    lines = (result.stdout + result.stderr).splitlines()
+    assert len(lines) == 1
+    assert "/" not in lines[0]
 
 
 @pytest.mark.parametrize("content", [None, "", "abc 10", "123"], ids=["missing", "empty", "not-a-number", "one-field"])
