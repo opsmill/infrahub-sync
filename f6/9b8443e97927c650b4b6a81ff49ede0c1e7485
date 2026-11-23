@@ -1,0 +1,32 @@
+tests/service/test_settings_automatic_resume.py
+  s_e30c79edd0b063::t_8e85d939ac2b7b 16-17,20-27
+  s_e30c79edd0b063::t_5629997bf88417 1-15,18-19,28-47
+infrahub_sync/service/settings.py
+  s_e30c79edd0b063::t_b92122e828a804 16-19,37,90-98,224
+dev/specs/030-automatic-resume/tasks.md
+  s_30954faa6b52fd::t_4143a2abefce5d 29,32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f69b8443e97927c650b4b6a81ff49ede0c1e7485",
+  "prompts": {},
+  "sessions": {
+    "s_30954faa6b52fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68b2c141-8dbb-4265-a817-fa76f097f99c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e30c79edd0b063": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ffd05d37-52a6-4c18-b655-cc3af9364009",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
