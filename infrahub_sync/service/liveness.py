@@ -246,7 +246,7 @@ def _automatic_resume_made_no_progress(
 
 
 class RunLivenessReconciler:
-    """Conservatively terminalize durable executions; never submit or replay work.
+    """Conservatively terminalize durable executions; replay work only for an automatic resume (ADR 0056).
 
     ``reconcile_execution`` evaluates one link against the rules below in order.
     The first matching rule decides the link; later rules do not run for it.
@@ -283,10 +283,14 @@ class RunLivenessReconciler:
     the same inclusive deadline as rule 2. Those competing reconciliation and
     request-time paths use the durable compare-and-set, so only one of them
     commits a verdict. No rule submits or resubmits work: an execution is
-    never replayed after any verdict. The one exception is the automatic resume
-    of spec 030: after its rules, ``reconcile_once`` steps the automatic resume
-    records through ``step_automatic_resumes``, which submits a new `verify`
-    and a new resume through ``submitter``, never the ended execution itself.
+    never replayed, except an automatic resume after rule 6 (Prefect reports
+    the flow run as ``crashed``) or rule 8 when the site turned on
+    ``INFRAHUB_SYNC_AUTOMATIC_RESUME`` (ADR 0056, which amends ADR 0027). For
+    that case, the interruption records an automatic resume record, and after
+    the rules ``reconcile_once`` steps the records through
+    ``step_automatic_resumes``. It submits a new `verify` and then a new resume
+    through ``submitter``, never the ended execution itself. A rule 6 ending in
+    any other Prefect state, and every other rule, records nothing.
     """
 
     def __init__(  # pylint: disable=too-many-arguments

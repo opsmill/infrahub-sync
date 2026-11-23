@@ -106,7 +106,7 @@ infrahub_sync/
 └── cli.py                # runs show and runs list output
 frontend/src/features/runs/   # run page notices and the resume action rule
 docs/docs/                    # day-2 operations, running a sync, HTTP reference, deployment settings
-dev/adr/0055-…md              # new ADR
+dev/adr/0056-…md              # new ADR
 .specify/memory/constitution.md
 tests/
 ├── service/test_automatic_resume.py      # decisions, moves, reasons, limits, restarts
@@ -129,5 +129,5 @@ reconciler, because only it knows rules 6 and 8 (research R1).
 4. Schedules: count by final result, overlap.
 5. Presentation, events, run resource, client, CLI.
 6. Web run page.
-7. Governance and documentation: constitution amendment, ADR 0055, user documentation, changelog fragment.
+7. Governance and documentation: constitution amendment, ADR 0056, user documentation, changelog fragment.
 8. The preview stack check (SC-001) and the refusal matrix (SC-002).

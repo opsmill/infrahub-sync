@@ -233,25 +233,25 @@ behind `ProductProjection`.
 
 ## Phase 6: Polish and governance
 
-- [ ] T036 Amend Principle I in `.specify/memory/constitution.md`: add a bullet after the schedule case that names
+- [X] T036 Amend Principle I in `.specify/memory/constitution.md`: add a bullet after the schedule case that names
       automatic resume, with the instruction (the interrupted run's own write and the site's setting), the target
       servers (those of the saved plan) and the approval (that of the interrupted run); bump the version to 1.3.0 and
       `Last Amended` to the date of the change (FR-020, research R13).
-- [ ] T037 Write `dev/adr/0055-a-lost-worker-resumes-automatically-when-the-site-allows-it.md` (check that 0055 is
+- [X] T037 Write `dev/adr/0056-a-lost-worker-resumes-automatically-when-the-site-allows-it.md` (check that 0056 is
       still free on every branch first): context (ADR 0027, the liveness rule "never replayed"), decision (rule 6
       `crashed` and rule 8 only; the check; the limits; the reserved actor; exactly once through receipts),
       consequences, alternatives (research R1 to R5). Add it to `dev/adr/README.md`. No internal links.
-- [ ] T038 Update the liveness docstring of `RunLivenessReconciler` in `infrahub_sync/service/liveness.py`: an
+- [X] T038 Update the liveness docstring of `RunLivenessReconciler` in `infrahub_sync/service/liveness.py`: an
       execution is never replayed, except an automatic resume after rule 6 (`crashed`) or rule 8 when the site turned
-      it on (ADR 0055).
-- [ ] T039 [P] Write the section "Automatic resume" in `docs/docs/operations/day-2-operations.mdx`: the setting, when
+      it on (ADR 0056).
+- [X] T039 [P] Write the section "Automatic resume" in `docs/docs/operations/day-2-operations.mdx`: the setting, when
       Sync resumes, each reason it does not, the limits, and how a person takes over.
-- [ ] T040 [P] Document the new fields and events in `docs/docs/running-a-sync.mdx` and
+- [X] T040 [P] Document the new fields and events in `docs/docs/running-a-sync.mdx` and
       `docs/docs/reference/sync-http-api.mdx`, and the setting in `docs/docs/compose-deployment.mdx` and
       `docs/docs/kubernetes-deployment.mdx`.
-- [ ] T041 [P] Add the changelog fragment `changelog/+automatic-resume.added.md` with
+- [X] T041 [P] Add the changelog fragment `changelog/+automatic-resume.added.md` with
       `uv run --extra dev towncrier create -c "…" +automatic-resume.added.md`.
-- [ ] T042 Add `infrahub-sync runs resume` to the list of CLI commands in `AGENTS.md` and mention automatic resume in
+- [X] T042 Add `infrahub-sync runs resume` to the list of CLI commands in `AGENTS.md` and mention automatic resume in
       it (spec 016 `EXTRACTED.md` noted the missing entry).
 - [ ] T043 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`,
       the frontend checks in `frontend/` (`pnpm lint`, `pnpm test`), and the CLI sanity commands of `AGENTS.md`.

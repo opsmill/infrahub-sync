@@ -182,7 +182,7 @@ checks the same condition when it writes the decision row, so a missing approval
 
 **Decision**: Principle I gains a third bullet after the schedule case, and the constitution moves from 1.2.0 to
 1.3.0 (a new named case is a minor change under its versioning rule). A new ADR, numbered after the highest number on
-every branch at the time of writing (0055), amends ADR 0027 and replaces the liveness reconciler's "an execution is
+every branch at the time of writing (0056), amends ADR 0027 and replaces the liveness reconciler's "an execution is
 never replayed after any verdict" with "an execution is never replayed, except an automatic resume after rule 6 or
 rule 8 when the site turned it on".
 

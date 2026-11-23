@@ -3,7 +3,8 @@ title: Operate a Compose deployment
 ---
 
 Check the health of a running Compose deployment, stop or restart it, change its
-credentials, and recover from a write with an unknown outcome. Run every command from
+credentials, recover from a write with an unknown outcome, and let the Sync API resume an
+interrupted write by itself. Run every command from
 the directory that holds `docker-compose.yml` and `.env`. Each section links the full
 procedure in the [Compose deployment guide](../compose-deployment).
 
@@ -161,3 +162,118 @@ follow the
 [reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):
 read the run record, inspect the destination, and then create a fresh plan. The fresh plan
 reads the destination as it is now, so it holds only the changes that are still outstanding.
+
+When `INFRAHUB_SYNC_AUTOMATIC_RESUME` is on, read `infrahub-sync runs show RUN_ID` before you run
+`verify`: the Sync API may already be resuming an interrupted run; see
+[Automatic resume of an interrupted write](#automatic-resume-of-an-interrupted-write).
+
+## Automatic resume of an interrupted write
+
+When the worker of an `apply`, a `sync` or a resume disappears during the write, the Sync API
+ends the write as interrupted. With automatic resume on, the Sync API then checks the
+destination with `verify` and resumes the run by itself, as in
+[Resume an interrupted apply](../running-a-sync.mdx#resume-an-interrupted-apply), without a
+person running `verify` and `runs resume`.
+
+### Turn automatic resume on
+
+Set `INFRAHUB_SYNC_AUTOMATIC_RESUME=true` in `.env`, then run `docker compose up -d --wait`,
+which recreates `sync-api` with the new value. The setting is read by `sync-api` only. It is off
+by default. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any
+case; any other value, including an empty one, stops `sync-api` at startup.
+
+The Sync API reads the setting each time it ends a write as interrupted. While the setting is
+off, it records nothing about automatic resume, and every interrupted run waits for a person. A
+run that the Sync API started to resume before you turned the setting off continues.
+
+### When the Sync API resumes a run
+
+The Sync API considers a write that it ended for one of two causes:
+
+- Prefect reported the flow run of the write as crashed. A flow run that Prefect reports as failed,
+  cancelled or completed is not resumed.
+- The worker that claimed the write stopped sending heartbeats.
+
+A write that the worker ended with its own failure record is not resumed, and neither is a write
+that a person cancelled.
+
+For each such write, the Sync API takes these steps, one at a time:
+
+1. It waits until the work pool has a live worker: online, with a heartbeat within the last
+   `max(3 * PREFECT_WORKER_HEARTBEAT_SECONDS, 30)` seconds. The time it waits does not count
+   against `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS`.
+2. It runs `verify` on the run. The check reads up to 2,000 uncertain operations, like any
+   `verify`, and records how many it left out.
+3. When the check passes and reports no operation as `differs`, it waits again for a live worker
+   and resumes the run from its saved position.
+
+The check and the resume run as `Sync (automatic resume)`, which `runs show`, the run page of
+the web interface and the event list show as their actor. Each step is submitted once, also when
+the Sync API restarts between two steps.
+
+`infrahub-sync runs show RUN_ID` prints one block for each interrupted write that the Sync API
+considered, oldest first. A block shows the state while the Sync API waits or runs a step, for
+example `waiting for a live worker to run the check`, and the result once it ends:
+
+```text
+Automatic resume 1: started
+  cause: the worker infrahub-sync-worker-3b2f… stopped sending heartbeats
+  check: passed, 0 differs, 0 not checked
+  resumed after operation 6000 by Sync (automatic resume)
+```
+
+`infrahub-sync runs list` adds `auto resumes: N` to a run that the Sync API resumed.
+
+### Reasons the Sync API does not resume a run
+
+When the Sync API does not resume a run, the block says `not started`, with the reason, and the
+run stays interrupted. The next step is printed under `next:`: run `verify`, then create a new
+plan or run `runs resume` yourself. The reason codes are in `GET /runs/{run_id}` under
+`automatic_resumes`, and in the event `infrahub_sync.run.automatic_resume_not_started`.
+
+| Code | Reason |
+| --- | --- |
+| `not-resumable` | `runs resume` would refuse the run: it has no saved plan, it was cancelled, or it is a scheduled run with branch review. Create a new plan. |
+| `approval-missing` | The Sync API requires an approved plan and the run has no approval. Approve the run, then run `verify` and `runs resume`. |
+| `no-progress` | The previous automatic resume of the run did not move the progress marker forward. |
+| `limit-reached` | The run already received 3 automatic resumes. |
+| `check-failed` | The check failed, for example because the destination was unreachable. The reason names the cause. |
+| `check-found-differs` | The check reported one or more nodes as `differs`. A resume would write the plan's values over them, so a person decides. |
+| `not-picked-up` | No worker picked up the check or the resume in time. |
+| `refused` | The Sync API refused the check or the resume, for example because a condition of `runs resume` was not met. The reason names the code. |
+| `person-took-over` | A person ran `verify` or `runs resume` while the Sync API waited for a live worker. |
+
+### Limits of automatic resume
+
+- A run receives at most 3 automatic resumes. A resume that a person starts does not count, and
+  a person can still resume the run after the limit.
+- When an automatic resume is interrupted without moving the progress marker forward, the Sync
+  API does not resume the run again.
+- The check reads at most 2,000 uncertain operations. A node that differs among the operations
+  it left out is not found, and the resume writes the plan's values over it. The block of
+  `runs show` prints the count as `not checked`.
+- Every condition of `runs resume` applies: the checksum, the checks before the first write, the
+  approval when the Sync API requires one, and the confirmation of left-out records. The
+  confirmation is taken from the interrupted write: an `apply` or a resume confirmed it, a
+  scheduled `sync` follows the schedule's `write_when_left_out`, and a manual `sync` did not
+  confirm it.
+
+### Automatic resume of a scheduled run
+
+While the Sync API waits for or runs an automatic resume of a scheduled run, the run counts as
+in progress for the schedule's overlap policy. The schedule counts the run once, when the last
+automatic resume ends: as succeeded when the plan is applied, and as one failed run when the
+Sync API does not resume it or the resume fails.
+
+### Take over an automatic resume
+
+While the Sync API waits for a live worker, run `infrahub-sync verify RUN_ID` or
+`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM` yourself. The Sync API stops its
+automatic resume with the reason `person-took-over`, and your request runs as usual. When the Sync
+API is already submitting its check or resume, or while its check or resume runs, your request is
+refused with `run-execution-conflict`. Wait for that step to end, then view the run with
+`runs show`.
+
+Setting `INFRAHUB_SYNC_AUTOMATIC_RESUME=false` stops the Sync API from considering new
+interrupted writes. It does not stop a run that the Sync API already considered: take that run
+over as described above.
