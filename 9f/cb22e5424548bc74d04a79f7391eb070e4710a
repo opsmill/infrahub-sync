@@ -1,0 +1,23 @@
+.github/workflows/workflow-tests.yml
+  s_30954faa6b52fd::t_8acde93abb17b6 85-88,110
+dev/specs/028-write-lock-holder/tasks.md
+  s_30954faa6b52fd::t_c2731a78325be9 110,114
+tasks/tests.py
+  s_30954faa6b52fd::t_ddeadbbc289751 45,47-50,52-55,61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9fcb22e5424548bc74d04a79f7391eb070e4710a",
+  "prompts": {},
+  "sessions": {
+    "s_30954faa6b52fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68b2c141-8dbb-4265-a817-fa76f097f99c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
