@@ -81,6 +81,12 @@ filter. Each `SchemaMappingFilter` has a `field` (dot-notation path), an `operat
 `is_empty` / `is_not_empty` ignore `value`; the ordering operations coerce both sides to
 `int`. The full operator table is `FILTERS_OPERATIONS` in `infrahub_sync/__init__.py`.
 
+Sources often send `""` or `None` for a field with no value, and `get_value` returns `None` for
+a dotted path through a null peer. Positive operations (`contains`, `regex`, `is_ip_within`, the
+ordering operations, `in` with a string value) return `False` for such a field; the matching
+negative operations (`not contains`, `not in` with a string value) return `True`. A non-blank value
+of the wrong type, such as `"abc"` for `>` or `"n/a"` for `is_ip_within`, still raises.
+
 ## Transforms
 
 Transforms rewrite a field with a Jinja2 expression after filtering. Each

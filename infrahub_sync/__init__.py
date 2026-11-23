@@ -162,22 +162,49 @@ def convert_to_int(value: Any) -> int:
         raise ValueError(msg) from exc
 
 
+def _is_blank(field: Any) -> bool:
+    """Return True when a source sent no value for the field: null or an empty string."""
+    # Not `not field`: 0 and False are real values that the comparisons must still see.
+    return field is None or (isinstance(field, str) and not field)
+
+
+def _compare_int(compare: Callable[[int, int], bool], field: Any, value: Any) -> bool:
+    """Compare a field and a value as integers. A blank or null field fails every comparison."""
+    return not _is_blank(field) and compare(convert_to_int(field), convert_to_int(value))
+
+
+def _in_string_or_list(field: Any, value: Any) -> bool:
+    """Check membership: substring when the value is a string, item when it is a list.
+
+    A blank or null field is not part of a string value. A list value is checked as is,
+    so a list that names "" or None still matches a blank or null field.
+    """
+    if isinstance(value, str):
+        return not _is_blank(field) and field in value
+    return bool(value) and field in value
+
+
 FILTERS_OPERATIONS: dict[str, Callable[..., Any]] = {
     "==": operator.eq,
     "!=": operator.ne,
-    ">": lambda field, value: operator.gt(convert_to_int(field), convert_to_int(value)),
-    "<": lambda field, value: operator.lt(convert_to_int(field), convert_to_int(value)),
-    ">=": lambda field, value: operator.ge(convert_to_int(field), convert_to_int(value)),
-    "<=": lambda field, value: operator.le(convert_to_int(field), convert_to_int(value)),
-    "in": lambda field, value: value and field in value,
-    "not in": lambda field, value: field not in value,
-    "contains": lambda field, value: field and value in field,
-    "not contains": lambda field, value: field and value not in field,
+    ">": lambda field, value: _compare_int(operator.gt, field, value),
+    "<": lambda field, value: _compare_int(operator.lt, field, value),
+    ">=": lambda field, value: _compare_int(operator.ge, field, value),
+    "<=": lambda field, value: _compare_int(operator.le, field, value),
+    "in": _in_string_or_list,
+    "not in": lambda field, value: (
+        _is_blank(field) or field not in value if isinstance(value, str) else field not in value
+    ),
+    "contains": lambda field, value: not _is_blank(field) and value in field,
+    # A blank or null field contains nothing, so it passes "not contains".
+    "not contains": lambda field, value: _is_blank(field) or value not in field,
     "is_empty": lambda field: field is None or not field,
     "is_not_empty": lambda field: field is not None and field,
-    "regex": lambda field, pattern: re.match(pattern, field) is not None,
+    # A blank or null field (for example a null nested peer) does not match any pattern, not even ".*".
+    "regex": lambda field, pattern: not _is_blank(field) and re.match(pattern, field) is not None,
     # Netutils
-    "is_ip_within": lambda field, value: is_ip_within_filter(ip=field, ip_compare=value),
+    # A blank or null address (for example a device with no primary IP) is not within any range.
+    "is_ip_within": lambda field, value: not _is_blank(field) and is_ip_within_filter(ip=field, ip_compare=value),
 }
 
 
