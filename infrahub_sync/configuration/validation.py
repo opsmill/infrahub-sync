@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
-from .capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, resolve_adapter_capabilities
 from .credentials import (
     _ENV_CREDENTIAL_IDENTIFIER,
     _ENV_IDENTIFIER,
@@ -697,8 +697,8 @@ def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> t
     accumulated.extend(_from_check(_CHECK_STORE, _accumulate_store(package, owned_locations)))
     source = package.configuration.source
     destination = package.configuration.destination
-    source_capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(source.name)
-    destination_capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(destination.name)
+    source_capabilities = resolve_adapter_capabilities(source.name, BUILTIN_ADAPTER_CAPABILITIES)
+    destination_capabilities = resolve_adapter_capabilities(destination.name, BUILTIN_ADAPTER_CAPABILITIES)
     roles: tuple[tuple[AdapterRole, Any, AdapterConfigurationCapabilities | None], ...] = (
         ("source", source, source_capabilities),
         ("destination", destination, destination_capabilities),

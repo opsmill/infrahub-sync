@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, resolve_adapter_capabilities
 from .models import REDACTED, ConfigurationPackage, ValidationFinding
 
 if TYPE_CHECKING:
@@ -138,7 +138,7 @@ def accumulate_unqualified_optional_features(package: ConfigurationPackage) -> t
     """
     if package.configuration.incremental is None:
         return ()
-    capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(package.configuration.source.name)
+    capabilities = resolve_adapter_capabilities(package.configuration.source.name, BUILTIN_ADAPTER_CAPABILITIES)
     if capabilities is None or capabilities.incremental_extraction:
         return ()
     return (

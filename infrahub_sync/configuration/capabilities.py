@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import math
+import pkgutil
 import re
+import sys
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from importlib.metadata import entry_points
+from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, TypeGuard
 from urllib.parse import urlsplit
 
 from .infrahub_lineage import validate_infrahub_lineage_settings
@@ -816,17 +821,133 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
 )
 
 
+#: The entry point group an installed distribution declares an adapter's capabilities in.
+#: Each entry is named for the adapter's configuration name and points at a callable that
+#: takes no arguments and returns that adapter's ``AdapterConfigurationCapabilities``.
+INSTALLED_CAPABILITIES_GROUP = "infrahub_sync.adapter_capabilities"
+
+_logger = logging.getLogger(__name__)
+
+
+def installed_adapter_capabilities(name: str) -> AdapterConfigurationCapabilities | None:
+    """The declaration an installed distribution publishes for ``name``, if it is admissible.
+
+    Only a source adapter can be declared this way: the destination stays qualified for
+    the bundled Infrahub adapter alone. A name that is, or normalizes to, a bundled adapter
+    is never resolved here, so an installed distribution cannot replace or alias one. The
+    entry point must be the only one for the name, and its module must be one an installed
+    distribution ships, under the rule registered execution resolves adapters by; that is
+    judged before the module is imported, and again on the module that loaded. It must
+    return exactly a declaration for this name. Anything else is no declaration, and
+    validation reports the adapter as missing, as it does today.
+
+    The declaration is read each time it is asked for, not cached, so a version validated
+    again later is judged against the declarations installed at that moment.
+    """
+    if _names_a_bundled_adapter(name):
+        return None
+    candidates = list(entry_points().select(group=INSTALLED_CAPABILITIES_GROUP, name=name))
+    if len(candidates) != 1:
+        if candidates:
+            _logger.warning("adapter %r has %d installed capability declarations; none is used", name, len(candidates))
+        return None
+    capabilities = _load_installed_declaration(candidates[0], name)
+    if capabilities is None:
+        return None
+    if not _is_source_declaration_for(capabilities, name):
+        _logger.warning("adapter %r: its installed capability declaration is not a source declaration for it", name)
+        return None
+    return capabilities
+
+
+def _is_source_declaration_for(capabilities: object, name: str) -> TypeGuard[AdapterConfigurationCapabilities]:
+    """Whether ``capabilities`` is exactly a declaration of ``name`` as a source and nothing else."""
+    # Exactly the declaration type: a subclass could override __post_init__ and skip its invariants.
+    if type(capabilities) is not AdapterConfigurationCapabilities:  # pylint: disable=unidiomatic-typecheck
+        return False
+    declares_a_destination = (
+        capabilities.destination_schema_validation
+        or capabilities.destination_schema_accessor is not None
+        or capabilities.destination_access_accessor is not None
+    )
+    return (
+        capabilities.adapter_name == name and capabilities.roles == frozenset({"source"}) and not declares_a_destination
+    )
+
+
+def _normalized_adapter_name(name: str) -> str:
+    """An adapter name as the plugin loader matches a bundled adapter module by it."""
+    return re.sub(r"[-_]", "", name.lower())
+
+
+def _names_a_bundled_adapter(name: str) -> bool:
+    """Whether ``name`` is a bundled declaration's name, or resolves to a bundled adapter."""
+    wanted = _normalized_adapter_name(name)
+    bundled = {_normalized_adapter_name(bundled_name) for bundled_name in BUILTIN_ADAPTER_CAPABILITIES}
+    adapters = Path(__file__).resolve().parent.parent / "adapters"
+    bundled |= {_normalized_adapter_name(module.name) for module in pkgutil.iter_modules([str(adapters)])}
+    return wanted in bundled
+
+
+def _load_installed_declaration(entry_point: Any, name: str) -> object | None:
+    """Call one installed declaration, or ``None`` when it is not admissible installed code."""
+    # Imported here: the plugin loader depends on the adapter runtime, which validation
+    # does not otherwise load.
+    from infrahub_sync.plugin_loader import (  # pylint: disable=import-outside-toplevel
+        is_installed_distribution_module,
+        module_origin_is_admitted,
+    )
+
+    module_name = entry_point.module
+    # Only a distribution's own module declares its adapter. The bundled package is admitted
+    # by name alone, so an entry point into it could call any of its functions.
+    if module_name.partition(".")[0] == "infrahub_sync" or not is_installed_distribution_module(module_name):
+        # Judged without importing it, so code that is not installed never runs here.
+        _logger.warning("adapter %r: its installed capability declaration is not from installed code", name)
+        return None
+    try:
+        declare = entry_point.load()
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # a failed load declares nothing
+        _logger.warning(
+            "adapter %r: its installed capability declaration could not be loaded (%s)", name, type(exc).__name__
+        )
+        return None
+    module = sys.modules.get(module_name)
+    if not callable(declare) or module is None or not module_origin_is_admitted(module, module_name):
+        _logger.warning("adapter %r: its installed capability declaration is not from installed code", name)
+        return None
+    try:
+        return declare()
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # a raising declaration declares nothing
+        _logger.warning("adapter %r: its installed capability declaration raised (%s)", name, type(exc).__name__)
+        return None
+
+
+def resolve_adapter_capabilities(
+    name: str, bundled: Mapping[str, AdapterConfigurationCapabilities]
+) -> AdapterConfigurationCapabilities | None:
+    """The declaration for ``name``: the bundled one when there is one, else an installed one.
+
+    ``bundled`` is the table the caller reads, so a caller's own view of the bundled
+    declarations decides first.
+    """
+    declared = bundled.get(name)
+    if declared is not None:
+        return declared
+    return installed_adapter_capabilities(name)
+
+
 class UnknownAdapterCapabilitiesError(ValueError):
     """An adapter has no safe declared configuration boundary."""
 
 
 def get_adapter_capabilities(name: str) -> AdapterConfigurationCapabilities:
-    """Return the bundled declaration for an exact registered adapter name."""
+    """Return the declaration for an exact registered adapter name, bundled or installed."""
     # Exact, not case-folded: every consumer resolves the name verbatim (module import,
     # PluginLoader camelization, the destination check in the CLI), and the declared name is
     # hashed as written, so a folded match would admit names that split package identity.
-    try:
-        return BUILTIN_ADAPTER_CAPABILITIES[name]
-    except KeyError:
+    capabilities = resolve_adapter_capabilities(name, BUILTIN_ADAPTER_CAPABILITIES)
+    if capabilities is None:
         msg = f"adapter {name!r} has no configuration capability declaration"
-        raise UnknownAdapterCapabilitiesError(msg) from None
+        raise UnknownAdapterCapabilitiesError(msg)
+    return capabilities

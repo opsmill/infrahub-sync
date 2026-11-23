@@ -53,7 +53,12 @@ from infrahub_sync.runtime_schema import (
     normalize_destination_schema,
 )
 
-from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationAccessAccessor, DestinationSchemaReadError
+from .capabilities import (
+    BUILTIN_ADAPTER_CAPABILITIES,
+    DestinationAccessAccessor,
+    DestinationSchemaReadError,
+    resolve_adapter_capabilities,
+)
 from .models import ValidationFinding, sort_findings
 from .runtime import effective_destination_branch
 from .validation import _finding_message
@@ -353,7 +358,7 @@ def collect_destination_schema_findings(
     declared destination branch.
     """
     destination = package.configuration.destination
-    capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(destination.name)
+    capabilities = resolve_adapter_capabilities(destination.name, BUILTIN_ADAPTER_CAPABILITIES)
     if capabilities is None:
         return DestinationSchemaValidation(findings=(), schema_fingerprint=None)
     findings: list[ValidationFinding] = []
