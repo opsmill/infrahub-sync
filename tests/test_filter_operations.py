@@ -73,6 +73,12 @@ def test_comparison_still_rejects_non_numeric_field(operation: str) -> None:
         DiffSyncModelMixin.apply_filter("abc", operation, 5)
 
 
+@pytest.mark.parametrize("operation", ["contains", "not contains"])
+def test_contains_does_not_treat_zero_as_blank(operation: str) -> None:
+    with pytest.raises(TypeError):
+        DiffSyncModelMixin.apply_filter(0, operation, "decom")
+
+
 def test_is_ip_within_still_rejects_invalid_address() -> None:
     with pytest.raises(ValueError, match="does not appear to be an IPv4 or IPv6"):
         DiffSyncModelMixin.apply_filter("n/a", "is_ip_within", "10.0.0.0/8")

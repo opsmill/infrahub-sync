@@ -195,9 +195,9 @@ FILTERS_OPERATIONS: dict[str, Callable[..., Any]] = {
     "not in": lambda field, value: (
         _is_blank(field) or field not in value if isinstance(value, str) else field not in value
     ),
-    "contains": lambda field, value: bool(field) and value in field,
+    "contains": lambda field, value: not _is_blank(field) and value in field,
     # A blank or null field contains nothing, so it passes "not contains".
-    "not contains": lambda field, value: not field or value not in field,
+    "not contains": lambda field, value: _is_blank(field) or value not in field,
     "is_empty": lambda field: field is None or not field,
     "is_not_empty": lambda field: field is not None and field,
     # A blank or null field (for example a null nested peer) does not match any pattern, not even ".*".
