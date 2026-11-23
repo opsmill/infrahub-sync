@@ -1358,8 +1358,9 @@ class ScheduledStartResult(BaseModel):
         return self
 
 
-# Why the liveness reconciler ended the interrupted write execution: rule 6 (its flow run
-# crashed) or rule 8 (its claiming worker is gone).
+# Why the liveness reconciler ended the interrupted write execution: rule 6 (Prefect reports its
+# flow run as ended, and spec 030 counts only `crashed`) or rule 8 (the work pool no longer
+# shows its claiming worker as fresh).
 AutomaticResumeCause: TypeAlias = Literal["rule-6", "rule-8"]
 AutomaticResumeState: TypeAlias = Literal["waiting-check", "checking", "waiting-resume", "resuming", "ended"]
 AutomaticResumeDecision: TypeAlias = Literal["resume", "no-resume"]
