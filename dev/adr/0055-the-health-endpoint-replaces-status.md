@@ -72,7 +72,7 @@ Two facts about the Compose deployment shape the worker side:
   round for one second after it ended, so polling does not multiply the load on the components.
 - **The answer holds no identifying text.** No host name, address, credential, error message or
   Sync version reaches the unauthenticated caller. A worker name that is not
-  `infrahub-sync-worker-<uuid>` is shown as `other`.
+  `infrahub-sync-service-<uuid>` is shown as `other`.
 
 ## Consequences
 

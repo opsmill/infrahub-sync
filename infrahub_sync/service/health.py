@@ -41,7 +41,7 @@ from infrahub_sync.client.models import (
     WorkersHealthResource,
 )
 
-from .orchestration import PoolStatus, normalized_pool_status, worker_is_live
+from .orchestration import SERVICE_WORKER_NAME_PREFIX, PoolStatus, normalized_pool_status, worker_is_live
 from .storage import s3_client_arguments
 
 if TYPE_CHECKING:
@@ -58,7 +58,9 @@ MAX_REPORT_AGE_SECONDS: Final = 1.0
 WORKER_LIST_WINDOW: Final = timedelta(hours=24)
 # The name the Sync worker entrypoint registers. Any other name is shown as `other`, so the answer
 # never holds a name chosen elsewhere, such as an account identifier (spec FR-013).
-_WORKER_NAME: Final = re.compile(r"infrahub-sync-worker-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_WORKER_NAME: Final = re.compile(
+    re.escape(SERVICE_WORKER_NAME_PREFIX) + r"-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
 OTHER_WORKER_NAME: Final = "other"
 # libpq raises a `connect_timeout` below 2 seconds to 2 seconds.
 _LIBPQ_MINIMUM_CONNECT_TIMEOUT: Final = 2
@@ -328,14 +330,17 @@ class HealthChecker:
         return DependencyHealthResource(name=dependency.name, status="up", error="none")
 
     async def _read_pool(self, now: datetime) -> PoolStatus | None:
-        """Read the work pool within the time limit; None when the limit passed or the server was not reached.
+        """Read the work pool within the time limit; None when the limit passed or the read failed.
 
         The orchestrator's `pool_status` turns a failed read into an unavailable snapshot itself,
         but the Prefect client is opened before that read, so a connection error can come from it.
         """
         try:
             return await asyncio.wait_for(self._pool_reader(now), self._check_timeout)
-        except (TimeoutError, httpx.HTTPError, OSError) as error:
+        # Any failure while the Prefect client opens or reads must make the workers `unknown`, not
+        # replace the whole answer with the error envelope (plan.md, Complexity Tracking). The error
+        # is not re-raised, and only its type name is logged, never its text.
+        except Exception as error:  # pylint: disable=broad-exception-caught  # noqa: BLE001
             logger.warning(
                 "health check failed",
                 component="workers",
@@ -346,14 +351,19 @@ class HealthChecker:
 
 
 def database_check(database_url: str, limit: int) -> Check:
-    """Open a connection to the product database, run `SELECT 1` and close it (research R-2)."""
+    """Open a connection to the product database, run `SELECT 1` and close it (research R-2).
+
+    No server setting is passed: an `options` connection keyword would replace the `options` of
+    the database URL, and a connection pooler such as PgBouncer refuses it. The round's time limit
+    (`asyncio.wait_for`) cancels a query that does not answer, and psycopg then asks the server to
+    cancel it before the connection closes.
+    """
 
     async def check() -> None:
         connection = await psycopg.AsyncConnection.connect(
             database_url,
             autocommit=True,
             connect_timeout=max(limit, _LIBPQ_MINIMUM_CONNECT_TIMEOUT),
-            options=f"-c statement_timeout={limit * 1000}",
         )
         async with connection:
             await connection.execute("SELECT 1")

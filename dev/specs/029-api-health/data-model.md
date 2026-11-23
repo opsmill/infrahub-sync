@@ -38,7 +38,7 @@ HTTP status: 200 when `status` is `healthy`, 503 otherwise. Header `Cache-Contro
 
 | Field | Type | Rule |
 | --- | --- | --- |
-| `name` | string | The Prefect worker name when it is `infrahub-sync-worker-<uuid>`, as the Sync worker entrypoint registers; `other` for any other name (spec FR-013). |
+| `name` | string | The Prefect worker name when it is `infrahub-sync-service-<uuid>`, as the Sync worker entrypoint registers; `other` for any other name (spec FR-013). |
 | `state` | `live` \| `stale` | `live` when `worker_is_live(worker, timestamp)` holds (research R-5). |
 | `last_heartbeat` | date-time with offset | Only workers with a heartbeat within 24 hours of `timestamp` are listed. |
 

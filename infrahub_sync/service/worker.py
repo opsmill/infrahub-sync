@@ -32,7 +32,7 @@ from pydantic import PrivateAttr
 from infrahub_sync.configuration.worker_credentials import held_credential_names
 from infrahub_sync.product_store import DuplicateConfigurationNamesError, EarlierProductDatabaseError
 
-from .orchestration import SERVICE_DEFINITION
+from .orchestration import SERVICE_DEFINITION, SERVICE_WORKER_NAME_PREFIX
 from .start_check import StartRefusedError, check_bootstrap_record
 from .storage import service_product_projection
 from .trust_store import TrustStoreError, install_custom_ca_bundle
@@ -50,7 +50,6 @@ if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
 
 _IDENTITY_ERROR = "service worker identity is unavailable"
-_WORKER_NAME_PREFIX = "infrahub-sync-service"
 _WORKER_PAGE_SIZE = 200
 # How long one poll waits for the product store to record the worker's credential variable names.
 _PUBLICATION_TIMEOUT_SECONDS = 10.0
@@ -96,7 +95,7 @@ class ServiceFlowRunRefusedError(RuntimeError):
 
 def service_worker_name() -> str:
     """Return a process-unique Prefect worker name for the supported entrypoint."""
-    return f"{_WORKER_NAME_PREFIX}-{uuid4()}"
+    return f"{SERVICE_WORKER_NAME_PREFIX}-{uuid4()}"
 
 
 def _canonical_uuid(value: object) -> UUID | None:

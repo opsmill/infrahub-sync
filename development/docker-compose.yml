@@ -365,7 +365,7 @@ services:
         - "-c"
         - |-
           import os, sys, time
-          path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "infrahub-sync-worker-alive")
+          path = os.path.join(os.environ.get("TMPDIR") or "/tmp", "infrahub-sync-worker-alive")
           try:
               fields = open(path, encoding="ascii").read().split()
           except (OSError, ValueError):

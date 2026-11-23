@@ -210,7 +210,7 @@ Two service modules report the health of a deployment (spec 029,
   ended. `classify_error` maps a failure to one of seven categories; it reads the error text only
   to choose a category and never logs or returns it. `workers_health` lists the workers with a
   heartbeat in the last 24 hours, decides `live` or `stale` with `worker_is_live` from
-  `orchestration.py`, and shows a name that is not `infrahub-sync-worker-<uuid>` as `other`.
+  `orchestration.py`, and shows a name that is not `infrahub-sync-service-<uuid>` as `other`.
   `overall_status` applies `INFRAHUB_SYNC_HEALTH_MIN_WORKERS`.
 - `worker_alive.py` holds the worker's alive file. `run_alive_writer` writes
   `<epoch seconds> <interval seconds>` to `$TMPDIR/infrahub-sync-worker-alive` every heartbeat

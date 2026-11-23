@@ -22,7 +22,7 @@ it was never released. The brief follows INFP-663 requirement 3
 | Minor | changed | SC-003: "a component recovers → 200 within 15 seconds" | SC-003, US1-2 | PostgreSQL recovery is 30 seconds, because the workers must send a heartbeat again through the Prefect database in the same PostgreSQL. The other components keep 15 seconds. The timings are measured on the development stack and documented. |
 | Minor | dropped | FR-005: health requests not counted in request metrics | Assumptions | The Sync API has no request metrics or tracing, so the requirement has nothing to apply to. Recorded as an assumption for when either is added. |
 | Minor | added | FR-007: 503 when live workers are below the minimum | FR-007, Edge Cases | Also 503 when the workers cannot be read (`unknown`) while every component is up, because the minimum cannot be confirmed. Follows from FR-007; not in the brief's words. |
-| Minor | added | FR-012: no host name, IP address, credential name or version | FR-013 | Worker names other than `infrahub-sync-worker-<uuid>` are shown as `other`, so a name set outside Sync never reaches an unauthenticated caller. A stricter form of FR-012. |
+| Minor | added | FR-012: no host name, IP address, credential name or version | FR-013 | Worker names other than `infrahub-sync-service-<uuid>` are shown as `other`, so a name set outside Sync never reaches an unauthenticated caller. A stricter form of FR-012. |
 | Minor | added | (none) | FR-012 | The documentation states that `/api/health` is a readiness signal, not a liveness probe, and that a probe's timeout must exceed the check timeout. Guidance only. |
 
 No brief requirement is missing; no acceptance scenario was softened except the PostgreSQL recovery

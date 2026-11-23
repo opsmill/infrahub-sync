@@ -25,7 +25,7 @@ meaning the documentation already gets wrong).
 
 | Component | Check | Why this check |
 | --- | --- | --- |
-| `database` | `psycopg.AsyncConnection.connect` to the product database with `connect_timeout` and `options=-c statement_timeout=<limit ms>`, `SELECT 1`, close | The product store opens a connection per operation through `PsycopgConnectionFactory` (`infrahub_sync/service/storage.py:59`); a separate connection cannot be starved by a busy request. The async connection runs on the event loop, so no thread outlives the check (critique E3). Read only, as the product owner decided. |
+| `database` | `psycopg.AsyncConnection.connect` to the product database with `connect_timeout`, `SELECT 1`, close. No `options` keyword: it would replace the `options` of `INFRAHUB_SYNC_DATABASE_URL`, and a pooler such as PgBouncer refuses it; the round's `asyncio.wait_for` limit cancels a query that does not answer, and psycopg asks the server to cancel it | The product store opens a connection per operation through `PsycopgConnectionFactory` (`infrahub_sync/service/storage.py:59`); a separate connection cannot be starved by a busy request. The async connection runs on the event loop, so no thread outlives the check (critique E3). Read only, as the product owner decided. |
 | `object_store` | `head_bucket` on the configured bucket, with a client built from `s3_client_arguments` (`storage.py:251`) and `connect_timeout`/`read_timeout` equal to the time limit and no retries | The same call `sync-bootstrap` already makes (`infrahub_sync/service/bootstrap.py:182`). It proves the endpoint, the credentials and the bucket. |
 | `task_manager` | `GET {PREFECT_API_URL}/health` | As in Infrahub. |
 | `task_manager_db` | `GET {PREFECT_API_URL}/ready`, which answers 503 when the Prefect server cannot reach its database | As in Infrahub. The Sync API holds no credential for the Prefect database. |
@@ -111,7 +111,7 @@ the limit.
   checker both call it; `_service_status` (`service.py:178`), the only other copy, is removed with
   `/status`.
 - The worker list keeps the records whose last heartbeat is within 24 hours of the round. A
-  record with no heartbeat is left out. A name that is not `infrahub-sync-worker-<uuid>` is shown
+  record with no heartbeat is left out. A name that is not `infrahub-sync-service-<uuid>` is shown
   as `other` (spec FR-013, critique E5), so the response can never hold `acct_` and the
   `AccountNameMiddleware` (`infrahub_sync/service/presentation.py:150`) never reads accounts for
   it; a PostgreSQL outage therefore returns the health report, not the generic 503 envelope.

@@ -3142,6 +3142,18 @@ def test_health_answers_its_report_without_credentials(tmp_path: Path, expected_
     assert installed_version("infrahub-sync") not in response.text
 
 
+@pytest.mark.parametrize("healthy", [True, False])
+def test_head_health_answers_the_status_and_headers_of_get_without_a_body(tmp_path: Path, *, healthy: bool) -> None:
+    client = _health_client(tmp_path, fake_health_checker(healthy=healthy))
+
+    get = client.get("/health")
+    head = client.head("/health")
+
+    assert head.status_code == get.status_code == (200 if healthy else 503)
+    assert dict(head.headers) == dict(get.headers)
+    assert head.content == b""
+
+
 def test_a_health_checker_that_raises_answers_the_service_unavailable_envelope(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

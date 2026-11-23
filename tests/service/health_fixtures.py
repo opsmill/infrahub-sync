@@ -14,8 +14,8 @@ from infrahub_sync.service.orchestration import PoolStatus, PoolWorker
 if TYPE_CHECKING:
     from infrahub_sync.client.models import HealthResource
 
-WORKER_NAME = "infrahub-sync-worker-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11"
-STALE_WORKER_NAME = "infrahub-sync-worker-8b1d7e40-2c9f-4e0a-a6b3-5f2e9c7d1b08"
+WORKER_NAME = "infrahub-sync-service-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11"
+STALE_WORKER_NAME = "infrahub-sync-service-8b1d7e40-2c9f-4e0a-a6b3-5f2e9c7d1b08"
 
 
 async def _up() -> None:  # noqa: RUF029 - the checker awaits every check.

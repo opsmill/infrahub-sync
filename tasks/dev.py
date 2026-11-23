@@ -1020,7 +1020,9 @@ def check_host_processes(settings: DevSettings) -> None:
         body = response.json()
     except (httpx.HTTPError, ValueError):
         raise DevStackError(not_answering) from None
-    workers = body.get("workers") if isinstance(body, dict) else None
+    if not isinstance(body, dict):
+        raise DevStackError(not_answering)
+    workers = body.get("workers")
     if (
         response.status_code not in {200, 503}
         or body.get("status") not in {"healthy", "unhealthy"}

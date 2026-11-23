@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -33,7 +32,7 @@ logger = structlog.get_logger(__name__)
 # exit 1 (`sys.exit` with a string writes it to standard error).
 WORKER_HEALTHCHECK_COMMAND = """\
 import os, sys, time
-path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "infrahub-sync-worker-alive")
+path = os.path.join(os.environ.get("TMPDIR") or "/tmp", "infrahub-sync-worker-alive")
 try:
     fields = open(path, encoding="ascii").read().split()
 except (OSError, ValueError):
@@ -45,8 +44,11 @@ if time.time() - int(fields[0]) > max(3 * int(fields[1]), 30):
 
 
 def alive_file_path(environ: Mapping[str, str]) -> Path:
-    """Return the alive file's path in `TMPDIR`, or in the system temporary directory."""
-    directory = environ.get("TMPDIR") or tempfile.gettempdir()
+    """Return the alive file's path in `TMPDIR`, or in `/tmp` when it is unset or empty.
+
+    The same rule as `WORKER_HEALTHCHECK_COMMAND`, so the writer and the reader find one file.
+    """
+    directory = environ.get("TMPDIR") or "/tmp"  # noqa: S108 - the healthcheck command reads the same path.
     return Path(directory) / ALIVE_FILE_NAME
 
 

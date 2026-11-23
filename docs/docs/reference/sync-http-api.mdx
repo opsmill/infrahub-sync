@@ -386,6 +386,10 @@ Both answers carry the same JSON body, `Content-Type: application/json` and
 name or value, an error message or the Sync version. If the route itself fails, the answer is
 the `503` `service-unavailable` error envelope instead of a report.
 
+`HEAD /health` answers the same status code and headers as `GET /health`, without a body. It
+runs the same checks, so a monitoring tool that only reads the status code can use it. The
+OpenAPI document lists only `GET`.
+
 ```json
 {
   "status": "healthy",
@@ -402,12 +406,12 @@ the `503` `service-unavailable` error envelope instead of a report.
     "queue_depth": 0,
     "items": [
       {
-        "name": "infrahub-sync-worker-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11",
+        "name": "infrahub-sync-service-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11",
         "state": "live",
         "last_heartbeat": "2026-11-23T10:15:02Z"
       },
       {
-        "name": "infrahub-sync-worker-8b1d7e40-2c9f-4e0a-a6b3-5f2e9c7d1b08",
+        "name": "infrahub-sync-service-8b1d7e40-2c9f-4e0a-a6b3-5f2e9c7d1b08",
         "state": "stale",
         "last_heartbeat": "2026-11-23T09:41:57Z"
       }
@@ -433,7 +437,7 @@ The fields of the report:
 | `workers.live_workers` | The number of listed workers whose state is `live`. `null` when `workers.state` is `unknown`. |
 | `workers.queue_depth` | The number of runs that are due and that no worker has claimed. `null` when `workers.state` is `unknown`. |
 | `workers.items` | The workers of the pool that sent a heartbeat in the last 24 hours, newest heartbeat first, then by name. Empty when `workers.state` is `unknown`. |
-| `workers.items[].name` | The worker name `infrahub-sync-worker-<uuid>` that the Sync worker registers at each start, or `other` for a worker of the pool with any other name. |
+| `workers.items[].name` | The worker name `infrahub-sync-service-<uuid>` that the Sync worker registers at each start, or `other` for a worker of the pool with any other name. |
 | `workers.items[].state` | `live` when the Prefect server reports the worker online and its last heartbeat is no older than `max(3 × heartbeat interval, 30 seconds)`; `stale` otherwise. |
 | `workers.items[].last_heartbeat` | The time of the worker's last heartbeat. |
 | `timestamp` | When the round of checks started. |

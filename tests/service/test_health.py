@@ -30,15 +30,19 @@ from infrahub_sync.service.health import (
     ErrorCategory,
     HealthChecker,
     classify_error,
+    database_check,
     object_store_check,
     task_manager_check,
     task_manager_db_check,
     workers_health,
 )
 from infrahub_sync.service.orchestration import PoolStatus, PoolWorker
+from infrahub_sync.service.worker import service_worker_name
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+
+    from typing_extensions import Self
 
     CheckFactory = Callable[..., Callable[[], Awaitable[None]]]
 
@@ -192,7 +196,7 @@ def _live_worker() -> PoolWorker:
         status="online",
         last_heartbeat=NOW - timedelta(seconds=5),
         heartbeat_interval_seconds=10.0,
-        name="infrahub-sync-worker-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11",
+        name="infrahub-sync-service-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11",
     )
 
 
@@ -335,10 +339,10 @@ async def test_a_failed_check_logs_one_warning_with_the_component_and_category_o
 
 # --- worker section (T008) -------------------------------------------------------------------
 
-WORKER_A = "infrahub-sync-worker-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11"
-WORKER_B = "infrahub-sync-worker-8b1d7e40-2c9f-4e0a-a6b3-5f2e9c7d1b08"
-WORKER_C = "infrahub-sync-worker-0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
-WORKER_D = "infrahub-sync-worker-11111111-2222-4333-8444-555555555555"
+WORKER_A = "infrahub-sync-service-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11"
+WORKER_B = "infrahub-sync-service-8b1d7e40-2c9f-4e0a-a6b3-5f2e9c7d1b08"
+WORKER_C = "infrahub-sync-service-0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+WORKER_D = "infrahub-sync-service-11111111-2222-4333-8444-555555555555"
 
 
 def _worker(index: int, name: str | None, *, age: timedelta | None, status: str = "online") -> PoolWorker:
@@ -404,7 +408,7 @@ def test_workers_are_sorted_newest_heartbeat_first_then_by_name() -> None:
         "acct_x",
         "laptop-01",
         None,
-        "infrahub-sync-worker-3F0C2A9E-6A1B-4C55-9D3E-2B7C1E0F4A11",
+        "infrahub-sync-service-3F0C2A9E-6A1B-4C55-9D3E-2B7C1E0F4A11",
         f"{WORKER_A}\n",
         f"prefix-{WORKER_A}",
     ],
@@ -413,6 +417,14 @@ def test_a_name_that_is_not_a_sync_worker_name_is_shown_as_other(name: str | Non
     workers = workers_health(_pool(_worker(1, name, age=timedelta(seconds=5))), NOW, minimum=1)
 
     assert [item.name for item in workers.items] == ["other"]
+
+
+def test_a_name_the_sync_worker_entrypoint_registers_is_shown_unchanged() -> None:
+    name = service_worker_name()
+
+    workers = workers_health(_pool(_worker(1, name, age=timedelta(seconds=5))), NOW, minimum=1)
+
+    assert [item.name for item in workers.items] == [name]
 
 
 def test_an_unavailable_pool_gives_an_unknown_worker_state() -> None:
@@ -451,6 +463,25 @@ async def test_a_pool_read_that_cannot_reach_the_server_gives_an_unknown_worker_
 
     assert report.workers.state == "unknown"
     assert report.status == "unhealthy"
+
+
+async def test_an_unexpected_error_of_the_pool_read_gives_an_unknown_worker_state_and_logs_its_type_only() -> None:
+    async def fails(_now: datetime) -> PoolStatus:  # noqa: RUF029 - the checker awaits the reader.
+        message = f"cannot open the client for {CONNECTION_TEXT}"
+        raise RuntimeError(message)
+
+    with capture_logs() as logs:
+        report = await _checker(reader=fails).report()
+
+    assert report.workers.state == "unknown"
+    assert report.status == "unhealthy"
+    assert all(d.status == "up" for d in report.dependencies)
+    warnings = [entry for entry in logs if entry["log_level"] == "warning"]
+    assert [(w["component"], w["category"], w["error_type"]) for w in warnings] == [
+        ("workers", "unknown_error", "RuntimeError")
+    ]
+    assert "hunter2" not in repr(logs)
+    assert "db.internal" not in repr(logs)
 
 
 async def test_fewer_live_workers_than_the_minimum_is_unhealthy() -> None:
@@ -562,3 +593,32 @@ async def test_the_object_store_client_is_built_once_for_every_round() -> None:
     await check()
 
     assert builds == 1
+
+
+async def test_the_database_check_passes_no_server_options_so_the_url_options_are_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connects: list[tuple[str, dict[str, object]]] = []
+    queries: list[str] = []
+
+    class FakeConnection:
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            pass
+
+        async def execute(self, query: str) -> None:  # noqa: PLR6301 - psycopg's connection method.
+            queries.append(query)
+
+    async def connect(conninfo: str, **kwargs: object) -> FakeConnection:  # noqa: RUF029 - psycopg's is async.
+        connects.append((conninfo, kwargs))
+        return FakeConnection()
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", connect)
+    url = "postgresql://sync@db.internal/sync?options=-csearch_path%3Dsync"
+
+    await database_check(url, 1)()
+
+    assert connects == [(url, {"autocommit": True, "connect_timeout": 2})]
+    assert queries == ["SELECT 1"]

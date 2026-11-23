@@ -10,6 +10,8 @@ GET /api/health HTTP/1.1
 ```
 
 No parameters, no body, no credential. `GET /api` and `GET /api/` redirect here with 307.
+`HEAD /api/health` answers the same status code and headers without a body; the OpenAPI document
+lists only `GET`.
 
 ## Responses
 
@@ -41,12 +43,12 @@ version. A failure inside the endpoint itself is answered with the existing 503
     "queue_depth": 0,
     "items": [
       {
-        "name": "infrahub-sync-worker-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11",
+        "name": "infrahub-sync-service-3f0c2a9e-6a1b-4c55-9d3e-2b7c1e0f4a11",
         "state": "live",
         "last_heartbeat": "2026-11-23T10:15:02Z"
       },
       {
-        "name": "infrahub-sync-worker-8b1d7e40-2c9f-4e0a-a6b3-5f2e9c7d1b08",
+        "name": "infrahub-sync-service-8b1d7e40-2c9f-4e0a-a6b3-5f2e9c7d1b08",
         "state": "stale",
         "last_heartbeat": "2026-11-23T09:41:57Z"
       }

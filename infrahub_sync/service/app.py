@@ -499,6 +499,16 @@ def create_app(
     @application.get("/health", response_model=HealthResource, responses={503: {"model": HealthResource}})
     async def get_health() -> JSONResponse:
         """Return the health of the components and workers, without authentication (spec 029)."""
+        return await health_answer()
+
+    # A monitoring tool can ask with HEAD: the same status and headers, and the server sends no body.
+    # Left out of the OpenAPI document, which keeps one operation for the report.
+    @application.head("/health", include_in_schema=False)
+    async def head_health() -> JSONResponse:
+        """Answer `GET /health`'s status and headers for a HEAD request."""
+        return await health_answer()
+
+    async def health_answer() -> JSONResponse:
         if health_checker is None:
             raise ServiceAPIError(503, "service-unavailable", "the Sync service is temporarily unavailable")
         report = await health_checker.report()

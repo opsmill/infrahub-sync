@@ -204,7 +204,7 @@ live worker; call `SyncClient.get_health()`; request `/api` and follow the redir
   `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`. The pages that describe `/api/status` MUST describe
   `/api/health` instead.
 - **FR-013**: A worker name MUST appear in the response only when it has the form
-  `infrahub-sync-worker-<uuid>` that the Sync worker registers. Any other worker of the pool is
+  `infrahub-sync-service-<uuid>` that the Sync worker registers. Any other worker of the pool is
   listed with the name `other`, so that a name chosen outside Sync never reaches an
   unauthenticated caller.
 

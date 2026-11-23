@@ -41,10 +41,10 @@ def test_alive_file_path_is_built_from_tmpdir(tmp_path: Path) -> None:
     assert alive_file_path({"TMPDIR": str(tmp_path)}) == tmp_path / ALIVE_FILE_NAME
 
 
-def test_alive_file_path_falls_back_to_the_system_temporary_directory() -> None:
-    import tempfile
-
-    assert alive_file_path({}) == Path(tempfile.gettempdir()) / ALIVE_FILE_NAME
+@pytest.mark.parametrize("environ", [{}, {"TMPDIR": ""}])
+def test_alive_file_path_falls_back_to_tmp_as_the_healthcheck_command_does(environ: dict[str, str]) -> None:
+    assert alive_file_path(environ) == Path("/tmp") / ALIVE_FILE_NAME  # noqa: S108 - the documented fallback.
+    assert 'os.environ.get("TMPDIR") or "/tmp"' in WORKER_HEALTHCHECK_COMMAND
 
 
 def test_the_writer_writes_the_time_and_interval_every_interval(
