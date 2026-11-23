@@ -22,7 +22,7 @@ Run everything from `/Users/bkohler/automation/opsmill/infrahub-sync/.worktrees/
 ## Phase 1: Setup
 
 - [X] T001 Install the full development profile in the worktree with `uv sync --extra dev --extra prefect --extra service`, then run `uv run invoke tests.tests-unit` and record the baseline pass count in `dev/specs/029-api-health/verification.md` (create it with a `## Baseline` heading)
-- [ ] T002 [P] Install the web interface dependencies with `cd frontend && pnpm install --frozen-lockfile` and record `pnpm test` and `pnpm lint` (or the scripts `frontend/package.json` defines) baseline results in `dev/specs/029-api-health/verification.md`
+- [X] T002 [P] Install the web interface dependencies with `cd frontend && pnpm install --frozen-lockfile` and record `pnpm test` and `pnpm lint` (or the scripts `frontend/package.json` defines) baseline results in `dev/specs/029-api-health/verification.md`
 
 ---
 
@@ -30,7 +30,7 @@ Run everything from `/Users/bkohler/automation/opsmill/infrahub-sync/.worktrees/
 
 - [X] T003 Add `name: str | None = None` as the last field of `PoolWorker` in `infrahub_sync/service/orchestration.py:155`, fill it in `_pool_worker` (`orchestration.py:714`) from the Prefect record's `name` (a non-string name becomes `None`, it does not make the record invalid), and add `worker_is_live(worker: PoolWorker, now: datetime) -> bool` in the same module: true exactly when `worker.status == "online"`, `last_heartbeat` and `heartbeat_interval_seconds` are not None, the interval is > 0, and `max(0, (now - last_heartbeat).total_seconds()) <= max(3 * interval, 30)`
 - [X] T004 Make `_owner_is_fresh` in `infrahub_sync/service/liveness.py:270` call `worker_is_live` for the matching worker record, keeping its current behavior: the exact claiming worker id must match, and a missing id returns False. `tests/service/test_liveness_policy.py` MUST pass without edits (research R-5)
-- [ ] T005 [P] Add unit tests for `worker_is_live` and `PoolWorker.name` in `tests/service/test_orchestration_pool.py` (new file): online and fresh; offline; no heartbeat; interval 0; exactly at `max(3 × interval, 30)`; one second past it; a 5-second interval uses the 30-second floor; a non-string Prefect name gives `name=None`
+- [X] T005 [P] Add unit tests for `worker_is_live` and `PoolWorker.name` in `tests/service/test_orchestration_pool.py` (new file): online and fresh; offline; no heartbeat; interval 0; exactly at `max(3 × interval, 30)`; one second past it; a 5-second interval uses the 30-second floor; a non-string Prefect name gives `name=None`
 
 **Checkpoint**: `uv run pytest tests/service/test_liveness_policy.py tests/service/test_orchestration_pool.py` passes.
 
