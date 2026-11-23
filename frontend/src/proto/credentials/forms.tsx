@@ -158,6 +158,12 @@ function Outcome({ form }: { form: CredentialForm }) {
 
 export function SheetForm({ credential, onClose }: FormProps) {
   const form = useCredentialForm(credential, onClose);
+  const answerRef = useRef<HTMLDivElement>(null);
+  const answered = Boolean(form.problem || form.error);
+  // The answer sits under the summary; scroll it above the sticky buttons when it appears.
+  useEffect(() => {
+    if (answered) answerRef.current?.scrollIntoView({ block: "nearest" });
+  }, [answered]);
   return (
     <Sheet
       isOpen
@@ -186,7 +192,7 @@ export function SheetForm({ credential, onClose }: FormProps) {
           <Outcome form={form} />
         </fieldset>
         {form.problem || form.error ? (
-          <div className="px-2 pb-3">
+          <div ref={answerRef} className="scroll-mb-20 px-2 pb-3">
             <FormAnswer form={form} />
           </div>
         ) : null}

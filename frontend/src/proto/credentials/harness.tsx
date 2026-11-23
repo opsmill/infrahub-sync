@@ -367,7 +367,7 @@ export function CredentialsPrototype() {
     ["plan-and-apply", "revision-changed", "none"],
     "plan-and-apply"
   );
-  const openText = params.open ?? DEFAULT_OPEN[screen.id];
+  const openText = params.open || DEFAULT_OPEN[screen.id];
   setRefusal(refusal);
 
   const set = (patch: Params) => setParams({ ...params, ...patch });

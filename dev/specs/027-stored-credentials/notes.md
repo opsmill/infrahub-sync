@@ -5,7 +5,7 @@ screen and records it under [Choices](#choices). T075 to T078 start only after t
 
 This is the second round. The first round placed the prototype inside the signed-in page frame,
 which reads the Sync API, so it could not be opened without a running Sync service. The second round
-keeps three versions from the first round and replaces the other five; see
+keeps four versions from the first round and replaces the other eight; see
 [Versions kept from the first round](#versions-kept-from-the-first-round).
 
 ## How to open the prototype
@@ -111,6 +111,17 @@ The section is shown on a sample run page, between "Details" and "Files".
 
 Replaced: "Cards" and "Names and details" (list), "On the page" and "Two steps" (forms), "Type the
 name" and "On the page" (delete), "By stage" and "By credential" (run details).
+
+Three of the new versions continue a direction of the first round. The maintainer can ask for a
+replacement if a version is too close to the one it continues:
+
+- Forms, "In the row", continues "On the page": both keep the form on the page without an overlay.
+  The first round opened a panel above the list; this round puts the form in place of the row.
+- Delete, "In the row", continues "On the page": both use a confirmation that is not modal and keep
+  the listing until it is dismissed. This round puts it in place of the row and adds "Try again".
+- Run details, "In the details", continues "By credential": both group the reads by credential and
+  block and say when the value changed during the run. This round moves them into the "Details"
+  card instead of a section of their own.
 
 ## Not built
 
