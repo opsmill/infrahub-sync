@@ -494,6 +494,8 @@ modules:
 To find the cause of a `503`, read the body: the component with `status` `down` and its
 `error`, or the `workers` section.
 
+### Run liveness and cancellation
+
 Each submitted Prefect execution is claimed by its worker before it resolves a
 configuration or builds adapters. The API derives the stall threshold as
 `max(3 × PREFECT_WORKER_QUERY_SECONDS, 30 seconds)`, and reconciles no less often

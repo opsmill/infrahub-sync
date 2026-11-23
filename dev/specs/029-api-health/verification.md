@@ -85,3 +85,51 @@ Compose variables caused:
 - Not run: the web interface in a browser against a Sync API built from this branch. The running
   development stack belongs to another worktree and session.
 - After initializing the `frontend/vendor/infrahub` submodule in this worktree (`git submodule update --init frontend/vendor/infrahub`), `pnpm typecheck` reported no error and `pnpm build` finished (`✓ built in 415ms`) at 2026-11-23T23:04:52Z.
+
+## T043–T050: documentation, decision record and reader grep (2026-11-24)
+
+- Documentation timings are the design values of spec.md (SC-001 to SC-003, heartbeat interval
+  10 seconds), labeled as design targets. T051 (quickstart on the development stack) is still
+  open, so no timing in the documentation is measured.
+- `uv run rumdl check` on every changed Markdown and MDX file: no issues.
+- Vale 3.20.0 (`.vale.ini`, the same check as the `workflow-linter.yml` documentation job) on the
+  changed pages: no finding in a changed line. `blackbox` and `Kuma` were added to
+  `.vale/styles/spelling-exceptions.txt`; prose uses "health check" in place of "healthcheck".
+  The remaining findings are `Infrahub.sentence-case` warnings on headings this change did not
+  touch.
+- `uv run invoke docs.generate`: no change to the generated CLI reference.
+- `cd docs && pnpm install --frozen-lockfile`, then `uv run invoke docs.docusaurus`:
+  `[SUCCESS] Generated static files in "build".`, no broken link or anchor reported.
+- T050 reader grep (`grep -rnE --exclude-dir=__pycache__ "get_status|/status\b|api/status|statusQuery|ServiceStatusResource|WorkerStatusResource" infrahub_sync frontend/src tasks tests docs/docs development docker-compose.yml README.md`).
+  Remaining matches and why each is allowed:
+  - `tests/vendored_prefect_extras/test_executors.py:201`: "the run/submit/result/status
+    contract" of the vendored Prefect executors; not the Sync route.
+  - `tests/service/test_web_site.py:457-458`: the test that `GET /api/status` answers `404`.
+  - `tests/compose/test_documentation.py:425` and `:432`: the test that no page under
+    `docs/docs` outside `release-notes` names `/api/status`.
+  - Fixed during T050: `tests/service/test_web_site.py:272` used `/status` as an example of a
+    path outside `/api`; it now uses `/health`. The two documentation sentences that said the
+    route is removed were dropped; the changelog fragment states it.
+- Outside the grep scope, `dev/adr/0043-…md` names `/api/status` in its unchanged body; ADR 0055
+  amends it, and its status line now says so. `.agents/skills/speckit-opsmill-qa/SKILL.md` and
+  `.specify/extensions/opsmill/commands/qa.md` use `/api/status` in a generic example of another
+  application, not the Sync API.
+
+## T052: full gate (2026-11-24)
+
+- `uv run invoke format`: exit 0 (ruff reformatted `tests/compose/test_documentation.py`).
+- `uv run invoke lint`: exit 0; its 31 ty diagnostics are unused `ty: ignore` comments in files
+  this change does not touch, as recorded at T042.
+- `uv run ruff check .`: all checks passed. `uv run ty check .`: exit 0 (same 31 diagnostics).
+- `uv run invoke tests.tests-unit`: 11271 passed, 12 skipped, 629 deselected, 2 xfailed, started
+  at 2026-11-23T23:11:09Z (seven more than at T042: the new documentation tests).
+- `uv run invoke docs.rumdl`: no issues in 184 files.
+- `uv run infrahub-sync --help`, `configs --help`, `runs --help`: exit 0.
+- `cd frontend && pnpm test`: 15 files, 419 tests passed. `pnpm lint`: 126 files, no findings.
+  `pnpm typecheck`: exit 0. `pnpm build`: `✓ built in 1.14s`.
+- `uv run invoke tests.check-310`: exit 0, "check-310 passed all three Python 3.10 legs"
+  (Python 3.10 dev+prefect: 7978 passed, 100 skipped; Python 3.10 base install: 7714 passed,
+  108 skipped), finished at 2026-11-23T23:25:33Z.
+- After the review fixes to ADR 0055 and the reference page, the changed tests were re-run with
+  `-v` at 2026-11-23T23:25:52Z: 14 passed, and `tests/compose/test_documentation.py` 150 passed.
+- T051 (quickstart scenarios 1–9 and measured timings on the development stack) is not run.

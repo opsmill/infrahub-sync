@@ -6,13 +6,17 @@
 `dev/specs/029-api-health/research.md` (R-1 to R-8),
 `dev/specs/029-api-health/contracts/health-api.md`
 
+Amends [ADR 0043](0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md): the
+unauthenticated route that 0043 names, `/api/status`, is replaced by `/api/health`, and the
+development tasks that read `/api/status` read `/api/health` instead.
+
 ## Context
 
 Before this decision, the Sync API served `GET /api/status`. It reported `service` and one
 `worker.state` (`ready`, `busy`, `no-live-worker` or `unavailable`), read from the Prefect work
 pool. It did not check PostgreSQL, the object store or the Prefect server, so an outage of one of
-them was not visible in the answer. It answered `200` in every case, so a monitoring tool had to
-parse the body. `/api/status` was never in a release.
+them was not visible in the answer. The route returned its resource with status `200` whenever it
+answered, so a monitoring tool had to parse the body. `/api/status` was never in a release.
 
 Infrahub adds a health endpoint with the same purpose in
 [opsmill/infrahub#11473](https://github.com/opsmill/infrahub/pull/11473): a `status` of `healthy`
@@ -50,8 +54,8 @@ Two facts about the Compose deployment shape the worker side:
   `max(3 × heartbeat interval, 30)` seconds. The health report and the run liveness policy
   (`_owner_is_fresh` in `infrahub_sync/service/liveness.py`) both call it.
 - **The database check reads only.** It opens its own connection, runs `SELECT 1` under a
-  statement timeout, and closes it. A write check would add rows or locks to the product
-  database at every poll.
+  statement timeout, and closes it. The product owner decided that the check reads only; the
+  specification and the research record no further reason.
 - **The worker container healthcheck reads a file that the worker's own timer writes.** The
   worker writes `<epoch seconds> <interval seconds>` to `$TMPDIR/infrahub-sync-worker-alive`
   every heartbeat interval, on a timer that calls no other service. The Compose healthcheck of
@@ -86,13 +90,11 @@ Two facts about the Compose deployment shape the worker side:
 
 ## Alternatives considered
 
-- **Keeping the `/status` shape and adding fields.** Rejected: it keeps `busy`, which mixes the
-  queue with liveness, and differs from Infrahub.
+- **Keeping the `/status` shape and adding fields.** Rejected: it keeps `busy`, whose meaning the
+  documentation already described wrongly, and it differs from Infrahub.
 - **A map of components keyed by name.** Rejected: shorter, but differs from Infrahub's list.
 - **Counting every listed worker, or failing on any stale record.** Rejected: a restart leaves
   the previous worker's record, so every restart would answer `503`.
-- **A database check that writes.** Rejected: it changes the product database at every poll for
-  no information that `SELECT 1` on a new connection does not give.
 - **A worker healthcheck based on the Prefect heartbeat, on `/api/health`, or on this worker's
   Prefect record.** Rejected: each depends on PostgreSQL, the Sync API or the Prefect server, so
   an outage of a shared component would turn the worker container `unhealthy`.
