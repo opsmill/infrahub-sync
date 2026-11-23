@@ -1,0 +1,45 @@
+frontend/src/domain/worker-state.test.ts
+  s_7b1f8b6ee684e7::t_34fff2ff1c3e5f 1-34,36-67
+  s_7b1f8b6ee684e7::t_c2a3d5347c4a16 35
+frontend/src/routes/__root.tsx
+  s_7b1f8b6ee684e7::t_dbfb876b6e3e9a 26,89,131,150-152,202,205-206,245,247,360,362,368
+  s_7b1f8b6ee684e7::t_c2a3d5347c4a16 34-40,112
+frontend/src/api/types.ts
+  s_7b1f8b6ee684e7::t_30cf13d6ccc532 29-30
+dev/specs/029-api-health/verification.md
+  s_7b1f8b6ee684e7::t_ca70d935d0de76 64-86
+frontend/src/api/health-query.test.ts
+  s_7b1f8b6ee684e7::t_7354762aec13f4 1-66
+frontend/src/domain/run-state.ts
+  s_7b1f8b6ee684e7::t_30cf13d6ccc532 1,621-635
+frontend/src/api/client.ts
+  s_7b1f8b6ee684e7::t_aaa68c81338e8f 5-11,90-95,115-116
+frontend/src/features/runs/StartRunDialog.tsx
+  s_7b1f8b6ee684e7::t_c2a3d5347c4a16 13-19,241-247
+  s_7b1f8b6ee684e7::t_dbfb876b6e3e9a 8,153
+frontend/src/api/errors.ts
+  s_7b1f8b6ee684e7::t_aaa68c81338e8f 1,17-29
+  s_7b1f8b6ee684e7::t_cf75bae9ceb77c 30-32
+frontend/src/api/queries.ts
+  s_7b1f8b6ee684e7::t_aaa68c81338e8f 7,11,47-59
+dev/specs/029-api-health/tasks.md
+  s_7b1f8b6ee684e7::t_cde8f81bb53802 110,119-123
+frontend/src/api/types.generated.ts
+  s_7b1f8b6ee684e7::t_da41910130d417 27,35-36,38,1372-1394,1537-1557,2558-2559,2561-2563,2568-2588,2590,2592-2594,2627,2642-2651
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c81fd60b053b65a9769b7003828b53a0a357383b",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

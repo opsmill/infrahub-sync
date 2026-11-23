@@ -1,0 +1,44 @@
+infrahub_sync/service/health.py
+  s_7b1f8b6ee684e7::t_2b1754686ff2c4 97-113,130,134-136,247
+  s_7b1f8b6ee684e7::t_cfe568ac368980 1-17,19,22-43,45-47,49-66,68-96,114-129,131-133,137-141,146-176,178-238,240-246,248-416
+  s_7b1f8b6ee684e7::t_9a1393bf5cc4f6 18,44,48,177
+  s_7b1f8b6ee684e7::t_c5fcc0f2b95484 20-21,67,239
+  s_7b1f8b6ee684e7::t_78fdabc9c661a6 142-145
+infrahub_sync/service/models.py
+  s_7b1f8b6ee684e7::t_3425edc7381288 32,40,64-65,87,95,119,121
+infrahub_sync/client/__init__.py
+  s_7b1f8b6ee684e7::t_040f3793ffc7c8 124,130
+  s_7b1f8b6ee684e7::t_ec698273e9cf95 40,46
+  s_7b1f8b6ee684e7::t_278948332808d0 91-92
+  s_7b1f8b6ee684e7::t_8aed8a2b67a3f7 182,184
+infrahub_sync/service/settings.py
+  s_7b1f8b6ee684e7::t_5200b9e0b8a733 15-17,39-40,56-63,212-266,278-279
+infrahub_sync/client/models.py
+  s_7b1f8b6ee684e7::t_eb8f5b17a49f19 681-738
+  s_7b1f8b6ee684e7::t_01df958778b645 122-123
+dev/specs/029-api-health/tasks.md
+  s_7b1f8b6ee684e7::t_622eccea61fcbb 49-52,59-63
+tests/service/test_health.py
+  s_7b1f8b6ee684e7::t_26c0905f916079 1-5,7-8,10-14,16-42,47-117,119-138,143-180,182-188,197-206,208-212,214-243,246-289,291-304,306-320,324-367,369-370,372-417,419-478,480-486,488-492,494-496,498-507,509-521,525,532
+  s_7b1f8b6ee684e7::t_c07bfce92d908b 15,43-44,189-196,368,371,479,487,493,497,522,526,530,533-538,540-551
+  s_7b1f8b6ee684e7::t_c5fcc0f2b95484 9,45,139-142,523-524,527-529,531
+  s_7b1f8b6ee684e7::t_78fdabc9c661a6 6,46,118,181,207,213,244-245,290,305,321-323,418,508,539
+tests/service/test_settings.py
+  s_7b1f8b6ee684e7::t_da2c059ea8f953 1-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd19de6cae28c05306fc91018d73b1c645c12454",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

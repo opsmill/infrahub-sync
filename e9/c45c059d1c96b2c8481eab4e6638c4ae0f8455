@@ -1,0 +1,21 @@
+dev/specs/029-api-health/checklists/requirements.md
+  s_7b1f8b6ee684e7::t_aa41322d4b35a6 1-41
+dev/specs/029-api-health/spec.md
+  s_7b1f8b6ee684e7::t_a2e5f4441539f1 1-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e9c45c059d1c96b2c8481eab4e6638c4ae0f8455",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

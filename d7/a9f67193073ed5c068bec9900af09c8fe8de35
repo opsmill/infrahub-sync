@@ -1,0 +1,31 @@
+dev/specs/029-api-health/verification.md
+  s_7b1f8b6ee684e7::t_e4487dabcf5225 88-129
+  s_7b1f8b6ee684e7::t_aae646541f22a8 130-135
+dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md
+  s_7b1f8b6ee684e7::t_8d639673e2be8a 7-9
+dev/adr/0055-the-health-endpoint-replaces-status.md
+  s_7b1f8b6ee684e7::t_ac2f5239b8ef1c 10-11
+  s_7b1f8b6ee684e7::t_8d639673e2be8a 9,12,18-19,57-58,93-94
+dev/specs/029-api-health/tasks.md
+  s_7b1f8b6ee684e7::t_85827733b93b35 131-138,140
+dev/adr/README.md
+  s_7b1f8b6ee684e7::t_8d639673e2be8a 131
+docs/docs/reference/sync-http-api.mdx
+  s_7b1f8b6ee684e7::t_8d639673e2be8a 497-498
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7a9f67193073ed5c068bec9900af09c8fe8de35",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

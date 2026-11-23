@@ -1,0 +1,78 @@
+docker-compose.yml
+  s_7b1f8b6ee684e7::t_1e19df7640e5c5 385
+dev/specs/029-api-health/data-model.md
+  s_7b1f8b6ee684e7::t_a6982598114a93 41
+tasks/dev.py
+  s_7b1f8b6ee684e7::t_0bcc06fa6ada99 1023-1025
+docs/docs/reference/sync-http-api.mdx
+  s_7b1f8b6ee684e7::t_9707c557513544 389-392
+  s_7b1f8b6ee684e7::t_a6982598114a93 409,414,440
+tests/service/health_fixtures.py
+  s_7b1f8b6ee684e7::t_a6982598114a93 17-18
+tests/service/test_health.py
+  s_7b1f8b6ee684e7::t_13eadb9fd2aeb7 605,611
+  s_7b1f8b6ee684e7::t_d7a91a95f0555c 45
+  s_7b1f8b6ee684e7::t_acb328697a3394 33,40,422-429,468-486,596-604,606-610,612-624
+  s_7b1f8b6ee684e7::t_a6982598114a93 199,342-345,411
+  s_7b1f8b6ee684e7::t_63e9e7a098fdec 46
+infrahub_sync/service/app.py
+  s_7b1f8b6ee684e7::t_4375bb4e5bed7e 502-511
+infrahub_sync/service/orchestration.py
+  s_7b1f8b6ee684e7::t_79049668bb6b27 37-38
+dev/specs/029-api-health/tasks.md
+  s_7b1f8b6ee684e7::t_a6982598114a93 51,63
+  s_7b1f8b6ee684e7::t_1e19df7640e5c5 89
+  s_7b1f8b6ee684e7::t_e0fab2d8cac3c1 62
+docs/docs/development/knowledge/repository-tour.md
+  s_7b1f8b6ee684e7::t_a6982598114a93 213
+infrahub_sync/service/health.py
+  s_7b1f8b6ee684e7::t_00d4b1e66191a7 333,340-343,354-360
+  s_7b1f8b6ee684e7::t_79049668bb6b27 44,61-63
+dev/specs/029-api-health/critiques/critique-20261123.md
+  s_7b1f8b6ee684e7::t_a6982598114a93 87,211
+dev/specs/029-api-health/contracts/health-api.md
+  s_7b1f8b6ee684e7::t_a6982598114a93 46,51
+  s_7b1f8b6ee684e7::t_a794e574799589 13-14
+dev/specs/029-api-health/spec.md
+  s_7b1f8b6ee684e7::t_a6982598114a93 207
+dev/specs/029-api-health/plan.md
+  s_7b1f8b6ee684e7::t_459e86748c4317 198
+development/docker-compose.yml
+  s_7b1f8b6ee684e7::t_1e19df7640e5c5 368
+dev/specs/029-api-health/alignment-check.md
+  s_7b1f8b6ee684e7::t_a6982598114a93 25
+infrahub_sync/service/worker_alive.py
+  s_7b1f8b6ee684e7::t_1e19df7640e5c5 35,47-51
+infrahub_sync/service/worker.py
+  s_7b1f8b6ee684e7::t_79049668bb6b27 35,98
+infrahub_sync/testcontainers/docker-compose.yml
+  s_7b1f8b6ee684e7::t_1e19df7640e5c5 385
+tests/service/test_worker_alive.py
+  s_7b1f8b6ee684e7::t_1e19df7640e5c5 44-47
+dev/specs/029-api-health/research.md
+  s_7b1f8b6ee684e7::t_e0fab2d8cac3c1 28
+  s_7b1f8b6ee684e7::t_a6982598114a93 114
+tests/service/test_http_api.py
+  s_7b1f8b6ee684e7::t_acb328697a3394 3145-3156
+tests/dev_stack/test_dev_tasks.py
+  s_7b1f8b6ee684e7::t_cf2c94ae53273d 973-987,989-994
+  s_7b1f8b6ee684e7::t_912d79650f185b 988
+dev/adr/0055-the-health-endpoint-replaces-status.md
+  s_7b1f8b6ee684e7::t_a6982598114a93 75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8b97f7365d5e32e4a354a9ff0eefa5d9256d9002",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

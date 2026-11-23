@@ -1,0 +1,22 @@
+infrahub_sync/service/liveness.py
+  s_7b1f8b6ee684e7::t_afb61a0fc8cc43 24
+  s_7b1f8b6ee684e7::t_dc192199423dfa 281
+infrahub_sync/service/orchestration.py
+  s_7b1f8b6ee684e7::t_945ff7f6f63cc9 162,169-182,742,744-748
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0dd006b5ef07ed1cba6d165ea87bf5ac6b7adfa7",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

@@ -1,0 +1,71 @@
+dev/specs/029-api-health/contracts/health-api.md
+  s_7b1f8b6ee684e7::t_78be8f032ba977 125-127
+  s_7b1f8b6ee684e7::t_32389eae3d56a7 133,140-144
+  s_7b1f8b6ee684e7::t_f716bdc61bfb68 62-67,76
+dev/specs/029-api-health/plan.md
+  s_7b1f8b6ee684e7::t_9f68e42bddddee 51
+  s_7b1f8b6ee684e7::t_0cc5a9be3aa374 144-151
+  s_7b1f8b6ee684e7::t_9d2327a71a5719 195-197
+  s_7b1f8b6ee684e7::t_52bf1f17ef1d7d 15-17
+  s_7b1f8b6ee684e7::t_7bb2ef959a7723 75-76,80-81,83,85-91
+  s_7b1f8b6ee684e7::t_732f2a04762525 184-189
+  s_7b1f8b6ee684e7::t_a7773b433fc01d 155-162,164-171
+  s_7b1f8b6ee684e7::t_f9aefe3fe44655 104,106-108,111-112,115-119
+  s_7b1f8b6ee684e7::t_f4bb0543c016bc 128-133
+  s_7b1f8b6ee684e7::t_de473c4907a76e 120
+dev/specs/029-api-health/spec.md
+  s_7b1f8b6ee684e7::t_04e97b17079c43 82-84,88-91,93-95
+  s_7b1f8b6ee684e7::t_9d8af9419d60d0 201-209
+  s_7b1f8b6ee684e7::t_a5b20f78812be6 50-54
+  s_7b1f8b6ee684e7::t_d86f0993b89638 195-199
+  s_7b1f8b6ee684e7::t_c0dc1854159cbc 225-227,231-234
+  s_7b1f8b6ee684e7::t_2d63066e5df2f6 180-182
+  s_7b1f8b6ee684e7::t_b98e9b315d1131 251-257
+  s_7b1f8b6ee684e7::t_5b4d4c13eb4908 73-76
+dev/specs/029-api-health/critiques/critique-20261123.md
+  s_7b1f8b6ee684e7::t_899eeca23da43c 176-181
+  s_7b1f8b6ee684e7::t_9d66574780f551 133-134
+  s_7b1f8b6ee684e7::t_de62749e28e5f4 115
+  s_7b1f8b6ee684e7::t_a201161a09a46e 171-172,175
+  s_7b1f8b6ee684e7::t_458fdb03eab614 1-15,17-24,28-62,64-73,75-79,81-104,106,108-112,116-124,126-132,135-149,152-170,173-174,182-197
+  s_7b1f8b6ee684e7::t_d6990275b9b59c 74
+  s_7b1f8b6ee684e7::t_2bc1e90e8bbb99 80
+  s_7b1f8b6ee684e7::t_40be1040773a7c 107
+  s_7b1f8b6ee684e7::t_70baceb3d21246 113
+  s_7b1f8b6ee684e7::t_1559da6f92d290 125
+  s_7b1f8b6ee684e7::t_6daede48900970 114
+  s_7b1f8b6ee684e7::t_59560922405b69 25-27
+  s_7b1f8b6ee684e7::t_dfca2fd1b3ad12 63
+  s_7b1f8b6ee684e7::t_cacf2e98be9837 16
+  s_7b1f8b6ee684e7::t_9a69c8187001bf 150-151
+  s_7b1f8b6ee684e7::t_e4c268d1d3515d 105
+  s_7b1f8b6ee684e7::t_703fa1f40c35c8 198-217
+dev/specs/029-api-health/quickstart.md
+  s_7b1f8b6ee684e7::t_d0eeaf733c1f12 66-70
+  s_7b1f8b6ee684e7::t_308a847c15771a 40-43
+dev/specs/029-api-health/research.md
+  s_7b1f8b6ee684e7::t_9371e13a4b5625 86-93
+  s_7b1f8b6ee684e7::t_7730202a71083a 140-173
+  s_7b1f8b6ee684e7::t_4d2d04aceb6079 28
+  s_7b1f8b6ee684e7::t_24096a00a33cff 114-122
+  s_7b1f8b6ee684e7::t_844c3e1f44b40e 56-74
+dev/specs/029-api-health/data-model.md
+  s_7b1f8b6ee684e7::t_88e357beddf607 41
+  s_7b1f8b6ee684e7::t_e0e29864b40f76 61,63-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5ffc5640f5b455d6c6ce068cc6b545c6d10a87a",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

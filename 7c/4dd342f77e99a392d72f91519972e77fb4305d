@@ -1,0 +1,28 @@
+dev/specs/029-api-health/quickstart.md
+  s_7b1f8b6ee684e7::t_9c3ebc127e0caf 1-111
+dev/specs/029-api-health/data-model.md
+  s_7b1f8b6ee684e7::t_fae78cfef9e1d7 1-65
+dev/specs/029-api-health/research.md
+  s_7b1f8b6ee684e7::t_9847a05b338e2d 1-177
+dev/specs/029-api-health/contracts/health-api.md
+  s_7b1f8b6ee684e7::t_70c4b03d69d3d8 1-136
+dev/specs/029-api-health/plan.md
+  s_7b1f8b6ee684e7::t_2428386f7a9482 2,5-7,17-19,37,39,52,54,56,68,70,107,110,112,114,125,127,133,135,140,142,146,148,157-159
+  s_7b1f8b6ee684e7::t_37aca2e348e390 1,3-4,8-16,20-36,38,40-51,53,55,57-67,69,71-106,108-109,111,113,115-124,126,128-132,134,136-139,141,143-145,147,149-156,160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c4dd342f77e99a392d72f91519972e77fb4305d",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
