@@ -84,3 +84,4 @@ Compose variables caused:
   this change does not touch. `uv run ruff check .` passed.
 - Not run: the web interface in a browser against a Sync API built from this branch. The running
   development stack belongs to another worktree and session.
+- After initializing the `frontend/vendor/infrahub` submodule in this worktree (`git submodule update --init frontend/vendor/infrahub`), `pnpm typecheck` reported no error and `pnpm build` finished (`✓ built in 415ms`) at 2026-11-23T23:04:52Z.
