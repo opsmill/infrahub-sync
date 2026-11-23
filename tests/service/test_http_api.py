@@ -3166,3 +3166,14 @@ def test_health_declares_its_report_for_200_and_503_and_needs_no_credential(tmp_
     for status in ("200", "503"):
         schema = operation["responses"][status]["content"]["application/json"]["schema"]
         assert schema == {"$ref": "#/components/schemas/HealthResource"}
+
+
+def test_an_api_built_without_a_health_checker_answers_the_service_unavailable_envelope(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "service-unavailable"
