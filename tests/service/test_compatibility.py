@@ -139,3 +139,42 @@ def test_a_client_and_a_service_on_either_side_of_the_additive_plan_fields_read_
     assert PlanResource.model_validate(older_document).last_changes is None
     assert PlanResource.model_validate(older_document).lineage is None
     assert OlderPlanResource.model_validate(newer_document).run_id == "run-1"
+
+
+def test_installed_sdk_version_reads_the_infrahub_sdk_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
+    requested: list[str] = []
+
+    def record_version(distribution_name: str) -> str:
+        requested.append(distribution_name)
+        return "1.23.2"
+
+    monkeypatch.setattr(compatibility, "version", record_version)
+
+    assert compatibility.installed_sdk_version() == "1.23.2"
+    assert requested == ["infrahub-sdk"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [PackageNotFoundError("infrahub-sdk"), ValueError("corrupt metadata")],
+)
+def test_installed_sdk_version_is_none_when_metadata_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+) -> None:
+    def fail_version(_distribution_name: str) -> str:
+        raise failure
+
+    monkeypatch.setattr(compatibility, "version", fail_version)
+
+    assert compatibility.installed_sdk_version() is None
+
+
+@pytest.mark.parametrize("metadata_value", [None, ""])
+def test_installed_sdk_version_is_none_for_an_empty_metadata_value(
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_value: object,
+) -> None:
+    monkeypatch.setattr(compatibility, "version", lambda _distribution_name: metadata_value)
+
+    assert compatibility.installed_sdk_version() is None
