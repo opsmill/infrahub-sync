@@ -1,0 +1,51 @@
+docs/docs/reference/sync-http-api.mdx
+  s_30954faa6b52fd::t_fdadab38eb39a0 1006-1007
+  s_30954faa6b52fd::t_649f95ddc9b2dc 1017-1021
+infrahub_sync/cli.py
+  s_30954faa6b52fd::t_d87ff8c8091996 1588-1591
+tests/service/test_flow_and_prefect.py
+  s_30954faa6b52fd::t_7fca04ef22507c 624
+docs/docs/development/guidelines/secret-redaction.md
+  s_30954faa6b52fd::t_ef203e618ca75a 51-52
+docs/docs/development/knowledge/apply-guard.md
+  s_30954faa6b52fd::t_543a4b35bccd6b 99-108
+tests/product_store/test_write_admission.py
+  s_30954faa6b52fd::t_e8898af67cf381 827-881
+tests/cli/test_failure_output.py
+  s_30954faa6b52fd::t_60151f931673ce 165-204
+infrahub_sync/product_store/store.py
+  s_30954faa6b52fd::t_5f9a928324baa2 5817-5824
+  s_30954faa6b52fd::t_92967ea64df103 4432-4444
+  s_30954faa6b52fd::t_09e8b69662d0b5 1221-1222
+  s_30954faa6b52fd::t_768a5032b8dcd7 773-784
+infrahub_sync/client/models.py
+  s_30954faa6b52fd::t_1968c27acae1e3 1150,1157-1158,1225-1227
+tests/service/test_failure_cause.py
+  s_30954faa6b52fd::t_9cd09ecfdbb5b8 420-467
+changelog/+write-guard-names-active-run.changed.md
+  s_30954faa6b52fd::t_42e79b8237f862 1
+tests/plan/test_report_models.py
+  s_30954faa6b52fd::t_323a590e2576b2 121-123,125
+tests/service/test_managed_write_guard.py
+  s_30954faa6b52fd::t_9dc7cf1cab1c90 348-436
+infrahub_sync/service/failure_cause.py
+  s_30954faa6b52fd::t_2d416ecb52a95f 85,295-304,317-319,407-423,459,475,586,593-596,632
+infrahub_sync/service/flow.py
+  s_30954faa6b52fd::t_da2a5c35e6c57e 105,1544,1560-1562,1587,1609-1616,1625,1649-1665,1755-1761
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf9f13b66bcbcedf44ce4411727e60f242af10a2",
+  "prompts": {},
+  "sessions": {
+    "s_30954faa6b52fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68b2c141-8dbb-4265-a817-fa76f097f99c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
