@@ -1,0 +1,110 @@
+---
+title: Cisco Catalyst SD-WAN adapter
+---
+
+The Cisco Catalyst SD-WAN adapter reads inventory from Cisco Catalyst SD-WAN Manager (formerly vManage) into a sync project: the Manager itself, its sites, its configuration groups and its WAN edge routers, or any other JSON resource under `/dataservice/`. Run it to record in Infrahub which routers the Manager has onboarded, with the site and configuration group of each one, and review the differences before you sync them.
+
+SD-WAN Manager is supported as a **source only**. The adapter reads data with GET requests. The only other requests it sends are the form login to `/j_security_check` and the logout from `/logout`; it never changes configuration in the Manager. The example on this page was tested against SD-WAN Manager 20.18.2.1.
+
+## Authentication and permissions
+
+The adapter logs in with a username and password, the same way the Manager web interface does: it posts the credentials to `/j_security_check`, requests the session's XSRF token from `/dataservice/client/token`, and sends that token with every later request. The [Cisco SD-WAN authentication documentation](https://developer.cisco.com/docs/sdwan/authentication/) describes this flow.
+
+The adapter uses one session for the whole run. After the last mapping loads, or as soon as a request fails, the adapter logs out with `POST /logout`, and falls back to `GET /logout` when the Manager responds with HTTP 405. Logging out matters because the Manager limits the number of concurrent sessions and, at that limit, invalidates the least recently used one. If the logout request fails, the adapter logs a warning and the session expires after the Manager's inactivity timeout, 30 minutes by default according to the same Cisco page.
+
+The adapter reads the credentials from environment variables only. The two settings contain variable names, not values:
+
+| Setting | Default variable name | The variable contains |
+| --- | --- | --- |
+| `username_env` | `CISCO_SDWAN_USERNAME` | The Manager user name |
+| `password_env` | `CISCO_SDWAN_PASSWORD` | The password of that user |
+
+Change the variable names when you run projects against several Managers from one environment. Give the account read access to every resource the project maps; for a resource the account cannot read, the adapter stops with HTTP 403.
+
+The adapter sends no tenant selection (`VSessionId`), so on a multi-tenant Manager it reads the data the Manager returns for the logged-in user.
+
+## Sync the Manager, sites, configuration groups and routers
+
+The [example project](https://github.com/opsmill/infrahub-sync/blob/main/examples/cisco_sdwan_to_infrahub/config.yml) maps four Manager resources to the `Sdwan` kinds in the accompanying [example schema](https://github.com/opsmill/infrahub-sync/blob/main/examples/cisco_sdwan_to_infrahub/schema.yml). An SD-WAN instance contains its sites and configuration groups, and each site contains its routers.
+
+| Infrahub kind | Manager endpoint | Identifier | Peer |
+| --- | --- | --- | --- |
+| `SdwanInstance` | `client/about` | `name`, set in the configuration | None |
+| `SdwanSite` | `v1/network-hierarchy`, nodes labelled `SITE` | `id_value` from `data.hierarchyId.siteId` | `instance` |
+| `SdwanConfigurationGroup` | `v1/config-group` | `name` | `instance` |
+| `SdwanRouter` | `system/device/vedges`, routers with a configured site ID | `chassis_id` from `chasisNumber` | `site` from `configuredSiteId`, referencing `SdwanSite` |
+
+`chasisNumber` is spelled that way by the API. The other mapped values come from these fields and transforms:
+
+- **Instance name.** `client/about` returns the Manager version, but no name for the deployment. The example sets the name `sdwan-manager` as a static value, and every `instance` reference uses the same value. Replace all of them with the name you use for this Manager.
+- **Routers that are not onboarded.** `system/device/vedges` also lists the chassis numbers in the WAN edge list that are not assigned to a site. On the Manager used to test the example, it returned 30 chassis numbers, 4 of them assigned. The filter on `configuredSiteId` keeps the assigned ones.
+- **Router model.** The API reports models such as `vedge-C8000V`. A transform removes the `vedge-` prefix, so the value matches a choice of the `model` dropdown, such as `C8000V`. When the result is not one of the choices, Infrahub rejects the router node.
+- **Configuration group of a router.** For a router deployed with a configuration group, the Manager reports `managed-by: Config-Group edge_basic`. A transform keeps the group name, `edge_basic`; for a router managed another way, the field stays empty.
+- **Feature profiles of a configuration group.** `v1/config-group` lists the profiles of each group with their type. One transform per type selects the profile name for `system_profile`, `transport_profile`, `service_profile`, `cli_profile` and `policy_object_profile`. The schema makes the system and transport profiles mandatory, so Infrahub rejects a group without one of them.
+
+Infrahub Sync orders the loads from the references: the instance first, then sites and configuration groups, then routers.
+
+Load the schema into Infrahub, then list, generate and compare:
+
+```bash
+infrahubctl schema load examples/cisco_sdwan_to_infrahub/schema.yml
+infrahub-sync list --directory examples/
+infrahub-sync generate --name from-cisco-sdwan --directory examples/
+infrahub-sync diff --name from-cisco-sdwan --directory examples/
+```
+
+Set `CISCO_SDWAN_URL`, `CISCO_SDWAN_USERNAME`, `CISCO_SDWAN_PASSWORD` and the destination's `INFRAHUB_API_TOKEN` through your secret manager or shell, and configure the destination address for your environment. Review the diff before you run `sync` with the same configuration.
+
+The example sets no `diffsync_flags`, so Infrahub Sync ignores nodes that exist only in Infrahub. A router removed from the Manager stays in Infrahub, and the diff does not list it.
+
+## Connection settings
+
+Set `source.name: ciscosdwan` and configure the connection under `source.settings`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `url` | Unset | HTTPS origin of the Manager, such as `https://sdwan-manager.example.com`, with no path, query, fragment or embedded credentials. `CISCO_SDWAN_URL` replaces it when set. |
+| `username_env` | `CISCO_SDWAN_USERNAME` | Name of the variable that contains the user name. |
+| `password_env` | `CISCO_SDWAN_PASSWORD` | Name of the variable that contains the password. |
+| `verify_ssl` | `true` | Verify the Manager's TLS certificate. |
+| `timeout` | `30` | Timeout in seconds for each request. |
+| `retries` | `3` | Retries per request after a rate limit, a server error, a timeout or a connection failure. |
+| `max_retry_delay` | `60` | Maximum wait in seconds between retries. A `Retry-After` longer than this value stops the run. |
+
+A lab Manager can present a self-signed certificate, which fails verification. Set `verify_ssl: false` only for such a lab. To trust a private certificate authority instead, set the `REQUESTS_CA_BUNDLE` environment variable to its certificate bundle.
+
+## Map other resources
+
+The `mapping` of each schema mapping is a GET path under `/dataservice/`. Write it with or without that prefix, and add query parameters after `?`, for example `data/device/state/CEdgeInterface?count=1000`. Configure fields, filters, Jinja2 transforms, identifiers and references as described in the [schema-mapping configuration](../reference/config.mdx).
+
+The adapter accepts the response shapes the Manager uses:
+
+- an object with a `data` list, as returned by `device` and `system/device/vedges`;
+- an object with a `data` object, as returned by `client/about`, which becomes one record;
+- a bare list, as returned by `v1/config-group` and `v1/network-hierarchy`.
+
+**Paged endpoints.** When a response includes `pageInfo` with `moreEntries: true`, the adapter requests the next page with `startId` set to the `endId` it received, and continues until `moreEntries` is false. The Manager pages device state endpoints, such as `data/device/state/CEdgeInterface`, this way. A response whose `pageInfo` reports `hasMoreData` uses scroll pagination, which the adapter does not support; it stops rather than load part of the data.
+
+**Field names with hyphens.** Many Manager fields contain hyphens, such as `host-name` and `system-ip`. A Jinja2 expression cannot name those as variables, so the adapter adds a copy of each such field with underscores: write `{{ host_name }}` in a transform. `mapping` and `filters` accept either name.
+
+**Several kinds from one endpoint.** When several mappings use the same endpoint, the adapter requests it once per run and gives each mapping its own copy of the records, so the transforms of one mapping do not change the records of another.
+
+**Repeated identifiers.** When several records of a mapping have the same identifier and the same values, for example sites taken from a device list, the adapter loads one node. When the values differ, it stops and names the identifier; add a filter or change the identifiers.
+
+**Source identifiers.** The adapter gives each record a source identifier, and Infrahub Sync matches a reference written as an `id` object to the peer with that identifier. The adapter uses the record's `id`, then `uuid`, `deviceId`, `recordId` or `vdevice-dataKey`. A record with none of them, such as the one from `client/about`, receives an identifier calculated from its endpoint and position.
+
+## Failure handling
+
+| Failure | Result and action |
+| --- | --- |
+| Login rejected | The Manager responds to a rejected login with HTTP 200 and an error body or its login page. The adapter stops and names the two credential variables; check their values. |
+| Session rejected during the run | When a data request returns the login page, HTTP 401 or HTTP 403, the adapter logs in once more and repeats the request. If the Manager still rejects it, the adapter stops with HTTP 401, or with HTTP 403 for a resource the account cannot read. |
+| HTTP 404 | Stops; check the mapping path and whether your Manager version provides the endpoint. |
+| HTTP 400 and other rejected responses | Stops with the status and the first 200 characters of the Manager's error message. Other response fields and the raw body are left out. |
+| HTTP 429 or 5xx | Waits for `Retry-After`, or 1, 2, 4… seconds up to `max_retry_delay`, then retries up to `retries` times. |
+| Timeout or connection failure | Retries the same way, then stops and names the endpoint. |
+| Certificate verification failure | Stops; trust the Manager's certificate authority, or set `verify_ssl: false` for a lab Manager. |
+| Redirect | Stops; the adapter does not follow redirects. |
+| Invalid JSON, records that are not objects, or a page without a new `endId` | Stops rather than treat the resource as empty or complete. |
+
+Errors and logs never contain the password, the session cookie or the XSRF token. The adapter logs a debug event for each request, with a running request count, and an info event for each endpoint, with the number of records and requests. Incremental change tracking is not implemented for SD-WAN Manager; the adapter reads every mapped resource in full on each run.

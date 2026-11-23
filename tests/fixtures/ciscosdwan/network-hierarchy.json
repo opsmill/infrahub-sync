@@ -1,0 +1,53 @@
+[
+  {
+    "name": "Global",
+    "description": "Global node for network hierarchy",
+    "data": {
+      "label": "GLOBAL"
+    },
+    "id": "62b65697-4044-4b68-995e-86dd56626512",
+    "hierarchyPath": "Global"
+  },
+  {
+    "uuid": "6eb02264-df0c-40e4-b473-84c543af5d53",
+    "name": "SITE_1",
+    "description": "Auto-Generated Site",
+    "data": {
+      "parentUuid": "62b65697-4044-4b68-995e-86dd56626512",
+      "label": "SITE",
+      "hierarchyId": {
+        "siteId": 1
+      }
+    },
+    "id": "6eb02264-df0c-40e4-b473-84c543af5d53",
+    "hierarchyPath": "Global/SITE_1"
+  },
+  {
+    "uuid": "83fe213c-e97e-4407-8fc0-526eb0cb1ad9",
+    "name": "SITE_2",
+    "description": "Auto-Generated Site",
+    "data": {
+      "parentUuid": "62b65697-4044-4b68-995e-86dd56626512",
+      "label": "SITE",
+      "hierarchyId": {
+        "siteId": 2
+      }
+    },
+    "id": "83fe213c-e97e-4407-8fc0-526eb0cb1ad9",
+    "hierarchyPath": "Global/SITE_2"
+  },
+  {
+    "uuid": "c955b38b-edd4-4058-a4b6-f2fda4b9414d",
+    "name": "SITE_100",
+    "description": "Auto-Generated Site",
+    "data": {
+      "parentUuid": "62b65697-4044-4b68-995e-86dd56626512",
+      "label": "SITE",
+      "hierarchyId": {
+        "siteId": 100
+      }
+    },
+    "id": "c955b38b-edd4-4058-a4b6-f2fda4b9414d",
+    "hierarchyPath": "Global/SITE_100"
+  }
+]

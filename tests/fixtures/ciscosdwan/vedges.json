@@ -1,0 +1,48 @@
+{
+  "header": {
+    "generatedOn": 1794852134619
+  },
+  "data": [
+    {
+      "deviceType": "vedge",
+      "serialNumber": "63D67D6C",
+      "uuid": "C8K-3D1A8960-6E76-532C-DA93-50626FC5797E",
+      "chasisNumber": "C8K-3D1A8960-6E76-532C-DA93-50626FC5797E",
+      "deviceModel": "vedge-C8000V",
+      "configuredHostname": "Edge1",
+      "configuredSiteId": "1",
+      "host-name": "Edge1",
+      "site-id": "1",
+      "system-ip": "10.0.0.1",
+      "managed-by": "Config-Group edge_basic",
+      "groupTopologyLabel": "",
+      "reachability": "reachable",
+      "version": "17.18.01a.0.182"
+    },
+    {
+      "deviceType": "vedge",
+      "serialNumber": "BADC3D49",
+      "uuid": "C8K-D4CE7174-5261-7E6F-91EA-4926BCF4C2DD",
+      "chasisNumber": "C8K-D4CE7174-5261-7E6F-91EA-4926BCF4C2DD",
+      "deviceModel": "vedge-C8000V",
+      "configuredHostname": "Edge2",
+      "configuredSiteId": "2",
+      "host-name": "Edge2",
+      "site-id": "2",
+      "system-ip": "10.0.0.2",
+      "managed-by": "Template Branch_C8000V",
+      "groupTopologyLabel": "",
+      "reachability": "reachable",
+      "version": "17.18.01a.0.182"
+    },
+    {
+      "deviceType": "vedge",
+      "serialNumber": "ec73ec75ccd7485c9b1501911b5558b9",
+      "uuid": "C8K-E5FA8EFC-7B65-C148-2D23-2C72D2745EFA",
+      "chasisNumber": "C8K-E5FA8EFC-7B65-C148-2D23-2C72D2745EFA",
+      "deviceModel": "vedge-C8000V-SD-ROUTING",
+      "managed-by": "Unmanaged",
+      "groupTopologyLabel": "NA"
+    }
+  ]
+}

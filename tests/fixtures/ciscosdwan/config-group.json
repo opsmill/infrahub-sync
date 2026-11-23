@@ -1,0 +1,36 @@
+[
+  {
+    "id": "0cd3c1bd-254d-42f8-a932-1dd4d107c551",
+    "name": "edge_basic",
+    "description": "Do not modify!",
+    "solution": "sdwan",
+    "numberOfDevices": 4,
+    "profiles": [
+      {
+        "id": "4d8a5c47-8d39-4716-b7cb-a99c67d34a06",
+        "name": "Default_Policy_Object_Profile",
+        "type": "policy-object"
+      },
+      {
+        "id": "67bb7050-183b-4f91-92b3-a4a0873b3015",
+        "name": "edge_basic_system",
+        "type": "system"
+      },
+      {
+        "id": "0986158a-cd99-45ea-9e5a-7bbaae762bcd",
+        "name": "edge_basic_wan",
+        "type": "transport"
+      },
+      {
+        "id": "a98165bd-c012-4ea7-9e08-93db46123b1c",
+        "name": "edge_basic_lan",
+        "type": "service"
+      },
+      {
+        "id": "d1463291-587d-40a3-9e98-15a83f29a173",
+        "name": "edge_basic_cli",
+        "type": "cli"
+      }
+    ]
+  }
+]

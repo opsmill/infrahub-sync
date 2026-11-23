@@ -88,6 +88,7 @@ After the sync completes, every NetBox device, interface, VLAN, prefix, and rela
 | Nautobot | Nautobot → Infrahub |
 | IP Fabric | IP Fabric → Infrahub |
 | Cisco ACI | Cisco ACI → Infrahub |
+| Cisco Catalyst SD-WAN | SD-WAN Manager → Infrahub |
 | Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager |
 | Prometheus | Prometheus → Infrahub |
 | Slurp'it | Slurp'it → Infrahub |
