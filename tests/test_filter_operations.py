@@ -32,6 +32,17 @@ def test_regex_matches() -> None:
     assert DiffSyncModelMixin.apply_filter("ios", "regex", "^ios") is True
 
 
+@pytest.mark.parametrize("field_value", ["", None])
+@pytest.mark.parametrize("pattern", [".*", "^$"])
+def test_regex_drops_blank_field_for_pattern_matching_empty_string(field_value: str | None, pattern: str) -> None:
+    assert DiffSyncModelMixin.apply_filter(field_value, "regex", pattern) is False
+
+
+def test_regex_still_rejects_non_string_field() -> None:
+    with pytest.raises(TypeError):
+        DiffSyncModelMixin.apply_filter(100, "regex", "^1")
+
+
 BLANK_OR_NULL = [pytest.param(None, id="none"), pytest.param("", id="empty-string")]
 
 

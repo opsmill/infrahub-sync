@@ -200,8 +200,8 @@ FILTERS_OPERATIONS: dict[str, Callable[..., Any]] = {
     "not contains": lambda field, value: not field or value not in field,
     "is_empty": lambda field: field is None or not field,
     "is_not_empty": lambda field: field is not None and field,
-    # A null field (for example a null nested peer) does not match any pattern.
-    "regex": lambda field, pattern: field is not None and re.match(pattern, str(field)) is not None,
+    # A blank or null field (for example a null nested peer) does not match any pattern, not even ".*".
+    "regex": lambda field, pattern: not _is_blank(field) and re.match(pattern, field) is not None,
     # Netutils
     # A blank or null address (for example a device with no primary IP) is not within any range.
     "is_ip_within": lambda field, value: not _is_blank(field) and is_ip_within_filter(ip=field, ip_compare=value),
