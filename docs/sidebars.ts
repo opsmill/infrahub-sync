@@ -36,6 +36,7 @@ const sidebars: SidebarsConfig = {
         'adapters/choosing-an-adapter',
         'adapters/aci',
         'adapters/device42',
+        'adapters/file',
         'adapters/msgraphsync',
         'adapters/genericrestapi',
         'adapters/infrahub',
