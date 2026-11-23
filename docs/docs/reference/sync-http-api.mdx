@@ -1014,11 +1014,15 @@ is `null` or absent:
   load or transform failure names.
 - `operations_total` and `failed_operation_detail`: for a stopped apply, the number of
   operations in the plan, and the `action`, `kind` and `identity` of the failed operation.
-- `active_run_id`: for `write_guard_contended`, the ID of the Sync run that was writing to the
-  same configuration. Sync reads it from its run records, not from the write guard, so it is the
-  write of that configuration that a worker started first and that has not ended. It is `null` when Sync finds
-  no such run, and the `cause` then says that the run is not known. The CLI prints it as
-  `active run: <run_id>`, and the `next_action` names `infrahub-sync runs show <run_id>`.
+- `active_run_id`: for `write_guard_contended`, the ID of the Sync run whose database session
+  held the configuration's write guard for the whole wait. Sync reads it from that session and
+  keeps it only when its run records hold a run with that ID for the same configuration. It is
+  also set when that run's write has ended but its worker still holds the guard; the `cause`
+  then says the write has ended, and the `next_action` says to stop or restart that worker.
+  While the run is still writing, the `next_action` names `infrahub-sync runs show <run_id>`.
+  It is `null` when Sync cannot prove which run holds the guard, and the `cause` then says that
+  the run is not known. The CLI prints it as `active run: <run_id>`, and the web interface links
+  to that run from the failure notice.
 
 The record never holds the text of another error, so no credential reaches it. A record
 written by an earlier release has none of these fields.

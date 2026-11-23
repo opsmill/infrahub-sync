@@ -111,9 +111,12 @@ needs, the second names each setting and where to get it.
 | `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_PREFIX`, `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_REGION` | Optional; the key prefix and region | Defaults: `integration` for the storage test, `us-east-1` for the region |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Credentials for that bucket | The development defaults `devaccesskey` and `devsecretkey` from `development/docker-compose.yml` |
 
-Use a separate, empty database for each of the three PostgreSQL settings. Do not reuse the
-development stack's own `infrahub_sync` database: these tests lock, terminate, create, and drop
-objects in the database they receive.
+Use a separate, empty database for each of the three PostgreSQL settings when you run the
+families one by one. `invoke tests.tests-product-store-postgresql` is the exception: it runs the
+product store and the apply guard families together, and both settings may name the same
+disposable database, as in the pull-request job. Do not reuse the development stack's own
+`infrahub_sync` database: these tests lock, terminate, create, and drop objects in the database
+they receive.
 
 Three families need more detail than the tables give:
 
@@ -174,13 +177,16 @@ Three families need more detail than the tables give:
     uv run --with 'psycopg[binary]' pytest -m integration tests/product_store tests/service
   ```
 
-  Pull-request CI runs the `product-store-postgresql` job in `workflow-tests.yml`, which
-  starts the same pinned `postgres:16-alpine` image the Compose bundle ships and runs only
-  `tests/product_store` and `tests/service/test_apply_versus_verify_race.py`.
-  The job uses `invoke tests.tests-product-store-postgresql`, which fails when the DSN is
-  unset, when any test skips (a missing `psycopg` or an unreachable server skips rather
-  than fails under plain `pytest -m integration`), or when no test is selected. To run the
-  same check locally:
+  Pull-request CI runs the `product-store-postgresql` job ("Product store on PostgreSQL") in
+  `workflow-tests.yml`, which starts the same pinned `postgres:16-alpine` image the Compose
+  bundle ships and runs `tests/product_store`, `tests/service/test_apply_versus_verify_race.py`
+  and the write-lock integration tests in `tests/integration/test_apply_guard_integration.py`.
+  The job sets both `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and `APPLY_GUARD_TEST_POSTGRESQL_DSN`
+  to that server and uses `invoke tests.tests-product-store-postgresql`, which fails when
+  either setting is unset, when any test skips (a missing `psycopg` or an unreachable server
+  skips rather than fails under plain `pytest -m integration`), or when no test is selected.
+  The write-lock tests terminate backends, so point both settings at a disposable database
+  only. To run the same check locally:
 
   ```bash
   docker run -d --name product-store-pg -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=probe \
@@ -190,10 +196,11 @@ Three families need more detail than the tables give:
     sleep 2
   done
   export PRODUCT_STORE_TEST_POSTGRESQL_DSN="host=127.0.0.1 port=55439 user=postgres password=probe dbname=probe"
+  export APPLY_GUARD_TEST_POSTGRESQL_DSN="$PRODUCT_STORE_TEST_POSTGRESQL_DSN"
   uv run invoke tests.tests-product-store-postgresql
   ```
 
-  To confirm the check refuses to pass without a server, unset the variable or point it at
+  To confirm the check refuses to pass without a server, unset either variable or point it at
   a closed port (`port=1`); the task exits non-zero in both cases. Clean up with
   `docker rm -f -v product-store-pg`.
 

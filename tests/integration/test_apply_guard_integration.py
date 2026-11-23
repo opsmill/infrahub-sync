@@ -437,7 +437,19 @@ def test_a_holder_label_cut_to_63_bytes_is_not_known(dsn: str, admin: _Session) 
         holder.close()
 
     assert holder_run_id is None
-    assert _advisory_holders(admin, _ALPHA_KEY) == []
+    assert _released(admin, _ALPHA_KEY)
+
+
+def _released(admin: _Session, key: int) -> bool:
+    """Wait until the server no longer lists a holder of `key`.
+
+    Closing a client session returns before the server ends its backend, so `pg_locks` can
+    still list the closed session's lock for a moment.
+    """
+    limit = time.monotonic() + _WAITING_DEADLINE_SECONDS
+    while _advisory_holders(admin, key) and time.monotonic() < limit:
+        time.sleep(0.01)
+    return _advisory_holders(admin, key) == []
 
 
 class _ReleaseBeforeLookup:

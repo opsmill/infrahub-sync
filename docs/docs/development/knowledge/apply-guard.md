@@ -96,15 +96,49 @@ failure with SQLSTATE `55P03` becomes `ApplyGuardContentionError`. Other provide
 instances during acquisition become `ApplyGuardUnavailableError`, distinguishing lock
 contention from a connection or provider failure.
 
-The guard does not know which run holds the key. When a service write fails with
-`ApplyGuardContentionError`, `_record_failure` in `infrahub_sync/service/flow.py` asks the
-product store for another run of the same configuration with a write execution (`apply`,
-`sync` or `resume`) that a worker claimed and that has not ended, the one claimed first
-(`ProductProjection.other_write_in_progress`). The failure record holds that run ID as
-`active_run_id`, with the failure type `write_guard_contended`, and `None` when the store finds
-no such run or the lookup fails. The run ID is the likeliest holder, not a proof: the store
-records executions, not guard sessions. The guard session and the error text are never read for
-it.
+### Naming the run that holds the key
+
+Before it requests the lock, a guard session of a service write sets its label
+(`application_name`) to `infrahub-sync-guard:` followed by the run ID (`guard_label`). A
+failure to set the label fails the acquisition as unavailable, so a labelled write never holds
+the key without its label. `guard_label` sets no label when the run ID is not of the run
+records' form or the label would be longer than 62 bytes, because PostgreSQL cuts
+`application_name` at 63 bytes in a standard build and a cut label could name another run. A
+holder without a label is reported as not known.
+
+A write that takes the lock reads nothing more. After a lock timeout, and before the session is
+closed, `_read_holder` reads the holder on the same session:
+
+1. It sets `statement_timeout` to 2 seconds on that session, so the read cannot extend the
+   failure by more than 2 seconds.
+2. It joins `pg_locks` to `pg_stat_activity` for a granted advisory lock on the same key, in the
+   current database, held by another session, and reads at most two rows.
+3. It returns a candidate run ID only when exactly one row comes back and the label has the
+   exact prefix, at most 62 bytes and a run ID of the run records' form (`_holder_run_id`). No
+   row, two rows, a rejected label or any exception gives `None`. The failure stays an
+   `ApplyGuardContentionError` in every case, and its `holder_run_id` carries the candidate.
+
+When a service write fails with that error, `_active_write_run` in
+`infrahub_sync/service/flow.py` makes one read of the run records,
+`ProductProjection.write_holder_state(candidate, config_id)`. It accepts the candidate only when
+it is not the failing run's own ID and the run records hold a run with that ID for the same
+configuration. The state also says whether that run's write has ended: a run whose write has
+ended can still hold the key while its worker keeps the session open. The failure record holds
+the run ID as `active_run_id`, with the failure type `write_guard_contended`, and `None` when the
+candidate is missing or rejected or the read fails. Its cause and next action come from one of
+three templates: the run is writing, its write has ended (stop or restart that worker), or the
+run is not known.
+
+The earlier guess from the run records, the other write of the same configuration that a worker
+claimed first (`other_write_in_progress`), is removed: it could name a run that did not hold the
+key.
+
+The label is neither private nor trusted. On PostgreSQL 16 with `track_activities` on, a
+session of another account that is not a superuser read the holder's label, so the label holds
+only a run ID. Any session that can connect to the database can set a false label and take the
+key; the check in the run records limits a false label to a real run of the same configuration.
+The raw label never leaves `_holder_run_id`, and its debug line records only the outcome
+(`named`, `no-row`, `several-rows`, `label-rejected` or `lookup-failed`).
 
 ### Proving ownership without reacquiring
 
@@ -165,7 +199,11 @@ avoid replacing unrelated diagnostic text.
 `tests/service/test_apply_guard.py` uses a scripted session fake to exercise acquisition,
 ownership, release and exception handling. The opt-in
 `tests/integration/test_apply_guard_integration.py` checks the PostgreSQL behavior that the
-fake assumes, using `-m integration` and `APPLY_GUARD_TEST_POSTGRESQL_DSN`.
+fake assumes, using `-m integration` and `APPLY_GUARD_TEST_POSTGRESQL_DSN`. They include the
+holder lookup: three sessions where the third names the holder and never the other waiter, a
+holder without a label, a holder with a 63-byte label, and a holder and a waiter of two other
+accounts. The "Product store on PostgreSQL" pull-request job runs them through
+`invoke tests.tests-product-store-postgresql`, which fails on any skipped test.
 
 Those integration tests terminate backends. Their connection string must identify a
 disposable, single-purpose database. Changes to the guard implementation require real

@@ -182,26 +182,26 @@ the web interface.
 
 ## Phase 6: Polish and cross-cutting
 
-- [ ] T028 [P] Amend `dev/adr/0021-a-failure-record-holds-a-structured-cause.md` with a dated section
+- [X] T028 [P] Amend `dev/adr/0021-a-failure-record-holds-a-structured-cause.md` with a dated section
   "Amendment, 2026-11-23" (follow the format of `dev/adr/0029-the-development-stack-is-one-compose-file-with-profiles.md`):
   the fixed list gains `write_guard_contended` (18 names); the allowed fields gain `active_run_id`, a run ID read
   from the label of the session that holds the configuration's write lock and confirmed in the run records; the
   accepted risk that a session of the same database account can set a label (research R5, R7). Do not cite
   internal sources.
-- [ ] T029 [P] Correct `docs/docs/development/guidelines/secret-redaction.md`: replace the line added by
+- [X] T029 [P] Correct `docs/docs/development/guidelines/secret-redaction.md`: replace the line added by
   `cf9f13b6` ("the ID of the run the product store records as writing to the same configuration") with the new
   source of the run ID; state that the guard session's label is read, that PostgreSQL shows a session's full
   details only to the same account, a superuser or `pg_read_all_stats`, and that only the run ID is stored.
-- [ ] T030 [P] Update `docs/docs/development/knowledge/apply-guard.md`: the session label, the holder lookup (at
+- [X] T030 [P] Update `docs/docs/development/knowledge/apply-guard.md`: the session label, the holder lookup (at
   most two reads after a failed wait, 2-second limit, exactly one row) and the removal of the run-record guess.
-- [ ] T031 [P] Update `docs/docs/running-a-sync.mdx` with the "ended" output example and the web interface's
+- [X] T031 [P] Update `docs/docs/running-a-sync.mdx` with the "ended" output example and the web interface's
   "Open run" link, and `docs/docs/reference/sync-http-api.mdx` if the description of `active_run_id` mentions the
   run records.
-- [ ] T032 [P] Update `docs/docs/development/guidelines/testing-tiers.md`: the "Product store on PostgreSQL"
+- [X] T032 [P] Update `docs/docs/development/guidelines/testing-tiers.md`: the "Product store on PostgreSQL"
   pull-request job also runs the write-lock integration tests and needs `APPLY_GUARD_TEST_POSTGRESQL_DSN`.
-- [ ] T033 [P] Reword `changelog/+write-guard-names-active-run.changed.md`: the failure names the run whose session
+- [X] T033 [P] Reword `changelog/+write-guard-names-active-run.changed.md`: the failure names the run whose session
   holds the configuration's write lock, or says it is not known, in the CLI and in the web interface.
-- [ ] T034 Run the gates in the work directory: `uv run invoke format`, `uv run invoke lint`,
+- [X] T034 Run the gates in the work directory: `uv run invoke format`, `uv run invoke lint`,
   `uv run ruff check .`, `uv run invoke tests.tests-unit` (large output through `ctx_execute` with `| tail -80`),
   the CLI help checks from AGENTS.md, `pnpm check`, `pnpm typecheck`, `pnpm test` and `pnpm build` in `frontend/`,
   then `uv run invoke tests.tests-product-store-postgresql` against a disposable PostgreSQL 16 server as in
