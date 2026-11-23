@@ -6,7 +6,7 @@ from asyncio import CancelledError, create_task, sleep
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -20,6 +20,7 @@ from infrahub_sync.client.models import (
     MAX_LOG_LIMIT,
     MAX_REPORT_LIMIT,
     MIN_LIMIT,
+    HealthResource,
     PlanReportPageResource,
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
@@ -410,6 +411,14 @@ def _lifespan(reconciler: RunLivenessReconciler | None, schedules: ScheduleServi
     return lifespan
 
 
+class HealthReporter(Protocol):
+    """What the health route reads: `HealthChecker` in a served process, a fake in a test."""
+
+    async def report(self) -> HealthResource:
+        """Return the latest health report."""
+        ...
+
+
 def create_app(
     service: RunService,
     resolver: PrincipalResolver,
@@ -417,8 +426,13 @@ def create_app(
     reconciler: RunLivenessReconciler | None = None,
     *,
     schedules: ScheduleService | None = None,
+    health_checker: HealthReporter | None = None,
 ) -> FastAPI:
     """Create the service application from explicit providers.
+
+    ``GET /health`` answers the report of ``health_checker``. Without one, as in a test that does
+    not exercise the route, it answers the 503 ``service-unavailable`` envelope; it never builds a
+    client of a real component.
 
     With ``schedules``, the application serves the schedule routes. When the API process starts,
     it stops the schedules that can no longer run and makes the Prefect schedules match the stored
@@ -488,6 +502,18 @@ def create_app(
     async def get_status() -> ServiceStatusResource:
         """Return unauthenticated lifecycle state without provider identifiers."""
         return await service.status(os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"))
+
+    @application.get("/health", response_model=HealthResource, responses={503: {"model": HealthResource}})
+    async def get_health() -> JSONResponse:
+        """Return the health of the components and workers, without authentication (spec 029)."""
+        if health_checker is None:
+            raise ServiceAPIError(503, "service-unavailable", "the Sync service is temporarily unavailable")
+        report = await health_checker.report()
+        return JSONResponse(
+            status_code=200 if report.status == "healthy" else 503,
+            content=report.model_dump(mode="json"),
+            headers={"Cache-Control": "no-store"},
+        )
 
     # Added before `contain_unhandled_error`, so it runs inside it: every JSON answer of a route or
     # of an exception handler passes through it, and a failed account read answers that 503.
