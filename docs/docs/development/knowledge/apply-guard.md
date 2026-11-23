@@ -141,7 +141,7 @@ The failure record holds the run ID as `active_run_id`, with the failure type
 `write_guard_contended`, and `None` when the candidate is missing or rejected or the read fails.
 Its cause and next action come from one of three templates: the run is writing, its write had
 ended before the wait began (stop or restart that worker), or the run is not known. Each cause
-says which run held the guard when this write's wait ended, not for the whole wait: another
+says which run held the guard when the wait of this write ended, not for the whole wait: another
 waiter can take the key between the original holder's release and the lookup.
 
 The earlier guess from the run records, the other write of the same configuration that a worker
