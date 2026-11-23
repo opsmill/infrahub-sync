@@ -1,0 +1,42 @@
+tests/service/test_schedule_automatic_resume.py
+  s_e30c79edd0b063::t_362fcfa90f1e94 221-223
+  s_e30c79edd0b063::t_c29c4959446d30 53
+  s_e30c79edd0b063::t_3135f180ecea70 1-32,34-52,54-62,65-220,224-277
+  s_e30c79edd0b063::t_32deba70ef2805 33,63-64
+infrahub_sync/product_store/store.py
+  s_e30c79edd0b063::t_c2956a012de1fb 2985-3002
+  s_e30c79edd0b063::t_1b7b13fcfc74de 4629-4630,4633-4635
+  s_e30c79edd0b063::t_5ee4dae255e00d 2174-2176
+  s_e30c79edd0b063::t_43db50a41f3781 813-819,821,823-824
+  s_e30c79edd0b063::t_a981ac2c5a4666 2945-2948
+  s_e30c79edd0b063::t_4c7da6abedcc8d 2952
+  s_e30c79edd0b063::t_6f822ae04a46fd 2222-2226
+tests/product_store/test_schedules.py
+  s_e30c79edd0b063::t_ac0407f680e9fd 1368-1369,1373-1376,1378,1381,1383-1384,1386-1415,1436-1592
+  s_e30c79edd0b063::t_5a4ca5a7cdc233 1416-1435
+  s_e30c79edd0b063::t_441071debcb8c8 1379-1380,1382,1385
+  s_e30c79edd0b063::t_9f5ba6ea1d9c61 1370-1372,1377
+dev/specs/030-automatic-resume/tasks.md
+  s_e30c79edd0b063::t_54d8eddf1e12ac 213,215,222,225
+tests/service/test_schedule_admission.py
+  s_e30c79edd0b063::t_9befe1292ac62c 24,60,74,296-335,338-363
+  s_e30c79edd0b063::t_990e6a509a8361 336-337
+  s_e30c79edd0b063::t_1c4ee100af3905 53
+  s_e30c79edd0b063::t_db8a2735df4d83 364-365
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14bbd2bb3fa51a85e76b592d6a18324c6bbe7fc8",
+  "prompts": {},
+  "sessions": {
+    "s_e30c79edd0b063": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ffd05d37-52a6-4c18-b655-cc3af9364009",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
