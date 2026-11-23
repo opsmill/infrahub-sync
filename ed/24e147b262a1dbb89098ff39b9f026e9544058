@@ -1,0 +1,64 @@
+docs/docs/development-stack.mdx
+  s_7b1f8b6ee684e7::t_1da16297ead7d5 157,160-161,265,603
+docs/docs/compose-deployment.mdx
+  s_7b1f8b6ee684e7::t_fe891fd4be8d01 1242,1244,1246,1249
+  s_7b1f8b6ee684e7::t_24c4e87d48a362 696,818,1115,1119,1185,1189-1193,1195-1205,1207-1229,1231,1235,1238-1241,1243,1245,1247-1248,1250-1269,1343-1344,1363,1375,1388
+changelog/+api-status-removed.changed.md
+  s_7b1f8b6ee684e7::t_cbd8482b7da080 1
+README.md
+  s_7b1f8b6ee684e7::t_1da16297ead7d5 101
+tests/service/test_web_site.py
+  s_7b1f8b6ee684e7::t_f95c217f7c5702 272
+docs/docs/operations/day-2-operations.mdx
+  s_7b1f8b6ee684e7::t_010296a68d737a 12-15,18,21,23,25-28,30-33,56
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_7b1f8b6ee684e7::t_660348ce59bbfa 199,202-203
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_7b1f8b6ee684e7::t_660348ce59bbfa 21,242,245
+tests/compose/test_documentation.py
+  s_7b1f8b6ee684e7::t_e2a9c955bea09e 153,396-418,424-433
+  s_7b1f8b6ee684e7::t_a3f0ab2f59fd57 434-435
+docs/docs/use-with-an-ai-agent.mdx
+  s_7b1f8b6ee684e7::t_660348ce59bbfa 25-26
+dev/adr/README.md
+  s_7b1f8b6ee684e7::t_c467799b890b30 172-175
+docs/docs/development/knowledge/repository-tour.md
+  s_7b1f8b6ee684e7::t_fe891fd4be8d01 218
+  s_7b1f8b6ee684e7::t_926ff7cda7ec99 203-217,219-224
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_7b1f8b6ee684e7::t_660348ce59bbfa 21,243,246
+docs/docs/reference/sync-http-api.mdx
+  s_7b1f8b6ee684e7::t_fe891fd4be8d01 466
+  s_7b1f8b6ee684e7::t_a3eb2e2c9da475 70,351,353-355,368-382,386-395,398-411,415-465,467-490
+dev/adr/0055-the-health-endpoint-replaces-status.md
+  s_7b1f8b6ee684e7::t_716dfc0dde9236 1-98
+docs/docs/operations/compose-troubleshooting.mdx
+  s_7b1f8b6ee684e7::t_454ce63dcdb69b 13,38
+  s_7b1f8b6ee684e7::t_fe891fd4be8d01 37
+docs/docs/quickstart-compose.mdx
+  s_7b1f8b6ee684e7::t_2a1d6aff2c2966 9,91,95-96,99
+changelog/+api-health.added.md
+  s_7b1f8b6ee684e7::t_cbd8482b7da080 1
+docs/docs/reference/python-api.mdx
+  s_7b1f8b6ee684e7::t_7accf37b3a50e1 45-47,50
+  s_7b1f8b6ee684e7::t_1c1508da945752 48
+  s_7b1f8b6ee684e7::t_f95c217f7c5702 49
+.vale/styles/spelling-exceptions.txt
+  s_7b1f8b6ee684e7::t_fe891fd4be8d01 243-244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed24e147b262a1dbb89098ff39b9f026e9544058",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
