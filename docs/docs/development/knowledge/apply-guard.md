@@ -108,8 +108,9 @@ holder without a label is reported as not known. So a run whose ID is longer tha
 or a holder on a worker that runs a release without the label (during an upgrade), is never
 named.
 
-A write that takes the lock reads nothing more. After a lock timeout, and before the session is
-closed, `_read_holder` reads the holder on the same session:
+A write that takes the lock runs the ownership query (`_OWNERSHIP`) but no holder lookup. After a
+lock timeout, and before the session is closed, `_read_holder` reads the holder on the same
+session:
 
 1. It sets `statement_timeout` to 2 seconds on that session, so the read cannot extend the
    failure by more than 2 seconds.

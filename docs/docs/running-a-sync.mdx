@@ -629,7 +629,7 @@ failure to read the destination schema also prints a `cause:` and a `hint:` line
 Sync writes to one configuration from one run at a time. When a `sync`, `apply` or `runs resume`
 waits 30 seconds for another write of the same configuration to finish and it does not, the
 write does not start and changes nothing. The command prints the failure type
-`write_guard_contended` and the other run's ID:
+`write_guard_contended` and, when Sync can name it, the other run's ID:
 
 ```text
 apply failed: ApplyGuardContentionError

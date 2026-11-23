@@ -121,9 +121,11 @@ Consequences of the amendment:
 
 - The label is not private. On PostgreSQL 16 with `track_activities` on, a session of another
   account that is not a superuser, connected to the same database, read the holder's label
-  (integration test `test_a_holder_of_another_account_is_named_correctly_or_not_known`). Any
-  account that can connect to the Sync service's database can therefore read the run ID in the
-  label. A run ID is not a secret, and the label never holds anything else.
+  (integration test `test_a_holder_of_another_account_is_named_correctly_or_not_known`). The
+  test accepts either the holder's run ID or none, because PostgreSQL's rules for
+  `pg_stat_activity` decide what another account can read. So any account that can connect to
+  the Sync service's database may be able to read the run ID in the label. A run ID is not a
+  secret, and the label never holds anything else.
 - The label is not trusted. Any session that can connect to the Sync service's database can set
   its own label and take the same advisory lock, so it can present a false run ID. The check in
   the run records limits a false label to a real run of the same configuration. This risk is

@@ -177,8 +177,9 @@ Three families need more detail than the tables give:
     uv run --with 'psycopg[binary]' pytest -m integration tests/product_store tests/service
   ```
 
-  Pull-request CI runs the `product-store-postgresql` job ("Product store on PostgreSQL") in
-  `workflow-tests.yml`, which starts the same pinned `postgres:16-alpine` image the Compose
+  On a pull request that changes files matched by the `sync_all` filter in
+  `.github/file-filters.yml`, CI runs the `product-store-postgresql` job ("Product store on
+  PostgreSQL") in `workflow-tests.yml`, which starts the same pinned `postgres:16-alpine` image the Compose
   bundle ships and runs `tests/product_store`, `tests/service/test_apply_versus_verify_race.py`
   and the write-lock integration tests in `tests/integration/test_apply_guard_integration.py`.
   The job sets both `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and `APPLY_GUARD_TEST_POSTGRESQL_DSN`

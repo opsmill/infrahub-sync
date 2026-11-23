@@ -64,8 +64,8 @@ All facts below were checked on branch `028-write-lock-holder` (from `fix/write-
 - **Correction, 2026-11-23**: The integration test
   `test_a_holder_of_another_account_is_named_correctly_or_not_known` showed that, on PostgreSQL 16 with
   `track_activities` on, a waiting session of another account that is not a superuser reads the holder's
-  `application_name` and names the holder correctly. The label is therefore readable by any account that can
-  connect to the Sync service's database, not only by the same account. A run ID is not a secret, and the label
+  `application_name` and names the holder correctly. The label may therefore be readable, under PostgreSQL's
+  `pg_stat_activity` rules, by any account that can connect to the Sync service's database, not only by the same account. A run ID is not a secret, and the label
   holds nothing else. A holder without a label shows `application_name` as an empty string, which the parser
   rejects, so the run is "not known".
 

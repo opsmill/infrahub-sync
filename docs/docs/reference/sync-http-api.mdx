@@ -1014,10 +1014,12 @@ is `null` or absent:
   load or transform failure names.
 - `operations_total` and `failed_operation_detail`: for a stopped apply, the number of
   operations in the plan, and the `action`, `kind` and `identity` of the failed operation.
-- `active_run_id`: for `write_guard_contended`, the ID of the Sync run whose database session
-  held the configuration's write guard when the wait ended. Sync reads it from that session and
-  keeps it only when its run records hold a run with that ID for the same configuration. It is
-  also set when that run's write had ended before the wait began but its worker still holds the
+- `active_run_id`: for `write_guard_contended`, the ID of the Sync run named by the label
+  (`application_name`) of the database session that held the configuration's write guard when
+  the wait ended. Sync keeps it only when its run records hold a run with that ID for the same
+  configuration. Any client that can connect to the database can set that label, so the value
+  names the run that the label names; it does not prove that this run's session held the guard.
+  It is also set when that run's write had ended before the wait began but its worker still holds the
   guard; the `cause` then says the write had ended, and the `next_action` says to stop or restart
   that worker.
   While the run is still writing, the `next_action` names `infrahub-sync runs show <run_id>`.
