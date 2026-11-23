@@ -84,9 +84,9 @@ Two facts about the Compose deployment shape the worker side:
   `SyncClient` and the `dev.smoke` task moved with this change.
 - A probe's own timeout must be longer than `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`; otherwise a slow
   component is reported as a probe timeout instead of as `down` in the body.
-- The recovery times are design targets (503 within 60 seconds after a worker stops, within
-  5 seconds after a component stops; 200 again within 15 or 30 seconds after recovery). They are
-  not measured in this record.
+- The design targets were 503 within 60 seconds after a worker stops, within 5 seconds after a
+  component stops, and 200 again within 15 or 30 seconds after recovery. The Compose deployment
+  guide lists the times measured on that deployment; all are within the targets.
 
 ## Alternatives considered
 

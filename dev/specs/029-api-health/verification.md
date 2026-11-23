@@ -133,3 +133,75 @@ Compose variables caused:
 - After the review fixes to ADR 0055 and the reference page, the changed tests were re-run with
   `-v` at 2026-11-23T23:25:52Z: 14 passed, and `tests/compose/test_documentation.py` 150 passed.
 - T051 (quickstart scenarios 1–9 and measured timings on the development stack) is not run.
+
+## T051: quickstart scenarios on an isolated Compose deployment (2026-11-23)
+
+The development stack on this machine belongs to another worktree, so the scenarios ran on the root `docker-compose.yml` under its own project (`sync029-qs`, API on port 8029), with an image built from this branch (`infrahub-sync:compose-test-029`). One PostgreSQL holds both databases, as in the development stack. The project and its volumes were removed afterwards. Results, as recorded by the run script:
+
+Deployment `sync029-qs` up at 2026-11-23T23:27:03Z
+
+### Quickstart run 2026-11-23T23:27:03Z (project sync029-qs, image infrahub-sync:compose-test-029)
+
+#### Scenario 1: all up
+- 200 with a live worker: 0.1 s — `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live]`
+#### Scenario 6: headers and private values
+- Cache-Control: `no-store`; private words found: none
+#### Scenario 8: /status removed, /api redirect
+- /api/status → 404; /api → 307 /api/health
+#### Scenario 7: 600 requests, 50 at a time
+- {200: 600} in 12.9 s
+#### Scenario 2: worker paused, then resumed
+- 503 after pause: 22.3 s — `503 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=0 items=[stale]`
+- sync-worker container while paused (after ≥35 s more): `paused/`
+- 200 after unpause: 1.1 s — `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live]`
+#### Scenario 3: worker restart leaves a stale record
+- 200 with a stale record: 29.7 s — `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live,stale]`
+#### Scenario 4: object-store stopped, then started
+- 503 with object_store down: 1.1 s — `503 database=up/none object_store=down/name_resolution_failed task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live,stale]`
+- 200 after object-store started: 1.1 s — `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live,stale]`
+#### Scenario 4: prefect-server stopped, then started
+- 503 with task_manager down: 1.6 s — `503 database=up/none object_store=up/none task_manager=down/name_resolution_failed task_manager_db=down/name_resolution_failed workers=unknown live=None items=[]`
+- 200 after prefect-server started: 2.6 s — `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live,stale]`
+#### Scenario 4: postgres stopped, then started
+- 503 with database down: 0.1 s — `503 database=down/name_resolution_failed object_store=up/none task_manager=up/none task_manager_db=down/unavailable workers=unknown live=None items=[]`
+- after 40 s more: `503 database=down/name_resolution_failed object_store=up/none task_manager=up/none task_manager_db=down/unavailable workers=unknown live=None items=[]`; sync-worker container `running/healthy`
+- 200 after postgres started: 8.5 s — `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live,stale]`
+#### Scenario 4b: postgres paused
+- 503 with database down (expect timeout): 4.0 s — `503 database=down/timeout object_store=up/none task_manager=up/none task_manager_db=down/timeout workers=unknown live=None items=[]`
+- 200 after postgres unpaused: 1.1 s — `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live,stale]`
+#### Scenario 5: minimum of two workers
+
+### Continued run 2026-11-23T23:30:41Z (sync-api already recreated with minimum 2; first `up --wait` failed once)
+
+#### Scenario 5: minimum of two workers
+- 503 with minimum 2: 0.1 s — `503 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live,stale]`
+- 200 with two live workers: 0.1 s — `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=2 items=[live,live,stale]`
+#### Scenario 2b: worker process stopped with SIGSTOP (US2)
+- SIGSTOP exit 2 sh: 1: pgrep: not found
+sh: 1: kill: Usage: kill [-s sigspec | -signum | -sigspec] [pid | job]... or
+kill -l [exitstatus]
+- container `running/healthy` after 151 s
+- /api/health then: `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live,stale,stale]`
+- SIGCONT exit 2
+- container `running/healthy` 0 s after SIGCONT
+- 200 after SIGCONT: 0.0 s — `200 database=up/none object_store=up/none task_manager=up/none task_manager_db=up/none workers=known live=1 items=[live,stale,stale]`
+#### Scenario 9: timeout setting out of range
+- sync-api `restarting/`; log names the variable: True
+
+Run ended 2026-11-23T23:34:17Z
+
+#### Scenario 2b: worker process stopped with SIGSTOP (US2), 2026-11-23T23:36:45Z
+- The image has no pgrep or kill; the signal was sent with `docker exec sync-worker python -c 'os.kill(6, SIGSTOP)'` (PID 6 is `python -m infrahub_sync.service.worker` under tini).
+- Container `unhealthy` after about 50 s; /api/health `unhealthy`, live_workers 0, items all `stale`.
+- After SIGCONT, container `healthy` after about 10 s.
+- A paused container (scenario 2) showed an empty health status in `docker compose ps` on this Docker Desktop, so pausing does not test US2 here; SIGSTOP does.
+
+After the review fixes (commits 0a99c3e2, b97c6acd) the image was rebuilt: `workers.items[].name` showed `infrahub-sync-service-<uuid>` names, `HEAD /api/health` answered 200 with `Cache-Control: no-store` and an empty body, and `sync-worker` was `healthy`.
+
+Differences from the spec, now in the deployment guide: a paused container shows no health status, because Docker does not run health checks in a paused container (a hung process, simulated with SIGSTOP, turns it `unhealthy` after about 50 s); with PostgreSQL stopped, `workers.state` is `unknown` at once instead of `stale` after 30 s, because Prefect cannot read the work pool.
+
+The first `docker compose up -d --wait sync-api` with `INFRAHUB_SYNC_HEALTH_MIN_WORKERS=2` failed once and succeeded when repeated.
+
+### The `compose` test suite
+
+`INFRAHUB_SYNC_COMPOSE_PROJECT_PREFIX=sync029 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test-029 uv run --extra testcontainers pytest -m compose tests/compose` (started 2026-11-23T23:06:39Z): 62 passed, 2 failed. Both failures were `configuration-name-in-use` (409): `test_a_plan_apply_and_separate_sync_run_through_the_replacement_worker` and `test_a_registered_plan_runs_through_the_deployed_worker` register `compose-suite-registered` in the session-wide deployment after another test registered it. Run alone, the two tests passed (2 passed). This branch does not change configuration registration.

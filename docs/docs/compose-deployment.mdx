@@ -1214,8 +1214,8 @@ category:
 
 In this deployment one PostgreSQL holds both the product database and the Prefect
 database. When `postgres` stops or is paused, `database` and `task_manager_db` are
-both `down`. After 30 seconds the workers also turn `stale`, because Prefect can no
-longer record their heartbeats, and `workers.state` can become `unknown`.
+both `down`, and `workers.state` is `unknown`, because Prefect cannot read the work
+pool from its database.
 
 `workers.items` lists each worker that sent a heartbeat in the last 24 hours:
 
@@ -1245,9 +1245,11 @@ The `sync-worker` container has its own health check. The worker writes a file o
 timer, every heartbeat interval (`PREFECT_WORKER_HEARTBEAT_SECONDS`, 10 seconds in
 this deployment), and the health check fails when the file is older than three
 intervals or 30 seconds, whichever is longer. The timer calls no other service, so a
-paused or hung worker process turns the container `unhealthy` in `docker compose ps`,
-and an outage of PostgreSQL or Prefect leaves it `healthy`. The health check runs every
-10 seconds and reports `unhealthy` after three failures in a row.
+hung worker process turns the container `unhealthy` in `docker compose ps`, and an
+outage of PostgreSQL or Prefect leaves it `healthy`. The health check runs every
+10 seconds and reports `unhealthy` after three failures in a row. Docker does not run
+health checks in a paused container, so `docker compose pause sync-worker` shows the
+container as paused, not `unhealthy`; `/api/health` still reports the worker `stale`.
 
 A worker that has been stopped outright turns `stale` the same way: the API still
 answers, submissions are still accepted, and they wait unclaimed until a worker
@@ -1255,18 +1257,22 @@ comes back. Start it again with `docker compose restart sync-api sync-worker`,
 then check `/api/health`. The replacement worker registers under a new Prefect
 name, and no durable record changes.
 
-The design targets for these answers, with the default heartbeat interval of 10
-seconds, are:
+These are the times measured on this deployment, with one worker, the default heartbeat
+interval of 10 seconds and the default check timeout of 3 seconds:
 
-- `503` within 60 seconds after a worker stops or hangs;
-- `503` within 5 seconds after PostgreSQL, the object store or the Prefect server
-  stops or hangs;
-- `200` again within 15 seconds after the object store or the Prefect server
-  recovers, and within 30 seconds after PostgreSQL or a worker recovers, because
-  the workers must send a heartbeat again.
+| Event | `/api/health` answer |
+| --- | --- |
+| The worker container is paused | `503` after 22 seconds, the worker `stale` |
+| The paused worker container is resumed | `200` after 1 second |
+| The worker process hangs | The `sync-worker` container `unhealthy` after 50 seconds |
+| The object store or the Prefect server stops | `503` within 2 seconds |
+| PostgreSQL stops | `503` at the next request |
+| PostgreSQL is paused | `503` after 4 seconds, with the error `timeout` |
+| The object store or the Prefect server starts again | `200` within 3 seconds |
+| PostgreSQL starts again | `200` after 9 seconds |
+| The worker container restarts | `200` once the new worker has sent its first heartbeat; the previous worker stays listed as `stale` |
 
-These are design targets, not measured values. A longer heartbeat interval lengthens
-the worker timings in proportion.
+A longer heartbeat interval lengthens the worker times in proportion.
 
 ## Logs
 
