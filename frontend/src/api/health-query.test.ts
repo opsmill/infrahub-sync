@@ -59,6 +59,14 @@ describe("healthQuery", () => {
     await expect(read()).rejects.toEqual(envelope);
   });
 
+  it("fails on a 503 whose report has malformed worker data", async () => {
+    answer(
+      503,
+      JSON.stringify({ ...report, workers: { ...report.workers, items: [{ name: 1 }] } })
+    );
+    await expect(read()).rejects.toBeInstanceOf(SyncApiUnavailable);
+  });
+
   it("fails on an answer that is neither a report nor an envelope", async () => {
     answer(502, "<html>Bad Gateway</html>");
     await expect(read()).rejects.toBeInstanceOf(SyncApiUnavailable);

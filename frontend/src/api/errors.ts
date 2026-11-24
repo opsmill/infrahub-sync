@@ -14,19 +14,40 @@ export function isEnvelope(value: unknown): value is ApiErrorBody {
   );
 }
 
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isWorker = (value: unknown): boolean =>
+  isObject(value) &&
+  typeof value.name === "string" &&
+  typeof value.state === "string" &&
+  typeof value.last_heartbeat === "string";
+
+const isWorkers = (value: unknown): boolean => {
+  if (!isObject(value)) return false;
+  if (value.state === "unknown") return true;
+  return (
+    value.state === "known" &&
+    typeof value.minimum === "number" &&
+    typeof value.live_workers === "number" &&
+    typeof value.queue_depth === "number" &&
+    Array.isArray(value.items) &&
+    value.items.every(isWorker)
+  );
+};
+
 /**
  * True for the body of `GET /health`, which the Sync API also sends with a 503 when a component is
- * down. Only the fields the page reads are checked.
+ * down. Only the fields the page reads are checked, so a malformed body counts as no answer
+ * instead of breaking the page.
  */
 export function isHealthReport(value: unknown): value is HealthReport {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "status" in value &&
-    "workers" in value &&
-    "timestamp" in value &&
-    typeof value.workers === "object" &&
-    value.workers !== null
+    isObject(value) &&
+    (value.status === "healthy" || value.status === "unhealthy") &&
+    Array.isArray(value.dependencies) &&
+    typeof value.timestamp === "string" &&
+    isWorkers(value.workers)
   );
 }
 
