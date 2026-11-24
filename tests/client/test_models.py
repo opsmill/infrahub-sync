@@ -23,6 +23,7 @@ from infrahub_sync.client.models import (
     EventPrimaryResource,
     EventRelatedResource,
     EventResource,
+    HealthResource,
     OrchestrationSummary,
     PackageCheckRequest,
     PublicRunResource,
@@ -898,3 +899,113 @@ def test_a_package_check_request_serializes_only_the_field_it_carries() -> None:
 def test_a_package_check_request_refuses_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         PackageCheckRequest(package={"format_version": 1}, reason="no reason field")  # ty: ignore[unknown-argument]
+
+
+_HEALTH_NOW = "2026-01-01T00:00:00Z"
+
+
+def _health_body(**extra: object) -> dict[str, object]:
+    return {
+        "status": "healthy",
+        "dependencies": [{"name": "database", "status": "up", "error": "none"}],
+        "workers": {
+            "state": "known",
+            "minimum": 1,
+            "live_workers": 1,
+            "queue_depth": 0,
+            "items": [{"name": "worker-1", "state": "live", "last_heartbeat": _HEALTH_NOW}],
+        },
+        "timestamp": _HEALTH_NOW,
+        **extra,
+    }
+
+
+def test_health_report_accepts_timestamps_with_a_timezone() -> None:
+    report = HealthResource.model_validate(_health_body())
+
+    assert report.timestamp.utcoffset() is not None
+    assert report.workers.items[0].last_heartbeat.utcoffset() is not None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(timestamp="2026-01-01T00:00:00"), id="naive-timestamp"),
+        pytest.param(
+            _health_body(
+                workers={
+                    "state": "known",
+                    "minimum": 1,
+                    "live_workers": 1,
+                    "queue_depth": 0,
+                    "items": [{"name": "worker-1", "state": "live", "last_heartbeat": "2026-01-01T00:00:00"}],
+                }
+            ),
+            id="naive-last-heartbeat",
+        ),
+    ],
+)
+def test_health_report_refuses_a_timestamp_without_a_timezone(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="health timestamps must include a timezone"):
+        HealthResource.model_validate(body)
+
+
+_DOWN_DATABASE = {"name": "database", "status": "down", "error": "timeout"}
+_UP_OBJECT_STORE = {"name": "object_store", "status": "up", "error": "none"}
+_UNKNOWN_WORKERS = {"state": "unknown", "minimum": 1, "live_workers": None, "queue_depth": None, "items": []}
+_TOO_FEW_WORKERS = {"state": "known", "minimum": 2, "live_workers": 1, "queue_depth": 0, "items": []}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(dependencies=[]), id="no-component"),
+        pytest.param(
+            _health_body(
+                dependencies=[
+                    {"name": "database", "status": "up", "error": "none"},
+                    {"name": "database", "status": "up", "error": "none"},
+                ]
+            ),
+            id="duplicate-component",
+        ),
+    ],
+)
+def test_health_report_refuses_an_empty_or_repeated_component_list(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="at least one component, each once"):
+        HealthResource.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(dependencies=[_DOWN_DATABASE]), id="healthy-with-a-component-down"),
+        pytest.param(_health_body(workers=_UNKNOWN_WORKERS), id="healthy-with-unknown-workers"),
+        pytest.param(_health_body(workers=_TOO_FEW_WORKERS), id="healthy-with-too-few-workers"),
+        pytest.param(_health_body(status="unhealthy"), id="unhealthy-with-everything-up"),
+    ],
+)
+def test_health_report_refuses_a_status_that_does_not_match_its_parts(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="healthy exactly when every component is up"):
+        HealthResource.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(status="unhealthy", dependencies=[_DOWN_DATABASE]), id="component-down"),
+        pytest.param(_health_body(status="unhealthy", workers=_UNKNOWN_WORKERS), id="unknown-workers"),
+        pytest.param(_health_body(status="unhealthy", workers=_TOO_FEW_WORKERS), id="too-few-workers"),
+    ],
+)
+def test_health_report_accepts_unhealthy_when_a_part_fails(body: dict[str, object]) -> None:
+    assert HealthResource.model_validate(body).status == "unhealthy"
+
+
+def test_health_report_accepts_any_number_and_order_of_components() -> None:
+    body = _health_body(dependencies=[_UP_OBJECT_STORE, {"name": "database", "status": "up", "error": "none"}])
+
+    assert [dependency.name for dependency in HealthResource.model_validate(body).dependencies] == [
+        "object_store",
+        "database",
+    ]

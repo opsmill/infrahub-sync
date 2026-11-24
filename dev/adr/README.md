@@ -128,7 +128,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
   out and deletes are kept.
 - [0043 — The Sync service serves the web interface at the root of its address and the Sync API under `/api`](0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md)
-  — **partly superseded by 0049** — why every Sync API route moved under `/api`, why the web
+  — **partly superseded by 0049, amended by 0055** — why every Sync API route moved under `/api`, why the web
   interface keeps a person's token for the browser tab, and why the CLI adds `/api` to
   `INFRAHUB_SYNC_API_URL`.
 - [0044 — The base install declares no Redis client, and no code imports the Redis store](0044-the-base-install-declares-no-redis-client.md)
@@ -169,6 +169,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why `POST /configs/validate` and `configs check` run the checks of a registered version on a
   package that is not registered, why the route requires an administrator, and why the service
   parses the file.
+- [0055 — `GET /api/health` replaces `GET /api/status`](0055-the-health-endpoint-replaces-status.md)
+  — why the health answer follows Infrahub's shape, why workers count through a minimum and a
+  stale record never fails it, why the database check reads only, and why the worker container
+  healthcheck reads a file that the worker's own timer writes.
 
 ## Related
 

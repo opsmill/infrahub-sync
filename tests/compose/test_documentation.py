@@ -150,7 +150,7 @@ def client_chains(source: str) -> list[tuple[tuple[str, bool], ...]]:
     """Return every attribute chain the example takes from a `SyncClient` binding.
 
     Each step is the attribute name and whether the example calls it, because
-    `get_status` and `get_status()` resolve to different things.
+    `get_health` and `get_health()` resolve to different things.
     """
     tree = ast.parse(source)
     bound = {
@@ -393,12 +393,44 @@ def test_the_page_selects_the_image_through_the_two_compose_settings() -> None:
     assert "INFRAHUB_SYNC_DOCKER_IMAGE" in image_section
 
 
-@pytest.mark.parametrize("state", ["ready", "busy", "no-live-worker"])
-def test_the_status_table_documents_every_worker_state(state: str) -> None:
-    """`/status` is the only readiness signal now that the wrapper's states are gone."""
+ERROR_CATEGORIES = (
+    "none",
+    "timeout",
+    "connection_refused",
+    "connection_closed",
+    "name_resolution_failed",
+    "unavailable",
+    "unknown_error",
+)
+DOCS_ROOT = REPO_ROOT / "docs" / "docs"
+
+
+@pytest.mark.parametrize("category", ERROR_CATEGORIES)
+def test_the_status_section_documents_every_error_category(category: str) -> None:
+    """An operator names the failed component's reason from the Compose page alone."""
+    rows = [line for line in section(page(), "Status").splitlines() if line.startswith("| ")]
+
+    assert any(row.startswith(f"| `{category}` |") for row in rows), category
+
+
+@pytest.mark.parametrize("state", ["live", "stale"])
+def test_the_status_section_documents_every_worker_state(state: str) -> None:
+    """`/api/health` lists each worker as `live` or `stale`."""
     rows = [line for line in section(page(), "Status").splitlines() if line.startswith("| ")]
 
     assert any(row.startswith(f"| `{state}` |") for row in rows), state
+
+
+def test_no_page_names_the_removed_status_route() -> None:
+    """`/api/status` was replaced by `/api/health`; only the release notes may name it."""
+    pages = [
+        path for path in sorted(DOCS_ROOT.rglob("*.md*")) if "release-notes" not in path.relative_to(DOCS_ROOT).parts
+    ]
+
+    naming = [str(path.relative_to(DOCS_ROOT)) for path in pages if "/api/status" in path.read_text(encoding="utf-8")]
+
+    assert pages
+    assert naming == []
 
 
 def test_the_quickstart_fetches_the_file_from_the_release_tag() -> None:

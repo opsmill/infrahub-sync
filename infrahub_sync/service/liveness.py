@@ -21,6 +21,7 @@ from .orchestration import (
     PoolStatus,
     ServiceOrchestration,
     normalized_pool_status,
+    worker_is_live,
 )
 
 RUN_ADMISSION_TTL_ENV = "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"
@@ -277,9 +278,5 @@ def _owner_is_fresh(worker_id: str | None, pool: PoolStatus, now: datetime) -> b
     for worker in pool.workers:
         if worker.worker_id != worker_id or worker.status != "online":
             continue
-        if worker.last_heartbeat is None or worker.heartbeat_interval_seconds is None:
-            return False
-        if worker.heartbeat_interval_seconds <= 0:
-            return False
-        return age(now, worker.last_heartbeat) <= max(3 * worker.heartbeat_interval_seconds, 30)
+        return worker_is_live(worker, now)
     return False

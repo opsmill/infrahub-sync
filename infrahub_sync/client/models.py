@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
 
 from pydantic import (
     BaseModel,
@@ -20,6 +20,9 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
@@ -118,7 +121,13 @@ _SCHEDULED_RUN_MESSAGE = "a scheduled run requires its schedule and its schedule
 _MANUAL_RUN_MESSAGE = "a manual run cannot name a schedule or a scheduled start time"
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
-_WORKER_STATUS_MESSAGE = "worker status is invalid"
+_HEALTH_ERROR_MESSAGE = "a component error must be none exactly when the component is up"
+_HEALTH_DEPENDENCIES_MESSAGE = "a health report must list at least one component, each once"
+_HEALTH_STATUS_MESSAGE = (
+    "a health report must be healthy exactly when every component is up and enough workers are live"
+)
+_HEALTH_TIME_MESSAGE = "health timestamps must include a timezone"
+_WORKERS_HEALTH_MESSAGE = "worker details must be present exactly when the worker state is known"
 _ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
 _ARTIFACT_OWNER_MESSAGE = "every artifact reference must belong to the product record's run ID"
 _EXECUTION_IDS_MESSAGE = "execution IDs must be unique within a product record"
@@ -638,42 +647,105 @@ class VersionResource(_ResourceModel):
     sdk_version: str | None = None
 
 
-class WorkerStatusResource(_ResourceModel):
-    """Report bounded worker availability details."""
+class DependencyHealthResource(_ResourceModel):
+    """Report whether one component of the Sync API answered its health check."""
 
-    state: Literal["ready", "busy", "no-live-worker", "unavailable"]
-    detail_available: bool
-    live_workers: int | None = Field(default=None, ge=0, strict=True)
-    queue_depth: int | None = Field(default=None, ge=0, strict=True)
-    observed_at: datetime | None
+    name: Literal["database", "object_store", "task_manager", "task_manager_db"]
+    status: Literal["up", "down"]
+    error: Literal[
+        "none",
+        "timeout",
+        "connection_refused",
+        "connection_closed",
+        "name_resolution_failed",
+        "unavailable",
+        "unknown_error",
+    ]
 
     @model_validator(mode="after")
-    def _require_status(self) -> WorkerStatusResource:
-        details = (self.live_workers, self.queue_depth, self.observed_at)
-        if not self.detail_available:
-            if self.state != "unavailable" or any(value is not None for value in details):
-                raise ValueError(_WORKER_STATUS_MESSAGE)
-            return self
-        if self.state == "unavailable" or any(value is None for value in details):
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        assert self.live_workers is not None
-        assert self.queue_depth is not None
-        if self.state == "no-live-worker" and self.live_workers != 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state in {"ready", "busy"} and self.live_workers == 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state == "ready" and self.queue_depth != 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state == "busy" and self.queue_depth == 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
+    def _require_error_for_down(self) -> DependencyHealthResource:
+        if (self.status == "up") != (self.error == "none"):
+            raise ValueError(_HEALTH_ERROR_MESSAGE)
         return self
 
 
-class ServiceStatusResource(_ResourceModel):
-    """Report service readiness and worker availability."""
+class WorkerHealthResource(_ResourceModel):
+    """Report one worker that sent a heartbeat within the last 24 hours."""
 
-    service: Literal["ready"]
-    worker: WorkerStatusResource
+    name: str
+    state: Literal["live", "stale"]
+    last_heartbeat: datetime
+
+    @field_validator("last_heartbeat")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _HEALTH_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+
+class WorkersHealthResource(_ResourceModel):
+    """Report the workers of the work pool, or that the work pool could not be read."""
+
+    state: Literal["known", "unknown"]
+    minimum: int = Field(ge=1, strict=True)
+    live_workers: int | None = Field(ge=0, strict=True)
+    queue_depth: int | None = Field(ge=0, strict=True)
+    items: list[WorkerHealthResource]
+
+    @model_validator(mode="after")
+    def _require_details_when_known(self) -> WorkersHealthResource:
+        if self.state == "unknown":
+            if self.live_workers is not None or self.queue_depth is not None or self.items:
+                raise ValueError(_WORKERS_HEALTH_MESSAGE)
+        elif self.live_workers is None or self.queue_depth is None:
+            raise ValueError(_WORKERS_HEALTH_MESSAGE)
+        return self
+
+
+def expected_health_status(
+    dependencies: Sequence[DependencyHealthResource], workers: WorkersHealthResource
+) -> Literal["healthy", "unhealthy"]:
+    """Return the status a health report must carry for these components and workers.
+
+    ``healthy`` exactly when every component is up, the work pool was read, and at least
+    ``minimum`` workers are live. The Sync API builds its report with this rule, and the client
+    refuses a report that breaks it.
+    """
+    if any(dependency.status != "up" for dependency in dependencies):
+        return "unhealthy"
+    if workers.state != "known" or workers.live_workers is None or workers.live_workers < workers.minimum:
+        return "unhealthy"
+    return "healthy"
+
+
+class HealthResource(_ResourceModel):
+    """Report the health of the Sync API's components and of its workers.
+
+    The model does not fix the number or the order of the components: it requires at least one,
+    each named once, and a ``status`` that matches the components and the workers.
+    """
+
+    status: Literal["healthy", "unhealthy"]
+    dependencies: list[DependencyHealthResource]
+    workers: WorkersHealthResource
+    timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _HEALTH_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+    @model_validator(mode="after")
+    def _require_consistent_report(self) -> HealthResource:
+        names = [dependency.name for dependency in self.dependencies]
+        if not names or len(set(names)) != len(names):
+            raise ValueError(_HEALTH_DEPENDENCIES_MESSAGE)
+        if self.status != expected_health_status(self.dependencies, self.workers):
+            raise ValueError(_HEALTH_STATUS_MESSAGE)
+        return self
 
 
 class PrincipalResource(_ResourceModel):

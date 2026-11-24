@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
+import structlog
 import uvicorn
 from prefect.client.orchestration import get_client
+from prefect.settings import get_current_settings
 
 from infrahub_sync.execution import collect_secret_values
 from infrahub_sync.product_store.accounts import DuplicateCredentialError
@@ -15,6 +18,15 @@ from .app import create_app
 from .auth import StoreAccountResolver, apply_admin_account
 from .config_routes import ConfigurationRoutes
 from .credentials import no_account_hash
+from .health import (
+    Check,
+    DependencyCheck,
+    HealthChecker,
+    database_check,
+    object_store_check,
+    task_manager_check,
+    task_manager_db_check,
+)
 from .liveness import LivenessPolicy, RunLivenessReconciler
 from .orchestration import (
     CancellationResult,
@@ -33,20 +45,25 @@ from .settings import (
     ADMIN_ACCOUNT_PASSWORD_ENV,
     ADMIN_ACCOUNT_TOKEN_ENV,
     AccountSettingsError,
+    HealthSettingsError,
     admin_account_settings,
+    health_check_timeout_seconds,
+    health_min_workers,
     session_idle_seconds,
     web_directory,
 )
 from .start_check import StartRefusedError, check_bootstrap_record
-from .storage import service_product_projection
+from .storage import S3_BUCKET_ENV, _database_url, _required_setting, service_product_projection
 from .trust_store import TrustStoreError, install_custom_ca_bundle
 from .web import create_site
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from fastapi import FastAPI
     from starlette.applications import Starlette
+
+logger = structlog.get_logger(__name__)
 
 # The write targets of a schedule that this build can run. A request for another write target
 # is refused with ``schedule-setting-not-available``.
@@ -97,6 +114,55 @@ class _ClientPerCallOrchestration:
             await PrefectOrchestration(client).create_scheduled_runs()
 
 
+class HealthSettingMissingError(Exception):
+    """A health check cannot run because a setting of its component is absent or refused."""
+
+    def __init__(self) -> None:
+        super().__init__("a setting of this component is absent or refused")
+
+
+def _missing_setting_check() -> Check:
+    async def check() -> None:  # noqa: RUF029 - the checker awaits every check.
+        raise HealthSettingMissingError
+
+    return check
+
+
+def health_checks(environ: Mapping[str, str], limit: int, prefect_api_url: str | None) -> list[DependencyCheck]:
+    """Build the four component checks from the settings the product store and Prefect use.
+
+    In a served process the product projection is built first from the same settings, and it
+    stops start-up when one is refused, so a refused setting reaches this function only when a
+    test built the API with a fake projection. Such a component then reports `down` with
+    `unknown_error` instead of adding a start-up failure; no message names a value.
+    """
+    names_missing: list[str] = []
+    try:
+        database = database_check(_database_url(environ), limit)
+    except ValueError:
+        names_missing.append("database")
+        database = _missing_setting_check()
+    try:
+        object_store = object_store_check(environ, _required_setting(environ, S3_BUCKET_ENV), limit)
+    except ValueError:
+        names_missing.append("object_store")
+        object_store = _missing_setting_check()
+    if prefect_api_url:
+        task_manager = task_manager_check(prefect_api_url, limit)
+        task_manager_db = task_manager_db_check(prefect_api_url, limit)
+    else:
+        names_missing.extend(("task_manager", "task_manager_db"))
+        task_manager = task_manager_db = _missing_setting_check()
+    for name in names_missing:
+        logger.warning("health check has no usable setting", component=name)
+    return [
+        DependencyCheck("database", database),
+        DependencyCheck("object_store", object_store),
+        DependencyCheck("task_manager", task_manager),
+        DependencyCheck("task_manager_db", task_manager_db),
+    ]
+
+
 def build_app(
     *,
     projection_factory: Any = service_product_projection,
@@ -128,9 +194,14 @@ def build_app(
             token of ``admin`` as an API token. The message names the variable.
         StartRefusedError: when the bootstrap record is missing or names another Sync version
             or work pool, or cannot be read.
+        HealthSettingsError: when ``INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`` or
+            ``INFRAHUB_SYNC_HEALTH_MIN_WORKERS`` holds a value that is not accepted; it is raised
+            before the bootstrap record is read. The message names the variable.
     """
     install_custom_ca_bundle()
     policy = LivenessPolicy.from_environment(worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10"))
+    health_timeout = health_check_timeout_seconds()
+    health_minimum = health_min_workers()
     # Validated before any dependency is built, so a bad address stops start-up with no side effect.
     prefect_ui_url = prefect_ui_url_from_environment()
     admin_account = admin_account_settings() if resolver_factory is None else None
@@ -165,6 +236,13 @@ def build_app(
         cancellation_recovery_seconds=policy.stall_threshold_seconds,
         prefect_ui_url=prefect_ui_url,
     )
+    # Built after the projection, which has already refused any bad database or S3 setting.
+    health_checker = HealthChecker(
+        checks=health_checks(os.environ, health_timeout, get_current_settings().api.url),
+        pool_reader=partial(orchestration.pool_status, work_pool),
+        minimum=health_minimum,
+        check_timeout=health_timeout,
+    )
     reconciler = RunLivenessReconciler(
         projection,
         orchestration,
@@ -178,7 +256,9 @@ def build_app(
         delivered_write_targets=DELIVERED_SCHEDULE_WRITE_TARGETS,
         secrets=resolver.secret_values,
     )
-    return app_factory(service, resolver, configuration_routes, reconciler, schedules=schedules)
+    return app_factory(
+        service, resolver, configuration_routes, reconciler, schedules=schedules, health_checker=health_checker
+    )
 
 
 def build_service(
@@ -218,7 +298,7 @@ def main() -> None:
     """Serve the Sync API and the web interface; Prefect workers and deployments are separate."""
     try:
         app = build_service()
-    except (TrustStoreError, AccountSettingsError, StartRefusedError) as error:
+    except (TrustStoreError, AccountSettingsError, HealthSettingsError, StartRefusedError) as error:
         raise SystemExit(str(error)) from None
     uvicorn.run(app, host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)
 

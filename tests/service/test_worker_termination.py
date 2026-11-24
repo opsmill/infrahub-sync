@@ -9,10 +9,12 @@ import subprocess  # noqa: S404 -- a separate process is the point: it receives 
 import sys
 import textwrap
 import time
+from pathlib import Path
 
 import pytest
 
 from infrahub_sync.service import worker
+from infrahub_sync.service.worker_alive import ALIVE_FILE_NAME
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM handlers are POSIX only")
 
@@ -77,8 +79,9 @@ def test_a_cancel_without_sigterm_still_propagates() -> None:
         asyncio.run(scenario())
 
 
-def test_main_runs_the_worker_inside_the_sigterm_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_runs_the_worker_inside_the_sigterm_handler(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     started: list[str] = []
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
 
     class _Worker:
         def __init__(self, **_settings: object) -> None:
@@ -95,6 +98,8 @@ def test_main_runs_the_worker_inside_the_sigterm_handler(monkeypatch: pytest.Mon
 
     assert worker.main(["--pool", "team-pool"], start_check=lambda _pool: None) == 0
     assert started == ["started"]
+    # The entrypoint runs the alive-file writer beside the worker (spec 029, US2).
+    assert (tmp_path / ALIVE_FILE_NAME).is_file()
 
 
 def test_a_process_stops_within_a_second_of_sigterm() -> None:
