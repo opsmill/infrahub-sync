@@ -128,12 +128,23 @@ no execution is replayed.
   The reconciler logs the warning "automatic resume submitted after a person took over" with the
   flow run. A resume can then run under a `person-took-over` row and does not count toward the
   limit.
-- The reconciler reads the position the resume starts after before it submits. After a restart
-  between the submission and the move, the next loop reads the position again, later than the
-  true start. The next row can then end as `no-progress` although the resume moved the
-  marker, which leaves the run for a person instead of resuming it.
-- When a scheduled run's resume ends before its flow run is recorded on the row (a restart
-  between the submission and the move), the schedule does not count that run.
+- The reconciler reads the position the resume starts after from the resume execution's own
+  saved marker, after the submission. While the resume has saved no marker, it reads the run's
+  highest marker, so a replayed submission records the position the resume started after.
+- When a scheduled run's resume ends before the move to `resuming` records its flow run (a
+  restart between the submission and the move), the move counts the run for its schedule with
+  the verdict of the resume's end, unless the resume was interrupted and its next row still
+  waits.
+- A refusal with a 5xx status leaves the row waiting, and the next loop tries again. The tries
+  have no time limit or count: while the service cannot serve the request, the row waits and
+  the reconciler logs one line for each loop.
+- The reconciler judges the check from the `verify` report that names the check's flow run
+  (`flow_run_id`), which the worker writes. The Sync API and the worker must be upgraded
+  together: a worker that predates this decision writes no `flow_run_id`, and every automatic
+  check then ends `check-failed`.
+- A destination that cannot read planned nodes produces a `verify` report with no
+  per-operation comparison, so the automatic check on that destination always ends
+  `check-failed`, and a person resumes the run.
 - The limit of 3 automatic resumes and the limit of 2,000 operations of the check are
   constants. No source confirms the limit of 3 yet.
 - Pre-release V3 databases are recreated, not migrated, for the new table, as ADR 0010 states.
