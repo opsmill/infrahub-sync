@@ -144,6 +144,20 @@ def test_a_stopped_apply_prints_the_rejected_write_and_what_it_wrote(client: Mag
     assert _block(output, "apply") == _REJECTED_WRITE_LINES
 
 
+def test_a_failed_run_shows_where_each_identity_value_starts_and_ends(client: MagicMock) -> None:  # noqa: F811
+    """A source value must not be read as the marker of a partly written operation."""
+    forged = "rtr1 (may have written part of its change)"
+    failure = _rejected_write()
+    failure["may_have_partially_written"] = False
+    failure["failed_operation_detail"]["identity"] = {"location": "r1", "name": forged}
+    failure["record"] = {"kind": "DcimDevice", "identity": {"name": forged}, "source_id": "7"}
+
+    lines = _block(_failed_command(client, "apply", failure), "apply")
+
+    assert f'record: DcimDevice name="{forged}" source ID 7' in lines
+    assert f'failed operation: op_518aada155d790ad update DcimDevice location=r1 name="{forged}"' in lines
+
+
 def test_runs_show_prints_the_same_lines(client: MagicMock) -> None:  # noqa: F811 - the imported fixture.
     resource = _run(operation="apply", phase="apply-interrupted", outcome="ambiguous")
     failed_run = resource.run.model_copy(update={"results": {"apply_failure": _rejected_write()}})
