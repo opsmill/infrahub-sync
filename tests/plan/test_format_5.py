@@ -301,6 +301,8 @@ def test_a_format_4_plan_is_still_approved_by_checksum(tmp_path: Path) -> None:
     from infrahub_sync.service import flow as service_flow
     from infrahub_sync.service.app import create_app
     from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+    from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+    from tests.helpers.stored_credentials import create_stored_credential_names
     from tests.service import test_approval
     from tests.service.accounts import seed_accounts
 
@@ -312,6 +314,8 @@ def test_a_format_4_plan_is_still_approved_by_checksum(tmp_path: Path) -> None:
 
     projection = local_product_projection((tmp_path / "service").resolve())
     resolver = seed_accounts(projection, {"owner": {"token": test_approval.OWNER_TOKEN}}).resolver
+    # The package of the approval tests names two stored credentials.
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(test_approval._registered_package())
     test_approval._stored_run(projection, version, publish=False)
     projection.publish_artifact(

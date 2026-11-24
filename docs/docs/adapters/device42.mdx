@@ -26,7 +26,7 @@ from Device42 to Infrahub. Writing data back into Device42 is not supported.
 
 The repository contains a mapping example: [`examples/device42_to_infrahub/config.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/device42_to_infrahub/config.yml). It is a `config.yml` file, not a package, and registration refuses it as it is. To use it, convert it as described in [Convert a config.yml file](../configuration-package.mdx#convert-a-configyml-file).
 
-The package declares the Device42 connection in `source.settings`. Credentials are `$credential` references:
+The package declares the Device42 connection in `source.settings`. The block names a stored credential that holds the Device42 username and password, because `auth_method` is `basic`:
 
 ```yaml
 format_version: 1
@@ -34,31 +34,24 @@ configuration:
   name: from-device42
   source:
     name: genericrestapi
+    credential: device42-account
     settings:
       url: "https://device42.example.com"
       api_endpoint: "/api/1.0"
       auth_method: "basic"
-      username:
-        $credential: device42-username
-      password:
-        $credential: device42-password
       response_key_pattern: "objects"
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "https://infrahub.example.com"
-      token:
-        $credential: infrahub-token
-credentials:
-  device42-username:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_DEVICE42_USERNAME
-  device42-password:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_DEVICE42_PASSWORD
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
-See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.
+An administrator creates both credentials before the package is registered. The first command asks for the Device42 password, the second for the Infrahub token, and neither echoes it:
+
+```bash
+infrahub-sync credentials create device42-account --username <Device42 username>
+infrahub-sync credentials create infrahub-token
+```
+
+See [Manage stored credentials](../guides/credentials.mdx) for the commands. See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.

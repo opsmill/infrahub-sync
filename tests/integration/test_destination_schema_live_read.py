@@ -33,12 +33,6 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(autouse=True)
-def _declared_credential(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Expose the exported token under the name the package's `env` reference resolves."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", INFRAHUB_API_TOKEN or "")
-
-
 def _live_package_data() -> dict[str, Any]:
     return {
         "format_version": 1,
@@ -47,13 +41,18 @@ def _live_package_data() -> dict[str, Any]:
             "source": {"name": "netbox", "settings": {"url": "https://demo.netbox.dev"}},
             "destination": {
                 "name": "infrahub",
-                "settings": {"url": INFRAHUB_ADDRESS, "token": {"$credential": "infrahub-token"}},
+                "credential": "infrahub-token",
+                "settings": {"url": INFRAHUB_ADDRESS},
             },
         },
-        "credentials": {
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
-        },
     }
+
+
+def _live_snapshot() -> Any:  # noqa: ANN401 - the snapshot of the accessor.
+    """Read the schema with the exported token, given as the code that holds a stored value gives it."""
+    package = parse_configuration_package(_live_package_data())
+    with capabilities_module.destination_token(INFRAHUB_API_TOKEN):
+        return capabilities_module._read_infrahub_destination_schema(package, "main")
 
 
 def test_the_live_accessor_returns_a_judgeable_snapshot() -> None:
@@ -63,9 +62,7 @@ def test_the_live_accessor_returns_a_judgeable_snapshot() -> None:
     change to either invalidates a saved plan — so a snapshot carrying only attributes and
     relationships would leave the plan guard comparing less than it claims to.
     """
-    package = parse_configuration_package(_live_package_data())
-
-    snapshot = capabilities_module._read_infrahub_destination_schema(package, "main")
+    snapshot = _live_snapshot()
 
     assert snapshot
     for entry in snapshot.values():
@@ -97,9 +94,7 @@ def test_the_live_accessor_returns_a_judgeable_snapshot() -> None:
 
 def test_the_live_snapshot_normalizes_into_the_closed_domain() -> None:
     """The property the guard depends on: a live read is consumable without coercion."""
-    package = parse_configuration_package(_live_package_data())
-
-    snapshot = capabilities_module._read_infrahub_destination_schema(package, "main")
+    snapshot = _live_snapshot()
     normalized = normalize_destination_schema(snapshot)
 
     assert set(normalized.kinds) == set(snapshot)

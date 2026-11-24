@@ -110,6 +110,8 @@ REASON_MAX_LENGTH = 512
 # The rule of a local account name (spec 022, research R8), which the Sync API and the client both
 # apply: no space, so a name differs from every placeholder and is safe in a URL path.
 ACCOUNT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$"
+# The name of a stored credential, as a package names it in ``credential:`` (spec 027).
+CREDENTIAL_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,62}$"
 _JSON_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
 _PACKAGE_CHECK_FIELDS_MESSAGE = "exactly one of package and document is required"
 _ARTIFACT_TIME_MESSAGE = "artifact-reference timestamps must include a timezone"
@@ -817,6 +819,21 @@ class ResumeResource(_ResourceModel):
         return checked
 
 
+class CredentialUsedResource(_ResourceModel):
+    """The stored credential that one stage of a run received for one block: its name and revision, never a value.
+
+    `stage` is `plan`, `verify`, `apply`, `sync` or `resume`, and `block` is `source` or
+    `destination`. Both are plain strings so the client still reads a value a newer server adds.
+    The name and the revision are the ones recorded when the stage received the values, so they
+    stay after the credential is changed or deleted.
+    """
+
+    stage: str
+    block: str
+    name: str
+    revision: int = Field(ge=1)
+
+
 class AutomaticResumeResource(_ResourceModel):
     """Sync's decision on resuming one interrupted write without a person (spec 030 contracts/http-api.md).
 
@@ -859,13 +876,16 @@ class RunResource(_ResourceModel):
     resuming the run's interrupted writes without a person, oldest first, and
     `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). For a run
     that no decision concerns, and for a Sync API that predates spec 030, `automatic_resumes` is
-    empty and `automatic_resume_count` is 0.
+    empty and `automatic_resume_count` is 0. `credentials_used` holds one entry for each block
+    whose stored credential values a stage execution received, oldest first; it is empty for a
+    run whose stages received none, and for a Sync API that predates spec 027.
     """
 
     run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
     apply_progress: ApplyProgressResource | None = None
     resumes: tuple[ResumeResource, ...] = ()
+    credentials_used: tuple[CredentialUsedResource, ...] = ()
     automatic_resumes: tuple[AutomaticResumeResource, ...] = ()
     automatic_resume_count: int = Field(default=0, ge=0)
 
@@ -947,6 +967,8 @@ class EventDetailsResource(_ResourceModel):
     # The earlier run whose branch or proposed change was replaced.
     replaced_run_id: str | None = None
     cause: str | None = None
+    # The revision of the stored credential an event names.
+    revision: int | None = Field(default=None, ge=1)
     # The settings whose stored value a change of a schedule altered; empty when every setting
     # the change sent already had its value. Only `infrahub_sync.schedule.changed` holds it.
     changes: tuple[ScheduleSettingChangeResource, ...] | None = None
@@ -1259,6 +1281,7 @@ FailureType = Literal[
     "record_load_failed",
     "transform_failed",
     "credential_missing",
+    "credential_unavailable",
     "verification_failed",
     "apply_refused",
     "left_out_review_required",
@@ -1280,6 +1303,10 @@ FailureType = Literal[
 
 The seven names from `destination_default_branch_not_main` to `proposed_change_close_failed` are
 the failures of the branch review operations of a scheduled run (spec 021, research R15).
+
+`credential_unavailable` is a stage that could not get the stored credential values of its run
+from the Sync API (spec 027, FR-019): the cause says which of the reasons applies.
+
 `write_guard_contended` is a write that did not start because another writer held the
 configuration's write guard for the whole wait (ADR 0010).
 """
@@ -1562,6 +1589,29 @@ class AccountResource(_ResourceModel):
     sign_in_refused_until: datetime | None = None
 
 
+class CredentialResource(_ResourceModel):
+    """What the Sync API shows of a stored credential: the names of its fields, never their values.
+
+    ``created_by`` and ``updated_by`` are account names, including ``Deleted account <short identifier>``.
+    """
+
+    name: str
+    description: str
+    fields: tuple[str, ...]
+    revision: int = Field(ge=1)
+    created_by: str
+    created_at: datetime
+    updated_by: str
+    updated_at: datetime
+
+
+class CredentialPage(_ResourceModel):
+    """One page of stored credentials sorted by name; ``next_offset`` is ``None`` on the last page."""
+
+    items: tuple[CredentialResource, ...]
+    next_offset: int | None = Field(default=None, ge=0)
+
+
 class DeletedAccountResource(_ResourceModel):
     """The answer of a deletion: what every record of the deleted account displays from now on."""
 
@@ -1677,6 +1727,18 @@ class ConfigErrorDetail(_ResourceModel):
     status: int
     family: str
     reason: str | None = None
+    # Set when a registration is refused for the stored credentials it names: one entry for each
+    # block whose credential does not exist or does not hold a field the block needs. Absent
+    # from every other error body.
+    details: dict[str, Any] | None = None
+
+    # No return annotation on purpose, as on `ErrorDetail`.
+    @model_serializer(mode="wrap")
+    def _omit_absent_details(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if self.details is None:
+            data.pop("details", None)
+        return data
 
 
 class ConfigErrorEnvelope(_ResourceModel):

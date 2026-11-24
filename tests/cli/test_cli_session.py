@@ -290,9 +290,10 @@ def test_the_printed_form_of_a_saved_session_holds_no_token() -> None:
 
 def test_the_cli_and_its_session_module_load_no_service_code() -> None:
     script = (
-        "import sys, infrahub_sync.cli, infrahub_sync.cli_session, infrahub_sync.cli_accounts\n"
+        "import sys, infrahub_sync.cli, infrahub_sync.cli_session, infrahub_sync.cli_accounts, "
+        "infrahub_sync.cli_credentials\n"
         "loaded = sorted(name for name in sys.modules if name.startswith(('infrahub_sync.service', "
-        "'infrahub_sync.product_store', 'fastapi', 'psycopg', 'uvicorn')))\n"
+        "'infrahub_sync.product_store', 'fastapi', 'psycopg', 'uvicorn', 'cryptography')))\n"
         "print(loaded)\n"
     )
 

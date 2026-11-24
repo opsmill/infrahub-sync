@@ -70,10 +70,10 @@ def smoke_package(infrahub_url: str, name: str | None = None) -> dict[str, Any]:
     """The declared package the smoke registers, as `POST /configs` accepts it.
 
     Both adapters are the bundled `infrahub` one, so the registered worker resolves them
-    through the installed loader with nothing generated and nothing on the filesystem. The
-    token is a credential *reference* — the worker resolves
-    `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` from its own environment, so no secret
-    value is ever posted or recorded.
+    through the installed loader with nothing generated and nothing on the filesystem. Each
+    block names the stored credential `infrahub-token`, which `dev.start` stores through the
+    Sync API. The Sync API releases its value to the worker for a run, so no secret value is
+    ever posted or recorded here.
 
     Without `name`, every call returns a package with a new unique name, so two calls give
     two packages for two configurations. Pass the same `name` to build a package that is a
@@ -85,15 +85,13 @@ def smoke_package(infrahub_url: str, name: str | None = None) -> dict[str, Any]:
             "name": name if name is not None else unique_config_name(),
             "source": {
                 "name": "infrahub",
-                "settings": {"url": infrahub_url, "branch": "main", "token": {"$credential": "infrahub-token"}},
+                "credential": "infrahub-token",
+                "settings": {"url": infrahub_url, "branch": "main"},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": infrahub_url,
-                    "branch": SMOKE_BRANCH,
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": "infrahub-token",
+                "settings": {"url": infrahub_url, "branch": SMOKE_BRANCH},
             },
             "schema_mapping": [
                 {
@@ -105,9 +103,6 @@ def smoke_package(infrahub_url: str, name: str | None = None) -> dict[str, Any]:
                     "fields": [{"name": name, "mapping": name} for name in SMOKE_FIELDS],
                 }
             ],
-        },
-        "credentials": {
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
         },
     }
 

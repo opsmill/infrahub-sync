@@ -5,13 +5,16 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
+from .conversion_authentication import V2_AUTHENTICATION_METHODS
 from .infrahub_lineage import validate_infrahub_lineage_settings
 from .models import _SETTING_NAME, ConfigurationPackage, ValidationFinding, is_renderable_setting_path
 
@@ -24,6 +27,7 @@ ConfigurationValidator = Callable[[ConfigurationPackage, AdapterRole], Sequence[
 # (name -> {"kind", "optional", "default_value", "unique", "read_only"}), and its relationships
 # (name -> {"peer", "cardinality", "optional", "kind", "read_only"}). Raises DestinationSchemaReadError
 # and nothing else for a read that fails; performs I/O only when called, never at import.
+# A destination that names a stored credential reads with the token of `destination_token`.
 DestinationSchemaAccessor = Callable[[ConfigurationPackage, str], Mapping[str, Any]]
 _SCHEMA_READ_REASON = re.compile(r"^[a-z]{1,32}$")
 _ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
@@ -191,16 +195,51 @@ def _validate_relative_rest_mapping_endpoints(
     return tuple(findings)
 
 
+class _NoDestinationToken(Enum):
+    """The state of `destination_token` outside every ``with`` block: no caller gave a token."""
+
+    NOT_GIVEN = "not-given"
+
+
+_DESTINATION_TOKEN: ContextVar[str | _NoDestinationToken | None] = ContextVar(
+    "infrahub_sync_destination_token", default=_NoDestinationToken.NOT_GIVEN
+)
+
+
+@contextmanager
+def destination_token(token: str | None) -> Iterator[None]:
+    """Give the destination reads inside the ``with`` block the token of the destination's stored credential.
+
+    A destination block that names a stored credential (``credential: <name>``) declares no
+    token, so the code that holds the value gives it here. On a worker, that is the value the
+    Sync API released to the run. In the Sync API, that is the value it decrypted inside the
+    request, which it returns nowhere (spec 027, FR-004). The token is read by the schema
+    accessor and the access accessor of the destination, and by nothing else.
+
+    ``None`` asks for a read without a token: the read then shows only whether the
+    destination answers. Outside every block, a read of a destination that names a stored
+    credential is refused with the reason ``credentials``, before any request.
+
+    The token applies to the current context only, so a read on another thread or task does
+    not receive it. A package that names no stored credential ignores it.
+    """
+    reset = _DESTINATION_TOKEN.set(token)
+    try:
+        yield
+    finally:
+        _DESTINATION_TOKEN.reset(reset)
+
+
 def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tuple[str, dict[str, Any]]:
     """Resolve the declared destination settings one schema read needs.
 
     Returns the declared url and the SDK configuration built from the declared settings,
-    refusing — as :class:`DestinationSchemaReadError` — a missing url and a declared token
-    credential that does not resolve.
+    refusing — as :class:`DestinationSchemaReadError` — a missing url, and a named stored
+    credential whose token no caller gave through :func:`destination_token`.
     """
     # Imported here, not at module load, for the same reason as the client imports below.
     # pylint: disable-next=import-outside-toplevel
-    from .credentials import CredentialConfigurationError, pin_infrahub_sdk_authority, resolve_reference
+    from .credentials import pin_infrahub_sdk_authority
 
     settings = package.configuration.destination.settings or {}
     url = settings.get("url")
@@ -213,15 +252,13 @@ def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tup
         "default_branch": branch,
         "default_branch_from_git": False,
     }
-    token = settings.get("token")
-    if isinstance(token, Mapping):
-        reference_name = token.get("$credential")
-        if isinstance(reference_name, str):
-            try:
-                sdk_config["api_token"] = resolve_reference(package, reference_name)
-            except CredentialConfigurationError as exc:
-                msg = f"destination token credential could not be resolved: {type(exc).__name__}"
-                raise DestinationSchemaReadError(msg, reason="credentials") from None
+    if package.configuration.destination.credential is not None:
+        given = _DESTINATION_TOKEN.get()
+        if isinstance(given, _NoDestinationToken):
+            msg = "the token of the destination's stored credential was not given to the read"
+            raise DestinationSchemaReadError(msg, reason="credentials")
+        if given is not None:
+            sdk_config["api_token"] = given
     verify_ssl = settings.get("verify_ssl")
     if verify_ssl is not None:
         sdk_config["tls_insecure"] = not verify_ssl
@@ -830,3 +867,83 @@ def get_adapter_capabilities(name: str) -> AdapterConfigurationCapabilities:
     except KeyError:
         msg = f"adapter {name!r} has no configuration capability declaration"
         raise UnknownAdapterCapabilitiesError(msg) from None
+
+
+CredentialField = Literal["password", "token", "username"]
+"""A field of a stored credential; the Sync API stores no other."""
+
+
+def _fills(settings: dict[str, CredentialField]) -> Mapping[str, CredentialField]:
+    """Freeze one setting-to-stored-field table."""
+    return MappingProxyType(settings)
+
+
+_TOKEN_FILLS_TOKEN = _fills({"token": "token"})
+_BASIC_FILLS_BASIC = _fills({"username": "username", "password": "password"})
+# Research R2: the adapters whose credential settings do not depend on an ``auth_method``.
+# IP Fabric and Slurpit hold a token under another setting name. Slurpit's ``token`` setting
+# is not filled: the adapter passes its settings to ``slurpit.api``, which takes ``api_key``
+# and has no ``token`` parameter.
+_FIXED_CREDENTIAL_FIELDS: Mapping[str, Mapping[str, CredentialField]] = MappingProxyType(
+    {
+        "aci": _BASIC_FILLS_BASIC,
+        "infrahub": _TOKEN_FILLS_TOKEN,
+        "ipfabricsync": _fills({"auth": "token"}),
+        "nautobot": _TOKEN_FILLS_TOKEN,
+        "netbox": _TOKEN_FILLS_TOKEN,
+        "slurpitsync": _fills({"api_key": "token"}),
+    }
+)
+
+
+class UnknownCredentialMethodError(ValueError):
+    """The block's ``auth_method`` is not one its adapter accepts; the message names the accepted values."""
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialFieldMap:
+    """Which stored credential field fills which setting of one source or destination block.
+
+    ``settings`` maps each setting to the stored field that fills it. It is empty when the
+    block's adapter and ``auth_method`` need no credential.
+    """
+
+    adapter_name: str
+    settings: Mapping[str, CredentialField]
+
+    @property
+    def fields(self) -> frozenset[CredentialField]:
+        """The stored fields a credential named by this block must hold."""
+        return frozenset(self.settings.values())
+
+    @property
+    def needs_credential(self) -> bool:
+        """Whether the block uses a credential at all."""
+        return bool(self.settings)
+
+
+def credential_field_map(adapter_name: str, settings: Mapping[str, Any]) -> CredentialFieldMap:
+    """Return the stored fields a block of ``adapter_name`` with these ``settings`` needs, and where they go.
+
+    An adapter with an ``auth_method`` setting needs the fields of that method, and of the
+    adapter's default method when the setting is absent; each field fills the setting of the
+    same name. The methods are the ones ``conversion_authentication`` records for v2, which the
+    bundled V3 adapters accept unchanged.
+
+    Raises:
+        UnknownAdapterCapabilitiesError: the adapter has no configuration capability declaration.
+        UnknownCredentialMethodError: ``auth_method`` is not a method the adapter accepts.
+    """
+    get_adapter_capabilities(adapter_name)
+    fixed = _FIXED_CREDENTIAL_FIELDS.get(adapter_name)
+    if fixed is not None:
+        return CredentialFieldMap(adapter_name, fixed)
+    methods = V2_AUTHENTICATION_METHODS.get(adapter_name)
+    if methods is None:
+        return CredentialFieldMap(adapter_name, _fills({}))
+    method = settings.get("auth_method", methods.default)
+    if not isinstance(method, str) or method not in methods.uses:
+        msg = f"auth_method of adapter {adapter_name!r} must be one of {', '.join(methods.uses)}"
+        raise UnknownCredentialMethodError(msg)
+    used = cast("tuple[CredentialField, ...]", methods.uses[method])
+    return CredentialFieldMap(adapter_name, _fills({setting: setting for setting in used}))

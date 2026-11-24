@@ -55,8 +55,8 @@ Prefect execution IDs for the same product run.
 1. **Submit.** The API reads the selected registered configuration version and binds the
    product run to its configuration ID, version and package checksum. It reserves the run
    before submitting the requested stage to Prefect, then stores the Prefect execution link.
-2. **Execute.** The worker claims that execution, reads the registered package and resolves
-   its credential references. For planning, it reads the destination schema and builds
+2. **Execute.** The worker claims that execution, reads the registered package and asks the
+   Sync API for the values of the stored credentials that the package names. For planning, it reads the destination schema and builds
    runtime models before loading the source and destination data.
 3. **Save the plan.** The engine compares the two datasets and records the proposed
    operations. The worker publishes an internal plan checkpoint and then the review
@@ -304,7 +304,7 @@ role only if it implements that role's operations.
 
 The worker resolves registered adapters from installed code and checks their declared
 capabilities. See [configuration foundation](configuration-foundation.md) for package
-validation and credential references, and [schema mapping](schema-mapping.md) for resource
+validation and stored credential names, and [schema mapping](schema-mapping.md) for resource
 and field comparisons.
 
 ### The sync engine

@@ -17,11 +17,24 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration import ConfigurationPackage
-from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection, ProductRun, local_product_projection
+from infrahub_sync.product_store import (
+    CredentialUse,
+    PrefectExecutionLink,
+    ProductProjection,
+    ProductRun,
+    local_product_projection,
+)
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.removed_credential_format import (
+    REMOVED_REFERENCE_NAME,
+    store_as_the_earlier_build,
+    store_in_removed_format,
+)
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
 from tests.service.schedule_fixtures import NoDeploymentSchedules
@@ -78,18 +91,19 @@ def _registered_package() -> ConfigurationPackage:
                 "name": "registered-inventory",
                 "source": {
                     "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                    "credential": SOURCE_CREDENTIAL,
+                    "settings": {"url": "https://netbox.example"},
                 },
                 "destination": {
                     "name": "infrahub",
-                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
+                    "credential": DESTINATION_CREDENTIAL,
+                    "settings": {"url": "https://infrahub.example"},
                 },
                 "order": [],
                 "schema_mapping": [],
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
@@ -109,6 +123,7 @@ def _api_fixture(tmp_path: Path) -> _Api:
         },
     ).resolver
     orchestration = _RecordingOrchestration()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
     return TestClient(create_app(service, resolver)), projection, orchestration, version
@@ -206,10 +221,85 @@ def test_approve_records_the_approval_and_returns_the_run_with_the_plan_summary(
     assert _outcomes(projection) == ["accepted"]
 
 
+def test_the_approve_answer_holds_the_credentials_that_the_plan_stage_received(api: _Api) -> None:
+    client, projection, _, version = api
+    _stored_run(projection, version)
+    credential = projection.lookup_stored_credential(SOURCE_CREDENTIAL)
+    assert credential is not None
+    projection.record_credential_uses(
+        [
+            CredentialUse(
+                run_id=RUN_ID,
+                flow_run_id="flow-run-of-the-plan",
+                stage="plan",
+                block="source",
+                credential_id=credential.credential_id,
+                credential_name=credential.name,
+                revision=1,
+                released_at=datetime(2026, 11, 10, 12, tzinfo=timezone.utc),
+            )
+        ]
+    )
+
+    response = _approve(client)
+
+    assert response.status_code == 200, response.json()["error"]["code"]
+    assert response.json()["credentials_used"] == [
+        {"stage": "plan", "block": "source", "name": SOURCE_CREDENTIAL, "revision": 1}
+    ]
+
+
+def test_a_version_stored_in_the_removed_credential_format_cannot_be_approved(api: _Api, tmp_path: Path) -> None:
+    """The apply that the approval precedes can never run, so the approval is refused and recorded (FR-021)."""
+    client, projection, _, version = api
+    _stored_run(projection, version)
+    store_in_removed_format(
+        tmp_path.resolve(), version.config_id, version.registry_version, _registered_package().declared_content()
+    )
+
+    response = _approve(client)
+
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert error["code"] == "credential-format-removed"
+    assert "register a new version" in error["message"]
+    assert REMOVED_REFERENCE_NAME not in response.text
+    assert _outcomes(projection) == ["refused-credential-format-removed"]
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    assert stored.approval is None
+
+
+def test_a_version_stored_with_an_empty_credentials_block_is_approved_and_applied_by_its_stored_checksum(
+    api: _Api, tmp_path: Path
+) -> None:
+    """The earlier build wrote an empty block into every version; its saved plan stays usable (overnight log A3)."""
+    client, projection, orchestration, version = api
+    checksum = store_as_the_earlier_build(tmp_path.resolve(), version.config_id, version.registry_version)
+    earlier = projection.lookup_configuration_version(version.config_id, version.registry_version).value
+    assert earlier is not None
+    assert earlier.package_checksum == checksum != version.package_checksum
+    _stored_run(projection, earlier)
+
+    approved = _approve(client)
+    applied = client.post(
+        f"/runs/{RUN_ID}/apply",
+        headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "apply-key-1"},
+        json={"expected_checksum": CHECKSUM, "reason": "apply the reviewed plan", "confirm_writes": True},
+    )
+
+    assert approved.status_code == 200, approved.text
+    assert _outcomes(projection) == ["accepted"]
+    assert applied.status_code in {200, 202}, applied.text
+    assert applied.json()["run"]["package_checksum"] == checksum
+    assert [submission["package_checksum"] for submission in orchestration.submissions] == [checksum]
+
+
 def test_an_approval_and_its_accepted_event_carry_one_clock_reading(tmp_path: Path) -> None:
     """An injected clock that advances on every read still stamps both records with one time."""
     projection = local_product_projection(tmp_path.resolve())
     resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     readings = iter(datetime(2026, 11, 11, 12, second, tzinfo=timezone.utc) for second in range(60))
     service = RunService(

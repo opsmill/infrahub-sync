@@ -197,14 +197,14 @@ def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: 
     with 409 `configuration-name-in-use` naming the configuration that has the name.
     """
     package = shipped_package()
-    # The credential references are what makes registration possible at all: a package
-    # carrying a literal token is refused before anything is persisted.
-    assert package["configuration"]["source"]["settings"]["token"] == {"$credential": "netbox-token"}
-    assert package["configuration"]["destination"]["settings"]["token"] == {"$credential": "infrahub-token"}
-    assert package["credentials"] == {
-        "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
-        "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
-    }
+    # The stored credential names are what makes registration possible at all: a package
+    # carrying a literal token is refused before anything is persisted. `dev.start` stores
+    # both credentials through the Sync API.
+    assert package["configuration"]["source"]["credential"] == "netbox-token"
+    assert package["configuration"]["destination"]["credential"] == "infrahub-token"
+    assert "token" not in package["configuration"]["source"]["settings"]
+    assert "token" not in package["configuration"]["destination"]["settings"]
+    assert "credentials" not in package
     named = _named(package)
     name = named["configuration"]["name"]
     package_file = tmp_path / "package.yml"

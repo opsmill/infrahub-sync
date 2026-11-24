@@ -1,1 +1,0 @@
-Run creation now refuses stored configuration versions with invalid environment credential identifiers before submitting work, with instructions to register a new version using the `INFRAHUB_SYNC_CREDENTIAL_` prefix followed by a name.

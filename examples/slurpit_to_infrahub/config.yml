@@ -2,27 +2,25 @@
 # from-slurpit — the same parsed configuration as package.yml, like every other V3
 # example (see examples/netbox_to_infrahub/config.yml for the same pattern): a test enforces
 # that this file and package.yml's `configuration` stay identical, so both name the same
-# $credential references. Register package.yml with `infrahub-sync configs register`; the
-# service worker resolves the $credential references below from its own environment when a
-# registered run starts. This file is kept only for comparison and is not a standalone legacy config:
-# the legacy config.yml discovery path does not resolve $credential references, so pointing it
-# at this file directly passes the reference itself, not a secret, to the Slurp'it SDK.
+# stored credentials. Register package.yml with `infrahub-sync configs register`; the Sync
+# API releases the value of each named credential to the worker when a registered run
+# starts. This file is kept only for comparison and is not a standalone legacy config:
+# the legacy config.yml discovery path does not read a stored credential, so pointing it
+# at this file directly gives the Slurp'it SDK no API key.
 
 name: from-slurpit
 
 source:
   name: slurpitsync
+  credential: slurpit-api-key
   settings:
     url: "https://<SLURPIT-ENDPOINT>"
-    api_key:
-      $credential: slurpit-api-key
 
 destination:
   name: infrahub
+  credential: infrahub-token
   settings:
     url: "http://localhost:8000"
-    token:
-      $credential: infrahub-token
 
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:

@@ -201,6 +201,201 @@ Deleting an account that is already deleted answers `404`, code `account-not-fou
 
 For the CLI commands that call these routes, see [Manage accounts](../guides/accounts.mdx).
 
+## Stored credentials
+
+An administrator stores the tokens and passwords of sources and destinations as stored
+credentials. A configuration package names one in each adapter block with `credential: <name>`.
+[Manage stored credentials](../guides/credentials.mdx) describes the CLI commands.
+
+A credential resource holds no value:
+
+```json
+{
+  "name": "netbox-lab",
+  "description": "NetBox lab, read-only token",
+  "fields": ["token"],
+  "revision": 3,
+  "created_by": "alice",
+  "created_at": "2026-11-20T10:00:00Z",
+  "updated_by": "bob",
+  "updated_at": "2026-11-21T09:00:00Z"
+}
+```
+
+`created_by` and `updated_by` are account names, as the Sync API returns them elsewhere.
+
+### Credential routes for accounts
+
+| Method and path | Who | Request and answer |
+| --- | --- | --- |
+| `GET /credentials` | every signed-in account | Query `offset` and `limit`. Returns `{"items": [...], "next_offset"}`, sorted by name. `next_offset` is `null` on the last page. |
+| `GET /credentials/{name}` | every signed-in account | Returns one credential. `404`, code `credential-not-found`, when no credential has the name. |
+| `POST /credentials` | administrator | Takes `{"name", "description"?, "username"?, "password"?, "token"?}`. Returns `201` and the credential at revision 1. |
+| `PUT /credentials/{name}/value` | administrator | Takes `{"username"?, "password"?, "token"?}`, the whole new set of fields. Returns the credential with its revision raised by one. |
+| `PATCH /credentials/{name}` | administrator | Takes `{"description"}`. Returns the credential with the same revision. |
+| `DELETE /credentials/{name}` | administrator | Takes no body. Returns `204` with no body. `404`, code `credential-not-found`, when no credential has the name. `409`, code `credential-in-use`, while something current names the credential. |
+
+- The four changing routes need an `Idempotency-Key` header. The stored answer of a repeated
+  request is the credential resource, which holds no value. A repeated deletion with the same key
+  answers `204` again.
+- The accepted sets of fields are `token`; `username` and `password`; `username` and `token`.
+  Each value is 1 to 4,096 characters with no control character. Another set or value answers
+  `422`, code `credential-fields-invalid`.
+- A second creation with the same name answers `409`, code `credential-exists`.
+- A caller that is not an administrator receives `403`, code `forbidden`, on the four changing
+  routes. The checks name the permission `manage-credentials`, which administrators hold.
+- A `422` answer never repeats the submitted body.
+- The Sync API does not start without `INFRAHUB_SYNC_ENCRYPTION_KEY`; see
+  [Start the API](#start-the-api).
+- No route changes the name of a credential.
+
+#### Deletion of a credential
+
+`DELETE /credentials/{name}` removes the credential and every revision of its value. It cannot
+be reversed.
+
+The route answers `409`, code `credential-in-use`, and deletes nothing while one of these names
+the credential:
+
+- the latest version of a configuration
+- a schedule that is not deleted, through the version that it pins
+
+`details` lists the configuration identifiers and the schedule names, each sorted:
+
+```json
+{
+  "error": {
+    "code": "credential-in-use",
+    "message": "…",
+    "status": 409,
+    "details": {"configurations": ["20261121T0727-1338af57"], "schedules": ["from-netbox-nightly"]}
+  }
+}
+```
+
+- An older version that names the credential does not block the deletion. A request that starts
+  a run of that version then answers `422`, code `credential-not-found`.
+- A run of an older version that started before the deletion receives no value:
+  `POST /worker/runs/{run_id}/credentials` answers `422`, code `credential-not-found`.
+- `credentials_used` of a run keeps the name and the revision of a deleted credential.
+- After a refused deletion, the same `Idempotency-Key` can be sent again once nothing names the
+  credential.
+- The deletion writes the audit event `infrahub_sync.credential.deleted` with the name and the
+  last revision.
+
+### Worker routes
+
+The `worker` account is defined by `INFRAHUB_SYNC_WORKER_TOKEN` on the Sync API. It can call
+only the two routes below; every other route answers `403`, code `forbidden`, to it. Both routes
+answer `403` to every other account, including an administrator. Neither takes an
+`Idempotency-Key` or writes a mutation receipt.
+
+`POST /worker/runs/{run_id}/credentials` returns the values that one stage of a run needs. The
+body is `{"flow_run_id": "<uuid>"}`. It is the only route whose answer holds a value:
+
+```json
+{
+  "run_id": "run_…",
+  "blocks": {
+    "destination": {"name": "infrahub-netbox-sync", "revision": 4, "fields": {"token": "…"}},
+    "source": {"name": "netbox-lab", "revision": 3, "fields": {"token": "…"}}
+  }
+}
+```
+
+- The answer holds only the blocks that the stage needs: an apply, a verify and a resume get
+  the destination only. A block that names no credential is absent.
+- Refusals, each with no value:
+    - `404 run-not-found`
+    - `409 execution-not-in-progress`: no claimed, unfinished execution has this run and flow run
+    - `422 credential-not-found`, `422 credential-field-missing`, `422 credential-method-unknown`
+    - `422 credential-format-removed`: the version of the run uses the removed `credentials`
+      block or `$credential` references
+    - `500 credential-undecryptable`: the stored value cannot be decrypted with the current key
+    - `503 credential-key-not-configured`
+- Each success records the name and the revision of each released credential for the stage,
+  and writes one audit event with no value.
+
+`POST /worker/schedules/{schedule_id}/proposed-change-states` returns the states of the earlier
+proposed changes of a schedule with branch review. A scheduled start needs these states before
+its run exists, so no value can be released for it. The Sync API reads Infrahub itself.
+
+- The route declares no body. The Sync API takes the destination address and the credential
+  name from the schedule's stored version, and the proposed-change identifiers from the
+  schedule's stored branch rows.
+- The answer holds only the state of each proposed change, by the run of its branch row:
+  `{"states": {"run_…": "approved", "run_…": "merged"}}`. A state is `open`, `approved`,
+  `merging`, `merged`, `closed`, `canceled`, or `missing` for a proposed change that Infrahub no
+  longer holds. A schedule with no such branch row gets `{"states": {}}`.
+- Refusals, each with no value:
+    - `404 schedule-not-found`
+    - `422 destination-credential-not-named`: the destination of the schedule's version names
+      no stored credential
+    - `422 credential-not-found`, `422 credential-field-missing`,
+      `422 credential-method-unknown`, `422 credential-format-removed`
+    - `424 proposed-change-read-failed`: Infrahub could not be read. `details.failure` is the
+      class of the failure, never the text of the error.
+    - `500 credential-undecryptable`, `500 configuration-version-unavailable`,
+      `503 credential-key-not-configured`
+- The route writes no audit event. Each read of Infrahub writes one log line with the schedule,
+  the credential name and its revision.
+
+### Credentials that a run used
+
+`GET /runs/{run_id}` returns `credentials_used`: one entry for each block whose stored
+credential values a stage of the run received. The Sync API writes an entry when the worker
+route releases the values to that stage.
+
+```json
+"credentials_used": [
+  {"stage": "plan", "block": "destination", "name": "infrahub-token", "revision": 3},
+  {"stage": "plan", "block": "source", "name": "netbox-token", "revision": 1},
+  {"stage": "apply", "block": "destination", "name": "infrahub-token", "revision": 4}
+]
+```
+
+- `stage` is `plan`, `verify`, `apply`, `sync` or `resume`. `block` is `source` or
+  `destination`.
+- `name` and `revision` are the ones recorded at the release. A later change of the value or a
+  deletion of the credential does not change an entry, so a plan and its apply can hold two
+  revisions of one credential.
+- The entries are ordered by the time of the release, oldest first. When a worker asks again
+  for the same stage execution, the new entry replaces the earlier one for that execution and
+  block.
+- The list is empty for a run whose stages received no stored credential: a run of a package
+  that names none, a run whose stage has not started, or a run of a version in the removed
+  format.
+- No entry holds a value.
+- Every other route that answers a run with its orchestration entries returns the same field.
+  `GET /runs` does not return the field.
+
+### Checks of stored credentials on the other routes
+
+- `POST /configs` and `POST /configs/{config_id}/versions` refuse a package with
+  `422 configs-validation` when a block names a credential that does not exist
+  (`credential-not-found`) or that lacks a field the block needs (`credential-field-missing`).
+  The `reason` field of the error names the code of the first such block. The `details` field
+  of the error holds `credentials`, a list with one entry for each such block: `block`
+  (`source` or `destination`), `name`, `code` and `fields`. `fields` lists every field the
+  block needs when the credential does not exist, and the fields the credential lacks
+  otherwise. No entry holds a value. An error with another reason has no `details` field.
+- The same two routes refuse a package that holds a `credentials` key, empty or not, or a
+  `$credential` reference, with the reason `credential-format-removed`. The message names
+  `credential: <name>`.
+- The routes that start a plan, a sync, a verify, an apply, an approval or a resume refuse with
+  `422` and the code `credential-not-found`, `credential-field-missing`,
+  `credential-method-unknown` or `credential-format-removed`, before they start anything.
+- `POST /schedules` and `POST /schedules/{schedule_id}/change` answer
+  `422 credential-format-removed` when the schedule names a version in the removed format.
+- `POST /schedules`, and a `POST /schedules/{schedule_id}/change` that pins another version,
+  answer `422 credential-not-found` when that version names a stored credential that does not
+  exist. The message lists the missing names and the command that creates each one. The error
+  has no `details` field. A change that keeps the version does not check its credentials.
+- A version stored by an earlier build with an empty `credentials` block is read as before and
+  keeps its checksum. A version stored with an entry in that block, or with a `$credential`
+  reference, is refused as above; the routes that read it, its runs, their results, artifacts
+  and logs still answer `200`.
+
 ## Deploy the service flow
 
 Set the work pool name, then apply the service deployment:
@@ -285,7 +480,12 @@ Configure the worker environment before it starts:
 | `INFRAHUB_SYNC_SERVICE_WORK_POOL` | Name of the existing Prefect pool used by the deployment, worker, and API reconciliation. It is never returned by the API. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | Optional decimal integer from 1 through 86400; defaults to 300. An unclaimed execution becomes abandoned at this inclusive deadline. |
 | `PREFECT_WORKER_QUERY_SECONDS` | Prefect worker polling interval. It must be a finite positive decimal no greater than 3600; the API derives its liveness thresholds from the same value. |
-| Adapter credential variables | The environment variables that the `credentials` entries of a registered package name, for example `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`. A registered run reads only these credential values from the worker environment; adapter URL variables such as `NETBOX_URL` do not replace the declared URLs. |
+| `INFRAHUB_SYNC_API_URL` | Address of the Sync API, for example `http://sync-api:8000`. An `http://` or `https://` address with a host and no user name or password. The worker asks this address for the stored credential values of each stage. |
+| `INFRAHUB_SYNC_WORKER_TOKEN` | Token of the `worker` account, the same value as on the Sync API. See [Stored credentials](#stored-credentials). |
+
+The worker reads no token, username or password of a source or a destination from its
+environment for a registered package, and adapter URL variables such as `NETBOX_URL` do not
+replace the declared URLs. No `INFRAHUB_SYNC_CREDENTIAL_*` variable is read.
 
 The service flow accepts exactly eight bounded parameters:
 
@@ -340,6 +540,12 @@ already has the tables.
 Also export `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, and optionally
 `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, as [Accounts and API tokens](#accounts-and-api-tokens)
 describes. Without the password, the API does not start.
+
+Also export `INFRAHUB_SYNC_ENCRYPTION_KEY` (32 bytes, base64-encoded) and
+`INFRAHUB_SYNC_WORKER_TOKEN`. Without either, the API does not start, and the message names the
+missing variable. A value that is not accepted stops the start in the same way: a key that is
+not base64 or not 32 bytes, or a worker token that breaks the rules of the `admin` token or
+equals it. No message holds a value.
 
 The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and any
 network access controls at your ingress boundary. Accounts and tokens authenticate the callers
@@ -717,7 +923,7 @@ returned unchanged.
 | `GET /configs/{config_id}` | Return one registered configuration's summary, with its `name` and `latest_version`. |
 | `GET /configs/{config_id}/versions` | List a configuration's version summaries, newest first, one page at a time. |
 | `GET /configs/{config_id}/versions/{registry_version}` | Return one registered version, with its package content. |
-| `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. With `branch=<name>`, also check the mapping, the import account's permissions and the named `source` and `owner` against that Infrahub branch, and check that a live worker holds a variable of each `$credential` name. It checks names only, not whether a credential's value is accepted. |
+| `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. With `branch=<name>`, also check the mapping, the import account's permissions and the named `source` and `owner` against that Infrahub branch; the Sync API reads Infrahub with the destination's stored credential. Every call also checks that each stored credential a block names exists and holds the fields the block needs. It does not check whether a source accepts a credential's value. |
 | `POST /configs/validate` | Check a package that is not registered, with the checks of the route above, and store nothing. Administrator only; a request refused because the token is not an administrator's is recorded in the audit history with the operation `check-config-package`. No other request to this route, accepted or refused, is recorded. The body holds exactly one of `package`, a JSON object, or `document`, the text of a YAML or JSON file, which the service parses. A `document` that is not a mapping with string keys, or that holds more than 1,000,000 values once its YAML aliases are expanded, gets 400 `request` with the reason `invalid_package`. Takes `branch` as the route above does. `offset`, `0` by default, and `limit`, `256` by default and at most `256`, select the page of findings that the response holds. The response holds `package_checksum`, `name`, `declared_content`, `destination_read`, `destination_schema_fingerprint` and one page of findings. A package that registration refuses gets the same refusal; a v2 `config.yml` gets 422 `validation` with the reason `v2_configuration`. |
 | `GET /runs` | List runs, newest first, one page at a time. Filter by `config_id`, `registry_version`, `trigger_type` and `schedule_id`. |
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
@@ -781,6 +987,12 @@ value up as a name. A name belongs to one configuration only.
 | `infrahub-sync events` | `GET /events` |
 | `infrahub-sync runs cancel RUN_ID` | `POST /runs/{run_id}/cancel` |
 | `infrahub-sync whoami` | `GET /me` |
+| `infrahub-sync credentials list` | `GET /credentials` |
+| `infrahub-sync credentials show NAME` | `GET /credentials/{name}` |
+| `infrahub-sync credentials create NAME` | `POST /credentials` |
+| `infrahub-sync credentials set NAME` | `PUT /credentials/{name}/value` |
+| `infrahub-sync credentials describe NAME TEXT` | `PATCH /credentials/{name}` |
+| `infrahub-sync credentials delete NAME` | `DELETE /credentials/{name}` |
 | `infrahub-sync runs list --trigger-type TYPE --schedule SCHEDULE` | `GET /runs?trigger_type=TYPE&schedule_id=SCHEDULE_ID` |
 | `infrahub-sync events --schedule SCHEDULE` | `GET /events?related=schedule:SCHEDULE_ID` |
 | `infrahub-sync schedules create` | `POST /schedules` |
@@ -1114,7 +1326,8 @@ is `null` or absent:
 - `failure_type`: one of these types, grouped by what failed:
     - a credential or the connection to a source or the destination: `system_unreachable`,
       `system_timeout`, `token_rejected`, `permission_missing`, `tls_certificate_rejected`,
-      `credential_missing`;
+      `credential_missing`, `credential_unavailable` (the stage could not get the stored credentials of
+      its run from the Sync API);
     - reading a source record: `record_load_failed`, `transform_failed`;
     - the destination's answer: `destination_rejected_write`, `destination_peer_missing`,
       `destination_peer_ambiguous`, `lineage_refused`, `destination_schema_unavailable`;
@@ -1723,6 +1936,7 @@ The schedule routes answer these refusals:
 | 422 | `schedule-left-out-not-applicable` | `write_when_left_out` is `true` and `write_target` is `branch-review`. |
 | 422 | `schedule-setting-not-available` | The write target is not turned on in this build. |
 | 422 | `secret-parameter-refused` | A request field holds a credential. |
+| 422 | `credential-not-found` | A create, or a change that pins another version, names a version whose adapter blocks name a stored credential that does not exist. The message lists the missing names and the command that creates each one. |
 | 422 | `request-invalid` | The body does not match the schema, names `name`, `config_id` or `owner` in a change, or changes nothing. |
 | 503 | `configuration-version-invalid` | The registered configuration version cannot be read. |
 | 503 | `orchestration-unavailable` | The schedule is stored, and either the task manager could not be reached or the product database failed while the Sync API matched the task manager to the stored schedules; the message says which. The task manager may then still hold the schedule as it was before the change, also after a deletion, and starts runs with what it holds. The next change to any schedule, or a restart of the Sync API, matches the task manager to the stored schedules again, which removes the task manager's schedule of a deleted schedule, and records the match. |

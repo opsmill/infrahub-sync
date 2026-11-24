@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # every account action and its refusals, for admin, worker and other accounts
 """What the account routes of the Sync API do: the requests, the answers and the actions.
 
 ``account_routes`` declares the routes and calls one function of this module for each. A function
@@ -42,6 +43,7 @@ from infrahub_sync.product_store.accounts import (
 )
 
 from . import credentials
+from .auth import is_worker_account
 from .events import (
     ACCOUNT_CREATED,
     ACCOUNT_DELETED,
@@ -65,6 +67,7 @@ from .settings import (
     ADMIN_ACCOUNT_TOKEN_ENV,
     PASSWORD_MAX_LENGTH,
     PASSWORD_MIN_LENGTH,
+    WORKER_TOKEN_ENV,
     session_idle_seconds,
 )
 
@@ -76,9 +79,9 @@ if TYPE_CHECKING:
     from .auth import Principal
 
 TOKEN_NAME_MAX_LENGTH = 64
-# The names no account can be created with, in any letter case: the account that the environment
+# The names no account can be created with, in any letter case: the accounts that the environment
 # manages, and the values a record holds when no account applies.
-RESERVED_ACCOUNT_NAMES = frozenset({"admin", "unknown", "unauthenticated"})
+RESERVED_ACCOUNT_NAMES = frozenset({"admin", "worker", "unknown", "unauthenticated"})
 # One message for a wrong name, a wrong password, a disabled account and a name that is refused
 # after repeated failures, so that an answer does not show which of them happened (FR-003).
 SIGN_IN_REFUSED_MESSAGE = "the account name or the password was not accepted"
@@ -111,6 +114,10 @@ _ENVIRONMENT_MANAGED_MESSAGE = (
 _ADMIN_STATE_MESSAGE = (
     "admin is always an active administrator that the environment defines; it cannot be disabled, deleted "
     "or have its level changed"
+)
+_WORKER_MESSAGE = (
+    "worker is the account of the workers that the environment defines; it has no password and cannot be "
+    "changed; change {variable} and restart the Sync API to replace its token"
 )
 
 _ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
@@ -454,7 +461,10 @@ def sign_in(service: RunService, body: SignInRequest, path: str) -> SessionResou
         raise sign_in_refused()
     account = service.accounts.projection.lookup_account_by_name(name)
     # The refusal is read again once the check can start, and is answered in the same way.
-    if not _check_password_of_name(service, name, account, body.password) or account is None:
+    checked = _check_password_of_name(service, name, account, body.password)
+    # The `worker` account is refused after the check, so its refusal costs one hash computation
+    # as every other refusal does; it has no password, and this holds even if one were stored.
+    if not checked or account is None or is_worker_account(account):
         # The record holds one reason for every cause, and no name.
         service.record_authentication_refusal(path, "sign-in-refused")
         raise sign_in_refused()
@@ -578,9 +588,18 @@ def _hash_new_password(password: str) -> str:
         raise ServiceAPIError(422, "password-invalid", PASSWORD_INVALID_MESSAGE) from None
 
 
-def _environment_managed(variable: str | None = None) -> ServiceAPIError:
-    """Return the refusal of a change to ``admin``: it names the variable of a password or a token change."""
-    message = _ADMIN_STATE_MESSAGE if variable is None else _ENVIRONMENT_MANAGED_MESSAGE.format(variable=variable)
+def _environment_managed(account: Account, variable: str | None = None) -> ServiceAPIError:
+    """Return the refusal of a change to an account that the environment manages.
+
+    For ``admin`` it names the variable of a password or a token change. For ``worker`` it names
+    the variable of its token, whatever the change.
+    """
+    if is_worker_account(account):
+        message = _WORKER_MESSAGE.format(variable=WORKER_TOKEN_ENV)
+    elif variable is None:
+        message = _ADMIN_STATE_MESSAGE
+    else:
+        message = _ENVIRONMENT_MANAGED_MESSAGE.format(variable=variable)
     return ServiceAPIError(409, "environment-managed-account", message)
 
 
@@ -697,7 +716,7 @@ def update_account(service: RunService, principal: Principal, name: str, body: U
     if body.disabled is None and body.administrator is None:
         raise ServiceAPIError(422, "request-invalid", NO_CHANGE_MESSAGE)
     if account.environment_managed:
-        raise _environment_managed()
+        raise _environment_managed(account)
     projection, now, secrets = service.accounts.projection, service.accounts.now(), service.accounts.secrets
     if body.disabled is not None and body.disabled != account.disabled:
         # The store writes each event in the transaction of its change.
@@ -745,7 +764,7 @@ def delete_account(service: RunService, principal: Principal, name: str, reason:
     _require_safe_reason(service, principal, operation, reason)
     account = _find_account(service, name)
     if account.environment_managed:
-        raise _environment_managed()
+        raise _environment_managed(account)
     now = service.accounts.now()
     event = account_event(
         ACCOUNT_DELETED,
@@ -790,7 +809,7 @@ def delete_account_token(
     _require_safe_reason(service, principal, operation, reason)
     account = _find_account(service, name)
     if account.environment_managed:
-        raise _environment_managed(ADMIN_ACCOUNT_TOKEN_ENV)
+        raise _environment_managed(account, ADMIN_ACCOUNT_TOKEN_ENV)
     _delete_token(service, principal, account, token_id, operation=operation, reason=reason)
 
 
@@ -825,7 +844,7 @@ def set_account_password(service: RunService, principal: Principal, name: str, b
     _require_safe_reason(service, principal, operation, body.reason)
     account = _find_account(service, name)
     if account.environment_managed:
-        raise _environment_managed(ADMIN_ACCOUNT_PASSWORD_ENV)
+        raise _environment_managed(account, ADMIN_ACCOUNT_PASSWORD_ENV)
     _require_new_password(body.new_password)
     password_hash = _hash_new_password(body.new_password)
     # One transaction: the hash, the end of every session, the end of the refusal and the event.
@@ -900,7 +919,7 @@ def change_own_password(service: RunService, principal: Principal, body: ChangeP
     account = _own_account(service, principal)
     name = account.name or ""
     if account.environment_managed:
-        raise _environment_managed(ADMIN_ACCOUNT_PASSWORD_ENV)
+        raise _environment_managed(account, ADMIN_ACCOUNT_PASSWORD_ENV)
     if sign_in_refused_until(service, name) is not None:
         raise _refuse_current_password(service, principal)
     _require_new_password(body.new_password)
@@ -953,7 +972,7 @@ def create_own_token(service: RunService, principal: Principal, body: CreateToke
         raise _refuse_secret_text(service, principal, operation, "name")
     account = _own_account(service, principal)
     if account.environment_managed:
-        raise _environment_managed(ADMIN_ACCOUNT_TOKEN_ENV)
+        raise _environment_managed(account, ADMIN_ACCOUNT_TOKEN_ENV)
     now = service.accounts.now()
     if body.expires_at is not None and body.expires_at <= now:
         raise ServiceAPIError(422, "expiry-in-the-past", EXPIRY_IN_THE_PAST_MESSAGE)
@@ -995,5 +1014,5 @@ def delete_own_token(service: RunService, principal: Principal, token_id: str, r
     _require_safe_reason(service, principal, operation, reason)
     account = _own_account(service, principal)
     if account.environment_managed:
-        raise _environment_managed(ADMIN_ACCOUNT_TOKEN_ENV)
+        raise _environment_managed(account, ADMIN_ACCOUNT_TOKEN_ENV)
     _delete_token(service, principal, account, token_id, operation=operation, reason=reason)

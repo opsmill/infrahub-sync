@@ -4,25 +4,26 @@ configuration:
 
   # Replace both URLs with addresses the Sync worker can reach. The worker uses
   # these declared URLs; it does not read CISCO_APIC_URL or INFRAHUB_ADDRESS.
-  # Credentials are references: the worker reads each value from the environment
-  # variable named in the credentials block at the end of this file.
+  # Each block names a stored credential. The Sync API stores the value and
+  # releases it to the worker for a run; this file holds no value. An
+  # administrator creates the two credentials before registering this package.
+  # The first command asks for the password of the APIC account, and the
+  # second for the Infrahub token, both without echo:
+  #   uv run infrahub-sync credentials create apic-account --username <apic-username>
+  #   uv run infrahub-sync credentials create infrahub-token
   source:
     name: aci
+    credential: apic-account
     settings:
       url: "https://apic.example.com"
-      username:
-        $credential: apic-username
-      password:
-        $credential: apic-password
       api_endpoint: "api"
       verify: true
 
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "http://localhost:8000"
-      token:
-        $credential: infrahub-token
 
   # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
   # Uncomment and edit only if you need to override the computed order:
@@ -128,14 +129,3 @@ configuration:
         - field: "l1PhysIf.attributes.id"
           operation: "contains"
           value: "eth"
-
-credentials:
-  apic-username:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME
-  apic-password:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN

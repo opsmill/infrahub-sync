@@ -172,6 +172,34 @@ Every account route that would change the password, the tokens, the level or the
 `environment_managed` account, or delete it, answers `409 environment-managed-account`. Unlock
 is accepted.
 
+### The `worker` account
+
+The workers call the Sync API as one account named `worker`, which the environment defines
+([ADR 0057](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)).
+It uses the account tables, with no new column: the pair "named `worker` and
+`environment_managed`" identifies it (`is_worker_account` in `auth.py`).
+
+- When `INFRAHUB_SYNC_WORKER_TOKEN` is set, `apply_worker_account` creates the row when it is
+  missing, as an active account that is not an administrator and has no password, and keeps one
+  environment-managed API token for it, the digest of the variable.
+- When the variable is not set or is empty, a Sync API process refuses to start:
+  `build_process_service` in `serve.py` calls `credential_settings`, and the message names the
+  variable. `main` and the `uvicorn --factory` start of `dev.api` both go through it. The
+  operator `docker-compose.yml` also requires the variable, so Compose stops before any
+  container starts without it.
+- `build_app` alone accepts an environment without the variable, for an application that a test
+  builds in its own process. It then applies no `worker` account and logs a warning.
+- `settings.py` applies the rules of the `admin` token to the worker token and stops the start
+  when the two tokens are equal. `serve.py` stops the start when an account named `worker`
+  exists that the environment does not manage, or when another account already has the worker
+  token as an API token.
+- `worker` is a reserved account name, so no request can create an account with it.
+- The account cannot sign in: the sign-in check refuses it after the password check.
+- `Principal.worker` is true for this account only. The dependency of every route outside the
+  worker routes answers `403 forbidden` to it, and `require_worker` in `app.py`, the dependency
+  of the routes under `/worker/`, answers `403 forbidden` to every other account.
+- The token of `worker` is in `resolver.secret_values`, with the token of `admin`.
+
 ### Account names in answers
 
 Records hold account identifiers. `AccountNameMiddleware` replaces them in every JSON answer of

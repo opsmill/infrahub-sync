@@ -12,9 +12,18 @@ import pytest
 pytest.importorskip("prefect")
 pytest.importorskip("fastapi")
 
+from infrahub_sync.configuration import ConfigurationPackage
+from infrahub_sync.configuration.removed_credential_format import STORED_VERSION_FORMAT_REMOVED_MESSAGE
 from infrahub_sync.service import serve
 from infrahub_sync.service.schedule_cadence import next_start
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
+from tests.helpers.removed_credential_format import (
+    REMOVED_IDENTIFIER,
+    REMOVED_REFERENCE_NAME,
+    store_as_the_earlier_build,
+    store_in_removed_format,
+)
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.schedule_fixtures import (
     ADMIN_TOKEN,
     OTHER_TOKEN,
@@ -139,6 +148,7 @@ def test_the_write_target_is_checked_before_the_configuration_is_read(  # noqa: 
 def test_the_served_api_delivers_both_write_targets(monkeypatch: pytest.MonkeyPatch) -> None:
     """A deployment runs schedules with branch review and schedules that write to the default branch."""
     received: dict[str, object] = {}
+    monkeypatch.delenv("INFRAHUB_SYNC_ENCRYPTION_KEY", raising=False)
 
     def schedule_service(*providers: object, **settings: object) -> str:
         received.update(settings, providers=len(providers))
@@ -160,8 +170,9 @@ def test_the_served_api_delivers_both_write_targets(monkeypatch: pytest.MonkeyPa
         "secrets": ("a-token",),
         "providers": 3,
     }
-    assert set(cast("dict[str, object]", built)) == {"schedules", "health_checker"}
+    assert set(cast("dict[str, object]", built)) == {"schedules", "health_checker", "credential_cipher"}
     assert cast("dict[str, object]", built)["schedules"] == "the schedule service"
+    assert cast("dict[str, object]", built)["credential_cipher"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +437,66 @@ def test_the_owner_changes_the_version_and_the_cadence(api: ScheduleApi) -> None
     assert body["schedule_id"] == created["schedule_id"]
     assert body["prefect_synced"] is True
     assert api.get(created["schedule_id"]) == body
+
+
+def _naming_a_deleted_credential(api: ScheduleApi, config_id: str, name: str) -> int:
+    """Add a version whose source names ``name``, then a later one that does not, and delete ``name``.
+
+    Returns the number of the version that names the deleted credential. The later version lets
+    the deletion pass: no latest version and no schedule names the credential.
+    """
+    create_stored_credential_names(api.projection, name)
+    data = package(name).model_dump()
+    data["configuration"]["source"]["credential"] = name
+    named, added = api.projection.add_configuration_version(config_id, ConfigurationPackage.model_validate(data))
+    assert added
+    _later, added = api.projection.add_configuration_version(config_id, package(f"{name}-later"))
+    assert added
+    api.projection.delete_stored_credential(name=name)
+    return named.registry_version
+
+
+def test_create_refuses_a_version_that_names_a_stored_credential_that_does_not_exist(api: ScheduleApi) -> None:
+    version = _naming_a_deleted_credential(api, api.config_id, "netbox-deleted")
+    key = "create-names-a-deleted-credential"
+
+    response = api.client.post("/schedules", json=api.body(registry_version=version), headers=headers(key=key))
+
+    assert response.status_code == 422, response.text
+    error = _error(response)
+    assert error["code"] == "credential-not-found"
+    assert "netbox-deleted" in error["message"]
+    assert "`infrahub-sync credentials create netbox-deleted`" in error["message"]
+    assert api.client.get("/schedules", headers=READ).json()["items"] == []
+    assert api.orchestration.calls == []
+    # The receipt of the refused request was released: the same request with the same key is
+    # refused again, not answered as a request in progress.
+    again = api.client.post("/schedules", json=api.body(registry_version=version), headers=headers(key=key))
+    assert again.status_code == 422, again.text
+    assert _error(again)["code"] == "credential-not-found"
+
+
+def test_a_change_to_a_version_that_names_a_stored_credential_that_does_not_exist_is_refused(
+    api: ScheduleApi,
+) -> None:
+    created = api.create()
+    version = _naming_a_deleted_credential(api, api.config_id, "netbox-deleted")
+    path = f"/schedules/{created['schedule_id']}/change"
+    key = "change-names-a-deleted-credential"
+
+    response = api.client.post(path, json={"registry_version": version}, headers=headers(key=key))
+
+    assert response.status_code == 422, response.text
+    error = _error(response)
+    assert error["code"] == "credential-not-found"
+    assert "netbox-deleted" in error["message"]
+    assert "`infrahub-sync credentials create netbox-deleted`" in error["message"]
+    assert api.get(created["schedule_id"])["registry_version"] == 1
+    # The receipt of the refused request was released: the same change with the same key is
+    # refused again, not answered as a request in progress.
+    again = api.client.post(path, json={"registry_version": version}, headers=headers(key=key))
+    assert again.status_code == 422, again.text
+    assert _error(again)["code"] == "credential-not-found"
 
 
 @pytest.mark.parametrize(
@@ -828,3 +899,51 @@ def test_a_schedule_that_writes_to_the_default_branch_is_created_when_approval_i
     run_id = api.scheduled_run(created["schedule_id"], datetime(2027, 1, 1, 1, tzinfo=timezone.utc))
     assert api.projection.lookup_schedule_branch(run_id).value is None
     assert api.get(created["schedule_id"])["open_branch"] is None
+
+
+# ----------------------------------------------------------------------
+# A version stored before the removal of the `credentials` block (spec 027, FR-021)
+# ----------------------------------------------------------------------
+
+
+def _format_removed(response: Response) -> None:
+    """Check the refusal that every route gives for a version stored in the removed format."""
+    assert response.status_code == 422, response.text
+    assert _error(response)["code"] == "credential-format-removed"
+    assert _error(response)["message"] == STORED_VERSION_FORMAT_REMOVED_MESSAGE
+    assert REMOVED_REFERENCE_NAME not in response.text
+    assert REMOVED_IDENTIFIER not in response.text
+
+
+def test_create_refuses_a_version_stored_in_the_removed_credential_format(api: ScheduleApi, tmp_path: Path) -> None:
+    store_in_removed_format(tmp_path.resolve(), api.config_id, 1, package().declared_content())
+
+    response = api.client.post("/schedules", json=api.body(), headers=headers())
+
+    _format_removed(response)
+    assert api.client.get("/schedules", headers=READ).json()["items"] == []
+    assert api.orchestration.calls == []
+    assert api.event_types()[-1] == "infrahub_sync.schedule.refused"
+
+
+def test_change_refuses_a_version_stored_in_the_removed_credential_format(api: ScheduleApi, tmp_path: Path) -> None:
+    created = api.create()
+    store_in_removed_format(tmp_path.resolve(), api.config_id, 1, package().declared_content())
+
+    response = api.post(created["schedule_id"], "change", cron="30 3 * * *", timezone="UTC")
+
+    _format_removed(response)
+    assert api.get(created["schedule_id"])["cron"] == created["cron"]
+
+
+def test_create_and_change_accept_a_version_stored_with_an_empty_credentials_block(
+    api: ScheduleApi, tmp_path: Path
+) -> None:
+    """The earlier build wrote an empty block into every version; such a version is still scheduled."""
+    store_as_the_earlier_build(tmp_path.resolve(), api.config_id, 1)
+
+    created = api.create()
+    changed = api.post(created["schedule_id"], "change", cron="30 3 * * *", timezone="UTC")
+
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["cron"] == "30 3 * * *"

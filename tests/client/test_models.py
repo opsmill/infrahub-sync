@@ -481,6 +481,7 @@ def test_the_details_of_an_event_declare_only_the_closed_keys() -> None:
         "proposed_change_id",
         "replaced_run_id",
         "cause",
+        "revision",
         "changes",
         # The events of an automatic resume (spec 030).
         "reason",

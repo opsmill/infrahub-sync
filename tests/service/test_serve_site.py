@@ -16,6 +16,7 @@ from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.service import serve
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV, WEB_DIRECTORY_ENV
+from tests.helpers.stored_credentials import set_process_start_settings
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -96,8 +97,8 @@ def test_build_service_passes_the_schedule_service_factory_to_the_api(
     replacement = object()
     captured: dict[str, object] = {}
 
-    def _app(*_args: object, schedules: object, health_checker: object) -> object:
-        del health_checker
+    def _app(*_args: object, schedules: object, credential_cipher: object, health_checker: object) -> object:
+        del credential_cipher, health_checker
         captured["schedules"] = schedules
         return captured
 
@@ -114,6 +115,7 @@ def test_build_service_passes_the_schedule_service_factory_to_the_api(
 
 
 def test_main_serves_the_outer_application(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_process_start_settings(monkeypatch)
     sentinel = object()
     monkeypatch.setattr(serve, "build_service", lambda: sentinel)
     captured: dict[str, object] = {}

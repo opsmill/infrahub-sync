@@ -23,12 +23,14 @@ from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection,
 from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
-from tests.configuration.validation_packages import package
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL, credential_package
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.plan.artifact_fixtures import manifest_path, operation_record, write_artifact
 from tests.service.execution_fixtures import (
     append_execution,
     bind_granting_guard,
     publish_authored_plan,
+    serve_released_credentials,
     stage_root,
     write_applied_sidecar,
 )
@@ -37,17 +39,20 @@ FLOW_RUN_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 SCHEMA_FINGERPRINT = "c" * 64
 INFRAHUB_CANARY = "registered-infrahub-canary"
+# What the host that computed the plan held: the values of both blocks.
+PLAN_TIME_VALUES = {"source": {"token": "registered-netbox-canary"}, "destination": {"token": INFRAHUB_CANARY}}
 
 
 def _registered_apply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, manifest_binding: tuple[str, int, str] | Literal["exact"] | None
 ) -> tuple[str, tuple[str, int, str], str, list[str]]:
     """Prepare one bound run and a manifest, with a destination-call sentinel."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "registered-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "registered-infrahub-canary")
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     projection = local_product_projection(tmp_path / "product")
-    registered = projection.create_configuration(package())
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    # The Sync API releases what the stage connects to: an apply gets the destination block only.
+    serve_released_credentials(monkeypatch, service_flow, PLAN_TIME_VALUES, projection=projection)
+    registered = projection.create_configuration(credential_package())
     binding = (registered.config_id, registered.registry_version, registered.package_checksum)
     if manifest_binding == "exact":
         manifest_binding = binding
@@ -75,7 +80,7 @@ def _registered_apply(
     stored = projection.lookup_configuration_version(binding[0], binding[1]).value
     assert stored is not None
     runtime = resolve_runtime_instance(
-        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
+        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path), released=PLAN_TIME_VALUES
     )
     runtime._configuration_binding = binding
     authored = tmp_path / "runs" / runtime.name / run_id
@@ -259,19 +264,18 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
 ) -> None:
     """AR10: applying a reviewed plan needs destination credentials only.
 
-    The plan was computed where the source was reachable; this apply runs on a host that
-    holds the destination credential and no source credential at all. `execute_run` is the real
+    The plan was computed where the source was reachable; this apply runs in a worker that
+    receives the destination credential and no source credential at all. `execute_run` is the real
     one, so the reviewed operation reaches the destination the apply seam constructed —
     and `import_adapter` refuses every side, which is what proves the source adapter is
     neither imported nor constructed on the way there.
     """
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "plan-host-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
 
     projection = local_product_projection(tmp_path / "product")
-    registered = projection.create_configuration(package())
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    registered = projection.create_configuration(credential_package())
     binding = (registered.config_id, registered.registry_version, registered.package_checksum)
     run_id = "registered-no-source-apply"
     projection.create_run(
@@ -298,7 +302,7 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
     assert stored is not None
     # The plan-time runtime: the host that computed the plan could resolve both sides.
     runtime = resolve_runtime_instance(
-        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
+        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path), released=PLAN_TIME_VALUES
     )
     runtime._configuration_binding = binding
     planned = PlannedOperation.model_validate(operation_record(identity={"name": "prod"}))
@@ -354,14 +358,15 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
             source=None,
         ),
     )
-    # The apply host itself: the destination credential resolves, the source one does not exist.
-    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN")
+    # The apply itself: the Sync API releases the destination credential, and no source value at all.
+    asked = serve_released_credentials(monkeypatch, service_flow, {"destination": {"token": INFRAHUB_CANARY}})
 
     result = service_sync_run.fn(
         run_id, "apply", *binding, expected_checksum=manifest.plan_checksum, confirm_writes=True
     )
 
     assert writes == [planned.operation_id]
+    assert asked == [run_id]
     assert isinstance(result, dict)
     assert result["outcome"] == "applied"
     assert result["summary"]["create"] == 1

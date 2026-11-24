@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AccountsRouteImport } from './routes/accounts'
+import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as ConfigsConfigIdRouteImport } from './routes/configs.$configId'
 import { Route as RunsIndexRouteImport } from './routes/runs.index'
@@ -32,6 +33,11 @@ const AccountRoute = AccountRouteImport.update({
 const AccountsRoute = AccountsRouteImport.update({
   id: '/accounts',
   path: '/accounts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CredentialsRoute = CredentialsRouteImport.update({
+  id: '/credentials',
+  path: '/credentials',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HealthRoute = HealthRouteImport.update({
@@ -69,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
+  '/credentials': typeof CredentialsRoute
   '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
@@ -80,6 +87,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
+  '/credentials': typeof CredentialsRoute
   '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
@@ -92,6 +100,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
+  '/credentials': typeof CredentialsRoute
   '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
@@ -105,6 +114,7 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/accounts'
+    | '/credentials'
     | '/health'
     | '/configs/$configId'
     | '/runs/$runId'
@@ -116,6 +126,7 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/accounts'
+    | '/credentials'
     | '/health'
     | '/configs/$configId'
     | '/runs/$runId'
@@ -127,6 +138,7 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/accounts'
+    | '/credentials'
     | '/health'
     | '/configs/$configId'
     | '/runs/$runId'
@@ -139,6 +151,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AccountRoute: typeof AccountRoute
   AccountsRoute: typeof AccountsRoute
+  CredentialsRoute: typeof CredentialsRoute
   HealthRoute: typeof HealthRoute
   ConfigsConfigIdRoute: typeof ConfigsConfigIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
@@ -168,6 +181,13 @@ declare module '@tanstack/react-router' {
       path: '/accounts'
       fullPath: '/accounts'
       preLoaderRoute: typeof AccountsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/credentials': {
+      id: '/credentials'
+      path: '/credentials'
+      fullPath: '/credentials'
+      preLoaderRoute: typeof CredentialsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/health': {
@@ -219,6 +239,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AccountRoute: AccountRoute,
   AccountsRoute: AccountsRoute,
+  CredentialsRoute: CredentialsRoute,
   HealthRoute: HealthRoute,
   ConfigsConfigIdRoute: ConfigsConfigIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,

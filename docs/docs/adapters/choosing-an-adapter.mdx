@@ -37,9 +37,9 @@ matching directory under [`examples/`](https://github.com/opsmill/infrahub-sync/
 
 For per-adapter details — connection parameters, supported models, known limitations — see the individual adapter pages in the Adapters sidebar.
 
-## Credentials on a Compose deployment
+## Credentials
 
-The Sync worker reads each credential from the environment variable that the package's `credentials` block names. Compose passes only variables the file names, so on a Compose deployment, and on the development stack in `development/docker-compose.yml`, the worker receives a fixed list of credential variables: a name for each credential setting of each bundled adapter, and every name the adapter pages and shipped examples use. Use those names as the `env` identifiers of a package for that deployment; a name that is not on the list does not reach the worker. [Credential variables the worker receives](../compose-deployment.mdx#credential-variables-the-worker-receives) lists them by adapter.
+A package holds no token and no password. Each source or destination block names a stored credential with `credential: <name>`, and an administrator creates that credential in the Sync API with `infrahub-sync credentials create <name>`. The worker gets the values from the Sync API for each run, so it needs no credential variable in its environment, on a Compose deployment and on the development stack alike. [Manage stored credentials](../guides/credentials.mdx) lists the fields that each adapter needs.
 
 IP Fabric and Slurp’it also need an SDK that the Sync image does not include; see their pages.
 

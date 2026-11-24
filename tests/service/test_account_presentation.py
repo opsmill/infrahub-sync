@@ -36,6 +36,7 @@ from infrahub_sync.service import service as service_module
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import StoreAccountResolver
 from infrahub_sync.service.config_routes import ConfigurationRoutes
+from infrahub_sync.service.credential_crypto import CredentialCipher
 from infrahub_sync.service.credentials import digest, new_api_token
 from infrahub_sync.service.events import RUN_AUTOMATIC_RESUME_STARTED, run_event
 from infrahub_sync.service.liveness import AUTOMATIC_RESUME_ACTOR
@@ -51,6 +52,7 @@ from infrahub_sync.service.resume_view import automatic_resume_view
 from infrahub_sync.service.schedules import ScheduleService
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.configuration.validation_packages import package_data
+from tests.helpers.stored_credentials import TEST_ENCRYPTION_KEY
 from tests.service.health_fixtures import fake_health_checker
 from tests.service.schedule_fixtures import FakeOrchestration
 from tests.service.test_approval import _RecordingOrchestration
@@ -240,6 +242,7 @@ def _api_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Api:
         resolver,
         ConfigurationRoutes(product_projection=store),
         schedules=schedules,
+        credential_cipher=CredentialCipher(TEST_ENCRYPTION_KEY),
         # Its answer lists workers, so a health answer is proven to make no account read.
         health_checker=fake_health_checker(),
     )
@@ -430,6 +433,26 @@ def _schedule_answers(api: _Api) -> list[Response]:
     ]
 
 
+def _credential_answers(api: _Api) -> list[Response]:
+    """Return the answers of a credential that the administrator created and changed."""
+    created = api.client.post(
+        "/credentials",
+        headers={**api.administrator_headers, "Idempotency-Key": "credential-1"},
+        json={"name": "netbox-lab", "token": "presentation-token-value"},
+    )
+    changed = api.client.put(
+        "/credentials/netbox-lab/value",
+        headers={**api.administrator_headers, "Idempotency-Key": "credential-2"},
+        json={"token": "presentation-token-value-2"},
+    )
+    return [
+        created,
+        changed,
+        api.client.get("/credentials/netbox-lab", headers=api.owner_headers),
+        api.client.get("/credentials", headers=api.owner_headers),
+    ]
+
+
 # One entry per response model that declares an account field: the routes that answer with it.
 _ANSWERS: dict[str, Callable[[_Api], list[Response]]] = {
     "PublicRunResource.actor": _run_answers,
@@ -446,12 +469,14 @@ _ANSWERS: dict[str, Callable[[_Api], list[Response]]] = {
     "ScheduleResource.left_out_set_by": _schedule_answers,
     # The copy of `ScheduleResource` that the service emits.
     "EmittedScheduleResource.left_out_set_by": _schedule_answers,
+    "CredentialResource.created_by": _credential_answers,
+    "CredentialResource.updated_by": _credential_answers,
 }
 # Fields whose key is an account field of the presentation but whose value is not an account.
 _NOT_ACCOUNTS = frozenset(
     {
-        # A node of the destination, by kind and name.
-        "PlanLineageResource.owner",
+        "PlanLineageResource.owner",  # A node of the destination, by kind and name.
+        "PlanLastChangeResource.updated_by",  # An account of Infrahub, as an object, not an account of Sync.
         # Always the reserved actor of the automatic resume, which
         # `test_a_run_answer_names_the_actor_of_each_automatic_resume_record` covers.
         "AutomaticResumeResource.actor",

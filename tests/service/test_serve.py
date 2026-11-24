@@ -16,11 +16,14 @@ from infrahub_sync.service.health import DEPENDENCY_NAMES, Check, HealthChecker
 from infrahub_sync.service.serve import HealthSettingMissingError, health_checks
 from infrahub_sync.service.settings import (
     ADMIN_ACCOUNT_PASSWORD_ENV,
+    ENCRYPTION_KEY_ENV,
     HEALTH_CHECK_TIMEOUT_ENV,
     HEALTH_MIN_WORKERS_ENV,
+    WORKER_TOKEN_ENV,
     HealthSettingsError,
 )
 from infrahub_sync.service.storage import DATABASE_URL_ENV, S3_BUCKET_ENV, S3_ENDPOINT_ENV
+from tests.helpers.stored_credentials import TEST_ENCRYPTION_KEY_BASE64
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -52,6 +55,9 @@ def test_a_bad_health_setting_stops_build_app_before_the_start_check_and_the_pro
 
 def test_main_turns_a_bad_health_setting_into_an_exit_that_names_the_variable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(HEALTH_CHECK_TIMEOUT_ENV, "-7")
+    # A Sync API process refuses to start without the stored credential settings (spec 027).
+    monkeypatch.setenv(ENCRYPTION_KEY_ENV, TEST_ENCRYPTION_KEY_BASE64)
+    monkeypatch.setenv(WORKER_TOKEN_ENV, "worker-token-of-the-serve-test-01")
     monkeypatch.setattr(serve.uvicorn, "run", lambda *_args, **_kwargs: pytest.fail("the server started"))
 
     with pytest.raises(SystemExit) as stopped:

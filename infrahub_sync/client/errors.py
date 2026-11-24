@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 
 class SyncClientError(Exception):
     """Base class for every client-owned failure."""
@@ -86,6 +88,8 @@ class APIError(SyncClientError):
         run_id: str | None = None,
         mutation_id: str | None = None,
         left_out: int | None = None,
+        configurations: tuple[str, ...] | None = None,
+        schedules: tuple[str, ...] | None = None,
         details: dict[str, object] | None = None,
     ) -> None:
         self.status = status
@@ -94,10 +98,31 @@ class APIError(SyncClientError):
         self.mutation_id = mutation_id
         # Set on a `left-out-confirmation-required` refusal: the count the plan leaves out.
         self.left_out = left_out
+        # Set on a `409 credential-in-use` refusal only: the identifiers of the configurations whose
+        # latest version names the credential, and the names of the schedules that are not deleted
+        # and pin a version that names it. The message text of the answer is not kept.
+        self.configurations = configurations
+        self.schedules = schedules
         # The structured context of a refusal, such as the configuration that already has the
         # name of a package on `configuration-name-in-use`. Absent from most refusals.
         self.details = details
         super().__init__("the Sync API refused the request")
+
+
+@dataclass(frozen=True, slots=True)
+class RefusedCredential:
+    """One stored credential that a refused registration names, with no value.
+
+    ``block`` is ``source`` or ``destination``. ``code`` says what is wrong:
+    ``credential-not-found``, ``credential-field-missing`` or ``credential-method-unknown``.
+    ``fields`` are the fields to supply: every field the block needs when the credential does
+    not exist, and the fields it does not hold otherwise.
+    """
+
+    block: str
+    name: str
+    code: str
+    fields: tuple[str, ...]
 
 
 class ConfigsAPIError(APIError):
@@ -111,9 +136,12 @@ class ConfigsAPIError(APIError):
         reason: str | None = None,
         *,
         mutation_id: str | None = None,
+        credentials: tuple[RefusedCredential, ...] = (),
     ) -> None:
         self.family = family
         self.reason = reason
+        # Set on a registration refused for the stored credentials it names; empty otherwise.
+        self.credentials = credentials
         super().__init__(status, code, mutation_id=mutation_id)
 
 

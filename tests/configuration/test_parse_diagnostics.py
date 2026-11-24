@@ -23,20 +23,20 @@ _REJECTED_CANARY = "rejected-secret-canary"
 _DELETE = object()
 
 
-def _package_data() -> dict[str, Any]:
+def _credential_package_data() -> dict[str, Any]:
+    """Return a valid package whose blocks each name a stored credential."""
     return {
         "format_version": 1,
         "configuration": {
             "name": "from-netbox",
-            "source": {"name": "netbox", "settings": {}},
-            "destination": {"name": "infrahub", "settings": {}},
+            "source": {"name": "netbox", "credential": "netbox-token", "settings": {}},
+            "destination": {"name": "infrahub", "credential": "infrahub-token", "settings": {}},
             "order": [],
             "schema_mapping": [],
             "diffsync_flags": [],
             "incremental": None,
         },
         "package_metadata": {"adapter_api_version": 1},
-        "credentials": {"valid-name": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
     }
 
 
@@ -67,7 +67,7 @@ def _parse_with_errors(
         return errors
 
     monkeypatch.setattr(ValidationError, "errors", injected_errors)
-    parse_data = data if data is not None else _package_data()
+    parse_data = data if data is not None else _credential_package_data()
     del parse_data["configuration"]["name"]
     return _parse_failure(parse_data)
 
@@ -108,21 +108,21 @@ def _set_path(data: dict[str, Any], path: tuple[str, ...], value: object) -> Non
             id="custom-extra",
         ),
         pytest.param(
-            ("credentials", "valid-name", "provider"),
+            ("configuration", "source", "credential"),
             "ENV!",
-            "/credentials/valid-name/provider: does not match required pattern",
+            "/configuration/source/credential: does not match required pattern",
             id="pattern",
         ),
         pytest.param(
-            ("credentials", "valid-name", "identifier"),
-            "",
-            "/credentials/valid-name/identifier: value is too short",
+            ("omissions",),
+            [{"kind": "DcimDevice", "reason": ""}],
+            "/omissions/0/reason: value is too short",
             id="short-string",
         ),
         pytest.param(
-            ("credentials", "valid-name", "identifier"),
-            _REJECTED_CANARY * 30,
-            "/credentials/valid-name/identifier: value is too long",
+            ("omissions",),
+            [{"kind": "DcimDevice", "reason": _REJECTED_CANARY * 30}],
+            "/omissions/0/reason: value is too long",
             id="long-string",
         ),
         pytest.param(
@@ -154,7 +154,7 @@ def _set_path(data: dict[str, Any], path: tuple[str, ...], value: object) -> Non
 def test_public_parse_maps_named_pydantic_families_without_values(
     path: tuple[str, ...], value: object, expected: str
 ) -> None:
-    data = _package_data()
+    data = _credential_package_data()
     _set_path(data, path, value)
 
     message = _parse_failure(data)
@@ -163,24 +163,9 @@ def test_public_parse_maps_named_pydantic_families_without_values(
     assert _REJECTED_CANARY not in message
 
 
-def test_public_parse_reports_invalid_credential_name_with_bad_children() -> None:
-    data = _package_data()
-    data["credentials"] = {
-        "bad/name": {"provider": "ENV!", "identifier": ""},
-    }
-
-    message = _parse_failure(data)
-
-    assert message == _PREFIX + (
-        "/credentials/bad~1name: invalid credential reference name; "
-        "/credentials/bad~1name/identifier: value is too short; "
-        "/credentials/bad~1name/provider: does not match required pattern"
-    )
-
-
-def test_direct_model_caller_context_cannot_disable_credential_key_validation() -> None:
-    data = _package_data()
-    data["credentials"] = {"bad/name": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}}
+def test_direct_model_caller_context_cannot_disable_credential_name_validation() -> None:
+    data = _credential_package_data()
+    data["configuration"]["source"]["credential"] = "bad/name"
 
     with pytest.raises(ValidationError):
         ConfigurationPackage.model_validate(
@@ -189,88 +174,33 @@ def test_direct_model_caller_context_cannot_disable_credential_key_validation() 
         )
 
 
-def test_direct_model_reports_credential_key_and_child_errors_together() -> None:
-    data = _package_data()
-    data["credentials"] = {"bad/name": {"provider": "ENV!", "identifier": ""}}
-
-    with pytest.raises(ValidationError) as caught:
-        ConfigurationPackage.model_validate(data)
-
-    failures = {
-        (tuple(error["loc"]), error["type"])
-        for error in caught.value.errors(include_input=False, include_context=False, include_url=False)
-    }
-    assert failures == {
-        (("credentials", "bad/name", "[key]"), "string_pattern_mismatch"),
-        (("credentials", "bad/name", "provider"), "string_pattern_mismatch"),
-        (("credentials", "bad/name", "identifier"), "string_too_short"),
-    }
-
-
-@pytest.mark.parametrize("names", [("z/name", "a~name"), ("a~name", "z/name")], ids=["forward", "reverse"])
-def test_public_parse_orders_independent_credential_name_failures(names: tuple[str, str]) -> None:
-    data = _package_data()
-    data["credentials"] = {name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"} for name in names}
+@pytest.mark.parametrize("blocks", [("source", "destination"), ("destination", "source")], ids=["forward", "reverse"])
+def test_public_parse_orders_independent_credential_name_failures(blocks: tuple[str, str]) -> None:
+    data = _credential_package_data()
+    declared = data["configuration"]
+    adapters = {block: {**declared.pop(block), "credential": "bad/name"} for block in blocks}
+    data["configuration"] = {**adapters, **declared}
 
     assert _parse_failure(data) == _PREFIX + (
-        "/credentials/a~0name: invalid credential reference name; "
-        "/credentials/z~1name: invalid credential reference name"
+        "/configuration/destination/credential: does not match required pattern; "
+        "/configuration/source/credential: does not match required pattern"
     )
 
 
-@pytest.mark.parametrize(
-    ("name", "expected_location"),
-    [
-        pytest.param("é" * 256, "/credentials/" + "é" * 256, id="multibyte-bounded-item"),
-        pytest.param("é" * 257, "/credentials", id="multibyte-oversized-container-location"),
-    ],
-)
-def test_public_parse_bounds_invalid_credential_name_locations(name: str, expected_location: str) -> None:
-    data = _package_data()
-    data["credentials"] = {name: {"provider": "env", "identifier": _REJECTED_CANARY}}
-
-    message = _parse_failure(data)
-
-    assert message == f"{_PREFIX}{expected_location}: invalid credential reference name"
-    assert _REJECTED_CANARY not in message
-
-
-def test_public_parse_degrades_oversized_credential_name_and_bad_child_to_container() -> None:
-    data = _package_data()
-    data["credentials"] = {"é" * 257: {"provider": "ENV!", "identifier": _REJECTED_CANARY}}
+def test_public_parse_preserves_lone_surrogate_setting_key_diagnostic() -> None:
+    data = _credential_package_data()
+    data["configuration"]["source"]["settings"] = {"bad\ud800key": _REJECTED_CANARY}
 
     error = _caught_failure(data)
 
-    assert str(error) == _PREFIX + (
-        "/credentials: does not match required pattern; /credentials: invalid credential reference name"
-    )
+    assert str(error) == _PREFIX + r"/configuration/source/settings/bad\\ud800key: invalid Unicode surrogate"
     assert _REJECTED_CANARY not in str(error)
 
 
-def test_public_parse_encodes_diagnostic_delimiters_in_credential_names() -> None:
-    data = _package_data()
-    data["credentials"] = {"bad: forged; next": {"provider": "env", "identifier": _REJECTED_CANARY}}
-
-    assert _parse_failure(data) == _PREFIX + (
-        r"/credentials/bad\u003a forged\u003b next: invalid credential reference name"
-    )
-
-
-def test_public_parse_preserves_lone_surrogate_credential_key_diagnostic() -> None:
-    data = _package_data()
-    data["credentials"] = {"bad\ud800key": {"provider": "env", "identifier": _REJECTED_CANARY}}
-
-    error = _caught_failure(data)
-
-    assert str(error) == _PREFIX + r"/credentials/bad\\ud800key: invalid Unicode surrogate"
-    assert "invalid credential reference name" not in str(error)
-    assert _REJECTED_CANARY not in str(error)
-
-
-def test_public_parse_rejects_hostile_root_credentials_key_without_callbacks() -> None:
-    data = _package_data()
-    credentials = data.pop("credentials")
-    data[_ExplodingStr("credentials")] = credentials
+def test_public_parse_rejects_hostile_root_key_without_callbacks() -> None:
+    data = _credential_package_data()
+    metadata = data.pop("package_metadata")
+    data[_ExplodingStr("package_metadata")] = metadata
 
     assert _parse_failure(data) == _PREFIX + "/: non-string mapping key"
 
@@ -343,17 +273,17 @@ class _ExplodingMapping(Mapping[str, object]):
 
 
 @pytest.mark.parametrize(
-    "credentials",
+    "container",
     [
         pytest.param(_ExplodingDict(), id="dict-subclass"),
         pytest.param(_ExplodingMapping(), id="mapping-protocol"),
     ],
 )
-def test_public_parse_rejects_hostile_credential_containers_without_callbacks(credentials: object) -> None:
-    data = _package_data()
-    data["credentials"] = credentials
+def test_public_parse_rejects_hostile_containers_without_callbacks(container: object) -> None:
+    data = _credential_package_data()
+    data["package_metadata"] = container
 
-    assert _parse_failure(data) == _PREFIX + "/credentials: non-JSON value"
+    assert _parse_failure(data) == _PREFIX + "/package_metadata: non-JSON value"
 
 
 @pytest.mark.parametrize(
@@ -373,8 +303,8 @@ def test_public_parse_rejects_malformed_error_collections(monkeypatch: pytest.Mo
 
 
 def test_public_parse_removes_rejected_values_from_exception_links() -> None:
-    data = _package_data()
-    data["credentials"]["valid-name"]["identifier"] = _REJECTED_CANARY * 30
+    data = _credential_package_data()
+    data["omissions"] = [{"kind": "DcimDevice", "reason": _REJECTED_CANARY * 30}]
 
     error = _caught_failure(data)
     rendered = (str(error), repr(error), repr(error.__cause__), repr(error.__context__))
@@ -511,6 +441,12 @@ def test_public_parse_encodes_diagnostic_delimiters_in_ordinary_locations(
         pytest.param("invalid_unicode_surrogate", ("configuration",), "invalid Unicode surrogate", id="unicode"),
         pytest.param("unsupported_declared_fields", ("configuration",), "unsupported declared field", id="unsupported"),
         pytest.param("invalid_diffsync_flag_name", ("configuration",), "invalid diffsync flag name", id="diffsync"),
+        pytest.param(
+            "credential_setting_with_named_credential",
+            ("configuration",),
+            "credential setting refused because the block names a credential",
+            id="named-credential",
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -562,6 +498,15 @@ _CUSTOM_CONTEXT_FAMILIES = [
             "unsupported declared field",
         ),
         id="unsupported",
+    ),
+    pytest.param(
+        (
+            "credential_setting_with_named_credential",
+            {"pointer": "/trusted", "field_names": ("token",)},
+            "/trusted/token: credential setting refused because the block names a credential",
+            "credential setting refused because the block names a credential",
+        ),
+        id="named-credential",
     ),
     pytest.param(
         (
@@ -946,7 +891,7 @@ def test_public_parse_ignores_untrusted_metadata_and_keeps_mixed_records(monkeyp
             "url": _ExplodingStr(_REJECTED_CANARY),
             "ctx": {"ignored": _ExplodingIterable()},
         },
-        _ExplodingDict(type="missing", loc=("credentials",)),
+        _ExplodingDict(type="missing", loc=("package_metadata",)),
     ]
 
     message = _parse_with_errors(monkeypatch, errors)
@@ -995,7 +940,7 @@ def test_public_parse_is_deterministic_across_hash_seeds(hash_seed: str) -> None
         from pydantic import ValidationError
         from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 
-        data = {_package_data()!r}
+        data = {_credential_package_data()!r}
         del data["configuration"]["name"]
         fields = {{"source", "name"}}
         records = [
@@ -1086,30 +1031,26 @@ def test_public_parse_bounds_total_findings_after_custom_field_expansion(
         assert details[-1] == "/expanded/b/field-127: unsupported declared field"
 
 
-@pytest.mark.parametrize("name_count", [256, 257], ids=["exact-maximum", "overflow"])
-def test_public_parse_bounds_native_credential_key_findings(name_count: int) -> None:
-    data = _package_data()
-    names = tuple(f"bad/name-{index:03}" for index in range(name_count))
-    data["credentials"] = {name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"} for name in names}
+@pytest.mark.parametrize("failure_count", [256, 257], ids=["exact-maximum", "overflow"])
+def test_public_parse_bounds_native_findings(failure_count: int) -> None:
+    data = _credential_package_data()
+    data["omissions"] = [{"kind": ""} for _ in range(failure_count)]
 
     message = _parse_failure(data)
 
-    if name_count == 257:
+    if failure_count == 257:
         assert message == _PREFIX + "/: invalid value"
     else:
         details = message.removeprefix(_PREFIX).split("; ")
         assert len(details) == 256
-        assert set(details) == {
-            f"/credentials/bad~1name-{index:03}: invalid credential reference name" for index in range(256)
-        }
+        assert set(details) == {f"/omissions/{index}/kind: value is too short" for index in range(256)}
 
 
 def test_public_parse_checks_natural_error_count_before_materializing_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    data = _package_data()
-    names = tuple(f"bad/name-{index:03}" for index in range(257))
-    data["credentials"] = {name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"} for name in names}
+    data = _credential_package_data()
+    data["omissions"] = [{"kind": ""} for _ in range(257)]
     real_errors = ValidationError.errors
     errors_calls = 0
 
@@ -1197,7 +1138,7 @@ def test_public_parse_accepts_exact_metadata_resource_boundaries(
 
 
 def _package_with_transform(expression: str) -> dict[str, Any]:
-    data = _package_data()
+    data = _credential_package_data()
     data["configuration"]["schema_mapping"] = [
         {
             "name": "DcimDevice",

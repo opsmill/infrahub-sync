@@ -96,14 +96,16 @@ When code holds a copy of a value that a deployment file also declares, add a un
 reads the file and compares it with the constant. The code reads the constant and not the
 file, so without the test nothing reports that one of the two changed without the other.
 
-For example, `tests/configuration/test_conversion_worker_variables.py` reads the `sync-worker`
-service of the root `docker-compose.yml` and asserts that its `INFRAHUB_SYNC_CREDENTIAL_*`
-variables equal `COMPOSE_WORKER_CREDENTIAL_VARIABLES`, in the file's order. `configs convert`
-uses that constant to warn about a variable the worker does not receive. The test parses the
-YAML file and needs no Docker, so it runs in the offline unit tier.
+For example, `test_the_api_accepts_the_stored_credential_settings_it_is_given` and
+`test_the_worker_accepts_the_stored_credential_settings_it_is_given` in
+`tests/compose/test_compose_contract.py` resolve the root `docker-compose.yml` and pass the
+environment of `sync-api` and of `sync-worker` to the start-up checks of
+`infrahub_sync/service/settings.py`. They fail when the file stops giving a service a variable
+that its check reads, such as `INFRAHUB_SYNC_ENCRYPTION_KEY`, `INFRAHUB_SYNC_WORKER_TOKEN` or
+`INFRAHUB_SYNC_API_URL`.
 
 [Handle optional dependencies and credentials](writing-an-adapter.md#handle-optional-dependencies-and-credentials)
-lists the places that hold the worker's credential variables and the test that checks each one.
+lists the places that change when an adapter gains a credential setting.
 
 ### Review a remediation over its own diff
 

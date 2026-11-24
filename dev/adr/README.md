@@ -72,7 +72,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   marker, and why a kind with a problem is read in full, so a warm read reports the problems
   of a full read.
 - [0026 — The Compose deployment takes an external object store, adapter credentials and CA certificates from `.env`](0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md)
-  — why the bundled store is scaled to zero to leave it out, why the worker receives a fixed
+  — **partly superseded by 0057** — why the bundled store is scaled to zero to leave it out, why the worker receives a fixed
   list of credential variables, and why the CA directory is the one read-only shared mount.
 - [0027 — An interrupted apply resumes from its saved position](0027-an-interrupted-apply-resumes-from-its-saved-position.md)
   — **amended by 0056** — why an apply saves a progress marker, why `verify` is admitted on an
@@ -116,10 +116,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why `runs cancel` withdraws a plan that has nothing running, and why `apply`, `approve` and
   `resume` refuse a run in phase `cancelled`.
 - [0039 — Workers publish the names of their credential variables so validation can check them](0039-workers-publish-the-names-of-their-credential-variables.md)
-  — why each worker writes the names of its credential variables to the product store, which
+  — **superseded by 0057** — why each worker writes the names of its credential variables to the product store, which
   workers count as live, and what grows in the `worker_environments` table.
 - [0040 — A v2 configuration converts to a package locally, by v2's own rules](0040-a-v2-configuration-converts-locally-by-v2-rules.md)
-  — why `configs convert` is a local command, why fixed tables reproduce v2's environment
+  — **partly superseded by 0057** — why `configs convert` is a local command, why fixed tables reproduce v2's environment
   variables and authentication methods, and why it never reads a credential value.
 - [0041 — An IP namespace that a uniqueness constraint needs and the file does not map converts to the `default` namespace](0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md)
   — why `--live-schema` reads the destination schema and maps an unmapped IP namespace to
@@ -178,6 +178,11 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   `INFRAHUB_SYNC_AUTOMATIC_RESUME` is on, why a `verify` runs first, why a run is not resumed
   after 3 automatic resumes or after one that saved no progress, and how fixed idempotency keys
   submit each step once. Amends 0027.
+- [0057 — The Sync API stores credentials and releases them to the worker account](0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)
+  — why a package names a stored credential in each block, how values are encrypted with a key
+  that only the Sync API holds, what the two routes of the `worker` account return, which stored
+  versions are refused, and the limits of the execution check and of the receipt check.
+  Supersedes 0039; partly supersedes 0026 and 0040.
 
 ## Related
 

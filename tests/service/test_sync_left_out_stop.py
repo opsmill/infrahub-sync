@@ -45,8 +45,9 @@ from infrahub_sync.product_store import (
 from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
-from tests.configuration.validation_packages import package
-from tests.service.execution_fixtures import stage_root, write_applied_sidecar
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL, credential_package
+from tests.helpers.stored_credentials import create_stored_credential_names
+from tests.service.execution_fixtures import serve_released_credentials, stage_root, write_applied_sidecar
 from tests.service.test_managed_write_guard import (
     SCHEMA_FINGERPRINT,
     WORKER_ID,
@@ -59,6 +60,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _STOP_OUTCOME = "left-out-review-required"
+# The fields that the Sync API releases for each block of the registered package.
+RELEASED = {"source": {"token": "stop-netbox-canary"}, "destination": {"token": "stop-infrahub-canary"}}
 _SYNC_FLOW_RUN_ID = "4b2f6e1a-8c3d-4e5f-9a0b-1c2d3e4f5a6b"
 _APPLY_FLOW_RUN_ID = "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a"
 _RUN_ID = "stopped-sync"
@@ -132,11 +135,11 @@ class _Harness:
 
 
 def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, report: PlanReport | None) -> _Harness:
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "stop-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "stop-infrahub-canary")
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     projection = local_product_projection(tmp_path / "product")
-    registered = projection.create_configuration(package())
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    serve_released_credentials(monkeypatch, service_flow, RELEASED, projection=projection)
+    registered = projection.create_configuration(credential_package())
     binding = (registered.config_id, registered.registry_version, registered.package_checksum)
     # Created with its write admission in one reservation, as `RunService.create_run` does.
     created, _new = projection.reserve_mutation(
@@ -168,7 +171,7 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, report: PlanRep
     stored = projection.lookup_configuration_version(binding[0], binding[1]).value
     assert stored is not None
     runtime = resolve_runtime_instance(
-        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
+        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path), released=RELEASED
     )
     runtime._configuration_binding = binding
     harness = _Harness(projection, binding, tmp_path)

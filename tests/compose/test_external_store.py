@@ -30,6 +30,7 @@ from tasks.smoke_dataset import SMOKE_BRANCH, SMOKE_KIND
 from tests.compose.conftest import FIXTURE_INFRAHUB_PORT, PROJECT_PREFIX
 from tests.compose.lifecycle import (
     FIXTURE_OVERRIDE,
+    SMOKE_CREDENTIAL,
     Deployment,
     api_client,
     await_phase,
@@ -64,7 +65,8 @@ STORE_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
 INFRAHUB_HOST = "infrahub.external.test"
 NETBOX_HOST = "netbox.external.test"
 FRONT_PORT = 8443
-NETBOX_TOKEN_SETTING = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"  # noqa: S105 -- a setting name, not a value
+# The stored credential the NetBox block of the private-CA package names.
+NETBOX_CREDENTIAL = "netbox-token"
 # Where the Compose file mounts the CA directory in the three Sync services.
 CA_MOUNT = "/etc/infrahub-sync/ca"
 # The bundled adapters the image can build, each with its own HTTP client.
@@ -419,11 +421,9 @@ def external_deployment(  # noqa: PLR0913 -- one deployment is named by each of 
     endpoint_host: str,
     store: ExternalStore,
     image: str,
-    destination_token: str,
     canaries: dict[str, str],
     trust_ca: bool = True,
     destination: str | None = None,
-    extra_settings: dict[str, str] | None = None,
 ) -> Deployment:
     """Write the `.env` of a deployment that uses the external store, and return it, not started.
 
@@ -436,7 +436,6 @@ def external_deployment(  # noqa: PLR0913 -- one deployment is named by each of 
     environment_file = operator_environment(
         directory,
         image=image,
-        destination_token=destination_token,
         canaries=canaries,
         api_port=port,
     )
@@ -447,8 +446,6 @@ def external_deployment(  # noqa: PLR0913 -- one deployment is named by each of 
         settings.write(f"INFRAHUB_SYNC_S3_ADDRESSING_STYLE={style}\n")
         settings.write(f"INFRAHUB_SYNC_S3_BUCKET={BUCKET}\n")
         settings.write("INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0\n")
-        for name, value in (extra_settings or {}).items():
-            settings.write(f"{name}={value}\n")
     return Deployment(
         instance=f"external{style}{uuid.uuid4().hex[:8]}",
         environment_file=environment_file,
@@ -483,13 +480,14 @@ def started(  # noqa: PLR0913, PLR0917 -- pytest injects each fixture by name
         endpoint_host=STORE_DOMAIN,
         store=external_store,
         image=sync_image,
-        destination_token=infrahub_fixture["token"],
         canaries=canaries,
     )
     launched = deployment.up()
     try:
         assert launched.returncode == 0, launched.stderr[-3000:] + bootstrap_log(deployment)[-3000:]
         wait_for("the deployment reporting a live worker", lambda: worker_state(deployment) in {"ready", "busy"})
+        # The credential the smoke package names, stored before a test registers it.
+        deployment.store_destination_token(infrahub_fixture["token"])
         yield deployment
     finally:
         deployment.down(volumes=True)
@@ -553,7 +551,6 @@ def test_a_store_that_accepts_a_second_create_only_write_stops_bootstrap(
         endpoint_host=PROXY_HOST,
         store=external_store,
         image=sync_image,
-        destination_token="",
         canaries=canaries,
     )
     try:
@@ -673,15 +670,13 @@ def netbox_package(netbox_url: str, infrahub_url: str) -> dict[str, Any]:
             "name": "compose-suite-private-ca",
             "source": {
                 "name": "netbox",
-                "settings": {"url": netbox_url, "token": {"$credential": "netbox-token"}},
+                "credential": NETBOX_CREDENTIAL,
+                "settings": {"url": netbox_url},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": infrahub_url,
-                    "branch": SMOKE_BRANCH,
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": SMOKE_CREDENTIAL,
+                "settings": {"url": infrahub_url, "branch": SMOKE_BRANCH},
             },
             "schema_mapping": [
                 {
@@ -694,10 +689,6 @@ def netbox_package(netbox_url: str, infrahub_url: str) -> dict[str, Any]:
                     ],
                 }
             ],
-        },
-        "credentials": {
-            "netbox-token": {"provider": "env", "identifier": NETBOX_TOKEN_SETTING},
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
         },
     }
 
@@ -721,10 +712,8 @@ def test_a_plan_reaches_netbox_infrahub_and_the_store_behind_a_private_ca(
         endpoint_host=STORE_DOMAIN,
         store=tls_store,
         image=sync_image,
-        destination_token=infrahub_fixture["token"],
         canaries=canaries,
         destination=f"https://{INFRAHUB_HOST}:{FRONT_PORT}",
-        extra_settings={NETBOX_TOKEN_SETTING: canary("netbox-token")},
     )
     try:
         launched = deployment.up()
@@ -737,6 +726,14 @@ def test_a_plan_reaches_netbox_infrahub_and_the_store_behind_a_private_ca(
         before = set(tls_store.keys())
         principal = deployment.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN")
         package = netbox_package(f"https://{NETBOX_HOST}:{FRONT_PORT}", deployment.destination)
+        # Both credentials are stored through the Sync API before the package that names them
+        # is registered; the worker reads their values from the Sync API for the plan.
+        deployment.store_credentials(
+            {
+                NETBOX_CREDENTIAL: {"token": canary("netbox-token")},
+                SMOKE_CREDENTIAL: {"token": infrahub_fixture["token"]},
+            }
+        )
         with api_client(deployment, principal) as client:
             config_id, registry_version = register(client, package, "compose suite: private CA configuration")
             created = client.post(
@@ -778,7 +775,6 @@ def test_without_the_ca_bootstrap_refuses_the_tls_store(
         endpoint_host=STORE_DOMAIN,
         store=tls_store,
         image=sync_image,
-        destination_token="",
         canaries=canaries,
         trust_ca=False,
     )

@@ -1,6 +1,7 @@
 # 39. Workers publish the names of their credential variables so validation can check them
 
-**Status**: Accepted
+**Status**: Superseded on 2026-11-21 by
+[ADR 0057](0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)
 **Date**: 2026-11-14
 **Source**: `dev/specs/archive/007-plan-problem-reporting/research.md` (R15),
 `dev/specs/archive/007-plan-problem-reporting/plan.md` (Complexity Tracking)

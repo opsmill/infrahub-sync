@@ -7,8 +7,8 @@ destination schema and, for each mapped kind whose uniqueness constraint names a
 cardinality-one relationship to an IP namespace, maps that relationship to the `default`
 namespace and says so in the report.
 
-The schema read is anonymous: the package's token reference is removed before the read, so
-the command still reads no credential value. A read that fails is reported, and the package
+The schema read is anonymous: the name of the destination's stored credential is removed
+before the read, so the command still reads no credential value. A read that fails is reported, and the package
 is written without the fill.
 """
 
@@ -61,8 +61,10 @@ def read_live_destination_schema(package: Mapping[str, Any]) -> DestinationSchem
         DestinationSchemaReadError: the read failed, including a refused anonymous read.
     """
     anonymous = copy.deepcopy(dict(package))
-    settings = anonymous["configuration"]["destination"].setdefault("settings", {})
-    settings.pop("token", None)
+    destination = anonymous["configuration"]["destination"]
+    # Without the name, the read asks for no stored credential and sends no token.
+    destination.pop("credential", None)
+    destination.setdefault("settings", {}).pop("token", None)
     try:
         parsed = parse_configuration_package(anonymous)
     except ConfigurationPackageParseError:

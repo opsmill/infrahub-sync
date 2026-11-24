@@ -877,6 +877,127 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Credentials
+         * @description Return one page of credentials sorted by name, with the names of their fields and no value.
+         */
+        get: operations["list_credentials_credentials_get"];
+        put?: never;
+        /**
+         * Create Credential
+         * @description Create a credential with its first value; the answer holds the names of its fields only.
+         */
+        post: operations["create_credential_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Credential
+         * @description Return one credential by its name, with the names of its fields and no value.
+         */
+        get: operations["read_credential_credentials__name__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Credential
+         * @description Delete a credential that no latest version of a configuration and no schedule that is not deleted names.
+         *
+         *     The refusal ``409 credential-in-use`` lists those configurations and schedules in
+         *     ``details``. A deletion cannot be reversed.
+         */
+        delete: operations["delete_credential_credentials__name__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Describe Credential
+         * @description Replace the description of a credential; its revision stays.
+         */
+        patch: operations["describe_credential_credentials__name__patch"];
+        trace?: never;
+    };
+    "/credentials/{name}/value": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Credential Value
+         * @description Replace the whole set of fields of a credential; its revision goes up by one.
+         */
+        put: operations["set_credential_value_credentials__name__value_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/worker/runs/{run_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release Credentials
+         * @description Return the values of the blocks that the stage of one claimed execution of the run needs.
+         *
+         *     The answer is built here and not checked against the model again: an error of that
+         *     check could quote a value.
+         */
+        post: operations["release_credentials_worker_runs__run_id__credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/worker/schedules/{schedule_id}/proposed-change-states": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Proposed Change States
+         * @description Return the state of each earlier proposed change of the schedule, read from Infrahub by the Sync API.
+         *
+         *     The route declares no body, so nothing a request sends can change the address, the
+         *     token or the proposed changes that are read. The answer holds the states only.
+         */
+        post: operations["read_proposed_change_states_worker_schedules__schedule_id__proposed_change_states_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1013,6 +1134,11 @@ export interface components {
              * @default []
              */
             resumes: components["schemas"]["ResumeResource"][];
+            /**
+             * Credentials Used
+             * @default []
+             */
+            credentials_used: components["schemas"]["CredentialUsedResource"][];
             /**
              * Automatic Resumes
              * @default []
@@ -1181,6 +1307,10 @@ export interface components {
             family: string;
             /** Reason */
             reason?: string | null;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            } | null;
         } & {
             [key: string]: unknown;
         };
@@ -1318,6 +1448,25 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * CreateCredentialRequest
+         * @description A new credential: ``POST /credentials``.
+         */
+        CreateCredentialRequest: {
+            /** Username */
+            username?: string | null;
+            /** Password */
+            password?: string | null;
+            /** Token */
+            token?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+        };
+        /**
          * CreateRunRequest
          * @description Request creation of a plan or confirmed synchronization run.
          */
@@ -1421,6 +1570,79 @@ export interface components {
             token: string;
         };
         /**
+         * CredentialPage
+         * @description One page of credentials sorted by name; ``next_offset`` is ``None`` on the last page.
+         */
+        CredentialPage: {
+            /** Items */
+            items: components["schemas"]["CredentialResource"][];
+            /** Next Offset */
+            next_offset: number | null;
+        };
+        /**
+         * CredentialResource
+         * @description A stored credential as the routes return it: the names of its fields, never their values.
+         *
+         *     ``created_by`` and ``updated_by`` hold account identifiers here; the answer shows names.
+         */
+        CredentialResource: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Fields */
+            fields: string[];
+            /** Revision */
+            revision: number;
+            /** Created By */
+            created_by: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Updated By */
+            updated_by: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * CredentialUsedResource
+         * @description The stored credential that one stage of a run received for one block: its name and revision, never a value.
+         *
+         *     `stage` is `plan`, `verify`, `apply`, `sync` or `resume`, and `block` is `source` or
+         *     `destination`. Both are plain strings so the client still reads a value a newer server adds.
+         *     The name and the revision are the ones recorded when the stage received the values, so they
+         *     stay after the credential is changed or deleted.
+         */
+        CredentialUsedResource: {
+            /** Stage */
+            stage: string;
+            /** Block */
+            block: string;
+            /** Name */
+            name: string;
+            /** Revision */
+            revision: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CredentialValueRequest
+         * @description The whole new set of fields of a credential: ``PUT /credentials/{name}/value``.
+         */
+        CredentialValueRequest: {
+            /** Username */
+            username?: string | null;
+            /** Password */
+            password?: string | null;
+            /** Token */
+            token?: string | null;
+        };
+        /**
          * DeletedAccountResource
          * @description The answer of a deletion: what every record of the account displays from now on.
          */
@@ -1450,6 +1672,14 @@ export interface components {
             error: "none" | "timeout" | "connection_refused" | "connection_closed" | "name_resolution_failed" | "unavailable" | "unknown_error";
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * DescribeCredentialRequest
+         * @description A new description: ``PATCH /credentials/{name}``.
+         */
+        DescribeCredentialRequest: {
+            /** Description */
+            description: string;
         };
         /**
          * ErrorDetail
@@ -1509,6 +1739,8 @@ export interface components {
             replaced_run_id?: string | null;
             /** Cause */
             cause?: string | null;
+            /** Revision */
+            revision?: number | null;
             /** Changes */
             changes?: components["schemas"]["ScheduleSettingChangeResource"][] | null;
             /** Reason */
@@ -2010,6 +2242,18 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * ProposedChangeStates
+         * @description The answer of the second worker route: the state of each earlier proposed change, by its run.
+         *
+         *     It holds no value, no address and no proposed-change identifier.
+         */
+        ProposedChangeStates: {
+            /** States */
+            states: {
+                [key: string]: string;
+            };
+        };
+        /**
          * PublicExecutionLink
          * @description Expose the public fields that link a run to one execution.
          */
@@ -2110,6 +2354,40 @@ export interface components {
             automatic_resume_count: number;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * ReleaseCredentialsRequest
+         * @description The execution that asks for its values: ``POST /worker/runs/{run_id}/credentials``.
+         */
+        ReleaseCredentialsRequest: {
+            /** Flow Run Id */
+            flow_run_id: string;
+        };
+        /**
+         * ReleasedBlock
+         * @description The credential of one block as the worker route releases it: its fields hold the values.
+         */
+        ReleasedBlock: {
+            /** Name */
+            name: string;
+            /** Revision */
+            revision: number;
+            /** Fields */
+            fields: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * ReleasedCredentials
+         * @description The answer of the worker route: the blocks the stage needs that name a credential.
+         */
+        ReleasedCredentials: {
+            /** Run Id */
+            run_id: string;
+            /** Blocks */
+            blocks: {
+                [key: string]: components["schemas"]["ReleasedBlock"];
+            };
         };
         /**
          * ResultsResource
@@ -2286,8 +2564,11 @@ export interface components {
          *     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
          *     predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
          *     resuming the run's interrupted writes without a person, oldest first, and
-         *     `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). Both are
-         *     empty for a run that no decision concerns, and for a Sync API that predates spec 030.
+         *     `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). For a run
+         *     that no decision concerns, and for a Sync API that predates spec 030, `automatic_resumes` is
+         *     empty and `automatic_resume_count` is 0. `credentials_used` holds one entry for each block
+         *     whose stored credential values a stage execution received, oldest first; it is empty for a
+         *     run whose stages received none, and for a Sync API that predates spec 027.
          */
         RunResource: {
             run: components["schemas"]["PublicRunResource"];
@@ -2299,6 +2580,11 @@ export interface components {
              * @default []
              */
             resumes: components["schemas"]["ResumeResource"][];
+            /**
+             * Credentials Used
+             * @default []
+             */
+            credentials_used: components["schemas"]["CredentialUsedResource"][];
             /**
              * Automatic Resumes
              * @default []
@@ -6499,6 +6785,617 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_credentials_credentials_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_credential_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    read_credential_credentials__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_credential_credentials__name__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    describe_credential_credentials__name__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DescribeCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    set_credential_value_credentials__name__value_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialValueRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    release_credentials_worker_runs__run_id__credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseCredentialsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleasedCredentials"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    read_proposed_change_states_worker_schedules__schedule_id__proposed_change_states_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposedChangeStates"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Failed Dependency */
+            424: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

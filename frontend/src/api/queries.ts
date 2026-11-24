@@ -8,6 +8,8 @@ import { isEnvelope, isHealthReport, isTimeout, SyncApiUnavailable } from "./err
 import type {
   ConfigurationSummary,
   ConfigurationVersion,
+  Credential,
+  CredentialPage,
   HealthReport,
   Run,
   RunLogLine,
@@ -463,6 +465,41 @@ export const accountTokensQuery = (name: string) =>
     { refetchInterval: poll(LIST_REFRESH_MS) }
   );
 
+/* ---------- stored credentials ---------- */
+
+/**
+ * Every stored credential, sorted by name, with the names of its fields and no value. Every
+ * signed-in account can read it. `GET /credentials` serves pages; this reads them all.
+ */
+export const credentialsQuery = () =>
+  queryOptions({
+    queryKey: ["get", "/credentials"] as const,
+    queryFn: async ({ signal }): Promise<Credential[]> => {
+      const items: Credential[] = [];
+      for (let offset = 0; ; ) {
+        const page: { data?: CredentialPage; error?: unknown } = await fetchClient.GET(
+          "/credentials",
+          { params: { query: { offset, limit: PAGE_LIMIT } }, signal }
+        );
+        if (page.error || !page.data) throw page.error;
+        items.push(...page.data.items);
+        if (page.data.next_offset == null) break;
+        offset = page.data.next_offset;
+      }
+      return items;
+    },
+    refetchInterval: poll(LIST_REFRESH_MS),
+  });
+
+/** One stored credential by its name, with the names of its fields and no value. */
+export const credentialQuery = (name: string) =>
+  $api.queryOptions(
+    "get",
+    "/credentials/{name}",
+    { params: { path: { name } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
 /** The newest run of each configuration, from one page of `GET /runs`. */
 export function latestRunByConfig(runs: Run[]): Map<string, Run> {
   const latest = new Map<string, Run>();
@@ -738,12 +775,161 @@ export function describeAccountError(error: unknown): DescribedError {
   return { ...described, title: words.title, detail: words.detail, notFound: false };
 }
 
+/* ---------- stored credentials: errors ---------- */
+
+/** The longest value of a credential field the Sync API accepts, in characters. */
+export const CREDENTIAL_VALUE_MAX = 4096;
+/** The longest description of a credential the Sync API accepts, in characters. */
+export const CREDENTIAL_DESCRIPTION_MAX = 500;
+/** A credential name: a lowercase letter, then up to 62 lowercase letters, digits or hyphens. */
+export const CREDENTIAL_NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/;
+
+/**
+ * Refusals that name a stored credential, in words. The keys are the Sync API error codes. A
+ * registration refusal carries the same code in `reason`, under the code `configs-validation`.
+ */
+const CREDENTIAL_ERRORS: Record<string, { title: string; detail?: string }> = {
+  forbidden: {
+    title: "Only an administrator can create, change or delete credentials",
+    detail: "Ask an administrator to create or change credentials.",
+  },
+  "credential-exists": {
+    title: "A credential with this name exists",
+    detail: "Choose another name, or change the value of the existing credential.",
+  },
+  "credential-fields-invalid": {
+    title: "The Sync service refused these fields",
+    detail: `A credential holds a token, a username and a password, or a username and a token. Each value holds 1 to ${CREDENTIAL_VALUE_MAX.toLocaleString("en")} characters and no control character.`,
+  },
+  "credential-in-use": {
+    title: "This credential is in use",
+    detail:
+      "The latest version of a configuration, or a schedule that is not deleted, names it. Register a version that names another credential, or change or delete the schedule, then delete the credential.",
+  },
+  "credential-key-not-configured": {
+    title: "The Sync service has no encryption key",
+    detail:
+      "The Sync service cannot store a credential value until its operator sets INFRAHUB_SYNC_ENCRYPTION_KEY.",
+  },
+  "credential-field-missing": {
+    title: "A stored credential lacks a field that the configuration needs",
+    detail:
+      "Ask an administrator to change the value of the credential so that it holds the field, or register a version that names another credential.",
+  },
+  "credential-method-unknown": {
+    title: "No stored field is known for the adapter or the authentication method of a block",
+    detail:
+      "Register a version whose source and destination use an authentication method that reads a token, or a username with a password or a token.",
+  },
+  "credential-not-used": {
+    title: "A block names a credential that its authentication method does not use",
+    detail: "Remove the credential from that block, then register the configuration again.",
+  },
+  "credential-format-removed": {
+    title: "This version holds its credentials in a format that was removed",
+    detail:
+      "Register a new version of the configuration that names stored credentials: write credential: <name> in the source and in the destination.",
+  },
+  "credential-undecryptable": {
+    title: "The Sync service cannot decrypt the stored value of a credential",
+    detail:
+      "The encryption key of the Sync service may have changed. Ask an administrator to change the value of the credential, which stores it again.",
+  },
+  "destination-credential-not-named": {
+    title: "The destination of this version names no stored credential",
+    detail: "Register a version whose destination names a stored credential.",
+  },
+  "secret-parameter-refused": {
+    title: "The description looks like a token or a secret",
+    detail: "Change the description, then try again.",
+  },
+};
+
+/**
+ * `describeError`, with the refusals that name a stored credential said for the Credentials page,
+ * a registration and a run. `credential-not-found` is a missing record on a credential route
+ * (404) and a refusal of a configuration elsewhere (422).
+ */
+export function describeCredentialError(error: unknown): DescribedError {
+  const described = describeError(error);
+  if (described.kind !== "envelope") return described;
+  const code =
+    described.code === "configs-validation" && described.reason ? described.reason : described.code;
+  if (!code) return described;
+  if (code === "credential-not-found") {
+    return described.status === 404
+      ? {
+          ...described,
+          title: "No stored credential with this name",
+          detail:
+            "Another administrator may have deleted it. The Credentials page lists the credentials that exist.",
+          notFound: true,
+        }
+      : {
+          ...described,
+          title: "The configuration names a stored credential that does not exist",
+          detail:
+            "Ask an administrator to create the credential on the Credentials page, then try again.",
+          notFound: false,
+        };
+  }
+  if (!Object.hasOwn(CREDENTIAL_ERRORS, code)) return described;
+  const words = CREDENTIAL_ERRORS[code];
+  return { ...described, title: words.title, detail: words.detail, notFound: false };
+}
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+
+/** The configurations and the schedules that name a credential, from a `credential-in-use` refusal. */
+export interface CredentialInUse {
+  /** Configuration IDs. */
+  configurations: string[];
+  /** Schedule names. */
+  schedules: string[];
+}
+
+/** The `details` of a `409 credential-in-use` refusal, or `undefined` for any other error. */
+export function credentialInUse(error: unknown): CredentialInUse | undefined {
+  if (!isEnvelope(error) || error.error.code !== "credential-in-use") return undefined;
+  const details = error.error.details ?? {};
+  return { configurations: strings(details.configurations), schedules: strings(details.schedules) };
+}
+
+/** One block of a refused registration whose stored credential does not exist or lacks a field. */
+export interface CredentialFinding {
+  /** "source" or "destination". */
+  block: string;
+  /** The name of the stored credential the block names. */
+  name: string;
+  /** `credential-not-found` or `credential-field-missing`. */
+  code: string;
+  /** Every field the block needs (not found), or the fields the credential lacks (field missing). */
+  fields: string[];
+}
+
+/** The `details.credentials` list of a refused registration; empty for any other error. */
+export function credentialFindings(error: unknown): CredentialFinding[] {
+  if (!isEnvelope(error)) return [];
+  const list = error.error.details?.credentials;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry: unknown): CredentialFinding[] => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const { block, name, code, fields } = entry as Record<string, unknown>;
+    if (typeof block !== "string" || typeof name !== "string" || typeof code !== "string") {
+      return [];
+    }
+    return [{ block, name, code, fields: strings(fields) }];
+  });
+}
+
 /** The refusals whose detail is the Sync API message, because it names the value or the reason. */
 const SCHEDULE_MESSAGE_DETAIL = new Set([
   "schedule-cron-invalid",
   "schedule-timezone-invalid",
   "schedule-stopped",
   "request-invalid",
+  "credential-not-found",
 ]);
 
 /** Refusals of a schedule read or action, in words. The keys are the Sync API error codes. */
@@ -791,6 +977,10 @@ const SCHEDULE_ERRORS: Record<string, { title: string; detail?: string }> = {
   },
   "schedule-cron-invalid": { title: "The Sync service refused the cron expression" },
   "schedule-timezone-invalid": { title: "The Sync service does not know this time zone" },
+  // The Sync API message names each missing credential and the command that creates it.
+  "credential-not-found": {
+    title: "The configuration version names a stored credential that does not exist",
+  },
   "configuration-version-not-found": {
     title: "No such version of this configuration",
     detail: "Choose a registered version of the configuration.",

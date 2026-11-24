@@ -47,6 +47,8 @@ from infrahub_sync.service.orchestration import Observation, PoolStatus, PoolWor
 from infrahub_sync.service.resume_view import automatic_resume_count, automatic_resume_view
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from infrahub_sync.service.settings import AUTOMATIC_RESUME_ENV, REQUIRE_APPROVAL_ENV
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import seed_accounts
 from tests.service.test_http_api import (
     ADMIN_TOKEN,
@@ -487,6 +489,7 @@ def step_api(tmp_path) -> _StepAPI:
         environment_token=True,
     ).resolver
     orchestration = _LiveOrchestration()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
     client = TestClient(create_app(service, resolver))

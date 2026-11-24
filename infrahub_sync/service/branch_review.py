@@ -98,6 +98,13 @@ class BranchReviewError(Exception):
         super().__init__(self.message)
 
 
+# The errors of a branch review operation that a caller records as a failure class (spec 021,
+# research R15): the typed errors of this module, and an unreachable server, a timeout, a refused
+# token or a missing permission, which keep their own classes. The steps of a scheduled run and
+# the Sync API's read of a schedule's earlier proposed changes (spec 027) catch the same list.
+BRANCH_REVIEW_ERRORS: tuple[type[Exception], ...] = (BranchReviewError, InfrahubSDKError, httpx.HTTPError, OSError)
+
+
 class DestinationDefaultBranchNotMainError(BranchReviewError):
     """The destination's default branch is not `main`, so it cannot receive a proposed change."""
 
@@ -167,7 +174,10 @@ def build_client(settings: Mapping[str, Any], branch: str) -> InfrahubClientSync
     """An Infrahub client of the destination, with `branch` as its default branch.
 
     It reads the address and the token as the destination adapter does, and reads nothing from
-    Infrahub, so `branch` need not exist yet. A missing address or token raises
+    Infrahub, so `branch` need not exist yet. `settings` are the resolved destination settings of
+    the run: for a destination that names a stored credential, their token is the value that the
+    Sync API released to the stage execution (spec 027), and no worker variable is read. A
+    missing address or token raises
     `CredentialConfigurationError`, which the failure record classes as `credential_missing`.
     """
     url, _declared_branch = resolved_endpoint(settings, branch)
