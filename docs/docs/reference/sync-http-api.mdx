@@ -1668,6 +1668,7 @@ The schedule routes answer these refusals:
 | 422 | `schedule-left-out-not-applicable` | `write_when_left_out` is `true` and `write_target` is `branch-review`. |
 | 422 | `schedule-setting-not-available` | The write target is not turned on in this build. |
 | 422 | `secret-parameter-refused` | A request field holds a credential. |
+| 422 | `credential-not-found` | A create, or a change that pins another version, names a version whose adapter blocks name a stored credential that does not exist. The message lists the missing names. |
 | 422 | `request-invalid` | The body does not match the schema, names `name`, `config_id` or `owner` in a change, or changes nothing. |
 | 503 | `configuration-version-invalid` | The registered configuration version cannot be read. |
 | 503 | `orchestration-unavailable` | The schedule is stored, and either the task manager could not be reached or the product database failed while the schedule was handed to the task manager; the message says which. When the task manager could not be reached, the schedule starts no run until a later request on a schedule, or a restart of the Sync API, hands it over. When the product database failed, the task manager may already hold the schedule and start its runs, but the stored schedule does not record the handover; a later request on a schedule, or a restart of the Sync API, records it. |

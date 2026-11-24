@@ -3788,6 +3788,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             ValueError: The schedule is not in the state ``active``.
             ScheduleNameInUseError: A schedule that is not deleted has the name.
             ScheduleExistsForConfigurationError: The configuration has a schedule that is not deleted.
+            VersionCredentialsMissingError: A stored credential the version names does not exist.
         """
         if schedule.state != "active":
             msg = "a schedule is created in the state active"
@@ -3795,6 +3796,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         try:
             with self._transaction() as cursor:
                 self._refuse_schedule_conflict(cursor, schedule)
+                credential_statements.lock_version_credentials(
+                    cursor, self._sql, config_id=schedule.config_id, registry_version=schedule.registry_version
+                )
                 cursor.execute(self._sql(_INSERT_SCHEDULE), _schedule_values(schedule))
                 for event in events:
                     self._insert_event(cursor, event)
@@ -3906,6 +3910,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             ScheduleChangedError: ``expected_updated_at`` is given and differs from the stored value.
             ScheduleTransitionError: The stored state cannot move to the requested state.
             ValueError: The change sets the name, the configuration or the creation time.
+            VersionCredentialsMissingError: The change pins another version, and a stored
+                credential that version names does not exist.
         """
         with self._transaction() as cursor:
             stored = self._locked_schedule(cursor, schedule.schedule_id)
@@ -3922,6 +3928,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             if schedule.state not in _SCHEDULE_TRANSITIONS[stored.state]:
                 msg = f"a schedule in the state {stored.state!r} cannot move to the state {schedule.state!r}"
                 raise ScheduleTransitionError(msg)
+            if schedule.state != "deleted" and schedule.registry_version != stored.registry_version:
+                # The same lock and check as a creation: a deletion of a credential that the new
+                # version names cannot commit beside this change.
+                credential_statements.lock_version_credentials(
+                    cursor, self._sql, config_id=schedule.config_id, registry_version=schedule.registry_version
+                )
             # A schedule that leaves a stop for repeated failures counts its failed runs from zero
             # again: when it is resumed, and when a resume stores another reason to stop it, so a
             # later change that makes it active does not keep the old count.
@@ -5769,6 +5781,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             ScheduleNameInUseError: A schedule that is not deleted has the name.
             ScheduleExistsForConfigurationError: The configuration has a schedule that is not
                 deleted; the error holds its identifier and its name.
+            VersionCredentialsMissingError: A stored credential the version names does not exist.
         """
         self._records.create_schedule(
             _redacted_schedule(schedule, secrets), events=tuple(_redact_event(event, secrets) for event in events)

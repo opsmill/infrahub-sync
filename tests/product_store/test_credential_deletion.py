@@ -27,11 +27,13 @@ from infrahub_sync.product_store import (
     CredentialInUseError,
     ProductProjection,
     RelatedResource,
+    ScheduleFilters,
     ScheduleRecord,
     StoredCredentialNotFoundError,
     configs,
 )
 from infrahub_sync.product_store import stored_credentials as credential_statements
+from infrahub_sync.product_store.stored_credentials import VersionCredentialsMissingError
 from tests.configuration.validation_packages import package_data
 from tests.product_store.test_contract import _PROFILES_WITH_POSTGRESQL, _projection_profile
 
@@ -81,14 +83,14 @@ def _new_version(projection: ProductProjection, config_id: str, name: str = "fro
     assert registered.version.registry_version == 2
 
 
-def _schedule(projection: ProductProjection, config_id: str) -> ScheduleRecord:
-    """Store an active schedule that pins version 1 of the configuration."""
-    schedule = ScheduleRecord.model_validate(
+def _schedule_record(config_id: str, registry_version: int = 1) -> ScheduleRecord:
+    """Return an active schedule that pins this version of the configuration."""
+    return ScheduleRecord.model_validate(
         {
             "schedule_id": f"s-{uuid4().hex}",
             "name": f"nightly-{uuid4().hex[:8]}",
             "config_id": config_id,
-            "registry_version": 1,
+            "registry_version": registry_version,
             "cron": "0 2 * * *",
             "write_target": "default-branch",
             "state": "active",
@@ -97,6 +99,11 @@ def _schedule(projection: ProductProjection, config_id: str) -> ScheduleRecord:
             "updated_at": _T0,
         }
     )
+
+
+def _schedule(projection: ProductProjection, config_id: str, registry_version: int = 1) -> ScheduleRecord:
+    """Store an active schedule that pins this version of the configuration."""
+    schedule = _schedule_record(config_id, registry_version)
     projection.create_schedule(schedule)
     return schedule
 
@@ -361,3 +368,121 @@ def test_a_registration_waits_for_a_deletion_of_the_credential_it_names_and_is_t
     # No current version names the deleted credential.
     assert _versions_that_name(projection, CREDENTIAL) == []
     assert configs.list_configs(projection=projection).items == ()
+
+
+# --- a schedule that pins a version whose credential does not exist -------------------------
+
+
+def _config_with_deleted_credential(projection: ProductProjection) -> str:
+    """Register version 1 that names the credential and version 2 that names none, then delete it."""
+    _store(projection)
+    config_id = _register(projection)
+    _new_version(projection, config_id)
+    projection.delete_stored_credential(name=CREDENTIAL)
+    return config_id
+
+
+def test_a_schedule_that_pins_a_version_whose_credential_was_deleted_is_refused(
+    projection: ProductProjection,
+) -> None:
+    config_id = _config_with_deleted_credential(projection)
+
+    with pytest.raises(VersionCredentialsMissingError) as refused:
+        _schedule(projection, config_id, registry_version=1)
+
+    assert refused.value.names == (CREDENTIAL,)
+    assert CREDENTIAL in str(refused.value)
+    assert projection.list_schedules(ScheduleFilters()).items == ()
+
+
+def test_a_schedule_of_a_version_that_names_no_credential_is_stored(projection: ProductProjection) -> None:
+    config_id = _config_with_deleted_credential(projection)
+
+    schedule = _schedule(projection, config_id, registry_version=2)
+
+    assert projection.lookup_schedule(schedule.schedule_id).value is not None
+
+
+def test_a_change_to_a_version_whose_credential_was_deleted_is_refused(projection: ProductProjection) -> None:
+    config_id = _config_with_deleted_credential(projection)
+    schedule = _schedule(projection, config_id, registry_version=2)
+
+    with pytest.raises(VersionCredentialsMissingError):
+        projection.update_schedule(schedule.model_copy(update={"registry_version": 1}))
+
+    stored = projection.lookup_schedule(schedule.schedule_id).value
+    assert stored is not None
+    assert stored.registry_version == 2
+
+
+def test_a_change_that_keeps_the_version_does_not_read_the_credentials(
+    projection: ProductProjection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_id = _config_with_deleted_credential(projection)
+    schedule = _schedule(projection, config_id, registry_version=2)
+
+    def refuse(*args: Any, **kwargs: Any) -> None:  # noqa: ANN401 - the arguments of the replaced function.
+        del args, kwargs
+        pytest.fail("a change that keeps the version must not lock credentials")
+
+    monkeypatch.setattr(credential_statements, "lock_version_credentials", refuse)
+    paused = projection.update_schedule(schedule.model_copy(update={"state": "paused"}))
+
+    assert paused.state == "paused"
+
+
+def test_a_deletion_waits_for_a_schedule_that_pins_the_credential_and_is_then_refused(
+    projection: ProductProjection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store(projection)
+    config_id = _register(projection)
+    _new_version(projection, config_id)
+    # The creation of the schedule holds the lock of the credential row: it checked the
+    # credential and has not yet stored the schedule.
+    reached = threading.Event()
+    go = threading.Event()
+    original = credential_statements.lock_version_credentials
+
+    def held(*args: Any, **kwargs: Any) -> None:  # noqa: ANN401 - the arguments of the held function.
+        original(*args, **kwargs)
+        reached.set()
+        assert go.wait(ENDS_WITHIN)
+
+    monkeypatch.setattr(credential_statements, "lock_version_credentials", held)
+    record = _schedule_record(config_id, 1)
+    creation = _Call(lambda: projection.create_schedule(record))
+    assert reached.wait(ENDS_WITHIN)
+
+    deletion = _Call(lambda: projection.delete_stored_credential(name=CREDENTIAL, event_for=_event()))
+
+    waits = not deletion.done.wait(WAITS_FOR)
+    go.set()
+    creation.join()
+    deletion.join()
+    assert waits
+    assert creation.error is None
+    assert isinstance(deletion.error, CredentialInUseError)
+    assert deletion.error.schedules == (record.name,)
+    assert projection.lookup_stored_credential(CREDENTIAL) is not None
+
+
+def test_a_schedule_waits_for_a_deletion_of_the_credential_it_pins_and_is_then_refused(
+    projection: ProductProjection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store(projection)
+    config_id = _register(projection)
+    _new_version(projection, config_id)
+    deletion_holds = _Held(monkeypatch, "read_in_use")
+    deletion = _Call(lambda: projection.delete_stored_credential(name=CREDENTIAL, event_for=_event()))
+    assert deletion_holds.reached.wait(ENDS_WITHIN)
+
+    creation = _Call(lambda: _schedule(projection, config_id, registry_version=1))
+
+    waits = not creation.done.wait(WAITS_FOR)
+    deletion_holds.go.set()
+    deletion.join()
+    creation.join()
+    assert waits
+    assert deletion.error is None
+    assert isinstance(creation.error, VersionCredentialsMissingError)
+    assert projection.list_schedules(ScheduleFilters()).items == ()

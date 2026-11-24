@@ -12,6 +12,7 @@ import pytest
 pytest.importorskip("prefect")
 pytest.importorskip("fastapi")
 
+from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.configuration.removed_credential_format import STORED_VERSION_FORMAT_REMOVED_MESSAGE
 from infrahub_sync.service import serve
 from infrahub_sync.service.schedule_cadence import next_start
@@ -22,6 +23,7 @@ from tests.helpers.removed_credential_format import (
     store_as_the_earlier_build,
     store_in_removed_format,
 )
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.schedule_fixtures import (
     ADMIN_TOKEN,
     OTHER_TOKEN,
@@ -433,6 +435,54 @@ def test_the_owner_changes_the_version_and_the_cadence(api: ScheduleApi) -> None
     assert body["schedule_id"] == created["schedule_id"]
     assert body["prefect_synced"] is True
     assert api.get(created["schedule_id"]) == body
+
+
+def _naming_a_deleted_credential(api: ScheduleApi, config_id: str, name: str) -> int:
+    """Add a version whose source names ``name``, then a later one that does not, and delete ``name``.
+
+    Returns the number of the version that names the deleted credential. The later version lets
+    the deletion pass: no latest version and no schedule names the credential.
+    """
+    create_stored_credential_names(api.projection, name)
+    data = package(name).model_dump()
+    data["configuration"]["source"]["credential"] = name
+    named, added = api.projection.add_configuration_version(config_id, ConfigurationPackage.model_validate(data))
+    assert added
+    _later, added = api.projection.add_configuration_version(config_id, package(f"{name}-later"))
+    assert added
+    api.projection.delete_stored_credential(name=name)
+    return named.registry_version
+
+
+def test_create_refuses_a_version_that_names_a_stored_credential_that_does_not_exist(api: ScheduleApi) -> None:
+    version = _naming_a_deleted_credential(api, api.config_id, "netbox-deleted")
+
+    response = api.client.post("/schedules", json=api.body(registry_version=version), headers=headers())
+
+    assert response.status_code == 422, response.text
+    error = _error(response)
+    assert error["code"] == "credential-not-found"
+    assert "netbox-deleted" in error["message"]
+    assert api.client.get("/schedules", headers=READ).json()["items"] == []
+    assert api.orchestration.calls == []
+
+
+def test_a_change_to_a_version_that_names_a_stored_credential_that_does_not_exist_is_refused(
+    api: ScheduleApi,
+) -> None:
+    created = api.create()
+    version = _naming_a_deleted_credential(api, api.config_id, "netbox-deleted")
+
+    response = api.post(created["schedule_id"], "change", registry_version=version)
+
+    assert response.status_code == 422, response.text
+    error = _error(response)
+    assert error["code"] == "credential-not-found"
+    assert "netbox-deleted" in error["message"]
+    assert api.get(created["schedule_id"])["registry_version"] == 1
+    # The receipt of the refused request was released: the same change is refused again, not
+    # answered as a request in progress.
+    assert api.post(created["schedule_id"], "change", registry_version=version).status_code == 422
 
 
 @pytest.mark.parametrize(

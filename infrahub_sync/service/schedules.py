@@ -47,6 +47,7 @@ from infrahub_sync.product_store import (
     ScheduleRecord,
 )
 from infrahub_sync.product_store.models import DEFAULT_START_LATE_SECONDS, SCHEDULE_ID_PATTERN
+from infrahub_sync.product_store.stored_credentials import VersionCredentialsMissingError
 
 from . import schedule_cadence
 from .events import SCHEDULE_START, SCHEDULE_STOPPED, schedule_decision_type, schedule_event
@@ -466,6 +467,9 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 f"the configuration {request.config_id!r} already has the schedule {error.name!r} "
                 f"({error.schedule_id}); a configuration has one schedule",
             ) from None
+        except VersionCredentialsMissingError as error:
+            self._projection.release_mutation(reserved.receipt_id, secrets=self._secrets)
+            raise self._credentials_missing(context, error) from None
         return await self._answer(reserved, 201, context.of(schedule), now)
 
     async def change(
@@ -841,6 +845,8 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             wanted = wanted.model_copy(update={"prefect_synced": False, "updated_at": now})
             try:
                 self._projection.update_schedule(wanted, expected_updated_at=schedule.updated_at, secrets=self._secrets)
+            except VersionCredentialsMissingError as error:
+                raise self._released(reserved, self._credentials_missing(context, error)) from None
             except (ScheduleChangedError, ScheduleDeletedError):
                 # Another writer, such as the worker that stops a schedule, saved a change in between.
                 reread = self._projection.lookup_schedule(schedule_id).value
@@ -897,6 +903,13 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             "schedule-stopped",
             f"the schedule is stopped with the reason {reason}: {_RESUME_ACTIONS[reason]}",
         )
+
+    def _credentials_missing(self, context: _Request, error: VersionCredentialsMissingError) -> ServiceAPIError:
+        """Return ``422 credential-not-found`` for a version that names missing stored credentials, with its event.
+
+        The message lists the missing names, as a registration does; a name is not secret.
+        """
+        return self._refusal(context, 422, "credential-not-found", str(error))
 
     def _released(self, receipt: MutationReceipt | None, error: ServiceAPIError) -> ServiceAPIError:
         """Make the receipt of a refused request available for a later attempt, and return the refusal."""

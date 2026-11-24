@@ -174,6 +174,19 @@ class CredentialInUseError(RuntimeError):
         super().__init__("the stored credential is in use")
 
 
+class VersionCredentialsMissingError(LookupError):
+    """A configuration version names stored credentials that do not exist.
+
+    ``names`` holds the missing names, sorted. Names are not secret; the message lists them.
+    """
+
+    def __init__(self, names: Sequence[str]) -> None:
+        self.names = tuple(sorted(names))
+        super().__init__(
+            "the configuration version names stored credentials that do not exist: " + ", ".join(self.names)
+        )
+
+
 class CredentialIdentifierAllocationError(RuntimeError):
     """Every attempt to choose an unused credential identifier collided."""
 
@@ -491,6 +504,23 @@ def lock_and_read_fields(cursor: _Cursor, sql: Sql, names: Collection[str]) -> d
         credential = read_credential_by_name(cursor, sql, name)
         held[name] = None if credential is None else tuple(credential.fields)
     return held
+
+
+def lock_version_credentials(cursor: _Cursor, sql: Sql, *, config_id: str, registry_version: int) -> None:
+    """Lock the credentials a version names until the transaction ends, and check that each exists.
+
+    A schedule that pins the version runs this in the transaction that stores it. The lock is
+    the one a deletion takes first, so a deletion either commits before and the schedule is
+    refused here, or waits and then finds the schedule and is refused (``read_in_use``).
+
+    Raises:
+        VersionCredentialsMissingError: a credential the version names does not exist.
+    """
+    named = read_version_credentials(cursor, sql, config_id=config_id, registry_version=registry_version)
+    held = lock_and_read_fields(cursor, sql, named.values())
+    missing = [name for name, fields in held.items() if fields is None]
+    if missing:
+        raise VersionCredentialsMissingError(missing)
 
 
 def write_version_credentials(

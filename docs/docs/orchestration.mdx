@@ -47,7 +47,9 @@ UTC. The Sync API refuses the request, and stores nothing, when:
   time zone is not known (`schedule-timezone-invalid`);
 - another schedule that is not deleted has the same name (`schedule-name-in-use`);
 - the configuration already has a schedule that is not deleted (`schedule-exists-for-configuration`).
-  The message names that schedule.
+  The message names that schedule;
+- the version names a stored credential that does not exist (`credential-not-found`). The message
+  lists the missing names. A change that pins another version is refused the same way.
 
 When the Sync API stores the schedule but cannot reach Prefect, it answers
 `503 orchestration-unavailable`. The schedule starts no run until a later request on a schedule,
