@@ -18,6 +18,7 @@ function contendedRun(failure: Record<string, unknown>): Run {
     trigger_type: "manual",
     artifact_refs: [],
     prefect_executions: [],
+    automatic_resume_count: 0,
     results: {
       sync_failure: {
         stage: "sync",
