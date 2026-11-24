@@ -48,6 +48,15 @@ and of its immediate cause, and only these fields:
 - the permission or message Infrahub returns with a 403, as before
 - the kind, the source record and the field that a typed Sync error names
 - the operations written, the operation count of the plan and the operation that failed
+- for a write that could not take the configuration's write guard, `active_run_id`: the run ID
+  read from the label (`application_name`) of the database session that holds the guard, and
+  stored only when the run records hold a run with that ID for the same configuration. The
+  label is neither private nor trusted. On PostgreSQL 16, a session of another account that is
+  not a superuser, connected to the same database, read the holder's label (PostgreSQL's
+  `pg_stat_activity` rules decide whether it can), so a guard label must never hold anything
+  but a run ID. Any session that can connect to that database can set
+  a false label; the check in the run records limits it to a real run of the same
+  configuration. Only the run ID is stored, never the label
 - text from a fixed template filled with the fields above, setting names, kind names, node
   names, account names, branch names and IDs
 

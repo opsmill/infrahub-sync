@@ -626,6 +626,43 @@ When the destination branch does not exist, the `cause:` line names the branch, 
 `hint:` line says to create it or to start the run with `--branch <existing branch>`. A
 failure to read the destination schema also prints a `cause:` and a `hint:` line.
 
+Sync writes to one configuration from one run at a time. When a `sync`, `apply` or `runs resume`
+waits 30 seconds for another write of the same configuration to finish and it does not, the
+write does not start and changes nothing. The command prints the failure type
+`write_guard_contended` and, when Sync can name it, the other run's ID:
+
+```text
+apply failed: ApplyGuardContentionError
+failure type: write_guard_contended
+cause: Sync run <run_id> was writing to this configuration and held its write guard when this write's wait for the guard ended, ...
+active run: <run_id>
+hint: Check that run with `infrahub-sync runs show <run_id>` and wait for it to finish, then plan again.
+```
+
+The `cause:` line is shortened here. Sync names the run whose database session held the
+configuration's write guard when the wait ended, and only when its run records hold that run for
+the same configuration. When Sync cannot prove which run holds the guard, the output has no
+`active run:` line, the `cause:` line says that the run is not known, and the `hint:` line
+names `infrahub-sync runs list`.
+
+When the named run's write had already ended before the wait began and its worker still holds the
+guard, waiting does not help. The guard is released only when that worker stops:
+
+```text
+apply failed: ApplyGuardContentionError
+failure type: write_guard_contended
+cause: Sync run <run_id> held this configuration's write guard when this write's wait for the guard ended, although its write had ended before that wait began, ...
+active run: <run_id>
+hint: The guard is released only when the worker of run <run_id> stops. Ask the administrator of the Sync service to stop or restart that worker, then plan again.
+```
+
+When the refused write is a `runs resume`, the `hint:` line ends with `infrahub-sync verify` and
+`infrahub-sync runs resume` instead of a new plan.
+
+In the web interface, the failed run's failure notice shows the same cause and next action.
+When Sync names the run that holds the guard, the notice also has an **Open run** link to that
+run's page.
+
 `infrahub-sync runs logs RUN_ID` prints the lines that Sync wrote during the run, including
 the ERROR line that holds the cause and the next step. It reads them through the Sync API.
 

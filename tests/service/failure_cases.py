@@ -40,12 +40,17 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.potenda import SideLoadError
 from infrahub_sync.runtime_schema.errors import DestinationSchemaUnavailableError
+from infrahub_sync.service.apply_guard import ApplyGuardContentionError
 from tests.adapters.test_infrahub_planned_write import SITE_KIND, RecordingClient, make_adapter, server_operation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 Stage = Literal["plan", "verify", "apply", "sync"]
+# What the run records answer for the candidate of a contended write guard (spec 028, SC-003):
+# a run of the same configuration whose write ended before the wait began ("confirmed") or is still open
+# ("confirmed-writing"), no such run ("rejected"), or a lookup that raised.
+HolderLookup = Literal["confirmed", "confirmed-writing", "rejected", "lookup-raised"]
 
 # A referenced credential of five characters, below the masking pass's minimum length of six
 # (`MIN_SECRET_LENGTH`), so masking cannot hide it.
@@ -71,6 +76,9 @@ FAILED_OPERATION = "op_518aada155d790ad"
 
 # Infrahub's own messages: the failure record may quote them, so they never hold credentials.
 INFRAHUB_MESSAGE = "planned is not a valid value for status"
+
+# The run a contended write guard's holder candidate names when the run records confirm it.
+HOLDER_RUN_ID = "run-failure-holder"
 PERMISSION = "object:*:DcimDevice:create:allow_all"
 
 
@@ -126,6 +134,9 @@ class FailureCase:
     build: Callable[[str], Exception]
     failure_type: str
     fields: dict[str, Any] = field(default_factory=dict)
+    # For a contended write guard only: what the run records say about the holder candidate the
+    # error carries. A test that records the failure against a product store arranges it.
+    holder: HolderLookup | None = None
 
 
 def _side(role: Literal["source", "destination"], adapter: str, inner: BaseException, text: str) -> SideLoadError:
@@ -213,6 +224,13 @@ def _peer_refusal(text: str, *, matches: int) -> Exception:
         return _apply_failed(refusal, text)
     msg = "The peer resolver did not refuse the operation."
     raise AssertionError(msg)
+
+
+def _contended(text: str, holder_run_id: str | None = None) -> Exception:
+    """The guard's contention error, with the holder candidate read from the holding session's label."""
+    error = ApplyGuardContentionError("another writer holds this configuration's write guard")
+    error.holder_run_id = holder_run_id
+    return _chained(error, RuntimeError(text))
 
 
 def _transform_failed(text: str) -> Exception:
@@ -371,6 +389,49 @@ CASES: tuple[FailureCase, ...] = (
         lambda text: _chained(LeftOutConfirmationRequiredError(2, run_id="run-failure-case"), RuntimeError(text)),
         "apply_refused",
     ),
+    FailureCase(
+        "write-guard-contended", "apply", _contended, "write_guard_contended", {"system": None, "active_run_id": None}
+    ),
+    # The candidate names a run of the same configuration, so the record names it. `active_run_id`
+    # stays `None` in `fields`: a record built without the run records names no run. That run's
+    # write ended before the wait began, so the record carries the "write had ended" cause and
+    # next action.
+    FailureCase(
+        "write-guard-contended-holder-confirmed",
+        "apply",
+        lambda text: _contended(text, HOLDER_RUN_ID),
+        "write_guard_contended",
+        {"system": None, "active_run_id": None},
+        holder="confirmed",
+    ),
+    # The same, with a claimed, open write on the named run: the "still writing" variant.
+    FailureCase(
+        "write-guard-contended-holder-writing",
+        "apply",
+        lambda text: _contended(text, HOLDER_RUN_ID),
+        "write_guard_contended",
+        {"system": None, "active_run_id": None},
+        holder="confirmed-writing",
+    ),
+    # The candidate is a credential that has the shape of a run ID and names no run: the run
+    # records reject it, so it must not reach any output.
+    FailureCase(
+        "write-guard-contended-holder-rejected",
+        "apply",
+        lambda text: _contended(text, SHORT_CREDENTIAL),
+        "write_guard_contended",
+        {"system": None, "active_run_id": None},
+        holder="rejected",
+    ),
+    # The run-record lookup raises an error whose text holds both credentials.
+    FailureCase(
+        "write-guard-contended-holder-lookup-raised",
+        "apply",
+        lambda text: _contended(text, HOLDER_RUN_ID),
+        "write_guard_contended",
+        {"system": None, "active_run_id": None},
+        holder="lookup-raised",
+    ),
     FailureCase("unknown-class", "plan", RuntimeError, "internal_error"),
     FailureCase(
         "unknown-class-in-a-side-read",
@@ -387,6 +448,7 @@ __all__ = [
     "CREDENTIALS",
     "ERROR_TEXT",
     "FAILED_OPERATION",
+    "HOLDER_RUN_ID",
     "NEUTRAL_TEXT",
     "SHORT_CREDENTIAL",
     "SHORT_CREDENTIAL_NAME",
@@ -394,5 +456,6 @@ __all__ = [
     "SPECIAL_CREDENTIAL_NAME",
     "SPECIAL_CREDENTIAL_RUN",
     "FailureCase",
+    "HolderLookup",
     "forbidden_values",
 ]

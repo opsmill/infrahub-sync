@@ -1661,6 +1661,10 @@ def _failure_lines(failure: Mapping[str, Any], record: StageFailureResource | No
     """The spec 007 lines of a failure record that follow `cause:` (contracts/cli.md), unescaped."""
     if record is None:
         return
+    if record.active_run_id:
+        # The run that was writing to the same configuration when this write could not take the
+        # configuration's write guard (`write_guard_contended`).
+        yield f"active run: {record.active_run_id}"
     if record.infrahub_message:
         yield f"Infrahub message: {record.infrahub_message}"
     if record.record is not None:

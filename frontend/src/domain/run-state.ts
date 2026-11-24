@@ -223,6 +223,11 @@ export interface FailureDetail {
   known: boolean;
   /** The recorded class names: `${errorType}, caused by ${causeType}`, or `errorType` alone. */
   errorLabel?: string;
+  /**
+   * The run that was writing to the same configuration when this write could not take the
+   * configuration's write guard. Set only when the failure record names one.
+   */
+  activeRunId?: string;
 }
 
 export function failureDetail(run: Run): FailureDetail | undefined {
@@ -254,6 +259,8 @@ export function failureDetail(run: Run): FailureDetail | undefined {
     ambiguous: run.reconciliation_required,
     appliedCount: Array.isArray(s.applied_operations) ? s.applied_operations.length : undefined,
     failedOperation: typeof s.failed_operation === "string" ? s.failed_operation : undefined,
+    activeRunId:
+      typeof f?.active_run_id === "string" && f.active_run_id !== "" ? f.active_run_id : undefined,
   };
 }
 

@@ -36,7 +36,7 @@ from infrahub_sync.product_store import (
     ProductRun,
 )
 from infrahub_sync.product_store.models import RunApproval
-from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
+from infrahub_sync.product_store.store import FileArtifactStore, HolderState, PostgreSQLRunStore, SQLiteRunStore
 from tests.product_store.postgresql_isolation import postgresql_schema_fixture
 
 if TYPE_CHECKING:
@@ -824,3 +824,108 @@ def test_a_withdrawn_run_refuses_an_apply_reservation_but_still_admits_a_verify(
     assert (refused.state, refused.response_status) == ("accepted", 409)
     assert _refusal_code(refused) == _CONFLICT_CODE
     assert verify.state == "reserved"
+
+
+def _open_write(
+    projection: ProductProjection, run_id: str, *, config_id: str, purpose: str, claimed: bool = True
+) -> str:
+    """Create a run of `config_id` and append one write execution that has not ended."""
+    run = _run(run_id, operation="sync" if purpose == "sync" else "plan")
+    projection.create_run(run.model_copy(update={"config_id": config_id}))
+    admitted = _admit_write(projection, run_id, f"m-{run_id}", operation=purpose)
+    flow_run_id = f"flow-{run_id}"
+    projection.add_prefect_execution(run_id, _link(flow_run_id, purpose=purpose), receipt_id=admitted.receipt_id)
+    projection.complete_mutation(
+        admitted.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id=flow_run_id
+    )
+    if claimed:
+        assert projection.claim_execution(run_id, flow_run_id, worker_id=_WORKER_ID)
+    return flow_run_id
+
+
+def test_write_holder_state_reports_a_claimed_open_write_of_the_configuration(
+    projection: ProductProjection,
+) -> None:
+    """A run of the configuration with a claimed write that has not ended is writing."""
+    config_id = _rid("guard-holder-config")
+    _open_write(projection, _rid("guard-holder"), config_id=config_id, purpose="apply")
+    _open_write(projection, _rid("guard-second-waiter"), config_id=config_id, purpose="sync")
+
+    for run_id in (_rid("guard-holder"), _rid("guard-second-waiter")):
+        state = projection.write_holder_state(run_id, config_id)
+        assert state is not None
+        assert state.writing is True
+
+
+def test_write_holder_state_reports_when_the_run_last_ended_a_claimed_write(
+    projection: ProductProjection,
+) -> None:
+    """Spec 028 finding 1: the same read returns when the run's claimed write ended, in UTC.
+
+    The end is written with a non-UTC offset, so the store must convert it, not pass the text on.
+    A run whose write is still open, and a run with no write, have no end time.
+    """
+    config_id = _rid("guard-ended-at-config")
+    run_id = _rid("guard-ended-at")
+    flow_run_id = _open_write(projection, run_id, config_id=config_id, purpose="apply")
+    assert projection.commit_claimed_execution(
+        run_id,
+        flow_run_id,
+        worker_id=_WORKER_ID,
+        terminal_at=datetime(2026, 11, 23, 9, 30, tzinfo=timezone(timedelta(hours=-1))),
+        terminal_state="failed",
+        terminal_outcome="failed",
+        writeback=ExecutionMergeWriteback(results={}),
+    )
+    still_open = _rid("guard-not-ended")
+    _open_write(projection, still_open, config_id=config_id, purpose="sync")
+    never_written = _rid("guard-never-wrote")
+    projection.create_run(_run(never_written).model_copy(update={"config_id": config_id}))
+
+    state = projection.write_holder_state(run_id, config_id)
+    assert state is not None
+    assert state.writing is False
+    ended_at = state.write_ended_at
+    assert ended_at == datetime(2026, 11, 23, 10, 30, tzinfo=timezone.utc)
+    assert ended_at is not None
+    assert ended_at.utcoffset() == timedelta(0)
+    assert projection.write_holder_state(still_open, config_id) == HolderState(writing=True, write_ended_at=None)
+    assert projection.write_holder_state(never_written, config_id) == HolderState(writing=False, write_ended_at=None)
+
+
+def test_write_holder_state_ignores_reads_ended_writes_and_other_configurations(
+    projection: ProductProjection,
+) -> None:
+    """A verify takes no write guard, and neither an unclaimed nor an ended write holds one."""
+    config_id = _rid("guard-quiet-config")
+    _open_write(projection, _rid("guard-alone"), config_id=config_id, purpose="sync")
+    _open_write(projection, _rid("guard-elsewhere"), config_id=_rid("guard-other-config"), purpose="apply")
+    _open_write(projection, _rid("guard-unclaimed"), config_id=config_id, purpose="apply", claimed=False)
+    reading = _rid("guard-reading")
+    projection.create_run(_run(reading).model_copy(update={"config_id": config_id}))
+    verify = _reserve_read(projection, reading, "m-verify", operation="verify")
+    projection.add_prefect_execution(
+        reading, _link("flow-guard-verify", purpose="verify"), receipt_id=verify.receipt_id
+    )
+    projection.complete_mutation(
+        verify.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id="flow-guard-verify"
+    )
+    assert projection.claim_execution(reading, "flow-guard-verify", worker_id=_WORKER_ID)
+    ended_run = _rid("guard-ended")
+    ended = _open_write(projection, ended_run, config_id=config_id, purpose="apply")
+    projection.commit_claimed_execution(
+        ended_run,
+        ended,
+        worker_id=_WORKER_ID,
+        terminal_at=datetime.now(timezone.utc),
+        terminal_state="failed",
+        terminal_outcome="failed",
+        writeback=ExecutionMergeWriteback(results={}),
+    )
+
+    assert projection.write_holder_state(_rid("guard-elsewhere"), config_id) is None
+    assert projection.write_holder_state(_rid("guard-unknown"), config_id) is None
+    for run_id in (reading, _rid("guard-unclaimed"), ended_run):
+        state = projection.write_holder_state(run_id, config_id)
+        assert state is not None
+        assert state.writing is False

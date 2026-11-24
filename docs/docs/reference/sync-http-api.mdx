@@ -1125,6 +1125,8 @@ is `null` or absent:
       `destination_default_branch_not_main`, `branch_list_failed`, `branch_create_failed`,
       `branch_delete_failed`, `proposed_change_open_failed`, `proposed_change_read_failed`,
       `proposed_change_close_failed`;
+    - a write that did not start because another write of the same configuration held its write
+      guard when the wait for it ended: `write_guard_contended`;
     - any other error: `internal_error`.
 - `system`: `{"role": "source" or "destination", "adapter": <name>}`.
 - `error_code`, `node_kind`, `attribute` and `infrahub_message`: Infrahub's error code, node
@@ -1134,6 +1136,18 @@ is `null` or absent:
   load or transform failure names.
 - `operations_total` and `failed_operation_detail`: for a stopped apply, the number of
   operations in the plan, and the `action`, `kind` and `identity` of the failed operation.
+- `active_run_id`: for `write_guard_contended`, the ID of the Sync run named by the label
+  (`application_name`) of the database session that held the configuration's write guard when
+  the wait ended. Sync keeps it only when its run records hold a run with that ID for the same
+  configuration. Any client that can connect to the database can set that label, so the value
+  names the run that the label names; it does not prove that this run's session held the guard.
+  It is also set when that run's write had ended before the wait began but its worker still holds the
+  guard; the `cause` then says the write had ended, and the `next_action` says to stop or restart
+  that worker.
+  While the run is still writing, the `next_action` names `infrahub-sync runs show <run_id>`.
+  It is `null` when Sync cannot prove which run holds the guard, and the `cause` then says that
+  the run is not known. The CLI prints it as `active run: <run_id>`, and the web interface links
+  to that run from the failure notice.
 
 The record never holds the text of another error, so no credential reaches it. A record
 written by an earlier release has none of these fields.
