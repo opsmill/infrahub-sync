@@ -16,10 +16,12 @@ import pytest
 from structlog.testing import capture_logs
 
 from infrahub_sync.service import worker
+from infrahub_sync.service.start_check import StartRefusedError
 from infrahub_sync.service.worker_alive import (
     ALIVE_FILE_NAME,
     WORKER_HEALTHCHECK_COMMAND,
     alive_file_path,
+    remove_alive_file,
     run_alive_writer,
 )
 
@@ -170,3 +172,48 @@ def test_the_writer_interval_is_the_worker_heartbeat_in_whole_seconds(
     monkeypatch.setattr(worker, "get_current_settings", lambda: settings)
 
     assert worker._heartbeat_interval_seconds() == expected
+
+
+def test_remove_alive_file_removes_the_file_a_previous_process_left(tmp_path: Path) -> None:
+    path = tmp_path / ALIVE_FILE_NAME
+    path.write_text(f"{int(time.time())} 30", encoding="ascii")
+
+    remove_alive_file(path)
+
+    assert not path.exists()
+
+
+def test_remove_alive_file_accepts_a_missing_file(tmp_path: Path) -> None:
+    with capture_logs() as logs:
+        remove_alive_file(tmp_path / ALIVE_FILE_NAME)
+
+    assert logs == []
+
+
+def test_remove_alive_file_warns_without_the_path_when_it_cannot_remove(tmp_path: Path) -> None:
+    # A directory in the file's place cannot be unlinked.
+    path = tmp_path / ALIVE_FILE_NAME
+    path.mkdir()
+
+    with capture_logs() as logs:
+        remove_alive_file(path)
+
+    assert [entry["event"] for entry in logs] == ["worker_alive_file_remove_failed"]
+    assert str(tmp_path) not in repr(logs)
+
+
+def test_the_worker_removes_a_stale_alive_file_before_its_bootstrap_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / ALIVE_FILE_NAME
+    path.write_text(f"{int(time.time())} 30", encoding="ascii")
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setattr(worker, "install_custom_ca_bundle", lambda: None)
+    seen: list[bool] = []
+
+    def refuse(_pool: str) -> None:
+        seen.append(path.exists())
+        raise StartRefusedError
+
+    assert worker.main(["--pool", "team-pool"], start_check=refuse) == 1
+    assert seen == [False]

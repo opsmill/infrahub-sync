@@ -5,6 +5,10 @@ on its own asyncio timer. The timer depends on no other service, so the file sho
 worker's process and event loop run: a paused or stopped process, or an event loop blocked by
 synchronous code, stops the writes. An outage of PostgreSQL or Prefect does not.
 
+The worker removes the file when its process starts, before its bootstrap check. A file left by
+the previous process survives a container restart when `TMPDIR` is not a tmpfs, and would pass
+the healthcheck until it grew too old, before the new process had written anything.
+
 The Compose healthcheck runs `WORKER_HEALTHCHECK_COMMAND` with `python -I -c`. It imports only
 the standard library, so it does not import this package every ten seconds.
 """
@@ -50,6 +54,18 @@ def alive_file_path(environ: Mapping[str, str]) -> Path:
     """
     directory = environ.get("TMPDIR") or "/tmp"  # noqa: S108 - the healthcheck command reads the same path.
     return Path(directory) / ALIVE_FILE_NAME
+
+
+def remove_alive_file(path: Path) -> None:
+    """Remove the alive file a previous worker process left, so it cannot pass the healthcheck.
+
+    A missing file is the usual case. Any other failure logs one warning, naming neither the path
+    nor the error text, and the worker keeps starting: the file only shows that the process runs.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("worker_alive_file_remove_failed")
 
 
 def _write_alive_file(path: Path, text: str) -> None:

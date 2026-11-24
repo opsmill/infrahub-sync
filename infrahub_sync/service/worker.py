@@ -36,7 +36,7 @@ from .orchestration import SERVICE_DEFINITION, SERVICE_WORKER_NAME_PREFIX
 from .start_check import StartRefusedError, check_bootstrap_record
 from .storage import service_product_projection
 from .trust_store import TrustStoreError, install_custom_ca_bundle
-from .worker_alive import alive_file_path, run_alive_writer
+from .worker_alive import alive_file_path, remove_alive_file, run_alive_writer
 
 if TYPE_CHECKING:
     import logging
@@ -638,7 +638,11 @@ def main(
     work pool the bootstrap has not set up exits 1 (spec 018 FR-007b). `start_check`
     replaces that check, for tests; unset, `check_bootstrap_record` is looked up when
     `main` runs.
+
+    The alive file of a previous process is removed first, so the Compose healthcheck fails
+    until this process writes its own.
     """
+    remove_alive_file(alive_file_path(os.environ))
     try:
         install_custom_ca_bundle()
     except TrustStoreError as error:
