@@ -128,6 +128,9 @@ _PACKAGE_ARG = "package"
 # The client operation that `configs check` reports when the Sync API breaks the paging contract.
 _CHECK_PACKAGE = "check_package"
 _KIND_ARG = "kind"
+_ACTION_ARG = "action"
+_JSON_ARG = "json"
+_SAMPLES_ARG = "samples"
 _TYPE_ARG = "type"
 _VERSION_ARG = "version"
 _DIFF_DEPRECATION = "warning: 'diff' is deprecated, use 'plan'"
@@ -161,6 +164,9 @@ _READABLE_ESCAPES = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
 # field, a parenthesis as a marker such as `(not executed)`, a quote as a value boundary, and a
 # backslash as the escape character used inside the quotes.
 _IDENTITY_DELIMITERS = frozenset("=\"'()\\")
+# A peer is printed as its identity values separated by commas, between square brackets on a
+# relationship line, so these characters are ambiguous in an identity value of a peer as well.
+_PEER_DELIMITERS = _IDENTITY_DELIMITERS | frozenset(",[]")
 
 app = typer.Typer(
     help="Synchronize registered configurations through the Sync API.",
@@ -1497,16 +1503,16 @@ def _delete_disclosure(plan: PlanResource) -> None:
         typer.echo("0 delete operations are recorded; apply has no deletes to skip.")
 
 
-def _identity_value(value: object) -> str:
+def _identity_value(value: object, delimiters: frozenset[str] = _IDENTITY_DELIMITERS) -> str:
     """Render one identity value so that its start and its end are visible on the line.
 
-    A value that is empty, or that contains whitespace or one of `_IDENTITY_DELIMITERS`, is
+    A value that is empty, or that contains whitespace or one of `delimiters`, is
     printed between double quotes, with each backslash and double quote inside it preceded by a
     backslash. The value then cannot be read as another `key=value` field or as a marker that
     follows the identity, and it cannot close its own quotes. Any other value is printed as it is.
     """
     text = str(value)
-    if text and not any(character.isspace() or character in _IDENTITY_DELIMITERS for character in text):
+    if text and not any(character.isspace() or character in delimiters for character in text):
         return text
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -1514,6 +1520,31 @@ def _identity_value(value: object) -> str:
 def _identity_text(identity: Mapping[str, Any]) -> str:
     # Quoting is decided on the real value; `_display` escapes the finished line afterwards.
     return " ".join(f"{key}={_identity_value(identity[key])}" for key in sorted(identity))
+
+
+def _peer_values(value: object) -> str:
+    """The identity values of one peer, separated by commas, in the order of the field names.
+
+    A value that refers to another peer is replaced by the identity values of that peer. Each
+    value is quoted like an identity value, and also when it contains a comma or a square
+    bracket, so a value cannot be read as two values or as the end of the peer.
+    """
+    if isinstance(value, dict):
+        mapping = cast("dict[str, object]", value)
+        identity = mapping.get("identity")
+        inner = cast("dict[str, object]", identity) if isinstance(identity, dict) else mapping
+        return ",".join(_peer_values(inner[key]) for key in sorted(inner))
+    if isinstance(value, list | tuple):
+        return ",".join(_peer_values(item) for item in value)
+    return _identity_value(value, _PEER_DELIMITERS)
+
+
+def _operation_identity_text(identity: Mapping[str, Any]) -> str:
+    """The identity of a plan operation: `key=value` fields, with a peer printed by its identity values."""
+    return " ".join(
+        f"{key}={_peer_values(value) if isinstance(value, dict | list | tuple) else _identity_value(value)}"
+        for key, value in sorted(identity.items())
+    )
 
 
 def _last_change_line(record: PlanLastChangeResource) -> str:
@@ -1530,14 +1561,27 @@ def _last_change_line(record: PlanLastChangeResource) -> str:
     )
 
 
+def _relationship_lines(reference: Mapping[str, Any]) -> Iterator[str]:
+    """One relationship of an operation: one line per peer, or one line that states it holds no peer.
+
+    A peer is printed by its kind and its identity values, with the values of the peers its
+    identity crosses. `runs plan --json` prints the same reference in full.
+    """
+    field = reference.get("field")
+    peers = reference.get("peers") or ()
+    for peer in peers:
+        yield f"  {field} -> {reference.get('peer_kind')}[{_peer_values(peer)}]"
+    if not peers:
+        # Plan format 5: a one-peer reference with no peer empties that relationship (FR-009).
+        # An empty peer set of a many relationship replaces the peers the destination holds.
+        yield f"  {field}: becomes empty" if reference.get("cardinality") == "one" else f"  {field} -> no peers"
+
+
 def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[PlanLastChangeResource] = ()) -> None:
     marker = " (not executed)" if operation.action == "delete" else ""
     # Identity values come from the source, so they are escaped before a reviewer reads them.
-    typer.echo(
-        _display(
-            f"{operation.operation_id} {operation.action} {operation.kind} {_identity_text(operation.identity)}{marker}"
-        )
-    )
+    identity = _operation_identity_text(operation.identity)
+    typer.echo(_display(f"{operation.operation_id} {operation.action} {operation.kind} {identity}{marker}"))
     # Only an update carries one, and it is what the apply will key that write by, so a
     # reviewer sees which destination object the operation names before approving it.
     if operation.destination_id is not None:
@@ -1545,13 +1589,9 @@ def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[P
     payload = operation.payload
     if payload is not None:
         typer.echo(f"  payload: {json.dumps(payload, sort_keys=True, separators=(',', ':'))}")
-    relationships = operation.relationships
-    if relationships:
-        typer.echo(f"  relationships: {json.dumps(relationships, sort_keys=True, separators=(',', ':'))}")
-        # Plan format 5: a one-peer reference with no peer empties that relationship (FR-009).
-        for reference in relationships:
-            if reference.get("cardinality") == "one" and not reference.get("peers"):
-                typer.echo(_display(f"  {reference.get('field')}: becomes empty"))
+    for reference in operation.relationships or ():
+        for line in _relationship_lines(reference):
+            typer.echo(_display(line))
     for record in last_changes:
         typer.echo(_last_change_line(record))
 
@@ -1654,14 +1694,48 @@ def _echo_first_problems(client: SyncClient, plan: PlanResource) -> None:
         typer.echo(f"List every problem with `infrahub-sync runs plan {_display(plan.run_id)} --problems`.")
 
 
-def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = None) -> None:
+def _echo_samples(
+    operations: Sequence[PlanOperationResource],
+    last_changes: Mapping[str, Sequence[PlanLastChangeResource]],
+    samples: int,
+) -> None:
+    """Print, for each destination kind and action, its operation count and its first operations.
+
+    The groups and the operations in a group keep the order of the saved plan, which is the
+    order apply writes them in. The heading states how many operations are shown, so a reviewer
+    reads that the rest of the group is not printed.
+    """
+    groups: dict[tuple[str, str], list[PlanOperationResource]] = {}
+    for operation in operations:
+        groups.setdefault((operation.kind, operation.action), []).append(operation)
+    for (kind, action), group in groups.items():
+        shown = group[:samples]
+        typer.echo(_display(f"{kind} {action}: {len(shown)} of {len(group)} operations shown"))
+        for operation in shown:
+            _operation_detail(operation, last_changes.get(operation.operation_id, ()))
+
+
+def _echo_plan(
+    plan: PlanResource,
+    *,
+    detail: bool = False,
+    kind: str | None = None,
+    action: str | None = None,
+    samples: int | None = None,
+) -> None:
     operations = list(plan.operations)
+    listed = detail or samples is not None
     if kind is not None:
-        if not detail:
+        if not listed:
             raise ClientInputError(_KIND_ARG)
         operations = [operation for operation in operations if operation.kind == kind]
         if not operations:
             raise ClientInputError(_KIND_ARG)
+    if action is not None:
+        if not listed:
+            raise ClientInputError(_ACTION_ARG)
+        # A plan without one action is usual, so an action that matches no operation prints none.
+        operations = [operation for operation in operations if operation.action == action]
     fields: list[tuple[str, object]] = [
         ("run_id", plan.run_id),
         ("plan_checksum", plan.checksum),
@@ -1681,13 +1755,17 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
     _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
     _owner_scope_disclosure(plan)
-    if detail:
-        # Records are grouped by operation; a plan made without them shows no last-change lines.
-        last_changes: dict[str, list[PlanLastChangeResource]] = {}
-        for record in plan.last_changes or ():
-            last_changes.setdefault(record.operation_id, []).append(record)
-        for operation in operations:
-            _operation_detail(operation, last_changes.get(operation.operation_id, ()))
+    if not listed:
+        return
+    # Records are grouped by operation; a plan made without them shows no last-change lines.
+    last_changes: dict[str, list[PlanLastChangeResource]] = {}
+    for record in plan.last_changes or ():
+        last_changes.setdefault(record.operation_id, []).append(record)
+    if samples is not None:
+        _echo_samples(operations, last_changes, samples)
+        return
+    for operation in operations:
+        _operation_detail(operation, last_changes.get(operation.operation_id, ()))
 
 
 def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
@@ -2500,16 +2578,45 @@ def runs_results(
         typer.echo(json.dumps(resource.model_dump(mode="json"), sort_keys=True, indent=2))
 
 
+class PlanActionOption(str, Enum):
+    """The action of a saved plan operation, for `runs plan --detail --action`."""
+
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+
+
 @runs_app.command("plan")
 def runs_plan(
     ctx: typer.Context,
     run_id: str = typer.Argument(..., help="Service-issued run ID."),
     *,
-    detail: bool = typer.Option(False, "--detail", help="Render every saved operation."),  # noqa: FBT003
+    detail: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--detail",
+        help="Render every saved operation, with each peer printed by its kind and identity values.",
+    ),
     kind: str | None = typer.Option(
         None,
         "--kind",
-        help="Filter the detailed operation list, or the problem, left-out or kept list, by destination kind.",
+        help="Filter the operations of --detail or --samples, or the problem, left-out or kept list, by destination kind.",
+    ),
+    action: PlanActionOption | None = typer.Option(
+        None, "--action", help="Filter the operations by action; requires --detail or --samples."
+    ),
+    samples: int | None = typer.Option(
+        None,
+        "--samples",
+        min=1,
+        help=(
+            "For each destination kind and action, print the operation count and this number of its "
+            "first operations; cannot be combined with --detail, --problems, --left-out, --kept or --json."
+        ),
+    ),
+    as_json: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--json",
+        help="Print the saved plan as one JSON object, with every peer in full; cannot be combined with another option.",
     ),
     problems: bool = typer.Option(False, "--problems", help="List every problem the plan found."),  # noqa: FBT003
     left_out: bool = typer.Option(False, "--left-out", help="List every record the plan leaves out."),  # noqa: FBT003
@@ -2531,10 +2638,23 @@ def runs_plan(
         lists = [name for name, chosen in (("problems", problems), ("left_out", left_out), ("kept", kept)) if chosen]
         if len(lists) > 1 or (lists and detail):
             raise ClientInputError(lists[1] if len(lists) > 1 else "detail")
-        if problem_type is not None and not problems:
-            raise ClientInputError(_TYPE_ARG)
+        # Each option that cannot be combined with the others given; the first one is reported.
+        refused = (
+            (_TYPE_ARG, problem_type is not None and not problems),
+            (_SAMPLES_ARG, samples is not None and (detail or bool(lists))),
+            (_JSON_ARG, as_json and (detail or bool(lists) or (kind, action, samples) != (None, None, None))),
+            (_ACTION_ARG, action is not None and bool(lists)),
+        )
+        for argument, is_refused in refused:
+            if is_refused:
+                raise ClientInputError(argument)
         client = _client(ctx)
-        if problems:
+        if as_json:
+            # `json.dumps` escapes every control character, so a source value cannot reach the
+            # terminal as an escape sequence, and the output keeps the real values.
+            plan = client.get_plan(run_id)
+            typer.echo(json.dumps(plan.model_dump(mode="json"), sort_keys=True, indent=2))
+        elif problems:
             for entry in _report_pages(
                 client.get_plan_problems, run_id, "get_plan_problems", problem_type=problem_type, kind=kind
             ):
@@ -2546,7 +2666,13 @@ def runs_plan(
             for entry in _report_pages(client.get_plan_kept, run_id, "get_plan_kept", kind=kind):
                 typer.echo(_kept_line(entry))
         else:
-            _echo_plan(client.get_plan(run_id), detail=detail, kind=kind)
+            _echo_plan(
+                client.get_plan(run_id),
+                detail=detail,
+                kind=kind,
+                action=action.value if action is not None else None,
+                samples=samples,
+            )
 
 
 # A run's phase while its first execution is submitted and has not ended.

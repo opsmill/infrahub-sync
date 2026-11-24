@@ -3192,3 +3192,250 @@ def test_runs_plan_detail_escapes_the_name_of_an_emptied_relationship(client: Ma
 
     assert result.exit_code == 0, result.output
     assert "  lag\\x1b[2K: becomes empty" in result.output.split("\n")
+
+
+def _site_peer() -> dict[str, Any]:
+    return {"peer_kind": "LocationSite", "identity": {"name": "DM-Akron"}}
+
+
+def _device_identity() -> dict[str, Any]:
+    """A device whose identity crosses a rack, whose identity crosses a site."""
+    rack = {"peer_kind": "LocationRack", "identity": {"name": "Rack-1", "site": _site_peer()}}
+    return {"location": rack, "name": "rtr01"}
+
+
+def _interface_create() -> PlanOperationResource:
+    """An interface create whose identity and `device` reference both name the same nested peer."""
+    return PlanOperationResource(
+        operation_id="op-interface",
+        action="create",
+        kind="InterfacePhysical",
+        identity={"device": {"peer_kind": "DcimDevice", "identity": _device_identity()}, "name": "ge-0/0/0"},
+        tier=3,
+        payload={"mtu": 1500, "name": "ge-0/0/0"},
+        relationships=(
+            {"field": "device", "peer_kind": "DcimDevice", "cardinality": "one", "peers": [_device_identity()]},
+            {
+                "field": "tags",
+                "peer_kind": "BuiltinTag",
+                "cardinality": "many",
+                "peers": [{"name": "core"}, {"name": "prod"}],
+            },
+        ),
+    )
+
+
+def test_runs_plan_detail_prints_each_peer_by_its_identity_values(client: MagicMock) -> None:
+    """SYNC-259: a peer is printed by its identity values, and each relationship peer on one line."""
+    client.get_plan.return_value = _plan_of(_interface_create())
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    header = lines.index("op-interface create InterfacePhysical device=Rack-1,DM-Akron,rtr01 name=ge-0/0/0")
+    assert lines[header + 1 : header + 6] == [
+        '  payload: {"mtu":1500,"name":"ge-0/0/0"}',
+        "  device -> DcimDevice[Rack-1,DM-Akron,rtr01]",
+        "  tags -> BuiltinTag[core]",
+        "  tags -> BuiltinTag[prod]",
+        "",
+    ]
+    assert "peer_kind" not in result.output
+    assert "relationships:" not in result.output
+
+
+def test_runs_plan_detail_states_that_an_emptied_many_relationship_has_no_peers(client: MagicMock) -> None:
+    """An empty peer set of a many relationship is written by apply, so the detail states it."""
+    client.get_plan.return_value = _plan_of(_lag_update([], cardinality="many"))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "  lag -> no peers" in result.output.split("\n")
+
+
+def test_runs_plan_detail_escapes_the_identity_values_of_a_peer(client: MagicMock) -> None:
+    client.get_plan.return_value = _plan_of(_lag_update([{"name": "ae0\x1b[2K"}]))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "\x1b" not in result.output
+    # The value holds a square bracket, so it is quoted as well as escaped.
+    assert '  lag -> InterfaceLag["ae0\\x1b[2K"]' in result.output.split("\n")
+
+
+def test_runs_plan_detail_filters_the_operations_by_action(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail", "--action", "create")
+
+    assert result.exit_code == 0, result.output
+    assert "op-create" in result.output
+    assert "op-delete" not in result.output
+    # The summary still covers the whole plan.
+    assert "operations: 2" in result.output
+
+
+def test_runs_plan_detail_with_an_action_the_plan_does_not_hold_prints_no_operation(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail", "--action", "update")
+
+    assert result.exit_code == 0, result.output
+    assert "op-create" not in result.output
+    assert "op-delete" not in result.output
+
+
+def test_runs_plan_action_without_detail_is_typed_input_error(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--action", "create")
+
+    assert result.exit_code == 2
+    assert "error: client-input" in result.output
+    assert "argument: action" in result.output
+
+
+def test_runs_plan_json_prints_the_saved_plan_with_every_peer_in_full(client: MagicMock) -> None:
+    plan = _plan_of(_interface_create())
+    client.get_plan.return_value = plan
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == plan.model_dump(mode="json")
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [("--detail",), ("--problems",), ("--kind", "Device"), ("--action", "create"), ("--samples", "1")],
+    ids=["detail", "problems", "kind", "action", "samples"],
+)
+def test_runs_plan_json_with_another_view_is_typed_input_error(client: MagicMock, arguments: tuple[str, ...]) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--json", *arguments)
+
+    assert result.exit_code == 2
+    assert "error: client-input" in result.output
+    assert "argument: json" in result.output
+    client.get_plan.assert_not_called()
+
+
+def _interface(number: int, action: Literal["create", "update"] = "create") -> PlanOperationResource:
+    return PlanOperationResource(
+        operation_id=f"op-{action}-{number}",
+        action=action,
+        kind="InterfacePhysical",
+        identity={"device": "edge-01", "name": f"et-0/0/{number}"},
+        tier=1,
+        payload={"name": f"et-0/0/{number}"},
+        relationships=(
+            {"field": "device", "peer_kind": "Device", "cardinality": "one", "peers": [{"name": "edge-01"}]},
+        ),
+        destination_id="dest-1" if action == "update" else None,
+    )
+
+
+def _plan_for_samples() -> PlanResource:
+    """One device create, three interface creates and one interface update, in write order."""
+    plan = _plan()
+    operations = (plan.operations[0], _interface(1), _interface(2), _interface(9, "update"), _interface(3))
+    return plan.model_copy(update={"operations": operations})
+
+
+def test_runs_plan_samples_prints_each_kind_and_action_with_its_count_and_first_operations(
+    client: MagicMock,
+) -> None:
+    """SYNC-259: a large plan is reviewed by kind and action, with a few operations of each."""
+    client.get_plan.return_value = _plan_for_samples()
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--samples", "2")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    assert lines[lines.index("Device create: 1 of 1 operations shown") :] == [
+        "Device create: 1 of 1 operations shown",
+        "op-create create Device name=edge-01",
+        '  payload: {"name":"edge-01"}',
+        "InterfacePhysical create: 2 of 3 operations shown",
+        "op-create-1 create InterfacePhysical device=edge-01 name=et-0/0/1",
+        '  payload: {"name":"et-0/0/1"}',
+        "  device -> Device[edge-01]",
+        "op-create-2 create InterfacePhysical device=edge-01 name=et-0/0/2",
+        '  payload: {"name":"et-0/0/2"}',
+        "  device -> Device[edge-01]",
+        "InterfacePhysical update: 1 of 1 operations shown",
+        "op-update-9 update InterfacePhysical device=edge-01 name=et-0/0/9",
+        "  destination id: dest-1",
+        '  payload: {"name":"et-0/0/9"}',
+        "  device -> Device[edge-01]",
+        "",
+    ]
+    # The summary above the samples still covers the whole plan.
+    assert f"plan_checksum: {CHECKSUM}" in lines
+
+
+def test_runs_plan_samples_are_filtered_by_kind_and_action(client: MagicMock) -> None:
+    client.get_plan.return_value = _plan_for_samples()
+
+    result = _invoke(
+        client, "runs", "plan", "service-run-1", "--samples", "1", "--kind", "InterfacePhysical", "--action", "create"
+    )
+
+    assert result.exit_code == 0, result.output
+    headings = [line for line in result.output.split("\n") if line.endswith("operations shown")]
+    assert headings == ["InterfacePhysical create: 1 of 3 operations shown"]
+    assert "op-create-2" not in result.output
+
+
+def test_runs_plan_samples_escape_the_kind_in_the_heading(client: MagicMock) -> None:
+    forged = _plan().operations[0].model_copy(update={"kind": "Device\x1b[2K"})
+    client.get_plan.return_value = _plan().model_copy(update={"operations": (forged,)})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--samples", "1")
+
+    assert result.exit_code == 0, result.output
+    assert "\x1b" not in result.output
+    assert "Device\\x1b[2K create: 1 of 1 operations shown" in result.output.split("\n")
+
+
+@pytest.mark.parametrize("arguments", [("--detail",), ("--problems",)], ids=["detail", "problems"])
+def test_runs_plan_samples_with_another_view_is_typed_input_error(
+    client: MagicMock, arguments: tuple[str, ...]
+) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--samples", "2", *arguments)
+
+    assert result.exit_code == 2
+    assert "error: client-input" in result.output
+    assert "argument: samples" in result.output
+    client.get_plan.assert_not_called()
+
+
+def test_runs_plan_refuses_a_sample_count_below_one(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--samples", "0")
+
+    assert result.exit_code == 2
+    client.get_plan.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("name", "printed"),
+    [
+        pytest.param("ae0,ae1", '"ae0,ae1"', id="comma"),
+        pytest.param("ae0]", '"ae0]"', id="closing-bracket"),
+        pytest.param("ae0 -> Forged[x", '"ae0 -> Forged[x"', id="forged-peer"),
+        pytest.param("ae 0", '"ae 0"', id="space"),
+        pytest.param("", '""', id="empty-value"),
+        pytest.param("ae0", "ae0", id="ordinary-value"),
+    ],
+)
+def test_runs_plan_detail_shows_where_each_identity_value_of_a_peer_starts_and_ends(
+    client: MagicMock, name: str, printed: str
+) -> None:
+    """A source value of a peer must not be read as two values, as another peer or as another field."""
+    operation = _lag_update([{"name": name}]).model_copy(
+        update={"identity": {"device": {"peer_kind": "Device", "identity": {"name": name}}, "name": "et-0/0/1"}}
+    )
+    client.get_plan.return_value = _plan_of(operation)
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    assert f"op-update update InterfacePhysical device={printed} name=et-0/0/1" in lines
+    assert f"  lag -> InterfaceLag[{printed}]" in lines

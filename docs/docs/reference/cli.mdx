@@ -704,8 +704,11 @@ $ infrahub-sync runs plan [OPTIONS] {run_id}
 
 **Options**:
 
-* `--detail`: Render every saved operation.
-* `--kind <str>`: Filter the detailed operation list, or the problem, left-out or kept list, by destination kind.
+* `--detail`: Render every saved operation, with each peer printed by its kind and identity values.
+* `--kind <str>`: Filter the operations of --detail or --samples, or the problem, left-out or kept list, by destination kind.
+* `--action <create|update|delete>`: Filter the operations by action; requires --detail or --samples.
+* `--samples <int range>`: For each destination kind and action, print the operation count and this number of its first operations; cannot be combined with --detail, --problems, --left-out, --kept or --json.  [x&gt;=1]
+* `--json`: Print the saved plan as one JSON object, with every peer in full; cannot be combined with another option.
 * `--problems`: List every problem the plan found.
 * `--left-out`: List every record the plan leaves out.
 * `--kept`: List every record the plan keeps without one optional relationship.
