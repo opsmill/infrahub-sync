@@ -1,0 +1,120 @@
+infrahub_sync/service/failure_cause.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 87,300-309,322-324,412-442,479,495,682-683,690-696,732
+  s_3edb7dabae63de::t_aea1143d0e2eb6 734
+infrahub_sync/service/flow.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 118-124,1200-1201,1209-1210,1212-1214,1414,1472,1706-1707,1723-1728,1753-1763,1785-1793,1802-1809,1833-1876,1965,1967-1974
+dev/specs/028-write-lock-holder/tasks.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-232
+dev/specs/028-write-lock-holder/contracts/contended-write-failure.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-50
+tests/service/failure_cases.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 43,50-53,77-79,135-137,227-233,390-432,449,455
+dev/specs/028-write-lock-holder/alignment-check.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-43
+.github/workflows/workflow-tests.yml
+  s_58b527396c8cb5::t_e6d1cf2044bc84 85-88,110
+dev/specs/028-write-lock-holder/plan.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-197
+infrahub_sync/service/apply_guard.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 27,29,31,44,55-66,72,86-101,131-146,196-230,380,391-393,404,420,422-428,431-432,435-436,438-439,454-461,465-469,477-502,524-525,527-535
+tests/integration/test_apply_guard_integration.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 23,28,34-35,40,73-74,243-248,250,314-571
+tests/service/test_flow_and_prefect.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 624
+frontend/src/domain/run-state.ts
+  s_58b527396c8cb5::t_e6d1cf2044bc84 226-230,262-263
+tests/service/test_read_progress.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 552
+tests/cli/test_failure_output.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 147-160,179-249
+tests/service/test_failure_cause.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 420-554
+tests/service/test_verify_destination.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 495
+infrahub_sync/client/models.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1299,1309-1311,1378-1381
+infrahub_sync/cli.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 160-163,1500-1513,1515-1516,1725-1728
+dev/specs/028-write-lock-holder/opsmill-implement-report.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-91
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 4,45-46,54-55,93-136
+tasks/tests.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 54,56-59,61-64,70
+dev/specs/028-write-lock-holder/spec.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-227
+frontend/src/domain/run-state.test.ts
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-50
+tests/cli/test_client_commands.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1503-1504,1544,1546,1554-1561,1563,1569-1630
+docs/docs/reference/sync-http-api.mdx
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1341-1342,1352-1363
+tests/service/test_managed_write_guard.py
+  s_58b527396c8cb5::t_b4e71fe2cc9dbc 650
+  s_58b527396c8cb5::t_e6d1cf2044bc84 18,39,76-77,89,95,99-100,164,222-224,365-649,651-674
+  s_58b527396c8cb5::t_9ebfdff5bb301c 675-676
+dev/specs/028-write-lock-holder/checklists/requirements.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-37
+dev/specs/028-write-lock-holder/research.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-149
+docs/docs/development/guidelines/testing-tiers.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 120-125,186-196,206,210
+changelog/+plan-detail-identity-boundaries.security.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1
+tests/product_store/test_write_admission.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 39,827-931
+frontend/src/features/runs/run-notices.tsx
+  s_58b527396c8cb5::t_e6d1cf2044bc84 153-166
+tests/integration/test_managed_write_guard_integration.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 73
+dev/specs/028-write-lock-holder/quickstart.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-60
+docs/docs/development/knowledge/apply-guard.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 99-159,219-223
+dev/specs/028-write-lock-holder/data-model.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-54
+docs/docs/development/guidelines/secret-redaction.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 51-59
+tests/service/test_apply_guard.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 13,22,25,27,36-37,41,52-56,75-78,81,85-89,98,101,107,113,117,119-122,124,126,128-129,133,149,157,166,182,329-334,344-363,365,368,384-516,1058-1126
+tests/service/test_failure_cause_credentials.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 40-45,61,139-189,213-214,217-220,231-237
+infrahub_sync/product_store/store.py
+  s_58b527396c8cb5::t_e6d1cf2044bc84 13,872-885,899-911,1355-1356,4869-4893,6490-6496
+  s_58b527396c8cb5::t_ae7e27019a8d41 6497
+tests/plan/test_report_models.py
+  s_58b527396c8cb5::t_31454b599f5168 121-123
+  s_58b527396c8cb5::t_e6d1cf2044bc84 127,172-182
+  s_58b527396c8cb5::t_e5dbb67fe0438e 124
+docs/docs/running-a-sync.mdx
+  s_58b527396c8cb5::t_e6d1cf2044bc84 254-271,659-694
+  s_58b527396c8cb5::t_f131d26f01becf 695
+dev/specs/028-write-lock-holder/critiques/critique-20261123.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1-136
+changelog/+write-guard-names-active-run.changed.md
+  s_58b527396c8cb5::t_e6d1cf2044bc84 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5517f83d515cda4ebc6f35203aa22e373f877769",
+  "prompts": {},
+  "sessions": {
+    "s_3edb7dabae63de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-amerge-v3-develop-401fc19ca00c26cc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
