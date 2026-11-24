@@ -456,15 +456,22 @@ def _naming_a_deleted_credential(api: ScheduleApi, config_id: str, name: str) ->
 
 def test_create_refuses_a_version_that_names_a_stored_credential_that_does_not_exist(api: ScheduleApi) -> None:
     version = _naming_a_deleted_credential(api, api.config_id, "netbox-deleted")
+    key = "create-names-a-deleted-credential"
 
-    response = api.client.post("/schedules", json=api.body(registry_version=version), headers=headers())
+    response = api.client.post("/schedules", json=api.body(registry_version=version), headers=headers(key=key))
 
     assert response.status_code == 422, response.text
     error = _error(response)
     assert error["code"] == "credential-not-found"
     assert "netbox-deleted" in error["message"]
+    assert "`infrahub-sync credentials create netbox-deleted`" in error["message"]
     assert api.client.get("/schedules", headers=READ).json()["items"] == []
     assert api.orchestration.calls == []
+    # The receipt of the refused request was released: the same request with the same key is
+    # refused again, not answered as a request in progress.
+    again = api.client.post("/schedules", json=api.body(registry_version=version), headers=headers(key=key))
+    assert again.status_code == 422, again.text
+    assert _error(again)["code"] == "credential-not-found"
 
 
 def test_a_change_to_a_version_that_names_a_stored_credential_that_does_not_exist_is_refused(
@@ -472,17 +479,22 @@ def test_a_change_to_a_version_that_names_a_stored_credential_that_does_not_exis
 ) -> None:
     created = api.create()
     version = _naming_a_deleted_credential(api, api.config_id, "netbox-deleted")
+    path = f"/schedules/{created['schedule_id']}/change"
+    key = "change-names-a-deleted-credential"
 
-    response = api.post(created["schedule_id"], "change", registry_version=version)
+    response = api.client.post(path, json={"registry_version": version}, headers=headers(key=key))
 
     assert response.status_code == 422, response.text
     error = _error(response)
     assert error["code"] == "credential-not-found"
     assert "netbox-deleted" in error["message"]
+    assert "`infrahub-sync credentials create netbox-deleted`" in error["message"]
     assert api.get(created["schedule_id"])["registry_version"] == 1
-    # The receipt of the refused request was released: the same change is refused again, not
-    # answered as a request in progress.
-    assert api.post(created["schedule_id"], "change", registry_version=version).status_code == 422
+    # The receipt of the refused request was released: the same change with the same key is
+    # refused again, not answered as a request in progress.
+    again = api.client.post(path, json={"registry_version": version}, headers=headers(key=key))
+    assert again.status_code == 422, again.text
+    assert _error(again)["code"] == "credential-not-found"
 
 
 @pytest.mark.parametrize(

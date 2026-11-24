@@ -45,9 +45,9 @@ from infrahub_sync.product_store import (
     ScheduleNameInUseError,
     ScheduleNotFoundError,
     ScheduleRecord,
+    VersionCredentialsMissingError,
 )
 from infrahub_sync.product_store.models import DEFAULT_START_LATE_SECONDS, SCHEDULE_ID_PATTERN
-from infrahub_sync.product_store.stored_credentials import VersionCredentialsMissingError
 
 from . import schedule_cadence
 from .events import SCHEDULE_START, SCHEDULE_STOPPED, schedule_decision_type, schedule_event
@@ -907,9 +907,12 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
     def _credentials_missing(self, context: _Request, error: VersionCredentialsMissingError) -> ServiceAPIError:
         """Return ``422 credential-not-found`` for a version that names missing stored credentials, with its event.
 
-        The message lists the missing names, as a registration does; a name is not secret.
+        The message lists the missing names, as a registration does, and the command that an
+        administrator runs to create each one (contracts/http-api.md); a name is not secret.
         """
-        return self._refusal(context, 422, "credential-not-found", str(error))
+        commands = ", ".join(f"`infrahub-sync credentials create {name}`" for name in error.names)
+        message = f"{error}; an administrator creates each one with {commands}"
+        return self._refusal(context, 422, "credential-not-found", message)
 
     def _released(self, receipt: MutationReceipt | None, error: ServiceAPIError) -> ServiceAPIError:
         """Make the receipt of a refused request available for a later attempt, and return the refusal."""

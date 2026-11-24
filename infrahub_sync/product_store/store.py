@@ -4906,7 +4906,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """Delete a credential that nothing current names, with its revisions and the event, in one transaction.
 
         The transaction locks the credential row first, as a registration that names the
-        credential does, so the two cannot both pass their check (research R8, critique E4).
+        credential does, and as a schedule does that is created or changed to pin a version that
+        names it, so the two cannot both pass their check (research R8, critique E4).
 
         Returns:
             The credential as it was before the deletion.
@@ -5814,7 +5815,8 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
 
         Raises:
             ScheduleNotFoundError, ScheduleDeletedError, ScheduleChangedError,
-            ScheduleTransitionError, ValueError: see `_RelationalRunStore.update_schedule`.
+            ScheduleTransitionError, ValueError, VersionCredentialsMissingError: see
+                `_RelationalRunStore.update_schedule`.
         """
         return self._records.update_schedule(
             _redacted_schedule(schedule, secrets),

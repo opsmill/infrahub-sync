@@ -458,7 +458,9 @@ def delete_credential(cursor: _Cursor, sql: Sql, name: str) -> StoredCredential:
     The lock is the first statement, before the check. A registration that names the credential
     takes the same lock first (``lock_and_read_fields``), so one of the two waits for the other
     to commit: a deletion that waited reads the new version and is refused, and a registration
-    that waited finds no credential and is refused (critique E4). The rows of
+    that waited finds no credential and is refused (critique E4). A schedule that is created, or
+    changed to pin another version, takes the same lock for each credential that version names
+    (``lock_version_credentials``), with the same outcome. The rows of
     ``configuration_version_credentials`` and ``run_credential_uses`` stay: they hold the name,
     so an older version and a run record still show which credential they named.
 
@@ -494,9 +496,9 @@ def lock_and_read_fields(cursor: _Cursor, sql: Sql, names: Collection[str]) -> d
     """Lock these credentials until the transaction ends, and return the field names each one holds.
 
     A name that no credential has maps to ``None``. The lock is the one a value change and a
-    deletion take, so a registration that passed its check cannot commit beside a deletion of a
-    credential it names (critique E4). The names are locked in sorted order, so two
-    registrations cannot wait for each other.
+    deletion take, so a registration, or a schedule (``lock_version_credentials``), that passed
+    its check cannot commit beside a deletion of a credential it names (critique E4). The names
+    are locked in sorted order, so two callers cannot wait for each other.
     """
     held: dict[str, tuple[str, ...] | None] = {}
     for name in sorted(set(names)):

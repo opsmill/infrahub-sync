@@ -96,6 +96,7 @@ from infrahub_sync.product_store.stored_credentials import (
     CredentialNameTakenError,
     StoredCredentialInvalidError,
     StoredCredentialNotFoundError,
+    VersionCredentialsMissingError,
 )
 
 __all__ = (
@@ -183,6 +184,7 @@ __all__ = (
     "StoredCredentialNotFoundError",
     "StoredCredentialPage",
     "StoredCredentialRevision",
+    "VersionCredentialsMissingError",
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
