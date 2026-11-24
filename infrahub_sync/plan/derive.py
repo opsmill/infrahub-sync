@@ -49,10 +49,10 @@ enters the comparison result the write path consumes (FR-016).
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+import structlog
 from diffsync.exceptions import ObjectNotFound
 
 from infrahub_sync.load_report import source_record_id
@@ -89,7 +89,7 @@ if TYPE_CHECKING:
     from infrahub_sync import SyncConfig
     from infrahub_sync.plan.last_changes import LastChangeCollector
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # The action an element carries when the object exists at the destination and not at the
 # source. Skipped while walking the diff so deletes come from `derive_deletes` alone.

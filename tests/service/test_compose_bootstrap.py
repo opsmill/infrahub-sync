@@ -11,6 +11,7 @@ empty and an operator registers through the API.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -431,7 +432,7 @@ def test_bootstrap_reports_its_progress_at_info_whatever_the_root_level(
 ) -> None:
     """Prefect leaves the root logger at a level that drops INFO; the job still reports each step."""
     _converged(monkeypatch, _projection(tmp_path))
-    bootstrap.logger.setLevel("WARNING")
+    logging.getLogger("infrahub_sync").setLevel("WARNING")
 
     with caplog.at_level("INFO"):
         assert bootstrap.main() == 0

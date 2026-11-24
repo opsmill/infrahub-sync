@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from typing import Any, ClassVar
 
+import structlog
 from diffsync import Adapter, DiffSyncModel
 
 from infrahub_sync import (
@@ -17,7 +17,7 @@ from infrahub_sync import (
 from infrahub_sync.adapters.utils import build_mapping
 from infrahub_sync.configuration.credentials import declared_settings, is_registered_context
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 try:
     # declared in the `ipfabric` extra, not the base install or the default `service` image

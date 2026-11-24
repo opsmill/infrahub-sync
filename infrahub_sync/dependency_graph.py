@@ -14,16 +14,17 @@ real schema problem and is surfaced to the operator.
 
 from __future__ import annotations
 
-import logging
 from itertools import pairwise
 from typing import TYPE_CHECKING
+
+import structlog
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from infrahub_sync import SchemaMappingModel
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class UnresolvedGenericReferenceError(ValueError):

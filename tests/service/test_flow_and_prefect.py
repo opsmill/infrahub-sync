@@ -295,7 +295,7 @@ def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeyp
     with service_flow._remote_log_bridge(run_logger, prefect_context=prefect_context):
         run_logger.info("local service execution")
 
-    assert isinstance(run_logger, logging.Logger)
+    assert run_logger is service_flow.logger
     assert prefect_context is False
 
 

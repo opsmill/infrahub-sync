@@ -124,6 +124,14 @@ Logs need separate handling. `RunLoggerBridge` redacts the formatted message fro
 `infrahub_sync` logger hierarchy before forwarding it to the Prefect run logger. The
 direct flow installs this bridge; the service worker installs it when a Prefect run
 context exists. This is not a filter for every logger, return value or artifact.
+
+A `structlog` event reaches the bridge because `infrahub_sync/log.py` delivers it through the
+standard `logging` logger of the same name, with each key-value pair written into the message
+as `key=value`. A string value is written as it is, so the bridge finds a collected secret in
+it. A value that is not a string is written with `repr`, which escapes a quote or a backslash
+inside a nested string; pass a value that can hold a secret as a string. An application that
+calls `structlog.configure` itself replaces this delivery, and then the bridge receives only
+what that configuration sends to standard `logging`.
 See [Prefect logging](../knowledge/orchestration-prefect.md#the-log-bridge).
 
 A boundary that catches `Exception` to sanitize and re-raise it may need a targeted

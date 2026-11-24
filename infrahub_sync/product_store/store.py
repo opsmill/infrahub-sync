@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -18,6 +17,7 @@ from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID, uuid4
 
+import structlog
 from pydantic import TypeAdapter, ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
@@ -97,7 +97,7 @@ if TYPE_CHECKING:
     # Typing only: importing the engine package at runtime would load the whole engine into the store.
     from infrahub_sync.potenda.read_progress import Side
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_runs (

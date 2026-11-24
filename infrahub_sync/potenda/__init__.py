@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from operator import methodcaller
 from typing import TYPE_CHECKING, Any, cast
 
+import structlog
+
 # The one costly module-level import: apply's exception boundary must name the SDK's errors.
 from infrahub_sdk.exceptions import Error as InfrahubSDKError
 from infrahub_sdk.exceptions import GraphQLError, ServerNotResponsiveError
@@ -55,7 +57,7 @@ from infrahub_sync.potenda.read_progress import SideReadReport
 # so where they sit; anything reaching pyarrow stays local to its caller.
 # pylint: disable=import-outside-toplevel
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # The apply path's **operational** exception boundary. An exception from

@@ -18,11 +18,12 @@ the source-store probe is what lets that probe stay a source-only question.
 
 from __future__ import annotations
 
-import logging
 import math
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING, Any
+
+import structlog
 
 from infrahub_sync.plan.canonical import canonical_json_bytes, canonical_value
 from infrahub_sync.plan.identity import canonical_identity
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync import SyncConfig
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)

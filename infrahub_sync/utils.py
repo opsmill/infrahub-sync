@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
-import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union, cast
 
+import structlog
 from diffsync.store.local import LocalStore
 
 from infrahub_sync.cache.paths import generate_run_id
@@ -22,7 +22,7 @@ from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError
 from infrahub_sync.potenda import PlanCheck, Potenda
 from infrahub_sync.runtime_schema import RuntimeModelScopeError, bind_runtime_models
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping

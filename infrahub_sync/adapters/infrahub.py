@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ipaddress
-import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+import structlog
 from diffsync import Adapter, DiffSyncModel
 from diffsync.exceptions import ObjectAlreadyExists, ObjectNotFound
 from infrahub_sdk import (
@@ -70,7 +70,7 @@ from infrahub_sync.plan.models import (
     RecordedAccountRecord,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[str | None, str | None]:

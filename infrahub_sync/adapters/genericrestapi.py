@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
+import structlog
 from diffsync import Adapter, DiffSyncModel
 
 from infrahub_sync import (
@@ -18,7 +18,7 @@ from .references import peer_unique_id, peer_unique_ids, reference_is_required
 from .rest_api_client import RestApiClient
 from .utils import derive_identifier_key, get_value
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class GenericrestapiAdapter(DiffSyncMixin, Adapter):

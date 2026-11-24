@@ -13,10 +13,11 @@ failure class, and an operator contract rather than around a rediscovered ratio.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 class RowcountGuardrailError(RuntimeError):

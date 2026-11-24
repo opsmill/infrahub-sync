@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
 import subprocess  # noqa: S404 -- fixed argv (sys.executable -m ruff), no shell, no user input
 import sys
 from typing import TYPE_CHECKING, Any, Protocol
 
 import jinja2
+import structlog
 from infrahub_sdk.schema import (
     NodeSchema,
     RelationshipKind,
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync import SyncConfig
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 ATTRIBUTE_KIND_MAP = {
     "Text": "str",

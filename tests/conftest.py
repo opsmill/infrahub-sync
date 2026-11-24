@@ -77,7 +77,7 @@ else:
 
 @pytest.fixture(autouse=True)
 def restore_package_log_handlers() -> Iterator[None]:
-    """Remove the handlers a test adds to the `infrahub_sync` logger.
+    """Remove the handlers a test adds to the `infrahub_sync` logger, and restore its level.
 
     A test that runs the CLI through `CliRunner` calls `cli._setup_logging`, which adds a
     `StreamHandler` bound to the runner's stderr. The runner closes that stream when the call
@@ -86,7 +86,11 @@ def restore_package_log_handlers() -> Iterator[None]:
     """
     package_logger = logging.getLogger("infrahub_sync")
     handlers = list(package_logger.handlers)
+    level = package_logger.level
     yield
     for handler in list(package_logger.handlers):
         if handler not in handlers:
             package_logger.removeHandler(handler)
+    # `configure_service_logging` and the CLI set the package logger's level; a level left
+    # behind would decide which records a later test's `caplog` receives.
+    package_logger.setLevel(level)

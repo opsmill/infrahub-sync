@@ -24,10 +24,11 @@ A log line never holds an exception message: a failed save is logged by error cl
 
 from __future__ import annotations
 
-import logging
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+
+import structlog
 
 from infrahub_sync.product_store.models import ApplyProgress
 
@@ -37,7 +38,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlannedOperation
     from infrahub_sync.product_store import ProductProjection
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Save after this many commits since the last save attempt (research R3).
 SAVE_EVERY_COMMITS = 500

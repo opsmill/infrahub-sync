@@ -35,12 +35,14 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import boto3
+import structlog
 from botocore.exceptions import BotoCoreError, ClientError, InvalidRegionError
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.actions import WorkPoolCreate
 from prefect.exceptions import ObjectNotFound
 from prefect.workers.process import ProcessWorker
 
+from infrahub_sync.log import configure_service_logging
 from infrahub_sync.product_store import (
     DuplicateArtifactError,
     DuplicateConfigurationNamesError,
@@ -69,7 +71,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync.product_store import ProductProjection
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # The pool type this deployment's worker joins. Prefect's own process worker
 # supplies the template, so a pool created here is the one `prefect work-pool
@@ -422,10 +424,11 @@ def _configure_logging() -> None:
 
     Importing Prefect configures the root logger before `main` runs, so `basicConfig` does
     nothing, and this logger inherits a level that drops every INFO line: the job would
-    report only its refusals. Its own level is set instead; the root handlers print it.
+    report only its refusals. The package logger's level is set instead; the root handlers
+    print it.
     """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | infrahub-sync bootstrap | %(message)s")
-    logger.setLevel(logging.INFO)
+    configure_service_logging()
 
 
 def main() -> int:

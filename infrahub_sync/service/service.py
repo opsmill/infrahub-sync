@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 import sys
 import threading
@@ -18,6 +17,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from uuid import uuid4
 
+import structlog
 from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
@@ -116,7 +116,7 @@ if TYPE_CHECKING:
     from infrahub_sync.configuration import ConfigurationPackage
     from infrahub_sync.product_store import Account
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _plan_step_timings(link: PrefectExecutionLink, *, run_id: str, prefect_state: str | None) -> PlanStepTimings | None:

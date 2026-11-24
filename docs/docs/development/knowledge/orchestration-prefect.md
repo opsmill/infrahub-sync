@@ -363,11 +363,13 @@ parameter therefore never reaches the flow body.
 - **Importing Prefect configures the root logger.** In the service processes
   (`sync-bootstrap`, `sync-api`, `sync-worker`), Prefect is imported before `main` runs, so a
   later `logging.basicConfig` does nothing and the inherited level drops INFO lines.
-  `bootstrap.py` and `trust_store.py` set their own logger to INFO for that reason, and
-  `trust_store.py` adds a standard-error handler when no handler would print its lines (the
-  Sync API process configures none before uvicorn starts). Both use the standard `logging`
-  module, not `structlog`, so the handlers that Prefect configures and pytest's `caplog`
-  receive their lines.
+  `configure_service_logging` in `infrahub_sync/log.py` sets the `infrahub_sync` logger to
+  INFO for that reason, and adds a standard-error handler when no handler would print the
+  package's lines (the Sync API process configures none before uvicorn starts). Each service
+  process calls it through `install_custom_ca_bundle`, its first step. Every module logs
+  with `structlog`, and `configure_structlog` in the same file delivers each event through
+  the standard `logging` module, so the handlers that Prefect configures, the log bridge
+  and pytest's `caplog` receive every line.
 - **SQLAlchemy is held below 2.1 while the `prefect` pin is 3.8.6.** With SQLAlchemy 2.1, the
   Prefect 3.8.6 scheduler service fails at each loop in `_insert_scheduled_flow_runs` with
   `InvalidRequestError: Can't evaluate bulk DML statement`, so no deployment schedule creates a

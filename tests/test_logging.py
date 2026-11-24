@@ -85,8 +85,7 @@ def test_modules_have_logger() -> None:
         if rel in _LOGGER_EXEMPT:
             continue
         source = py_file.read_text(encoding="utf-8")
-        # Check for logger = logging.getLogger pattern
-        if "logger = logging.getLogger" not in source:
+        if "logger = structlog.get_logger(__name__)" not in source:
             rel = py_file.relative_to(PACKAGE_DIR.parent)
             missing.append(str(rel))
 
@@ -98,6 +97,23 @@ def test_modules_have_logger() -> None:
     }
     missing_core = [f for f in missing if f in core_files]
     assert not missing_core, "Core modules missing logger definition:\n" + "\n".join(missing_core)
+
+
+# This adapter wraps its standard logger with `structlog.wrap_logger` and its own renderer,
+# so its events already reach standard `logging`.
+_WRAPS_ITS_STANDARD_LOGGER = {"infrahub_sync/adapters/msgraphsync.py"}
+
+
+def test_no_module_creates_a_standard_logging_logger() -> None:
+    """Every module logs through `structlog`, so the shared configuration applies to each line."""
+    violations = [
+        str(py_file.relative_to(_REPO_ROOT))
+        for py_file in _python_files()
+        if str(py_file.relative_to(_REPO_ROOT)) not in _WRAPS_ITS_STANDARD_LOGGER
+        and "logging.getLogger(__name__)" in py_file.read_text(encoding="utf-8")
+    ]
+
+    assert not violations, "Modules that should use structlog.get_logger(__name__):\n" + "\n".join(violations)
 
 
 @pytest.mark.parametrize(

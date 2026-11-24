@@ -665,11 +665,10 @@ in full, so a delete-bearing plan is the **ordinary** case, not an exception. Se
 
 ### A note on logging
 
-The code on this path emits through the standard library's `logging`, as every other module in
-`infrahub_sync/` does, and the warning levels described above are `logging` levels. The project
-constitution and `AGENTS.md` both mandate `structlog`, which no module currently uses. That divergence is
-an open governance question tracked outside this feature — it is recorded here only so the levels above
-read unambiguously, and it is **not** guidance either way.
+The code on this path creates its loggers with `structlog.get_logger(__name__)`, as every other
+module in `infrahub_sync/` does. `infrahub_sync/log.py` delivers each event through the standard
+library's `logging`, so the warning levels described above are `logging` levels, and a handler or
+`caplog` receives each line with its message text.
 
 ### See also
 

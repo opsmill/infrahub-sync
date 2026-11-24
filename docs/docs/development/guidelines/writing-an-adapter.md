@@ -81,6 +81,19 @@ timeouts, empty pages, and pagination. Let unexpected errors surface rather than
 
 **Always use `structlog`; never `print`, and never log credentials:**
 
+```python
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+logger.info("devices read", endpoint="dcim/devices", count=len(devices))
+```
+
+Create the logger with `structlog.get_logger(__name__)`, not `logging.getLogger`. The event
+reaches the standard `logging` handlers with the key-value pairs in the message text, here
+`devices read endpoint=dcim/devices count=3`. A `"%s"`-style message with positional
+arguments is also accepted.
+
 Include useful context — endpoint, model name, object counts — but never tokens, passwords,
 or full auth headers. The same rule applies to exception messages and tracebacks.
 

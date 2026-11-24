@@ -17,11 +17,11 @@ rendered from one fixed template per problem type over typed fields (research R1
 
 from __future__ import annotations
 
-import logging
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+import structlog
 from diffsync.exceptions import ObjectNotFound
 
 from infrahub_sync.load_report import source_record_id
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.destination_only_peer import DestinationOnlyPeers
     from infrahub_sync.plan.keying import IdentityGroup
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # The longest text a source value takes inside a reason, so the reason stays readable.
 _REASON_VALUE_LIMIT = 80

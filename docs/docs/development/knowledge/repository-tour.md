@@ -413,6 +413,9 @@ These three are development and internal machinery, not the registered route:
 planning, then applies verified saved-plan operations. It also owns the destination SDK exception
 boundary. [`infrahub_sync/utils.py`][src-infrahub-sync-utils-py] assembles the pieces — configuration, plugin loading,
 runtime models, cache paths and the engine — into a runnable instance.
+`infrahub_sync/log.py` holds the logging configuration every module shares: it delivers each
+`structlog` event through the standard `logging` module, and sets the package's level and
+fallback handler in the service processes.
 For the service components and registered-run lifecycle, see
 [Sync architecture](sync-architecture.md).
 
