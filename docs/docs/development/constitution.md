@@ -36,7 +36,9 @@ The non-mutating path is the default path, and applying changes is always a deli
   worker of an `apply`, a `sync` or a resume disappeared, the Sync API resumes that run's saved
   plan by itself. It applies only to an execution that Prefect reports as crashed, or whose
   worker stopped sending heartbeats, and only when the Sync API ran with
-  `INFRAHUB_SYNC_AUTOMATIC_RESUME` on at the time of the interruption.
+  `INFRAHUB_SYNC_AUTOMATIC_RESUME` on at the time of the interruption. It applies only to a run
+  that `runs resume` would accept: a run with a saved plan, so not a `sync` whose worker
+  disappeared before it saved its plan, and not a scheduled run that writes to a review branch.
     - The explicit user instruction is the interrupted run's own write, which a person or a
       schedule started, together with the site's setting, which an operator turned on.
     - The target servers are those of the run's saved plan. A resume never reads the source and

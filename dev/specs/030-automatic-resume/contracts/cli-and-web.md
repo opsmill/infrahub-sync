@@ -10,7 +10,7 @@ After the progress block of spec 016, a block per row of `automatic_resumes`, ol
 Automatic resume 1: started
   cause: the worker infrahub-sync-service-3b2f… stopped sending heartbeats
   check: passed, 0 differs, 0 not checked
-  resumed after operation 6000 by Sync (automatic resume)
+  resumed after operation 5999 by Sync (automatic resume)
 
 Automatic resume 2: not started
   cause: Prefect reported the flow run as crashed

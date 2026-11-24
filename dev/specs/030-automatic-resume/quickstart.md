@@ -19,8 +19,9 @@ Two Sync API reconcilers step the same row at the same time; exactly one submiss
 
 ## Preview stack (SC-001)
 
-1. Start the development stack with `uv run invoke dev.preview`, with `INFRAHUB_SYNC_AUTOMATIC_RESUME=true` on the
-   Sync API service.
+1. Start the development stack with `AUTOMATIC_RESUME=true uv run invoke dev.preview`. The development Compose file
+   passes `AUTOMATIC_RESUME` to the Sync API service as `INFRAHUB_SYNC_AUTOMATIC_RESUME`, and `REQUIRE_APPROVAL` as
+   `INFRAHUB_SYNC_REQUIRE_APPROVAL` (ADR 0029); it does not read the `INFRAHUB_SYNC_` names from the shell.
 2. Register a configuration whose plan has at least 10,000 creates and updates (the tier M benchmark dataset).
 3. Run `infrahub-sync plan`, then `infrahub-sync apply RUN_ID --expected-checksum CHECKSUM --no-wait`.
 4. When `runs show RUN_ID` reports a progress marker above 0, stop the worker container:
@@ -33,7 +34,8 @@ Two Sync API reconcilers step the same row at the same time; exactly one submiss
 ## Refusal cases (SC-002)
 
 Repeat steps 3 and 4 with each condition below, and check that `runs show` reports "Automatic resume 1: not started"
-with the matching reason:
+with the matching reason. On the development stack, set a Sync API setting with its short name, for example
+`AUTOMATIC_RESUME=false uv run invoke dev.restart`:
 
 | Condition | Expected reason |
 | --- | --- |

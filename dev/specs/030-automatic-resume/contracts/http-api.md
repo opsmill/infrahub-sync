@@ -20,7 +20,7 @@ The run resource gains two fields.
       "reason": null,
       "reason_text": null,
       "operations_not_checked": 0,
-      "start_after": 6000,
+      "start_after": 5999,
       "check_flow_run_id": "a81d…",
       "resume_flow_run_id": "c02e…",
       "decided_at": "2026-11-23T21:04:11Z",

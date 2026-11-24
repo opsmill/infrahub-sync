@@ -114,11 +114,13 @@ no execution is replayed.
 ## Consequences
 
 - On a site that turns the setting on, a run whose worker disappeared reaches `applied` without
-  a person when the check finds no node that differs. A run that Sync does not resume keeps its
+  a person when the check finds no node that differs, the resume passes the checks that admit
+  any resume, and the resume succeeds. A run that Sync does not resume keeps its
   row, its reason and its event, and a person resumes it with `verify` and `runs resume` as
   before.
-- Every row has a reason in words in `GET /runs/{run_id}` (`automatic_resumes`) and in
-  `infrahub-sync runs show`. The run list shows `automatic_resume_count`.
+- Every row that ends without a resume has a reason in words in `GET /runs/{run_id}`
+  (`automatic_resumes`) and in `infrahub-sync runs show`; a row that has not ended shows its
+  state, and a row that resumed shows its check and the position the resume started after. The run list shows `automatic_resume_count`.
 - When more than 2,000 operations are uncertain, the check reads only the first 2,000. A node
   that differs among the rest is not found before the resume writes the plan's values over it.
   The row and the event record how many operations the check left out.

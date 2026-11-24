@@ -219,10 +219,11 @@ example `waiting for a live worker to run the check`, and the result once it end
 Automatic resume 1: started
   cause: the worker infrahub-sync-service-3b2f… stopped sending heartbeats
   check: passed, 0 differs, 0 not checked
-  resumed after operation 6000 by Sync (automatic resume)
+  resumed after operation 5999 by Sync (automatic resume)
 ```
 
-`infrahub-sync runs list` adds `auto resumes: N` to a run that the Sync API resumed.
+`infrahub-sync runs list` adds `auto resumes: N` to a run for which the Sync API submitted an
+automatic resume. The count includes a resume that no worker started.
 
 ### Reasons the Sync API does not resume a run
 

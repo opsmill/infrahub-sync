@@ -1390,12 +1390,13 @@ When the service runs with `INFRAHUB_SYNC_AUTOMATIC_RESUME` set to `true`, `1`, 
 interrupted because Prefect reported the flow run as crashed or because the claiming worker
 stopped sending heartbeats. It waits for a live worker, runs a verification, and, when the
 verification passes and reports no operation as `differs`, submits a resume. The setting is off
-by default, takes the values of `INFRAHUB_SYNC_REQUIRE_APPROVAL`, and any other value stops the
-service at startup. While it is off, the service records nothing about automatic resume.
+by default, accepts the same values as `INFRAHUB_SYNC_REQUIRE_APPROVAL`, and any other value stops
+the service at startup. While it is off, the service records nothing about automatic resume.
 
 `GET /runs/{run_id}` returns one entry under `automatic_resumes` for each interrupted write that
-the service recorded for automatic resume, oldest first, and the number of automatic resumes the run received under
-`automatic_resume_count`. Both are empty for a run that no automatic resume concerns:
+the service recorded for automatic resume, oldest first, and the number of automatic resumes the
+service submitted for the run under `automatic_resume_count`. For a run that no automatic resume
+concerns, `automatic_resumes` is an empty list and `automatic_resume_count` is `0`:
 
 ```json
 "automatic_resume_count": 1,
@@ -1410,7 +1411,7 @@ the service recorded for automatic resume, oldest first, and the number of autom
     "reason": null,
     "reason_text": null,
     "operations_not_checked": 0,
-    "start_after": 6000,
+    "start_after": 5999,
     "check_flow_run_id": "a81d…",
     "resume_flow_run_id": "c02e…",
     "decided_at": "2026-11-23T21:04:11Z",
