@@ -2,11 +2,12 @@ import { Button } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { describeError, healthQuery } from "#/api/queries";
+import { describeError, HEALTH_REFRESH_MS, healthQuery } from "#/api/queries";
 import { announce } from "#/components/announcer";
 import { WarningIcon } from "#/components/icons";
 import { Bar, ErrorPanel } from "#/components/page";
 import { When } from "#/components/run-status";
+import { lastReadFailed } from "#/domain/health";
 import { formatAbsolute } from "#/lib/time";
 import { useDocumentTitle } from "#/lib/title";
 
@@ -60,12 +61,15 @@ export function HealthPage() {
   const report = health.data;
   // React Query keeps the last report after a failed refresh, so the failure is checked first. A
   // refetch of a query without data clears its error, so the error is kept until a newer answer.
-  const failed = health.errorUpdatedAt > health.dataUpdatedAt;
-  const [kept, setKept] = useState<unknown>();
+  const [kept, setKept] = useState<{ error: unknown }>();
   useEffect(() => {
-    if (health.isError) setKept(health.error);
+    if (health.isError) setKept({ error: health.error });
   }, [health.isError, health.error]);
-  const error = health.isError ? health.error : kept;
+  // The route loader reads a query without data again, so the page can open during that read,
+  // before it holds the error of the read that failed. It then shows that it is loading.
+  const last = health.isError ? { error: health.error } : kept;
+  const failed = lastReadFailed(health, last !== undefined);
+  const error = last?.error;
   const check = () => void health.refetch();
 
   return (
@@ -74,7 +78,8 @@ export function HealthPage() {
         <div className="flex flex-col gap-1.5">
           <h1 className="text-balance font-semibold text-2xl tracking-tight">Health</h1>
           <p className="text-pretty text-foreground-muted">
-            The components of the Sync API and its workers, checked every 15 seconds.
+            The components of the Sync API and its workers, checked every {HEALTH_REFRESH_MS / 1000}{" "}
+            seconds.
           </p>
         </div>
         {(report || !failed) && (

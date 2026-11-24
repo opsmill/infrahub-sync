@@ -96,8 +96,9 @@ export const Route = createFileRoute("/runs/$runId")({
 | `/account` | The signed-in account: change its password, and list, create and delete its API tokens. A created token's value is shown once. | `GET /me`, `PUT /me/password`, `GET /me/tokens`, `POST /me/tokens`, `DELETE /me/tokens/{token_id}` |
 | `/accounts` | For administrators: every account with its level and state, a filter on the state, and create, set level, set password, allow sign-in again, disable, enable, the tokens of an account, and delete. Other accounts see a message that only an administrator can manage accounts. | `GET /accounts`, `POST /accounts`, `PATCH /accounts/{name}`, `PUT /accounts/{name}/password`, `POST /accounts/{name}/unlock`, `DELETE /accounts/{name}`, `GET /accounts/{name}/tokens`, `DELETE /accounts/{name}/tokens/{token_id}` |
 | `/runs/{run_id}` | The plan, verify and apply steps with their timings, the failure detail, the planned changes by kind, the run's files and its executions. **Verify**, **Apply** and **Cancel run** act on the run. For a run that a schedule started: "Started by schedule name, scheduled for time", linked to the schedule. | `GET /runs/{run_id}`, `GET /runs/{run_id}/plan`, `GET /runs/{run_id}/artifacts`, `POST /runs/{run_id}/verify`, `POST /runs/{run_id}/apply`, `POST /runs/{run_id}/cancel`, `GET /schedules/{schedule_id}` for a scheduled run |
+| `/health` | Whether each component of the Sync API answered its health check, the number of workers online and required, the executions waiting for a worker, and the live and stale workers of the last 24 hours. The page reads the report again every 15 seconds. When a read fails, the page keeps the last report and draws it grey under a notice. The Sync service details in the top bar link to this page. | `GET /health` |
 
-The top bar reads `GET /status` for the worker state and `GET /me` for the signed-in account,
+The top bar reads `GET /health` for the worker state and `GET /me` for the signed-in account,
 which it displays, and its level, which decides whether the **Accounts** link is shown. A run in progress is read again every
 2 seconds; lists every 10 seconds.
 

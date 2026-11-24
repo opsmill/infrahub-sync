@@ -25,7 +25,7 @@ import {
   staleCount,
   WORKERS_UNKNOWN,
   WorkerTable,
-  workerKey,
+  workerKeys,
 } from "./parts";
 
 function Figure({
@@ -60,6 +60,7 @@ export function Board({ report }: BoardProps) {
   const healthy = report.status === "healthy";
   const stale = staleCount(w);
   const liveItems = w.items.filter((i) => i.state === "live");
+  const keys = workerKeys(w.items);
   return (
     <div className="flex flex-col gap-4">
       <p
@@ -130,7 +131,7 @@ export function Board({ report }: BoardProps) {
                   <Figure
                     term="Online"
                     value={count(w.live_workers)}
-                    tone={enough ? "success" : "danger"}
+                    tone={enough === null ? undefined : enough ? "success" : "danger"}
                   />
                   <Figure term="Required" value={count(w.minimum)} />
                   <Figure term="Executions waiting" value={count(w.queue_depth)} />
@@ -139,14 +140,11 @@ export function Board({ report }: BoardProps) {
                   <p className="text-foreground-muted">{NO_WORKER_LISTED}</p>
                 ) : (
                   <div className="flex flex-col gap-2">
-                    <div
-                      role="img"
-                      aria-label={`${plural(liveItems.length, "live worker", "live workers")} and ${plural(stale, "stale worker", "stale workers")} in the last 24 hours`}
-                      className="flex flex-wrap gap-1"
-                    >
+                    {/* The line under the squares gives the same counts in words. */}
+                    <div aria-hidden="true" className="flex flex-wrap gap-1">
                       {w.items.map((item, i) => (
                         <span
-                          key={workerKey(item, i)}
+                          key={keys[i]}
                           className={cn(
                             "block size-4 rounded-[4px]",
                             item.state === "live"

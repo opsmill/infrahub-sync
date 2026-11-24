@@ -33,6 +33,13 @@ not make the answer `503`. If no container is running at all, run
 `docker compose up -d --wait`. See the [status procedure](../compose-deployment#status)
 for every field and error category.
 
+To view the same report in a browser, open the
+[web interface](../compose-deployment#open-the-web-interface), select the state of the Sync
+service in the header, for example **Worker ready**, then select **Open the Health page**.
+The page shows each component, the number of workers online and required, the executions
+waiting for a worker, and the live and stale workers of the last 24 hours. It reads the
+report again every 15 seconds.
+
 `docker compose logs --no-color --tail 200` prints the last 200 lines of each service.
 Credentials are removed from run failures before they are printed. See the
 [log procedure](../compose-deployment#logs).

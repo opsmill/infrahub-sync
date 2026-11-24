@@ -5,10 +5,11 @@ import {
   type Dependency,
   enoughWorkers,
   errorText,
+  lastReadFailed,
   staleCount,
   type Worker,
   type Workers,
-  workerKey,
+  workerKeys,
 } from "./health";
 
 const workers = (overrides: Partial<Workers>): Workers => ({
@@ -80,9 +81,45 @@ describe("staleCount", () => {
   });
 });
 
-describe("workerKey", () => {
-  it("differs for two workers that share the name and the heartbeat", () => {
+describe("workerKeys", () => {
+  it("differ for two workers that share the name and the heartbeat", () => {
     const other = worker("other", "stale");
-    expect(workerKey(other, 0)).not.toBe(workerKey(other, 1));
+    const keys = workerKeys([other, other]);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("keep the key of a worker whose heartbeat changes", () => {
+    const before = worker("a", "live");
+    const after = { ...before, last_heartbeat: "2026-11-24T10:00:30Z" };
+    expect(workerKeys([after])).toEqual(workerKeys([before]));
+  });
+
+  it("keep the key of a worker that moves in the list", () => {
+    const a = worker("a", "live");
+    const b = worker("b", "live");
+    expect(workerKeys([b, a])).toEqual(workerKeys([a, b]).reverse());
+  });
+});
+
+describe("lastReadFailed", () => {
+  it("is false while the first read runs", () => {
+    expect(lastReadFailed({ errorUpdatedAt: 0, dataUpdatedAt: 0 }, false)).toBe(false);
+  });
+
+  it("is true when the first read failed", () => {
+    expect(lastReadFailed({ errorUpdatedAt: 5, dataUpdatedAt: 0 }, true)).toBe(true);
+  });
+
+  it("is true when a read failed after the report", () => {
+    expect(lastReadFailed({ errorUpdatedAt: 9, dataUpdatedAt: 5 }, true)).toBe(true);
+  });
+
+  it("is false when the report is newer than the failure", () => {
+    expect(lastReadFailed({ errorUpdatedAt: 5, dataUpdatedAt: 9 }, true)).toBe(false);
+  });
+
+  it("is false when the page opens while a failed first read is tried again", () => {
+    // The failure is newer than the missing report, but the page has no error to show.
+    expect(lastReadFailed({ errorUpdatedAt: 5, dataUpdatedAt: 0 }, false)).toBe(false);
   });
 });

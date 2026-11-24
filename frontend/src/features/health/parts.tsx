@@ -3,7 +3,7 @@ import { cn } from "tailwind-variants";
 import type { HealthReport } from "#/api/types";
 import { CODE_CHIP } from "#/components/page";
 import { When } from "#/components/run-status";
-import { type Worker, workerKey } from "#/domain/health";
+import { type Worker, workerKeys } from "#/domain/health";
 import { fmt } from "#/domain/run-state";
 
 export {
@@ -13,7 +13,7 @@ export {
   NO_WORKER_LISTED,
   staleCount,
   WORKERS_UNKNOWN,
-  workerKey,
+  workerKeys,
 } from "#/domain/health";
 
 export interface BoardProps {
@@ -46,6 +46,7 @@ export const ErrorCode = ({ code }: { code: string }) => <code className={CODE_C
 
 /** A table of workers, newest heartbeat first, as the Sync API orders them. */
 export function WorkerTable({ workers, label }: { workers: Worker[]; label: string }) {
+  const keys = workerKeys(workers);
   return (
     <div className="overflow-x-auto rounded-xl border">
       <table aria-label={label} className="w-full border-collapse text-left text-[13px]">
@@ -64,7 +65,7 @@ export function WorkerTable({ workers, label }: { workers: Worker[]; label: stri
         </thead>
         <tbody>
           {workers.map((w, i) => (
-            <tr key={workerKey(w, i)} className="border-b last:border-b-0">
+            <tr key={keys[i]} className="border-b last:border-b-0">
               <td
                 className={cn(
                   "min-w-36 px-4 py-2 font-mono text-xs [overflow-wrap:anywhere]",

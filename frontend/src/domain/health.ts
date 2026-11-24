@@ -42,6 +42,28 @@ export function enoughWorkers(workers: Workers): boolean | null {
 export const staleCount = (workers: Workers): number =>
   workers.items.filter((item) => item.state === "stale").length;
 
-/** Two workers can share the name "other", so the name alone is not a key. */
-export const workerKey = (worker: Worker, index: number): string =>
-  `${worker.name}-${worker.last_heartbeat}-${index}`;
+/**
+ * A key for each worker of a list, in the order of the list. Two workers can share the name
+ * "other", so a key also counts the earlier workers of the same name. It leaves out the heartbeat
+ * and the position in the list: both change while a worker lives, and a new key would make the
+ * page draw the row of that worker again.
+ */
+export function workerKeys(workers: Worker[]): string[] {
+  const seen = new Map<string, number>();
+  return workers.map(({ name }) => {
+    const earlier = seen.get(name) ?? 0;
+    seen.set(name, earlier + 1);
+    return `${name}-${earlier}`;
+  });
+}
+
+/**
+ * Whether the page says that the last read of the report failed: the failure is newer than the
+ * report, and the page holds its error. React Query clears the error of a query without a report
+ * while it reads it again, so a page that opens during that read has no error to show. It shows
+ * that it is loading until the read ends.
+ */
+export const lastReadFailed = (
+  query: { errorUpdatedAt: number; dataUpdatedAt: number },
+  errorKnown: boolean
+): boolean => errorKnown && query.errorUpdatedAt > query.dataUpdatedAt;
