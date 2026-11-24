@@ -58,8 +58,10 @@ HEALTH_CHECK_TIMEOUT_MINIMUM = 1
 HEALTH_CHECK_TIMEOUT_MAXIMUM = 60
 HEALTH_MIN_WORKERS_DEFAULT = 1
 HEALTH_MIN_WORKERS_MINIMUM = 1
-# More digits than any sensible number of workers; Python refuses to convert a very long text of digits.
-_HEALTH_MIN_WORKERS_MAX_DIGITS = 9
+# More than any sensible number of workers. The cap also keeps the text short: Python refuses to
+# convert a very long text of digits.
+HEALTH_MIN_WORKERS_MAXIMUM = 999_999_999
+_HEALTH_MIN_WORKERS_MAX_DIGITS = len(str(HEALTH_MIN_WORKERS_MAXIMUM))
 
 logger = structlog.get_logger(__name__)
 
@@ -248,17 +250,17 @@ def health_min_workers(environ: Mapping[str, str] | None = None) -> int:
     Unset means the default of 1. An empty value is refused.
 
     Raises:
-        HealthSettingsError: the value is not a whole number of at least 1.
+        HealthSettingsError: the value is not a whole number from 1 to 999999999.
     """
     env = os.environ if environ is None else environ
     value = env.get(HEALTH_MIN_WORKERS_ENV)
     if value is None:
         return HEALTH_MIN_WORKERS_DEFAULT
     minimum = _whole_number(value.strip(), _HEALTH_MIN_WORKERS_MAX_DIGITS)
-    if minimum is None or minimum < HEALTH_MIN_WORKERS_MINIMUM:
+    if minimum is None or not HEALTH_MIN_WORKERS_MINIMUM <= minimum <= HEALTH_MIN_WORKERS_MAXIMUM:
         msg = (
-            f"{HEALTH_MIN_WORKERS_ENV} must be a whole number of at least {HEALTH_MIN_WORKERS_MINIMUM}, "
-            f"with at most {_HEALTH_MIN_WORKERS_MAX_DIGITS} digits"
+            f"{HEALTH_MIN_WORKERS_ENV} must be a whole number "
+            f"from {HEALTH_MIN_WORKERS_MINIMUM} to {HEALTH_MIN_WORKERS_MAXIMUM}"
         )
         raise HealthSettingsError(msg)
     return minimum

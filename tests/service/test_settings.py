@@ -38,19 +38,20 @@ def test_the_minimum_of_workers_defaults_to_one() -> None:
     assert health_min_workers({}) == 1
 
 
-@pytest.mark.parametrize(("value", "expected"), [("1", 1), ("5", 5)])
-def test_the_minimum_of_workers_accepts_a_whole_number_of_at_least_one(value: str, expected: int) -> None:
+@pytest.mark.parametrize(("value", "expected"), [("1", 1), ("5", 5), ("999999999", 999_999_999)])
+def test_the_minimum_of_workers_accepts_a_whole_number_from_one_to_the_maximum(value: str, expected: int) -> None:
     assert health_min_workers({HEALTH_MIN_WORKERS_ENV: value}) == expected
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "x"])
-def test_the_minimum_of_workers_refuses_a_value_below_one_or_not_a_number(value: str) -> None:
+@pytest.mark.parametrize("value", ["0", "-1", "x", "1000000000", "0001000000000"])
+def test_the_minimum_of_workers_refuses_a_value_out_of_range_or_not_a_number(value: str) -> None:
     with pytest.raises(HealthSettingsError) as caught:
         health_min_workers({HEALTH_MIN_WORKERS_ENV: value})
 
     message = str(caught.value)
     assert HEALTH_MIN_WORKERS_ENV in message
-    assert value not in message.replace(HEALTH_MIN_WORKERS_ENV, "").replace("at least 1", "")
+    assert "from 1 to 999999999" in message
+    assert value not in message.replace(HEALTH_MIN_WORKERS_ENV, "").replace("from 1 to 999999999", "")
 
 
 def test_a_health_setting_error_is_a_value_error() -> None:

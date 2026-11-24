@@ -460,7 +460,7 @@ API at start with a message that names the variable.
 | Variable | Default | Rule |
 | --- | --- | --- |
 | `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` | `3` | The number of seconds that each component check and the read of the work pool may take. A whole number from 1 to 60. |
-| `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` | `1` | The answer is `503` when fewer workers than this number are live. A whole number of at least 1. |
+| `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` | `1` | The answer is `503` when fewer workers than this number are live. A whole number from 1 to 999999999. |
 
 All checks of one round run at the same time, so a round takes at most about
 `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` seconds. Each API process reuses the result of a round for
