@@ -1397,6 +1397,7 @@ the service recorded for automatic resume, oldest first, and the number of autom
 "automatic_resumes": [
   {
     "interrupted_flow_run_id": "6f1c…",
+    "actor": "Sync (automatic resume)",
     "cause": "rule-8",
     "cause_text": "the worker infrahub-sync-worker-3b2f… stopped sending heartbeats",
     "state": "ended",
@@ -1416,6 +1417,7 @@ the service recorded for automatic resume, oldest first, and the number of autom
 | Field | Holds |
 | --- | --- |
 | `interrupted_flow_run_id` | The flow run of the interrupted write. |
+| `actor` | The actor of the automatic check and resume, always `Sync (automatic resume)`. |
 | `cause` | `rule-6` when Prefect reported the flow run as crashed, `rule-8` when the claiming worker stopped sending heartbeats. `cause_text` states it in English. |
 | `state` | `waiting-check` (waiting for a live worker to run the check), `checking`, `waiting-resume` (waiting for a live worker to resume), `resuming` or `ended`. |
 | `decision` | `resume` once the service submitted the resume, `no-resume` when it ended without one, and `null` before. |

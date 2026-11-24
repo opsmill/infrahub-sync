@@ -35,12 +35,10 @@ from .orchestration import (
     normalized_pool_status,
     worker_is_live,
 )
-from .resume_view import run_has_saved_plan
+from .resume_view import AUTOMATIC_RESUME_ACTOR, run_has_saved_plan
 from .settings import approval_required, automatic_resume_enabled
 
 RUN_ADMISSION_TTL_ENV = "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"
-# The actor of the check and the resume that Sync submits by itself; never an account (research R5).
-AUTOMATIC_RESUME_ACTOR = "sync:automatic-resume"
 # How many automatic resumes one run receives at most (FR-010).
 AUTOMATIC_RESUME_LIMIT = 3
 _POLICY_ERROR = "service liveness settings are invalid"

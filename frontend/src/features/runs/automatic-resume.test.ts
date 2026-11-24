@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { AutomaticResume, Resume } from "#/api/types";
 
 import {
-  AUTOMATIC_RESUME_NAME,
   automaticResumeBlock,
   automaticResumeNext,
   automaticResumePending,
@@ -12,6 +11,7 @@ import {
 
 const row = (fields: Partial<AutomaticResume>): AutomaticResume => ({
   interrupted_flow_run_id: "flow-1",
+  actor: "Sync (automatic resume)",
   cause: "rule-8",
   cause_text: "the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
   state: "ended",
@@ -61,7 +61,15 @@ describe("automaticResumeBlock", () => {
 
   it("names the first operation when no position was saved", () => {
     const block = automaticResumeBlock(row({ decision: "resume", start_after: null }), 1);
-    expect(block.lines.at(-1)?.text).toBe(`from the first operation by ${AUTOMATIC_RESUME_NAME}`);
+    expect(block.lines.at(-1)?.text).toBe("from the first operation by Sync (automatic resume)");
+  });
+
+  it("names the actor the Sync API returns", () => {
+    const block = automaticResumeBlock(
+      row({ decision: "resume", start_after: 6000, actor: "Sync (renamed)" }),
+      1
+    );
+    expect(block.lines.at(-1)?.text).toBe("after operation 6000 by Sync (renamed)");
   });
 
   it.each([

@@ -747,11 +747,14 @@ class AutomaticResumeResource(_ResourceModel):
 
     `state` is `waiting-check`, `checking`, `waiting-resume`, `resuming` or `ended`. `decision` is
     `resume` once Sync submitted the resume, and `no-resume` with a `reason` code when it did not.
-    `cause_text` and `reason_text` are fixed English sentences built from the codes. The fields
-    are plain strings, so a client still reads a code that a later Sync API adds.
+    `cause_text` and `reason_text` are fixed English sentences built from the codes. `actor` is
+    the name the Sync API shows for the reserved actor of the automatic check and resume,
+    `Sync (automatic resume)`. The fields are plain strings, so a client still reads a code that
+    a later Sync API adds.
     """
 
     interrupted_flow_run_id: str
+    actor: str
     cause: str
     cause_text: str
     state: str

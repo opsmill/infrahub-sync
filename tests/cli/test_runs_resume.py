@@ -341,6 +341,7 @@ _CRASH_CAUSE = "Prefect reported the flow run as crashed"
 def _automatic(state: str, **changes: object) -> AutomaticResumeResource:
     fields: dict[str, object] = {
         "interrupted_flow_run_id": f"flow-{state}",
+        "actor": "Sync (automatic resume)",
         "cause": "rule-8",
         "cause_text": _WORKER_CAUSE,
         "state": state,

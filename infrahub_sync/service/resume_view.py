@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 
     from infrahub_sync.product_store import AutomaticResume, MutationReceipt, PrefectExecutionLink, ProductRun
 
+# The actor of the check and the resume that Sync submits by itself; never an account (research R5).
+# The account name middleware shows it as `Sync (automatic resume)` in every answer.
+AUTOMATIC_RESUME_ACTOR = "sync:automatic-resume"
 # How many commits after the saved position may have reached the destination when the failing
 # operation is unknown and the last save succeeded: the worker saves at least every 500 commits
 # (R3). Recorded deletes are never dispatched, so they are not commits and are not counted.
@@ -384,6 +387,7 @@ def automatic_resume_view(rows: Sequence[AutomaticResume]) -> tuple[AutomaticRes
         view.append(
             AutomaticResumeResource(
                 interrupted_flow_run_id=row.interrupted_flow_run_id,
+                actor=AUTOMATIC_RESUME_ACTOR,
                 cause=row.cause,
                 cause_text=automatic_resume_cause_text(row),
                 state=row.state,

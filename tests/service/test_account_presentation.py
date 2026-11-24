@@ -23,7 +23,13 @@ from pydantic import BaseModel
 
 from infrahub_sync.client import models as client_models
 from infrahub_sync.client.models import ResumeResource
-from infrahub_sync.product_store import Account, ProductProjection, ProductRun, local_product_projection
+from infrahub_sync.product_store import (
+    Account,
+    AutomaticResume,
+    ProductProjection,
+    ProductRun,
+    local_product_projection,
+)
 from infrahub_sync.product_store.store import ProductStoreProviderError
 from infrahub_sync.service import models as service_models
 from infrahub_sync.service import service as service_module
@@ -41,6 +47,7 @@ from infrahub_sync.service.presentation import (
     account_identifiers,
     present_accounts,
 )
+from infrahub_sync.service.resume_view import automatic_resume_view
 from infrahub_sync.service.schedules import ScheduleService
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.configuration.validation_packages import package_data
@@ -433,7 +440,15 @@ _ANSWERS: dict[str, Callable[[_Api], list[Response]]] = {
     "EmittedScheduleResource.left_out_set_by": _schedule_answers,
 }
 # Fields whose key is an account field of the presentation but whose value is not an account.
-_NOT_ACCOUNTS = frozenset({"PlanLineageResource.owner"})  # A node of the destination, by kind and name.
+_NOT_ACCOUNTS = frozenset(
+    {
+        # A node of the destination, by kind and name.
+        "PlanLineageResource.owner",
+        # Always the reserved actor of the automatic resume, which
+        # `test_a_run_answer_names_the_actor_of_each_automatic_resume_record` covers.
+        "AutomaticResumeResource.actor",
+    }
+)
 
 
 def _account_fields() -> list[str]:
@@ -747,6 +762,31 @@ def test_a_run_answer_shows_the_automatic_resume_by_name(api: _Api) -> None:
     assert body["run"]["actor"] == AUTOMATIC_RESUME_DISPLAY_NAME
     assert [entry["actor"] for entry in body["resumes"]] == [AUTOMATIC_RESUME_DISPLAY_NAME]
     assert api.reads == []
+
+
+def test_a_run_answer_names_the_actor_of_each_automatic_resume_record(api: _Api) -> None:
+    """The web page shows the actor of a record as the Sync API returns it (review F8)."""
+    _planned_run(api)
+    record = AutomaticResume(
+        run_id=_RUN_ID,
+        interrupted_flow_run_id="flow-interrupted",
+        cause="rule-8",
+        state="ended",
+        decision="resume",
+        start_after=5999,
+        operations_not_checked=0,
+        resume_flow_run_id="flow-resume",
+        decided_at=_T0,
+        updated_at=_T0,
+    )
+    view = automatic_resume_view((record,))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(service_module, "automatic_resume_view", lambda *_args, **_kwargs: view)
+        answer = api.client.get(f"/runs/{_RUN_ID}", headers=api.owner_headers)
+
+    assert answer.status_code == 200, answer.text
+    assert AUTOMATIC_RESUME_ACTOR not in answer.text
+    assert [entry["actor"] for entry in answer.json()["automatic_resumes"]] == [AUTOMATIC_RESUME_DISPLAY_NAME]
 
 
 def test_an_event_of_the_automatic_resume_shows_it_by_name(api: _Api) -> None:

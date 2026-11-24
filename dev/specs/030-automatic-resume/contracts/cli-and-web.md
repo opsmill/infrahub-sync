@@ -35,7 +35,7 @@ A run with `automatic_resume_count` above 0 shows it in a column `auto resumes`.
 
 - The resume entries show `Sync (automatic resume)` where a manual resume shows the account name.
 - A notice for each row of `automatic_resumes`, with the same text as `runs show`. A row that is not `ended` shows
-  its state.
+  its state. The `resumed … by` line shows the row's `actor` as the Sync API returns it.
 - The resume action of the run page (spec 016 in the web interface) stays available when the last row ended
   `no-resume`, and is hidden while a row is not `ended`.
 

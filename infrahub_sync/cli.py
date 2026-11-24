@@ -1287,9 +1287,6 @@ def _echo_apply_progress(resource: RunResource) -> None:
         )
 
 
-# What `runs show` prints for the reserved actor of the automatic resume, as the Sync API shows it
-# (spec 030). The CLI does not import the service package, so the name is repeated here.
-_AUTOMATIC_RESUME_NAME = "Sync (automatic resume)"
 # What `runs show` prints for an automatic resume record that has not ended.
 _AUTOMATIC_RESUME_STATES = {
     "waiting-check": "waiting for a live worker to run the check",
@@ -1339,7 +1336,7 @@ def _echo_automatic_resumes(resource: RunResource) -> None:
         if row.decision == "resume" or submitted_only:
             start = "from the first operation" if row.start_after is None else f"after operation {row.start_after}"
             verb = "submitted" if submitted_only else "resumed"
-            typer.echo(f"  {verb} {start} by {_AUTOMATIC_RESUME_NAME}")
+            typer.echo(_display(f"  {verb} {start} by {row.actor}"))
         if row.reason_text is not None:
             typer.echo(_display(f"  reason: {row.reason_text}"))
         if number == len(resource.automatic_resumes):

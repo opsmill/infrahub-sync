@@ -1,12 +1,5 @@
 import type { AutomaticResume, Resume, Run } from "#/api/types";
 
-/**
- * The name the Sync API shows for the reserved actor of the automatic resume (spec 030). An
- * automatic resume record names no actor, so its "resumed … by" line repeats the name here, as
- * `infrahub-sync runs show` does. The resume entries show the actor the Sync API returns.
- */
-export const AUTOMATIC_RESUME_NAME = "Sync (automatic resume)";
-
 /** What a record that has not ended is doing, in the words of `infrahub-sync runs show`. */
 const STATE_TEXT: Record<string, string> = {
   "waiting-check": "waiting for a live worker to run the check",
@@ -78,7 +71,8 @@ export function automaticResumeBlock(
   if (row.decision === "resume" || submittedOnly) {
     lines.push({
       label: submittedOnly ? "submitted" : "resumed",
-      text: `${startText(row.start_after)} by ${AUTOMATIC_RESUME_NAME}`,
+      // The name the Sync API returns for the reserved actor, as `infrahub-sync runs show` prints it.
+      text: `${startText(row.start_after)} by ${row.actor}`,
     });
   }
   if (row.reason_text != null) lines.push({ label: "reason", text: row.reason_text });

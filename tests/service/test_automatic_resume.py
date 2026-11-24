@@ -1135,6 +1135,7 @@ def test_an_apply_whose_worker_stopped_ends_applied_with_one_automatic_resume(st
     [automatic] = detail["automatic_resumes"]
     assert automatic == {
         "interrupted_flow_run_id": apply_flow_run_id,
+        "actor": "Sync (automatic resume)",
         "cause": "rule-8",
         "cause_text": "the worker w stopped sending heartbeats",
         "state": "ended",
@@ -1202,6 +1203,12 @@ def _ended(reason: str, **changes: object) -> AutomaticResume:
 def test_the_cause_text_names_the_rule_and_the_worker(row: AutomaticResume, cause_text: str) -> None:
     [view] = automatic_resume_view((row,))
     assert view.cause_text == cause_text
+
+
+def test_the_view_names_the_reserved_actor_of_the_automatic_resume() -> None:
+    """The account name middleware turns the actor into `Sync (automatic resume)` (review F8)."""
+    [view] = automatic_resume_view((_ended("no-progress"),))
+    assert view.actor == AUTOMATIC_RESUME_ACTOR
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,7 @@ The run resource gains two fields.
   "automatic_resumes": [
     {
       "interrupted_flow_run_id": "6f1c…",
+      "actor": "Sync (automatic resume)",
       "cause": "rule-8",
       "cause_text": "the worker infrahub-sync-worker-3b2f… stopped sending heartbeats",
       "state": "ended",
@@ -38,6 +39,8 @@ The run resource gains two fields.
   plan". For `check-failed` it names the failed check or the cause.
 - The `actor` of the resume entry in `resumes` (spec 016) is `sync:automatic-resume`; the answer shows it as
   `Sync (automatic resume)`, through the account name middleware.
+- Each row of `automatic_resumes` carries the same `actor`, shown as `Sync (automatic resume)`, so the web interface
+  shows the name the Sync API returns. Changed during implementation (review F8).
 
 ## `GET /runs`
 
