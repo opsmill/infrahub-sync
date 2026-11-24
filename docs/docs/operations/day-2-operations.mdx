@@ -10,9 +10,9 @@ procedure in the [Compose deployment guide](../compose-deployment).
 ## Check health and status
 
 Run `docker compose ps` to see each container and its health. The `sync-worker`
-container turns `unhealthy` when the worker process stops running, for example when it
-is paused or hung. Then ask the Sync API whether its components are up and a worker is
-live:
+container turns `unhealthy` when the worker process hangs. Docker runs no health check in
+a paused container, so a paused `sync-worker` shows as paused, not `unhealthy`. Then ask
+the Sync API whether its components are up and enough workers are live:
 
 ```sh
 curl -s http://127.0.0.1:8001/api/health
@@ -22,7 +22,7 @@ The answer is `200` with `status` `healthy`, or `503` with `status` `unhealthy`:
 
 | What the response shows | Meaning | Next action |
 | --- | --- | --- |
-| `status` is `healthy` | Every component is up and at least one worker is live. | None. A live worker does not check a registered source or destination. |
+| `status` is `healthy` | Every component is up and at least `workers.minimum` workers are live. | None. A live worker does not check a registered source or destination. |
 | An entry of `dependencies` is `down` | That component cannot be reached or cannot serve requests; its `error` names the reason. In Compose, `database` and `task_manager_db` are both in the `postgres` service, so they go down together. | Read the logs of that service, then start it again with `docker compose up -d --wait`. |
 | `workers.live_workers` is below `workers.minimum` | No worker, or too few, has sent a heartbeat recently. A stopped, paused or hung worker causes this. | Read the worker logs, then run `docker compose restart sync-api sync-worker`. |
 | `workers.state` is `unknown` | The Sync API could not read the work pool from Prefect. | Check `task_manager` and `task_manager_db` first. |

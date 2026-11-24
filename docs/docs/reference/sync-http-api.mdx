@@ -495,6 +495,10 @@ modules:
       valid_status_codes: [200]
 ```
 
+The 10-second timeout in these examples fits the default `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` of
+3 seconds. The setting accepts up to 60 seconds; when you raise it, raise the probe timeout
+above the new value.
+
 To find the cause of a `503`, read the body: the component with `status` `down` and its
 `error`, or the `workers` section.
 

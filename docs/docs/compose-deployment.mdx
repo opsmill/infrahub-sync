@@ -1188,7 +1188,8 @@ curl -s http://127.0.0.1:8001/api/health
 `docker compose ps` shows each container and the health of `postgres`,
 `object-store`, `prefect-server`, `sync-api` and `sync-worker`. The `/api/health`
 response needs no authentication. It answers `200` with `status` `healthy` when every
-component is up and at least one worker is live, and `503` with `status` `unhealthy`
+component is up and at least `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` workers (default 1) are
+live, and `503` with `status` `unhealthy`
 otherwise. The [Sync HTTP API reference](./reference/sync-http-api.mdx#get-health)
 describes every field.
 

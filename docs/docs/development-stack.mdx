@@ -157,8 +157,9 @@ curl -sf http://127.0.0.1:8001/api/version
 curl -sf http://127.0.0.1:8001/api/health
 ```
 
-The `health` response reports `"status": "healthy"` when every component is up and a worker is
-live, and `curl -f` fails when it answers `503`. The service
+The `health` response reports `"status": "healthy"` when every component is up and at least
+`INFRAHUB_SYNC_HEALTH_MIN_WORKERS` workers (default 1) are live, and `curl -f` fails when it
+answers `503`. The service
 starts with an empty configuration registry and connects to no source or destination until you
 register a package.
 

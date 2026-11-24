@@ -4,10 +4,8 @@
 [ADR 0049](0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md) — the web
 interface asks for an account name and a password and keeps the session token that the sign-in
 returns, in place of a Sync API token that a person enters, and
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` is no longer read. Amended on 2026-11-24 by
-[ADR 0055](0055-the-health-endpoint-replaces-status.md) — `/api/health` replaces `/api/status`.
-The body below is unchanged.
-**Date**: 2026-11-16
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` is no longer read. The body below is unchanged.
+**Date**: 2026-11-16, amended 2026-11-24 (see [Amendment, 2026-11-24](#amendment-2026-11-24-apihealth-replaces-apistatus))
 **Source**: `dev/specs/017-serve-web-interface/spec.md` (decisions D-1 to D-3, FR-001 to FR-034),
 `dev/specs/017-serve-web-interface/research.md` (R-1 to R-7, R-12), issue #421
 
@@ -91,3 +89,14 @@ address cannot answer both a browser that opens the page and a client that calls
   have two addresses and one more container, which issue #421 rules out.
 - **Operators add `/api` to `INFRAHUB_SYNC_API_URL` themselves.** Rejected: every Compose file,
   environment and document would change.
+
+## Amendment, 2026-11-24: `/api/health` replaces `/api/status`
+
+[ADR 0055](0055-the-health-endpoint-replaces-status.md) replaces the unauthenticated route
+`/api/status` with `/api/health`. The body above is unchanged and records the decision as it was
+taken.
+
+- `/api/health` answers without a token, as `/api/version`, `/api/docs` and `/api/openapi.json`
+  do. `/api/status` is removed and answers `404`.
+- The development tasks that called `/api/status` call `/api/health`. The `sync-api` container
+  health check of the Compose files calls `/api/version`.

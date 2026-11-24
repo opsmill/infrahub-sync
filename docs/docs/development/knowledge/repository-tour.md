@@ -218,9 +218,11 @@ Two service modules report the health of a deployment (spec 029,
   standard-library command that the `sync-worker` health check of both Compose files runs; a test
   checks that both files carry exactly that text.
 
-`worker_is_live` in `orchestration.py` is the only copy of the worker liveness rule: Prefect
-reports the worker online and its last heartbeat is within `max(3 × heartbeat interval, 30)`
-seconds. The health report and `_owner_is_fresh` in `liveness.py` both call it.
+`worker_is_live` in `orchestration.py` is the shared application-side worker liveness rule:
+Prefect reports the worker online and its last heartbeat is within
+`max(3 × heartbeat interval, 30)` seconds. The health report and `_owner_is_fresh` in
+`liveness.py` both call it. `WORKER_HEALTHCHECK_COMMAND` in `worker_alive.py` applies the same
+`max(3 × interval, 30)` threshold to the alive file, so a change to the threshold changes both.
 
 Each worker publishes the names of its set credential variables to the `worker_environments`
 table on each poll, through `service.storage.service_product_projection`.

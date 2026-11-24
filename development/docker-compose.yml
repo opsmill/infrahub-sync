@@ -355,7 +355,8 @@ services:
       - "host.docker.internal:host-gateway"
     # Looks only at this worker's own process: its event loop writes the alive file on a
     # timer that calls no other service, so an outage of PostgreSQL or Prefect leaves this
-    # container healthy, and a paused or hung process makes it unhealthy (spec 029, R-7).
+    # container healthy, and a hung process makes it unhealthy (spec 029, R-7). Docker runs no
+    # health check in a paused container, so a paused container shows as paused, not unhealthy.
     # The command is WORKER_HEALTHCHECK_COMMAND in infrahub_sync/service/worker_alive.py.
     healthcheck:
       test:

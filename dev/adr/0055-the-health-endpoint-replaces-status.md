@@ -28,7 +28,7 @@ Two facts about the Compose deployment shape the worker side:
 - One PostgreSQL container holds both the product database and the Prefect database. A Prefect
   worker heartbeat is written to the Prefect database, so a PostgreSQL outage stops every
   heartbeat even when the worker process runs.
-- A paused or hung worker container keeps the Docker state `running`. Before this decision the
+- A hung worker process keeps the Docker state `running`. Before this decision the
   `sync-worker` service had no healthcheck.
 
 ## Decision
@@ -45,24 +45,32 @@ Two facts about the Compose deployment shape the worker side:
   address.
 - **Workers count through a minimum.** The answer is `503` when fewer than
   `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` (default 1) workers are live, or when the work pool cannot be
-  read. Each worker that sent a heartbeat in the last 24 hours is listed as `live` or `stale`, but
-  a `stale` record never makes the answer `503`. Each worker start registers a new Prefect name,
-  so the record of the previous worker stays in the pool after a restart; counting stale records
-  would make every restart an outage.
+  read. Each worker that sent a heartbeat in the last 24 hours is listed as `live` or `stale`. A
+  `stale` record does not count as live, and it does not make the answer `503` while at least
+  `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` live workers remain. Each worker start registers a new
+  Prefect name, so the record of the previous worker stays in the pool after a restart; counting
+  stale records would make every restart an outage.
 - **One liveness rule.** `worker_is_live` in `infrahub_sync/service/orchestration.py` decides
   whether a worker is live: Prefect reports it online and its last heartbeat is within
   `max(3 × heartbeat interval, 30)` seconds. The health report and the run liveness policy
-  (`_owner_is_fresh` in `infrahub_sync/service/liveness.py`) both call it.
-- **The database check reads only.** It opens its own connection, runs `SELECT 1` under a
-  statement timeout, and closes it. The product owner decided that the check reads only; the
-  specification and the research record no further reason.
+  (`_owner_is_fresh` in `infrahub_sync/service/liveness.py`) both call it. The worker container
+  health check (`WORKER_HEALTHCHECK_COMMAND` in `infrahub_sync/service/worker_alive.py`) applies
+  the same `max(3 × interval, 30)` threshold to the worker's alive file, so the two change
+  together.
+- **The database check reads only.** It opens its own connection, runs `SELECT 1` and closes
+  it. It sets no PostgreSQL `statement_timeout`; the health check time limit
+  (`INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`) cancels a query that does not answer. The product owner
+  decided that the check reads only; the specification and the research record no further
+  reason.
 - **The worker container healthcheck reads a file that the worker's own timer writes.** The
   worker writes `<epoch seconds> <interval seconds>` to `$TMPDIR/infrahub-sync-worker-alive`
   every heartbeat interval, on a timer that calls no other service. The Compose healthcheck of
-  `sync-worker` fails when the file is older than `max(3 × interval, 30)` seconds. A paused or
-  hung process stops the writes; an outage of PostgreSQL or Prefect does not, because one
-  PostgreSQL holds both databases in Compose and a check based on the Prefect heartbeat would
-  turn the worker container `unhealthy` during every PostgreSQL outage.
+  `sync-worker` fails when the file is older than `max(3 × interval, 30)` seconds. A hung
+  process stops the writes, so the health check fails. Docker runs no health check in a paused
+  container, which shows as paused instead. An outage of PostgreSQL or Prefect does not stop
+  the writes. This matters because one PostgreSQL holds both databases in Compose, and a check
+  based on the Prefect heartbeat would turn the worker container `unhealthy` during every
+  PostgreSQL outage.
 - **`/api/health` is a readiness signal, not a liveness probe.** The `sync-api` container
   healthcheck stays on `/api/version`. The components are shared by every Sync API process, so a
   restart triggered by `/api/health` would restart all of them during an outage that a restart
@@ -78,8 +86,9 @@ Two facts about the Compose deployment shape the worker side:
 
 - An operator can name the failed component, or the missing worker, from the answer alone.
 - In Compose, a PostgreSQL outage shows `database` and `task_manager_db` as `down` together,
-  and after 30 seconds the workers turn `stale`, because their heartbeats cannot be recorded. The
-  `sync-worker` container stays `healthy` during that outage.
+  and `workers.state` as `unknown` at once, because Prefect cannot read the work pool from its
+  database. The answer is then `503` and lists no worker. The `sync-worker` container stays
+  `healthy` during that outage.
 - A script or page that read `/api/status` must move to `/api/health`. The web interface,
   `SyncClient` and the `dev.smoke` task moved with this change.
 - A probe's own timeout must be longer than `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`; otherwise a slow

@@ -93,8 +93,13 @@ curl -s http://127.0.0.1:8001/api/health
 
 `up -d --wait` pulls the images and returns once every service is healthy. In the
 `/api/health` response, `status` must be `healthy` and `workers.live_workers` at
-least 1. If `status` reads `unhealthy`, wait a few seconds and repeat the request. If `up` fails, see
-[Compose operator troubleshooting](./operations/compose-troubleshooting.mdx).
+least `workers.minimum` (1 by default). Shortly after the start, `status` can read
+`unhealthy` until the worker has sent its first heartbeat; repeat the request after a few
+seconds. If it stays `unhealthy`, read `dependencies` and `workers` in the answer: an entry
+of `dependencies` with `status` `down` and its `error`, or `workers.live_workers` below
+`workers.minimum`, names the cause. [Compose operator
+troubleshooting](./operations/compose-troubleshooting.mdx) gives the action for each cause,
+and for a failed `up`.
 
 A `healthy` answer confirms the deployment is running; it does not check a source or
 destination.
