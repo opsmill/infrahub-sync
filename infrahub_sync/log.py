@@ -64,8 +64,21 @@ _FALLBACK_HANDLER.setFormatter(logging.Formatter(SERVICE_LOG_FORMAT))
 
 
 def _render_value(value: object) -> str:
-    """Return the text of one value; a string is written as it is, so redaction finds it."""
-    return value if isinstance(value, str) else repr(value)
+    """Return the text of one value, with every string in it written as it is.
+
+    `RunLoggerBridge` replaces a secret by a literal search of the message. `repr` would
+    escape a quote, a backslash or a control character of a string, and the search would then
+    miss a secret that holds one. A string is therefore written without quotes, also inside a
+    mapping, a list, a tuple or a set. Any other value is written with `str`.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        items = ", ".join(f"{_render_value(key)}: {_render_value(item)}" for key, item in value.items())
+        return f"{{{items}}}"
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return f"[{', '.join(_render_value(item) for item in value)}]"
+    return str(value)
 
 
 def render_for_logging(

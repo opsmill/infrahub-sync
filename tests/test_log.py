@@ -19,6 +19,8 @@ from infrahub_sync.log import PACKAGE_LOGGER_NAME, configure_service_logging
 
 LOGGER_NAME = "infrahub_sync.tests.log"
 SECRET = "s3cr3t-token-value"  # noqa: S105  # a planted value, not a credential
+# `repr` would escape the quote, the backslash and the line break of this planted value.
+ESCAPED_SECRET = "s3cr3t'tok\\en\nvalue"  # noqa: S105  # a planted value, not a credential
 
 
 class _RunLogger:
@@ -130,6 +132,36 @@ def test_run_log_receives_a_key_value_redacted() -> None:
         structlog.get_logger(LOGGER_NAME).info("request failed", header=f"Bearer {SECRET}")
 
     assert run_logger.lines == [(logging.INFO, f"{LOGGER_NAME} | request failed header=Bearer ***")]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param([ESCAPED_SECRET], id="list"),
+        pytest.param((ESCAPED_SECRET,), id="tuple"),
+        pytest.param({"token": ESCAPED_SECRET}, id="mapping"),
+        pytest.param({"headers": [{"token": ESCAPED_SECRET}]}, id="nested"),
+    ],
+)
+def test_run_log_receives_a_secret_inside_a_container_redacted(value: object) -> None:
+    pytest.importorskip("prefect")
+    from infrahub_sync.orchestration.flow import remote_log_bridge
+
+    run_logger = _RunLogger()
+    with remote_log_bridge(run_logger, secrets=[ESCAPED_SECRET]):
+        structlog.get_logger(LOGGER_NAME).info("request failed", header=value)
+
+    ((_, line),) = run_logger.lines
+    assert ESCAPED_SECRET not in line
+    assert "***" in line
+
+
+def test_container_values_are_written_without_quotes(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=PACKAGE_LOGGER_NAME):
+        structlog.get_logger(LOGGER_NAME).info("devices read", names=["a", "b"], counts={"site": 2}, missing=None)
+
+    (record,) = caplog.records
+    assert record.getMessage() == "devices read names=[a, b] counts={site: 2} missing=None"
 
 
 def test_service_logging_reports_info_lines() -> None:
