@@ -1,0 +1,37 @@
+changelog/+health-page.added.md
+  s_ac747e9683a4e0::t_328ce2bce94b97 1
+frontend/src/domain/health.test.ts
+  s_ac747e9683a4e0::t_f98fd815d376da 1-88
+frontend/src/domain/health.ts
+  s_ac747e9683a4e0::t_b462b5ffd50532 1-47
+frontend/src/features/health/Board.tsx
+  s_ac747e9683a4e0::t_4c277f7fa62505 1-219
+frontend/src/features/health/HealthPage.tsx
+  s_ac747e9683a4e0::t_77d630916c14a7 1-116
+frontend/src/features/health/parts.tsx
+  s_ac747e9683a4e0::t_72bf2da27e52d2 1-91
+frontend/src/routeTree.gen.ts
+  s_ac747e9683a4e0::t_e4d79d0d7b1bae 15,37-41,72,83,95,108,119,130,142,173-179,222
+frontend/src/routes/__root.tsx
+  s_ac747e9683a4e0::t_d57dc6cf938b9d 29,208,211,278-289
+frontend/src/routes/health.tsx
+  s_ac747e9683a4e0::t_5b07abef2b4858 1-11
+frontend/src/styles.css
+  s_ac747e9683a4e0::t_0743b494cae0c6 23-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "559dab0a316d8ba285c0adfd33aee511cb9e0edb",
+  "prompts": {},
+  "sessions": {
+    "s_ac747e9683a4e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "549ed312-41da-4cbd-bef8-ee35642932a4",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
