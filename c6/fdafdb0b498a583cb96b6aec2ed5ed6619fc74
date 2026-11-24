@@ -1,0 +1,906 @@
+dev/specs/001-webex-adapter/quickstart.md
+  s_58b527396c8cb5::t_b978849b63e066 1-20
+dev/specs/026-schedules-web-page/design-schedule-form.md
+  s_58b527396c8cb5::t_b978849b63e066 1-49
+docs/docs/reference/cli.mdx
+  s_58b527396c8cb5::t_b978849b63e066 286,293-295,408-432,536-537,647-648
+  s_58b527396c8cb5::t_426e107323dbbd 433
+frontend/src/api/client.ts
+  s_58b527396c8cb5::t_b978849b63e066 5-11,90-95,115-116
+frontend/src/domain/schedule-page.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-311
+tests/client/test_client.py
+  s_58b527396c8cb5::t_b978849b63e066 32-33,56-75,276,318,335,443-470,524-565,580-615,1386-1492
+dev/specs/030-automatic-resume/research.md
+  s_58b527396c8cb5::t_b978849b63e066 1-229
+dev/specs/026-schedules-web-page/critiques/critique-20261119-revision.md
+  s_58b527396c8cb5::t_b978849b63e066 1-119
+frontend/src/domain/run-state.ts
+  s_58b527396c8cb5::t_b978849b63e066 1,621-635
+tests/compose/test_lifecycle.py
+  s_58b527396c8cb5::t_b978849b63e066 36,46,125
+docs/docs/development/constitution.md
+  s_58b527396c8cb5::t_814bfda0992830 236
+  s_58b527396c8cb5::t_b978849b63e066 25-26,35-47
+dev/specs/025-register-config-web/plan.md
+  s_58b527396c8cb5::t_b978849b63e066 1-158
+frontend/src/features/runs/automatic-resume.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-151
+infrahub_sync/client/__init__.py
+  s_58b527396c8cb5::t_b978849b63e066 29,45,51,53-54,81-82,86,95-96,111,131,137,140-141,172-173,177,189-190
+tests/dev_stack/test_dev_tasks.py
+  s_58b527396c8cb5::t_b978849b63e066 1114-1133
+  s_58b527396c8cb5::t_c191bb3a16a924 1112-1113
+changelog/+register-config-web.added.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+infrahub_sync/service/schedules.py
+  s_58b527396c8cb5::t_b978849b63e066 16,18,37,49,52,56,71-76,99-100,102-103,105-107,125-160,428-453,587-594,881-882,887-888,923-925,927,939,1113-1120,1125,1145,1158-1159,1162-1170,1208,1315-1322,1333
+tests/service/test_schedule_admission.py
+  s_58b527396c8cb5::t_b978849b63e066 24,53,60,74,296-363
+  s_58b527396c8cb5::t_9064dbe722a0af 364-365
+tests/cli/conftest.py
+  s_58b527396c8cb5::t_b978849b63e066 6,15,21-37
+  s_58b527396c8cb5::t_61755af2aea15a 38-39
+tests/service/test_compatibility.py
+  s_58b527396c8cb5::t_b978849b63e066 142-180
+dev/specs/001-entraid-source-adapter/research.md
+  s_58b527396c8cb5::t_b978849b63e066 1-165
+tests/service/test_settings.py
+  s_58b527396c8cb5::t_b978849b63e066 1-87
+dev/specs/030-automatic-resume/data-model.md
+  s_58b527396c8cb5::t_b978849b63e066 1-84
+frontend/src/features/schedules/time-zones.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-58
+changelog/+api-status-removed.changed.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+dev/specs/029-api-health/verification.md
+  s_58b527396c8cb5::t_b978849b63e066 1-211
+changelog/+automatic-resume.added.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+tests/demo/fakes.py
+  s_58b527396c8cb5::t_b978849b63e066 118-119,127,131,145-146,151,156,159,188-193
+tests/dev_stack/smoke/test_cli_client.py
+  s_58b527396c8cb5::t_b978849b63e066 128-132,134
+dev/specs/025-register-config-web/alignment-check.md
+  s_58b527396c8cb5::t_b978849b63e066 1-31
+dev/specs/026-schedules-web-page/contracts/http-api.md
+  s_58b527396c8cb5::t_b978849b63e066 1-86
+frontend/src/domain/schedule-events.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-461
+dev/specs/030-automatic-resume/critiques/critique-2026-11-23.md
+  s_58b527396c8cb5::t_b978849b63e066 1-127
+infrahub_sync/service/schedule_routes.py
+  s_58b527396c8cb5::t_b978849b63e066 15-16,28,44-53
+  s_58b527396c8cb5::t_562ad7d5ff46cc 54
+infrahub_sync/service/flow.py
+  s_58b527396c8cb5::t_b978849b63e066 1380-1382
+infrahub_sync/product_store/configs.py
+  s_58b527396c8cb5::t_b978849b63e066 1,44,63,71,153-167,750,761-762,767-771,775-776,794,802-803,809-814,820-821,927-972,975,977-986,1030-1035,1040-1077,1079-1084,1090-1104
+  s_58b527396c8cb5::t_cacc0230b829d3 910,912
+  s_58b527396c8cb5::t_a98f4382afbb46 913,919-926,973-974,976,1078,1085-1089
+dev/specs/001-entraid-source-adapter/alignment-check.md
+  s_58b527396c8cb5::t_b978849b63e066 1-35
+dev/specs/030-automatic-resume/run-report.md
+  s_58b527396c8cb5::t_b978849b63e066 1-132
+.specify/extensions/opsmill/commands/qa.md
+  s_58b527396c8cb5::t_b978849b63e066 1-369
+dev/specs/029-api-health/opsmill-implement-report.md
+  s_58b527396c8cb5::t_b978849b63e066 1-108
+frontend/src/features/runs/RunPage.tsx
+  s_58b527396c8cb5::t_b978849b63e066 45,308-310,314-315,476-482,684-685
+tests/product_store/test_postgresql_isolation.py
+  s_58b527396c8cb5::t_b978849b63e066 226,233-238,284,481-560
+  s_58b527396c8cb5::t_3480ce973ec419 561-564
+infrahub_sync/product_store/store.py
+  s_58b527396c8cb5::t_b978849b63e066 60-61,74,194-198,271-278,337-338,351-352,359-372,605-613,615-621,639-643,645-648,741-745,813-846,857-863,865,867-868,904-921,962-973,1094-1118,1221-1223,1233,1243,1564-1566,1568,1610-1625,2206-2214,2216-2232,2243-2244,2247-2396,3010-3011,3045-3051,3054-3055,3085-3088,3092,3125-3142,3774-3775,3777-3778,3809,3831,3833-3839,3847,3869-3871,3925-3931,3946-3950,3956-3969,3977,3981-3982,4001,4029-4030,4816-4817,4820-4822,5788,5796-5797,5799-5803,5807-5845,6157-6160,6165,6173,6179-6182,6186-6191,6200,6206-6211,6219-6223,7489-7519,7802-7815,7884,7913-7914
+  s_58b527396c8cb5::t_120334621dbf83 1626
+  s_3edb7dabae63de::t_9d4220417b0d9b 1629-1635
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_58b527396c8cb5::t_b978849b63e066 21,241,244
+frontend/src/features/runs/run-sections.tsx
+  s_58b527396c8cb5::t_b978849b63e066 14,253-265,267
+tests/adapters/test_msgraphsync_settings.py
+  s_58b527396c8cb5::t_b978849b63e066 1-320
+.specify/extensions/checkpoint/commands/commit.md
+  s_58b527396c8cb5::t_b978849b63e066 1-55
+dev/specs/001-entraid-source-adapter/critiques/critique-20261103-2215.md
+  s_58b527396c8cb5::t_b978849b63e066 1-178
+tests/compose/test_worker_healthcheck.py
+  s_58b527396c8cb5::t_b978849b63e066 1-40
+tests/integration/test_service_storage_integration.py
+  s_58b527396c8cb5::t_b978849b63e066 8,48-49,79
+infrahub_sync/service/app.py
+  s_58b527396c8cb5::t_b978849b63e066 8,23,33,37,41-42,53,108-114,311,313,323,437-441,521-526,537,541-544,579,607,609-612,615-641
+tests/service/test_event_transactions.py
+  s_58b527396c8cb5::t_b978849b63e066 27,494-527
+  s_58b527396c8cb5::t_92fad41dd03c63 528-529
+tests/service/test_events_route.py
+  s_58b527396c8cb5::t_b978849b63e066 249-318,335-336
+  s_58b527396c8cb5::t_b54d2866ab9be4 246-248
+tests/service/test_schedule_bootstrap.py
+  s_58b527396c8cb5::t_b978849b63e066 215-242
+.agents/skills/speckit-analyze/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 27,32,72,214,219
+frontend/src/api/errors.ts
+  s_58b527396c8cb5::t_b978849b63e066 1,17-51
+  s_58b527396c8cb5::t_b1e85d312808b5 52-53
+frontend/src/features/runs/automatic-resume.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-256
+frontend/README.md
+  s_58b527396c8cb5::t_b978849b63e066 92-95,98
+frontend/src/features/configurations/package-review.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-76,78,80-88,93-95,98,105-245
+  s_58b527396c8cb5::t_a40b8f862765e4 77,79,89-92,96-97,99-104
+frontend/src/features/schedules/config-choices.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-61
+docs/docs/operations/day-2-operations.mdx
+  s_58b527396c8cb5::t_b978849b63e066 6-7,13-16,19,22,24,26-29,31-34,57,180-298
+.specify/extensions/agent-context/scripts/bash/update-agent-context.sh
+  s_58b527396c8cb5::t_b978849b63e066 15,62-69,105-115,119-121,123-165,179-180,183-187,189-190,315-320,322-336,365-368,373-416,446-447
+dev/specs/001-webex-adapter/plan.md
+  s_58b527396c8cb5::t_b978849b63e066 1-76
+.specify/extensions/opsmill/scripts/python/route_codex.py
+  s_58b527396c8cb5::t_b978849b63e066 1-71
+frontend/src/api/health-query.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-74
+.specify/integration.json
+  s_58b527396c8cb5::t_b978849b63e066 2
+infrahub_sync/adapters/msgraphsync.py
+  s_58b527396c8cb5::t_b978849b63e066 1-1174
+infrahub_sync/adapters/webex_client.py
+  s_58b527396c8cb5::t_b978849b63e066 1-408
+tests/dev_stack/smoke/test_service_api.py
+  s_58b527396c8cb5::t_b978849b63e066 59-69,77-80,85,110-115
+tests/service/test_schedule_automatic_resume.py
+  s_58b527396c8cb5::t_b978849b63e066 1-375
+dev/specs/029-api-health/data-model.md
+  s_58b527396c8cb5::t_b978849b63e066 1-66
+infrahub_sync/cli.py
+  s_58b527396c8cb5::t_ae086bbc57833d 918-919,1058-1059
+  s_58b527396c8cb5::t_b978849b63e066 12,36,46-47,64,128-129,411,431-448,482-486,491-493,516-518,520,525-563,703,719,753-772,793-805,1047-1057,1060-1094,1332-1406,2208-2210,2236-2239,2421-2422,2435,2605-2610,2615-2623
+dev/specs/026-schedules-web-page/research.md
+  s_58b527396c8cb5::t_b978849b63e066 1-261
+infrahub_sync/service/compatibility.py
+  s_58b527396c8cb5::t_b978849b63e066 27-46
+frontend/src/features/schedules/ScheduleFormDialog.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-1070
+tests/service/test_resume_run.py
+  s_58b527396c8cb5::t_b978849b63e066 23,37-38,46-47,58,60,62,65-69,73,82,178-185,187-191,225-238,1561-1709
+  s_58b527396c8cb5::t_fe6c09efffc096 1710
+frontend/src/features/runs/StartRunDialog.tsx
+  s_58b527396c8cb5::t_b978849b63e066 8,13-19,153,241-247
+dev/specs/030-automatic-resume/opsmill-implement-report.md
+  s_58b527396c8cb5::t_b978849b63e066 1-172
+.specify/scripts/bash/check-prerequisites.sh
+  s_58b527396c8cb5::t_b978849b63e066 12,16,28,32,34-35,39-41,51-58,67,71,77,80,83,88,92,99-106,151-163,190-199,209-220,228-233,239,245
+infrahub_sync/service/events.py
+  s_58b527396c8cb5::t_b978849b63e066 18,43-48,322-358
+  s_58b527396c8cb5::t_6109869dba373e 359-362
+dev/specs/030-automatic-resume/tasks.md
+  s_58b527396c8cb5::t_b978849b63e066 1-315
+infrahub_sync/service/bootstrap.py
+  s_58b527396c8cb5::t_b978849b63e066 44-48,393-396
+.specify/extensions/agent-context/commands/speckit.agent-context.update.md
+  s_58b527396c8cb5::t_b978849b63e066 18,27
+.specify/extensions/opsmill/commands/summary.md
+  s_58b527396c8cb5::t_b978849b63e066 4-5
+tests/service/test_liveness_policy.py
+  s_58b527396c8cb5::t_b978849b63e066 582,605-606,746,783,787,848,887,890-892,895,1005-1095
+tests/adapters/test_infrahub_loader_fields.py
+  s_58b527396c8cb5::t_b978849b63e066 217-219,455-508
+  s_58b527396c8cb5::t_233a225b68ca13 509-510
+dev/specs/001-webex-adapter/spec.md
+  s_58b527396c8cb5::t_b978849b63e066 1-164
+frontend/src/features/schedules/cadence-draft.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-147
+.github/workflows/workflow-linter.yml
+  s_58b527396c8cb5::t_b978849b63e066 133-134,166-167
+tests/service/test_health_postgresql.py
+  s_58b527396c8cb5::t_b978849b63e066 1-47
+.specify/.gitignore
+  s_58b527396c8cb5::t_b978849b63e066 1-14
+frontend/src/features/schedules/config-choices.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-48
+tests/fixtures/webex/schema.json
+  s_58b527396c8cb5::t_b978849b63e066 1-105
+.agents/skills/speckit-agent-context-update/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 6,23,32
+.agents/skills/speckit-critique-run/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 3,7,177
+.agents/skills/speckit-plan/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 27,32,60,79,84,109,158,162
+.agents/skills/speckit-opsmill-extract/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 3,6,223,227-238,246
+.specify/integrations/speckit.manifest.json
+  s_58b527396c8cb5::t_b978849b63e066 3,6-9,11,14-17
+dev/specs/030-automatic-resume/contracts/http-api.md
+  s_58b527396c8cb5::t_b978849b63e066 1-73
+frontend/src/api/queries.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-296
+frontend/src/features/configurations/detail-mapping-panel.tsx
+  s_58b527396c8cb5::t_b978849b63e066 264
+frontend/src/features/runs/RunsTable.tsx
+  s_58b527396c8cb5::t_b978849b63e066 6,169-192,216-219,221
+  s_58b527396c8cb5::t_49ecd6ab2a4b21 220
+tests/client/test_models.py
+  s_58b527396c8cb5::t_b978849b63e066 16,27,29,210-253,485-491,496-520,868-1045
+tests/service/test_http_api.py
+  s_58b527396c8cb5::t_b978849b63e066 6-7,41,60,93,260-261,276,1178-1179,1183-1187,1194,1733,1741,1749,1764,1766-1767,1769,2849,2944-3026
+tests/test_logging.py
+  s_58b527396c8cb5::t_b978849b63e066 122-137
+frontend/pnpm-workspace.yaml
+  s_58b527396c8cb5::t_b978849b63e066 29-30
+tests/compose/test_documentation.py
+  s_58b527396c8cb5::t_b978849b63e066 153,396-418,424-433
+  s_58b527396c8cb5::t_1b1296014dd84a 434-435
+frontend/src/routeTree.gen.ts
+  s_58b527396c8cb5::t_b978849b63e066 19-20,57-66,75,77,86,88,98,100,111,113,122,124,133,135,145,147,201-214,225,227
+dev/specs/029-api-health/plan.md
+  s_58b527396c8cb5::t_b978849b63e066 1-198
+.specify/extensions/agent-context/agent-context-defaults.json
+  s_58b527396c8cb5::t_b978849b63e066 1-44
+tests/adapters/test_infrahub_peer_identifier.py
+  s_58b527396c8cb5::t_b978849b63e066 426,432,462,1016,1020,1028-1032,1034-1035
+.specify/extensions/agent-context/README.md
+  s_58b527396c8cb5::t_b978849b63e066 5-7,11,13-14,16,18,20,22-24,26,28-29,31-32,35-47,53,61,63
+frontend/src/domain/schedules.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-339
+tasks/tests.py
+  s_58b527396c8cb5::t_b978849b63e066 22-34
+.specify/extensions/checkpoint/LICENSE
+  s_58b527396c8cb5::t_b978849b63e066 1-21
+frontend/src/domain/worker-state.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-67
+frontend/src/features/schedules/CadenceTimeline.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-166
+dev/specs/026-schedules-web-page/opsmill-implement-report.md
+  s_58b527396c8cb5::t_b978849b63e066 1-110
+frontend/src/features/configurations/detail-mapping.tsx
+  s_58b527396c8cb5::t_b978849b63e066 44-47,52-53,56,59-60,64-76,98,100,103,110-116,157-159,167-173,190,192-193,200-204,207-219,234,245,268-273
+.specify/extensions/checkpoint/README.md
+  s_58b527396c8cb5::t_b978849b63e066 1-68
+.specify/presets/taskstoissues-jira/README.md
+  s_58b527396c8cb5::t_b978849b63e066 8-9
+tests/cli/test_parity_and_closure.py
+  s_58b527396c8cb5::t_b978849b63e066 71,140,269,275,278
+  s_58b527396c8cb5::t_b02512419d6449 270-272
+  s_3edb7dabae63de::t_a3649d0ad98e21 273
+.specify/init-options.json
+  s_58b527396c8cb5::t_b978849b63e066 8-9
+frontend/src/features/schedules/use-all-schedules.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-18
+frontend/src/features/schedules/CadenceField.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-336
+.agents/skills/speckit-taskstoissues/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 2-4,6-7,55-161,194
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_58b527396c8cb5::t_b978849b63e066 205
+  s_3edb7dabae63de::t_93853292d9970c 208-209
+frontend/src/features/configurations/PackageDropArea.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-120
+frontend/src/features/schedules/SchedulePage.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-347
+frontend/src/features/schedules/ScheduleStatusCard.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-162
+.specify/extensions/opsmill/scripts/bash/python-run.sh
+  s_58b527396c8cb5::t_b978849b63e066 1-43
+frontend/src/features/runs/form.tsx
+  s_58b527396c8cb5::t_b978849b63e066 6,55-56,62-64,72-73,84-87,92,97,100
+frontend/src/features/schedules/time-zones.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-26
+infrahub_sync/client/models.py
+  s_58b527396c8cb5::t_b978849b63e066 8,16,24-26,54-57,116,126-132,229-252,254-266,269-270,272,283-324,493-495,650-668,670-674,677-699,702-707,711-714,716-753,837-870,875-878,889-890,937-949,972-982,1086-1117,1474-1475,1502-1503,1525-1526,1655-1680
+  s_58b527396c8cb5::t_9e03bf0176fc0f 879-881
+  s_58b527396c8cb5::t_abb72efdc7b019 1681-1682
+tests/fixtures/webex/locations-page-2.json
+  s_58b527396c8cb5::t_b978849b63e066 1
+infrahub_sync/adapters/webex.py
+  s_58b527396c8cb5::t_b978849b63e066 1-202
+tests/fixtures/webex/workspaces.json
+  s_58b527396c8cb5::t_b978849b63e066 1
+docs/docs/compose-deployment.mdx
+  s_58b527396c8cb5::t_b978849b63e066 151,153-154,291-292,703-707,709,831,1131,1135,1163,1201,1205-1220,1222,1224-1246,1248,1252,1255-1292,1366-1367,1386,1398,1411
+frontend/src/features/schedules/ScheduleTimeline.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-336
+tests/service/test_automatic_resume.py
+  s_58b527396c8cb5::t_b978849b63e066 1-1642
+dev/specs/001-entraid-source-adapter/contracts/config-contract.md
+  s_58b527396c8cb5::t_b978849b63e066 1-86
+dev/specs/025-register-config-web/opsmill-implement-report.md
+  s_58b527396c8cb5::t_b978849b63e066 1-340
+infrahub_sync/service/presentation.py
+  s_58b527396c8cb5::t_b978849b63e066 6-8,23-24,50-53,72-73,84-88,95-97,99-100,102-103,105,136-137,182
+.agents/skills/speckit-tasks/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 27,32,52,60,79,99,104,163,198
+.agents/skills/speckit-git-validate/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 6
+.specify/presets/critique-opsmill/README.md
+  s_58b527396c8cb5::t_b978849b63e066 1-20
+dev/specs/026-schedules-web-page/plan.md
+  s_58b527396c8cb5::t_b978849b63e066 1-188
+tests/service/test_schedule_routes.py
+  s_58b527396c8cb5::t_b978849b63e066 8,157,174
+  s_58b527396c8cb5::t_8a262f9adf2994 173
+  s_58b527396c8cb5::t_d806e5ef6f2b26 175
+frontend/src/features/configurations/package-review.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-145
+.agents/skills/speckit-opsmill-implement/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 3,6,42-53,93-119,147-157,162-165,174,177,179
+.specify/extensions/opsmill/README.md
+  s_58b527396c8cb5::t_b978849b63e066 6,25-27,29-31,36-50,54-55,59-67,71-72,76,79-82,85,88-101,104-107,110-145,176-187,194-195,201-225,235-238,241-244,255-299,302-343
+  s_58b527396c8cb5::t_01757392b84075 344
+frontend/src/features/schedules/form-rules.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-186
+frontend/src/routes/__root.tsx
+  s_58b527396c8cb5::t_b978849b63e066 26,34-40,89,112,131,150-152,202,205-206,245,247,360,362,368,397,518-525
+  s_58b527396c8cb5::t_89cb4d03b071c1 526
+  s_3edb7dabae63de::t_6ef3ab41b3ccbc 394
+frontend/src/features/schedules/cadence-draft.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-67
+dev/specs/001-webex-adapter/research.md
+  s_58b527396c8cb5::t_b978849b63e066 1-33
+dev/adr/README.md
+  s_58b527396c8cb5::t_b978849b63e066 78-79,119,122,131,168-180
+  s_58b527396c8cb5::t_a97f544f5c1311 181
+  s_3edb7dabae63de::t_4b2ee3f47c6214 75
+dev/specs/025-register-config-web/research.md
+  s_58b527396c8cb5::t_b978849b63e066 1-174
+infrahub_sync/service/worker.py
+  s_58b527396c8cb5::t_b978849b63e066 7,25,30,33,65,509-535,547-549,551,571-572
+dev/specs/025-register-config-web/tasks.md
+  s_58b527396c8cb5::t_b978849b63e066 1-169
+dev/specs/001-entraid-source-adapter/tasks.md
+  s_58b527396c8cb5::t_b978849b63e066 1-176
+docs/docs/use-with-an-ai-agent.mdx
+  s_58b527396c8cb5::t_b978849b63e066 25-26
+.specify/extensions/opsmill/CHANGELOG.md
+  s_58b527396c8cb5::t_b978849b63e066 8-161,189-192,232
+.agents/skills/speckit-opsmill-prep/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 3,6,48-74,100,166,172,177-179
+frontend/src/domain/start-times.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-151
+tests/adapters/test_webex.py
+  s_58b527396c8cb5::t_b978849b63e066 1-322
+tests/client/test_resume.py
+  s_58b527396c8cb5::t_b978849b63e066 1,6,95-186
+tests/service/test_schedule_change_details.py
+  s_58b527396c8cb5::t_b978849b63e066 1-180
+frontend/src/api/errors.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-65
+frontend/vite.config.ts
+  s_58b527396c8cb5::t_b978849b63e066 1,42-46
+  s_58b527396c8cb5::t_aa21a229d7c779 47
+tests/service/test_settings_automatic_resume.py
+  s_58b527396c8cb5::t_b978849b63e066 1-47
+changelog/+schedule-change-history.added.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+dev/specs/025-register-config-web/contracts/web-interface.md
+  s_58b527396c8cb5::t_b978849b63e066 1-68
+dev/specs/026-schedules-web-page/data-model.md
+  s_58b527396c8cb5::t_b978849b63e066 1-228
+docs/sidebars.ts
+  s_58b527396c8cb5::t_b978849b63e066 170
+docs/docs/development/guidelines/testing-tiers.md
+  s_58b527396c8cb5::t_b978849b63e066 47,52-56
+  s_58b527396c8cb5::t_6d50a6e310c9c6 57
+tests/dev_stack/smoke/test_config_lifecycle.py
+  s_58b527396c8cb5::t_b978849b63e066 31,42-43,48-49,51,56-58,60-61,63,199,201,208,210-212,258,278-279,284-286,305,324
+tests/service/health_fixtures.py
+  s_58b527396c8cb5::t_b978849b63e066 1-71
+frontend/src/features/runs/schedule-choices.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-94
+docs/docs/orchestration.mdx
+  s_58b527396c8cb5::t_b978849b63e066 55-60,274-436,440-441,450
+dev/specs/029-api-health/alignment-check.md
+  s_58b527396c8cb5::t_b978849b63e066 1-34
+changelog/+schedule-api-additions.added.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+frontend/src/domain/cadence.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-84
+.specify/extensions/agent-context/extension.yml
+  s_58b527396c8cb5::t_b978849b63e066 6
+dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md
+  s_58b527396c8cb5::t_b978849b63e066 8,92-102
+tests/fixtures/webex/organizations.json
+  s_58b527396c8cb5::t_b978849b63e066 1-58
+.specify/presets/critique-opsmill/LICENSE
+  s_58b527396c8cb5::t_b978849b63e066 1-21
+frontend/src/features/schedules/form-parts.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-129
+frontend/src/domain/schedule-list.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-213
+.agents/skills/speckit-git-remote/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 6
+.specify/extensions/agent-context/scripts/python/update_agent_context.py
+  s_58b527396c8cb5::t_b978849b63e066 1-368
+infrahub_sync/service/web.py
+  s_58b527396c8cb5::t_b978849b63e066 4,47,223
+dev/specs/001-webex-adapter/checklists/requirements.md
+  s_58b527396c8cb5::t_b978849b63e066 1-38
+tests/service/test_environment_names.py
+  s_58b527396c8cb5::t_b978849b63e066 73-75
+.agents/skills/speckit-converge/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 27,32,99,152-157,252,259
+frontend/src/features/configurations/ConfigurationPage.tsx
+  s_58b527396c8cb5::t_b978849b63e066 25,33,300,357
+  s_58b527396c8cb5::t_d5486c7a25f0f8 358
+tests/dev_stack/test_deps_mode.py
+  s_58b527396c8cb5::t_b978849b63e066 127-144,146,150-151,158,469,477,482-491,493-512,517,522-534,540-541
+changelog/+validate-config-package.added.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+dev/adr/0054-a-package-can-be-validated-before-it-is-registered.md
+  s_58b527396c8cb5::t_b978849b63e066 1-147
+infrahub_sync/service/serve.py
+  s_58b527396c8cb5::t_cfbe96ae03d389 52
+  s_58b527396c8cb5::t_b978849b63e066 6,12,22-30,56-57,63,68,126-174,218-220,224-225,269-275,281-282,297,390
+tests/service/test_orchestration_pool.py
+  s_58b527396c8cb5::t_b978849b63e066 1-115
+dev/specs/001-entraid-source-adapter/data-model.md
+  s_58b527396c8cb5::t_b978849b63e066 1-102
+dev/specs/030-automatic-resume/checklists/requirements.md
+  s_58b527396c8cb5::t_b978849b63e066 1-38
+frontend/src/domain/schedule-events.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-288
+dev/specs/029-api-health/spec.md
+  s_58b527396c8cb5::t_b978849b63e066 1-271
+dev/specs/030-automatic-resume/spec.md
+  s_58b527396c8cb5::t_b978849b63e066 1-378
+frontend/src/api/actions.ts
+  s_58b527396c8cb5::t_b978849b63e066 5-6,57-120,286-320
+.specify/templates/checklist-template.md
+  s_58b527396c8cb5::t_b978849b63e066 7-9,11,14,20,39-42
+infrahub_sync/product_store/__init__.py
+  s_58b527396c8cb5::t_b978849b63e066 23-25,39,62,73,79,128-130,136,151,159,187
+docs/docs/reference/python-api.mdx
+  s_58b527396c8cb5::t_b978849b63e066 38,45-50,86-88
+tests/adapters/test_webex_client.py
+  s_58b527396c8cb5::t_b978849b63e066 1-626
+.specify/extensions/opsmill/scripts/bash/route-codex.sh
+  s_58b527396c8cb5::t_b978849b63e066 1-3
+.agents/skills/speckit-implement/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 27,32,52,63-65,69-70,74-78,82-83,85-87,92,157,192,197
+dev/specs/030-automatic-resume/quickstart.md
+  s_58b527396c8cb5::t_b978849b63e066 1-45
+.specify/presets/.registry
+  s_58b527396c8cb5::t_b978849b63e066 4-17,29-30
+tests/dev_stack/smoke/test_evidence.py
+  s_58b527396c8cb5::t_b978849b63e066 69
+tests/service/test_account_presentation.py
+  s_58b527396c8cb5::t_b978849b63e066 26-32,41-42,44-51,56,246-247,480-482,699,741-850
+.agents/skills/speckit-clarify/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 27,32,129,144-149,250,255,285
+tests/service/test_account_routes.py
+  s_58b527396c8cb5::t_b978849b63e066 188
+development/docker-compose.yml
+  s_58b527396c8cb5::t_b978849b63e066 111,287-290,331-356
+dev/specs/026-schedules-web-page/critiques/critique-20261119.md
+  s_58b527396c8cb5::t_b978849b63e066 1-143
+frontend/src/domain/mapping.ts
+  s_58b527396c8cb5::t_b978849b63e066 86-103
+infrahub_sync/client/errors.py
+  s_58b527396c8cb5::t_b978849b63e066 67-79,93,106-108
+.specify/scripts/bash/create-new-feature.sh
+  s_58b527396c8cb5::t_b978849b63e066 11,52-54,67,97-110,115,123-127,132,136-146,148-215,218-268,287,290-295,301-304,306-309,314,319,345-348,360-370,374-377,383-410,415-417,419-420,436-451,454-456,463-467,470-471,501-502
+.specify/extensions/opsmill/commands/auto.md
+  s_58b527396c8cb5::t_b978849b63e066 36,42,54,57,59,71
+infrahub_sync/testcontainers/docker-compose.yml
+  s_58b527396c8cb5::t_b978849b63e066 271-273,290-293,345-370
+tests/product_store/test_configs_service.py
+  s_58b527396c8cb5::t_cfbe96ae03d389 1698
+  s_58b527396c8cb5::t_7b9d7a009b37f4 1774,1781,1786-1798,1801,1803,1884-1890,1895-1896
+  s_58b527396c8cb5::t_b978849b63e066 14,23-29,31,286,324,533,675,1696,1699-1706,1708-1710,1712-1773,1775-1780,1782-1785,1799-1800,1802,1804-1837,1839-1883,1891-1894,1897-1956
+  s_58b527396c8cb5::t_540e0c8bfaa585 287
+dev/specs/001-entraid-source-adapter/plan.md
+  s_58b527396c8cb5::t_b978849b63e066 1-188
+infrahub_sync/configuration/schema_validation.py
+  s_58b527396c8cb5::t_b978849b63e066 125-138,143-144,306,311-312,315,325,357,427-428,449,458,481-490
+docs/docs/development/knowledge/repository-tour.md
+  s_58b527396c8cb5::t_b978849b63e066 215-235,237,378-386
+  s_58b527396c8cb5::t_7580454eea6404 212-214
+  s_58b527396c8cb5::t_f2e93de3dcb5a8 387
+docker-compose.yml
+  s_58b527396c8cb5::t_b978849b63e066 271-273,290-293,345-370
+infrahub_sync/service/service.py
+  s_58b527396c8cb5::t_b978849b63e066 51,69,71-79,117-118,173-177,200-201,364,616,625-626,784,791-792,801-953,1743-1744,1757,1759,1784,2147-2168,2384-2385,2387,2398-2399
+infrahub_sync/service/orchestration.py
+  s_58b527396c8cb5::t_b978849b63e066 37-38,164,171-184,744,746-750
+dev/specs/029-api-health/research.md
+  s_58b527396c8cb5::t_b978849b63e066 1-219
+docs/docs/running-a-sync.mdx
+  s_58b527396c8cb5::t_b978849b63e066 67,87-89,548-552,823-870
+  s_58b527396c8cb5::t_aa1f81def40dab 871
+tests/service/test_worker_termination.py
+  s_58b527396c8cb5::t_b978849b63e066 12,17,82,84,101-102
+frontend/src/features/runs/RunsPage.tsx
+  s_58b527396c8cb5::t_b978849b63e066 16-23,30,35-36,41,50-51,63,100,105,113,115,228,235,253-274,426-432,471-473,481-523,536,545-590
+  s_58b527396c8cb5::t_f8f9907f83a1b1 591-592
+tests/service/test_config_routes.py
+  s_58b527396c8cb5::t_425955cd7d3434 1908
+  s_58b527396c8cb5::t_b978849b63e066 6,15,23,26,41,55-56,311-312,499,598,688,743,837,950,975,1002,1037,1388,1390,1393,1396,1527-1531,1852-1907,1909-2546
+dev/specs/001-entraid-source-adapter/opsmill-implement-report.md
+  s_58b527396c8cb5::t_b978849b63e066 1-270
+dev/specs/025-register-config-web/data-model.md
+  s_58b527396c8cb5::t_b978849b63e066 1-70
+tests/service/test_start_check.py
+  s_58b527396c8cb5::t_b978849b63e066 212
+docs/docs/reference/sync-http-api.mdx
+  s_58b527396c8cb5::t_b978849b63e066 25-27,70,557,559-561,564-565,568,571-575,579-597,601-610,613-626,630-711,898-915,919-920,927,958,970-971,1046-1048,1053-1055,1171,1174-1198,1242-1264,1280-1281,1468-1469,1700,1710-1778,1891,1928,1937-1979,2084-2085,2092
+infrahub_sync/service/settings.py
+  s_58b527396c8cb5::t_b978849b63e066 26-29,49,58-59,75-84,118-126,412-466,477,479-480
+  s_3edb7dabae63de::t_9fa19a7e7dce69 15-17
+dev/specs/030-automatic-resume/plan.md
+  s_58b527396c8cb5::t_b978849b63e066 1-133
+infrahub_sync/product_store/models.py
+  s_58b527396c8cb5::t_b978849b63e066 12,676-677,704-705,790-813,840-851,942,945-947,1455-1538
+  s_58b527396c8cb5::t_28260fb3199f1c 1539-1541
+AGENTS.md
+  s_58b527396c8cb5::t_b978849b63e066 118
+.specify/extensions/.registry
+  s_58b527396c8cb5::t_b978849b63e066 76-77,79,84-118,122
+.claude/settings.json
+  s_58b527396c8cb5::t_b978849b63e066 1-15
+changelog/+api-health.added.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+dev/specs/001-entraid-source-adapter/checklists/requirements.md
+  s_58b527396c8cb5::t_b978849b63e066 1-42
+dev/specs/001-webex-adapter/data-model.md
+  s_58b527396c8cb5::t_b978849b63e066 1-25
+.agents/skills/speckit-specify/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 27,32,144,146,152,156,158,163,165,174,176,181,183,208,210,212,214,221,245,250
+dev/specs/026-schedules-web-page/quickstart.md
+  s_58b527396c8cb5::t_b978849b63e066 1-82
+dev/specs/029-api-health/contracts/health-api.md
+  s_58b527396c8cb5::t_b978849b63e066 1-146
+pyproject.toml
+  s_58b527396c8cb5::t_b978849b63e066 308,456
+tests/service/schedule_fixtures.py
+  s_58b527396c8cb5::t_b978849b63e066 42,321,325,334-338,341-346,358
+.specify/extensions/opsmill/commands/extract.md
+  s_58b527396c8cb5::t_b978849b63e066 218,222-233,241
+dev/specs/025-register-config-web/contracts/sync-api.md
+  s_58b527396c8cb5::t_b978849b63e066 1-125
+frontend/src/features/schedules/ScheduleHistory.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-256
+infrahub_sync/service/health.py
+  s_58b527396c8cb5::t_b978849b63e066 1-459
+CHANGELOG.md
+  s_58b527396c8cb5::t_b978849b63e066 7-30
+dev/specs/025-register-config-web/checklists/requirements.md
+  s_58b527396c8cb5::t_b978849b63e066 1-40
+.specify/extensions/checkpoint/extension.yml
+  s_58b527396c8cb5::t_b978849b63e066 1-23
+.specify/presets/critique-opsmill/preset.yml
+  s_58b527396c8cb5::t_b978849b63e066 1-27
+dev/specs/026-schedules-web-page/design-schedules-list.md
+  s_58b527396c8cb5::t_b978849b63e066 1-46
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_58b527396c8cb5::t_b978849b63e066 21,242,245
+infrahub_sync/service/models.py
+  s_58b527396c8cb5::t_b978849b63e066 25,34,42,58-59,65-66,70,80,89,97,113-114,120-121,239-241,246-247,254,259-261,267-268,270,272-278
+tests/service/test_web_site.py
+  s_58b527396c8cb5::t_b978849b63e066 272,280,283,287,456-462
+  s_58b527396c8cb5::t_fd3c1b126d5f5c 463-464
+.specify/templates/plan-template.md
+  s_58b527396c8cb5::t_b978849b63e066 7
+frontend/src/features/configurations/PackageReview.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-38,41-361,363-544,546-548,550-552,556-767
+  s_58b527396c8cb5::t_a40b8f862765e4 39,362,545,549,553-555
+  s_58b527396c8cb5::t_79470976ec433d 40
+.agents/skills/speckit-constitution/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 3,22-40,46,51,79-81,85-94,108,114-116,123,129,131,133,135,148,155,160
+tests/configuration/test_schema_validation.py
+  s_58b527396c8cb5::t_b978849b63e066 407,438,446,457-497
+  s_58b527396c8cb5::t_7b9d7a009b37f4 45
+  s_58b527396c8cb5::t_8dbb4acfc2e044 498-499
+.specify/extensions/opsmill/scripts/bash/python-env.sh
+  s_58b527396c8cb5::t_b978849b63e066 1-34
+frontend/src/api/queries.ts
+  s_58b527396c8cb5::t_18dc517cda838d 930,978-981
+  s_58b527396c8cb5::t_b978849b63e066 3-5,7,13,18-20,49-61,75-78,102-111,148-156,167-168,170,172,181,275-435,923-929,931-977,982-1017
+frontend/src/routes/schedules.$scheduleId.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-25
+.agents/skills/speckit-git-commit/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 6
+.vale/styles/spelling-exceptions.txt
+  s_58b527396c8cb5::t_b978849b63e066 14-15,108,161,241-244
+frontend/src/features/schedules/form-rules.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-127
+infrahub_sync/service/worker_alive.py
+  s_58b527396c8cb5::t_b978849b63e066 1-99
+tests/product_store/test_contract.py
+  s_58b527396c8cb5::t_005d68d6a29d63 669,671
+  s_58b527396c8cb5::t_b978849b63e066 32,40,91-93,99,114,122,150,663-668,675,821-825,3871-3872,3880,3886,3892,3899-3902,3904-3905,3910-3976,3978-3990,3995-4005,4007-4042,4053-4055,4058-4060,4328,4389-4391,4393-4394,4513-4518,5273,5380-5382,5391-5395,5774-5798
+  s_58b527396c8cb5::t_8a82e5b368fcc1 820
+  s_58b527396c8cb5::t_933dbd47fd1b5e 3977,3991-3994,4006
+  s_58b527396c8cb5::t_9d8baf0589e9df 670
+  s_58b527396c8cb5::t_8399001fe11a92 672-674
+dev/specs/026-schedules-web-page/design-schedule-page.md
+  s_58b527396c8cb5::t_b978849b63e066 1-52
+tests/compose/lifecycle.py
+  s_58b527396c8cb5::t_b978849b63e066 233-240,275-296,298-299
+frontend/src/routes/runs.index.tsx
+  s_58b527396c8cb5::t_b978849b63e066 8-9,19-20,22,24,31-32
+frontend/src/features/schedules/ScheduleActionDialogs.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-223
+changelog/+unique-configuration-names.changed.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+frontend/src/domain/schedule-list.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-205
+tests/service/test_flow_and_prefect.py
+  s_58b527396c8cb5::t_b978849b63e066 851-852
+tests/service/test_validation_secret_containment.py
+  s_58b527396c8cb5::t_b978849b63e066 182
+dev/adr/0056-a-lost-worker-resumes-automatically-when-the-site-allows-it.md
+  s_58b527396c8cb5::t_b978849b63e066 1-185
+dev/specs/026-schedules-web-page/contracts/web-pages.md
+  s_58b527396c8cb5::t_b978849b63e066 1-147
+tests/service/test_serve.py
+  s_58b527396c8cb5::t_b978849b63e066 1-94
+frontend/src/features/runs/RunTimeline.tsx
+  s_58b527396c8cb5::t_b978849b63e066 6,23,26,29-30,382-427,445-446,459-462,501-503,549-550,577
+tasks/dev.py
+  s_58b527396c8cb5::t_b978849b63e066 36,1093,1095-1099,1103-1104,1106,1109-1120,1122-1123,1269
+.agents/skills/speckit-opsmill-summary/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 3,6
+frontend/src/features/configurations/detail-version-bar.tsx
+  s_58b527396c8cb5::t_b978849b63e066 12-13,15-18,20-21,27-32,35,207-212
+dev/specs/029-api-health/checklists/requirements.md
+  s_58b527396c8cb5::t_b978849b63e066 1-41
+dev/specs/029-api-health/quickstart.md
+  s_58b527396c8cb5::t_b978849b63e066 1-118
+tests/client/test_not_sync_api.py
+  s_58b527396c8cb5::t_b978849b63e066 49-50,52,55-56,140-157
+dev/specs/025-register-config-web/quickstart.md
+  s_58b527396c8cb5::t_b978849b63e066 1-70
+dev/specs/029-api-health/tasks.md
+  s_58b527396c8cb5::t_b978849b63e066 1-166
+infrahub_sync/client/client.py
+  s_58b527396c8cb5::t_ae086bbc57833d 471-473
+  s_58b527396c8cb5::t_b978849b63e066 65,68-69,103-104,329-330,332-339,341,343,345,347-356,358,484-505,1694-1699,1787-1800
+  s_58b527396c8cb5::t_18808adb6ba04e 1691
+  s_58b527396c8cb5::t_8ca7b324dd564d 1801
+.specify/scripts/bash/common.sh
+  s_58b527396c8cb5::t_b978849b63e066 100-106,112-113,115,118-119,164-179,196-200,217-225,254,257-264,269,274-276,292,295-296,300-349,408-511,522-523,532-537,542-543,545,548-557,567-568,578-579,588-589,597-603,605,607,631-632,640-644,647-648,654-662,664,667-676,681-709,715,717,719-753,755-757,759-772,774-783,785-801,803-804,806-810,812,818-825,827,831-832,834,839,856-859,864-867,883-884,889-892,900-903,908-915,919,921-932,934,936
+infrahub_sync/service/resume_view.py
+  s_58b527396c8cb5::t_b978849b63e066 16-21,27,29-31,300-406
+dev/specs/001-webex-adapter/tasks.md
+  s_58b527396c8cb5::t_b978849b63e066 1-32
+dev/specs/030-automatic-resume/contracts/cli-and-web.md
+  s_58b527396c8cb5::t_b978849b63e066 1-47
+frontend/src/domain/schedules.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-324
+dev/specs/001-entraid-source-adapter/spec.md
+  s_58b527396c8cb5::t_b978849b63e066 1-305
+README.md
+  s_58b527396c8cb5::t_b978849b63e066 101,206
+tests/cli/test_client_commands.py
+  s_58b527396c8cb5::t_b978849b63e066 44-45,289-330,346-362,428-629,2441-2445,2460-2461
+.agents/skills/speckit-checkpoint-commit/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 3,6-7,10-58
+dev/specs/025-register-config-web/critiques/critique-20261118.md
+  s_58b527396c8cb5::t_b978849b63e066 1-107
+frontend/src/features/runs/run-notices.tsx
+  s_58b527396c8cb5::t_b978849b63e066 2,5,14,610-643
+  s_58b527396c8cb5::t_7146fad48091f5 644-647
+frontend/src/features/schedules/ScheduleListParts.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-296
+frontend/src/features/schedules/ScheduleStateLabel.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-30
+frontend/src/features/schedules/ScheduleLine.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-138
+tests/dev_stack/smoke/test_health.py
+  s_58b527396c8cb5::t_b978849b63e066 1-33
+tests/dev_stack/smoke/test_netbox_package.py
+  s_58b527396c8cb5::t_b978849b63e066 5-11,34,39,140-152,185,187-198,208-211,219,231,240-242,245,247-248,250-251,255-266,268,273,276-277,293-294,359
+dev/specs/030-automatic-resume/alignment-check.md
+  s_58b527396c8cb5::t_b978849b63e066 1-33
+tests/fixtures/webex/devices.json
+  s_58b527396c8cb5::t_b978849b63e066 1-254
+dev/adr/0055-the-health-endpoint-replaces-status.md
+  s_58b527396c8cb5::t_b978849b63e066 1-109
+dev/specs/026-schedules-web-page/checklists/requirements.md
+  s_58b527396c8cb5::t_b978849b63e066 1-41
+frontend/src/features/schedules/SchedulesPage.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-406
+dev/specs/029-api-health/critiques/critique-20261123.md
+  s_58b527396c8cb5::t_b978849b63e066 1-217
+tests/cache/test_destination_local_id_snapshot.py
+  s_58b527396c8cb5::t_b978849b63e066 208
+changelog/446.added.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+.agents/skills/speckit-opsmill-auto/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 3,6,41,47,59,62,64,76
+tests/cli/test_schedule_commands.py
+  s_58b527396c8cb5::t_b978849b63e066 30,622-654
+  s_58b527396c8cb5::t_2fed46f11d37c2 655-656
+dev/specs/001-entraid-source-adapter/quickstart.md
+  s_58b527396c8cb5::t_b978849b63e066 1-53
+dev/specs/025-register-config-web/spec.md
+  s_58b527396c8cb5::t_b978849b63e066 1-420
+tests/adapters/test_msgraphsync_graph.py
+  s_58b527396c8cb5::t_b978849b63e066 1-705
+tests/service/test_worker_alive.py
+  s_58b527396c8cb5::t_b978849b63e066 1-219
+docs/docs/operations/compose-troubleshooting.mdx
+  s_58b527396c8cb5::t_b978849b63e066 13,37-38
+frontend/package.json
+  s_58b527396c8cb5::t_b978849b63e066 18-19,48-49
+tests/service/test_serve_site.py
+  s_58b527396c8cb5::t_b978849b63e066 17,30,32,47-48,61-62
+  s_3edb7dabae63de::t_9382b626cada17 100-101
+.agents/skills/speckit-opsmill-retrospect/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 3,6,29,79,120,164
+.agents/skills/speckit-opsmill-qa/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 1-371
+tests/product_store/test_schedules.py
+  s_58b527396c8cb5::t_b978849b63e066 31,61,116-117,1334-1590
+  s_58b527396c8cb5::t_d00e84d5356956 118
+  s_58b527396c8cb5::t_19c91b9f777aa7 1591-1592
+.specify/extensions.yml
+  s_58b527396c8cb5::t_b978849b63e066 3,130-136
+  s_58b527396c8cb5::t_0eb5d6112124bf 137
+.specify/scripts/bash/resolve-template.sh
+  s_58b527396c8cb5::t_b978849b63e066 1-57
+dev/specs/026-schedules-web-page/tasks.md
+  s_58b527396c8cb5::t_b978849b63e066 1-259
+frontend/src/features/schedules/NextStarts.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-20
+tests/cli/test_runs_resume.py
+  s_58b527396c8cb5::t_b978849b63e066 8-9,23,27,33,36,332-600
+tests/product_store/test_automatic_resumes.py
+  s_58b527396c8cb5::t_b978849b63e066 1-450
+tests/product_store/test_configuration_unvalidated_mark.py
+  s_58b527396c8cb5::t_b978849b63e066 1-217
+tests/test_potenda_plan_artifact.py
+  s_58b527396c8cb5::t_b978849b63e066 1376-1378,2014,2021
+tests/configuration/validation_packages.py
+  s_58b527396c8cb5::t_cfbe96ae03d389 34-39
+  s_58b527396c8cb5::t_b978849b63e066 59,61
+  s_58b527396c8cb5::t_19af4da160299e 31-32,42,44,47,50-51,53
+  s_58b527396c8cb5::t_814a90d5c43fbe 33
+.codex/hooks.json
+  s_58b527396c8cb5::t_b978849b63e066 1-15
+frontend/src/domain/cadence.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-162
+.agents/skills/speckit-git-feature/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 6
+dev/specs/026-schedules-web-page/alignment-check.md
+  s_58b527396c8cb5::t_b978849b63e066 1-35
+frontend/src/routes/schedules.index.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-37
+tests/fixtures/webex/locations-page-1.json
+  s_58b527396c8cb5::t_b978849b63e066 1
+docs/docs/kubernetes-deployment.mdx
+  s_58b527396c8cb5::t_b978849b63e066 387-400
+docs/docs/configuration-package.mdx
+  s_58b527396c8cb5::t_77b7ea905e01db 316-317
+  s_58b527396c8cb5::t_b978849b63e066 118-125,130-133,140-158,160-162,173-186,189-190,195-197,200-264,267-272,274-304,318
+  s_58b527396c8cb5::t_ae086bbc57833d 187-188,191-194,198-199,265-266,273
+  s_58b527396c8cb5::t_645e83f9027e26 305
+frontend/src/api/types.ts
+  s_58b527396c8cb5::t_b978849b63e066 8-9,23-38,80-102,114
+  s_58b527396c8cb5::t_a40b8f862765e4 43-44
+  s_58b527396c8cb5::t_1c0317ec000ce4 111-113
+.specify/extensions/opsmill/commands/retrospect.md
+  s_58b527396c8cb5::t_b978849b63e066 24,74,159
+tests/service/test_schedule_next_starts.py
+  s_58b527396c8cb5::t_b978849b63e066 1-170
+.specify/extensions/agent-context/scripts/powershell/update-agent-context.ps1
+  s_58b527396c8cb5::t_b978849b63e066 15,23-72,303-339,429-433,503-505
+.agents/skills/speckit-git-initialize/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 6
+.specify/extensions/opsmill/extension.yml
+  s_58b527396c8cb5::t_b978849b63e066 6-7,29-31,54
+.specify/scripts/bash/setup-plan.sh
+  s_58b527396c8cb5::t_b978849b63e066 10-11,13,17,19-21,46-54,61-63,65-67,77,79,81,86-87
+.specify/presets/critique-opsmill/commands/speckit.critique.run.md
+  s_58b527396c8cb5::t_b978849b63e066 1-238
+dev/adr/0027-an-interrupted-apply-resumes-from-its-saved-position.md
+  s_58b527396c8cb5::t_b978849b63e066 4,128-136
+dev/specs/001-webex-adapter/contracts/configuration.md
+  s_58b527396c8cb5::t_b978849b63e066 1-15
+frontend/src/features/schedules/ScheduleSettings.tsx
+  s_58b527396c8cb5::t_b978849b63e066 1-102
+infrahub_sync/adapters/infrahub.py
+  s_58b527396c8cb5::t_b978849b63e066 1485-1486,1500,1508
+docs/docs/release-notes/infrahub-sync/release-2_1_0.mdx
+  s_58b527396c8cb5::t_b978849b63e066 1-109
+tests/service/test_health.py
+  s_58b527396c8cb5::t_b978849b63e066 1-695
+infrahub_sync/service/config_routes.py
+  s_58b527396c8cb5::t_b978849b63e066 3,7,10,15,17,24,29,51,66-86,91-168,268-273,278-285,328-333,338,341-348,352-358,363-364,373,457,465-502,506-510,512-524,534,536-537,539-552,554-562,568,597,599-601,605-611,619-624,704-735,753,761,778,780,784-814,832,834
+  s_58b527396c8cb5::t_8092d4e9cac20b 511
+.specify/extensions/opsmill/commands/prep.md
+  s_58b527396c8cb5::t_b978849b63e066 43-69,95,161,167,172-174
+.specify/scripts/bash/setup-tasks.sh
+  s_58b527396c8cb5::t_b978849b63e066 54-56,74-75,83-84
+frontend/src/domain/start-times.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-95
+frontend/src/features/runs/schedule-choices.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-68
+infrahub_sync/service/liveness.py
+  s_58b527396c8cb5::t_b978849b63e066 10,12-15,17-18,22-26,29,33,36,38-39,42-43,46-109,171-263,265,301-309,312,320,327-328,336,341-544,614-616,621-622,626-667,710,712-750
+docs/docs/quickstart-compose.mdx
+  s_58b527396c8cb5::t_b978849b63e066 9,93,97-106
+docs/docs/development-stack.mdx
+  s_58b527396c8cb5::t_b978849b63e066 161,164-166,270,571-572,634
+tests/adapters/test_msgraphsync_adapter.py
+  s_58b527396c8cb5::t_b978849b63e066 1-821
+dev/specs/026-schedules-web-page/spec.md
+  s_58b527396c8cb5::t_b978849b63e066 1-623
+.specify/extensions/opsmill/commands/implement.md
+  s_58b527396c8cb5::t_b978849b63e066 37-48,88-114,142-152,157-160,169,172,174
+changelog/+parallel-unit-tests.housekeeping.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+frontend/src/domain/schedule-page.test.ts
+  s_58b527396c8cb5::t_b978849b63e066 1-275
+tests/adapters/msgraphsync_fakes.py
+  s_58b527396c8cb5::t_b978849b63e066 1-340
+.agents/skills/speckit-checklist/SKILL.md
+  s_58b527396c8cb5::t_b978849b63e066 35-43,57,62,90,145,154,264,359,364
+changelog/+schedules-web-interface.added.md
+  s_58b527396c8cb5::t_b978849b63e066 1
+frontend/src/features/configurations/ConfigurationsPage.tsx
+  s_58b527396c8cb5::t_b978849b63e066 38,618
+  s_58b527396c8cb5::t_78d93755816b33 619
+.specify/integrations/claude.manifest.json
+  s_58b527396c8cb5::t_b978849b63e066 3-4,6-15
+frontend/pnpm-lock.yaml
+  s_58b527396c8cb5::t_89a9ea597a8a53 51-53,135-137,1674-1684,1691-1693,1787-1790,1913-1915,1933-1935,1940-1943,2190-2193,2413-2415,2480-2487,2622-2662,2666-2670,3996-4004,4013-4014,4102-4103,4178-4179,4215-4218,4221-4222,4397-4398,4707-4708,4765-4768,4847-4867,4870-4871
+uv.lock
+  s_58b527396c8cb5::t_7a4e6ea1097536 804,826,1291,1294,1298,1303-1304,1306,1310,1312,2239,2295,2717,3234-3235,3248,3843
+dev/adr/0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md
+  s_3edb7dabae63de::t_94708838a0bd0f 4
+dev/adr/0039-workers-publish-the-names-of-their-credential-variables.md
+  s_3edb7dabae63de::t_027ddf50290c7f 4
+dev/adr/0040-a-v2-configuration-converts-locally-by-v2-rules.md
+  s_3edb7dabae63de::t_dc1a24e877e7e1 4
+dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md
+  s_3edb7dabae63de::t_495335165ec3c7 1
+dev/specs/027-stored-credentials/critiques/critique-20261120.md
+  s_3edb7dabae63de::t_56083cf7640b64 45,75,125
+dev/specs/027-stored-credentials/opsmill-implement-report.md
+  s_3edb7dabae63de::t_6aaf30c7ec73f7 39,170
+dev/specs/027-stored-credentials/plan.md
+  s_3edb7dabae63de::t_f3c7277f1b63c8 33,202
+dev/specs/027-stored-credentials/research.md
+  s_3edb7dabae63de::t_7a9a8b4a3ec1a5 271-272
+dev/specs/027-stored-credentials/tasks.md
+  s_3edb7dabae63de::t_82bc73d6b9e130 163
+docs/docs/development/adr-index.mdx
+  s_3edb7dabae63de::t_4474c0cfcc0c47 52
+docs/docs/development/guidelines/secret-redaction.md
+  s_3edb7dabae63de::t_c7d0102e9734ff 270
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_3edb7dabae63de::t_46c75fcc92ea78 112
+docs/docs/development/knowledge/configuration-foundation.md
+  s_3edb7dabae63de::t_87a394b9e4905d 35
+docs/docs/development/knowledge/local-accounts.md
+  s_3edb7dabae63de::t_dd1cf93206cbbf 178
+frontend/src/api/types.generated.ts
+  s_3edb7dabae63de::t_c58e8819e9e080 16,27,35-36,38,248-267,364-386,536,1142-1151,1199-1247,1295-1325,1329-1339,1343,1345-1347,1350-1354,1421-1425,1653-1675,1744-1757,1840-1863,1906-1958,2350-2354,2565-2571,2588-2597,2609-2651,2745-2750,2752-2758,2892-2910,2930-2931,2936-2937,2939-2941,2946-2966,2968,2970-2972,3005,3020-3029,4067-4139,4211-4247,4253,4516-4593,5182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c6fdafdb0b498a583cb96b6aec2ed5ed6619fc74",
+  "prompts": {},
+  "sessions": {
+    "s_3edb7dabae63de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-amerge-v3-develop-401fc19ca00c26cc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
