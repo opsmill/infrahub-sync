@@ -23,6 +23,7 @@ from infrahub_sync.client.models import (
     EventPrimaryResource,
     EventRelatedResource,
     EventResource,
+    HealthResource,
     OrchestrationSummary,
     PackageCheckRequest,
     PublicRunResource,
@@ -898,3 +899,52 @@ def test_a_package_check_request_serializes_only_the_field_it_carries() -> None:
 def test_a_package_check_request_refuses_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         PackageCheckRequest(package={"format_version": 1}, reason="no reason field")  # ty: ignore[unknown-argument]
+
+
+_HEALTH_NOW = "2026-01-01T00:00:00Z"
+
+
+def _health_body(**extra: object) -> dict[str, object]:
+    return {
+        "status": "healthy",
+        "dependencies": [{"name": "database", "status": "up", "error": "none"}],
+        "workers": {
+            "state": "known",
+            "minimum": 1,
+            "live_workers": 1,
+            "queue_depth": 0,
+            "items": [{"name": "worker-1", "state": "live", "last_heartbeat": _HEALTH_NOW}],
+        },
+        "timestamp": _HEALTH_NOW,
+        **extra,
+    }
+
+
+def test_health_report_accepts_timestamps_with_a_timezone() -> None:
+    report = HealthResource.model_validate(_health_body())
+
+    assert report.timestamp.utcoffset() is not None
+    assert report.workers.items[0].last_heartbeat.utcoffset() is not None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(timestamp="2026-01-01T00:00:00"), id="naive-timestamp"),
+        pytest.param(
+            _health_body(
+                workers={
+                    "state": "known",
+                    "minimum": 1,
+                    "live_workers": 1,
+                    "queue_depth": 0,
+                    "items": [{"name": "worker-1", "state": "live", "last_heartbeat": "2026-01-01T00:00:00"}],
+                }
+            ),
+            id="naive-last-heartbeat",
+        ),
+    ],
+)
+def test_health_report_refuses_a_timestamp_without_a_timezone(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="health timestamps must include a timezone"):
+        HealthResource.model_validate(body)

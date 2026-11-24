@@ -119,6 +119,7 @@ _MANUAL_RUN_MESSAGE = "a manual run cannot name a schedule or a scheduled start 
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
 _HEALTH_ERROR_MESSAGE = "a component error must be none exactly when the component is up"
+_HEALTH_TIME_MESSAGE = "health timestamps must include a timezone"
 _WORKERS_HEALTH_MESSAGE = "worker details must be present exactly when the worker state is known"
 _ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
 _ARTIFACT_OWNER_MESSAGE = "every artifact reference must belong to the product record's run ID"
@@ -668,6 +669,13 @@ class WorkerHealthResource(_ResourceModel):
     state: Literal["live", "stale"]
     last_heartbeat: datetime
 
+    @field_validator("last_heartbeat")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _HEALTH_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
 
 class WorkersHealthResource(_ResourceModel):
     """Report the workers of the work pool, or that the work pool could not be read."""
@@ -695,6 +703,13 @@ class HealthResource(_ResourceModel):
     dependencies: list[DependencyHealthResource]
     workers: WorkersHealthResource
     timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _HEALTH_TIME_MESSAGE)
+        assert checked is not None
+        return checked
 
 
 class PrincipalResource(_ResourceModel):
