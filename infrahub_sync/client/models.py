@@ -722,8 +722,8 @@ def expected_health_status(
 class HealthResource(_ResourceModel):
     """Report the health of the Sync API's components and of its workers.
 
-    The report does not fix the number or the order of its components, so a client keeps
-    accepting a report from a newer Sync API that checks one more component.
+    The model does not fix the number or the order of the components: it requires at least one,
+    each named once, and a ``status`` that matches the components and the workers.
     """
 
     status: Literal["healthy", "unhealthy"]
