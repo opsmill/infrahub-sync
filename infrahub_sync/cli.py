@@ -1297,6 +1297,20 @@ _AUTOMATIC_RESUME_STATES = {
     "waiting-resume": "waiting for a live worker to resume",
     "resuming": "resuming",
 }
+# What `runs show` prints for an ended record whose resume Sync submitted and no worker started.
+_AUTOMATIC_RESUME_SUBMITTED_ONLY = "submitted, no worker started it"
+# The reasons whose record ended because the check did not pass.
+_AUTOMATIC_CHECK_NOT_PASSED = frozenset({"check-failed", "check-found-differs"})
+
+
+def _automatic_check_passed(row: AutomaticResumeResource) -> bool:
+    """Return whether the automatic check of the record passed.
+
+    The record holds `operations_not_checked` once its check returned a report with a comparison.
+    The check passed unless the record ended because of the check, so a record that ended later,
+    for example when the resume was refused or no worker picked it up, still shows the check.
+    """
+    return row.operations_not_checked is not None and row.reason not in _AUTOMATIC_CHECK_NOT_PASSED
 
 
 def _echo_automatic_resumes(resource: RunResource) -> None:
@@ -1306,20 +1320,26 @@ def _echo_automatic_resumes(resource: RunResource) -> None:
     value from the plan.
     """
     for number, row in enumerate(resource.automatic_resumes, start=1):
+        # A resume that Sync submitted and no worker picked up ends `no-resume` with its flow run.
+        submitted_only = row.decision != "resume" and row.resume_flow_run_id is not None
         if row.state != "ended":
             heading = _AUTOMATIC_RESUME_STATES.get(row.state, row.state)
+        elif row.decision == "resume":
+            heading = "started"
+        elif submitted_only:
+            heading = _AUTOMATIC_RESUME_SUBMITTED_ONLY
         else:
-            heading = "started" if row.decision == "resume" else "not started"
+            heading = "not started"
         typer.echo("")
         typer.echo(_display(f"Automatic resume {number}: {heading}"))
         typer.echo(_display(f"  cause: {row.cause_text}"))
-        # The check passed once the record waits for the resume, or once the resume started.
-        if row.state in {"waiting-resume", "resuming"} or row.decision == "resume":
+        if _automatic_check_passed(row):
             not_checked = row.operations_not_checked or 0
             typer.echo(f"  check: passed, 0 differs, {not_checked} not checked")
-        if row.decision == "resume":
+        if row.decision == "resume" or submitted_only:
             start = "from the first operation" if row.start_after is None else f"after operation {row.start_after}"
-            typer.echo(f"  resumed {start} by {_AUTOMATIC_RESUME_NAME}")
+            verb = "submitted" if submitted_only else "resumed"
+            typer.echo(f"  {verb} {start} by {_AUTOMATIC_RESUME_NAME}")
         if row.reason_text is not None:
             typer.echo(_display(f"  reason: {row.reason_text}"))
         if number == len(resource.automatic_resumes):

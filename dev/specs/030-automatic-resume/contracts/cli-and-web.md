@@ -21,6 +21,12 @@ Automatic resume 2: not started
 A row that is not `ended` prints its state: `waiting for a live worker to run the check`, `checking`, `waiting for a
 live worker to resume`, `resuming`.
 
+A row that ended after Sync submitted its resume and no worker picked the resume up (`no-resume`, `not-picked-up`,
+with a `resume_flow_run_id`) prints `submitted, no worker started it` and a line `submitted after operation N by Sync
+(automatic resume)`; it counts as an automatic resume. The `check` line appears on every row whose check passed, also
+when the row ended later: refused at the resume, `person-took-over` while it waited for the resume, or `not-picked-up`
+at the resume. Changed during implementation (review F7).
+
 ## `infrahub-sync runs list`
 
 A run with `automatic_resume_count` above 0 shows it in a column `auto resumes`.

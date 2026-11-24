@@ -71,10 +71,81 @@ describe("automaticResumeBlock", () => {
     ["resuming", "Automatic resume 1: resuming", true],
     ["a-later-state", "Automatic resume 1: a-later-state", false],
   ])("shows the state %s of a record that has not ended", (state, title, checked) => {
-    const block = automaticResumeBlock(row({ state, operations_not_checked: 3 }), 1);
+    // The check flow run exists from `checking` on; only a passed check records the count.
+    const block = automaticResumeBlock(
+      row({
+        state,
+        check_flow_run_id: state === "waiting-check" ? null : "flow-check",
+        operations_not_checked: checked ? 3 : null,
+      }),
+      1
+    );
     expect(block.title).toBe(title);
     expect(block.notStarted).toBe(false);
     expect(block.lines.some((l) => l.text === "passed, 0 differs, 3 not checked")).toBe(checked);
+  });
+
+  it.each([
+    ["refused", "the Sync API refused the automatic resume with the code run-not-resumable"],
+    [
+      "person-took-over",
+      "a person ran `verify` or `runs resume` while the automatic resume waited for a live worker",
+    ],
+  ])("shows the passed check of a record that ended %s after the check", (reason, reasonText) => {
+    const block = automaticResumeBlock(
+      row({
+        decision: "no-resume",
+        reason,
+        reason_text: reasonText,
+        check_flow_run_id: "flow-check",
+        operations_not_checked: 2,
+      }),
+      1
+    );
+    expect(text(block)).toEqual([
+      "Automatic resume 1: not started",
+      "cause: the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+      "check: passed, 0 differs, 2 not checked",
+      `reason: ${reasonText}`,
+    ]);
+    expect(block.notStarted).toBe(true);
+  });
+
+  it("shows a resume that Sync submitted and no worker started", () => {
+    const block = automaticResumeBlock(
+      row({
+        decision: "no-resume",
+        reason: "not-picked-up",
+        reason_text: "no worker picked up the automatic resume in time",
+        check_flow_run_id: "flow-check",
+        resume_flow_run_id: "flow-resume",
+        operations_not_checked: 0,
+        start_after: 6000,
+      }),
+      1
+    );
+    expect(text(block)).toEqual([
+      "Automatic resume 1: submitted, no worker started it",
+      "cause: the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+      "check: passed, 0 differs, 0 not checked",
+      "submitted: after operation 6000 by Sync (automatic resume)",
+      "reason: no worker picked up the automatic resume in time",
+    ]);
+    expect(block.notStarted).toBe(true);
+  });
+
+  it("shows no check line for a check that no worker picked up", () => {
+    const block = automaticResumeBlock(
+      row({
+        decision: "no-resume",
+        reason: "not-picked-up",
+        reason_text: "no worker picked up the automatic check in time",
+        check_flow_run_id: "flow-check",
+      }),
+      1
+    );
+    expect(block.title).toBe("Automatic resume 1: not started");
+    expect(block.lines.map((l) => l.label)).toEqual(["cause", "reason"]);
   });
 });
 

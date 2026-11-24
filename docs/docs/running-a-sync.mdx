@@ -832,9 +832,12 @@ Automatic resume 2: not started
 
 - The first line gives the state: `started` or `not started` once the automatic resume ended, and
   `waiting for a live worker to run the check`, `checking`, `waiting for a live worker to
-  resume` or `resuming` before.
+  resume` or `resuming` before. When the Sync API submitted the resume and no worker started it
+  in time, the first line says `submitted, no worker started it`, a line `submitted after
+  operation N by Sync (automatic resume)` follows the check, and the resume counts toward the
+  limit of 3.
 - `cause` says why the write was interrupted.
-- `check` appears once the automatic `verify` passed, with the count of uncertain operations
+- `check` appears once the automatic `verify` passed, also when the automatic resume ended later, with the count of uncertain operations
   it did not read (`not checked`) because of its limit of 2,000. A check that did not pass is
   stated under `reason`.
 - `reason` says why the Sync API did not resume the run.

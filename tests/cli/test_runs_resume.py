@@ -432,6 +432,91 @@ def test_runs_show_prints_the_state_of_an_automatic_resume_that_has_not_ended(
     assert not any(line.startswith("  reason:") for line in lines)
 
 
+@pytest.mark.parametrize(
+    ("reason", "reason_text"),
+    [
+        ("refused", "the Sync API refused the automatic resume with the code run-not-resumable"),
+        (
+            "person-took-over",
+            "a person ran `verify` or `runs resume` while the automatic resume waited for a live worker",
+        ),
+    ],
+)
+def test_runs_show_prints_the_passed_check_of_a_record_that_ended_after_the_check(
+    client: MagicMock,  # noqa: F811
+    reason: str,
+    reason_text: str,
+) -> None:
+    client.get_run.return_value = _with_automatic_resumes(
+        _automatic(
+            "ended",
+            decision="no-resume",
+            reason=reason,
+            reason_text=reason_text,
+            check_flow_run_id="flow-check",
+            operations_not_checked=2,
+        )
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    first = lines.index("Automatic resume 1: not started")
+    assert lines[first : first + 4] == [
+        "Automatic resume 1: not started",
+        f"  cause: {_WORKER_CAUSE}",
+        "  check: passed, 0 differs, 2 not checked",
+        f"  reason: {reason_text}",
+    ]
+
+
+def test_runs_show_prints_a_resume_that_sync_submitted_and_no_worker_started(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _with_automatic_resumes(
+        _automatic(
+            "ended",
+            decision="no-resume",
+            reason="not-picked-up",
+            reason_text="no worker picked up the automatic resume in time",
+            check_flow_run_id="flow-check",
+            resume_flow_run_id="flow-resume",
+            operations_not_checked=0,
+            start_after=5999,
+        )
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    first = lines.index("Automatic resume 1: submitted, no worker started it")
+    assert lines[first : first + 5] == [
+        "Automatic resume 1: submitted, no worker started it",
+        f"  cause: {_WORKER_CAUSE}",
+        "  check: passed, 0 differs, 0 not checked",
+        "  submitted after operation 5999 by Sync (automatic resume)",
+        "  reason: no worker picked up the automatic resume in time",
+    ]
+
+
+def test_runs_show_prints_no_check_line_for_a_check_that_no_worker_picked_up(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _with_automatic_resumes(
+        _automatic(
+            "ended",
+            decision="no-resume",
+            reason="not-picked-up",
+            reason_text="no worker picked up the automatic check in time",
+            check_flow_run_id="flow-check",
+        )
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert "Automatic resume 1: not started" in result.stdout.splitlines()
+    assert "check:" not in result.output
+
+
 def test_runs_show_prints_no_automatic_resume_block_for_a_run_without_one(client: MagicMock) -> None:  # noqa: F811
     client.get_run.return_value = _interrupted(verify_required=False)
 

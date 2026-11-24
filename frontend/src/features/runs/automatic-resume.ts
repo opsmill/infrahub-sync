@@ -15,13 +15,30 @@ const STATE_TEXT: Record<string, string> = {
   resuming: "resuming",
 };
 
+/** The heading of an ended record whose resume Sync submitted and no worker started. */
+const SUBMITTED_ONLY_TEXT = "submitted, no worker started it";
+
+/** The reasons whose record ended because the check did not pass. */
+const CHECK_NOT_PASSED = new Set(["check-failed", "check-found-differs"]);
+
+/**
+ * Whether the automatic check of the record passed. The record holds `operations_not_checked`
+ * once its check returned a report with a comparison; the check passed unless the record ended
+ * because of the check, so a record that ended later still shows the check line.
+ */
+const automaticCheckPassed = (row: AutomaticResume) =>
+  row.operations_not_checked != null && !CHECK_NOT_PASSED.has(row.reason ?? "");
+
 export interface AutomaticResumeLine {
   label: string;
   text: string;
 }
 
 export interface AutomaticResumeBlock {
-  /** "Automatic resume 1: started", "Automatic resume 2: not started" or the state of a record that has not ended. */
+  /**
+   * "Automatic resume 1: started", "Automatic resume 2: not started", "Automatic resume 3:
+   * submitted, no worker started it" or the state of a record that has not ended.
+   */
   title: string;
   /** Whether Sync did not resume the run: the record ended without a resume. */
   notStarted: boolean;
@@ -42,22 +59,25 @@ export function automaticResumeBlock(
   next?: string
 ): AutomaticResumeBlock {
   const ended = row.state === "ended";
+  // A resume that Sync submitted and no worker picked up ends `no-resume` with its flow run.
+  const submittedOnly = row.decision !== "resume" && row.resume_flow_run_id != null;
   const heading = ended
     ? row.decision === "resume"
       ? "started"
-      : "not started"
+      : submittedOnly
+        ? SUBMITTED_ONLY_TEXT
+        : "not started"
     : (STATE_TEXT[row.state] ?? row.state);
   const lines: AutomaticResumeLine[] = [{ label: "cause", text: row.cause_text }];
-  // The check passed once the record waits for the resume, or once the resume started.
-  if (row.state === "waiting-resume" || row.state === "resuming" || row.decision === "resume") {
+  if (automaticCheckPassed(row)) {
     lines.push({
       label: "check",
       text: `passed, 0 differs, ${row.operations_not_checked ?? 0} not checked`,
     });
   }
-  if (row.decision === "resume") {
+  if (row.decision === "resume" || submittedOnly) {
     lines.push({
-      label: "resumed",
+      label: submittedOnly ? "submitted" : "resumed",
       text: `${startText(row.start_after)} by ${AUTOMATIC_RESUME_NAME}`,
     });
   }
