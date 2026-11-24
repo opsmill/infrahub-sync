@@ -17,10 +17,11 @@ value (FR-021, docs/docs/development/guidelines/secret-redaction.md).
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
+
+import structlog
 
 from infrahub_sync.potenda.plan_step import PLAN_STEP_PARTS
 
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
     from infrahub_sync.potenda.plan_step import PlanStepPartName
     from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # The part names the run response returns, in the order the plan step runs them. The two
 # reads run between preparing and comparing and are returned with the reads (FR-015).

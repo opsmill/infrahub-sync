@@ -13,10 +13,11 @@ editing or adding a configuration needs no restart.
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 from pathlib import Path
+
+import structlog
 
 MISSING_EXTRA_MESSAGE = "prefect is not installed - install the optional integration: pip install -e '.[prefect]'"
 
@@ -43,7 +44,7 @@ except ImportError as exc:
     sys.stderr.write(f"{MISSING_EXTRA_MESSAGE}\n")
     raise SystemExit(1) from None
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _error(message: str) -> None:

@@ -15,10 +15,11 @@ The rules themselves, and the measurements behind them, are recorded in
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
+
+import structlog
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import DestinationIdentityCollisionError, UnkeyedCreateRefusedError
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 # attribute, `site__name__value` for one that crosses a relationship. The only thing split on
 # it here is a schema path; a DiffSync unique id is never split.
 COMPONENT_PATH_SEPARATOR = "__"
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def require_infrahub_create_schema(*, destination: Any, operations: Sequence[PlannedOperation]) -> None:

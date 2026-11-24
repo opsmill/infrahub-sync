@@ -19,6 +19,7 @@ from typing import Any, Literal, NoReturn
 from uuid import UUID
 
 import httpx
+import structlog
 from infrahub_sdk.exceptions import Error as InfrahubSdkError
 from prefect import flow, get_run_logger
 from prefect.artifacts import create_markdown_artifact
@@ -166,7 +167,7 @@ from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
 from .settings import CredentialSettingsError, approval_required
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 _REGISTERED_VERSION_UNAVAILABLE = "registered configuration version is unavailable"
 _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
 _REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"

@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
-import logging
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import httpx
 import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the optional `slurpit` extra
+import structlog
 from diffsync import Adapter, DiffSyncModel
 
 from infrahub_sync import (
@@ -22,7 +22,7 @@ from infrahub_sync import (
 from infrahub_sync.adapters.utils import build_mapping, get_value
 from infrahub_sync.configuration.credentials import declared_settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 T = TypeVar("T")
 READ_ONLY_SDK_MAPPINGS = frozenset({"device.get_devices", "site.get_sites"})
 

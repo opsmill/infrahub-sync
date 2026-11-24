@@ -20,8 +20,9 @@ rest of the kind. When the peer is not stored otherwise:
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any, get_args
+
+import structlog
 
 from infrahub_sync import (
     ExcludedRequiredPeerError,
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync import DiffSyncMixin
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def reference_is_required(model: type[Any], field_name: str) -> bool:

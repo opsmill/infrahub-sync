@@ -24,7 +24,6 @@ The guard is inert on its own: nothing in the supported write path calls it yet.
 from __future__ import annotations
 
 import hashlib
-import logging
 import math
 import re
 from contextlib import contextmanager, suppress
@@ -32,6 +31,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 import psycopg
+import structlog
 from psycopg import conninfo
 from typing_extensions import LiteralString
 
@@ -62,7 +62,7 @@ MAX_GUARD_LABEL_BYTES = 62
 # also matches before a trailing newline.
 _RUN_ID = re.compile(_IDENTIFIER_PATTERN)
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _LOCK_NOT_AVAILABLE = "55P03"
 _OID_MASK = 0xFFFFFFFF

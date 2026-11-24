@@ -147,6 +147,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 ### Logging
 
 - Use `structlog` for structured logging (not `print`). Include context (request IDs, endpoints, object counts) but never secrets.
+- Create a module's logger with `structlog.get_logger(__name__)`, not `logging.getLogger`. `infrahub_sync/log.py` delivers every event through standard `logging`, so levels, handlers, the Prefect run log and `caplog` apply to it. In a test, read records through `caplog`; `structlog.testing.capture_logs` does not exercise that delivery.
 
 ### Sync frontend
 

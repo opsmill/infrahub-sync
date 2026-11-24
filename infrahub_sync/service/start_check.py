@@ -16,9 +16,10 @@ values, and the database's own errors are reduced to a fixed line.
 from __future__ import annotations
 
 import contextlib
-import logging
 import os
 from typing import TYPE_CHECKING
+
+import structlog
 
 from infrahub_sync.product_store import ProductStoreProviderError, read_bootstrap_record
 
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync.product_store import BootstrapRecord, DBAPIConnection
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Every refusal ends with this line, whatever its cause: a missing or different record, a
 # database that cannot be reached or read, or an unknown installed version. The line logged

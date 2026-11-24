@@ -6,10 +6,11 @@ Pure functions only — engine wiring lives in `potenda/__init__.py`.
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import Callable  # noqa: TC003
 from datetime import datetime  # noqa: TC003
 from typing import TYPE_CHECKING
+
+import structlog
 
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.parquet_io import SNAPSHOT_INTERNAL_COLUMNS, read_schema, read_table
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync import SyncConfig
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 _SUCCESS_STATUSES = frozenset({"applied", "dry-run"})

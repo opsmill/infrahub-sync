@@ -9,6 +9,7 @@ from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any, ClassVar, Union, get_args
 
 import pydantic
+import structlog
 from diffsync.enum import DiffSyncFlags
 from diffsync.exceptions import ObjectAlreadyExists
 from jinja2 import StrictUndefined, Undefined
@@ -21,6 +22,7 @@ from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
 from infrahub_sync.load_report import LoadReport, LoadReportEntry, filter_entry, source_record_id, transform_entry
+from infrahub_sync.log import configure_structlog
 from infrahub_sync.plan.models import NOT_IN_SOURCE_VALUE_PREFIX, SourceRecordReference
 from infrahub_sync.warm_read import WarmSourceReadMixin
 
@@ -33,7 +35,9 @@ if TYPE_CHECKING:
     from infrahub_sync.load_report import LoadReportReason
     from infrahub_sync.runtime_schema import RuntimeModelPlan
 
-logger = logging.getLogger(__name__)
+# Every module's `structlog` logger is delivered through standard `logging`; see `infrahub_sync/log.py`.
+configure_structlog()
+logger = structlog.get_logger(__name__)
 
 
 class SandboxedNativeEnvironment(ImmutableSandboxedEnvironment):

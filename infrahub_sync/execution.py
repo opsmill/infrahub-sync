@@ -41,6 +41,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 import pydantic
+import structlog
 import yaml
 from filelock import Timeout
 
@@ -81,7 +82,7 @@ if TYPE_CHECKING:
     from infrahub_sync.potenda.plan_step import PlanStepObserver
     from infrahub_sync.potenda.read_progress import SideReadObserver
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # The level every engine this module builds sets on the `diffsync` logger.
 _DIFFSYNC_LOG_LEVEL = logging.INFO

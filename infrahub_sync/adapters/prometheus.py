@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import logging
 import re
 from typing import Any
 
 import requests
+import structlog
 from diffsync import Adapter, DiffSyncModel
 from prometheus_client.parser import (
     text_string_to_metric_families,
@@ -19,7 +19,7 @@ from infrahub_sync import (
 )
 from infrahub_sync.configuration.credentials import select_runtime_credential
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ---- If you already have these in your project, you can delete the fallbacks below and import instead. ----

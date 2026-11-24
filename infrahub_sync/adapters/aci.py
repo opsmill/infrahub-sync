@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import requests
+import structlog
 import urllib3
 from diffsync import Adapter, DiffSyncModel
 from requests import Response
@@ -31,7 +31,7 @@ from .utils import get_value
 if TYPE_CHECKING:
     from requests.cookies import RequestsCookieJar
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class InvalidAciCredentialError(ValueError):

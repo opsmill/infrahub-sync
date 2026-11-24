@@ -11,10 +11,10 @@ error's class name only (docs/docs/development/guidelines/secret-redaction.md).
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, get_args
 
+import structlog
 from pydantic import ValidationError
 
 from infrahub_sync.client.models import SideRead, StageReads
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from infrahub_sync.potenda.read_progress import Side, SideReadReport
     from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _SIDES: tuple[Side, ...] = ("source", "destination")
 # The fields a stored document may carry (spec 013 data-model.md); anything else is dropped.

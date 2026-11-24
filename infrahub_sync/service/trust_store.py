@@ -21,7 +21,6 @@ inherits the worker's environment, so it trusts the same bundle.
 from __future__ import annotations
 
 import atexit
-import logging
 import os
 import ssl
 import tempfile
@@ -29,15 +28,11 @@ from pathlib import Path
 from typing import NoReturn
 
 import certifi
+import structlog
 
-logger = logging.getLogger(__name__)
-# Importing Prefect sets the root logger to a level that drops INFO before a service's
-# `main` runs; the certificate count and bundle path are this module's whole report.
-logger.setLevel(logging.INFO)
-# Used only when no handler would print this module's lines: the Sync API process configures
-# no logging before uvicorn starts.
-_FALLBACK_HANDLER = logging.StreamHandler()
-_FALLBACK_HANDLER.setFormatter(logging.Formatter("%(levelname)s | infrahub-sync | %(message)s"))
+from infrahub_sync.log import configure_service_logging
+
+logger = structlog.get_logger(__name__)
 
 CA_DIRECTORY_ENV = "INFRAHUB_SYNC_CA_DIRECTORY"
 TRUST_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "AWS_CA_BUNDLE", "INFRAHUB_TLS_CA_FILE")
@@ -130,8 +125,9 @@ def install_custom_ca_bundle(directory: Path | None = None) -> Path | None:
     Raises:
         TrustStoreError: when a file holds a private key or is not a readable certificate.
     """
-    if not logger.hasHandlers():
-        logger.addHandler(_FALLBACK_HANDLER)
+    # Every Sync process calls this function first, so it is where the package's INFO lines
+    # are switched on: the certificate count and bundle path are this module's whole report.
+    configure_service_logging()
     if directory is None:
         configured = os.environ.get(CA_DIRECTORY_ENV)
         if not configured:

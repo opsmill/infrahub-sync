@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 import fsspec
 import pyarrow as pa
 import pyarrow.parquet as pq
+import structlog
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator, Mapping
     from datetime import datetime
     from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # Columns injected into every per-resource snapshot by `write_resource_side`.
