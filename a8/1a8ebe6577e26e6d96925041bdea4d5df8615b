@@ -1,0 +1,28 @@
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_cbc26fa7b39843 138-139
+  s_a9719f961786d2::t_cb1690829bc728 73-75,435-438
+dev/specs/031-registered-adapters/contracts/adapter-file.md
+  s_a9719f961786d2::t_457339de9a266d 7,55,90,117-118
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_a9719f961786d2::t_6f70d1089a06a7 98-99
+dev/specs/031-registered-adapters/plan.md
+  s_a9719f961786d2::t_97da86839d87b6 243-248
+dev/specs/031-registered-adapters/research.md
+  s_a9719f961786d2::t_cb7b67d00a31ce 105-112,139-144,162-163,268-273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a81a8ebe6577e26e6d96925041bdea4d5df8615b",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
