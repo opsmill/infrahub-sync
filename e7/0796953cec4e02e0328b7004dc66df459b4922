@@ -1,0 +1,57 @@
+tests/service/test_worker_route_boundary.py
+  s_58b527396c8cb5::t_ace9df0dec385f 10,57
+tests/service/test_credential_routes.py
+  s_58b527396c8cb5::t_a64926add522bd 429
+tests/service/test_config_routes.py
+  s_58b527396c8cb5::t_425955cd7d3434 45,1909,1911-1912,1920-1930
+  s_58b527396c8cb5::t_01856039365676 1931-1932
+tests/product_store/test_contract.py
+  s_58b527396c8cb5::t_ca0cb13645d179 164
+  s_58b527396c8cb5::t_005d68d6a29d63 678
+  s_58b527396c8cb5::t_8a82e5b368fcc1 830
+  s_58b527396c8cb5::t_69f4ecf747f16b 675-677
+  s_58b527396c8cb5::t_16b832e040b6ca 831
+  s_3edb7dabae63de::t_809007a75378a2 670-674,3982,3996-3999,4011
+tests/product_store/test_credential_admission.py
+  s_58b527396c8cb5::t_b77520dfa6a22b 237-240
+tests/service/test_serve.py
+  s_58b527396c8cb5::t_a64926add522bd 19,22,26,58-60
+tests/service/test_automatic_resume.py
+  s_e9a60184115a66::t_be7c52c1509c84 50-51,492
+tests/service/test_resume_run.py
+  s_e9a60184115a66::t_43e0861047d070 71-72,1579
+tests/service/test_schedule_automatic_resume.py
+  s_e9a60184115a66::t_ff85b3257f1dc5 36-37,81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e70796953cec4e02e0328b7004dc66df459b4922",
+  "prompts": {},
+  "sessions": {
+    "s_3edb7dabae63de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-amerge-v3-develop-401fc19ca00c26cc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e9a60184115a66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d615b40-b458-402a-bfea-e1614506b60f",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
