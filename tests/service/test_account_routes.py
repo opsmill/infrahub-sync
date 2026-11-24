@@ -185,6 +185,7 @@ def test_create_refuses_the_name_of_a_disabled_account(api: AccountApi, root: di
         pytest.param("acct_0123", id="starts-like-an-identifier"),
         pytest.param("ACCT_other", id="starts-like-an-identifier-in-upper-case"),
         pytest.param("ifs_pat_pasted-token", id="holds-a-token-prefix"),
+        pytest.param("sync:automatic-resume", id="the-reserved-automatic-resume-actor"),
     ],
 )
 def test_create_refuses_an_invalid_or_reserved_name(api: AccountApi, root: dict[str, str], name: str) -> None:

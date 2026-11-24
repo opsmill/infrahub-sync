@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
 SERVICE_FLOW_NAME = "infrahub-sync-service"
 SERVICE_DEPLOYMENT_NAME = "run"
+# The Sync worker entrypoint registers each worker as `<prefix>-<uuid4>`; the health report reads it too.
+SERVICE_WORKER_NAME_PREFIX: Final = "infrahub-sync-service"
 _TERMINAL_STATE_TYPES = frozenset({StateType.COMPLETED, StateType.FAILED, StateType.CRASHED, StateType.CANCELLED})
 # Freshness uses three intervals; cap it at the largest age two datetimes can express.
 _MAX_DATETIME_AGE = datetime.max.replace(tzinfo=timezone.utc) - datetime.min.replace(tzinfo=timezone.utc)
@@ -159,10 +161,25 @@ class PoolWorker:
     status: str
     last_heartbeat: datetime | None
     heartbeat_interval_seconds: float | None
+    name: str | None = None
 
     def __post_init__(self) -> None:
         """Reject worker evidence outside the documented value domain."""
         _validate_pool_worker(self)
+
+
+def worker_is_live(worker: PoolWorker, now: datetime) -> bool:
+    """Whether the worker is online and its last heartbeat is within ``max(3 * interval, 30)`` seconds.
+
+    A worker with no heartbeat or no positive heartbeat interval is not live. A heartbeat later
+    than ``now`` counts as zero seconds old, so a reversed clock cannot end a live worker.
+    """
+    if worker.status != "online" or worker.last_heartbeat is None or worker.heartbeat_interval_seconds is None:
+        return False
+    if worker.heartbeat_interval_seconds <= 0:
+        return False
+    elapsed = max(0.0, (now - worker.last_heartbeat).total_seconds())
+    return elapsed <= max(3 * worker.heartbeat_interval_seconds, 30)
 
 
 @dataclass(frozen=True, slots=True)
@@ -724,4 +741,10 @@ def _pool_worker(worker: Any) -> PoolWorker:
         status=_status_value(worker.status),
         last_heartbeat=heartbeat,
         heartbeat_interval_seconds=float(interval),
+        name=_worker_name(getattr(worker, "name", None)),
     )
+
+
+def _worker_name(value: object) -> str | None:
+    """Keep a worker's name only when it is a non-empty string; any other value is no name."""
+    return value if isinstance(value, str) and value else None

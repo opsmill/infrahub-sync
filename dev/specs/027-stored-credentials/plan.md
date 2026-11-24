@@ -30,7 +30,7 @@ worker, with no restart:
 
 | Step | User story | Content | Depends on |
 | --- | --- | --- | --- |
-| 1 | US1 (P1) | Encryption, store tables, the `worker` account, credential routes, worker route, worker client, package format change, removal of `env` and of the worker variable publishing, registration and run-start checks, run records, CLI group, the conversion output (because the removal of `env` breaks the old one), deployment files (Compose, development stack, testcontainers), the shared test helper and the moved tests, ADR 0054, constitution 1.3.0, documentation | none |
+| 1 | US1 (P1) | Encryption, store tables, the `worker` account, credential routes, worker route, worker client, package format change, removal of `env` and of the worker variable publishing, registration and run-start checks, run records, CLI group, the conversion output (because the removal of `env` breaks the old one), deployment files (Compose, development stack, testcontainers), the shared test helper and the moved tests, ADR 0057, constitution 1.3.0, documentation | none |
 | 2 | US2 (P2) | `credentials_used` on the run detail route and in `runs show`, the plan-then-apply revision test | step 1 |
 | 3 | US4 (P3) | Deletion check and its refusal details, CLI `delete` | step 1 |
 | 4 | US3 (P3) | The conversion report that lists the credentials to create, and the registration message for a converted package | step 1 |
@@ -199,7 +199,7 @@ frontend/src/
 └── api/queries.ts, actions.ts, types.generated.ts
 
 docs/docs/                      # pages listed in research R12; guides/credentials.mdx new
-dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md
+dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md
 .specify/memory/constitution.md, AGENTS.md
 changelog/+stored-credentials.added.md, changelog/+credential-env-provider.removed.md
 ```

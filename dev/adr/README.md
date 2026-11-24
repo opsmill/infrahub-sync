@@ -72,11 +72,11 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   marker, and why a kind with a problem is read in full, so a warm read reports the problems
   of a full read.
 - [0026 — The Compose deployment takes an external object store, adapter credentials and CA certificates from `.env`](0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md)
-  — **partly superseded by 0054** — why the bundled store is scaled to zero to leave it out, why the worker receives a fixed
+  — **partly superseded by 0057** — why the bundled store is scaled to zero to leave it out, why the worker receives a fixed
   list of credential variables, and why the CA directory is the one read-only shared mount.
 - [0027 — An interrupted apply resumes from its saved position](0027-an-interrupted-apply-resumes-from-its-saved-position.md)
-  — why an apply saves a progress marker, why `verify` is admitted on an interrupted run and
-  reports each uncertain operation, and why a resume on the same run clears
+  — **amended by 0056** — why an apply saves a progress marker, why `verify` is admitted on an
+  interrupted run and reports each uncertain operation, and why a resume on the same run clears
   `reconciliation_required`. Partly supersedes 0010.
 - [0028 — The bundled object store runs from the Silo image](0028-the-bundled-object-store-runs-from-the-silo-image.md)
   — why every Sync Compose stack runs the object store from a pinned `pgsty/silo` release, the
@@ -116,10 +116,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why `runs cancel` withdraws a plan that has nothing running, and why `apply`, `approve` and
   `resume` refuse a run in phase `cancelled`.
 - [0039 — Workers publish the names of their credential variables so validation can check them](0039-workers-publish-the-names-of-their-credential-variables.md)
-  — **superseded by 0054** — why each worker writes the names of its credential variables to the product store, which
+  — **superseded by 0057** — why each worker writes the names of its credential variables to the product store, which
   workers count as live, and what grows in the `worker_environments` table.
 - [0040 — A v2 configuration converts to a package locally, by v2's own rules](0040-a-v2-configuration-converts-locally-by-v2-rules.md)
-  — **partly superseded by 0054** — why `configs convert` is a local command, why fixed tables reproduce v2's environment
+  — **partly superseded by 0057** — why `configs convert` is a local command, why fixed tables reproduce v2's environment
   variables and authentication methods, and why it never reads a credential value.
 - [0041 — An IP namespace that a uniqueness constraint needs and the file does not map converts to the `default` namespace](0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md)
   — why `--live-schema` reads the destination schema and maps an unmapped IP namespace to
@@ -128,7 +128,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
   out and deletes are kept.
 - [0043 — The Sync service serves the web interface at the root of its address and the Sync API under `/api`](0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md)
-  — **partly superseded by 0049** — why every Sync API route moved under `/api`, why the web
+  — **partly superseded by 0049, amended by 0055** — why every Sync API route moved under `/api`, why the web
   interface keeps a person's token for the browser tab, and why the CLI adds `/api` to
   `INFRAHUB_SYNC_API_URL`.
 - [0044 — The base install declares no Redis client, and no code imports the Redis store](0044-the-base-install-declares-no-redis-client.md)
@@ -165,7 +165,20 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0050 — A record holds an account identifier, and a deletion empties the account row](0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md)
   — why records hold `acct_` identifiers that one middleware shows as names, and why a deletion
   changes no past record.
-- [0054 — The Sync API stores credentials and releases them to the worker account](0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)
+- [0054 — A package can be validated before it is registered](0054-a-package-can-be-validated-before-it-is-registered.md)
+  — why `POST /configs/validate` and `configs check` run the checks of a registered version on a
+  package that is not registered, why the route requires an administrator, and why the service
+  parses the file.
+- [0055 — `GET /api/health` replaces `GET /api/status`](0055-the-health-endpoint-replaces-status.md)
+  — why the health answer follows Infrahub's shape, why workers count through a minimum and a
+  stale record never fails it, why the database check reads only, and why the worker container
+  healthcheck reads a file that the worker's own timer writes.
+- [0056 — A write whose worker disappeared resumes automatically when the site allows it](0056-a-lost-worker-resumes-automatically-when-the-site-allows-it.md)
+  — why the liveness reconciler resumes a write after rule 6 (`crashed`) or rule 8 only when
+  `INFRAHUB_SYNC_AUTOMATIC_RESUME` is on, why a `verify` runs first, why a run is not resumed
+  after 3 automatic resumes or after one that saved no progress, and how fixed idempotency keys
+  submit each step once. Amends 0027.
+- [0057 — The Sync API stores credentials and releases them to the worker account](0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)
   — why a package names a stored credential in each block, how values are encrypted with a key
   that only the Sync API holds, what the two routes of the `worker` account return, which stored
   versions are refused, and the limits of the execution check and of the receipt check.

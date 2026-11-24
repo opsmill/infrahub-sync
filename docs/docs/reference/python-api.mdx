@@ -35,12 +35,18 @@ from infrahub_sync.client import SyncClient
 
 with SyncClient.from_environment(timeout=30) as client:
     version = client.get_version()
-    status = client.get_status()
+    health = client.get_health()
 ```
 
 The first protected operation checks `/version` before sending the bearer token. The client
 requires the server to declare `v3-unstable` and caches a successful compatibility check for that
 client instance.
+
+`get_health()` reads `GET /api/health` without a token. It returns a `HealthResource` for both a
+`200` and a `503` answer, so read `health.status` (`healthy` or `unhealthy`), `health.dependencies`
+and `health.workers` to find the cause. A `503` that carries an error envelope instead of a report
+raises `APIError`; any other answer raises `ProtocolError`. See
+[`GET /health`](./sync-http-api.mdx#get-health) for every field.
 
 ## Register and inspect configurations
 
@@ -77,7 +83,9 @@ synchronizes nothing. For a complete package, see
 The client also exposes `create_config_version`, `list_configs`, `get_config`,
 `list_config_versions`, and `get_config_version`. Configuration list methods return the complete
 server response and do not expose pagination arguments. Validation exposes the server's finding
-page fields and preserves finding order.
+page fields and preserves finding order. `check_package` takes a `PackageCheckRequest` with
+`package` or `document` and validates a package that is not registered; it needs an
+administrator token.
 
 ## Create and inspect runs
 

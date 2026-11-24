@@ -33,6 +33,7 @@ from tests.compose.lifecycle import (
     await_verification,
     container_reachable_host,
     docker,
+    health_report,
     idempotency,
     online_worker_names,
     operator_environment,
@@ -42,6 +43,7 @@ from tests.compose.lifecycle import (
     smoke_package,
     wait_for,
     worker_state,
+    worker_state_of,
 )
 from tests.compose.redaction import SECRETS
 
@@ -120,9 +122,7 @@ def observe_worker_states() -> set[str]:
     observed: set[str] = set()
     deadline = time.monotonic() + BUSY_OBSERVATION_SECONDS
     while time.monotonic() < deadline:
-        response = httpx.get(f"http://127.0.0.1:{API_PORT}/api/status", timeout=15)
-        response.raise_for_status()
-        observed.add(response.json()["worker"]["state"])
+        observed.add(worker_state_of(health_report(f"http://127.0.0.1:{API_PORT}")))
         if "busy" in observed:
             break
         time.sleep(1)

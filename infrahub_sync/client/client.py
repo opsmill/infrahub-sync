@@ -62,8 +62,11 @@ from .models import (
     ErrorEnvelope,
     EventPage,
     EventResource,
+    HealthResource,
     ListPage,
     OrchestrationSummary,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanReportPageResource,
     PlanResource,
     PrincipalResource,
@@ -78,7 +81,6 @@ from .models import (
     ScheduleActionRequest,
     SchedulePage,
     ScheduleResource,
-    ServiceStatusResource,
     SessionResource,
     TokenResource,
     ValidationReportResource,
@@ -98,6 +100,8 @@ _DIGEST = re.compile(r"sha-256=(?P<digest>[0-9a-f]{64})")
 _ERROR_STATUSES = frozenset({401, 403, 404, 409, 410, 422, 503})
 _CONFIG_ERROR_STATUSES = _ERROR_STATUSES | {400}
 _MAX_JSON_BYTES = 16 * 1024 * 1024
+# The health report's `status` that each HTTP status of `GET /health` must carry.
+_HEALTH_STATUS_BY_CODE = {200: "healthy", 503: "unhealthy"}
 _SERVICE_URL_ARG = "service_url"
 _TOKEN_ARG = "token"
 _TIMEOUT_ARG = "timeout"
@@ -322,18 +326,36 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         except (ValidationError, ProtocolError):
             raise self._compatibility_error(response) from None
 
-    def get_status(self) -> ServiceStatusResource:
-        """Return unauthenticated service and worker status."""
+    def get_health(self) -> HealthResource:
+        """Return the unauthenticated health report of the Sync API's components and workers.
 
-        operation = "get_status"
-        response = self._send(operation, "GET", "/status", authenticated=False)
+        A ``200`` answer that carries a ``healthy`` report, or a ``503`` answer that carries an
+        ``unhealthy`` report, returns it. A ``503`` that carries the error envelope instead raises
+        ``APIError``. Any other answer, including a report whose ``status`` does not match the
+        HTTP status, raises ``ProtocolError``.
+        """
+
+        operation = "get_health"
+        response = self._send(operation, "GET", "/health", authenticated=False)
         self._require_json(response, operation)
-        if response.status_code != 200:
+        if response.status_code not in _HEALTH_STATUS_BY_CODE:
+            raise ProtocolError(operation, response.status_code)
+        payload = self._json(response, operation)
+        try:
+            report = HealthResource.model_validate(payload)
+        except (ValidationError, TypeError, ValueError):
+            report = None
+        if report is not None:
+            if report.status != _HEALTH_STATUS_BY_CODE[response.status_code]:
+                raise ProtocolError(operation, response.status_code)
+            return report
+        if response.status_code != 503:
             raise ProtocolError(operation, response.status_code)
         try:
-            return ServiceStatusResource.model_validate(self._json(response, operation))
-        except (ValidationError, TypeError, ValueError):
+            error = self._parse_api_error(payload, response.status_code, config_route=False)
+        except (ValidationError, KeyError, TypeError, ValueError):
             raise ProtocolError(operation, response.status_code) from None
+        raise error
 
     def register_config(self, request: ConfigMutationRequest, idempotency_key: str) -> RegisteredConfigurationResource:
         """Register a configuration package idempotently."""
@@ -446,27 +468,41 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     ) -> ValidationReportResource:
         """Validate a configuration version and return one findings page.
 
-        With ``branch``, the service also checks the mapping, the import account's permissions
-        and the workers' credential variables against that Infrahub branch (spec 007 FR-034).
+        With ``branch``, the service also checks the mapping and the import account's permissions
+        against that Infrahub branch (spec 007 FR-034), read with the destination's stored
+        credential (spec 027).
         """
 
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
-        self._offset(offset)
-        if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_LIMIT_ARG)
-        # The service refuses an empty name and one with surrounding whitespace (`parse_branch`).
-        if branch is not None and (type(branch) is not str or not branch.strip() or branch != branch.strip()):  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_BRANCH_ARG)
         return self._request_model(
             "validate_config",
             "POST",
             f"/configs/{config_id}/versions/{version}/validate",
             model=ValidationReportResource,
             success={200},
-            params={"offset": offset, "limit": limit}
-            if branch is None
-            else {"offset": offset, "limit": limit, "branch": branch},
+            params=self._validation_params(offset, limit, branch),
+            config_route=True,
+        )
+
+    def check_package(
+        self, request: PackageCheckRequest, *, offset: int = 0, limit: int = 256, branch: str | None = None
+    ) -> PackageCheckResource:
+        """Validate a package without registering it and return one findings page.
+
+        The service stores nothing. With ``branch``, it also reads the destination schema of that
+        Infrahub branch; ``destination_read`` in the result says whether the read succeeded.
+        An administrator token is required.
+        """
+
+        return self._request_model(
+            "check_package",
+            "POST",
+            "/configs/validate",
+            model=PackageCheckResource,
+            success={200},
+            body=request,
+            params=self._validation_params(offset, limit, branch),
             config_route=True,
         )
 
@@ -1652,9 +1688,15 @@ class SyncClient:  # pylint: disable=too-many-public-methods
                 mutation_id=detail.mutation_id,
                 configurations=_text_list(detail.details, "configurations"),
                 schedules=_text_list(detail.details, "schedules"),
+                details=detail.details,
             )
         return APIError(
-            detail.status, detail.code, run_id=detail.run_id, mutation_id=detail.mutation_id, left_out=detail.left_out
+            detail.status,
+            detail.code,
+            run_id=detail.run_id,
+            mutation_id=detail.mutation_id,
+            left_out=detail.left_out,
+            details=detail.details,
         )
 
     @staticmethod
@@ -1741,6 +1783,21 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if not isinstance(value, datetime) or value.utcoffset() is None:
             raise ClientInputError(argument)
         return value.isoformat()
+
+    @classmethod
+    def _validation_params(cls, offset: int, limit: int, branch: str | None) -> dict[str, str | int]:
+        """Check and return the query parameters of a validation findings page."""
+        cls._offset(offset)
+        if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_LIMIT_ARG)
+        # The service refuses an empty name and one with surrounding whitespace (`parse_branch`).
+        if branch is not None and (type(branch) is not str or not branch.strip() or branch != branch.strip()):  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_BRANCH_ARG)
+        return (
+            {"offset": offset, "limit": limit}
+            if branch is None
+            else {"offset": offset, "limit": limit, "branch": branch}
+        )
 
     @staticmethod
     def _offset(offset: object) -> None:

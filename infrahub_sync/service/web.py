@@ -1,7 +1,7 @@
 """Serve the Sync API under ``/api`` and the built web interface at every other address.
 
 The outer application mounts the API application at ``/api``, sends ``GET /api`` and ``GET /api/``
-to ``/api/status``, and answers every other address with one route that accepts every method. The route applies decision 1 of ADR 0043
+to ``/api/health``, and answers every other address with one route that accepts every method. The route applies decision 1 of ADR 0043
 (``dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md``) in this order:
 
 1. A method other than ``GET`` or ``HEAD``: the 404 envelope naming ``/api``.
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from starlette.types import Receive, Scope, Send
 
 API_PREFIX = "/api"
-API_ROOT_TARGET = f"{API_PREFIX}/status"
+API_ROOT_TARGET = f"{API_PREFIX}/health"
 NOT_FOUND_MESSAGE = "the Sync API is served under /api"
 NO_WEB_INTERFACE_MESSAGE = "The web interface is not included in this install. The Sync API is served under /api."
 INDEX_CACHE_CONTROL = "no-cache"
@@ -220,7 +220,7 @@ def create_site(api: FastAPI, directory: Path | None) -> Starlette:
         return response
 
     def api_root(request: Request) -> Response:
-        """Send ``GET /api`` and ``GET /api/`` to the status of the service, which needs no token."""
+        """Send ``GET /api`` and ``GET /api/`` to the health report of the service, which needs no token."""
         response: Response = (
             RedirectResponse(API_ROOT_TARGET, status_code=307)
             if request.method in {"GET", "HEAD"}

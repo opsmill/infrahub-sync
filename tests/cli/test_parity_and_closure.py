@@ -68,6 +68,7 @@ CLI_CLIENT_PARITY = (
     ("configs show CONFIG_ID --version VERSION", "get_config_version", "GET /configs/{config_id}/versions/{version}"),
     ("configs versions CONFIG_ID", "list_config_versions", "GET /configs/{config_id}/versions"),
     ("configs validate CONFIG_ID VERSION", "validate_config", "POST /configs/{config_id}/versions/{version}/validate"),
+    ("configs check PACKAGE", "check_package", "POST /configs/validate"),
     ("plan", "plan", "POST /runs"),
     ("sync", "sync", "POST /runs"),
     ("verify RUN_ID", "verify", "POST /runs/{run_id}/verify"),
@@ -136,6 +137,7 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "get_config_version",
         "list_config_versions",
         "validate_config",
+        "check_package",
         "plan",
         "sync",
         "verify",
@@ -264,12 +266,16 @@ def test_only_shared_client_constructs_sync_api_http_requests() -> None:
         if "httpx.Client(" in source or "httpx.AsyncClient(" in source:
             constructors.append(path.relative_to(ROOT))
 
-    # The shared client serves every route for accounts. The worker's credential client calls the
-    # one worker route, with the worker token and its own retry and redaction rules (spec 027,
-    # research R6); its answer holds values, so it does not pass through the shared client.
+    # The Microsoft Graph adapter reads its own source API, not the Sync API. The health checks
+    # call the Prefect server's `/health` and `/ready`, not the Sync API. The shared client serves
+    # every route for accounts. The worker's credential client calls the one worker route, with
+    # the worker token and its own retry and redaction rules (spec 027, research R6); its answer
+    # holds values, so it does not pass through the shared client.
     assert sorted(constructors) == [
+        Path("infrahub_sync/adapters/msgraphsync.py"),
         Path("infrahub_sync/client/client.py"),
         Path("infrahub_sync/service/credential_client.py"),
+        Path("infrahub_sync/service/health.py"),
     ]
 
 

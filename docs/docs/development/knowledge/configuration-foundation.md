@@ -32,7 +32,7 @@ content and the checksum it had before the key existed. Pointing a block to anot
 changes the checksum; changing the stored value does not.
 
 The Sync API stores the value, encrypted, and releases it to the worker for a run in progress.
-[ADR 0054](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)
+[ADR 0057](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)
 records the decision. The parts in `infrahub_sync/configuration/` are:
 
 - **Which stored field fills which setting.** `credential_field_map` in `capabilities.py` returns,

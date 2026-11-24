@@ -56,7 +56,17 @@ POLL_TIMEOUT_SECONDS = 240
 SMOKE_FIELDS = ("name", "type")
 
 
-def smoke_package(infrahub_url: str) -> dict[str, Any]:
+def unique_config_name(prefix: str = "smoke-registered") -> str:
+    """A configuration name no other registration uses, on this run or on an earlier one.
+
+    A name belongs to one configuration: `POST /configs` refuses a package whose name another
+    configuration has, with 409 `configuration-name-in-use`. The stack keeps every configuration
+    the suite registered on earlier runs, so a fixed name would be refused from the second run on.
+    """
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def smoke_package(infrahub_url: str, name: str | None = None) -> dict[str, Any]:
     """The declared package the smoke registers, as `POST /configs` accepts it.
 
     Both adapters are the bundled `infrahub` one, so the registered worker resolves them
@@ -64,11 +74,15 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
     block names the stored credential `infrahub-token`, which `dev.start` stores through the
     Sync API. The Sync API releases its value to the worker for a run, so no secret value is
     ever posted or recorded here.
+
+    Without `name`, every call returns a package with a new unique name, so two calls give
+    two packages for two configurations. Pass the same `name` to build a package that is a
+    new version of a configuration already registered under it.
     """
     return {
         "format_version": 1,
         "configuration": {
-            "name": "smoke-registered",
+            "name": name if name is not None else unique_config_name(),
             "source": {
                 "name": "infrahub",
                 "credential": "infrahub-token",
@@ -93,9 +107,12 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
     }
 
 
-def register_request(infrahub_url: str) -> dict[str, Any]:
-    """The `POST /configs` body: a declared package plus its audit reason."""
-    return {"package": smoke_package(infrahub_url), "reason": "smoke: register the smoke configuration"}
+def register_request(infrahub_url: str, name: str | None = None) -> dict[str, Any]:
+    """The `POST /configs` body: a declared package plus its audit reason.
+
+    The package has a new unique name unless `name` is given; see `smoke_package`.
+    """
+    return {"package": smoke_package(infrahub_url, name), "reason": "smoke: register the smoke configuration"}
 
 
 def create_run_request(config_id: str, registry_version: int) -> dict[str, Any]:

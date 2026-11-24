@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator, model_validator
 
 from infrahub_sync.configuration.capabilities import (
     CredentialField,  # noqa: TC001 - Pydantic resolves this annotation at runtime.
@@ -673,6 +673,8 @@ class ConfigurationVersionSummary(BaseModel):
     # before the store recorded them.
     registered_by: str | None = None
     registration_reason: str | None = None
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
     latest_run: RunReference | None = None
     latest_applied_run: RunReference | None = None
 
@@ -699,6 +701,8 @@ class ConfigurationVersion(BaseModel):
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     declared_content: dict[str, Any]
     created_at: datetime
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
 
     @field_validator("created_at")
     @classmethod
@@ -783,6 +787,30 @@ class PrimaryResource(BaseModel):
     id: str = Field(min_length=1)
 
 
+# The stored settings of a schedule that ``POST /schedules/{schedule_id}/change`` can alter.
+ScheduleSettingName: TypeAlias = Literal[
+    "registry_version",
+    "cron",
+    "timezone",
+    "write_target",
+    "write_when_left_out",
+    "overlap_policy",
+    "start_late_by_at_most_seconds",
+]
+# The stored value of one setting. Strict, so ``True`` and ``1`` read back as they were stored.
+ScheduleSettingValue: TypeAlias = StrictBool | StrictInt | StrictStr
+
+
+class ScheduleSettingChange(BaseModel):
+    """One setting that a change of a schedule altered, with its stored value before and after."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    field: ScheduleSettingName
+    before: ScheduleSettingValue
+    after: ScheduleSettingValue
+
+
 class EventDetails(BaseModel):
     """The facts of one event, under a closed set of keys. A key the event does not use is ``None``.
 
@@ -809,6 +837,18 @@ class EventDetails(BaseModel):
     cause: str | None = Field(default=None, min_length=1)
     # The revision of the stored credential an event names (spec 027).
     revision: int | None = Field(default=None, ge=1)
+    # The settings whose stored value a change of a schedule altered, in the order of the
+    # change request's fields. Empty when every setting the change sent already had its value.
+    changes: tuple[ScheduleSettingChange, ...] | None = None
+    # The events of an automatic resume (spec 030): ``cause`` holds `rule-6` or `rule-8`.
+    # The reason code of an automatic resume that did not start, and its codes and counts.
+    reason: str | None = Field(default=None, min_length=1)
+    reason_detail: dict[StrictStr, StrictStr | StrictInt] | None = None
+    # The progress marker the automatic resume starts after, the operations its check left
+    # out, and the flow run of the resume.
+    start_after: int | None = Field(default=None, ge=0)
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod
@@ -899,8 +939,11 @@ class EventFilters(BaseModel):
         return value
 
 
-# One page of events, oldest first.
+# One page of events, in the order the ``order`` argument names (``asc``, oldest first, by default).
 EventPage: TypeAlias = StorePage[AuditEvent]
+
+# The order of an event list: ``asc`` oldest first, ``desc`` newest first; both by ``created_at`` then ``event_id``.
+EventOrder: TypeAlias = Literal["asc", "desc"]
 
 ACCOUNT_ID_PATTERN = r"^acct_[0-9a-f]{32}$"
 _ACCOUNT_SHORT_ID_PATTERN = r"^[0-9a-f]{8}$"
@@ -1405,6 +1448,93 @@ class ScheduledStartResult(BaseModel):
     def _require_one_outcome(self) -> ScheduledStartResult:
         if self.started is (self.run_id is None) or self.started is (self.cause is not None):
             msg = "an admission result holds a run identifier when the start ran, else a cause"
+            raise ValueError(msg)
+        return self
+
+
+# Why the liveness reconciler ended the interrupted write execution: rule 6 (Prefect reports its
+# flow run as ended, and spec 030 counts only `crashed`) or rule 8 (the work pool no longer
+# shows its claiming worker as fresh).
+AutomaticResumeCause: TypeAlias = Literal["rule-6", "rule-8"]
+AutomaticResumeState: TypeAlias = Literal["waiting-check", "checking", "waiting-resume", "resuming", "ended"]
+AutomaticResumeDecision: TypeAlias = Literal["resume", "no-resume"]
+# Why an interrupted run was not resumed automatically (spec 030, FR-016).
+AutomaticResumeReason: TypeAlias = Literal[
+    "not-resumable",
+    "approval-missing",
+    "no-progress",
+    "limit-reached",
+    "check-failed",
+    "check-found-differs",
+    "not-picked-up",
+    "refused",
+    "person-took-over",
+]
+# The states in which a decision row holds a decision.
+_DECIDED_AUTOMATIC_RESUME_STATES = frozenset({"resuming", "ended"})
+_AUTOMATIC_RESUME_TIME_MESSAGE = "automatic resume timestamps must include a timezone"
+
+
+class AutomaticResume(BaseModel):
+    """The stored decision on resuming one interrupted write execution without a person (spec 030).
+
+    One record exists for each write execution that the liveness reconciler ended under rule 6
+    or rule 8 while automatic resume was on. ``state`` is where the record is in the sequence
+    check, then resume. ``decision`` is ``resume`` once the automatic resume was submitted, and
+    ``no-resume`` with a ``reason`` when the run was not resumed. ``reason_detail`` holds codes
+    and counts only, never a value read from the source or the destination.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    interrupted_flow_run_id: str = Field(min_length=1)
+    cause: AutomaticResumeCause
+    # The claiming worker's name, when the work pool snapshot had it (rule 8).
+    worker_name: str | None = Field(default=None, min_length=1)
+    state: AutomaticResumeState
+    decision: AutomaticResumeDecision | None = None
+    reason: AutomaticResumeReason | None = None
+    reason_detail: dict[str, StrictStr | StrictInt] | None = None
+    # Operations the check left out because of the limit on checked operations (FR-007).
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    # The progress marker the automatic resume starts after.
+    start_after: int | None = Field(default=None, ge=0)
+    check_flow_run_id: str | None = Field(default=None, min_length=1)
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
+    # When the record was inserted, and when it last moved.
+    decided_at: datetime
+    updated_at: datetime
+
+    @field_validator("decided_at", "updated_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError(_AUTOMATIC_RESUME_TIME_MESSAGE)
+        return value
+
+    @property
+    def resume_submitted(self) -> bool:
+        """Whether Sync submitted the automatic resume of this record.
+
+        It counts toward the limit and toward the run's automatic resumes even when no worker
+        picked it up, which ends the record as ``no-resume``, ``not-picked-up`` (FR-010).
+        """
+        return self.resume_flow_run_id is not None
+
+    @model_validator(mode="after")
+    def _require_consistent_decision(self) -> AutomaticResume:
+        if self.decision is not None and self.state not in _DECIDED_AUTOMATIC_RESUME_STATES:
+            msg = "an automatic resume record holds a decision only in the states resuming and ended"
+            raise ValueError(msg)
+        if self.state in _DECIDED_AUTOMATIC_RESUME_STATES and self.decision is None:
+            msg = "an automatic resume record in the states resuming and ended holds a decision"
+            raise ValueError(msg)
+        if self.state == "resuming" and self.decision != "resume":
+            msg = "an automatic resume record in the state resuming holds the decision resume"
+            raise ValueError(msg)
+        if (self.decision == "no-resume") is (self.reason is None):
+            msg = "an automatic resume record holds a reason when its decision is no-resume, and only then"
             raise ValueError(msg)
         return self
 

@@ -148,7 +148,10 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
 | `INFRAHUB_SYNC_REQUIRE_APPROVAL` | `false` | Set on `sync-api` and `sync-worker`, from the same value. When `true`, `apply` refuses a plan that has no approval matching the checksum it names, and `sync` is refused; operators run `plan`, `approve` and `apply` instead. Before each scheduled run, the worker refuses a run of a schedule that writes to the default branch, and stops that schedule. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any case. Any other value, including an empty one, stops `sync-api` at startup, and makes `sync-worker` create no run for a scheduled start. The service reads it for each `apply` or `sync` request, and the worker for each scheduled start, so after you change it in `.env`, run `docker compose up -d --wait`, which recreates `sync-api` and `sync-worker` with the new value (`docker compose restart` keeps the old one); stored runs and approvals are not changed. `infrahub-sync whoami` prints the value as `approval_required`. See [Require an approved plan](./running-a-sync.mdx#require-an-approved-plan). |
+| `INFRAHUB_SYNC_AUTOMATIC_RESUME` | `false` | Set on `sync-api` only. When `true`, and the Sync API ends a write as interrupted because Prefect reported its flow run as crashed or because its worker stopped sending heartbeats, the Sync API runs `verify` on the run and then resumes it, without a person. It does not resume a run when the check reports a node as `differs`, after 3 automatic resumes of the run, and in the other cases listed in [Automatic resume of an interrupted write](./operations/day-2-operations.mdx#automatic-resume-of-an-interrupted-write). Accepted values are those of `INFRAHUB_SYNC_REQUIRE_APPROVAL`; any other value, including an empty one, stops `sync-api` at startup. The Sync API reads it each time it ends a write as interrupted, so after you change it in `.env`, run `docker compose up -d --wait`. While it is off, nothing is recorded about automatic resume. |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |
+| `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` | `3` | Set on `sync-api`. The number of seconds that `GET /api/health` waits for each component and for the read of the work pool. A component that does not answer in time is reported `down` with the error `timeout`. A whole number from 1 to 60. |
+| `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` | `1` | Set on `sync-api`. `GET /api/health` answers `503` when fewer workers than this number are live. A whole number from 1 to 999999999. |
 | `INFRAHUB_SYNC_PREFECT_UI_URL` | empty | The address you open the Prefect UI at, for example `http://127.0.0.1:4200`. Run responses and `infrahub-sync runs show` then link each flow run to its Prefect UI page. Empty turns the link off. The Sync API refuses to start when the value is not an absolute `http` or `https` URL, or when it carries credentials, a query or a fragment; see [Valid values of `INFRAHUB_SYNC_PREFECT_UI_URL`](#valid-values-of-infrahub_sync_prefect_ui_url). |
 | `INFRAHUB_SYNC_WEB_DIRECTORY` | `/opt/infrahub-sync/web`, set in the image | The directory of the built web interface that `sync-api` serves at the root of its address. The Compose file does not read it from `.env`, so the image value applies. When the variable is empty, or names a directory without `index.html`, the Sync API still starts under `/api`, and a browser that opens the root address receives the text "The web interface is not included in this install." See [Open the web interface](#open-the-web-interface). |
 
@@ -285,6 +288,8 @@ changes.
   character that is not printable ASCII, starts or ends with a space, or starts
   with `ifs_pat_` or `ifs_ses_`.
 - `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number from 60 to 999999999999.
+- `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` is not a whole number from 1 to 60, or
+  `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` is not a whole number from 1 to 999999999.
 
 Its log names the variable and never shows the value:
 
@@ -695,8 +700,13 @@ Any account can create and inspect a run. Only the account that created a run, o
 an administrator, can verify, approve, apply or cancel it. See
 [Accounts and API tokens](./reference/sync-http-api.mdx#accounts-and-api-tokens).
 
+With an administrator token, you can register a configuration or add a version by
+dropping a package file on the Configurations page or on a configuration's page. The
+web interface validates the package and shows the result before it registers it. See
+[Register a package from the web interface](./configuration-package.mdx#register-a-package-from-the-web-interface).
+
 The Sync API is served under `/api` on the same port, for example
-`http://127.0.0.1:8001/api/status`. Keep `INFRAHUB_SYNC_API_URL` set to the address
+`http://127.0.0.1:8001/api/health`. Keep `INFRAHUB_SYNC_API_URL` set to the address
 without `/api`: the CLI adds it. A script that calls the Sync API directly adds
 `/api` to the address. A request outside `/api` from a client that does not accept
 HTML, such as an earlier route address called by a script, receives a "not found"
@@ -818,7 +828,7 @@ of its commands has a plain `docker compose` equivalent.
 | `init` | Write `.env` by hand, or generate it as shown in [An example `.env`](#an-example-env). There is no instance identity: the Compose project name, which defaults to the directory name, plays that role. |
 | `preflight` | `docker compose version --short`, expecting 2.24 or later, then `docker compose config --quiet`, which names the first missing credential. `up` reports a pull failure or a port in use. |
 | `start` | `docker compose up -d --wait`, then check the worker as in [Status](#status). |
-| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8001/api/status` and read `worker.state`. |
+| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8001/api/health` and read `status` and `workers.live_workers`. |
 | `logs` | `docker compose logs --no-color --tail 200 [service]` |
 | `stop` | `docker compose stop` |
 | `restart` | `docker compose restart sync-api sync-worker`, then check the worker. It does not pick up a changed `.env`. |
@@ -1118,11 +1128,11 @@ authorize a command, or prove what a write reached.
 
 The same deployment answers directly. Every Sync API route is under `/api`, so a
 script adds `/api` to `INFRAHUB_SYNC_API_URL`; the CLI and `SyncClient` add it
-themselves. `/api/status` needs no credential:
+themselves. `/api/health` needs no credential:
 
 ```bash
 export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
-curl -sS "$INFRAHUB_SYNC_API_URL/api/status"
+curl -sS "$INFRAHUB_SYNC_API_URL/api/health"
 ```
 
 An authenticated call is what the CLI is for: `configs list` reads the same
@@ -1150,7 +1160,7 @@ From Python:
 from infrahub_sync.client import SyncClient
 
 with SyncClient("http://127.0.0.1:8001", "<an API token>") as client:
-    print(client.get_status().worker.state)
+    print(client.get_health().workers.live_workers)
 ```
 
 ### Plan verification details
@@ -1188,38 +1198,98 @@ rm -f "$CURL_CONFIG"
 
 ```bash
 docker compose ps
-curl -s http://127.0.0.1:8001/api/status
+curl -s http://127.0.0.1:8001/api/health
 ```
 
 `docker compose ps` shows each container and the health of `postgres`,
-`object-store`, and `prefect-server`. The `/api/status` response needs no
-authentication; its `worker.state` says whether a worker is live:
+`object-store`, `prefect-server`, `sync-api` and `sync-worker`. The `/api/health`
+response needs no authentication. It answers `200` with `status` `healthy` when every
+component is up and at least `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` workers (default 1) are
+live, and `503` with `status` `unhealthy`
+otherwise. The [Sync HTTP API reference](./reference/sync-http-api.mdx#get-health)
+describes every field.
 
-| `worker.state` | What it means |
+Each entry of `dependencies` names one component and, when it is `down`, an error
+category:
+
+| `dependencies[].name` | Component |
 | --- | --- |
-| `ready` | A registered worker is sending heartbeats and can take a run. |
-| `busy` | A registered worker is sending heartbeats and is running work. |
-| `no-live-worker` | No worker has sent a heartbeat recently. Submissions are accepted and wait unclaimed. |
+| `database` | The product database in the `postgres` service. |
+| `object_store` | The bucket in the `object-store` service. |
+| `task_manager` | The `prefect-server` service. |
+| `task_manager_db` | The Prefect database in the `postgres` service, as `prefect-server` reports it. |
 
-To read the worker state without the published port, ask from inside the
+| `dependencies[].error` | What it means |
+| --- | --- |
+| `none` | The component is up. |
+| `timeout` | No answer within `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` seconds. A paused container gives this. |
+| `connection_refused` | The address was reached, but nothing listens on the port. |
+| `connection_closed` | The connection was opened and then closed by the other side. |
+| `name_resolution_failed` | The host name does not resolve. A stopped container gives this. |
+| `unavailable` | The component answered but cannot serve requests, for example a missing bucket or a refused login. |
+| `unknown_error` | Any other failure. |
+
+In this deployment one PostgreSQL holds both the product database and the Prefect
+database. When `postgres` stops or is paused, `database` and `task_manager_db` are
+both `down`, and `workers.state` is `unknown`, because Prefect cannot read the work
+pool from its database.
+
+`workers.items` lists each worker that sent a heartbeat in the last 24 hours:
+
+| `workers.items[].state` | What it means |
+| --- | --- |
+| `live` | The worker sends heartbeats and can take a run. |
+| `stale` | The worker has not sent a heartbeat within three heartbeat intervals or 30 seconds, whichever is longer. Submissions are accepted and wait unclaimed until a worker is live. |
+
+Each worker start registers under a new name, so after a restart the record of the
+previous worker stays in the list as `stale`. A stale record does not make the answer
+`503`; only `workers.live_workers` below `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` does.
+
+To read the health without the published port, ask from inside the
 deployment's network:
 
 ```bash
-docker compose run --rm --no-deps -T sync-bootstrap python -c "import httpx; print(httpx.get('http://sync-api:8000/api/status', timeout=5).json()['worker']['state'])"
+docker compose run --rm --no-deps -T sync-bootstrap python -c "import httpx; print(httpx.get('http://sync-api:8000/api/health', timeout=10).json()['status'])"
 ```
 
-Container state establishes absence and nothing else. A paused or hung worker
-keeps looking `running` to Docker. Only the worker state the API reports shows that it aged
-out, as `no-live-worker`, after three missed heartbeats or 30 seconds, because
-readiness comes from what the Sync API reports about the Prefect registry rather
-than from a process being up.
+Use `/api/health` for monitoring and alerting, not as a check that restarts
+containers: every Sync API process depends on the same components, so an outage of
+one of them would restart all of them. Give a monitoring check a timeout longer than
+`INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`. For this reason the `sync-api` container
+health check stays on `/api/version`.
 
-A worker that has been stopped outright reaches `no-live-worker` the same way:
-the API still answers, submissions are still accepted, and they sit unclaimed
-until a worker comes back. Start it again with
-`docker compose restart sync-api sync-worker`, then check `worker.state`. The
-replacement worker registers under a new Prefect identity, and no durable record
-changes.
+The `sync-worker` container has its own health check. The worker writes a file on a
+timer, every heartbeat interval (`PREFECT_WORKER_HEARTBEAT_SECONDS`, 10 seconds in
+this deployment), and the health check fails when the file is older than three
+intervals or 30 seconds, whichever is longer. The timer calls no other service, so a
+hung worker process turns the container `unhealthy` in `docker compose ps`, and an
+outage of PostgreSQL or Prefect leaves it `healthy`. The health check runs every
+10 seconds and reports `unhealthy` after three failures in a row. Docker does not run
+health checks in a paused container, so `docker compose pause sync-worker` shows the
+container as paused, not `unhealthy`; `/api/health` still reports the worker `stale`.
+
+A worker that has been stopped outright turns `stale` the same way: the API still
+answers, submissions are still accepted, and they wait unclaimed until a worker
+comes back. Start it again with `docker compose restart sync-api sync-worker`,
+then check `/api/health`. The replacement worker registers under a new Prefect
+name, and no durable record changes.
+
+These are the times measured on this deployment, with one worker, the default heartbeat
+interval of 10 seconds and the default check timeout of 3 seconds:
+
+| Event | `/api/health` answer |
+| --- | --- |
+| The worker container is paused | `503` after 22 seconds, the worker `stale` |
+| The paused worker container is resumed | `200` after 1 second |
+| The worker process hangs | The `sync-worker` container `unhealthy` after 50 seconds |
+| The object store or the Prefect server stops | `503` within 2 seconds |
+| PostgreSQL stops | `503` at the next request |
+| PostgreSQL is paused | `503` within 4 seconds, with the error `timeout` |
+| The object store or the Prefect server starts again | `200` within 3 seconds |
+| PostgreSQL starts again | `200` within 9 seconds |
+| The worker container restarts | `200` once the new worker has sent its first heartbeat; the previous worker stays listed as `stale` |
+
+A longer heartbeat interval lengthens the worker times in proportion.
 
 ## Logs
 
@@ -1293,8 +1363,8 @@ infrahub-sync runs show RUN_ID
 
 Wait until its `execution_state` is `completed`, `failed`, `cancelled`,
 `abandoned`, or `interrupted`. These are terminal execution states; a missing
-or other value does not confirm a terminal execution. A `ready` or `busy` worker
-says nothing about idleness. These checks cover only known runs; if you cannot
+or other value does not confirm a terminal execution. A live worker in
+`/api/health` says nothing about idleness. These checks cover only known runs; if you cannot
 account for all submitted work, postpone maintenance.
 
 ### Stop and resume the deployment
@@ -1313,7 +1383,7 @@ Expect no running container. To resume the deployment:
 docker compose up -d --wait
 ```
 
-Then check `worker.state` as in [Status](#status) before submitting work. `up`
+Then check the health of the deployment as in [Status](#status) before submitting work. `up`
 starts the PostgreSQL, object storage, and Prefect dependencies as well as the
 API and worker.
 
@@ -1325,7 +1395,7 @@ When the dependencies are running, restart only the API and worker processes:
 docker compose restart sync-api sync-worker
 ```
 
-Then check `worker.state`. A restart preserves durable records. It does not
+Then check the health of the deployment as in [Status](#status). A restart preserves durable records. It does not
 start stopped dependencies, and it does not pick up a changed `.env`; use
 `docker compose up -d --wait` for both.
 
@@ -1338,7 +1408,7 @@ infrahub-sync configs show CONFIG_ID --version VERSION
 ```
 
 Replace `CONFIG_ID` and `VERSION` with the identifier and version you registered.
-Save the output, then repeat the command after the worker reports `ready`.
+Save the output, then repeat the command after `/api/health` answers `healthy`.
 Confirm that `config_id`, `registry_version`, `package_checksum`, and
 `declared_content` match the earlier output. This checks that the configuration
 version remains available; a live worker alone only checks deployment health.

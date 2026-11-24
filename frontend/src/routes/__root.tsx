@@ -23,7 +23,7 @@ import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { type ComponentPropsWithRef, type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 import { signOut } from "#/api/client";
-import { describeError, meQuery, statusQuery, versionQuery } from "#/api/queries";
+import { describeError, healthQuery, meQuery, versionQuery } from "#/api/queries";
 import { announce, LiveRegion } from "#/components/announcer";
 import { FOCUS, FOCUS_RAC } from "#/components/classes";
 import { StateIcon } from "#/components/icons";
@@ -31,7 +31,13 @@ import { Mark } from "#/components/mark";
 import { Notice } from "#/components/page";
 import { When } from "#/components/run-status";
 import { ThemeMenu } from "#/components/theme-menu";
-import { fmt, NO_WORKER_SENTENCE, queueSentence, type RunState } from "#/domain/run-state";
+import {
+  fmt,
+  NO_WORKER_SENTENCE,
+  queueSentence,
+  type RunState,
+  workerState,
+} from "#/domain/run-state";
 
 import "../styles.css";
 
@@ -80,7 +86,7 @@ function useLastFailure(query: QueryResult): { failed: boolean; error: unknown }
 }
 
 function useServiceState(): ServiceState & { showDetail: boolean } {
-  const status = useQuery(statusQuery());
+  const status = useQuery(healthQuery());
   const me = useQuery(meQuery());
   const statusFailure = useLastFailure(status);
   const meFailure = useLastFailure(me);
@@ -103,9 +109,7 @@ function useServiceState(): ServiceState & { showDetail: boolean } {
         showDetail: false,
       };
     }
-    const last = status.data
-      ? (status.data.worker.observed_at ?? new Date(status.dataUpdatedAt).toISOString())
-      : undefined;
+    const last = status.data?.timestamp;
     return {
       icon: "failed",
       color: "text-danger",
@@ -124,7 +128,7 @@ function useServiceState(): ServiceState & { showDetail: boolean } {
       showDetail: false,
     };
   }
-  // `GET /status` needs no session, so only `GET /me` shows that the Sync API refuses the session.
+  // `GET /health` needs no session, so only `GET /me` shows that the Sync API refuses the session.
   if (meFailure.failed && describeError(meFailure.error).status === 401) {
     return {
       icon: "failed",
@@ -143,9 +147,9 @@ function useServiceState(): ServiceState & { showDetail: boolean } {
       showDetail: false,
     };
   }
-  const w = status.data.worker;
-  const showDetail = w.detail_available;
-  switch (w.state) {
+  const w = status.data.workers;
+  const showDetail = w.state === "known";
+  switch (workerState(status.data)) {
     case "ready":
       return { icon: "insync", color: "text-success", label: "Worker ready", showDetail };
     case "busy":
@@ -195,10 +199,11 @@ const DL = "col-span-2 grid grid-cols-subgrid gap-y-1.5";
 /** The Sync service's state in the header; opens the details. */
 function StatusMenu() {
   const s = useServiceState();
-  const status = useQuery(statusQuery());
+  const status = useQuery(healthQuery());
   const version = useQuery(versionQuery());
   const me = useQuery(meQuery());
-  const w = status.data?.worker;
+  const w = status.data?.workers;
+  const checkedAt = status.data?.timestamp;
   const workerRows = s.showDetail && w;
 
   return (
@@ -237,9 +242,9 @@ function StatusMenu() {
                   {workerRows && w.queue_depth != null && (
                     <Row term="Executions waiting for a worker">{fmt(w.queue_depth)}</Row>
                   )}
-                  {workerRows && w.observed_at && (
+                  {workerRows && checkedAt && (
                     <Row term="Checked">
-                      <When iso={w.observed_at} />
+                      <When iso={checkedAt} />
                     </Row>
                   )}
                   {version.data && (
@@ -352,15 +357,15 @@ function AccountMenu({ current }: { current: boolean }) {
  * not move when it appears.
  */
 function WorkerNotice() {
-  const status = useQuery(statusQuery());
+  const status = useQuery(healthQuery());
   const shown = Boolean(
-    status.data && !status.isError && status.data.worker.state === "no-live-worker"
+    status.data && !status.isError && workerState(status.data) === "no-live-worker"
   );
   useEffect(() => {
     if (shown) announce(NO_WORKER_SENTENCE);
   }, [shown]);
   if (!shown || !status.data) return null;
-  const queued = status.data.worker.queue_depth;
+  const queued = status.data.workers.queue_depth;
   return (
     <div className="sticky bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 mt-8 rounded-xl bg-content shadow-lg">
       <Notice tone="danger" role="note">
@@ -386,9 +391,10 @@ const PlainLink = createLink(PlainAnchor);
 
 function sectionOf(
   pathname: string
-): "configs" | "runs" | "credentials" | "accounts" | "account" | undefined {
+): "configs" | "runs" | "schedules" | "credentials" | "accounts" | "account" | undefined {
   if (pathname === "/" || pathname.startsWith("/configs/")) return "configs";
   if (pathname === "/runs" || pathname.startsWith("/runs/")) return "runs";
+  if (pathname === "/schedules" || pathname.startsWith("/schedules/")) return "schedules";
   if (pathname === "/credentials") return "credentials";
   if (pathname === "/accounts") return "accounts";
   if (pathname === "/account") return "account";
@@ -508,6 +514,15 @@ function RootComponent() {
               aria-current={section === "runs" ? "true" : undefined}
             >
               Runs
+            </Link>
+            <Link
+              to="/schedules"
+              activeOptions={{ exact: true, includeSearch: false }}
+              className={NAV}
+              data-current={section === "schedules" ? "" : undefined}
+              aria-current={section === "schedules" ? "true" : undefined}
+            >
+              Schedules
             </Link>
             {/* Every signed-in account views the credentials; only an administrator changes them. */}
             <Link

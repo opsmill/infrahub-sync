@@ -108,6 +108,7 @@ x-sync-env: &sync-env
   INFRAHUB_SYNC_SERVICE_WORK_POOL: "${WORK_POOL:-infrahub-sync}"
   INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${RUN_ADMISSION_TTL_SECONDS:-300}"
   INFRAHUB_SYNC_REQUIRE_APPROVAL: "${REQUIRE_APPROVAL-false}"
+  INFRAHUB_SYNC_AUTOMATIC_RESUME: "${AUTOMATIC_RESUME-false}"
   PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
   PREFECT_API_URL: "http://prefect-server:4200/api"
 
@@ -283,6 +284,10 @@ services:
       # The Prefect UI this stack publishes on loopback; run responses and `runs show`
       # link each flow run to it.
       INFRAHUB_SYNC_PREFECT_UI_URL: "http://127.0.0.1:${PREFECT_PORT:-4230}"
+      # Each health check's time limit, in seconds (1 to 60), and the live workers below which
+      # GET /api/health answers 503. The healthcheck below stays on /api/version.
+      INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT: "${INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT:-3}"
+      INFRAHUB_SYNC_HEALTH_MIN_WORKERS: "${INFRAHUB_SYNC_HEALTH_MIN_WORKERS:-1}"
     ports:
       - "127.0.0.1:${SYNC_API_PORT:-8001}:8000"
     volumes: *sync-source-and-ca
@@ -323,6 +328,32 @@ services:
     # on this machine that has no Compose network to join, and it costs nothing when unused.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Looks only at this worker's own process: its event loop writes the alive file on a
+    # timer that calls no other service, so an outage of PostgreSQL or Prefect leaves this
+    # container healthy, and a hung process makes it unhealthy (spec 029, R-7). Docker runs no
+    # health check in a paused container, so a paused container shows as paused, not unhealthy.
+    # The command is WORKER_HEALTHCHECK_COMMAND in infrahub_sync/service/worker_alive.py.
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-I"
+        - "-c"
+        - |-
+          import os, sys, time
+          path = os.path.join(os.environ.get("TMPDIR") or "/tmp", "infrahub-sync-worker-alive")
+          try:
+              fields = open(path, encoding="ascii").read().split()
+          except (OSError, ValueError):
+              sys.exit("worker alive file is missing or unreadable")
+          if len(fields) != 2 or not all(field.isdigit() for field in fields):
+              sys.exit("worker alive file is malformed")
+          if time.time() - int(fields[0]) > max(3 * int(fields[1]), 30):
+              sys.exit("worker alive file is older than its limit")
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
 configs:
   # Read once, when Postgres initializes an empty data directory. Adding a database

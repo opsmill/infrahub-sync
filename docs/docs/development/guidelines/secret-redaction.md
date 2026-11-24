@@ -267,7 +267,7 @@ candidate passwords. See [Local accounts and sign-in](../knowledge/local-account
 
 The values of stored credentials are in no environment variable and in no configuration
 setting, so `collect_secret_values` cannot find them. A value enters a process in one of three
-ways, and each one adds it to a redaction registry before any other code receives it ([ADR 0054](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)):
+ways, and each one adds it to a redaction registry before any other code receives it ([ADR 0057](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)):
 
 - **A request that creates a credential or changes its value.** `CredentialActions` in
   `service/credential_actions.py` calls `register_secret_values` with the submitted values

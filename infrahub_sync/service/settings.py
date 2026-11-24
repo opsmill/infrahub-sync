@@ -12,7 +12,9 @@ directory is logged and treated as unset.
 ``INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`` and ``INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`` define the
 ``admin`` account. They are read once, when the served application is built, and a value that is
 not accepted stops the service. ``INFRAHUB_SYNC_SESSION_IDLE_SECONDS`` is the period without
-activity after which a session ends.
+activity after which a session ends. ``INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`` is the time limit of
+each health check and ``INFRAHUB_SYNC_HEALTH_MIN_WORKERS`` the number of live workers below which the
+health report is unhealthy.
 
 ``INFRAHUB_SYNC_ENCRYPTION_KEY`` and ``INFRAHUB_SYNC_WORKER_TOKEN`` are read by ``sync-api``: the key
 of stored credentials and the token of the ``worker`` account. Both are required: a ``sync-api``
@@ -21,6 +23,10 @@ process refuses to start without either, or with a value that is not accepted.
 reach the Sync API, when a run names a stored credential: a worker without either starts, and each
 such run fails before it reads the source, with a cause that names both variables. No message of this
 module contains a value.
+
+``INFRAHUB_SYNC_AUTOMATIC_RESUME`` makes the Sync service resume an interrupted ``apply`` without a
+person. It is off unless set, it is read again each time an ``apply`` is found interrupted, and it
+is validated once when the application is created, like ``INFRAHUB_SYNC_REQUIRE_APPROVAL``.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 REQUIRE_APPROVAL_ENV = "INFRAHUB_SYNC_REQUIRE_APPROVAL"
+AUTOMATIC_RESUME_ENV = "INFRAHUB_SYNC_AUTOMATIC_RESUME"
 WEB_DIRECTORY_ENV = "INFRAHUB_SYNC_WEB_DIRECTORY"
 ADMIN_ACCOUNT_PASSWORD_ENV = "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"
 ADMIN_ACCOUNT_TOKEN_ENV = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"
@@ -48,6 +55,8 @@ ENCRYPTION_KEY_ENV = "INFRAHUB_SYNC_ENCRYPTION_KEY"
 WORKER_TOKEN_ENV = "INFRAHUB_SYNC_WORKER_TOKEN"
 WORKER_API_URL_ENV = "INFRAHUB_SYNC_API_URL"
 ENCRYPTION_KEY_BYTES = 32
+HEALTH_CHECK_TIMEOUT_ENV = "INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT"
+HEALTH_MIN_WORKERS_ENV = "INFRAHUB_SYNC_HEALTH_MIN_WORKERS"
 
 PASSWORD_MIN_LENGTH = 12
 # The longest password that is checked or stored. A longer one is refused before any hash is
@@ -62,6 +71,16 @@ _SESSION_IDLE_SECONDS_MAX_DIGITS = len(str(SESSION_IDLE_SECONDS_MAXIMUM))
 _SESSION_IDLE_SECONDS_RULE = (
     f"must be a whole number from {SESSION_IDLE_SECONDS_MINIMUM} to {SESSION_IDLE_SECONDS_MAXIMUM}"
 )
+
+HEALTH_CHECK_TIMEOUT_DEFAULT = 3
+HEALTH_CHECK_TIMEOUT_MINIMUM = 1
+HEALTH_CHECK_TIMEOUT_MAXIMUM = 60
+HEALTH_MIN_WORKERS_DEFAULT = 1
+HEALTH_MIN_WORKERS_MINIMUM = 1
+# More than any sensible number of workers. The cap also keeps the text short: Python refuses to
+# convert a very long text of digits.
+HEALTH_MIN_WORKERS_MAXIMUM = 999_999_999
+_HEALTH_MIN_WORKERS_MAX_DIGITS = len(str(HEALTH_MIN_WORKERS_MAXIMUM))
 
 logger = structlog.get_logger(__name__)
 
@@ -94,6 +113,15 @@ def approval_required() -> bool:
         ValueError: ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that is not accepted.
     """
     return _parse_flag(REQUIRE_APPROVAL_ENV, os.environ.get(REQUIRE_APPROVAL_ENV))
+
+
+def automatic_resume_enabled() -> bool:
+    """Return whether this site resumes an interrupted ``apply`` without a person.
+
+    Raises:
+        ValueError: ``INFRAHUB_SYNC_AUTOMATIC_RESUME`` holds a value that is not accepted.
+    """
+    return _parse_flag(AUTOMATIC_RESUME_ENV, os.environ.get(AUTOMATIC_RESUME_ENV))
 
 
 def web_directory() -> Path | None:
@@ -381,6 +409,61 @@ def session_idle_seconds(environ: Mapping[str, str] | None = None) -> int:
     return int(value)
 
 
+class HealthSettingsError(ValueError):
+    """A health setting holds a value that is not accepted; the message names the variable, not the value."""
+
+
+def _whole_number(value: str, max_digits: int) -> int | None:
+    """Return the value as a whole number when it holds only ASCII digits, else None."""
+    if not (value.isascii() and value.isdigit()) or len(value) > max_digits:
+        return None
+    return int(value)
+
+
+def health_check_timeout_seconds(environ: Mapping[str, str] | None = None) -> int:
+    """Return the time limit, in seconds, of each health check and of the work-pool read.
+
+    Unset means the default of 3 seconds. An empty value is refused.
+
+    Raises:
+        HealthSettingsError: the value is not a whole number from 1 to 60.
+    """
+    env = os.environ if environ is None else environ
+    value = env.get(HEALTH_CHECK_TIMEOUT_ENV)
+    if value is None:
+        return HEALTH_CHECK_TIMEOUT_DEFAULT
+    seconds = _whole_number(value.strip(), len(str(HEALTH_CHECK_TIMEOUT_MAXIMUM)))
+    if seconds is None or not HEALTH_CHECK_TIMEOUT_MINIMUM <= seconds <= HEALTH_CHECK_TIMEOUT_MAXIMUM:
+        msg = (
+            f"{HEALTH_CHECK_TIMEOUT_ENV} must be a whole number of seconds "
+            f"from {HEALTH_CHECK_TIMEOUT_MINIMUM} to {HEALTH_CHECK_TIMEOUT_MAXIMUM}"
+        )
+        raise HealthSettingsError(msg)
+    return seconds
+
+
+def health_min_workers(environ: Mapping[str, str] | None = None) -> int:
+    """Return the number of live workers below which the health report is unhealthy.
+
+    Unset means the default of 1. An empty value is refused.
+
+    Raises:
+        HealthSettingsError: the value is not a whole number from 1 to 999999999.
+    """
+    env = os.environ if environ is None else environ
+    value = env.get(HEALTH_MIN_WORKERS_ENV)
+    if value is None:
+        return HEALTH_MIN_WORKERS_DEFAULT
+    minimum = _whole_number(value.strip(), _HEALTH_MIN_WORKERS_MAX_DIGITS)
+    if minimum is None or not HEALTH_MIN_WORKERS_MINIMUM <= minimum <= HEALTH_MIN_WORKERS_MAXIMUM:
+        msg = (
+            f"{HEALTH_MIN_WORKERS_ENV} must be a whole number "
+            f"from {HEALTH_MIN_WORKERS_MINIMUM} to {HEALTH_MIN_WORKERS_MAXIMUM}"
+        )
+        raise HealthSettingsError(msg)
+    return minimum
+
+
 def validate_settings() -> None:
     """Refuse to start the service when a setting holds a value that is not accepted.
 
@@ -391,4 +474,7 @@ def validate_settings() -> None:
         ValueError: A setting holds a value that is not accepted; the message names the variable.
     """
     approval_required()
+    automatic_resume_enabled()
     session_idle_seconds()
+    health_check_timeout_seconds()
+    health_min_workers()

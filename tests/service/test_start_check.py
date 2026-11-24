@@ -209,7 +209,7 @@ def test_the_api_checks_the_work_pool_it_reconciles(monkeypatch: pytest.MonkeyPa
         secret_values: tuple[str, ...] = ()
 
     class _Reconciler:
-        def __init__(self, *arguments: object) -> None:
+        def __init__(self, *arguments: object, **_options: object) -> None:
             reconciled.append(cast("str", arguments[-1]))
 
     monkeypatch.setattr(serve, "RunLivenessReconciler", _Reconciler)

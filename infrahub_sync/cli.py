@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import sys
 import tempfile
 import unicodedata
@@ -32,6 +33,7 @@ from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
     ApproveRunRequest,
+    AutomaticResumeResource,
     CancelRunRequest,
     ChangeScheduleRequest,
     ClientInputError,
@@ -41,6 +43,8 @@ from infrahub_sync.client import (
     CreateRunRequest,
     CreateScheduleRequest,
     NotSyncAPIError,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanResource,
     ProtocolError,
     RegisteredConfigurationResource,
@@ -57,6 +61,7 @@ from infrahub_sync.client import (
     ValidationReportResource,
     VerifyRunRequest,
 )
+from infrahub_sync.client.errors import CONFIGURATION_NAME_IN_USE, configuration_name_in_use_message
 from infrahub_sync.client.models import (
     LOG_STAGES,
     MAX_FAILURE_CAUSE_TEXT,
@@ -120,6 +125,8 @@ OWNER_SCOPE_NOTICE = "The owner setting applies only to values this run creates.
 NOT_RECORDED = "not recorded"
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
+# The client operation that `configs check` reports when the Sync API breaks the paging contract.
+_CHECK_PACKAGE = "check_package"
 _KIND_ARG = "kind"
 _TYPE_ARG = "type"
 _VERSION_ARG = "version"
@@ -401,6 +408,7 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
     return result[0], (
         *result[1],
         *_removed_format_message(error),
+        *_name_in_use_message(error),
         *_account_message(error),
         *cli_credentials.in_use_fields(error),
         *cli_credentials.refused_credential_fields(error),
@@ -418,6 +426,24 @@ def _removed_format_message(error: SyncClientError) -> tuple[tuple[str, object],
     if isinstance(error, APIError) and error.code == CREDENTIAL_FORMAT_REMOVED_REASON:
         return (("message", STORED_VERSION_FORMAT_REMOVED_MESSAGE),)
     return ()
+
+
+def _configuration_with_the_name(error: SyncClientError) -> tuple[str, str] | None:
+    """Return the ID and name of the configuration a ``configuration-name-in-use`` refusal names."""
+    if not isinstance(error, APIError) or isinstance(error, ConfigsAPIError):
+        return None
+    if error.code != CONFIGURATION_NAME_IN_USE or error.details is None:
+        return None
+    config_id, name = error.details.get("config_id"), error.details.get("name")
+    if not isinstance(config_id, str) or not isinstance(name, str):
+        return None
+    return config_id, name
+
+
+def _name_in_use_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return the message of a refusal of a name that another configuration has, as one more field."""
+    named = _configuration_with_the_name(error)
+    return () if named is None else (("message", configuration_name_in_use_message(named[1], named[0])),)
 
 
 def _account_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
@@ -453,12 +479,18 @@ def _forget_refused_session(error: SyncClientError) -> None:
 
 
 @contextmanager
-def _client_errors() -> Iterator[None]:
-    """Map the closed client error taxonomy to stable CLI exit behavior."""
+def _client_errors(hint: Callable[[SyncClientError], str | None] | None = None) -> Iterator[None]:
+    """Map the closed client error taxonomy to stable CLI exit behavior.
+
+    ``hint`` returns a line that says what to do next about the error, or nothing.
+    """
     try:
         yield
     except SyncClientError as error:
         code = _echo_client_error(error)
+        next_step = None if hint is None else hint(error)
+        if next_step is not None:
+            typer.echo(_display(f"hint: {next_step}"), err=True)
         _forget_refused_session(error)
         raise typer.Exit(code) from None
 
@@ -481,11 +513,52 @@ def _request(model: type[Any], **values: object) -> Any:
 def _package(path: Path) -> dict[str, Any]:
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError):
+    # `ValueError` covers a decode error and a date the YAML parser cannot build, such as
+    # `2024-13-45`; the Sync API refuses the same document as `invalid_package`.
+    except (OSError, ValueError, RecursionError, yaml.YAMLError):
         raise ClientInputError(_PACKAGE_ARG) from None
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value) or _contains_itself(value):
         raise ClientInputError(_PACKAGE_ARG)
     return cast("dict[str, Any]", value)
+
+
+def _contains_itself(value: object) -> bool:
+    """Return whether a parsed YAML value holds itself, through an alias to an enclosing node.
+
+    Such a value, for example `a: &x [*x]`, has no JSON form. The walk does not recurse, and it
+    visits each mapping or list once, so a value that uses one alias in many places stays cheap.
+    """
+    on_path: set[int] = set()
+    finished: set[int] = set()
+    stack: list[tuple[object, Iterator[object]]] = []
+    end = object()
+
+    def enter(item: object) -> bool:
+        """Start the walk of one mapping or list; return whether it encloses the current position."""
+        if type(item) is dict:  # pylint: disable=unidiomatic-typecheck
+            children: Iterator[object] = iter(cast("dict[object, object]", item).values())
+        elif type(item) is list:  # pylint: disable=unidiomatic-typecheck
+            children = iter(cast("list[object]", item))
+        else:
+            return False
+        if id(item) in on_path:
+            return True
+        if id(item) not in finished:
+            on_path.add(id(item))
+            stack.append((item, children))
+        return False
+
+    enter(value)
+    while stack:
+        item, children = stack[-1]
+        child = next(children, end)
+        if child is end:
+            stack.pop()
+            on_path.discard(id(item))
+            finished.add(id(item))
+        elif enter(child):
+            return True
+    return False
 
 
 def _idempotency_key(explicit: str | None) -> str:
@@ -627,6 +700,7 @@ def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) 
             ("created_at", resource.created_at.isoformat()),
             ("registered_by", resource.registered_by),
             ("registration_reason", resource.registration_reason),
+            ("registered_without_validation", resource.registered_without_validation),
             ("latest_run", _run_reference(resource.latest_run)),
             ("latest_applied_run", _run_reference(resource.latest_applied_run, applied=True)),
         )
@@ -642,6 +716,7 @@ def _echo_config_version_reference(
             ("registry_version", resource.registry_version),
             ("package_checksum", resource.package_checksum),
             ("created_at", resource.created_at.isoformat()),
+            ("registered_without_validation", resource.registered_without_validation),
         )
     )
 
@@ -675,6 +750,26 @@ def _echo_validation(resource: ValidationReportResource) -> None:
             ("next_offset", resource.next_offset),
         )
     )
+    _echo_findings(resource)
+
+
+def _echo_package_check(resource: PackageCheckResource) -> None:
+    """Print the check of an unregistered package as `configs validate` prints a version, with the read outcome."""
+    _echo_fields(
+        (
+            ("package_checksum", resource.package_checksum),
+            ("destination_read", resource.destination_read),
+            ("destination_schema_fingerprint", resource.destination_schema_fingerprint),
+            ("offset", resource.offset),
+            ("limit", resource.limit),
+            ("total_findings", resource.total_findings),
+            ("next_offset", resource.next_offset),
+        )
+    )
+    _echo_findings(resource)
+
+
+def _echo_findings(resource: ValidationReportResource | PackageCheckResource) -> None:
     for finding in resource.findings:
         typer.echo(
             _display(
@@ -695,8 +790,19 @@ def configs_register(
         help="Retry key. A new key is generated and printed when omitted.",
     ),
 ) -> None:
-    """Register a JSON or YAML configuration package."""
-    with _client_errors():
+    """Register a JSON or YAML configuration package.
+
+    The name of the package must not be the name of another configuration. A refusal prints the
+    command that adds the package as a new version of that configuration instead.
+    """
+
+    def add_as_a_version(error: SyncClientError) -> str | None:
+        named = _configuration_with_the_name(error)
+        if named is None:
+            return None
+        return f"infrahub-sync configs version {shlex.quote(named[0])} {shlex.quote(str(package))}"
+
+    with _client_errors(hint=add_as_a_version):
         key = _idempotency_key(idempotency_key)
         _echo_idempotency_key(key)
         request = cast(
@@ -809,8 +915,8 @@ def configs_validate(
         None,
         "--branch",
         help=(
-            "Also check the mapping, the import account's permissions and the workers' credential "
-            "variables against this Infrahub branch. Exits 1 when a finding on the returned page is "
+            "Also check the mapping and the import account's permissions against this Infrahub "
+            "branch, read with the destination's stored credential. Exits 1 when a finding on the returned page is "
             "an error; read every page with --offset to check them all."
         ),
     ),
@@ -936,6 +1042,54 @@ def _with_live_schema(path: Path, result: ConversionResult) -> tuple[ConversionR
         _echo_lines(refusal_lines(path.name, filled.refusals), err=True)
         raise typer.Exit(1)
     return filled, filled.package
+
+
+@configs_app.command("check")
+def configs_check(
+    ctx: typer.Context,
+    package: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
+    *,
+    offset: int = typer.Option(0, "--offset", help="Finding offset."),
+    limit: int = typer.Option(256, "--limit", help="Maximum findings to return."),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help=(
+            "Also check the mapping and the import account's permissions against this Infrahub "
+            "branch, read with the destination's stored credential. `destination_read` says whether the service read "
+            "the branch's schema."
+        ),
+    ),
+) -> None:
+    """Validate a JSON or YAML configuration package without registering it.
+
+    Prints the requested page of findings. Exits 1 when any page has an error finding: when the
+    printed page has none, the command reads the following pages until it finds one or reaches
+    the end. A warning does not change the exit code.
+    """
+    with _client_errors():
+        request = cast("PackageCheckRequest", _request(PackageCheckRequest, package=_package(package)))
+        client = _client(ctx)
+        report = client.check_package(request, offset=offset, limit=limit, branch=branch)
+        _echo_package_check(report)
+        # contracts/sync-api.md (spec 025, decision D-10): an error finding exits 1, on whichever
+        # page it is, so `configs check pkg && configs register pkg` never registers one.
+        page, page_offset = report, offset
+        while not _has_error_finding(page) and page.next_offset is not None:
+            # A `next_offset` that does not move forward would read the same page forever.
+            if page.next_offset <= page_offset:
+                raise ProtocolError(_CHECK_PACKAGE)
+            page_offset = page.next_offset
+            page = client.check_package(request, offset=page_offset, limit=limit, branch=branch)
+    if _has_error_finding(page):
+        if page is not report:
+            typer.echo(f"error findings start on a later page: run again with --offset {page.offset}", err=True)
+        raise typer.Exit(code=1)
+
+
+def _has_error_finding(report: PackageCheckResource) -> bool:
+    """Return whether one page of a package check holds an `error` finding."""
+    return any(finding.severity == "error" for finding in report.findings)
 
 
 @configs_app.command("convert")
@@ -1173,6 +1327,81 @@ def _echo_credentials_used(resource: RunResource) -> None:
     typer.echo("Credentials used:")
     for used in resource.credentials_used:
         typer.echo(_display(f"  {used.stage} {used.block}: {used.name} revision {used.revision}"))
+
+
+# What `runs show` prints for an automatic resume record that has not ended.
+_AUTOMATIC_RESUME_STATES = {
+    "waiting-check": "waiting for a live worker to run the check",
+    "checking": "checking",
+    "waiting-resume": "waiting for a live worker to resume",
+    "resuming": "resuming",
+}
+# What `runs show` prints for an ended record whose resume Sync submitted and no worker started.
+_AUTOMATIC_RESUME_SUBMITTED_ONLY = "submitted, no worker started it"
+# The reasons whose record ended because the check did not pass.
+_AUTOMATIC_CHECK_NOT_PASSED = frozenset({"check-failed", "check-found-differs"})
+
+
+def _automatic_check_passed(row: AutomaticResumeResource) -> bool:
+    """Return whether the automatic check of the record passed.
+
+    The record holds `operations_not_checked` once its check returned a report with a comparison.
+    The check passed unless the record ended because of the check, so a record that ended later,
+    for example when the resume was refused or no worker picked it up, still shows the check.
+    """
+    return row.operations_not_checked is not None and row.reason not in _AUTOMATIC_CHECK_NOT_PASSED
+
+
+def _echo_automatic_resumes(resource: RunResource) -> None:
+    """Print one block per automatic resume record of the run, oldest first (spec 030 contracts/cli-and-web.md).
+
+    The lines hold codes, counts and the fixed sentences the Sync API builds from them, never a
+    value from the plan.
+    """
+    for number, row in enumerate(resource.automatic_resumes, start=1):
+        # A resume that Sync submitted and no worker picked up ends `no-resume` with its flow run.
+        submitted_only = row.decision != "resume" and row.resume_flow_run_id is not None
+        if row.state != "ended":
+            heading = _AUTOMATIC_RESUME_STATES.get(row.state, row.state)
+        elif row.decision == "resume":
+            heading = "started"
+        elif submitted_only:
+            heading = _AUTOMATIC_RESUME_SUBMITTED_ONLY
+        else:
+            heading = "not started"
+        typer.echo("")
+        typer.echo(_display(f"Automatic resume {number}: {heading}"))
+        typer.echo(_display(f"  cause: {row.cause_text}"))
+        if _automatic_check_passed(row):
+            not_checked = row.operations_not_checked or 0
+            typer.echo(f"  check: passed, 0 differs, {not_checked} not checked")
+        if row.decision == "resume" or submitted_only:
+            start = "from the first operation" if row.start_after is None else f"after operation {row.start_after}"
+            verb = "submitted" if submitted_only else "resumed"
+            typer.echo(_display(f"  {verb} {start} by {row.actor}"))
+        if row.reason_text is not None:
+            typer.echo(_display(f"  reason: {row.reason_text}"))
+        if number == len(resource.automatic_resumes):
+            advice = _automatic_resume_next(row, resource)
+            if advice is not None:
+                typer.echo(_display(f"  next: {advice}"))
+
+
+def _automatic_resume_next(row: AutomaticResumeResource, resource: RunResource) -> str | None:
+    """What the operator can do after Sync did not resume the run, or `None` (spec 030 contracts/cli-and-web.md).
+
+    Only the latest record gets the line, only when it ended without a resume and the run still
+    has an interrupted write to resolve. A run that `runs resume` refuses (`not-resumable`) needs a
+    new plan, so the line does not name `runs resume`.
+    """
+    if row.state != "ended" or row.decision != "no-resume" or not resource.run.reconciliation_required:
+        return None
+    if row.reason == "not-resumable":
+        return "create a new plan; `infrahub-sync runs resume` cannot resume this run"
+    verify = f"run `infrahub-sync verify {resource.run.run_id}`"
+    return (
+        f"{verify}, then a new plan or `infrahub-sync runs resume {resource.run.run_id} --expected-checksum CHECKSUM`"
+    )
 
 
 def _side_read_text(side: SideRead | None) -> str | None:
@@ -1976,6 +2205,9 @@ def _run_row(run: PublicRunResource) -> str:
         run.actor or "-",
         run.started_at.isoformat(),
     )
+    # Only a run that Sync resumed without a person has the column (spec 030).
+    if run.automatic_resume_count:
+        columns = (*columns, f"auto resumes: {run.automatic_resume_count}")
     return _display("  ".join(columns))
 
 
@@ -2001,7 +2233,10 @@ def runs_list(  # pylint: disable=too-many-arguments
     limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
     all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
 ) -> None:
-    """List runs, newest first: run, configuration@version, branch, trigger type, phase, outcome, actor, start time."""
+    """List runs, newest first: run, configuration@version, branch, trigger type, phase, outcome, actor, start time.
+
+    A run that Sync resumed without a person adds `auto resumes: N`, the number of automatic resumes.
+    """
     with _client_errors():
         if version is not None and config is None:
             raise ClientInputError(_VERSION_ARG)
@@ -2183,6 +2418,8 @@ def runs_show(
     and the recorded deletes between them; while a first apply or `sync` runs, none are uncertain. A `resume`
     line counts the creates and updates that resume wrote; the `written:` line of a failed write counts those of
     every execution of the run.
+    Then one `Automatic resume N:` block per decision of Sync on resuming the run's interrupted write without a
+    person: whether it started, its cause, the result of its check, where it resumed, and why it did not start.
     Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
     scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
     A run with a stage that received the values of a stored credential adds a `Credentials used:` section, with one
@@ -2195,6 +2432,7 @@ def runs_show(
     _echo_run(resource)
     _echo_reads(resource)
     _echo_apply_progress(resource)
+    _echo_automatic_resumes(resource)
     scheduled_start = resource.run.scheduled_start_at
     _echo_fields(
         (
@@ -2364,12 +2602,25 @@ def runs_logs(
 
 
 def _event_details(event: EventResource) -> str | None:
-    """Render the facts of an event as `key=value` pairs, or `None` when it records none."""
+    """Render the facts of an event as `key=value` pairs, or `None` when it records none.
+
+    Each changed setting of a change event is one `<setting>=<before>-><after>` pair, with the
+    values written as JSON, so a cadence with spaces stays one value; `changes=none` when the
+    change altered no stored value.
+    """
     if event.details is None:
         return None
     pairs = []
     for key, value in event.details.model_dump().items():
-        if value is not None:
+        if value is None:
+            continue
+        if key == "changes":
+            pairs.extend(
+                f"{change['field']}={json.dumps(change['before'])}->{json.dumps(change['after'])}" for change in value
+            )
+            if not value:
+                pairs.append("changes=none")
+        else:
             pairs.append(f"{key}={value.isoformat() if isinstance(value, datetime) else value}")
     return " ".join(pairs) or None
 

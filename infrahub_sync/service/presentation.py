@@ -3,7 +3,9 @@
 A record holds an account identifier, never a name. Every JSON answer of the API application
 passes through `AccountNameMiddleware`, which shows the account name where a record holds an
 identifier. A route therefore needs no step of its own, and an answer replayed from a stored
-receipt is presented like an answer that was just built.
+receipt is presented like an answer that was just built. The reserved actor of the automatic
+resume (spec 030) is no account: it is shown as `AUTOMATIC_RESUME_DISPLAY_NAME`, with no
+account lookup.
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers, MutableHeaders
 
 from infrahub_sync.product_store.models import ACCOUNT_ID_PATTERN
+
+from .liveness import AUTOMATIC_RESUME_ACTOR
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -43,6 +47,10 @@ ACCOUNT_KIND = "account"
 
 AccountReader = Callable[[Sequence[str]], Mapping[str, "Account"]]
 
+# What every answer shows in place of the reserved actor of the automatic check and resume.
+AUTOMATIC_RESUME_DISPLAY_NAME = "Sync (automatic resume)"
+_AUTOMATIC_RESUME_MARK = AUTOMATIC_RESUME_ACTOR.encode()
+
 _ACCOUNT_ID = re.compile(ACCOUNT_ID_PATTERN)
 # Every account identifier starts with these bytes, so a body without them needs no parsing.
 _ACCOUNT_ID_MARK = b"acct_"
@@ -61,8 +69,8 @@ def display_name(account: Account) -> str:
     return account.name
 
 
-def account_identifiers(body: Any) -> set[str]:
-    """Return every account identifier that `present_accounts` would replace in this body."""
+def _actor_values(body: Any) -> set[str]:
+    """Return every account identifier and reserved actor that `present_accounts` would replace in this body."""
     found: set[str] = set()
 
     def collect(value: str) -> str:
@@ -73,19 +81,28 @@ def account_identifiers(body: Any) -> set[str]:
     return found
 
 
+def account_identifiers(body: Any) -> set[str]:
+    """Return every account identifier that `present_accounts` would replace with an account's name."""
+    return _actor_values(body) - {AUTOMATIC_RESUME_ACTOR}
+
+
 def present_accounts(body: Any, read_accounts: AccountReader) -> Any:
     """Return the body with each account identifier replaced by the display name of its account.
 
     Only the string value of a key of `ACCOUNT_FIELDS`, and the `id` of a related
     resource or of a primary resource of kind `account`, is replaced, and only when it has the
     form of an account identifier. An identifier that no account has is left as it is. The accounts are read with
-    one call; a body that holds no identifier is returned as it is, with no call.
+    one call; a body that holds no identifier is returned as it is, with no call. The reserved
+    actor of the automatic resume, in the same places, is replaced by
+    `AUTOMATIC_RESUME_DISPLAY_NAME` without reading any account.
     """
-    identifiers = account_identifiers(body)
-    if not identifiers:
+    values = _actor_values(body)
+    if not values:
         return body
-    accounts = read_accounts(sorted(identifiers))
+    identifiers = sorted(values - {AUTOMATIC_RESUME_ACTOR})
+    accounts = read_accounts(identifiers) if identifiers else {}
     names = {identifier: display_name(account) for identifier, account in accounts.items()}
+    names[AUTOMATIC_RESUME_ACTOR] = AUTOMATIC_RESUME_DISPLAY_NAME
     return _convert_accounts(body, lambda value: names.get(value, value))
 
 
@@ -116,8 +133,8 @@ def _convert_related(entry: Any, convert: _Convert) -> Any:
 
 
 def _convert_identifier(value: str, convert: _Convert) -> str:
-    """Apply `convert` to a value that has the form of an account identifier; return any other value as it is."""
-    return convert(value) if _ACCOUNT_ID.fullmatch(value) else value
+    """Apply `convert` to an account identifier or the reserved actor; return any other value as it is."""
+    return convert(value) if value == AUTOMATIC_RESUME_ACTOR or _ACCOUNT_ID.fullmatch(value) else value
 
 
 class AccountNameMiddleware:
@@ -162,7 +179,7 @@ class AccountNameMiddleware:
 
     async def _present(self, raw: bytes) -> bytes:
         """Return the bytes to send: `raw` itself unless an account identifier was replaced."""
-        if _ACCOUNT_ID_MARK not in raw:
+        if _ACCOUNT_ID_MARK not in raw and _AUTOMATIC_RESUME_MARK not in raw:
             return raw
         try:
             body = json.loads(raw)

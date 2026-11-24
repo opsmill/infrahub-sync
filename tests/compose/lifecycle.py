@@ -230,9 +230,14 @@ class Deployment:
 # The dependencies whose health is an answer from the service -- a PostgreSQL
 # readiness check and two HTTP endpoints -- rather than the fact a container is up.
 STATUS_DEPENDENCIES = ("postgres", "object-store", "prefect-server")
-# The worker state the Sync API reports, asked from inside the deployment so the
-# answer does not depend on how the host maps container ports onto loopback.
-STATUS = "import httpx; print(httpx.get('http://sync-api:8000/api/status', timeout=5).json()['worker']['state'])"
+# The worker state read from the Sync API's health report, asked from inside the deployment so
+# the answer does not depend on how the host maps container ports onto loopback. The report
+# answers 200 or 503; both carry the `workers` section. The four names are `worker_state_of`'s.
+STATUS = (
+    "import httpx; w = httpx.get('http://sync-api:8000/api/health', timeout=5).json()['workers']; "
+    "print('unavailable' if w['state'] == 'unknown' else 'no-live-worker' if w['live_workers'] == 0 "
+    "else 'busy' if w['queue_depth'] else 'ready')"
+)
 
 
 def wait_for(description: str, probe: Callable[[], object], *, timeout: int = READY_TIMEOUT_SECONDS) -> object:
@@ -267,11 +272,31 @@ def idempotency(prefix: str) -> dict[str, str]:
     return {"Idempotency-Key": f"{prefix}-{secrets.token_hex(8)}"}
 
 
+def worker_state_of(report: Mapping[str, Any]) -> str:
+    """Name the worker state of one `GET /api/health` report from its `workers` section alone.
+
+    `unavailable` when the work pool could not be read, `no-live-worker` when no worker is live,
+    `busy` when runs wait in the queue, and `ready` otherwise.
+    """
+    workers = report["workers"]
+    if workers["state"] == "unknown":
+        return "unavailable"
+    if workers["live_workers"] == 0:
+        return "no-live-worker"
+    return "busy" if workers["queue_depth"] else "ready"
+
+
+def health_report(base_url: str) -> dict[str, Any]:
+    """Read the unauthenticated health report, which answers 200 or 503 with the same shape."""
+    response = httpx.get(f"{base_url}/api/health", timeout=30)
+    if response.status_code not in {200, 503}:
+        response.raise_for_status()
+    return cast("dict[str, Any]", response.json())
+
+
 def worker_state(deployment: Deployment) -> str:
-    """Return the worker state the unauthenticated status endpoint reports."""
-    response = httpx.get(f"{deployment.api}/api/status", timeout=30)
-    response.raise_for_status()
-    return str(response.json()["worker"]["state"])
+    """Return the worker state the unauthenticated health report gives."""
+    return worker_state_of(health_report(deployment.api))
 
 
 def register(client: httpx.Client, package: Mapping[str, Any], reason: str) -> tuple[str, int]:

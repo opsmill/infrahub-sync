@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -154,7 +154,7 @@ def test_the_served_api_delivers_both_write_targets(monkeypatch: pytest.MonkeyPa
         received.update(settings, providers=len(providers))
         return "the schedule service"
 
-    monkeypatch.setattr(serve, "RunLivenessReconciler", lambda *_arguments: object())
+    monkeypatch.setattr(serve, "RunLivenessReconciler", lambda *_arguments, **_options: object())
     built = serve.build_app(
         projection_factory=object,
         resolver_factory=lambda: SimpleNamespace(secret_values=("a-token",)),
@@ -170,7 +170,9 @@ def test_the_served_api_delivers_both_write_targets(monkeypatch: pytest.MonkeyPa
         "secrets": ("a-token",),
         "providers": 3,
     }
-    assert built == {"schedules": "the schedule service", "credential_cipher": None}
+    assert set(cast("dict[str, object]", built)) == {"schedules", "health_checker", "credential_cipher"}
+    assert cast("dict[str, object]", built)["schedules"] == "the schedule service"
+    assert cast("dict[str, object]", built)["credential_cipher"] is None
 
 
 # ---------------------------------------------------------------------------

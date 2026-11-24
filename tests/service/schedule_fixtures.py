@@ -39,7 +39,7 @@ from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import IDLE_SECONDS, TOKEN_NAME, AccountSpec, seed_accounts
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
     from pathlib import Path
 
     import pytest
@@ -318,9 +318,11 @@ def schedule_api(
     *,
     delivered: Collection[str] = BOTH_WRITE_TARGETS,
     accounts: Mapping[str, AccountSpec] = ACCOUNTS,
+    clock: Callable[[], datetime] | None = None,
 ) -> ScheduleApi:
     """Build a Sync API with one registered configuration and the given set of delivered write targets.
 
+    ``clock``, when given, is the clock of the schedule service; otherwise the service reads the time.
     The destination of every scheduled start answers: the worker's check before admission
     (FR-035) is replaced, so no test reads a destination unless it asks for that check.
     """
@@ -329,10 +331,19 @@ def schedule_api(
     seed_accounts(projection, accounts, environment_token=ADMIN_ACCOUNT_NAME in accounts)
     create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     config_id = projection.create_configuration(package()).config_id
-    return restarted(ScheduleApi(projection, FakeOrchestration(), None, None, None, config_id), delivered=delivered)  # ty: ignore[invalid-argument-type]
+    return restarted(
+        ScheduleApi(projection, FakeOrchestration(), None, None, None, config_id),  # ty: ignore[invalid-argument-type]
+        delivered=delivered,
+        clock=clock,
+    )
 
 
-def restarted(api: ScheduleApi, *, delivered: Collection[str] = BOTH_WRITE_TARGETS) -> ScheduleApi:
+def restarted(
+    api: ScheduleApi,
+    *,
+    delivered: Collection[str] = BOTH_WRITE_TARGETS,
+    clock: Callable[[], datetime] | None = None,
+) -> ScheduleApi:
     """Return the API as a new API process builds it: same store and task manager, settings read again.
 
     The lifespan of the application has not run; a test runs it with ``with api.client:``.
@@ -344,6 +355,7 @@ def restarted(api: ScheduleApi, *, delivered: Collection[str] = BOTH_WRITE_TARGE
         resolver,
         delivered_write_targets=delivered,
         secrets=resolver.secret_values,
+        **({} if clock is None else {"clock": clock}),
     )
     service = RunService(api.projection, api.orchestration, secrets=resolver.secret_values)
     app = create_app(service, resolver, schedules=schedules)

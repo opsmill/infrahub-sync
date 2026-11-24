@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Get Version
-         * @description Return the installed server and supported unstable API versions.
+         * @description Return the installed server and Infrahub SDK versions and the supported unstable API versions.
          */
         get: operations["get_version_version_get"];
         put?: never;
@@ -24,7 +24,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/status": {
+    "/health": {
         parameters: {
             query?: never;
             header?: never;
@@ -32,10 +32,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Status
-         * @description Return unauthenticated lifecycle state without provider identifiers.
+         * Get Health
+         * @description Return the health of the components and workers, without authentication (spec 029).
          */
-        get: operations["get_status_status_get"];
+        get: operations["get_health_health_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -245,6 +245,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/configs/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Package
+         * @description Validate a package without registering it; an administrator token is required.
+         */
+        post: operations["check_package_configs_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/configs/{config_id}/versions": {
         parameters: {
             query?: never;
@@ -335,6 +355,29 @@ export interface paths {
          * @description Create a schedule that starts a ``sync`` run of one configuration version on a cron cadence.
          */
         post: operations["create_schedule_schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/next-starts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Schedule Next Starts
+         * @description Return the next start times of a cron expression in a time zone; stores nothing and records no event.
+         *
+         *     The values travel in the body, not in the query string, so a credential typed by mistake
+         *     never reaches the access log. It takes no ``Idempotency-Key``.
+         */
+        post: operations["schedule_next_starts_schedules_next_starts_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -490,7 +533,7 @@ export interface paths {
         };
         /**
          * List Events
-         * @description Return one page of typed events, oldest first, that match every given filter.
+         * @description Return one page of typed events that match every given filter, oldest first or, for ``desc``, newest first.
          */
         get: operations["list_events_events_get"];
         put?: never;
@@ -1096,6 +1139,16 @@ export interface components {
              * @default []
              */
             credentials_used: components["schemas"]["CredentialUsedResource"][];
+            /**
+             * Automatic Resumes
+             * @default []
+             */
+            automatic_resumes: components["schemas"]["AutomaticResumeResource"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
             plan_summary: components["schemas"]["ApprovedPlanSummaryResource"];
         } & {
             [key: string]: unknown;
@@ -1140,6 +1193,55 @@ export interface components {
             created_at: string;
             /** Expires At */
             expires_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AutomaticResumeResource
+         * @description Sync's decision on resuming one interrupted write without a person (spec 030 contracts/http-api.md).
+         *
+         *     `state` is `waiting-check`, `checking`, `waiting-resume`, `resuming` or `ended`. `decision` is
+         *     `resume` once Sync submitted the resume, and `no-resume` with a `reason` code when it did not.
+         *     `cause_text` and `reason_text` are fixed English sentences built from the codes. `actor` is
+         *     the name the Sync API shows for the reserved actor of the automatic check and resume,
+         *     `Sync (automatic resume)`. The fields are plain strings, so a client still reads a code that
+         *     a later Sync API adds.
+         */
+        AutomaticResumeResource: {
+            /** Interrupted Flow Run Id */
+            interrupted_flow_run_id: string;
+            /** Actor */
+            actor: string;
+            /** Cause */
+            cause: string;
+            /** Cause Text */
+            cause_text: string;
+            /** State */
+            state: string;
+            /** Decision */
+            decision?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Reason Text */
+            reason_text?: string | null;
+            /** Operations Not Checked */
+            operations_not_checked?: number | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Check Flow Run Id */
+            check_flow_run_id?: string | null;
+            /** Resume Flow Run Id */
+            resume_flow_run_id?: string | null;
+            /**
+             * Decided At
+             * Format: date-time
+             */
+            decided_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         } & {
             [key: string]: unknown;
         };
@@ -1191,16 +1293,65 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * ConfigErrorDetail
+         * @description Parse the public fields in a configuration API error.
+         */
+        ConfigErrorDetail: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Status */
+            status: number;
+            /** Family */
+            family: string;
+            /** Reason */
+            reason?: string | null;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ConfigErrorEnvelope
+         * @description Wrap a configuration API error response.
+         */
+        ConfigErrorEnvelope: {
+            error: components["schemas"]["ConfigErrorDetail"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ConfigMutationRequest
          * @description Submit a configuration package with an optional audit reason.
+         *
+         *     The package is ``package``, as JSON, or ``document``, the text of a package file, YAML or
+         *     JSON, which the Sync API parses as `POST /configs/validate` does. The web interface sends
+         *     ``document``, because a browser that parses and serializes the file again can change its
+         *     numbers; the CLI sends ``package``. Exactly one is set. The Sync API checks that rule
+         *     itself, after the administrator check, so this model shared with it does not; the field
+         *     that is not set is omitted.
+         *
+         *     ``registered_without_validation`` marks the created version as registered without
+         *     validation. The web interface sets it; the CLI never does. A request without the mark
+         *     keeps today's body, so it is omitted when ``false``.
          */
         ConfigMutationRequest: {
             /** Package */
-            package: {
+            package?: {
                 [key: string]: unknown;
-            };
+            } | null;
+            /** Document */
+            document?: string | null;
             /** Reason */
             reason?: string | null;
+            /**
+             * Registered Without Validation
+             * @default false
+             */
+            registered_without_validation: boolean;
         };
         /**
          * ConfigurationPage
@@ -1267,6 +1418,11 @@ export interface components {
             registered_by?: string | null;
             /** Registration Reason */
             registration_reason?: string | null;
+            /**
+             * Registered Without Validation
+             * @default false
+             */
+            registered_without_validation: boolean;
             latest_run?: components["schemas"]["RunReference"] | null;
             latest_applied_run?: components["schemas"]["RunReference"] | null;
         } & {
@@ -1495,6 +1651,29 @@ export interface components {
             placeholder: string;
         };
         /**
+         * DependencyHealthResource
+         * @description Report whether one component of the Sync API answered its health check.
+         */
+        DependencyHealthResource: {
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "database" | "object_store" | "task_manager" | "task_manager_db";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "up" | "down";
+            /**
+             * Error
+             * @enum {string}
+             */
+            error: "none" | "timeout" | "connection_refused" | "connection_closed" | "name_resolution_failed" | "unavailable" | "unknown_error";
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * DescribeCredentialRequest
          * @description A new description: ``PATCH /credentials/{name}``.
          */
@@ -1562,6 +1741,20 @@ export interface components {
             cause?: string | null;
             /** Revision */
             revision?: number | null;
+            /** Changes */
+            changes?: components["schemas"]["ScheduleSettingChangeResource"][] | null;
+            /** Reason */
+            reason?: string | null;
+            /** Reason Detail */
+            reason_detail?: {
+                [key: string]: number | string;
+            } | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Operations Not Checked */
+            operations_not_checked?: number | null;
+            /** Resume Flow Run Id */
+            resume_flow_run_id?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -1645,6 +1838,30 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * HealthResource
+         * @description Report the health of the Sync API's components and of its workers.
+         *
+         *     The model does not fix the number or the order of the components: it requires at least one,
+         *     each named once, and a ``status`` that matches the components and the workers.
+         */
+        HealthResource: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "healthy" | "unhealthy";
+            /** Dependencies */
+            dependencies: components["schemas"]["DependencyHealthResource"][];
+            workers: components["schemas"]["WorkersHealthResource"];
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * OrchestrationSummary
          * @description Summarize one orchestration attempt and its terminal verdict.
          */
@@ -1683,6 +1900,59 @@ export interface components {
             prefect_flow_run_url?: string | null;
             reads?: components["schemas"]["StageReads"] | null;
             plan_step?: components["schemas"]["PlanStepTimings"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PackageCheckRequest
+         * @description The body of `POST /configs/validate`: a package as JSON, or the text of a package file.
+         *
+         *     Exactly one field is set. The route checks that rule itself, so that breaking it is the
+         *     `request` refusal of the contract rather than a schema refusal, and so that it is checked
+         *     only after the caller is known to be an administrator.
+         */
+        PackageCheckRequest: {
+            /** Package */
+            package?: {
+                [key: string]: unknown;
+            } | null;
+            /** Document */
+            document?: string | null;
+        };
+        /**
+         * PackageCheckResource
+         * @description Return the check of a package that is not registered, with one page of its findings.
+         *
+         *     ``package_checksum`` and ``declared_content`` are what registering the package would store.
+         *     ``destination_read`` is ``not_requested`` without a branch, ``read`` when the destination
+         *     schema was read, ``not_read`` when the destination adapter is unknown or declares no schema
+         *     read, or the reason the read failed: ``timeout``, ``unreachable``,
+         *     ``unauthorized``, ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured`` or
+         *     ``credentials``.
+         */
+        PackageCheckResource: {
+            /** Package Checksum */
+            package_checksum: string;
+            /** Name */
+            name?: string | null;
+            /** Declared Content */
+            declared_content: {
+                [key: string]: unknown;
+            };
+            /** Destination Read */
+            destination_read: string;
+            /** Destination Schema Fingerprint */
+            destination_schema_fingerprint?: string | null;
+            /** Findings */
+            findings: components["schemas"]["ValidationFindingResource"][];
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Total Findings */
+            total_findings: number;
+            /** Next Offset */
+            next_offset: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -2077,6 +2347,11 @@ export interface components {
              * @default []
              */
             prefect_executions: components["schemas"]["PublicExecutionLink"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
         } & {
             [key: string]: unknown;
         };
@@ -2287,9 +2562,13 @@ export interface components {
          * @description Combine a public run record with its orchestration history.
          *
          *     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
-         *     predates spec 016; `resumes` is then empty. `credentials_used` holds one entry for each
-         *     block whose stored credential values a stage execution received, oldest first; it is empty
-         *     for a run whose stages received none, and for a Sync API that predates spec 027.
+         *     predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
+         *     resuming the run's interrupted writes without a person, oldest first, and
+         *     `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). For a run
+         *     that no decision concerns, and for a Sync API that predates spec 030, `automatic_resumes` is
+         *     empty and `automatic_resume_count` is 0. `credentials_used` holds one entry for each block
+         *     whose stored credential values a stage execution received, oldest first; it is empty for a
+         *     run whose stages received none, and for a Sync API that predates spec 027.
          */
         RunResource: {
             run: components["schemas"]["PublicRunResource"];
@@ -2306,6 +2585,16 @@ export interface components {
              * @default []
              */
             credentials_used: components["schemas"]["CredentialUsedResource"][];
+            /**
+             * Automatic Resumes
+             * @default []
+             */
+            automatic_resumes: components["schemas"]["AutomaticResumeResource"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
         } & {
             [key: string]: unknown;
         };
@@ -2316,6 +2605,49 @@ export interface components {
         ScheduleActionRequest: {
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * ScheduleNextStarts
+         * @description The next start times of a cadence, in UTC and in increasing order.
+         *
+         *     ``starts`` holds fewer times than requested when the cadence has fewer starts before
+         *     ``searched_until``.
+         */
+        ScheduleNextStarts: {
+            /** Cron */
+            cron: string;
+            /** Timezone */
+            timezone: string;
+            /** Starts */
+            starts: string[];
+            /**
+             * Searched Until
+             * Format: date-time
+             */
+            searched_until: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleNextStartsRequest
+         * @description Request the next start times of a cron expression in a time zone, before a schedule is saved.
+         *
+         *     `cron` and `timezone` are not validated here, as in `CreateScheduleRequest`: the Sync API
+         *     answers `schedule-cron-invalid` or `schedule-timezone-invalid`.
+         */
+        ScheduleNextStartsRequest: {
+            /** Cron */
+            cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            timezone: string;
+            /**
+             * Count
+             * @default 5
+             */
+            count: number;
         };
         /**
          * ScheduleOpenBranchResource
@@ -2410,16 +2742,20 @@ export interface components {
             [key: string]: unknown;
         };
         /**
-         * ServiceStatusResource
-         * @description Report service readiness and worker availability.
+         * ScheduleSettingChangeResource
+         * @description One setting that a change of a schedule altered, with its stored value before and after.
+         *
+         *     ``field`` is the name of the setting as the change request names it, such as ``cron`` or
+         *     ``start_late_by_at_most_seconds``; the values are the stored values, such as a version
+         *     number, a cron expression or a number of seconds.
          */
-        ServiceStatusResource: {
-            /**
-             * Service
-             * @constant
-             */
-            service: "ready";
-            worker: components["schemas"]["WorkerStatusResource"];
+        ScheduleSettingChangeResource: {
+            /** Field */
+            field: string;
+            /** Before */
+            before: boolean | number | string;
+            /** After */
+            after: boolean | number | string;
         } & {
             [key: string]: unknown;
         };
@@ -2554,6 +2890,25 @@ export interface components {
             ctx?: Record<string, never>;
         };
         /**
+         * ValidationFindingResource
+         * @description Describe one ordered configuration validation finding.
+         */
+        ValidationFindingResource: {
+            /** Code */
+            code: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "error" | "warning";
+            /** Location */
+            location: string;
+            /** Message */
+            message: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * VerifyRunRequest
          * @description Request verification of a saved run plan.
          */
@@ -2572,27 +2927,49 @@ export interface components {
             api_versions: string[];
             /** Stability */
             stability: string;
+            /** Sdk Version */
+            sdk_version?: string | null;
         } & {
             [key: string]: unknown;
         };
         /**
-         * WorkerStatusResource
-         * @description Report bounded worker availability details.
+         * WorkerHealthResource
+         * @description Report one worker that sent a heartbeat within the last 24 hours.
          */
-        WorkerStatusResource: {
+        WorkerHealthResource: {
+            /** Name */
+            name: string;
             /**
              * State
              * @enum {string}
              */
-            state: "ready" | "busy" | "no-live-worker" | "unavailable";
-            /** Detail Available */
-            detail_available: boolean;
+            state: "live" | "stale";
+            /**
+             * Last Heartbeat
+             * Format: date-time
+             */
+            last_heartbeat: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WorkersHealthResource
+         * @description Report the workers of the work pool, or that the work pool could not be read.
+         */
+        WorkersHealthResource: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "known" | "unknown";
+            /** Minimum */
+            minimum: number;
             /** Live Workers */
-            live_workers?: number | null;
+            live_workers: number | null;
             /** Queue Depth */
-            queue_depth?: number | null;
-            /** Observed At */
-            observed_at: string | null;
+            queue_depth: number | null;
+            /** Items */
+            items: components["schemas"]["WorkerHealthResource"][];
         } & {
             [key: string]: unknown;
         };
@@ -2625,7 +3002,7 @@ export interface operations {
             };
         };
     };
-    get_status_status_get: {
+    get_health_health_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2640,7 +3017,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ServiceStatusResource"];
+                    "application/json": components["schemas"]["HealthResource"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResource"] | components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -3678,6 +4064,79 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description The request sets both or neither of `package` and `document`, or `document` is not a YAML or JSON mapping (`ConfigErrorEnvelope`, family `request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorEnvelope"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request does not match the API schema (`ErrorEnvelope`), or the validation refused the package (`ConfigErrorEnvelope`, family `validation`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"] | components["schemas"]["ConfigErrorEnvelope"];
+                };
+            };
+        };
+    };
+    check_package_configs_validate_post: {
+        parameters: {
+            query?: {
+                offset?: string;
+                limit?: string;
+                branch?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackageCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageCheckResource"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -3749,13 +4208,49 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description Validation Error */
+            /** @description The request sets both or neither of `package` and `document`, or `document` is not a YAML or JSON mapping (`ConfigErrorEnvelope`, family `request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorEnvelope"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request does not match the API schema (`ErrorEnvelope`), or the validation refused the package (`ConfigErrorEnvelope`, family `validation`). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"] | components["schemas"]["ConfigErrorEnvelope"];
                 };
             };
         };
@@ -3960,6 +4455,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    schedule_next_starts_schedules_next_starts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleNextStartsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleNextStarts"];
                 };
             };
             /** @description Unauthorized */
@@ -4606,6 +5179,7 @@ export interface operations {
                 until?: string | null;
                 limit?: string | null;
                 offset?: string | null;
+                order?: "asc" | "desc";
             };
             header?: never;
             path?: never;

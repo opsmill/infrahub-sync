@@ -1,12 +1,11 @@
 """FastAPI routing for the stable Sync HTTP contract."""
 
 import logging
-import os
 from asyncio import CancelledError, create_task, sleep
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -21,6 +20,7 @@ from infrahub_sync.client.models import (
     MAX_LOG_LIMIT,
     MAX_REPORT_LIMIT,
     MIN_LIMIT,
+    HealthResource,
     PlanReportPageResource,
 )
 from infrahub_sync.configuration.removed_credential_format import (
@@ -30,14 +30,16 @@ from infrahub_sync.configuration.removed_credential_format import (
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.execution import redaction_scope
 from infrahub_sync.plan.models import PROBLEM_TYPES
-from infrahub_sync.product_store import Account
+from infrahub_sync.product_store import Account, EventOrder
 
 from .account_routes import account_router
 from .auth import Principal, PrincipalResolver
-from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
+from .compatibility import API_STABILITY, API_VERSIONS, installed_sdk_version, installed_server_version
 from .config_routes import (
     CONFIG_ID_PATTERN,
     MAX_REGISTRY_VERSION,
+    V2_CONFIGURATION_MESSAGE,
+    V2_CONFIGURATION_REASON,
     ConfigurationAPIError,
     ConfigurationRoutes,
     configuration_router,
@@ -48,7 +50,7 @@ from .credential_actions import CredentialActions, destination_credential_values
 from .credential_crypto import CredentialCipher
 from .credential_routes import credential_router
 from .events import ACCOUNT_REFUSED
-from .liveness import RunLivenessReconciler
+from .liveness import AUTOMATIC_RESUME_ACTOR, RunLivenessReconciler
 from .models import (
     ApplyRunRequest,
     ApprovedRunResource,
@@ -68,7 +70,6 @@ from .models import (
     RunLogPage,
     RunPage,
     RunResource,
-    ServiceStatusResource,
     VerifyRunRequest,
     VersionResource,
 )
@@ -104,6 +105,13 @@ async def _service_error(_request: Request, exc: ServiceAPIError) -> JSONRespons
 
 
 _HTTP_ERROR_CODES = {404: "not-found", 405: "method-not-allowed"}
+# The fixed message of each configuration refusal reason that has its own; any other refusal
+# gets one general message, so no caller-supplied text reaches the response.
+_CONFIGURATION_REFUSAL_MESSAGES: dict[str | None, str] = {
+    UNSUPPORTED_STORE_REASON: UNSUPPORTED_STORE_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON: CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    V2_CONFIGURATION_REASON: V2_CONFIGURATION_MESSAGE,
+}
 
 
 async def _http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:  # noqa: RUF029
@@ -300,8 +308,9 @@ def events_router(service: RunService, authenticate: Callable[..., Principal]) -
         until: Annotated[str | None, Query()] = None,
         limit: Annotated[str | None, Query()] = None,
         offset: Annotated[str | None, Query()] = None,
+        order: Annotated[EventOrder, Query()] = "asc",
     ) -> EventPage:
-        """Return one page of typed events, oldest first, that match every given filter."""
+        """Return one page of typed events that match every given filter, oldest first or, for ``desc``, newest first."""
         return service.list_events(
             run_id=run_id,
             config_id=config_id,
@@ -311,6 +320,7 @@ def events_router(service: RunService, authenticate: Callable[..., Principal]) -
             until=_optional_time(until),
             limit=parse_page_limit(limit),
             offset=_page_offset(offset),
+            order=order,
         )
 
     return router
@@ -424,6 +434,11 @@ def _principal_resolver(
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
             raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
         resolution = resolver.resolve(token)
+        if resolution.principal is not None and resolution.principal.actor == AUTOMATIC_RESUME_ACTOR:
+            # The reserved actor of the automatic check and resume is never a request's actor,
+            # whatever resolver is configured: only the liveness reconciler acts as it (research R5).
+            service.record_authentication_refusal(request.url.path, "reserved-actor")
+            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
         if resolution.principal is not None:
             return resolution.principal
         if resolution.refusal == "token-expired":
@@ -503,12 +518,12 @@ def _lifespan(reconciler: RunLivenessReconciler | None, schedules: ScheduleServi
     return lifespan
 
 
-# The refusals of a configuration route that have a fixed message of their own. Every other
-# refusal answers one general message, and its `reason` names the cause.
-_CONFIGURATION_REFUSAL_MESSAGES = {
-    UNSUPPORTED_STORE_REASON: UNSUPPORTED_STORE_MESSAGE,
-    CREDENTIAL_FORMAT_REMOVED_REASON: CREDENTIAL_FORMAT_REMOVED_MESSAGE,
-}
+class HealthReporter(Protocol):
+    """What the health route reads: `HealthChecker` in a served process, a fake in a test."""
+
+    async def report(self) -> HealthResource:
+        """Return the latest health report."""
+        ...
 
 
 def create_app(
@@ -519,8 +534,13 @@ def create_app(
     *,
     schedules: ScheduleService | None = None,
     credential_cipher: CredentialCipher | None = None,
+    health_checker: HealthReporter | None = None,
 ) -> FastAPI:
     """Create the service application from explicit providers.
+
+    ``GET /health`` answers the report of ``health_checker``. Without one, as in a test that does
+    not exercise the route, it answers the 503 ``service-unavailable`` envelope; it never builds a
+    client of a real component.
 
     With ``schedules``, the application serves the schedule routes. When the API process starts,
     it stops the schedules that can no longer run and makes the Prefect schedules match the stored
@@ -556,7 +576,7 @@ def create_app(
             error=ConfigErrorDetail(
                 code=f"configs-{exc.family}",
                 message=_CONFIGURATION_REFUSAL_MESSAGES.get(
-                    exc.reason or "", "the configuration service refused the request"
+                    exc.reason, "the configuration service refused the request"
                 ),
                 status=exc.status,
                 family=exc.family,
@@ -584,15 +604,41 @@ def create_app(
 
     @application.get("/version")
     def get_version() -> VersionResource:
-        """Return the installed server and supported unstable API versions."""
+        """Return the installed server and Infrahub SDK versions and the supported unstable API versions."""
         return VersionResource(
-            server_version=installed_server_version(), api_versions=API_VERSIONS, stability=API_STABILITY
+            server_version=installed_server_version(),
+            api_versions=API_VERSIONS,
+            stability=API_STABILITY,
+            sdk_version=installed_sdk_version(),
         )
 
-    @application.get("/status")
-    async def get_status() -> ServiceStatusResource:
-        """Return unauthenticated lifecycle state without provider identifiers."""
-        return await service.status(os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"))
+    # A 503 carries the unhealthy report, or the error envelope when there is no report: no
+    # health checker is configured, or the route fails before the report is built.
+    @application.get(
+        "/health",
+        response_model=HealthResource,
+        responses={503: {"model": HealthResource | ErrorEnvelope}},
+    )
+    async def get_health() -> JSONResponse:
+        """Return the health of the components and workers, without authentication (spec 029)."""
+        return await health_answer()
+
+    # A monitoring tool can ask with HEAD: the same status and headers, and the server sends no body.
+    # Left out of the OpenAPI document, which keeps one operation for the report.
+    @application.head("/health", include_in_schema=False)
+    async def head_health() -> JSONResponse:
+        """Answer `GET /health`'s status and headers for a HEAD request."""
+        return await health_answer()
+
+    async def health_answer() -> JSONResponse:
+        if health_checker is None:
+            raise ServiceAPIError(503, "service-unavailable", "the Sync service is temporarily unavailable")
+        report = await health_checker.report()
+        return JSONResponse(
+            status_code=200 if report.status == "healthy" else 503,
+            content=report.model_dump(mode="json"),
+            headers={"Cache-Control": "no-store"},
+        )
 
     # Added before `contain_unhandled_error`, so it runs inside it: every JSON answer of a route or
     # of an exception handler passes through it, and a failed account read answers that 503.

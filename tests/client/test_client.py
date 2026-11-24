@@ -29,6 +29,8 @@ from infrahub_sync.client import (
     EventPage,
     EventResource,
     NotSyncAPIError,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanReportPageResource,
     PrincipalResource,
     ProtocolError,
@@ -49,6 +51,26 @@ NOW = datetime(2026, 8, 30, 12, tzinfo=timezone.utc).isoformat()
 
 def _version(**extra: object) -> dict[str, object]:
     return {"server_version": "3.0.0", "api_versions": ["v3-unstable"], "stability": "unstable", **extra}
+
+
+def _health(**extra: object) -> dict[str, object]:
+    return {
+        "status": "healthy",
+        "dependencies": [{"name": "database", "status": "up", "error": "none"}],
+        "workers": {
+            "state": "known",
+            "minimum": 1,
+            "live_workers": 1,
+            "queue_depth": 0,
+            "items": [{"name": "worker-1", "state": "live", "last_heartbeat": NOW}],
+        },
+        "timestamp": NOW,
+        **extra,
+    }
+
+
+def _unhealthy_health() -> dict[str, object]:
+    return _health(status="unhealthy", dependencies=[{"name": "database", "status": "down", "error": "timeout"}])
 
 
 def _run(run_id: str = "run-1") -> dict[str, object]:
@@ -251,10 +273,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
     version = _config_version()
     config = {"config_id": "cfg", "created_at": NOW}
     responses: dict[tuple[str, str], tuple[int, object]] = {
-        ("GET", "/api/status"): (
-            200,
-            {"service": "ready", "worker": {"state": "unavailable", "detail_available": False, "observed_at": None}},
-        ),
+        ("GET", "/api/health"): (200, _health()),
         ("POST", "/api/configs"): (201, {"configuration": config, "version": version}),
         ("POST", "/api/configs/cfg/versions"): (200, {"version": version, "created": False}),
         ("GET", "/api/configs"): (200, {"items": [config], "next_cursor": None}),
@@ -296,7 +315,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
 
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
     mutation = ConfigMutationRequest(package={"format_version": 1}, reason="test")
-    client.get_status()
+    client.get_health()
     client.register_config(mutation, "key-1")
     client.create_config_version("cfg", mutation, "key-2")
     client.list_configs()
@@ -313,7 +332,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
     client.apply_run("run-1", ApplyRunRequest(expected_checksum="a" * 64, confirm_writes=True, reason="test"), "key-5")
     client.cancel_run("run-1", CancelRunRequest(reason="test"), "key-6")
 
-    protected = [request for request in requests if request.url.path not in {"/api/version", "/api/status"}]
+    protected = [request for request in requests if request.url.path not in {"/api/version", "/api/health"}]
     assert all(request.headers["Authorization"] == f"Bearer {TOKEN}" for request in protected)
     assert [request.headers.get("Idempotency-Key") for request in requests if request.method == "POST"] == [
         "key-1",
@@ -421,6 +440,34 @@ def test_register_config_403_retains_machine_fields_and_discards_secrets() -> No
     assert raised.value.__cause__ is None
 
 
+def test_register_config_name_in_use_keeps_the_configuration_that_has_the_name() -> None:
+    details = {"config_id": "20261120T1249-9d57f620", "name": "from-netbox"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            409,
+            json={
+                "error": {
+                    "code": "configuration-name-in-use",
+                    "message": "server message",
+                    "status": 409,
+                    "details": details,
+                }
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+    request = ConfigMutationRequest(package={"format_version": 1}, reason="test")
+
+    with pytest.raises(APIError) as raised:
+        client.register_config(request, "key-1")
+
+    assert not isinstance(raised.value, ConfigsAPIError)
+    assert (raised.value.status, raised.value.code, raised.value.details) == (409, "configuration-name-in-use", details)
+
+
 @pytest.mark.parametrize(
     ("response", "error_type"),
     [
@@ -474,7 +521,48 @@ def test_response_failures_are_typed_and_secret_safe(response: httpx.Response, e
     assert raised.value.__cause__ is None
 
 
-def test_status_accepts_only_its_declared_success_status() -> None:
+def test_get_health_returns_a_healthy_report_for_200() -> None:
+    client = SyncClient(
+        "https://example.test",
+        TOKEN,
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=_health())),
+    )
+
+    report = client.get_health()
+
+    assert report.status == "healthy"
+    assert report.workers.live_workers == 1
+
+
+def test_get_health_returns_an_unhealthy_report_for_503() -> None:
+    body = _health(
+        status="unhealthy",
+        dependencies=[{"name": "database", "status": "down", "error": "timeout"}],
+    )
+    client = SyncClient(
+        "https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: httpx.Response(503, json=body))
+    )
+
+    report = client.get_health()
+
+    assert report.status == "unhealthy"
+    assert report.dependencies[0].error == "timeout"
+
+
+def test_get_health_sends_no_credential() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=_health())
+
+    SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler)).get_health()
+
+    assert [request.url.path for request in requests] == ["/api/health"]
+    assert "Authorization" not in requests[0].headers
+
+
+def test_get_health_raises_the_error_envelope_error_for_a_503_envelope() -> None:
     response = httpx.Response(
         503,
         json={
@@ -489,8 +577,42 @@ def test_status_accepts_only_its_declared_success_status() -> None:
     )
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: response))
 
-    with pytest.raises(ProtocolError):
-        client.get_status()
+    with pytest.raises(APIError) as raised:
+        client.get_health()
+
+    assert (raised.value.status, raised.value.code) == (503, "unavailable")
+    assert "secret" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param(
+            httpx.Response(
+                404,
+                json={
+                    "error": {"code": "not_found", "message": "x", "status": 404, "run_id": None, "mutation_id": None}
+                },
+            ),
+            id="404",
+        ),
+        pytest.param(httpx.Response(500, json=_health()), id="500"),
+        pytest.param(
+            httpx.Response(200, content=b"not json", headers={"Content-Type": "application/json"}), id="non-json"
+        ),
+        pytest.param(httpx.Response(200, json={"status": "healthy"}), id="200-invalid-body"),
+        pytest.param(httpx.Response(503, json={"status": "unhealthy"}), id="503-invalid-body"),
+        pytest.param(httpx.Response(200, json=_unhealthy_health()), id="200-unhealthy-report"),
+        pytest.param(httpx.Response(503, json=_health()), id="503-healthy-report"),
+    ],
+)
+def test_get_health_raises_protocol_error_for_any_other_answer(response: httpx.Response) -> None:
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: response))
+
+    with pytest.raises(ProtocolError) as raised:
+        client.get_health()
+
+    assert raised.value.operation == "get_health"
 
 
 def test_json_response_over_16_mib_is_a_protocol_error() -> None:
@@ -1261,3 +1383,110 @@ def test_validate_config_refuses_a_branch_with_surrounding_whitespace(branch: st
     with pytest.raises(ClientInputError):
         client.validate_config("cfg", 1, branch=branch)
     assert requests == []
+
+
+def _package_check(**extra: object) -> dict[str, object]:
+    return {
+        "package_checksum": "b" * 64,
+        "name": "edge-sync",
+        "declared_content": {"format_version": 1, "configuration": {"name": "edge-sync"}},
+        "destination_read": "not_requested",
+        "destination_schema_fingerprint": None,
+        "offset": 0,
+        "limit": 256,
+        "total_findings": 1,
+        "next_offset": None,
+        "findings": [{"code": "finding", "severity": "warning", "location": "/a", "message": "a finding"}],
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("request_fields", "body"),
+    [
+        pytest.param(
+            {"package": {"format_version": 1, "configuration": {"name": "edge-sync"}}},
+            {"package": {"format_version": 1, "configuration": {"name": "edge-sync"}}},
+            id="package",
+        ),
+        pytest.param(
+            {"document": "format_version: 1\nconfiguration:\n  name: edge-sync\n"},
+            {"document": "format_version: 1\nconfiguration:\n  name: edge-sync\n"},
+            id="document",
+        ),
+    ],
+)
+def test_check_package_posts_exactly_one_field_without_an_idempotency_key(
+    request_fields: dict[str, object], body: dict[str, object]
+) -> None:
+    """contracts/sync-api.md: `POST /api/configs/validate` takes one of `package` and `document`."""
+    requests: list[httpx.Request] = []
+    client = _list_client({None: _package_check(destination_read="read")}, requests)
+
+    report = client.check_package(
+        PackageCheckRequest.model_validate(request_fields), offset=2, limit=3, branch="review"
+    )
+
+    (request,) = requests
+    assert (request.method, request.url.path) == ("POST", "/api/configs/validate")
+    assert dict(request.url.params) == {"offset": "2", "limit": "3", "branch": "review"}
+    assert json.loads(request.content) == body
+    assert "Idempotency-Key" not in request.headers
+    assert request.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert isinstance(report, PackageCheckResource)
+    assert report.destination_read == "read"
+    assert [finding.code for finding in report.findings] == ["finding"]
+
+
+def test_check_package_without_a_branch_sends_no_branch() -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({None: _package_check()}, requests)
+
+    client.check_package(PackageCheckRequest(package={"format_version": 1}))
+
+    assert dict(requests[0].url.params) == {"offset": "0", "limit": "256"}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"offset": -1}, id="negative-offset"),
+        pytest.param({"limit": 0}, id="zero-limit"),
+        pytest.param({"limit": 257}, id="limit-over-256"),
+        pytest.param({"branch": " main"}, id="untrimmed-branch"),
+        pytest.param({"branch": ""}, id="empty-branch"),
+    ],
+)
+def test_check_package_refuses_bad_page_or_branch_arguments_before_sending(arguments: dict[str, object]) -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({}, requests)
+
+    with pytest.raises(ClientInputError):
+        client.check_package(PackageCheckRequest(package={"format_version": 1}), **arguments)  # ty: ignore[invalid-argument-type]
+    assert requests == []
+
+
+def test_check_package_v2_refusal_is_a_configs_api_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            422,
+            json={
+                "error": {
+                    "code": "validation",
+                    "message": "run infrahub-sync configs convert",
+                    "status": 422,
+                    "family": "validation",
+                    "reason": "v2_configuration",
+                }
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ConfigsAPIError) as raised:
+        client.check_package(PackageCheckRequest(document="source: {}\ndestination: {}\n"))
+
+    assert raised.value.status == 422
+    assert raised.value.reason == "v2_configuration"

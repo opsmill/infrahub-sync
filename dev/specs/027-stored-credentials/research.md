@@ -268,8 +268,8 @@ through the API after the stack starts, instead of setting `INFRAHUB_SYNC_CREDEN
 
 ## R12. Documentation, decision records, constitution
 
-- **ADR 0054** "The Sync API stores credentials and releases them to the worker account" supersedes
-  ADR 0039. ADR 0026 and ADR 0040 get a "Changed by 0054" note. ADR 0054 also records:
+- **ADR 0057** "The Sync API stores credentials and releases them to the worker account" supersedes
+  ADR 0039. ADR 0026 and ADR 0040 get a "Changed by 0057" note. ADR 0057 also records:
     - **Rollback (critique E5).** An earlier build ignores the new tables, needs the
       `INFRAHUB_SYNC_CREDENTIAL_*` variables again, and cannot run a version that names a stored
       credential.

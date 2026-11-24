@@ -209,8 +209,32 @@ differs from the request's; the HTTP layer returns `422 invalid-cursor`. `valida
 the limits in `client/models.py` (`DEFAULT_LIMIT` 50, `MAX_LIMIT` 200). ADR 0032 records the
 paging rules.
 
+Two service modules report the health of a deployment (spec 029,
+[ADR 0055](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0055-the-health-endpoint-replaces-status.md)):
+
+- `health.py` builds the answer of `GET /api/health`. `HealthChecker` runs the four component
+  checks (`database_check`, `object_store_check`, `task_manager_check`,
+  `task_manager_db_check`) and the read of the work pool at the same time, each under
+  `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`, and reuses the report of a round for one second after it
+  ended. `classify_error` maps a failure to one of seven categories; it reads the error text only
+  to choose a category and never logs or returns it. `workers_health` lists the workers with a
+  heartbeat in the last 24 hours, decides `live` or `stale` with `worker_is_live` from
+  `orchestration.py`, and shows a name that is not `infrahub-sync-service-<uuid>` as `other`.
+  `overall_status` applies `INFRAHUB_SYNC_HEALTH_MIN_WORKERS`.
+- `worker_alive.py` holds the worker's alive file. `run_alive_writer` writes
+  `<epoch seconds> <interval seconds>` to `$TMPDIR/infrahub-sync-worker-alive` every heartbeat
+  interval, on a timer that calls no other service. `WORKER_HEALTHCHECK_COMMAND` is the
+  standard-library command that the `sync-worker` health check of both Compose files runs; a test
+  checks that both files carry exactly that text.
+
+`worker_is_live` in `orchestration.py` is the shared application-side worker liveness rule:
+Prefect reports the worker online and its last heartbeat is within
+`max(3 × heartbeat interval, 30)` seconds. The health report and `_owner_is_fresh` in
+`liveness.py` both call it. `WORKER_HEALTHCHECK_COMMAND` in `worker_alive.py` applies the same
+`max(3 × interval, 30)` threshold to the alive file, so a change to the threshold changes both.
+
 Four service modules carry the stored credentials
-([ADR 0054](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)):
+([ADR 0057](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)):
 
 - `credential_routes.py` declares the routes for accounts (`GET /credentials`,
   `GET /credentials/{name}`, `POST /credentials`, `PUT /credentials/{name}/value`,
@@ -348,9 +372,18 @@ Start-up creates the list indexes, each with `CREATE INDEX IF NOT EXISTS`
 | `product_runs_config_started (config_id, started_at, run_id)` | The run list of one configuration |
 | `product_runs_binding_started (config_id, registry_version, started_at, run_id)` | The run list of one version, and each version's newest run |
 | `product_runs_binding_applied (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'` | Each version's most recently applied run |
-| `configurations_name (name)` | The `name` filter of the configuration list |
 | `configurations_created (created_at, config_id)` | The order of the configuration list |
 | `product_runs_schedule_started (schedule_id, started_at, run_id)` | The run list of one schedule |
+
+A configuration name is unique among configurations: the unique index
+`configurations_name_unique (name)` (`_CONFIGURATION_UNIQUE_INDEXES`) holds the rule and serves the
+`name` filter of the configuration list. A configuration without a name holds `NULL`, which the
+index does not constrain. It replaces the plain index `configurations_name` of an earlier build,
+which start-up drops. `_insert_configuration_version_row` checks the name in the transaction that
+registers a version and raises `ConfigurationNameInUseError`; when two registrations both pass the
+check, the index refuses the second and the same check, run again, names the configuration. Before
+it creates the index, start-up refuses a database where several configurations have one name with
+`DuplicateConfigurationNamesError`, which names them.
 
 The schedule records live in the tables `schedules` and `schedule_branches`. Three unique
 indexes hold their rules: `product_runs_schedule_start (schedule_id, scheduled_start_at)` allows

@@ -28,27 +28,34 @@ _VALID_CONTENT: dict[str, Any] = {
 }
 
 
-def credential_package_data() -> dict[str, Any]:
-    """Return one valid declared package whose blocks each name a stored credential, as mutable content."""
-    return copy.deepcopy(_VALID_CONTENT)
+def credential_package_data(name: str | None = None) -> dict[str, Any]:
+    """Return one valid declared package whose blocks each name a stored credential, as mutable content.
+
+    ``name`` replaces the configuration name, since a name is unique among configurations.
+    """
+    data = copy.deepcopy(_VALID_CONTENT)
+    if name is not None:
+        data["configuration"]["name"] = name
+    return data
 
 
-def credential_package(data: dict[str, Any] | None = None) -> ConfigurationPackage:
+def credential_package(data: dict[str, Any] | None = None, *, name: str | None = None) -> ConfigurationPackage:
     """Parse declared content into a package, defaulting to the valid one that names stored credentials."""
-    return ConfigurationPackage.model_validate(credential_package_data() if data is None else data)
+    return ConfigurationPackage.model_validate(credential_package_data(name) if data is None else data)
 
 
-def package_data() -> dict[str, Any]:
+def package_data(name: str | None = None) -> dict[str, Any]:
     """Return one valid declared package whose blocks name no stored credential, as mutable content.
 
-    Such a package registers in a store that holds no stored credential.
+    Such a package registers in a store that holds no stored credential. ``name`` replaces the
+    configuration name, since a name is unique among configurations.
     """
-    data = credential_package_data()
+    data = credential_package_data(name)
     for block in ("source", "destination"):
         del data["configuration"][block]["credential"]
     return data
 
 
-def package(data: dict[str, Any] | None = None) -> ConfigurationPackage:
+def package(data: dict[str, Any] | None = None, *, name: str | None = None) -> ConfigurationPackage:
     """Parse declared content into a package, defaulting to the valid one that names no stored credential."""
-    return ConfigurationPackage.model_validate(package_data() if data is None else data)
+    return ConfigurationPackage.model_validate(package_data(name) if data is None else data)

@@ -384,6 +384,20 @@ After you set `settings.requireApproval` to `true`, list the active schedules wi
 `infrahub-sync schedules list --state active --all`, then check with `infrahub-sync schedules show`
 that none of them has `write_target: default-branch`.
 
+The chart has no `settings` value for `INFRAHUB_SYNC_AUTOMATIC_RESUME` yet, and the Sync API
+runs with automatic resume off by default. To turn it on, set the variable on the Sync API
+through `api.extraEnv`, a list of `env` entries. The worker does not read it.
+
+```yaml
+api:
+  extraEnv:
+    - name: INFRAHUB_SYNC_AUTOMATIC_RESUME
+      value: "true"
+```
+
+[Automatic resume of an interrupted write](./operations/day-2-operations.mdx#automatic-resume-of-an-interrupted-write)
+describes when the Sync API resumes a run, and when it does not.
+
 The init containers of the Prefect server and the bootstrap Job set the resource requests and
 limits of `initContainers.resources`: 10m CPU and 64Mi memory requested, and a 128Mi memory limit,
 by default. A namespace with a ResourceQuota on CPU or memory, such as `requests.cpu` or

@@ -1,7 +1,7 @@
 # 40. A v2 configuration converts to a package locally, by v2's own rules
 
 **Status**: Accepted; partly superseded on 2026-11-21 by
-[ADR 0054](0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md) — the converted package names one stored credential in each block that uses
+[ADR 0057](0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md) — the converted package names one stored credential in each block that uses
 authentication (`credential: <name>`), in place of `$credential` references and a `credentials`
 block, and the report lists the credentials to create. The body below is unchanged.
 **Date**: 2026-11-14

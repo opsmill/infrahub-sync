@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import socket
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -36,6 +38,7 @@ from pydantic import BaseModel
 
 from infrahub_sync.adapters.infrahub import resolved_endpoint
 from infrahub_sync.client import PlanStepTimings
+from infrahub_sync.client.models import HealthResource
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.plan.models import PlanManifest
@@ -54,7 +57,7 @@ from infrahub_sync.product_store import (
     local_product_projection,
 )
 from infrahub_sync.service import flow as service_flow
-from infrahub_sync.service.app import create_app
+from infrahub_sync.service.app import HealthReporter, create_app
 from infrahub_sync.service.auth import StoreAccountResolver
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.service.models import (
@@ -87,6 +90,7 @@ from tests.helpers.removed_credential_format import (
 from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
+from tests.service.health_fixtures import WORKER_NAME, RaisingHealthChecker, fake_health_checker
 from tests.service.schedule_fixtures import OWNER_TOKEN as SCHEDULE_OWNER_TOKEN
 from tests.service.schedule_fixtures import NoDeploymentSchedules, schedule_api
 
@@ -253,7 +257,8 @@ def test_admission_reads_registered_binding_before_allocating_run(
 ) -> None:
     """Admission takes package identity and display name from the immutable registry row."""
     _client, projection, orchestration = service_api
-    version = projection.create_configuration(_registered_package())
+    # The fixture registered the package's name already, and a name is unique.
+    version = projection.create_configuration(_package_variant(name="admitted-inventory"))
     request = CreateRunRequest(
         operation="plan",
         config_id=version.config_id,
@@ -268,7 +273,7 @@ def test_admission_reads_registered_binding_before_allocating_run(
     run = projection.lookup_run(body["run"]["run_id"]).value
     assert run is not None
     assert run.configuration_binding == (version.config_id, version.registry_version, version.package_checksum)
-    assert run.summary["sync_name"] == "registered-inventory"
+    assert run.summary["sync_name"] == "admitted-inventory"
     assert set(orchestration.submissions[0][0]) == {
         "run_id",
         "stage",
@@ -1170,18 +1175,23 @@ def test_public_run_resource_is_a_self_contained_projection_of_the_product_run_c
     )
     public_run = public_run_resource(product_run)
     projected_field = "prefect_executions"
+    # Read from the run's automatic resume records, not from the run record (spec 030).
+    derived_fields = {"automatic_resume_count"}
     product_fields = set(ProductRun.model_fields)
 
     assert not issubclass(PublicRunResource, ProductRun)
-    assert set(PublicRunResource.model_fields) == product_fields
-    assert public_run.model_dump(exclude={projected_field}) == product_run.model_dump(exclude={projected_field})
+    assert set(PublicRunResource.model_fields) == product_fields | derived_fields
+    assert public_run.model_dump(exclude={projected_field, *derived_fields}) == product_run.model_dump(
+        exclude={projected_field}
+    )
+    assert public_run.automatic_resume_count == 0
 
     openapi = client.get("/openapi.json").json()
     public_schema = openapi["components"]["schemas"]["PublicRunResource"]
     product_app = FastAPI()
     product_app.add_api_route("/product-run", lambda: product_run, response_model=ProductRun)
     product_schema = product_app.openapi()["components"]["schemas"]["ProductRun"]
-    assert set(public_schema["properties"]) == product_fields
+    assert set(public_schema["properties"]) == product_fields | derived_fields
     assert set(public_schema.get("required", ())) - {projected_field} == set(product_schema.get("required", ())) - {
         projected_field
     }
@@ -1720,7 +1730,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}/resume",
         "/runs/{run_id}/approve",
         "/runs/{run_id}/cancel",
-        "/status",
+        "/health",
         "/version",
         "/worker/runs/{run_id}/credentials",
         "/worker/schedules/{schedule_id}/proposed-change-states",
@@ -1728,7 +1738,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
     for path, route in paths.items():
         for operation in route.values():
             # A sign-in presents a name and a password, not a bearer value.
-            if path in {"/status", "/version", "/auth/sign-in"}:
+            if path in {"/health", "/version", "/auth/sign-in"}:
                 assert "security" not in operation
                 continue
             assert "401" in operation["responses"]
@@ -1736,7 +1746,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
             assert operation["security"] == [{"BearerAuth": []}]
 
 
-def test_version_is_unauthenticated_and_declares_the_unstable_api(
+def test_version_is_unauthenticated_and_declares_the_unstable_api_and_sdk(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
     """Lifecycle discovery does not require a bearer token."""
@@ -1751,9 +1761,12 @@ def test_version_is_unauthenticated_and_declares_the_unstable_api(
         "server_version": installed_version("infrahub-sync"),
         "api_versions": ["v3-unstable"],
         "stability": "unstable",
+        "sdk_version": installed_version("infrahub-sdk"),
     }
-    operation = client.get("/openapi.json").json()["paths"]["/version"]["get"]
+    openapi = client.get("/openapi.json").json()
+    operation = openapi["paths"]["/version"]["get"]
     assert "security" not in operation
+    assert "sdk_version" in openapi["components"]["schemas"]["VersionResource"]["properties"]
 
 
 def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
@@ -2833,6 +2846,7 @@ def test_the_client_keeps_a_plan_step_part_and_field_from_a_newer_server() -> No
 _SCHEDULE_OPERATIONS = {
     ("/schedules", "post"),
     ("/schedules", "get"),
+    ("/schedules/next-starts", "post"),
     ("/schedules/{schedule_id}", "get"),
     ("/schedules/{schedule_id}/change", "post"),
     ("/schedules/{schedule_id}/pause", "post"),
@@ -2927,3 +2941,86 @@ def test_the_run_list_filters_on_the_trigger_and_the_schedule_and_returns_the_ru
     )
     assert same_filter.status_code == 200, same_filter.text
     assert other_filter.status_code == 422, other_filter.text
+
+
+# --- GET /health (spec 029, T010) -------------------------------------------------------------
+
+_IP_ADDRESS = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+
+
+def _health_client(tmp_path: Path, checker: HealthReporter) -> TestClient:
+    projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
+    service = RunService(projection, _FakeOrchestration(), secrets=resolver.secret_values)
+    return TestClient(create_app(service, resolver, health_checker=checker))
+
+
+@pytest.mark.parametrize(("healthy", "expected_status"), [(True, 200), (False, 503)])
+def test_health_answers_its_report_without_credentials(tmp_path: Path, expected_status: int, *, healthy: bool) -> None:
+    client = _health_client(tmp_path, fake_health_checker(healthy=healthy))
+
+    response = client.get("/health")
+
+    assert response.status_code == expected_status
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-type"] == "application/json"
+    report = HealthResource.model_validate(response.json())
+    assert report.status == ("healthy" if healthy else "unhealthy")
+    assert report.workers.items[0].name == WORKER_NAME
+    assert "acct_" not in response.text
+    assert socket.gethostname() not in response.text
+    assert "localhost" not in response.text
+    assert _IP_ADDRESS.search(response.text) is None
+    assert installed_version("infrahub-sync") not in response.text
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_head_health_answers_the_status_and_headers_of_get_without_a_body(tmp_path: Path, *, healthy: bool) -> None:
+    client = _health_client(tmp_path, fake_health_checker(healthy=healthy))
+
+    get = client.get("/health")
+    head = client.head("/health")
+
+    assert head.status_code == get.status_code == (200 if healthy else 503)
+    assert dict(head.headers) == dict(get.headers)
+    assert head.content == b""
+
+
+def test_a_health_checker_that_raises_answers_the_service_unavailable_envelope(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = _health_client(tmp_path, RaisingHealthChecker())
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.service.app"):
+        response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "service-unavailable"
+    assert "health-checker-canary" not in response.text + caplog.text
+    assert "db.internal" not in response.text + caplog.text
+
+
+def test_health_declares_its_report_for_200_and_503_and_needs_no_credential(tmp_path: Path) -> None:
+    client = _health_client(tmp_path, fake_health_checker())
+
+    operation = client.get("/openapi.json").json()["paths"]["/health"]["get"]
+
+    assert "security" not in operation
+    responses = operation["responses"]
+    assert responses["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/HealthResource"}
+    # A 503 carries the unhealthy report, or the error envelope when no report could be built.
+    assert responses["503"]["content"]["application/json"]["schema"]["anyOf"] == [
+        {"$ref": "#/components/schemas/HealthResource"},
+        {"$ref": "#/components/schemas/ErrorEnvelope"},
+    ]
+
+
+def test_an_api_built_without_a_health_checker_answers_the_service_unavailable_envelope(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "service-unavailable"

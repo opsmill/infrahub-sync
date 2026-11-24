@@ -305,6 +305,7 @@ exclude = [
     # The opsmill/infrahub submodule that holds the design system; upstream code,
     # linted and formatted in its own repository.
     "frontend/vendor",
+    ".specify",
 ]
 
 
@@ -452,7 +453,7 @@ max-complexity = 33
 # entry point — local, invoke, and CI's inlined commands — agrees.
 # frontend/vendor is the opsmill/infrahub submodule that holds the design system;
 # upstream code, checked in its own repository.
-exclude = ["examples/**", "tests/vendored_prefect_extras/**", "frontend/vendor/**"]
+exclude = ["examples/**", "tests/vendored_prefect_extras/**", "frontend/vendor/**", ".specify/**"]
 
 [tool.ty.environment]
 python-version = "3.10"

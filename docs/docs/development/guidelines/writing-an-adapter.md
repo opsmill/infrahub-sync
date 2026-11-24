@@ -109,7 +109,7 @@ token = os.environ.get("NETBOX_TOKEN") or settings.get("token")
   and direct adapter use, it reads the adapter's environment variables first and falls back to
   `settings`. Never hardcode, print, commit, or log a secret. Keep example configs sanitized.
 - A registered package names a stored credential in the block (`credential: <name>`) and holds
-  no credential setting ([ADR 0054](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)). An adapter that gains a credential setting changes these places
+  no credential setting ([ADR 0057](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)). An adapter that gains a credential setting changes these places
   in one commit:
     - `credential_setting_paths` of the adapter's declaration in
       `infrahub_sync/configuration/capabilities.py`, so that a value in `settings` is refused;

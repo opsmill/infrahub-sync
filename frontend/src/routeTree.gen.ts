@@ -16,6 +16,8 @@ import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as ConfigsConfigIdRouteImport } from './routes/configs.$configId'
 import { Route as RunsIndexRouteImport } from './routes/runs.index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
+import { Route as SchedulesIndexRouteImport } from './routes/schedules.index'
+import { Route as SchedulesScheduleIdRouteImport } from './routes/schedules.$scheduleId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -52,6 +54,16 @@ const RunsRunIdRoute = RunsRunIdRouteImport.update({
   path: '/runs/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SchedulesIndexRoute = SchedulesIndexRouteImport.update({
+  id: '/schedules/',
+  path: '/schedules/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SchedulesScheduleIdRoute = SchedulesScheduleIdRouteImport.update({
+  id: '/schedules/$scheduleId',
+  path: '/schedules/$scheduleId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -60,7 +72,9 @@ export interface FileRoutesByFullPath {
   '/credentials': typeof CredentialsRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
   '/runs/': typeof RunsIndexRoute
+  '/schedules/': typeof SchedulesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -69,7 +83,9 @@ export interface FileRoutesByTo {
   '/credentials': typeof CredentialsRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
   '/runs': typeof RunsIndexRoute
+  '/schedules': typeof SchedulesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -79,7 +95,9 @@ export interface FileRoutesById {
   '/credentials': typeof CredentialsRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
   '/runs/': typeof RunsIndexRoute
+  '/schedules/': typeof SchedulesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -90,7 +108,9 @@ export interface FileRouteTypes {
     | '/credentials'
     | '/configs/$configId'
     | '/runs/$runId'
+    | '/schedules/$scheduleId'
     | '/runs/'
+    | '/schedules/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -99,7 +119,9 @@ export interface FileRouteTypes {
     | '/credentials'
     | '/configs/$configId'
     | '/runs/$runId'
+    | '/schedules/$scheduleId'
     | '/runs'
+    | '/schedules'
   id:
     | '__root__'
     | '/'
@@ -108,7 +130,9 @@ export interface FileRouteTypes {
     | '/credentials'
     | '/configs/$configId'
     | '/runs/$runId'
+    | '/schedules/$scheduleId'
     | '/runs/'
+    | '/schedules/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -118,7 +142,9 @@ export interface RootRouteChildren {
   CredentialsRoute: typeof CredentialsRoute
   ConfigsConfigIdRoute: typeof ConfigsConfigIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
+  SchedulesScheduleIdRoute: typeof SchedulesScheduleIdRoute
   RunsIndexRoute: typeof RunsIndexRoute
+  SchedulesIndexRoute: typeof SchedulesIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -172,6 +198,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RunsRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/schedules/': {
+      id: '/schedules/'
+      path: '/schedules'
+      fullPath: '/schedules/'
+      preLoaderRoute: typeof SchedulesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schedules/$scheduleId': {
+      id: '/schedules/$scheduleId'
+      path: '/schedules/$scheduleId'
+      fullPath: '/schedules/$scheduleId'
+      preLoaderRoute: typeof SchedulesScheduleIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -182,7 +222,9 @@ const rootRouteChildren: RootRouteChildren = {
   CredentialsRoute: CredentialsRoute,
   ConfigsConfigIdRoute: ConfigsConfigIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,
+  SchedulesScheduleIdRoute: SchedulesScheduleIdRoute,
   RunsIndexRoute: RunsIndexRoute,
+  SchedulesIndexRoute: SchedulesIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

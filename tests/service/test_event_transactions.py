@@ -24,6 +24,7 @@ from infrahub_sync.product_store import (
     ProductProjection,
     ProductRun,
     RelatedResource,
+    ScheduleSettingChange,
 )
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
 from infrahub_sync.service import events as service_events
@@ -488,6 +489,42 @@ def test_events_of_a_sequence_are_redacted(projection: ProductProjection) -> Non
     (stored,) = projection.list_events(EventFilters(), limit=50, offset=0).items
     assert stored.reason is not None
     assert _SECRET not in stored.reason
+
+
+def test_the_changes_of_a_change_event_read_back_with_their_text_values_redacted(projection: ProductProjection) -> None:
+    _claimed_execution(projection)
+    changes = (
+        ScheduleSettingChange(field="registry_version", before=1, after=2),
+        ScheduleSettingChange(field="cron", before="0 2 * * *", after=f"0 3 * * * {_SECRET}"),
+        ScheduleSettingChange(field="write_when_left_out", before=True, after=False),
+    )
+    event = _missed_start("a-changed", 1).model_copy(
+        update={"event_type": service_events.SCHEDULE_CHANGED, "details": EventDetails(changes=changes)}
+    )
+
+    assert _commit_plan_with_events(projection, event, secrets=(_SECRET,))
+
+    (stored,) = projection.list_events(EventFilters(), limit=50, offset=0).items
+    assert stored.details is not None
+    assert stored.details.changes is not None
+    version, cron, left_out = stored.details.changes
+    assert (version, left_out) == changes[0::2]
+    assert type(left_out.before) is bool
+    assert (cron.field, cron.before) == ("cron", "0 2 * * *")
+    assert isinstance(cron.after, str)
+    assert _SECRET not in cron.after
+
+
+def test_a_change_event_that_altered_nothing_reads_back_an_empty_list(projection: ProductProjection) -> None:
+    _claimed_execution(projection)
+    event = _missed_start("a-changed", 1).model_copy(
+        update={"event_type": service_events.SCHEDULE_CHANGED, "details": EventDetails(changes=())}
+    )
+
+    assert _commit_plan_with_events(projection, event)
+
+    (stored,) = projection.list_events(EventFilters(), limit=50, offset=0).items
+    assert stored.details == EventDetails(changes=())
 
 
 def test_a_schedule_event_names_the_schedule_the_configuration_and_the_version() -> None:

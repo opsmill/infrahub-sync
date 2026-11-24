@@ -283,11 +283,15 @@ $ infrahub-sync configs [OPTIONS] COMMAND [ARGS]...
 * `show`: Show a configuration or one of its versions.
 * `versions`: List a configuration&#x27;s versions, newest...
 * `validate`: Validate a registered configuration version.
+* `check`: Validate a JSON or YAML configuration...
 * `convert`: Convert a v1 or v2 config.yml into a V3...
 
 ### `infrahub-sync configs register`
 
 Register a JSON or YAML configuration package.
+
+The name of the package must not be the name of another configuration. A refusal prints the
+command that adds the package as a new version of that configuration instead.
 
 **Usage**:
 
@@ -401,7 +405,32 @@ $ infrahub-sync configs validate [OPTIONS] {CONFIG} {version}
 
 * `--offset <int>`: Finding offset.  [default: 0]
 * `--limit <int>`: Maximum findings to return.  [default: 256]
-* `--branch <str>`: Also check the mapping, the import account&#x27;s permissions and the workers&#x27; credential variables against this Infrahub branch. Exits 1 when a finding on the returned page is an error; read every page with --offset to check them all.
+* `--branch <str>`: Also check the mapping and the import account&#x27;s permissions against this Infrahub branch, read with the destination&#x27;s stored credential. Exits 1 when a finding on the returned page is an error; read every page with --offset to check them all.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync configs check`
+
+Validate a JSON or YAML configuration package without registering it.
+
+Prints the requested page of findings. Exits 1 when any page has an error finding: when the
+printed page has none, the command reads the following pages until it finds one or reaches
+the end. A warning does not change the exit code.
+
+**Usage**:
+
+```console
+$ infrahub-sync configs check [OPTIONS] {package}
+```
+
+**Arguments**:
+
+* `package`: [required]
+
+**Options**:
+
+* `--offset <int>`: Finding offset.  [default: 0]
+* `--limit <int>`: Maximum findings to return.  [default: 256]
+* `--branch <str>`: Also check the mapping and the import account&#x27;s permissions against this Infrahub branch, read with the destination&#x27;s stored credential. `destination_read` says whether the service read the branch&#x27;s schema.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs convert`
@@ -503,6 +532,8 @@ $ infrahub-sync runs [OPTIONS] COMMAND [ARGS]...
 ### `infrahub-sync runs list`
 
 List runs, newest first: run, configuration@version, branch, trigger type, phase, outcome, actor, start time.
+
+A run that Sync resumed without a person adds `auto resumes: N`, the number of automatic resumes.
 
 **Usage**:
 
@@ -613,6 +644,8 @@ last save is not known to have succeeded. While a resume runs, they are the next
 and the recorded deletes between them; while a first apply or `sync` runs, none are uncertain. A `resume`
 line counts the creates and updates that resume wrote; the `written:` line of a failed write counts those of
 every execution of the run.
+Then one `Automatic resume N:` block per decision of Sync on resuming the run&#x27;s interrupted write without a
+person: whether it started, its cause, the result of its check, where it resumed, and why it did not start.
 Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
 scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
 A run with a stage that received the values of a stored credential adds a `Credentials used:` section, with one

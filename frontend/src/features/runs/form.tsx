@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, useId, useLayoutEffect, useRef } from "react";
 import { cn } from "tailwind-variants";
 
-import { describeError } from "#/api/queries";
+import { type DescribedError, describeError } from "#/api/queries";
 import { FOCUS, Notice } from "#/components/page";
 
 export const INPUT =
@@ -52,11 +52,16 @@ export function ReasonField({
   value,
   onChange,
   autoFocus,
+  maxLength,
+  readOnly,
 }: {
   id: string;
   value: string;
   onChange: (v: string) => void;
   autoFocus?: boolean;
+  maxLength?: number;
+  /** Set once a request was sent with this reason, so a retry sends the same one. */
+  readOnly?: boolean;
 }) {
   return (
     <Field id={id} label="Reason" hint="Optional. Stored in the Sync service's audit log.">
@@ -64,6 +69,8 @@ export function ReasonField({
         id={id}
         className={INPUT}
         value={value}
+        maxLength={maxLength}
+        readOnly={readOnly}
         onChange={(e) => onChange(e.target.value)}
         autoComplete="off"
         // biome-ignore lint/a11y/noAutofocus: only with a fine pointer, inside a modal that just opened.
@@ -74,18 +81,23 @@ export function ReasonField({
   );
 }
 
-/** The Sync API's refusal, next to the button that sent the request. */
+/**
+ * The Sync API's refusal, next to the button that sent the request. `describe` puts the refusal
+ * in words; the schedule dialogs pass `describeScheduleError`.
+ */
 export function MutationError({
   error,
   currentRunId,
   retryHint,
+  describe = describeError,
 }: {
   error: unknown;
   currentRunId?: string;
   retryHint?: ReactNode;
+  describe?: (error: unknown) => DescribedError;
 }) {
   if (!error) return null;
-  const d = describeError(error);
+  const d = describe(error);
   const detail =
     d.kind === "no-answer" && retryHint
       ? retryHint

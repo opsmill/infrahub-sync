@@ -2,9 +2,13 @@
 
 The development stack has no NetBox source by default, no schema library and no NetBox token, so this
 module never plans or applies this package. What it does prove is the part that needs no
-source: the package a reader actually copies out of `examples/` registers through all
-three interfaces, resolves its credentials by reference rather than by value, and reports
-the same findings whichever interface asked.
+source: the package a reader actually copies out of `examples/` registers, reaches the
+same stored content through all three interfaces, resolves its credentials by reference
+rather than by value, and reports the same findings whichever interface asked.
+
+Each registration replaces only the configuration name with a unique one. A name belongs to
+one configuration, and the stack keeps the configurations of earlier runs, so registering
+the shipped name `from-netbox` would be refused once anything has registered it.
 
 The last row is the one the package's shape rests on. Default validation judges declared
 content only — no schema read, no network — so the source URL is pointed at a listener
@@ -27,11 +31,12 @@ import yaml
 
 from infrahub_sync.client import SyncClient
 from infrahub_sync.client.models import ConfigMutationRequest
+from infrahub_sync.configuration import parse_configuration_package
 from tasks import dev
 from tasks.utils import REPO_BASE as REPO_ROOT
 from tests.dev_stack.smoke.evidence import canary_leaks
 from tests.dev_stack.smoke.test_cli_client import ANSI, run_cli, run_cli_command
-from tests.dev_stack.smoke.test_service_api import authenticated_client, idempotency_headers
+from tests.dev_stack.smoke.test_service_api import authenticated_client, idempotency_headers, unique_config_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -132,6 +137,19 @@ def shipped_package() -> dict[str, Any]:
     return dict(yaml.safe_load(PACKAGE_FILE.read_text(encoding="utf-8")))
 
 
+def _named(package: dict[str, Any], name: str | None = None) -> dict[str, Any]:
+    """`package` with only `configuration.name` replaced, by default with a new unique name.
+
+    A name belongs to one configuration, and the stack keeps every configuration earlier
+    runs registered, so the shipped name `from-netbox` is refused once anything has
+    registered it. Every other declared value stays as the file declares it.
+    """
+    return {
+        **package,
+        "configuration": {**package["configuration"], "name": name or unique_config_name("from-netbox-smoke")},
+    }
+
+
 def _with_omission() -> dict[str, Any]:
     """The shipped package plus one declared omission, which is one warning finding."""
     return {**shipped_package(), "omissions": [{"kind": OMITTED_KIND, "reason": OMISSION_REASON}]}
@@ -164,9 +182,20 @@ def _register_over_http(client: Any, package: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: PLR0914
-    smoke_env: dict[str, Any], evidence_dir: Path
+    smoke_env: dict[str, Any], evidence_dir: Path, tmp_path: Path
 ) -> None:
-    """The file on disk registers as-is, replays on its key, and checksums the same everywhere."""
+    """The file on disk registers under a free name, replays on its key, and checksums the same everywhere.
+
+    The registry checksums the whole declared content, the configuration name included, and a
+    name belongs to one configuration. So the three interfaces cannot each register the file
+    under one name, and three names would give three checksums. The CLI registers the file with
+    only its name replaced by a unique one, and the checksum it reports is the one computed
+    locally from that content. The Python client and raw HTTP then submit the same content as
+    a new version of that configuration: the registry answers with the stored version 1
+    (`created` false), which it does only for a package whose checksum it already holds. Raw
+    HTTP first tries to register that content as another configuration, which is refused
+    with 409 `configuration-name-in-use` naming the configuration that has the name.
+    """
     package = shipped_package()
     # The stored credential names are what makes registration possible at all: a package
     # carrying a literal token is refused before anything is persisted. `dev.start` stores
@@ -176,6 +205,10 @@ def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: 
     assert "token" not in package["configuration"]["source"]["settings"]
     assert "token" not in package["configuration"]["destination"]["settings"]
     assert "credentials" not in package
+    named = _named(package)
+    name = named["configuration"]["name"]
+    package_file = tmp_path / "package.yml"
+    package_file.write_text(yaml.safe_dump(named, sort_keys=False), encoding="utf-8")
 
     artifacts: dict[str, object] = {}
     key = idempotency_headers("smoke-netbox")["Idempotency-Key"]
@@ -183,7 +216,7 @@ def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: 
         smoke_env,
         "configs",
         "register",
-        str(PACKAGE_FILE),
+        str(package_file),
         "--reason",
         REASON,
         "--idempotency-key",
@@ -195,7 +228,7 @@ def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: 
         smoke_env,
         "configs",
         "register",
-        str(PACKAGE_FILE),
+        str(package_file),
         "--reason",
         REASON,
         "--idempotency-key",
@@ -204,37 +237,44 @@ def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: 
         artifact_name="NetBox package register replay",
     )
     assert replayed_cli == from_cli
+    config_id = from_cli["config_id"]
+    # The registry stored the file's content: only the name differs from the shipped file.
+    assert from_cli["package_checksum"] == parse_configuration_package(named).checksum()
 
     with SyncClient(smoke_env["urls"]["sync_api"], smoke_env["bearer_token"], timeout=30.0) as client:
-        request = ConfigMutationRequest(package=package, reason=REASON)
+        request = ConfigMutationRequest(package=named, reason=REASON)
         python_key = idempotency_headers("smoke-netbox")["Idempotency-Key"]
-        from_python = client.register_config(request, python_key)
-        replayed_python = client.register_config(request, python_key)
+        from_python = client.create_config_version(config_id, request, python_key)
+        replayed_python = client.create_config_version(config_id, request, python_key)
         assert replayed_python == from_python
+        assert from_python.created is False
+        assert from_python.version.registry_version == 1
 
     transcript = evidence_dir / "netbox-package-register-http.jsonl"
     with authenticated_client(smoke_env, transcript=transcript) as api:
-        http_key = idempotency_headers("smoke-netbox")
-        body = {"package": package, "reason": REASON}
-        first = api.post("/configs", headers=http_key, json=body)
-        assert first.status_code == 201, first.text
-        replayed_http = api.post("/configs", headers=http_key, json=body)
-        assert replayed_http.json() == first.json()
-        from_http = first.json()["version"]
+        body = {"package": named, "reason": REASON}
+        refused = api.post("/configs", headers=idempotency_headers("smoke-netbox"), json=body)
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error"]["code"] == "configuration-name-in-use"
+        assert refused.json()["error"]["details"] == {"config_id": config_id, "name": name}
+        identical = api.post(f"/configs/{config_id}/versions", headers=idempotency_headers("smoke-netbox"), json=body)
+        assert identical.status_code == 200, identical.text
+        assert identical.json()["created"] is False
+        from_http = identical.json()["version"]
+        assert from_http["registry_version"] == 1
 
-    # Three independent registrations of one declared file: different configurations, the
-    # same content, so the checksum the registry computed has to be one value.
+    # One declared content through three interfaces: the checksum the registry holds is one value.
     assert from_cli["package_checksum"] == from_python.version.package_checksum == from_http["package_checksum"]
-    assert len({from_cli["config_id"], from_python.version.config_id, from_http["config_id"]}) == 3
+    assert from_python.version.config_id == from_http["config_id"] == config_id
     captured = transcript.read_text(encoding="utf-8")
     exchanges = [
         (record["method"], record["path"], record["status"]) for record in map(json.loads, captured.splitlines())
     ]
-    assert exchanges == [("POST", "/api/configs", 201), ("POST", "/api/configs", 201)]
+    assert exchanges == [("POST", "/api/configs", 409), ("POST", f"/api/configs/{config_id}/versions", 200)]
     artifacts.update(
         {
-            "NetBox Python register resource": from_python,
-            "NetBox Python register replay resource": replayed_python,
+            "NetBox Python version resource": from_python,
+            "NetBox Python version replay resource": replayed_python,
             str(transcript): captured,
         }
     )
@@ -250,8 +290,8 @@ def test_the_netbox_package_validates_identically_through_every_interface(
     python_reports: list[object] = []
     http_bodies: list[bytes] = []
     with authenticated_client(smoke_env, transcript=transcript) as api:
-        clean = _register_over_http(api, shipped_package())
-        warned = _register_over_http(api, _with_omission())
+        clean = _register_over_http(api, _named(shipped_package()))
+        warned = _register_over_http(api, _named(_with_omission()))
         expected = {
             (clean["config_id"], clean["registry_version"]): [],
             (warned["config_id"], warned["registry_version"]): [
@@ -316,7 +356,7 @@ def test_validating_the_netbox_package_reads_no_source(
     smoke_env: dict[str, Any], source_sink: str, evidence_dir: Path
 ) -> None:
     """Default validation judges declared content, so the source endpoint is never called."""
-    package = shipped_package()
+    package = _named(shipped_package())
     package["configuration"]["source"]["settings"]["url"] = source_sink
     # Prove the Sync API's side can reach the listener, and that it records, before relying
     # on it recording nothing; an empty log from a listener the API could not have reached

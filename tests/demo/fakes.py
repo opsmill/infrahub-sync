@@ -115,7 +115,8 @@ class FakeSyncClient:
         if self.error is not None:
             raise self.error
         self.requests.append(request)
-        fingerprint = _checksum(["register", "", request.package, request.reason])
+        package = _sent_package(request)
+        fingerprint = _checksum(["register", "", package, request.reason])
         replayed = self._replay(idempotency_key, fingerprint)
         if replayed is not None:
             registered = cast("RegisteredConfigurationResource", replayed)
@@ -123,11 +124,11 @@ class FakeSyncClient:
             return registered
         config_id = f"cfg-{len(self.configs) + 1}"
         self.calls.append(("register_config", config_id, idempotency_key))
-        self.add(config_id, request.package)
+        self.add(config_id, package)
         answer = RegisteredConfigurationResource.model_validate(
             {
                 "configuration": {"config_id": config_id, "created_at": CREATED_AT, "latest_version": 1},
-                "version": _reference(config_id, 1, request.package),
+                "version": _reference(config_id, 1, package),
             }
         )
         self._answers[idempotency_key] = (fingerprint, answer)
@@ -141,20 +142,21 @@ class FakeSyncClient:
         if self.error is not None:
             raise self.error
         self.requests.append(request)
-        fingerprint = _checksum(["version", config_id, request.package, request.reason])
+        package = _sent_package(request)
+        fingerprint = _checksum(["version", config_id, package, request.reason])
         replayed = self._replay(idempotency_key, fingerprint)
         if replayed is not None:
             return cast("RegisteredVersionResource", replayed)
         config = next(config for config in self.configs if config.config_id == config_id)
-        checksum = _checksum(request.package)
+        checksum = _checksum(package)
         existing = next(
             (number for number, package in enumerate(config.versions, 1) if _checksum(package) == checksum), None
         )
         if existing is None:
-            config.versions.append(request.package)
+            config.versions.append(package)
         version = existing if existing is not None else len(config.versions)
         answer = RegisteredVersionResource.model_validate(
-            {"version": _reference(config_id, version, request.package), "created": existing is None}
+            {"version": _reference(config_id, version, package), "created": existing is None}
         )
         self._answers[idempotency_key] = (fingerprint, answer)
         return answer
@@ -183,3 +185,9 @@ class FakeSchemaLoader:
 
 
 __all__ = ["FakeSchemaLoader", "FakeSyncClient", "package_name_of"]
+
+
+def _sent_package(request: ConfigMutationRequest) -> dict[str, object]:
+    """The package a registration request sends; the CLI never sends a package file's text."""
+    assert request.package is not None, "the fake registers a package sent as JSON only"
+    return request.package

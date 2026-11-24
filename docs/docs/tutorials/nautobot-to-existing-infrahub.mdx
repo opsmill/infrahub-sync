@@ -18,7 +18,7 @@ fresh local Infrahub and the public NetBox demo, follow the
 ## Before you start
 
 - Complete [Start a Compose deployment](../quickstart-compose.mdx) and confirm
-  that the worker reports `ready`.
+  that `/api/health` reports `healthy`.
 - Have Nautobot and Infrahub running, with API tokens for each. The worker
   container must be able to reach both servers; the Docker host must also reach
   Infrahub to load its schema.
@@ -238,10 +238,10 @@ location relationship; review source data before expecting a complete preview.
 Check that the deployment is ready:
 
 ```sh
-curl -s http://127.0.0.1:8001/api/status
+curl -s http://127.0.0.1:8001/api/health
 ```
 
-Continue only when the `/status` response shows `worker.state` as `ready`.
+Continue only when the `/api/health` response shows `status` as `healthy`.
 
 The commands below use the `infrahub-sync` CLI on your machine; see
 [Connect the CLI to the Sync API](../running-a-sync.mdx#connect-the-cli-to-the-sync-api).

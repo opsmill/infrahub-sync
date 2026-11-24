@@ -5,6 +5,8 @@ type Schemas = components["schemas"];
 export type Run = Schemas["PublicRunResource"];
 export type RunResource = Schemas["RunResource"];
 export type Orchestration = Schemas["OrchestrationSummary"];
+export type Resume = Schemas["ResumeResource"];
+export type AutomaticResume = Schemas["AutomaticResumeResource"];
 export type ConfigurationSummary = Schemas["ConfigurationSummaryResource"];
 export type VersionSummary = Schemas["ConfigurationVersionSummaryResource"];
 export type RunReference = Schemas["RunReference"];
@@ -18,10 +20,28 @@ export type Credential = Schemas["CredentialResource"];
 export type CredentialPage = Schemas["CredentialPage"];
 /** One stored credential that a stage of a run read, with the revision it read. */
 export type CredentialUsed = Schemas["CredentialUsedResource"];
+export type PackageCheck = Schemas["PackageCheckResource"];
+export type ValidationFinding = Schemas["ValidationFindingResource"];
+/**
+ * The body of `POST /configs` and `POST /configs/{config_id}/versions`. The generated type marks
+ * `registered_without_validation` as required because it has a default; the Sync API accepts the
+ * body without it.
+ */
+export type ConfigMutationRequest = Schemas["ConfigMutationRequest"];
+export type Schedule = Schemas["ScheduleResource"];
+export type CreateScheduleRequest = Schemas["CreateScheduleRequest"];
+export type ChangeScheduleRequest = Schemas["ChangeScheduleRequest"];
+export type ScheduleNextStarts = Schemas["ScheduleNextStarts"];
+export type Principal = Schemas["PrincipalResource"];
+export type SyncEvent = Schemas["EventResource"];
+/** The body of `GET /health`, for a 200 and for a 503 answer. */
+export type HealthReport = Schemas["HealthResource"];
 
 /** A source or destination as a registered package declares it. */
 export interface DeclaredAdapter {
   name: string;
+  /** The name of the stored credential the block reads; a package never holds a value. */
+  credential?: string | null;
   settings?: Record<string, unknown> | null;
 }
 
@@ -54,8 +74,30 @@ export interface ConfigurationVersion {
   declared_content: {
     format_version: number;
     configuration: DeclaredConfiguration;
-    credentials?: Record<string, { provider: string; identifier: string }>;
   };
+}
+
+/** A package as the store keeps it: `PackageCheck.declared_content`, typed as an open object. */
+export type DeclaredContent = ConfigurationVersion["declared_content"];
+
+/** `POST /configs/{config_id}/versions`; the OpenAPI document types its response as `unknown`. */
+export interface RegisteredVersion {
+  version: {
+    config_id: string;
+    registry_version: number;
+    package_checksum: string;
+    created_at: string;
+    /** True when the version was registered while the destination could not be reached. */
+    registered_without_validation: boolean;
+  };
+  /** False when the package is the same as an existing version, which is returned instead. */
+  created: boolean;
+}
+
+/** `POST /configs`; the OpenAPI document types its response as `unknown`. */
+export interface RegisteredConfiguration {
+  configuration: ConfigurationSummary;
+  version: RegisteredVersion["version"];
 }
 
 /** The error envelope every Sync API error uses. */
@@ -66,7 +108,10 @@ export interface ApiErrorBody {
     status: number;
     run_id?: string | null;
     reason?: string | null;
-    /** Facts of the refusal, such as the configurations and schedules that name a credential. */
+    /**
+     * Values the refusal names, such as the configuration of `configuration-name-in-use`, or the
+     * configurations and schedules that name a credential on `credential-in-use`.
+     */
     details?: Record<string, unknown> | null;
   };
 }

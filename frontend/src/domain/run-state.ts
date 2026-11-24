@@ -1,4 +1,4 @@
-import type { Run, RunReference, VersionSummary } from "#/api/types";
+import type { HealthReport, Run, RunReference, VersionSummary } from "#/api/types";
 
 import type { System } from "./systems";
 
@@ -618,6 +618,20 @@ export function branchPrefill(
 export const NO_WORKER_SENTENCE =
   "No worker is online, so new runs do not start. The Sync service keeps them waiting, and a run that no worker picks up in time is abandoned.";
 
-/** `queue_depth` from `GET /status` counts scheduled executions, not runs. */
+/** The state of the workers that the page frame and the start dialog show. */
+export type WorkerState = "unavailable" | "no-live-worker" | "busy" | "ready";
+
+/**
+ * The workers' state from the `workers` section of `GET /health`. It never reads the report's
+ * overall status, so a component that is down does not change what the page shows.
+ */
+export function workerState(report: HealthReport): WorkerState {
+  const { state, live_workers, queue_depth } = report.workers;
+  if (state === "unknown" || live_workers == null) return "unavailable";
+  if (live_workers === 0) return "no-live-worker";
+  return (queue_depth ?? 0) > 0 ? "busy" : "ready";
+}
+
+/** `queue_depth` from `GET /health` counts scheduled executions, not runs. */
 export const queueSentence = (n: number) =>
   `${fmt(n)} ${n === 1 ? "execution is" : "executions are"} waiting for a worker.`;

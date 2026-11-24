@@ -5,12 +5,18 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
 import { useCreateRun, useIdempotencyKey } from "#/api/actions";
-import { configQuery, configVersionQuery, runsQuery, statusQuery } from "#/api/queries";
+import { configQuery, configVersionQuery, healthQuery, runsQuery } from "#/api/queries";
 import type { Run } from "#/api/types";
 import { StateIcon } from "#/components/icons";
 import { Notice } from "#/components/page";
 import { BranchBadge, When } from "#/components/run-status";
-import { executableCount, fmt, NO_WORKER_SENTENCE, queueSentence } from "#/domain/run-state";
+import {
+  executableCount,
+  fmt,
+  NO_WORKER_SENTENCE,
+  queueSentence,
+  workerState,
+} from "#/domain/run-state";
 import { describeSystem } from "#/domain/systems";
 
 import {
@@ -144,7 +150,7 @@ export function StartRunDialog({
   const n = target.version;
   const version = useQuery(configVersionQuery(target.configId, n));
   const latest = useQuery(configQuery(target.configId)).data?.latest_version;
-  const status = useQuery(statusQuery());
+  const status = useQuery(healthQuery());
   const runs = useQuery(runsQuery({ config_id: target.configId }));
 
   const destination = version.data
@@ -232,7 +238,13 @@ export function StartRunDialog({
           )}
         </>
       }
-      notice={runNotice(runs.data, status.data?.worker, onClose)}
+      notice={runNotice(
+        runs.data,
+        status.data
+          ? { state: workerState(status.data), queue_depth: status.data.workers.queue_depth }
+          : undefined,
+        onClose
+      )}
       error={
         create.error ? (
           <MutationError

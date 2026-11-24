@@ -35,6 +35,7 @@ import { StartRunDialog, type StartRunTarget } from "#/features/runs/StartRunDia
 import { useDocumentTitle } from "#/lib/title";
 
 import { InSyncSection } from "./InSyncSection";
+import { PackageRegistration } from "./PackageReview";
 import { LIFT, SearchHint, SystemsLine } from "./row-parts";
 
 import {
@@ -613,6 +614,8 @@ export function ConfigurationsPage({
       <output aria-live="polite" className="sr-only">
         {announcement}
       </output>
+
+      <PackageRegistration action="Register a configuration" target={{ kind: "configuration" }} />
 
       <div ref={groupsRef} aria-busy={isPending}>
         {isPending ? (

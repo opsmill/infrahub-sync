@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from infrahub_sync.client.models import (
     ApplyRunRequest,
     ApproveRunRequest,
+    AutomaticResumeResource,
     CancelRunRequest,
     ChangeScheduleRequest,
     ConfigMutationRequest,
@@ -23,7 +24,9 @@ from infrahub_sync.client.models import (
     EventPrimaryResource,
     EventRelatedResource,
     EventResource,
+    HealthResource,
     OrchestrationSummary,
+    PackageCheckRequest,
     PublicRunResource,
     RunApprovalResource,
     RunResource,
@@ -202,6 +205,50 @@ def test_a_valid_configuration_reason_is_kept_unchanged() -> None:
     request = ConfigMutationRequest(package={"format_version": 1}, reason="register inventory")
 
     assert request.reason == "register inventory"
+
+
+def test_a_configuration_request_carries_the_unvalidated_mark_and_defaults_it_to_false() -> None:
+    """The web interface sets the mark when it registers without validation (spec 025, US4)."""
+    default = ConfigMutationRequest(package={"format_version": 1})
+    marked = ConfigMutationRequest(package={"format_version": 1}, registered_without_validation=True)
+
+    assert default.registered_without_validation is False
+    # An unmarked request keeps the body a Sync API without the field accepts.
+    assert "registered_without_validation" not in default.model_dump(mode="json")
+    assert marked.model_dump(mode="json")["registered_without_validation"] is True
+    assert (
+        ConfigMutationRequest.model_validate({"package": {"format_version": 1}, "registered_without_validation": True})
+        == marked
+    )
+    with pytest.raises(ValidationError):
+        ConfigMutationRequest(package={"format_version": 1}, registered_without_validation="yes")  # ty: ignore[invalid-argument-type]
+
+
+def test_a_configuration_request_with_a_package_keeps_its_body() -> None:
+    """The CLI sends `package`; the body has no `document` key, so a Sync API without it accepts it."""
+    request = ConfigMutationRequest(package={"format_version": 1}, reason="register inventory")
+
+    assert request.model_dump(mode="json") == {"package": {"format_version": 1}, "reason": "register inventory"}
+
+
+def test_a_configuration_request_sends_the_text_of_a_package_file_unchanged() -> None:
+    """The web interface sends the file's text (spec 025, D-12); whitespace and numbers are kept."""
+    document = "  format_version: 1\nconfiguration:\n  timeout: 30.0\n"
+
+    request = ConfigMutationRequest(document=document, registered_without_validation=True)
+
+    assert request.model_dump(mode="json") == {
+        "document": document,
+        "reason": None,
+        "registered_without_validation": True,
+    }
+
+
+def test_the_configuration_request_leaves_the_exactly_one_rule_to_the_sync_api() -> None:
+    """The model is shared with the Sync API, which refuses both or neither with `400 request`."""
+    assert ConfigMutationRequest().model_dump(mode="json") == {"reason": None}
+    both = ConfigMutationRequest(package={"format_version": 1}, document="format_version: 1\n")
+    assert set(both.model_dump(mode="json")) == {"package", "document", "reason"}
 
 
 def _public_run(**extra: object) -> dict[str, object]:
@@ -435,8 +482,40 @@ def test_the_details_of_an_event_declare_only_the_closed_keys() -> None:
         "replaced_run_id",
         "cause",
         "revision",
+        "changes",
+        # The events of an automatic resume (spec 030).
+        "reason",
+        "reason_detail",
+        "start_after",
+        "operations_not_checked",
+        "resume_flow_run_id",
     }
     assert EventDetailsResource().model_dump() == dict.fromkeys(EventDetailsResource.model_fields)
+
+
+def test_the_changes_of_a_change_event_keep_the_type_of_each_value() -> None:
+    event = EventResource.model_validate(
+        _event(
+            event_type="infrahub_sync.schedule.changed",
+            details={
+                "changes": [
+                    {"field": "registry_version", "before": 1, "after": 2},
+                    {"field": "cron", "before": "0 2 * * *", "after": "30 6 * * 1-5"},
+                    {"field": "write_when_left_out", "before": True, "after": False},
+                ]
+            },
+        )
+    )
+
+    assert event.details is not None
+    assert event.details.changes is not None
+    assert [(change.field, change.before, change.after) for change in event.details.changes] == [
+        ("registry_version", 1, 2),
+        ("cron", "0 2 * * *", "30 6 * * 1-5"),
+        ("write_when_left_out", True, False),
+    ]
+    assert type(event.details.changes[2].before) is bool
+    assert type(event.details.changes[0].before) is int
 
 
 @pytest.mark.parametrize(
@@ -786,3 +865,181 @@ def test_the_service_bounds_the_details_of_an_event_it_emits() -> None:
     assert details is not None
     assert "infrahub_message" not in details.model_dump()
     assert details.start_at == datetime(2026, 11, 18, 1, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({}, id="neither"),
+        pytest.param({"package": {"format_version": 1}, "document": "format_version: 1\n"}, id="both"),
+        pytest.param({"package": None, "document": None}, id="both-null"),
+    ],
+)
+def test_a_package_check_request_needs_exactly_one_of_package_and_document(fields: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PackageCheckRequest(**fields)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize(
+    "package",
+    [
+        pytest.param({"format_version": float("nan")}, id="nan"),
+        pytest.param({"values": (1, 2)}, id="tuple"),
+        pytest.param({"nested": {1: "integer key"}}, id="integer-key"),
+    ],
+)
+def test_a_package_check_request_keeps_the_json_native_package_rule(package: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PackageCheckRequest(package=package)
+    with pytest.raises(ValidationError):
+        ConfigMutationRequest(package=package)
+
+
+def test_a_package_check_request_serializes_only_the_field_it_carries() -> None:
+    assert PackageCheckRequest(package={"format_version": 1}).model_dump(mode="json") == {
+        "package": {"format_version": 1}
+    }
+    assert PackageCheckRequest(document=" format_version: 1\n").model_dump(mode="json") == {
+        "document": " format_version: 1\n"
+    }
+
+
+def test_a_package_check_request_refuses_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        PackageCheckRequest(package={"format_version": 1}, reason="no reason field")  # ty: ignore[unknown-argument]
+
+
+_AUTOMATIC_RESUME = {
+    "interrupted_flow_run_id": "flow-1",
+    "actor": "Sync (automatic resume)",
+    "cause": "rule-6",
+    "cause_text": "Prefect reported the flow run as crashed",
+    "state": "resuming",
+    "decision": "resume",
+    "check_flow_run_id": "flow-2",
+    "resume_flow_run_id": "flow-3",
+    "decided_at": "2026-11-24T09:00:00Z",
+    "updated_at": "2026-11-24T09:05:00Z",
+}
+
+
+@pytest.mark.parametrize("field", ["interrupted_flow_run_id", "check_flow_run_id", "resume_flow_run_id"])
+def test_an_automatic_resume_refuses_an_empty_flow_run_id(field: str) -> None:
+    AutomaticResumeResource.model_validate(_AUTOMATIC_RESUME)
+    with pytest.raises(ValidationError):
+        AutomaticResumeResource.model_validate({**_AUTOMATIC_RESUME, field: ""})
+
+
+def test_an_automatic_resume_event_refuses_an_empty_resume_flow_run_id() -> None:
+    with pytest.raises(ValidationError):
+        EventDetailsResource.model_validate({"resume_flow_run_id": ""})
+
+
+_HEALTH_NOW = "2026-01-01T00:00:00Z"
+
+
+def _health_body(**extra: object) -> dict[str, object]:
+    return {
+        "status": "healthy",
+        "dependencies": [{"name": "database", "status": "up", "error": "none"}],
+        "workers": {
+            "state": "known",
+            "minimum": 1,
+            "live_workers": 1,
+            "queue_depth": 0,
+            "items": [{"name": "worker-1", "state": "live", "last_heartbeat": _HEALTH_NOW}],
+        },
+        "timestamp": _HEALTH_NOW,
+        **extra,
+    }
+
+
+def test_health_report_accepts_timestamps_with_a_timezone() -> None:
+    report = HealthResource.model_validate(_health_body())
+
+    assert report.timestamp.utcoffset() is not None
+    assert report.workers.items[0].last_heartbeat.utcoffset() is not None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(timestamp="2026-01-01T00:00:00"), id="naive-timestamp"),
+        pytest.param(
+            _health_body(
+                workers={
+                    "state": "known",
+                    "minimum": 1,
+                    "live_workers": 1,
+                    "queue_depth": 0,
+                    "items": [{"name": "worker-1", "state": "live", "last_heartbeat": "2026-01-01T00:00:00"}],
+                }
+            ),
+            id="naive-last-heartbeat",
+        ),
+    ],
+)
+def test_health_report_refuses_a_timestamp_without_a_timezone(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="health timestamps must include a timezone"):
+        HealthResource.model_validate(body)
+
+
+_DOWN_DATABASE = {"name": "database", "status": "down", "error": "timeout"}
+_UP_OBJECT_STORE = {"name": "object_store", "status": "up", "error": "none"}
+_UNKNOWN_WORKERS = {"state": "unknown", "minimum": 1, "live_workers": None, "queue_depth": None, "items": []}
+_TOO_FEW_WORKERS = {"state": "known", "minimum": 2, "live_workers": 1, "queue_depth": 0, "items": []}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(dependencies=[]), id="no-component"),
+        pytest.param(
+            _health_body(
+                dependencies=[
+                    {"name": "database", "status": "up", "error": "none"},
+                    {"name": "database", "status": "up", "error": "none"},
+                ]
+            ),
+            id="duplicate-component",
+        ),
+    ],
+)
+def test_health_report_refuses_an_empty_or_repeated_component_list(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="at least one component, each once"):
+        HealthResource.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(dependencies=[_DOWN_DATABASE]), id="healthy-with-a-component-down"),
+        pytest.param(_health_body(workers=_UNKNOWN_WORKERS), id="healthy-with-unknown-workers"),
+        pytest.param(_health_body(workers=_TOO_FEW_WORKERS), id="healthy-with-too-few-workers"),
+        pytest.param(_health_body(status="unhealthy"), id="unhealthy-with-everything-up"),
+    ],
+)
+def test_health_report_refuses_a_status_that_does_not_match_its_parts(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="healthy exactly when every component is up"):
+        HealthResource.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(status="unhealthy", dependencies=[_DOWN_DATABASE]), id="component-down"),
+        pytest.param(_health_body(status="unhealthy", workers=_UNKNOWN_WORKERS), id="unknown-workers"),
+        pytest.param(_health_body(status="unhealthy", workers=_TOO_FEW_WORKERS), id="too-few-workers"),
+    ],
+)
+def test_health_report_accepts_unhealthy_when_a_part_fails(body: dict[str, object]) -> None:
+    assert HealthResource.model_validate(body).status == "unhealthy"
+
+
+def test_health_report_accepts_any_number_and_order_of_components() -> None:
+    body = _health_body(dependencies=[_UP_OBJECT_STORE, {"name": "database", "status": "up", "error": "none"}])
+
+    assert [dependency.name for dependency in HealthResource.model_validate(body).dependencies] == [
+        "object_store",
+        "database",
+    ]

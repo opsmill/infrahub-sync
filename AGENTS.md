@@ -115,6 +115,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - `infrahub-sync approve` — record approval of a run's saved plan by checksum without writing, for a planned run or an interrupted run that can be resumed; required before `apply` or `runs resume` only when the Sync API sets `INFRAHUB_SYNC_REQUIRE_APPROVAL` (Sync API and human approval required).
 - `infrahub-sync sync` — perform synchronization; refused when the Sync API requires approval (Sync API and human approval required).
 - `infrahub-sync apply` — apply a reviewed plan by checksum (Sync API and human approval required).
+- `infrahub-sync runs resume` — apply the rest of an interrupted run's saved plan by checksum, after a `verify` that passed; when the Sync API sets `INFRAHUB_SYNC_AUTOMATIC_RESUME`, it runs that `verify` and resume by itself after a worker disappeared, and `runs show` reports each automatic resume (Sync API and human approval required).
 - `infrahub-sync runs cancel` — cancel a run's running stage, or withdraw a finished, unapplied plan; cancelling a write can leave an ambiguous outcome (human approval required).
 
 ## Configuration and Examples

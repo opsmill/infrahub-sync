@@ -57,6 +57,8 @@ from infrahub_sync.product_store.models import (
     ApplyProgressSave,
     ArtifactReference,
     AuditEvent,
+    AutomaticResume,
+    AutomaticResumeState,
     BaselineWriteback,
     BootstrapRecord,
     BranchReviewOutcome,
@@ -69,6 +71,7 @@ from infrahub_sync.product_store.models import (
     CredentialBlock,
     CredentialUse,
     EventFilters,
+    EventOrder,
     EventPage,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
@@ -188,6 +191,11 @@ CREATE TABLE IF NOT EXISTS configuration_versions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
+CREATE TABLE IF NOT EXISTS configuration_versions_unvalidated (
+    config_id TEXT NOT NULL, registry_version INTEGER NOT NULL,
+    PRIMARY KEY (config_id, registry_version),
+    FOREIGN KEY (config_id, registry_version) REFERENCES configuration_versions(config_id, registry_version)
+);
 CREATE TABLE IF NOT EXISTS accounts (
     account_id TEXT PRIMARY KEY, short_id TEXT NOT NULL UNIQUE, name TEXT, name_key TEXT, password_hash TEXT,
     administrator BOOLEAN NOT NULL DEFAULT FALSE, disabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -260,6 +268,14 @@ CREATE TABLE IF NOT EXISTS run_credential_uses (
     credential_id TEXT NOT NULL, credential_name TEXT NOT NULL, revision INTEGER NOT NULL, released_at TEXT NOT NULL,
     PRIMARY KEY (run_id, flow_run_id, block), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
 );
+CREATE TABLE IF NOT EXISTS automatic_resumes (
+    run_id TEXT NOT NULL, interrupted_flow_run_id TEXT NOT NULL, cause TEXT NOT NULL, worker_name TEXT,
+    state TEXT NOT NULL, decision TEXT, reason TEXT, reason_detail TEXT, operations_not_checked INTEGER,
+    start_after INTEGER, check_flow_run_id TEXT, resume_flow_run_id TEXT, decided_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, interrupted_flow_run_id),
+    FOREIGN KEY (run_id, interrupted_flow_run_id) REFERENCES prefect_executions(run_id, flow_run_id)
+);
 """
 # The stored credential tables (spec 027) are new tables, created whole on an earlier database;
 # none adds a column to an existing table, so ``_COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD`` is unchanged.
@@ -318,7 +334,8 @@ _UPDATE_LATEST_EXECUTION_CANCELLED = (
 # Indexes for listing runs newest first: unfiltered, filtered by configuration, and filtered
 # by configuration and version; for each version's most recently applied run, a partial index
 # over applied runs only, in the order ``_SELECT_LATEST_VERSION_RUNS`` ranks them; and for the
-# configuration list, its name filter and its ``(created_at, config_id)`` order.
+# configuration list, its ``(created_at, config_id)`` order (the unique index of
+# ``_CONFIGURATION_UNIQUE_INDEXES`` serves its name filter).
 # ``IF NOT EXISTS`` makes each re-run a no-op. SQLite and PostgreSQL both scan an
 # ascending index backwards for a descending order, and both support partial indexes.
 _RUN_LISTING_INDEXES: tuple[str, ...] = (
@@ -328,16 +345,31 @@ _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "ON product_runs (config_id, registry_version, started_at, run_id)",
     "CREATE INDEX IF NOT EXISTS product_runs_binding_applied "
     "ON product_runs (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'",
-    "CREATE INDEX IF NOT EXISTS configurations_name ON configurations (name)",
     "CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at, config_id)",
     # The runs of one schedule, newest first (the ``schedule_id`` filter of the run list).
     "CREATE INDEX IF NOT EXISTS product_runs_schedule_started ON product_runs (schedule_id, started_at, run_id)",
+    # The automatic resume rows that the liveness reconciler still moves (spec 030, research R14).
+    "CREATE INDEX IF NOT EXISTS automatic_resumes_open ON automatic_resumes (state) WHERE state <> 'ended'",
 )
 # One run for each start of a schedule: two flow runs of the same start cannot both create a
 # run (spec 021, research R2). A manual run holds NULL in both columns, and SQLite and
 # PostgreSQL both treat NULLs as distinct, so the index does not constrain manual runs. The two
 # partial indexes hold the rules of the schedule itself: a name is unique among schedules that
 # are not deleted, and a configuration has at most one schedule that is not deleted.
+# A name is unique among configurations. A configuration without a name holds NULL, and SQLite
+# and PostgreSQL both treat NULLs as distinct, so the index does not constrain those. The
+# unique index replaces the plain index ``configurations_name`` of an earlier build.
+_CONFIGURATION_UNIQUE_INDEXES: tuple[str, ...] = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS configurations_name_unique ON configurations (name)",
+    "DROP INDEX IF EXISTS configurations_name",
+)
+# Every configuration whose name another configuration also has, which an earlier build allowed.
+_SELECT_DUPLICATE_CONFIGURATION_NAMES = (
+    "SELECT name, config_id FROM configurations WHERE name IN "
+    "(SELECT name FROM configurations WHERE name IS NOT NULL GROUP BY name HAVING COUNT(*) > 1) "
+    "ORDER BY name, config_id"
+)
+_SELECT_CONFIGURATION_WITH_NAME = "SELECT config_id FROM configurations WHERE name = ? AND config_id <> ?"
 _SCHEDULE_UNIQUE_INDEXES: tuple[str, ...] = (
     "CREATE UNIQUE INDEX IF NOT EXISTS product_runs_schedule_start ON product_runs (schedule_id, scheduled_start_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS schedules_name_not_deleted ON schedules (name) WHERE state <> 'deleted'",
@@ -570,9 +602,23 @@ _CONFIGURATION_LIST_ORDER = " ORDER BY configurations.created_at DESC, configura
 _UPDATE_CONFIGURATION_NAME = "UPDATE configurations SET name = ? WHERE config_id = ?"
 _INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, registry_version, package_checksum,
 declared_content, created_at, registered_by, registration_reason) VALUES (?, ?, ?, ?, ?, ?, ?)"""
+# A version registered without validation (spec 025) has a row in its own table, so a database
+# created by an earlier build gains it at start-up; no row reads as ``false``. The column is a
+# correlated ``EXISTS`` rather than a join, so the unqualified fragments below stay unambiguous.
+_INSERT_CONFIGURATION_VERSION_UNVALIDATED = (
+    "INSERT INTO configuration_versions_unvalidated (config_id, registry_version) VALUES (?, ?)"
+)
+_UNVALIDATED_COLUMN = """EXISTS (SELECT 1 FROM configuration_versions_unvalidated AS unvalidated
+WHERE unvalidated.config_id = configuration_versions.config_id
+AND unvalidated.registry_version = configuration_versions.registry_version)"""
 # The paged version list: summaries without the package, newest version first.
-_SELECT_CONFIGURATION_VERSION_LIST = """SELECT config_id, registry_version, package_checksum, created_at,
-registered_by, registration_reason FROM configuration_versions WHERE config_id = ?"""
+_CONFIGURATION_VERSION_SUMMARY_COLUMNS = (
+    "config_id, registry_version, package_checksum, created_at, registered_by, registration_reason, "
+    + _UNVALIDATED_COLUMN
+)
+_SELECT_CONFIGURATION_VERSION_LIST = (
+    "SELECT " + _CONFIGURATION_VERSION_SUMMARY_COLUMNS + " FROM configuration_versions WHERE config_id = ?"  # noqa: S608 - module constants only.
+)
 _CONFIGURATION_VERSION_LIST_AFTER = " AND registry_version < ?"
 _CONFIGURATION_VERSION_LIST_ORDER = " ORDER BY registry_version DESC LIMIT ?"
 # For every version on one page, the newest run and the most recently applied run, in one query.
@@ -590,13 +636,16 @@ SELECT registry_version, 'applied' AS kind, run_id, phase, outcome, started_at, 
 ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY finished_at DESC, run_id DESC) AS position
 FROM product_runs WHERE config_id = ? AND registry_version IN ({0}) AND phase = 'applied'
 ) ranked WHERE position = 1"""
-_SELECT_CONFIGURATION_VERSION = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
-FROM configuration_versions WHERE config_id = ? AND registry_version = ?"""
+_CONFIGURATION_VERSION_COLUMNS = (
+    "config_id, registry_version, package_checksum, declared_content, created_at, " + _UNVALIDATED_COLUMN
+)
+_SELECT_FROM_CONFIGURATION_VERSIONS = "SELECT " + _CONFIGURATION_VERSION_COLUMNS + " FROM configuration_versions"  # noqa: S608 - module constants only.
+_SELECT_CONFIGURATION_VERSION = _SELECT_FROM_CONFIGURATION_VERSIONS + " WHERE config_id = ? AND registry_version = ?"
 _CONFIGURATION_VERSION_EXISTS = "SELECT 1 FROM configuration_versions WHERE config_id = ? AND registry_version = ?"
-_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = """SELECT config_id, registry_version, package_checksum, declared_content,
-created_at FROM configuration_versions WHERE config_id = ? AND package_checksum = ?"""
-_SELECT_CONFIGURATION_VERSIONS = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
-FROM configuration_versions WHERE config_id = ? ORDER BY registry_version"""
+_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = (
+    _SELECT_FROM_CONFIGURATION_VERSIONS + " WHERE config_id = ? AND package_checksum = ?"
+)
+_SELECT_CONFIGURATION_VERSIONS = _SELECT_FROM_CONFIGURATION_VERSIONS + " WHERE config_id = ? ORDER BY registry_version"
 _SELECT_NEXT_CONFIGURATION_VERSION = (
     "SELECT COALESCE(MAX(registry_version) + 1, 1) FROM configuration_versions WHERE config_id = ?"
 )
@@ -689,6 +738,11 @@ _EVENT_HAS_RESOURCE = (
     "EXISTS (SELECT 1 FROM audit_event_resources AS resource WHERE resource.event_id = audit_events.event_id "
     "AND resource.kind = ? AND resource.resource_id = ?)"
 )
+# The fixed ORDER BY clause of an event list, by its order; no caller text reaches the statement.
+_EVENT_ORDER_CLAUSES: dict[str, str] = {
+    "asc": "ORDER BY created_at, event_id",
+    "desc": "ORDER BY created_at DESC, event_id DESC",
+}
 # Event IDs read per related-resource query, well under SQLite's bound-parameter limit.
 _EVENT_RESOURCE_BATCH = 500
 _SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"
@@ -756,6 +810,40 @@ _SCHEDULE_BRANCH_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 _SCHEDULE_BRANCH_FIXED_FIELDS = ("schedule_id", "branch", "created_at")
 _EARLIER_BRANCH_STATES: tuple[ScheduleBranchState, ...] = ("pending", "open")
+# The decision rows of automatic resume (spec 030, data-model.md).
+_AUTOMATIC_RESUME_COLUMNS = (
+    "run_id, interrupted_flow_run_id, cause, worker_name, state, decision, reason, reason_detail, "
+    "operations_not_checked, start_after, check_flow_run_id, resume_flow_run_id, decided_at, updated_at"
+)
+_AUTOMATIC_RESUME_FIELDS = tuple(column.strip() for column in _AUTOMATIC_RESUME_COLUMNS.split(","))
+_INSERT_AUTOMATIC_RESUME = (
+    "INSERT INTO automatic_resumes (" + _AUTOMATIC_RESUME_COLUMNS + ") "
+    "VALUES (" + ", ".join("?" for _ in _AUTOMATIC_RESUME_FIELDS) + ")"
+)
+_SELECT_AUTOMATIC_RESUMES = "SELECT " + _AUTOMATIC_RESUME_COLUMNS + " FROM automatic_resumes"  # noqa: S608 - module constants only.
+_AUTOMATIC_RESUME_ORDER = " ORDER BY decided_at, run_id, interrupted_flow_run_id"
+# The fields a move may change. The key, the cause, the worker and the insert time are fixed;
+# the state changes through the move's own arguments.
+_AUTOMATIC_RESUME_MOVABLE_FIELDS = frozenset(
+    {
+        "decision",
+        "reason",
+        "reason_detail",
+        "operations_not_checked",
+        "start_after",
+        "check_flow_run_id",
+        "resume_flow_run_id",
+        "updated_at",
+    }
+)
+# The states a row may move to, by its stored state (data-model.md, "State transitions").
+# ``ended`` is final.
+_AUTOMATIC_RESUME_TRANSITIONS: dict[AutomaticResumeState, frozenset[AutomaticResumeState]] = {
+    "waiting-check": frozenset({"checking", "ended"}),
+    "checking": frozenset({"waiting-resume", "ended"}),
+    "waiting-resume": frozenset({"resuming", "ended"}),
+    "resuming": frozenset({"ended"}),
+}
 # The run of one start of a schedule. Bound to the schedule ID and the start time in UTC.
 _SELECT_RUN_OF_START = "SELECT run_id FROM product_runs WHERE schedule_id = ? AND scheduled_start_at = ?"
 # The schedule of a scheduled run whose ``sync`` execution ended. A stage that a person
@@ -766,10 +854,18 @@ _SELECT_SCHEDULE_OF_ENDED_SYNC = (
     "(SELECT 1 FROM prefect_executions WHERE prefect_executions.run_id = ? "
     "AND prefect_executions.flow_run_id = ? AND prefect_executions.purpose = 'sync')"
 )
-# The newest run of a configuration that has an execution with no terminal verdict.
+# The execution that an automatic resume row interrupted, for the automatic resume that the
+# row started. Bound to the run ID and the flow run ID of the automatic resume.
+_SELECT_EXECUTION_AN_AUTOMATIC_RESUME_RESUMED = (
+    "SELECT interrupted_flow_run_id FROM automatic_resumes WHERE run_id = ? AND resume_flow_run_id = ?"
+)
+# The newest run of a configuration that has an execution with no terminal verdict, or an
+# automatic resume row that is not ``ended`` (spec 030, research R11).
 _SELECT_RUN_WITH_OPEN_EXECUTION = (
-    "SELECT run_id FROM product_runs WHERE config_id = ? AND EXISTS (SELECT 1 FROM prefect_executions "
+    "SELECT run_id FROM product_runs WHERE config_id = ? AND (EXISTS (SELECT 1 FROM prefect_executions "
     "WHERE prefect_executions.run_id = product_runs.run_id AND prefect_executions.terminal_at IS NULL) "
+    "OR EXISTS (SELECT 1 FROM automatic_resumes WHERE automatic_resumes.run_id = product_runs.run_id "
+    "AND automatic_resumes.state <> 'ended')) "
     "ORDER BY started_at DESC, run_id DESC LIMIT 1"
 )
 # The unresolved receipts of a stage operation on the runs of a configuration, newest run
@@ -803,6 +899,24 @@ class EarlierProductDatabaseError(RuntimeError):
             "empty database, then start Infrahub Sync again."
         )
         self.missing = {table: tuple(names) for table, names in missing.items()}
+
+
+class DuplicateConfigurationNamesError(RuntimeError):
+    """The product database holds several configurations with the same name.
+
+    An earlier build allowed it; this build requires a name to be unique among configurations.
+    ``duplicates`` maps each such name to the IDs of the configurations that have it.
+    """
+
+    def __init__(self, duplicates: Mapping[str, Sequence[str]]) -> None:
+        names = "; ".join(f"{name!r} ({', '.join(ids)})" for name, ids in duplicates.items())
+        super().__init__(
+            "The product database holds several configurations with the same name, which this build of "
+            f"Infrahub Sync does not allow: {names}. Infrahub Sync does not change the configurations itself. "
+            "With the earlier build, register a new version with another name for all but one configuration "
+            "of each name, or replace the database with a new, empty one. Then start Infrahub Sync again."
+        )
+        self.duplicates = {name: tuple(ids) for name, ids in duplicates.items()}
 
 
 class ProductStoreProviderError(RuntimeError):
@@ -843,6 +957,18 @@ class ConfigurationVersionAllocationError(ValueError):
 
 class DuplicateConfigurationError(ValueError):
     """The generated configuration ID already exists."""
+
+
+class ConfigurationNameInUseError(ValueError):
+    """Raised when another configuration already has the name of the package.
+
+    ``config_id`` and ``name`` identify that configuration.
+    """
+
+    def __init__(self, *, config_id: str, name: str) -> None:
+        self.config_id = config_id
+        self.name = name
+        super().__init__(f"a configuration named {name!r} already exists ({config_id})")
 
 
 class ScheduleNotFoundError(ValueError):
@@ -965,7 +1091,31 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
 
     def interrupt_execution(
-        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime,
+        event: AuditEvent | None = None,
+        automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
+    ) -> bool: ...
+
+    def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]: ...
+
+    def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]: ...
+
+    def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]: ...
+
+    def move_automatic_resume(
+        self,
+        run_id: str,
+        interrupted_flow_run_id: str,
+        *,
+        from_state: AutomaticResumeState,
+        to_state: AutomaticResumeState,
+        event: AuditEvent | None = None,
+        **fields: object,
     ) -> bool: ...
 
     def commit_claimed_execution(
@@ -1068,7 +1218,9 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
 
-    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage: ...
+    def list_events(
+        self, filters: EventFilters, *, limit: int, offset: int, order: EventOrder = "asc"
+    ) -> EventPage: ...
 
     def configuration_exists(self, config_id: str) -> bool: ...
 
@@ -1078,6 +1230,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> ConfigurationVersion: ...
 
     def add_configuration_version(
@@ -1087,6 +1240,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> tuple[ConfigurationVersion, bool]: ...
 
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]: ...
@@ -1407,8 +1561,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     if self._dialect == "postgresql":
                         cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
                     # Before any statement: SQLite commits each DDL statement on its own, so
-                    # a later refusal would leave the new tables on the earlier database.
+                    # a later refusal would leave the new tables on the earlier database. The
+                    # duplicate names would also make the unique index on the configuration
+                    # name fail with a message that names no configuration.
                     self._refuse_earlier_database(cursor)
+                    self._refuse_duplicate_configuration_names(cursor)
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
@@ -1450,10 +1607,32 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if missing:
             raise EarlierProductDatabaseError(missing)
 
+    def _refuse_duplicate_configuration_names(self, cursor: _Cursor) -> None:
+        """Raise when several configurations have the same name; the check changes nothing.
+
+        A database without a ``configurations`` table, or whose table has no ``name`` column,
+        has no configuration name and passes.
+        """
+        statement = _SELECT_SQLITE_TABLE_COLUMNS if self._dialect == "sqlite" else _SELECT_POSTGRESQL_TABLE_COLUMNS
+        cursor.execute(self._sql(statement), ("configurations",))
+        if "name" not in {str(row[0]) for row in cursor.fetchall()}:
+            return
+        cursor.execute(_SELECT_DUPLICATE_CONFIGURATION_NAMES)
+        duplicates: dict[str, list[str]] = {}
+        for name, config_id in cursor.fetchall():
+            duplicates.setdefault(str(name), []).append(str(config_id))
+        if duplicates:
+            raise DuplicateConfigurationNamesError(duplicates)
+
     @staticmethod
     def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
-        """Create the listing indexes, the unique indexes of schedules and the index of version credentials."""
-        for statement in (*_RUN_LISTING_INDEXES, *_SCHEDULE_UNIQUE_INDEXES, *_STORED_CREDENTIAL_INDEXES):
+        """Create the listing indexes, the unique indexes of names and the index of version credentials."""
+        for statement in (
+            *_RUN_LISTING_INDEXES,
+            *_CONFIGURATION_UNIQUE_INDEXES,
+            *_SCHEDULE_UNIQUE_INDEXES,
+            *_STORED_CREDENTIAL_INDEXES,
+        ):
             cursor.execute(statement)
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
@@ -2024,10 +2203,33 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             outcome="abandoned",
         )
 
-    def interrupt_execution(
-        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    def interrupt_execution(  # pylint: disable=too-many-arguments
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime,
+        event: AuditEvent | None = None,
+        automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool:
-        """Atomically terminalize an orphaned claimed execution and its product run, with its event."""
+        """Atomically terminalize an orphaned claimed execution and its product run, with its event.
+
+        ``automatic_resume``, when given, is inserted in the same transaction, and only when the
+        execution moves to its interrupted verdict (spec 030, FR-013): a second interruption of
+        the same execution changes nothing and inserts nothing. While the inserted row is not
+        ``ended``, the end of a scheduled run is not counted yet (research R11).
+        ``automatic_resume_event`` is the event of that decision, written with the row (FR-017).
+
+        Raises:
+            ValueError: ``automatic_resume`` names another run or another execution.
+        """
+        if automatic_resume is not None and (automatic_resume.run_id, automatic_resume.interrupted_flow_run_id) != (
+            run_id,
+            flow_run_id,
+        ):
+            msg = "an automatic resume record must name the run and the execution that are interrupted"
+            raise ValueError(msg)
         return self._terminalize_execution(
             run_id,
             flow_run_id,
@@ -2038,7 +2240,159 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             phase="interrupted",
             outcome="ambiguous",
             event=event,
+            automatic_resume=automatic_resume,
+            automatic_resume_event=automatic_resume_event,
         )
+
+    def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows of one run, oldest first."""
+        with self._reading() as cursor:
+            cursor.execute(
+                self._sql(_SELECT_AUTOMATIC_RESUMES + " WHERE run_id = ?" + _AUTOMATIC_RESUME_ORDER), (run_id,)
+            )
+            return tuple(_automatic_resume_from_row(row) for row in cursor.fetchall())
+
+    def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]:
+        """Return, for each run of ``run_ids`` that has any, the number of rows whose resume Sync submitted.
+
+        A row whose resume no worker picked up counts too (`AutomaticResume.resume_submitted`).
+        """
+        counts: dict[str, int] = {}
+        unique = tuple(dict.fromkeys(run_ids))
+        with self._reading() as cursor:
+            for start in range(0, len(unique), _EVENT_RESOURCE_BATCH):
+                batch = unique[start : start + _EVENT_RESOURCE_BATCH]
+                placeholders = ", ".join("?" for _ in batch)
+                cursor.execute(
+                    self._sql(
+                        "SELECT run_id, COUNT(*) FROM automatic_resumes "  # noqa: S608 - placeholders only.
+                        f"WHERE resume_flow_run_id IS NOT NULL AND run_id IN ({placeholders}) GROUP BY run_id"
+                    ),
+                    batch,
+                )
+                counts.update({str(run_id): int(count) for run_id, count in cursor.fetchall()})
+        return counts
+
+    def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows that are not ``ended``, oldest first."""
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_AUTOMATIC_RESUMES + " WHERE state <> 'ended'" + _AUTOMATIC_RESUME_ORDER))
+            return tuple(_automatic_resume_from_row(row) for row in cursor.fetchall())
+
+    def move_automatic_resume(
+        self,
+        run_id: str,
+        interrupted_flow_run_id: str,
+        *,
+        from_state: AutomaticResumeState,
+        to_state: AutomaticResumeState,
+        event: AuditEvent | None = None,
+        **fields: object,
+    ) -> bool:
+        """Move one automatic resume row from ``from_state`` to ``to_state`` and set ``fields``.
+
+        The move is a compare-and-set on the row's key and its state, so when two Sync API
+        processes move the same row, one of them moves it and the other gets ``False``
+        (data-model.md, "State transitions"). ``fields`` must include ``updated_at``. The moved
+        row is checked as an `AutomaticResume` before the transaction commits. ``event`` is
+        written in the transaction of the move, and only when the row moved (FR-017). A move
+        to ``ended`` with the decision ``no-resume`` counts a scheduled run as one failed run
+        in the same transaction (`_settle_scheduled_run_end`, research R11).
+
+        Raises:
+            ValueError: ``fields`` names a field that a move cannot set or lacks ``updated_at``,
+                the move is not one of the state transitions, or the moved row is not valid.
+        """
+        unknown = set(fields) - _AUTOMATIC_RESUME_MOVABLE_FIELDS
+        if unknown:
+            msg = f"a move of an automatic resume row cannot set {', '.join(sorted(unknown))}"
+            raise ValueError(msg)
+        if "updated_at" not in fields:
+            msg = "a move of an automatic resume row must set updated_at"
+            raise ValueError(msg)
+        if to_state not in _AUTOMATIC_RESUME_TRANSITIONS.get(from_state, frozenset()):
+            msg = f"an automatic resume row in the state {from_state!r} cannot move to the state {to_state!r}"
+            raise ValueError(msg)
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    _SELECT_AUTOMATIC_RESUMES + " WHERE run_id = ? AND interrupted_flow_run_id = ? AND state = ?"
+                ),
+                (run_id, interrupted_flow_run_id, from_state),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return False
+            stored = _automatic_resume_from_row(row)
+            moved = AutomaticResume.model_validate({**stored.model_dump(), **fields, "state": to_state})
+            names = sorted(fields)
+            cursor.execute(
+                self._sql(
+                    "UPDATE automatic_resumes SET state = ?, "  # noqa: S608 - column names from a fixed set.
+                    + ", ".join(f"{name} = ?" for name in names)
+                    + " WHERE run_id = ? AND interrupted_flow_run_id = ? AND state = ?"
+                ),
+                (
+                    to_state,
+                    *(_automatic_resume_column_value(moved, name) for name in names),
+                    run_id,
+                    interrupted_flow_run_id,
+                    from_state,
+                ),
+            )
+            moved_row = cursor.rowcount == 1
+            if moved_row and event is not None:
+                self._insert_event(cursor, event)
+            if moved_row and to_state == "ended" and moved.decision == "no-resume":
+                # The run stays interrupted, so it counts as one failed run (research R11).
+                self._settle_scheduled_run_end(
+                    cursor, run_id, interrupted_flow_run_id, verdict="failed", ended_at=moved.updated_at
+                )
+            if moved_row and to_state == "resuming" and moved.resume_flow_run_id is not None:
+                self._settle_resume_ended_before_its_move(
+                    cursor, run_id, moved.resume_flow_run_id, ended_at=moved.updated_at
+                )
+        return moved_row
+
+    def _settle_resume_ended_before_its_move(
+        self, cursor: _Cursor, run_id: str, resume_flow_run_id: str, *, ended_at: datetime
+    ) -> None:
+        """Count a scheduled run whose automatic resume ended before the row named it (research R11).
+
+        The end of an automatic resume counts for the run's ``sync`` through the row's
+        ``resume_flow_run_id``, which the move to ``resuming`` sets after the submission. When a
+        restart or a lost answer delays that move, the resume can end first, and its end then
+        counted nothing. The move counts it here instead, with the verdict its end would have
+        given. A resume that was interrupted and whose next row is not ``ended`` counts nothing:
+        that row's end counts the run.
+
+        The resume's execution row is locked before its verdict is read, so on PostgreSQL the
+        transaction that ends the execution and this move cannot both miss each other: one
+        waits for the other, and exactly one of them counts the run.
+        """
+        cursor.execute(
+            self._sql("UPDATE prefect_executions SET flow_run_id = flow_run_id WHERE run_id = ? AND flow_run_id = ?"),
+            (run_id, resume_flow_run_id),
+        )
+        cursor.execute(
+            self._sql(
+                "SELECT terminal_state, terminal_outcome FROM prefect_executions "
+                "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NOT NULL"
+            ),
+            (run_id, resume_flow_run_id),
+        )
+        ended = cursor.fetchone()
+        if ended is None:
+            return
+        cursor.execute(
+            self._sql("SELECT state FROM automatic_resumes WHERE run_id = ? AND interrupted_flow_run_id = ?"),
+            (run_id, resume_flow_run_id),
+        )
+        next_row = cursor.fetchone()
+        if next_row is not None and str(next_row[0]) != "ended":
+            return
+        verdict = _scheduled_run_verdict(str(ended[0]), str(ended[1]))
+        self._settle_scheduled_run_end(cursor, run_id, resume_flow_run_id, verdict=verdict, ended_at=ended_at)
 
     def commit_claimed_execution(
         self,
@@ -2653,6 +3007,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         phase: str,
         outcome: str,
         event: AuditEvent | None = None,
+        automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool:
         connection = self._connect()
         try:
@@ -2686,15 +3042,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     terminal_outcome=terminal_outcome,
                 )
                 self._keep_interrupted_run_resumable(cursor, run_id)
-                self._settle_scheduled_run_end(
-                    cursor,
-                    run_id,
-                    flow_run_id,
-                    verdict=_scheduled_run_verdict(terminal_state, terminal_outcome),
-                    ended_at=terminal_at,
-                )
+                verdict = _scheduled_run_verdict(terminal_state, terminal_outcome)
+                if automatic_resume is not None:
+                    cursor.execute(self._sql(_INSERT_AUTOMATIC_RESUME), _automatic_resume_values(automatic_resume))
+                    # The schedule counts the run once the automatic resume ends (research R11).
+                    if automatic_resume.state != "ended":
+                        verdict = "unchanged"
+                self._settle_scheduled_run_end(cursor, run_id, flow_run_id, verdict=verdict, ended_at=terminal_at)
                 if event is not None:
                     self._insert_event(cursor, event)
+                if automatic_resume is not None and automatic_resume_event is not None:
+                    self._insert_event(cursor, automatic_resume_event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2724,10 +3082,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         ``stopped`` with the reason ``repeated-failures``, its Prefect schedule is marked as
         not matching the record, and the event ``infrahub_sync.schedule.stopped`` names the
         run. A paused schedule keeps its state. A run that no schedule started, and a stage
-        that a person starts on a scheduled run, change nothing.
+        that a person starts on a scheduled run, change nothing. The end of an automatic
+        resume counts as the end of the execution its chain of rows interrupted first, so the
+        end of a scheduled run's automatic resume counts as the end of its ``sync`` (spec 030,
+        research R11).
         """
         if verdict == "unchanged":
             return
+        flow_run_id = self._execution_an_automatic_resume_chain_started_from(cursor, run_id, flow_run_id)
         cursor.execute(self._sql(_SELECT_SCHEDULE_OF_ENDED_SYNC), (run_id, run_id, flow_run_id))
         row = cursor.fetchone()
         if row is None:
@@ -2759,6 +3121,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         schedule = self._read_schedule(cursor, schedule_id)
         if schedule is not None:
             self._insert_event(cursor, _schedule_stopped_event(schedule, run_id, ended_at))
+
+    def _execution_an_automatic_resume_chain_started_from(self, cursor: _Cursor, run_id: str, flow_run_id: str) -> str:
+        """Return the execution that the automatic resumes ending in ``flow_run_id`` resumed first.
+
+        An automatic resume is the execution that a row of ``automatic_resumes`` names as its
+        ``resume_flow_run_id``. Its end, and the end of a row that an interrupted automatic
+        resume inserted, count for the execution that the first row of the chain interrupted:
+        for a scheduled run, its ``sync`` (spec 030, research R11). Any other execution,
+        including a resume that a person started, is returned unchanged.
+        """
+        seen = {flow_run_id}
+        while True:
+            cursor.execute(self._sql(_SELECT_EXECUTION_AN_AUTOMATIC_RESUME_RESUMED), (run_id, flow_run_id))
+            row = cursor.fetchone()
+            if row is None or str(row[0]) in seen:
+                return flow_run_id
+            flow_run_id = str(row[0])
+            seen.add(flow_run_id)
 
     def reserve_mutation(
         self,
@@ -3391,10 +3771,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             resources = self._read_event_resources(cursor, rows)
         return tuple(_audit_from_row(row, resources[str(row[0])]) for row in rows)
 
-    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage:
-        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``, oldest first.
+    def list_events(self, filters: EventFilters, *, limit: int, offset: int, order: EventOrder = "asc") -> EventPage:
+        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``.
 
-        Events are ordered by ``created_at`` and then ``event_id``. An event without a type,
+        Events are ordered by ``created_at`` and then ``event_id``: oldest first for ``asc``,
+        newest first, both descending, for ``desc``. An event without a type,
         a request refused for a missing or invalid token, is never listed (research R6).
 
         Raises:
@@ -3425,7 +3806,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             parameters.append(_utc_iso(filters.until))
         statement = (
             f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE {' AND '.join(conditions)} "  # noqa: S608
-            "ORDER BY created_at, event_id LIMIT ? OFFSET ?"
+            f"{_EVENT_ORDER_CLAUSES[order]} LIMIT ? OFFSET ?"
         )
         resources: dict[str, list[tuple[str, str]]] = {}
 
@@ -3447,8 +3828,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> ConfigurationVersion:
-        """Durably register a brand-new configuration and its first version."""
+        """Durably register a brand-new configuration and its first version.
+
+        ``registered_without_validation`` marks the version in the same transaction.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has the name of the package.
+        """
         config_id = _generate_config_id()
         version = ConfigurationVersion(
             config_id=config_id,
@@ -3456,6 +3844,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             package_checksum=package.checksum(),
             declared_content=package.declared_content(),
             created_at=datetime.now(timezone.utc),
+            registered_without_validation=registered_without_validation,
         )
         connection = self._connect()
         try:
@@ -3477,6 +3866,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 # inspect only documented SQLite/PostgreSQL uniqueness markers.
                 connection.rollback()
                 if _is_unique_violation(exc):
+                    # Two registrations can both pass the name check; the unique index refuses
+                    # the second, and the check on a new connection names the configuration.
+                    self._refuse_configuration_name_in_use_now(package.configuration.name or None, config_id)
                     msg = f"Configuration ID {config_id!r} already exists"
                     raise DuplicateConfigurationError(msg) from exc
                 raise
@@ -3530,7 +3922,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         Runs inside the transaction that allocates the version, which is always the newest
         one, so the configuration's name is always its latest version's name. ``name`` is
-        ``None`` when the package declares an empty name.
+        ``None`` when the package declares an empty name. A version marked
+        ``registered_without_validation`` gets its mark row after the version row, which the
+        mark's foreign key requires.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has ``name``. The check runs after
+                the version row, so a known checksum still answers with its stored version.
         """
         _require_checksum_digests_content(version.package_checksum, version.declared_content)
         cursor.execute(
@@ -3545,10 +3943,29 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 registration_reason,
             ),
         )
+        self._refuse_configuration_name_in_use(cursor, name, version.config_id)
+        if version.registered_without_validation:
+            cursor.execute(
+                self._sql(_INSERT_CONFIGURATION_VERSION_UNVALIDATED), (version.config_id, version.registry_version)
+            )
         cursor.execute(
             self._sql(_UPDATE_CONFIGURATION_NAME),
             (name, version.config_id),
         )
+
+    def _refuse_configuration_name_in_use(self, cursor: _Cursor, name: str | None, config_id: str) -> None:
+        """Raise when a configuration other than ``config_id`` has ``name``; no name is never in use."""
+        if name is None:
+            return
+        cursor.execute(self._sql(_SELECT_CONFIGURATION_WITH_NAME), (name, config_id))
+        row = cursor.fetchone()
+        if row is not None:
+            raise ConfigurationNameInUseError(config_id=str(row[0]), name=name)
+
+    def _refuse_configuration_name_in_use_now(self, name: str | None, config_id: str) -> None:
+        """Run the name check on a new connection, after a unique index refused a write."""
+        with self._reading() as cursor:
+            self._refuse_configuration_name_in_use(cursor, name, config_id)
 
     def add_configuration_version(
         self,
@@ -3557,11 +3974,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> tuple[ConfigurationVersion, bool]:
         """Atomically allocate the next version, or return the existing one for a known checksum.
 
-        An existing version is returned unchanged: its actor and reason stay those of the
-        request that created it.
+        An existing version is returned unchanged: its actor, reason and
+        ``registered_without_validation`` mark stay those of the request that created it.
         """
         checksum = package.checksum()
         last_conflict: BaseException | None = None
@@ -3580,6 +3998,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         package_checksum=checksum,
                         declared_content=package.declared_content(),
                         created_at=datetime.now(timezone.utc),
+                        registered_without_validation=registered_without_validation,
                     )
                     self._insert_configuration_version_row(
                         cursor,
@@ -3607,6 +4026,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             existing = self._lookup_configuration_version_by_checksum(config_id, checksum)
             if existing is not None:
                 return existing, False
+            # The unique index on the name refused a registration that passed the name check.
+            self._refuse_configuration_name_in_use_now(package.configuration.name or None, config_id)
             if attempt + 1 == _CONFIGURATION_VERSION_ATTEMPTS:
                 msg = f"Could not allocate a configuration version for {config_id!r}"
                 raise ConfigurationVersionAllocationError(msg) from last_conflict
@@ -4392,11 +4813,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None:
         """Return the newest run of a configuration that is in progress, or ``None`` (research R7).
 
-        A run is in progress when one of its executions has no terminal verdict, or when it
+        A run is in progress when one of its executions has no terminal verdict, when it has
+        an automatic resume row that is not ``ended`` (spec 030, research R11), or when it
         has an unresolved receipt of a stage operation that was created less than
         ``receipt_age_limit`` before ``now``. A run in phase ``planned`` that waits for a
-        person, an interrupted run and an abandoned execution all have a terminal verdict, so
-        they are not in progress. The receipt times are compared as times, not as text.
+        person, an abandoned execution, and an interrupted run with no automatic resume row
+        waiting or running all have a terminal verdict, so they are not in progress. The
+        receipt times are compared as times, not as text.
         """
         with self._reading() as cursor:
             return self._run_in_progress(cursor, config_id, now - receipt_age_limit)
@@ -5362,7 +5785,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         _require_execution_timestamp(effective_terminal_at)
         return self._records.abandon_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
 
-    def interrupt_execution(
+    def interrupt_execution(  # pylint: disable=too-many-arguments
         self,
         run_id: str,
         flow_run_id: str,
@@ -5370,12 +5793,56 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         terminal_at: datetime | None = None,
         event: AuditEvent | None = None,
         secrets: Sequence[str] = (),
+        automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool:
-        """CAS a claimed execution into the terminal interrupted/ambiguous verdict, with its event."""
+        """CAS a claimed execution into the terminal interrupted/ambiguous verdict, with its event.
+
+        ``automatic_resume`` and its ``automatic_resume_event`` are inserted in the same
+        transaction, only when the verdict is saved (spec 030, FR-013, FR-017).
+        """
         effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_terminal_at)
         return self._records.interrupt_execution(
-            run_id, flow_run_id, terminal_at=effective_terminal_at, event=_redacted_event(event, secrets)
+            run_id,
+            flow_run_id,
+            terminal_at=effective_terminal_at,
+            event=_redacted_event(event, secrets),
+            automatic_resume=automatic_resume,
+            automatic_resume_event=_redacted_event(automatic_resume_event, secrets),
+        )
+
+    def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows of one run, oldest first."""
+        return self._records.automatic_resumes_of(run_id)
+
+    def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]:
+        """Return, for each run of ``run_ids`` that has any, the number of automatic resumes it received."""
+        return self._records.automatic_resume_counts(run_ids)
+
+    def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows that are not ``ended``, oldest first."""
+        return self._records.open_automatic_resumes()
+
+    def move_automatic_resume(
+        self,
+        run_id: str,
+        interrupted_flow_run_id: str,
+        *,
+        from_state: AutomaticResumeState,
+        to_state: AutomaticResumeState,
+        event: AuditEvent | None = None,
+        **fields: object,
+    ) -> bool:
+        """Compare-and-set one automatic resume row from ``from_state`` to ``to_state`` with ``fields``.
+
+        ``updated_at`` defaults to the current time. Returns ``False`` when the row is not in
+        ``from_state``, because another process moved it first. ``event`` is written with the
+        move, and only when the row moved.
+        """
+        fields.setdefault("updated_at", datetime.now(timezone.utc))
+        return self._records.move_automatic_resume(
+            run_id, interrupted_flow_run_id, from_state=from_state, to_state=to_state, event=event, **fields
         )
 
     def commit_claimed_execution(
@@ -5687,13 +6154,15 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return all audit evidence, optionally narrowed to one Sync run."""
         return self._records.audit_events(run_id)
 
-    def list_events(self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> EventPage:
-        """Return one page of typed events matching ``filters``, oldest first.
+    def list_events(
+        self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0, order: EventOrder = "asc"
+    ) -> EventPage:
+        """Return one page of typed events matching ``filters``, oldest first, or newest first for ``desc``.
 
         Raises:
             ValueError: ``limit`` is less than 1 or ``offset`` is negative.
         """
-        return self._records.list_events(filters, limit=limit, offset=offset)
+        return self._records.list_events(filters, limit=limit, offset=offset, order=order)
 
     def create_configuration(
         self,
@@ -5701,16 +6170,25 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
         secrets: Sequence[str] = (),
     ) -> ConfigurationVersion:
         """Validate, then durably register a brand-new configuration's first version.
 
         ``registered_by`` and ``registration_reason`` are recorded on the version with every
-        value in ``secrets`` redacted.
+        value in ``secrets`` redacted, and ``registered_without_validation`` marks it.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has the name of the package.
         """
         validate_package_credentials(package)
         actor, reason = _redacted_registration(registered_by, registration_reason, secrets)
-        return self._records.create_configuration(package, registered_by=actor, registration_reason=reason)
+        return self._records.create_configuration(
+            package,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
+        )
 
     def add_configuration_version(
         self,
@@ -5719,12 +6197,18 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
         secrets: Sequence[str] = (),
     ) -> tuple[ConfigurationVersion, bool]:
         """Validate, then atomically add a version to an existing configuration.
 
         ``registered_by`` and ``registration_reason`` are recorded on a created version with
-        every value in ``secrets`` redacted.
+        every value in ``secrets`` redacted, and ``registered_without_validation`` marks it;
+        an identical existing version keeps its own values.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has the name of the package. A
+                package whose checksum the configuration already has returns that version.
         """
         validate_package_credentials(package)
         if not self._records.configuration_exists(config_id):
@@ -5732,7 +6216,11 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             raise ConfigurationNotFoundError(msg)
         actor, reason = _redacted_registration(registered_by, registration_reason, secrets)
         return self._records.add_configuration_version(
-            config_id, package, registered_by=actor, registration_reason=reason
+            config_id,
+            package,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
         )
 
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]:
@@ -6998,6 +7486,37 @@ def _schedule_from_row(row: Sequence[Any]) -> ScheduleRecord:
     return ScheduleRecord.model_validate(dict(zip(_SCHEDULE_FIELDS, row, strict=True)))
 
 
+def _automatic_resume_values(record: AutomaticResume) -> tuple[Any, ...]:
+    return (
+        record.run_id,
+        record.interrupted_flow_run_id,
+        record.cause,
+        record.worker_name,
+        record.state,
+        record.decision,
+        record.reason,
+        None if record.reason_detail is None else _json(record.reason_detail),
+        record.operations_not_checked,
+        record.start_after,
+        record.check_flow_run_id,
+        record.resume_flow_run_id,
+        _utc_iso(record.decided_at),
+        _utc_iso(record.updated_at),
+    )
+
+
+def _automatic_resume_column_value(record: AutomaticResume, name: str) -> Any:
+    """Return the stored form of one field of ``record``, as ``_automatic_resume_values`` writes it."""
+    return _automatic_resume_values(record)[_AUTOMATIC_RESUME_FIELDS.index(name)]
+
+
+def _automatic_resume_from_row(row: Sequence[Any]) -> AutomaticResume:
+    values = dict(zip(_AUTOMATIC_RESUME_FIELDS, row, strict=True))
+    if values["reason_detail"] is not None:
+        values["reason_detail"] = _JSON_MAPPING_ADAPTER.validate_json(str(values["reason_detail"]))
+    return AutomaticResume.model_validate(values)
+
+
 def _schedule_branch_from_row(row: Sequence[Any]) -> ScheduleBranch:
     return ScheduleBranch.model_validate(
         {
@@ -7280,6 +7799,20 @@ def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
             key: _redact_ordered_value(value, ordered, numbers=False) if key in _EVENT_DETAILS_TEXT_KEYS else value
             for key, value in details.items()
         }
+        if details.get("changes") is not None:
+            # The text values of a changed setting, such as a cadence or a time zone, are
+            # redacted as the stored schedule is; the setting's name and the numbers are not.
+            redacted["details"]["changes"] = [
+                {
+                    **change,
+                    **{
+                        side: _redact_ordered_value(change[side], ordered, numbers=False)
+                        for side in ("before", "after")
+                        if isinstance(change[side], str)
+                    },
+                }
+                for change in details["changes"]
+            ]
     return AuditEvent.model_validate(redacted)
 
 
@@ -7348,6 +7881,7 @@ def _configuration_version_summary_from_row(
         created_at=row[3],
         registered_by=row[4],
         registration_reason=row[5],
+        registered_without_validation=bool(row[6]),
         latest_run=latest.get((int(row[1]), "latest")),
         latest_applied_run=latest.get((int(row[1]), "applied")),
     )
@@ -7376,6 +7910,8 @@ def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:
             "package_checksum": row[2],
             "declared_content": json.loads(row[3]),
             "created_at": row[4],
+            # SQLite returns the ``EXISTS`` column as 0 or 1, PostgreSQL as a boolean.
+            "registered_without_validation": bool(row[5]),
         }
     )
 

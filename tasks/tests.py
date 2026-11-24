@@ -19,10 +19,19 @@ MAIN_DIRECTORY = CURRENT_DIRECTORY.parent
 # ----------------------------------------------------------------------------
 
 
-@task
-def tests_unit(context: Context) -> None:
-    """Run tests excluding the integration, smoke, Docker, and Compose markers."""
-    command = 'pytest -m "not integration and not smoke and not docker and not compose"'
+@task(
+    help={
+        "workers": "Number of pytest-xdist worker processes, or `auto` for one per CPU, or `0` to run in one process."
+    }
+)
+def tests_unit(context: Context, workers: str = "auto") -> None:  # noqa: PT028 - an Invoke task, not a test
+    """Run tests excluding the integration, smoke, Docker, and Compose markers.
+
+    The tests run in parallel through pytest-xdist, one worker per CPU by default, so that the
+    unit tier of CI stays well inside its time limit as the suite grows. Pass `--workers 0` to run
+    them in one process, for example to debug a test that depends on another.
+    """
+    command = f'pytest -m "not integration and not smoke and not docker and not compose" -n {shlex.quote(workers)}'
     if sys.version_info < (3, 11):
         command += " --ignore=tests/service --ignore=tests/runtime_schema/test_worker_path.py"
     with context.cd(MAIN_DIRECTORY):

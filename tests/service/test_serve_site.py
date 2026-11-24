@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.service import serve
+from infrahub_sync.service.service import RunService
 from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV, WEB_DIRECTORY_ENV
 from tests.helpers.stored_credentials import set_process_start_settings
 
@@ -26,8 +27,9 @@ class _RecordingReconciler:
 
     cadence_seconds = 0.01
 
-    def __init__(self, *_args: object) -> None:
+    def __init__(self, *_args: object, submitter: object = None) -> None:
         self.iterated = threading.Event()
+        self.submitter = submitter
 
     async def reconcile_once(self) -> None:
         self.iterated.set()
@@ -42,8 +44,8 @@ def test_build_service_serves_the_api_under_api_and_runs_the_liveness_loop(
     monkeypatch.delenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", raising=False)
     reconcilers: list[_RecordingReconciler] = []
 
-    def _reconciler(*args: object) -> _RecordingReconciler:
-        reconciler = _RecordingReconciler(*args)
+    def _reconciler(*args: object, submitter: object = None) -> _RecordingReconciler:
+        reconciler = _RecordingReconciler(*args, submitter=submitter)
         reconcilers.append(reconciler)
         return reconciler
 
@@ -56,6 +58,8 @@ def test_build_service_serves_the_api_under_api_and_runs_the_liveness_loop(
         assert client.get("/api/version").status_code == 200
         assert client.get("/version", headers={"Accept": "application/json"}).status_code == 404
         assert len(reconcilers) == 1
+        # The run service submits the automatic check and resume (spec 030, T016).
+        assert isinstance(reconcilers[0].submitter, RunService)
         assert reconcilers[0].iterated.wait(timeout=5)
 
 
@@ -93,8 +97,8 @@ def test_build_service_passes_the_schedule_service_factory_to_the_api(
     replacement = object()
     captured: dict[str, object] = {}
 
-    def _app(*_args: object, schedules: object, credential_cipher: object) -> object:
-        del credential_cipher
+    def _app(*_args: object, schedules: object, credential_cipher: object, health_checker: object) -> object:
+        del credential_cipher, health_checker
         captured["schedules"] = schedules
         return captured
 

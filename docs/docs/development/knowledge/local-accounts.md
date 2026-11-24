@@ -175,7 +175,7 @@ is accepted.
 ### The `worker` account
 
 The workers call the Sync API as one account named `worker`, which the environment defines
-([ADR 0054](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0054-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)).
+([ADR 0057](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)).
 It uses the account tables, with no new column: the pair "named `worker` and
 `environment_managed`" identifies it (`is_worker_account` in `auth.py`).
 
