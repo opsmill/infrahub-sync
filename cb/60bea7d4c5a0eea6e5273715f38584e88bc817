@@ -1,0 +1,19 @@
+infrahub_sync/service/apply_guard.py
+  s_91d5cdaa577a3c::t_857a6432555aa5 34,60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cb60bea7d4c5a0eea6e5273715f38584e88bc817",
+  "prompts": {},
+  "sessions": {
+    "s_91d5cdaa577a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dee066ca-cc9c-4793-8818-ea204d7bebc6",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
