@@ -1,0 +1,21 @@
+frontend/src/api/errors.ts
+  s_0ca490c1faed1c::t_160f645914d8af 26-27,29-32
+frontend/src/api/errors.test.ts
+  s_0ca490c1faed1c::t_e7a827a4adb66b 39-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29920e4594b8303acbb9dd6ed2493fd6f3412624",
+  "prompts": {},
+  "sessions": {
+    "s_0ca490c1faed1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac55537f-b117-4c9b-bb69-11fe9e609baf",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
