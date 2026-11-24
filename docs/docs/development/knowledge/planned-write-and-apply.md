@@ -665,8 +665,9 @@ in full, so a delete-bearing plan is the **ordinary** case, not an exception. Se
 
 ### A note on logging
 
-The code on this path creates its loggers with `structlog.get_logger(__name__)`, as every other
-module in `infrahub_sync/` does. `infrahub_sync/log.py` delivers each event through the standard
+The code on this path creates its loggers with `structlog.get_logger(__name__)`, as the other
+modules in `infrahub_sync/` do. The one exception is `adapters/msgraphsync.py`, which wraps its
+standard `logging` logger with `structlog`. `infrahub_sync/log.py` delivers each event through the standard
 library's `logging`, so the warning levels described above are `logging` levels, and a handler or
 `caplog` receives each line with its message text.
 

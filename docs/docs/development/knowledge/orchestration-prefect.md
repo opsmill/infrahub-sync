@@ -366,8 +366,9 @@ parameter therefore never reaches the flow body.
   `configure_service_logging` in `infrahub_sync/log.py` sets the `infrahub_sync` logger to
   INFO for that reason, and adds a standard-error handler when no handler would print the
   package's lines (the Sync API process configures none before uvicorn starts). Each service
-  process calls it through `install_custom_ca_bundle`, its first step. Every module logs
-  with `structlog`, and `configure_structlog` in the same file delivers each event through
+  process calls it at start: `sync-bootstrap` calls it directly, and `sync-api` and
+  `sync-worker` call it through `install_custom_ca_bundle`. The modules log with
+  `structlog`, and `configure_structlog` in the same file delivers each event through
   the standard `logging` module, so the handlers that Prefect configures, the log bridge
   and pytest's `caplog` receive every line.
 - **SQLAlchemy is held below 2.1 while the `prefect` pin is 3.8.6.** With SQLAlchemy 2.1, the
