@@ -53,6 +53,26 @@ def _version(**extra: object) -> dict[str, object]:
     return {"server_version": "3.0.0", "api_versions": ["v3-unstable"], "stability": "unstable", **extra}
 
 
+def _health(**extra: object) -> dict[str, object]:
+    return {
+        "status": "healthy",
+        "dependencies": [{"name": "database", "status": "up", "error": "none"}],
+        "workers": {
+            "state": "known",
+            "minimum": 1,
+            "live_workers": 1,
+            "queue_depth": 0,
+            "items": [{"name": "worker-1", "state": "live", "last_heartbeat": NOW}],
+        },
+        "timestamp": NOW,
+        **extra,
+    }
+
+
+def _unhealthy_health() -> dict[str, object]:
+    return _health(status="unhealthy", dependencies=[{"name": "database", "status": "down", "error": "timeout"}])
+
+
 def _run(run_id: str = "run-1") -> dict[str, object]:
     return {
         "run": {
@@ -253,10 +273,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
     version = _config_version()
     config = {"config_id": "cfg", "created_at": NOW}
     responses: dict[tuple[str, str], tuple[int, object]] = {
-        ("GET", "/api/status"): (
-            200,
-            {"service": "ready", "worker": {"state": "unavailable", "detail_available": False, "observed_at": None}},
-        ),
+        ("GET", "/api/health"): (200, _health()),
         ("POST", "/api/configs"): (201, {"configuration": config, "version": version}),
         ("POST", "/api/configs/cfg/versions"): (200, {"version": version, "created": False}),
         ("GET", "/api/configs"): (200, {"items": [config], "next_cursor": None}),
@@ -298,7 +315,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
 
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
     mutation = ConfigMutationRequest(package={"format_version": 1}, reason="test")
-    client.get_status()
+    client.get_health()
     client.register_config(mutation, "key-1")
     client.create_config_version("cfg", mutation, "key-2")
     client.list_configs()
@@ -315,7 +332,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
     client.apply_run("run-1", ApplyRunRequest(expected_checksum="a" * 64, confirm_writes=True, reason="test"), "key-5")
     client.cancel_run("run-1", CancelRunRequest(reason="test"), "key-6")
 
-    protected = [request for request in requests if request.url.path not in {"/api/version", "/api/status"}]
+    protected = [request for request in requests if request.url.path not in {"/api/version", "/api/health"}]
     assert all(request.headers["Authorization"] == f"Bearer {TOKEN}" for request in protected)
     assert [request.headers.get("Idempotency-Key") for request in requests if request.method == "POST"] == [
         "key-1",
@@ -504,7 +521,48 @@ def test_response_failures_are_typed_and_secret_safe(response: httpx.Response, e
     assert raised.value.__cause__ is None
 
 
-def test_status_accepts_only_its_declared_success_status() -> None:
+def test_get_health_returns_a_healthy_report_for_200() -> None:
+    client = SyncClient(
+        "https://example.test",
+        TOKEN,
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=_health())),
+    )
+
+    report = client.get_health()
+
+    assert report.status == "healthy"
+    assert report.workers.live_workers == 1
+
+
+def test_get_health_returns_an_unhealthy_report_for_503() -> None:
+    body = _health(
+        status="unhealthy",
+        dependencies=[{"name": "database", "status": "down", "error": "timeout"}],
+    )
+    client = SyncClient(
+        "https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: httpx.Response(503, json=body))
+    )
+
+    report = client.get_health()
+
+    assert report.status == "unhealthy"
+    assert report.dependencies[0].error == "timeout"
+
+
+def test_get_health_sends_no_credential() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=_health())
+
+    SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler)).get_health()
+
+    assert [request.url.path for request in requests] == ["/api/health"]
+    assert "Authorization" not in requests[0].headers
+
+
+def test_get_health_raises_the_error_envelope_error_for_a_503_envelope() -> None:
     response = httpx.Response(
         503,
         json={
@@ -519,8 +577,42 @@ def test_status_accepts_only_its_declared_success_status() -> None:
     )
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: response))
 
-    with pytest.raises(ProtocolError):
-        client.get_status()
+    with pytest.raises(APIError) as raised:
+        client.get_health()
+
+    assert (raised.value.status, raised.value.code) == (503, "unavailable")
+    assert "secret" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param(
+            httpx.Response(
+                404,
+                json={
+                    "error": {"code": "not_found", "message": "x", "status": 404, "run_id": None, "mutation_id": None}
+                },
+            ),
+            id="404",
+        ),
+        pytest.param(httpx.Response(500, json=_health()), id="500"),
+        pytest.param(
+            httpx.Response(200, content=b"not json", headers={"Content-Type": "application/json"}), id="non-json"
+        ),
+        pytest.param(httpx.Response(200, json={"status": "healthy"}), id="200-invalid-body"),
+        pytest.param(httpx.Response(503, json={"status": "unhealthy"}), id="503-invalid-body"),
+        pytest.param(httpx.Response(200, json=_unhealthy_health()), id="200-unhealthy-report"),
+        pytest.param(httpx.Response(503, json=_health()), id="503-healthy-report"),
+    ],
+)
+def test_get_health_raises_protocol_error_for_any_other_answer(response: httpx.Response) -> None:
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: response))
+
+    with pytest.raises(ProtocolError) as raised:
+        client.get_health()
+
+    assert raised.value.operation == "get_health"
 
 
 def test_json_response_over_16_mib_is_a_protocol_error() -> None:

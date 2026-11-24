@@ -844,6 +844,55 @@ save the progress marker for 5 minutes, the apply stops and the run is interrupt
 An interrupted `sync` run is resumed in the same way, with the checksum of the plan that the
 `sync` run saved. Read it with `runs plan RUN_ID`.
 
+### View an automatic resume
+
+When the Sync API runs with `INFRAHUB_SYNC_AUTOMATIC_RESUME` on, it runs `verify` and resumes a
+run by itself after the worker of its write disappeared: Prefect reported the flow run as
+crashed, or the worker stopped sending heartbeats. The setting, the reasons the Sync API does not
+resume a run, and the limits are described in
+[Automatic resume of an interrupted write](./operations/day-2-operations.mdx#automatic-resume-of-an-interrupted-write).
+
+`infrahub-sync runs show RUN_ID` prints one block for each interrupted write that the Sync API
+recorded for automatic resume, oldest first, after the progress lines:
+
+```text
+Automatic resume 1: started
+  cause: the worker infrahub-sync-service-3b2f… stopped sending heartbeats
+  check: passed, 0 differs, 0 not checked
+  resumed after operation 5999 by Sync (automatic resume)
+
+Automatic resume 2: not started
+  cause: Prefect reported the flow run as crashed
+  reason: the check found 1 node that differs from the plan
+  next: run `infrahub-sync verify RUN_ID`, then a new plan or `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`
+```
+
+- The first line gives the state: `started` or `not started` once the automatic resume ended, and
+  `waiting for a live worker to run the check`, `checking`, `waiting for a live worker to
+  resume` or `resuming` before. When the Sync API submitted the resume and no worker started it
+  in time, the first line says `submitted, no worker started it`, a line `submitted after
+  operation N by Sync (automatic resume)` follows the check, and the resume counts toward the
+  limit of 3.
+- `cause` says why the write was interrupted.
+- `check` appears once the automatic `verify` passed, also when the automatic resume ended later, with the count of uncertain operations
+  it did not read (`not checked`) because of its limit of 2,000. A check that did not pass is
+  stated under `reason`.
+- `reason` says why the Sync API did not resume the run.
+- `next` appears on the last block only, when the Sync API did not resume the run and the run
+  is still interrupted. When the run cannot be resumed, it says to create a new plan.
+
+The resume lines of `runs show` and the run page of the web interface name
+`Sync (automatic resume)` as the actor of an automatic resume. `infrahub-sync runs list` adds
+`auto resumes: N` to a run that the Sync API resumed. The event list records
+`infrahub_sync.run.automatic_resume_started` when the Sync API submits a resume, and
+`infrahub_sync.run.automatic_resume_not_started`, with the reason code, when it does not resume
+the run; see [List events](./reference/sync-http-api.mdx#list-events).
+
+While the Sync API waits for a live worker, your own `verify` or `runs resume` stops the
+automatic resume, and its block then says that a person ran `verify` or `runs resume` while the
+automatic resume waited for a live worker. While its check or its resume is being submitted or
+runs, your request is refused with `run-execution-conflict`.
+
 ## Change a registered package
 
 A registered version never changes. To change a package, edit the file and register it as a

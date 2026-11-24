@@ -46,14 +46,14 @@ def test_an_html_page_answering_version_is_not_a_sync_api() -> None:
     _assert_body_absent(raised.value)
 
 
-@pytest.mark.parametrize("status", [200, 502])
-def test_an_html_answer_to_get_status_is_not_a_sync_api(status: int) -> None:
+@pytest.mark.parametrize("status", [200, 502, 503])
+def test_an_html_answer_to_get_health_is_not_a_sync_api(status: int) -> None:
     with pytest.raises(NotSyncAPIError) as raised:
-        _client(lambda _request: httpx.Response(status, text=HTML, headers=HTML_HEADERS)).get_status()
+        _client(lambda _request: httpx.Response(status, text=HTML, headers=HTML_HEADERS)).get_health()
 
     assert (raised.value.operation, raised.value.url, raised.value.status) == (
-        "get_status",
-        "http://127.0.0.1:8001/api/status",
+        "get_health",
+        "http://127.0.0.1:8001/api/health",
         status,
     )
     _assert_body_absent(raised.value)
@@ -137,3 +137,21 @@ def test_an_html_error_answer_to_get_artifact_is_not_a_sync_api() -> None:
 
     assert (raised.value.operation, raised.value.status) == ("get_artifact", 404)
     _assert_body_absent(raised.value)
+
+
+def test_a_version_answer_without_sdk_version_still_parses() -> None:
+    """A server that predates `sdk_version` answers without it; the client reads `None`."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_version())
+
+    version = _client(handler).get_version()
+
+    assert (version.server_version, version.sdk_version) == ("3.0.0", None)
+
+
+def test_a_version_answer_with_sdk_version_is_read() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={**_version(), "sdk_version": "1.23.2"})
+
+    assert _client(handler).get_version().sdk_version == "1.23.2"

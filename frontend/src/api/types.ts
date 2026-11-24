@@ -5,6 +5,8 @@ type Schemas = components["schemas"];
 export type Run = Schemas["PublicRunResource"];
 export type RunResource = Schemas["RunResource"];
 export type Orchestration = Schemas["OrchestrationSummary"];
+export type Resume = Schemas["ResumeResource"];
+export type AutomaticResume = Schemas["AutomaticResumeResource"];
 export type ConfigurationSummary = Schemas["ConfigurationSummaryResource"];
 export type VersionSummary = Schemas["ConfigurationVersionSummaryResource"];
 export type RunReference = Schemas["RunReference"];
@@ -26,6 +28,8 @@ export type ChangeScheduleRequest = Schemas["ChangeScheduleRequest"];
 export type ScheduleNextStarts = Schemas["ScheduleNextStarts"];
 export type Principal = Schemas["PrincipalResource"];
 export type SyncEvent = Schemas["EventResource"];
+/** The body of `GET /health`, for a 200 and for a 503 answer. */
+export type HealthReport = Schemas["HealthResource"];
 
 /** A source or destination as a registered package declares it. */
 export interface DeclaredAdapter {

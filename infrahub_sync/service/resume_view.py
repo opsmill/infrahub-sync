@@ -13,14 +13,22 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from infrahub_sync.client.models import ApplyProgressKindResource, ApplyProgressResource, ResumeResource
+from infrahub_sync.client.models import (
+    ApplyProgressKindResource,
+    ApplyProgressResource,
+    AutomaticResumeResource,
+    ResumeResource,
+)
 from infrahub_sync.product_store import PLAN_ARTIFACT_ID, WRITE_PURPOSES, run_apply_progress
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun
+    from infrahub_sync.product_store import AutomaticResume, MutationReceipt, PrefectExecutionLink, ProductRun
 
+# The actor of the check and the resume that Sync submits by itself; never an account (research R5).
+# The account name middleware shows it as `Sync (automatic resume)` in every answer.
+AUTOMATIC_RESUME_ACTOR = "sync:automatic-resume"
 # How many commits after the saved position may have reached the destination when the failing
 # operation is unknown and the last save succeeded: the worker saves at least every 500 commits
 # (R3). Recorded deletes are never dispatched, so they are not commits and are not counted.
@@ -289,3 +297,110 @@ def run_resumes(
         if link.purpose in WRITE_PURPOSES and link.apply_progress is not None:
             highest = max(link.apply_progress.position, -1 if highest is None else highest)
     return tuple(resumes)
+
+
+# The fixed sentences of the reasons not to resume a run automatically (spec 030 contracts/http-api.md).
+# The reasons whose sentence depends on the record are built in `automatic_resume_reason_text`.
+_AUTOMATIC_RESUME_REASON_TEXTS = {
+    "not-resumable": (
+        "`runs resume` would refuse the run: it has no saved plan, it was cancelled, "
+        "or it is a scheduled run with branch review"
+    ),
+    "approval-missing": "the site requires approval and the run's plan has no recorded approval",
+    "no-progress": "the previous automatic resume did not move the progress marker forward",
+    "person-took-over": "a person ran `verify` or `runs resume` while the automatic resume waited for a live worker",
+}
+
+
+def automatic_resume_count(rows: Sequence[AutomaticResume]) -> int:
+    """Return how many automatic resumes a run received: its records whose resume Sync submitted.
+
+    A resume that no worker picked up counts too: its record ends ``not-picked-up`` (FR-010).
+    """
+    return sum(row.resume_submitted for row in rows)
+
+
+def automatic_resume_cause_text(row: AutomaticResume) -> str:
+    """Return the sentence that states why the liveness reconciler ended the write ``row`` names."""
+    if row.cause == "rule-6":
+        return "Prefect reported the flow run as crashed"
+    if row.worker_name is not None:
+        return f"the worker {row.worker_name} stopped sending heartbeats"
+    return "the claiming worker stopped sending heartbeats"
+
+
+def _differs_text(row: AutomaticResume) -> str:
+    differs = (row.reason_detail or {}).get("differs", 0)
+    nodes = "1 node that differs" if differs == 1 else f"{differs} nodes that differ"
+    return f"the check found {nodes} from the plan"
+
+
+def _check_failed_text(row: AutomaticResume) -> str:
+    cause = (row.reason_detail or {}).get("cause")
+    return "the automatic check failed" if cause is None else f"the automatic check failed: {cause}"
+
+
+def _not_picked_up_text(row: AutomaticResume) -> str:
+    # A resume that no worker picked up was submitted, so it has its flow run.
+    step = "check" if row.resume_flow_run_id is None else "resume"
+    return f"no worker picked up the automatic {step} in time"
+
+
+def _refused_text(row: AutomaticResume) -> str:
+    # The resume is submitted only after a check ran, so a refusal after a check is the resume's.
+    step = "check" if row.check_flow_run_id is None else "resume"
+    code = (row.reason_detail or {}).get("code")
+    refused = f"the Sync API refused the automatic {step}"
+    return refused if code is None else f"{refused} with the code {code}"
+
+
+# The reasons whose sentence names a code or a count of the record.
+_AUTOMATIC_RESUME_REASON_BUILDERS: dict[str, Callable[[AutomaticResume], str]] = {
+    "check-found-differs": _differs_text,
+    "check-failed": _check_failed_text,
+    "not-picked-up": _not_picked_up_text,
+    "refused": _refused_text,
+}
+
+
+def automatic_resume_reason_text(row: AutomaticResume, earlier_resumes: int = 0) -> str | None:
+    """Return the sentence that states why Sync did not resume the run, or ``None`` when it did or may still.
+
+    ``earlier_resumes`` is the number of automatic resumes the run received before ``row``, which
+    the sentence of ``limit-reached`` names. The sentences hold codes and counts only.
+    """
+    if row.reason is None:
+        return None
+    if row.reason == "limit-reached":
+        return f"the run already received {earlier_resumes} automatic resumes, the limit"
+    build = _AUTOMATIC_RESUME_REASON_BUILDERS.get(row.reason)
+    if build is not None:
+        return build(row)
+    return _AUTOMATIC_RESUME_REASON_TEXTS.get(row.reason, row.reason)
+
+
+def automatic_resume_view(rows: Sequence[AutomaticResume]) -> tuple[AutomaticResumeResource, ...]:
+    """Return the run detail's view of a run's automatic resume records, oldest first (FR-016)."""
+    view = []
+    earlier_resumes = 0
+    for row in rows:
+        view.append(
+            AutomaticResumeResource(
+                interrupted_flow_run_id=row.interrupted_flow_run_id,
+                actor=AUTOMATIC_RESUME_ACTOR,
+                cause=row.cause,
+                cause_text=automatic_resume_cause_text(row),
+                state=row.state,
+                decision=row.decision,
+                reason=row.reason,
+                reason_text=automatic_resume_reason_text(row, earlier_resumes),
+                operations_not_checked=row.operations_not_checked,
+                start_after=row.start_after,
+                check_flow_run_id=row.check_flow_run_id,
+                resume_flow_run_id=row.resume_flow_run_id,
+                decided_at=row.decided_at,
+                updated_at=row.updated_at,
+            )
+        )
+        earlier_resumes += row.resume_submitted
+    return tuple(view)

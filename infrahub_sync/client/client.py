@@ -57,6 +57,7 @@ from .models import (
     ErrorEnvelope,
     EventPage,
     EventResource,
+    HealthResource,
     ListPage,
     OrchestrationSummary,
     PackageCheckRequest,
@@ -75,7 +76,6 @@ from .models import (
     ScheduleActionRequest,
     SchedulePage,
     ScheduleResource,
-    ServiceStatusResource,
     SessionResource,
     TokenResource,
     ValidationReportResource,
@@ -95,6 +95,8 @@ _DIGEST = re.compile(r"sha-256=(?P<digest>[0-9a-f]{64})")
 _ERROR_STATUSES = frozenset({401, 403, 404, 409, 410, 422, 503})
 _CONFIG_ERROR_STATUSES = _ERROR_STATUSES | {400}
 _MAX_JSON_BYTES = 16 * 1024 * 1024
+# The health report's `status` that each HTTP status of `GET /health` must carry.
+_HEALTH_STATUS_BY_CODE = {200: "healthy", 503: "unhealthy"}
 _SERVICE_URL_ARG = "service_url"
 _TOKEN_ARG = "token"
 _TIMEOUT_ARG = "timeout"
@@ -262,18 +264,36 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         except (ValidationError, ProtocolError):
             raise self._compatibility_error(response) from None
 
-    def get_status(self) -> ServiceStatusResource:
-        """Return unauthenticated service and worker status."""
+    def get_health(self) -> HealthResource:
+        """Return the unauthenticated health report of the Sync API's components and workers.
 
-        operation = "get_status"
-        response = self._send(operation, "GET", "/status", authenticated=False)
+        A ``200`` answer that carries a ``healthy`` report, or a ``503`` answer that carries an
+        ``unhealthy`` report, returns it. A ``503`` that carries the error envelope instead raises
+        ``APIError``. Any other answer, including a report whose ``status`` does not match the
+        HTTP status, raises ``ProtocolError``.
+        """
+
+        operation = "get_health"
+        response = self._send(operation, "GET", "/health", authenticated=False)
         self._require_json(response, operation)
-        if response.status_code != 200:
+        if response.status_code not in _HEALTH_STATUS_BY_CODE:
+            raise ProtocolError(operation, response.status_code)
+        payload = self._json(response, operation)
+        try:
+            report = HealthResource.model_validate(payload)
+        except (ValidationError, TypeError, ValueError):
+            report = None
+        if report is not None:
+            if report.status != _HEALTH_STATUS_BY_CODE[response.status_code]:
+                raise ProtocolError(operation, response.status_code)
+            return report
+        if response.status_code != 503:
             raise ProtocolError(operation, response.status_code)
         try:
-            return ServiceStatusResource.model_validate(self._json(response, operation))
-        except (ValidationError, TypeError, ValueError):
+            error = self._parse_api_error(payload, response.status_code, config_route=False)
+        except (ValidationError, KeyError, TypeError, ValueError):
             raise ProtocolError(operation, response.status_code) from None
+        raise error
 
     def register_config(self, request: ConfigMutationRequest, idempotency_key: str) -> RegisteredConfigurationResource:
         """Register a configuration package idempotently."""

@@ -196,7 +196,7 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(  # noqa: PL
 def test_the_python_client_drives_the_registry_and_both_public_resources(  # noqa: PLR0914
     smoke_env: dict[str, Any],
 ) -> None:
-    """`/version`, `/status`, and all seven registry methods through the typed client."""
+    """`/version`, `/health`, and all seven registry methods through the typed client."""
     package = smoke_package(smoke_env["urls"]["infrahub"])
     revised = revised_package(smoke_env["urls"]["infrahub"], package["configuration"]["name"])
     key = idempotency_headers("smoke-config")["Idempotency-Key"]
@@ -205,11 +205,11 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(  # noq
         version = client.get_version()
         assert "v3-unstable" in version.api_versions
 
-        status = client.get_status()
-        assert status.service == "ready"
+        health = client.get_health()
         # The development stack starts a worker, so an absent one is a broken environment, not a
-        # tolerable state: only the two live states are admitted here.
-        assert status.worker.state in {"ready", "busy"}, status.worker
+        # tolerable state: the work pool must be read and at least one worker must be live.
+        assert health.workers.state == "known", health.workers
+        assert health.workers.live_workers, health.workers
 
         request = ConfigMutationRequest(package=package, reason=REASON)
         registered = client.register_config(request, key)
@@ -255,7 +255,7 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(  # noq
             smoke_env["infrahub_token"],
             {
                 "get_version resource": version,
-                "get_status resource": status,
+                "get_health resource": health,
                 "register_config resource": registered,
                 "register_config replay resource": replayed,
                 "identical create_config_version resource": identical,
@@ -281,9 +281,9 @@ def test_raw_http_drives_the_registry_and_records_the_transcript(smoke_env: dict
 
     with authenticated_client(smoke_env, transcript=transcript) as client:
         assert client.get("/version").status_code == 200
-        status = client.get("/status")
-        assert status.status_code == 200, status.text
-        assert status.json()["service"] == "ready"
+        health = client.get("/health")
+        assert health.status_code == 200, health.text
+        assert health.json()["status"] == "healthy"
 
         registered = client.post("/configs", headers=key, json=body)
         assert registered.status_code == 201, registered.text
@@ -321,7 +321,7 @@ def test_raw_http_drives_the_registry_and_records_the_transcript(smoke_env: dict
     records = [json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()]
     assert [(record["method"], record["path"], record["status"]) for record in records] == [
         ("GET", "/api/version", 200),
-        ("GET", "/api/status", 200),
+        ("GET", "/api/health", 200),
         ("POST", "/api/configs", 201),
         ("POST", "/api/configs", 201),
         ("POST", f"/api/configs/{config_id}/versions", 200),

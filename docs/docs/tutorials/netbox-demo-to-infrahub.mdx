@@ -196,10 +196,11 @@ name comes from the project name `infrahub` you gave `docker compose -p` in
 ```bash
 export INFRAHUB_SYNC_API_URL="http://127.0.0.1:8001"
 export INFRAHUB_SYNC_API_TOKEN="infrahub-sync-dev-token"
-curl -sf -H "Authorization: Bearer ${INFRAHUB_SYNC_API_TOKEN}" "${INFRAHUB_SYNC_API_URL}/api/status"
+curl -sf "${INFRAHUB_SYNC_API_URL}/api/health"
 ```
 
-The response reports `"service": "ready"` when the worker is running. The API token
+The response reports `"status": "healthy"` when every component is up and a worker is live;
+`curl -f` fails when the answer is `503`. The API token
 authenticates the CLI to the Sync API. It is separate from
 `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, which the worker uses to access Infrahub.
 

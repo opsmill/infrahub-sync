@@ -4,10 +4,11 @@ import { cronFields } from "#/domain/cadence";
 import { DEFAULT_HISTORY_EVENT_TYPES, untilAfter } from "#/domain/schedule-events";
 
 import { $api, fetchClient } from "./client";
-import { isEnvelope, isTimeout, SyncApiUnavailable } from "./errors";
+import { isEnvelope, isHealthReport, isTimeout, SyncApiUnavailable } from "./errors";
 import type {
   ConfigurationSummary,
   ConfigurationVersion,
+  HealthReport,
   Run,
   RunLogLine,
   RunResource,
@@ -43,8 +44,19 @@ const poll =
  * The status check keeps polling after a failure, so the header turns back to green when the Sync
  * API answers again. It uses the shared retry rule: a timeout or a refusal is not retried.
  */
-export const statusQuery = () =>
-  $api.queryOptions("get", "/status", {}, { refetchInterval: 15_000, retryDelay: 1_000 });
+export const healthQuery = () =>
+  queryOptions({
+    queryKey: ["get", "/health"],
+    queryFn: async ({ signal }): Promise<HealthReport> => {
+      const { data, error, response } = await fetchClient.GET("/health", { signal });
+      if (data) return data;
+      // A 503 carries the report when a component is down; the page reads its workers section.
+      if (response.status === 503 && isHealthReport(error)) return error;
+      throw error;
+    },
+    refetchInterval: 15_000,
+    retryDelay: 1_000,
+  });
 
 export const meQuery = () => $api.queryOptions("get", "/me", {}, { staleTime: 5 * 60_000 });
 

@@ -69,7 +69,9 @@ def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pyte
     captured: dict[str, Any] = {}
 
     class _Reconciler:
-        def __init__(self, _projection: object, _orchestration: object, _policy: object, work_pool: str) -> None:
+        def __init__(
+            self, _projection: object, _orchestration: object, _policy: object, work_pool: str, **_options: object
+        ) -> None:
             captured["work_pool"] = work_pool
 
     monkeypatch.setattr(serve, "RunLivenessReconciler", _Reconciler)

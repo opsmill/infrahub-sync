@@ -1,7 +1,7 @@
 # 27. An interrupted apply resumes from its saved position
 
 **Status**: Accepted
-**Date**: 2026-11-13
+**Date**: 2026-11-13, amended 2026-11-24 (see [Amendment, 2026-11-24](#amendment-2026-11-24-automatic-resume))
 **Source**: `dev/specs/archive/016-resume-interrupted-apply/research.md` (R1, R2, R4, R5, R6, R7, R8, R11, R12, R13, R14)
 
 ## Context
@@ -125,3 +125,12 @@ its plan before its first write, so when the liveness monitor ends such an execu
 has been written yet. But the worker may still be running, publish its plan and write, so the
 absence of a plan does not prove that nothing will be written. Clearing the column could hide
 a write.
+
+## Amendment, 2026-11-24: automatic resume
+
+[ADR 0056](0056-a-lost-worker-resumes-automatically-when-the-site-allows-it.md) lets the Sync API
+run the `verify` and the resume of this decision by itself, as the reserved actor
+`sync:automatic-resume`, when the liveness reconciler ended the write because its worker
+disappeared and the Sync API runs with `INFRAHUB_SYNC_AUTOMATIC_RESUME` on. The body above is
+unchanged: the automatic resume passes every condition of a resume, including a passing `verify`
+newer than the latest write.

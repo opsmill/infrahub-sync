@@ -478,6 +478,90 @@ def test_postgresql_concurrent_approvals_of_one_run_store_exactly_one() -> None:
         schema.drop()
 
 
+@pytest.mark.integration
+def test_postgresql_two_reconcilers_moving_one_automatic_resume_record_move_it_once() -> None:
+    """Two connections compare-and-set the same automatic resume record at once: one moves it (FR-014)."""
+    schema = postgresql_isolation.isolated_schema(
+        postgresql_isolation.dsn_or_skip("the concurrent automatic resume PostgreSQL case")
+    )
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.product_store import AutomaticResume, PrefectExecutionLink, ProductRun
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.product_store.store import PostgreSQLRunStore
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    def connect() -> Any:  # noqa: ANN401 - the provider's own connection wrapper.
+        return PsycopgConnectionFactory(psycopg.connect)(schema.dsn)
+
+    now = datetime.now(timezone.utc)
+    run_id, flow_run_id = "run-automatic-resume", "flow-interrupted"
+    schema.create()
+    try:
+        setup = PostgreSQLRunStore(connect)
+        setup.create(
+            ProductRun(
+                run_id=run_id,
+                operation="plan",
+                configuration_reference="sha256:configuration",
+                actor="operator",
+                started_at=now,
+                phase="applying",
+                prefect_executions=(
+                    PrefectExecutionLink(
+                        flow_run_id=flow_run_id,
+                        purpose="apply",
+                        attempt=1,
+                        submitted_at=now,
+                        claimed_at=now,
+                        claiming_worker_id="0f6f2d7e-3b7a-4c1e-9d55-6a1e2b3c4d5e",
+                    ),
+                ),
+            )
+        )
+        assert setup.interrupt_execution(
+            run_id,
+            flow_run_id,
+            terminal_at=now,
+            automatic_resume=AutomaticResume(
+                run_id=run_id,
+                interrupted_flow_run_id=flow_run_id,
+                cause="rule-8",
+                state="waiting-check",
+                decided_at=now,
+                updated_at=now,
+            ),
+        )
+        stores = [PostgreSQLRunStore(connect), PostgreSQLRunStore(connect)]
+        barrier = Barrier(2)
+
+        def move(index: int) -> bool:
+            barrier.wait()
+            return stores[index].move_automatic_resume(
+                run_id,
+                flow_run_id,
+                from_state="waiting-check",
+                to_state="checking",
+                check_flow_run_id=f"flow-check-{index}",
+                updated_at=now,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(move, (0, 1)))
+
+        assert sorted(outcomes) == [False, True]
+        (stored,) = setup.automatic_resumes_of(run_id)
+        assert stored.state == "checking"
+        assert stored.check_flow_run_id == f"flow-check-{outcomes.index(True)}"
+    finally:
+        schema.drop()
+
+
 _WITHDRAW_RACE_ROUNDS = 8
 
 

@@ -579,8 +579,8 @@ def test_lifespan_continues_after_ordinary_failure_and_cancels_cleanly(tmp_path)
 
 def test_pool_parsing_reports_a_ready_worker_when_freshness_is_exactly_at_the_bound() -> None:
     """A heartbeat exactly three intervals old is still fresh."""
+    from infrahub_sync.service.health import workers_health
     from infrahub_sync.service.orchestration import PrefectOrchestration
-    from infrahub_sync.service.service import _service_status  # noqa: PLC2701 - public status behavior test.
 
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
 
@@ -602,7 +602,8 @@ def test_pool_parsing_reports_a_ready_worker_when_freshness_is_exactly_at_the_bo
     valid = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient(10))).pool_status("pool", now))
 
     assert valid.detail_available
-    assert _service_status(valid).worker.state == "ready"
+    workers = workers_health(valid, now, 1)
+    assert (workers.state, workers.live_workers, workers.queue_depth) == ("known", 1, 0)
 
 
 @pytest.mark.parametrize(
@@ -742,8 +743,8 @@ def test_duplicate_worker_uuid_snapshot_is_unavailable_and_cannot_drive_reconcil
     tmp_path, worker_order: str
 ) -> None:
     """Conflicting records for one worker identity invalidate the whole pool snapshot."""
+    from infrahub_sync.service.health import workers_health
     from infrahub_sync.service.orchestration import PrefectOrchestration
-    from infrahub_sync.service.service import _service_status  # noqa: PLC2701 - public boundary behavior test.
 
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     worker_id = uuid4()
@@ -779,11 +780,11 @@ def test_duplicate_worker_uuid_snapshot_is_unavailable_and_cannot_drive_reconcil
         projection, _Orchestration(snapshot), LivenessPolicy(300, 30, 5), "pool", clock=lambda: now
     )
 
-    status = _service_status(snapshot)
+    reported = workers_health(snapshot, now, 1)
     asyncio.run(reconciler.reconcile_once())
 
     assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
-    assert status.worker.detail_available is False
+    assert reported.state == "unknown"
     stored = projection.lookup_run("run-duplicate-workers").value
     assert stored is not None
     assert stored.prefect_executions[0].stalled_at is None
@@ -844,7 +845,7 @@ def test_malformed_pool_snapshot_is_unavailable_and_causes_no_liveness_transitio
     value: object,
 ) -> None:
     """Provider-supplied invalid worker detail cannot drive status or product state."""
-    from infrahub_sync.service.service import _service_status  # noqa: PLC2701 - public boundary behavior test.
+    from infrahub_sync.service.health import workers_health
 
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     worker: dict[str, object] = {
@@ -883,15 +884,15 @@ def test_malformed_pool_snapshot_is_unavailable_and_causes_no_liveness_transitio
         clock=lambda: now,
     )
 
-    status = _service_status(malformed)
+    workers = workers_health(malformed, now, 1)
     asyncio.run(reconciler.reconcile_once())
 
-    assert status.worker.model_dump() == {
-        "state": "unavailable",
-        "detail_available": False,
+    assert workers.model_dump() == {
+        "state": "unknown",
+        "minimum": 1,
         "live_workers": None,
         "queue_depth": None,
-        "observed_at": None,
+        "items": [],
     }
     run = projection.lookup_run("run-malformed-pool").value
     assert run is not None
@@ -914,48 +915,6 @@ def test_malformed_pool_snapshot_is_unavailable_and_causes_no_liveness_transitio
 def test_pool_status_refuses_count_and_availability_invariant_violations(snapshot: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         PoolStatus(**cast("Any", snapshot))
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {
-            "state": "unavailable",
-            "detail_available": False,
-            "live_workers": 0,
-            "queue_depth": None,
-            "observed_at": None,
-        },
-        {
-            "state": "ready",
-            "detail_available": True,
-            "live_workers": -1,
-            "queue_depth": 0,
-            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
-        },
-        {
-            "state": "busy",
-            "detail_available": True,
-            "live_workers": 1,
-            "queue_depth": 0,
-            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
-        },
-        {
-            "state": "ready",
-            "detail_available": True,
-            "live_workers": True,
-            "queue_depth": 0,
-            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
-        },
-    ],
-)
-def test_public_worker_status_refuses_count_and_availability_invariant_violations(payload: dict[str, object]) -> None:
-    from pydantic import ValidationError
-
-    from infrahub_sync.service.models import WorkerStatusResource
-
-    with pytest.raises(ValidationError):
-        WorkerStatusResource.model_validate(payload)
 
 
 def test_request_time_reconciliation_terminalizes_each_pending_link(tmp_path) -> None:
@@ -1043,3 +1002,94 @@ def test_a_lost_write_worker_leaves_durable_reconciliation_evidence(tmp_path, pu
     assert run is not None
     assert run.prefect_executions[0].terminal_state == "interrupted"
     assert run.reconciliation_required is expected
+
+
+def _live_worker_pool(now: datetime, *workers: PoolWorker) -> PoolStatus:
+    return PoolStatus(detail_available=True, queue_depth=0, observed_at=now, workers=workers)
+
+
+@pytest.mark.parametrize(
+    ("status", "heartbeat_age", "interval", "live"),
+    [
+        ("online", 30, 10.0, True),
+        ("online", 31, 10.0, False),
+        ("online", 60, 20.0, True),
+        ("online", 61, 20.0, False),
+        ("offline", 0, 10.0, False),
+        ("online", None, 10.0, False),
+        ("online", 0, None, False),
+    ],
+    ids=(
+        "online-at-bound",
+        "online-stale",
+        "online-long-interval",
+        "online-stale-long-interval",
+        "offline",
+        "missing-heartbeat",
+        "missing-interval",
+    ),
+)
+def test_live_workers_keeps_only_online_workers_with_a_recent_heartbeat(
+    status: str,
+    heartbeat_age: int | None,
+    interval: float | None,
+    live: bool,  # noqa: FBT001 - one parametrized dimension of the verdict.
+) -> None:
+    """A worker is live when online with a heartbeat within max(3 * interval, 30) seconds (research R8)."""
+    from infrahub_sync.service.liveness import live_workers
+    from infrahub_sync.service.orchestration import worker_is_live
+
+    now = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
+    heartbeat = None if heartbeat_age is None else now - timedelta(seconds=heartbeat_age)
+    worker = PoolWorker(str(uuid4()), status, heartbeat, interval)
+
+    assert worker_is_live(worker, now) is live
+    assert live_workers(_live_worker_pool(now, worker), now) == ((worker,) if live else ())
+
+
+def test_live_workers_returns_every_live_worker_in_pool_order() -> None:
+    from infrahub_sync.service.liveness import live_workers
+
+    now = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
+    first = PoolWorker(str(uuid4()), "online", now, 10.0)
+    offline = PoolWorker(str(uuid4()), "offline", now, 10.0)
+    second = PoolWorker(str(uuid4()), "online", now - timedelta(seconds=5), 10.0)
+
+    assert live_workers(_live_worker_pool(now, first, offline, second), now) == (first, second)
+
+
+def test_an_unavailable_pool_snapshot_has_no_live_worker() -> None:
+    """A snapshot without worker detail counts as no live worker (critique E3)."""
+    from infrahub_sync.service.liveness import live_workers
+
+    now = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
+
+    assert live_workers(PoolStatus(detail_available=False, queue_depth=None, observed_at=None), now) == ()
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("infrahub-sync-service-1", "infrahub-sync-service-1"), ("", None), (42, None)],
+    ids=("text", "empty", "not-text"),
+)
+def test_pool_status_keeps_a_worker_name_only_when_it_is_text(name: object, expected: str | None) -> None:
+    """A worker name that is not a non-empty string is no name; it does not make the snapshot unavailable."""
+    from infrahub_sync.service.orchestration import PrefectOrchestration
+
+    now = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
+
+    class _PoolClient:
+        async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301 - protocol fake.
+            return [
+                SimpleNamespace(
+                    id=uuid4(), name=name, status="ONLINE", last_heartbeat_time=now, heartbeat_interval_seconds=10
+                )
+            ]
+
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str, **_options: object):  # noqa: PLR6301 - protocol fake.
+            return []
+
+    pool = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status("pool", now))
+
+    assert pool.detail_available
+    assert pool.workers[0].name == expected

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 import httpx
@@ -11,9 +12,29 @@ import pytest
 from infrahub_sync.client import SyncClient
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 VERSION = {"server_version": "3.0.0", "api_versions": ["v3-unstable"], "stability": "unstable"}
+
+
+@pytest.fixture(autouse=True)
+def _restore_cli_package_logging() -> Iterator[None]:
+    """Undo the level and the handler that the CLI's `main` sets on the `infrahub_sync` logger.
+
+    `main` leaves the package logger at the level of the invocation, for example WARNING with
+    `--quiet`. Without this restore, a later test in the same process that reads an INFO record
+    of the package through `caplog` sees nothing, and the result depends on the test order.
+    """
+    package_logger = logging.getLogger("infrahub_sync")
+    level = package_logger.level
+    handlers = list(package_logger.handlers)
+    yield
+    package_logger.setLevel(level)
+    for handler in list(package_logger.handlers):
+        if handler not in handlers:
+            package_logger.removeHandler(handler)
+            handler.close()
 
 
 @pytest.fixture(autouse=True)

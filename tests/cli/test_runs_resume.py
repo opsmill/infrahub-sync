@@ -5,7 +5,8 @@
 - a `verify-required` refusal prints the error lines and `hint: run infrahub-sync verify RUN_ID first`;
 - an `approval-required` refusal prints `hint: run infrahub-sync approve RUN_ID --expected-checksum CHECKSUM first`;
 - refusals and failures exit with the codes `apply` uses;
-- `runs show` prints the progress, resumable, per-kind and resume lines, and nothing from the plan.
+- `runs show` prints the progress, resumable, per-kind and resume lines, and nothing from the plan;
+- `runs show` prints one block per automatic resume record, and `runs list` its count (spec 030 T025).
 """
 
 from __future__ import annotations
@@ -19,16 +20,20 @@ from infrahub_sync.client import (
     APIError,
     ApplyProgressKindResource,
     ApplyProgressResource,
+    AutomaticResumeResource,
     ClientInputError,
     ResultsResource,
     ResumeResource,
+    RunPage,
     RunResource,
     RunTerminalError,
 )
 from tests.cli.test_client_commands import (
     CHECKSUM,
+    NOW,
     _invoke,
     _plan,
+    _public_run,
     _restore_package_logging,  # noqa: F401 - the CLI suite's autouse fixture, used by name.
     _run,
     client,  # noqa: F401 - the fixture is used by name.
@@ -324,3 +329,272 @@ def test_runs_show_prints_no_progress_lines_for_a_run_without_a_write(client: Ma
     assert result.exit_code == 0, result.output
     assert "progress:" not in result.output
     assert "resumable:" not in result.output
+
+
+# --- the automatic resume records (spec 030 T025, contracts/cli-and-web.md) ------------------
+
+_DECIDED_AT = datetime(2026, 11, 23, 21, 4, 11, tzinfo=timezone.utc)
+_WORKER_CAUSE = "the worker infrahub-sync-service-3b2f stopped sending heartbeats"
+_CRASH_CAUSE = "Prefect reported the flow run as crashed"
+
+
+def _automatic(state: str, **changes: object) -> AutomaticResumeResource:
+    fields: dict[str, object] = {
+        "interrupted_flow_run_id": f"flow-{state}",
+        "actor": "Sync (automatic resume)",
+        "cause": "rule-8",
+        "cause_text": _WORKER_CAUSE,
+        "state": state,
+        "decided_at": _DECIDED_AT,
+        "updated_at": _DECIDED_AT,
+        **changes,
+    }
+    return AutomaticResumeResource.model_validate(fields)
+
+
+def _with_automatic_resumes(*rows: AutomaticResumeResource) -> RunResource:
+    resource = _interrupted(verify_required=False)
+    return resource.model_copy(
+        update={
+            "automatic_resumes": rows,
+            "automatic_resume_count": sum(row.decision == "resume" for row in rows),
+        }
+    )
+
+
+def test_runs_show_prints_one_block_per_automatic_resume(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _with_automatic_resumes(
+        _automatic("ended", decision="resume", operations_not_checked=0, start_after=5999),
+        _automatic(
+            "ended",
+            cause="rule-6",
+            cause_text=_CRASH_CAUSE,
+            decision="no-resume",
+            reason="check-found-differs",
+            reason_text="the check found 1 node that differs from the plan",
+            operations_not_checked=0,
+        ),
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    first = lines.index("Automatic resume 1: started")
+    assert lines[first : first + 4] == [
+        "Automatic resume 1: started",
+        f"  cause: {_WORKER_CAUSE}",
+        "  check: passed, 0 differs, 0 not checked",
+        "  resumed after operation 5999 by Sync (automatic resume)",
+    ]
+    second = lines.index("Automatic resume 2: not started")
+    assert lines[second : second + 3] == [
+        "Automatic resume 2: not started",
+        f"  cause: {_CRASH_CAUSE}",
+        "  reason: the check found 1 node that differs from the plan",
+    ]
+    # An empty line comes before each block.
+    assert not lines[first - 1]
+    assert not lines[second - 1]
+
+
+@pytest.mark.parametrize(
+    ("state", "heading", "check_printed"),
+    [
+        ("waiting-check", "waiting for a live worker to run the check", False),
+        ("checking", "checking", False),
+        ("waiting-resume", "waiting for a live worker to resume", True),
+        ("resuming", "resuming", True),
+    ],
+)
+def test_runs_show_prints_the_state_of_an_automatic_resume_that_has_not_ended(
+    client: MagicMock,  # noqa: F811
+    state: str,
+    heading: str,
+    check_printed: bool,  # noqa: FBT001 - one parametrized dimension of the state.
+) -> None:
+    resuming = state == "resuming"
+    client.get_run.return_value = _with_automatic_resumes(
+        _automatic(
+            state,
+            decision="resume" if resuming else None,
+            operations_not_checked=3 if check_printed else None,
+            start_after=5999 if resuming else None,
+        )
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert f"Automatic resume 1: {heading}" in lines
+    assert ("  check: passed, 0 differs, 3 not checked" in lines) is check_printed
+    assert ("  resumed after operation 5999 by Sync (automatic resume)" in lines) is resuming
+    assert not any(line.startswith("  reason:") for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("reason", "reason_text"),
+    [
+        ("refused", "the Sync API refused the automatic resume with the code run-not-resumable"),
+        (
+            "person-took-over",
+            "a person ran `verify` or `runs resume` while the automatic resume waited for a live worker",
+        ),
+    ],
+)
+def test_runs_show_prints_the_passed_check_of_a_record_that_ended_after_the_check(
+    client: MagicMock,  # noqa: F811
+    reason: str,
+    reason_text: str,
+) -> None:
+    client.get_run.return_value = _with_automatic_resumes(
+        _automatic(
+            "ended",
+            decision="no-resume",
+            reason=reason,
+            reason_text=reason_text,
+            check_flow_run_id="flow-check",
+            operations_not_checked=2,
+        )
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    first = lines.index("Automatic resume 1: not started")
+    assert lines[first : first + 4] == [
+        "Automatic resume 1: not started",
+        f"  cause: {_WORKER_CAUSE}",
+        "  check: passed, 0 differs, 2 not checked",
+        f"  reason: {reason_text}",
+    ]
+
+
+def test_runs_show_prints_a_resume_that_sync_submitted_and_no_worker_started(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _with_automatic_resumes(
+        _automatic(
+            "ended",
+            decision="no-resume",
+            reason="not-picked-up",
+            reason_text="no worker picked up the automatic resume in time",
+            check_flow_run_id="flow-check",
+            resume_flow_run_id="flow-resume",
+            operations_not_checked=0,
+            start_after=5999,
+        )
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    first = lines.index("Automatic resume 1: submitted, no worker started it")
+    assert lines[first : first + 5] == [
+        "Automatic resume 1: submitted, no worker started it",
+        f"  cause: {_WORKER_CAUSE}",
+        "  check: passed, 0 differs, 0 not checked",
+        "  submitted after operation 5999 by Sync (automatic resume)",
+        "  reason: no worker picked up the automatic resume in time",
+    ]
+
+
+def test_runs_show_prints_no_check_line_for_a_check_that_no_worker_picked_up(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _with_automatic_resumes(
+        _automatic(
+            "ended",
+            decision="no-resume",
+            reason="not-picked-up",
+            reason_text="no worker picked up the automatic check in time",
+            check_flow_run_id="flow-check",
+        )
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert "Automatic resume 1: not started" in result.stdout.splitlines()
+    assert "check:" not in result.output
+
+
+def test_runs_show_prints_no_automatic_resume_block_for_a_run_without_one(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _interrupted(verify_required=False)
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert "Automatic resume" not in result.output
+
+
+def test_runs_list_shows_the_automatic_resume_count_of_a_run_that_has_one(client: MagicMock) -> None:  # noqa: F811
+    resumed = _public_run("run-2").model_copy(update={"automatic_resume_count": 2})
+    client.list_runs.return_value = RunPage(items=(resumed, _public_run("run-1")), next_cursor=None)
+
+    result = _invoke(client, "runs", "list")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        f"run-2  edge-sync@1  review  manual  planned  -  operator  {NOW.isoformat()}  auto resumes: 2",
+        f"run-1  edge-sync@1  review  manual  planned  -  operator  {NOW.isoformat()}",
+    ]
+
+
+# --- the advice after Sync did not resume the run (spec 030 T031) ----------------------------
+
+_NEXT = (
+    f"  next: run `infrahub-sync verify {_RUN_ID}`, then a new plan or "
+    f"`infrahub-sync runs resume {_RUN_ID} --expected-checksum CHECKSUM`"
+)
+
+
+def _not_started(reason: str, **changes: object) -> AutomaticResumeResource:
+    return _automatic("ended", decision="no-resume", reason=reason, reason_text=f"the reason {reason}", **changes)
+
+
+@pytest.mark.parametrize("reason", ["check-found-differs", "approval-missing", "person-took-over", "limit-reached"])
+def test_runs_show_prints_the_next_line_under_the_latest_record_that_did_not_start(
+    client: MagicMock,  # noqa: F811
+    reason: str,
+) -> None:
+    client.get_run.return_value = _with_automatic_resumes(_not_started(reason))
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    reason_line = lines.index(f"  reason: the reason {reason}")
+    assert lines[reason_line + 1] == _NEXT
+
+
+def test_runs_show_does_not_name_runs_resume_for_a_run_it_cannot_resume(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _with_automatic_resumes(_not_started("not-resumable"))
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert "  next: create a new plan; `infrahub-sync runs resume` cannot resume this run" in result.stdout.splitlines()
+
+
+def test_runs_show_prints_the_next_line_only_for_the_latest_record(client: MagicMock) -> None:  # noqa: F811
+    client.get_run.return_value = _with_automatic_resumes(
+        _not_started("check-found-differs", interrupted_flow_run_id="flow-first"),
+        _automatic("ended", decision="resume", operations_not_checked=0, start_after=5999),
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert not any(line.startswith("  next:") for line in result.stdout.splitlines())
+
+
+def test_runs_show_prints_no_next_line_once_the_run_has_no_interrupted_write(client: MagicMock) -> None:  # noqa: F811
+    resource = _with_automatic_resumes(_not_started("check-found-differs"))
+    client.get_run.return_value = resource.model_copy(
+        update={"run": resource.run.model_copy(update={"phase": "applied", "reconciliation_required": False})}
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert not any(line.startswith("  next:") for line in result.stdout.splitlines())

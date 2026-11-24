@@ -114,19 +114,38 @@ class FakeDocker:
         ]
 
 
+def _health_report(
+    *, status: str = "healthy", state: str = "known", live_workers: int | None = 1, database: str = "up"
+) -> dict[str, Any]:
+    """A `GET /api/health` report; `live_workers` and the queue are absent when `state` is `unknown`."""
+    return {
+        "status": status,
+        "dependencies": [{"name": "database", "status": database, "error": "none" if database == "up" else "timeout"}],
+        "workers": {
+            "state": state,
+            "minimum": 1,
+            "live_workers": live_workers if state == "known" else None,
+            "queue_depth": 0 if state == "known" else None,
+            "items": [],
+        },
+        "timestamp": "2026-11-23T12:00:00+00:00",
+    }
+
+
 class FakeHttp:
-    """Stands in for `httpx.get`: records every URL and answers `/status` as told."""
+    """Stands in for `httpx.get`: records every URL and answers `/health` as told."""
 
     def __init__(self) -> None:
         self.urls: list[str] = []
-        self.status: dict[str, Any] | None = {"service": "ready", "worker": {"state": "ready"}}
+        self.status: dict[str, Any] | None = _health_report()
+        self.code = 200
 
     def get(self, url: str, **_kwargs: Any) -> httpx.Response:  # noqa: ANN401 -- httpx's keyword arguments
         self.urls.append(url)
         if self.status is None:
             msg = "connection refused"
             raise httpx.ConnectError(msg, request=httpx.Request("GET", url))
-        return httpx.Response(200, json=self.status, request=httpx.Request("GET", url))
+        return httpx.Response(self.code, json=self.status, request=httpx.Request("GET", url))
 
 
 @pytest.fixture
@@ -424,7 +443,7 @@ def smoke(monkeypatch: pytest.MonkeyPatch, fake: FakeDocker) -> list[str]:
     return seeded
 
 
-def test_dev_smoke_names_dev_api_when_status_does_not_answer(
+def test_dev_smoke_names_dev_api_when_health_does_not_answer(
     context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str]
 ) -> None:
     http.status = None
@@ -432,23 +451,62 @@ def test_dev_smoke_names_dev_api_when_status_does_not_answer(
     with pytest.raises(dev.DevStackError, match=r"dev\.api"):
         _body(dev.dev_smoke)(context)
 
-    assert http.urls == ["http://127.0.0.1:8001/api/status"]
+    assert http.urls == ["http://127.0.0.1:8001/api/health"]
     assert dev.SMOKE_COMMAND not in fake.commands
     assert smoke == []
 
 
-@pytest.mark.parametrize("state", ["no-live-worker", "unavailable"])
-def test_dev_smoke_names_dev_worker_when_status_reports_no_available_worker(
-    context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str], state: str
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param((200, {"service": "ready"}), id="200-not-a-report"),
+        pytest.param((404, {"error": {"code": "not-found", "status": 404}}), id="404"),
+        pytest.param((503, {"error": {"code": "service-unavailable", "status": 503}}), id="503-error-envelope"),
+    ],
+)
+def test_dev_smoke_names_dev_api_when_the_answer_is_not_a_health_report(
+    context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str], answer: tuple[int, dict[str, Any]]
 ) -> None:
-    http.status = {"service": "ready", "worker": {"state": state, "detail_available": state != "unavailable"}}
+    http.code, http.status = answer
+
+    with pytest.raises(dev.DevStackError, match=r"dev\.api"):
+        _body(dev.dev_smoke)(context)
+
+    assert dev.SMOKE_COMMAND not in fake.commands
+    assert smoke == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param((200, _health_report(live_workers=0)), id="no-live-worker"),
+        pytest.param((503, _health_report(status="unhealthy", state="unknown")), id="workers-unknown"),
+    ],
+)
+def test_dev_smoke_names_dev_worker_when_health_reports_no_live_worker(
+    context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str], answer: tuple[int, dict[str, Any]]
+) -> None:
+    http.code, http.status = answer
 
     with pytest.raises(dev.DevStackError, match=r"dev\.worker"):
         _body(dev.dev_smoke)(context)
 
-    assert http.urls == ["http://127.0.0.1:8001/api/status"]
+    assert http.urls == ["http://127.0.0.1:8001/api/health"]
     assert dev.SMOKE_COMMAND not in fake.commands
     assert smoke == []
+
+
+def test_dev_smoke_accepts_an_unhealthy_report_with_a_live_worker(
+    context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str]
+) -> None:
+    # A 503 report names a component that is down; the host processes themselves are running.
+    http.code, http.status = 503, _health_report(status="unhealthy", database="down")
+
+    _body(dev.dev_smoke)(context)
+
+    assert http.urls == ["http://127.0.0.1:8001/api/health"]
+    assert fake.calls[-1][0] == dev.SMOKE_COMMAND
+    assert smoke == ["http://127.0.0.1:8000"]
 
 
 def test_dev_smoke_with_both_host_processes_runs_the_suite_for_a_host_worker(
@@ -456,8 +514,8 @@ def test_dev_smoke_with_both_host_processes_runs_the_suite_for_a_host_worker(
 ) -> None:
     _body(dev.dev_smoke)(context)
 
-    # Only the Sync API's /status; never the Prefect API on 4230.
-    assert http.urls == ["http://127.0.0.1:8001/api/status"]
+    # Only the Sync API's /health; never the Prefect API on 4230.
+    assert http.urls == ["http://127.0.0.1:8001/api/health"]
     assert not any(":4230" in command for command in fake.commands)
     assert smoke == ["http://127.0.0.1:8000"]
     command, kwargs = fake.calls[-1]

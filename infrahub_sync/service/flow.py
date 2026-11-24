@@ -1238,6 +1238,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             "verification_notes": list(saved.verification_notes),
             "checks": list(checks),
             "destination_checked": True,
+            # The `verify` execution that wrote this result: a later `verify` replaces it, so
+            # the automatic check reads only its own report (spec 030, research R7).
+            "flow_run_id": flow_run_id,
             **destination_report,
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})

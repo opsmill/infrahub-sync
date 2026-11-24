@@ -33,7 +33,7 @@ With `--infrahub-network NAME`, or `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK`, the pre
 against those containers' loopback publications. No task writes a PID file or keeps a
 process in the background. `dev.smoke` notices this mode from the running containers
 (the Prefect server runs, no `sync-api` container does) and first checks both host
-processes through the Sync API's `GET /api/status`.
+processes through the Sync API's `GET /api/health`.
 
 `dev.frontend` runs the web interface's development server on the host, in the
 foreground, against the Sync API of either mode.
@@ -196,8 +196,6 @@ INFRAHUB_TOKEN_VARIABLE = "INFRAHUB_API_TOKEN"  # noqa: S105 -- a variable name
 SYNC_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
 SYNC_TOKEN_VARIABLE = "INFRAHUB_SYNC_API_TOKEN"  # noqa: S105 -- a variable name
 DEMO_BRANCH = "netbox-demo-1"
-# The `/status` worker states that mean a worker takes runs (see `service._service_status`).
-AVAILABLE_WORKER_STATES = frozenset({"ready", "busy"})
 
 
 class DevStackError(RuntimeError):
@@ -1005,28 +1003,37 @@ def in_dependencies_mode(context: Context, settings: DevSettings) -> bool:
 
 
 def check_host_processes(settings: DevSettings) -> None:
-    """Fail naming the missing host process, from the Sync API's `GET /api/status` alone.
+    """Fail naming the missing host process, from the Sync API's `GET /api/health` alone.
 
-    No answer names `dev.api`. An answer whose worker is not available names
-    `dev.worker`. The Sync API reads worker availability from Prefect itself, so this
-    check never calls the Prefect API.
+    The health report answers 200 when every component is up and 503 when one is down; both
+    carry the report, and only its `workers` section matters here. No answer, or an answer that
+    is not a report, names `dev.api`. A report whose work pool could not be read, or that counts
+    no live worker, names `dev.worker`. The Sync API reads the workers from Prefect itself, so
+    this check never calls the Prefect API.
     """
     import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
 
-    status_url = f"{settings.sync_api_url}/api/status"
+    health_url = f"{settings.sync_api_url}/api/health"
+    not_answering = f"The Sync API does not answer at {health_url}; start it with `uv run invoke dev.api`"
     try:
-        response = httpx.get(status_url, timeout=10)
-        response.raise_for_status()
+        response = httpx.get(health_url, timeout=10)
         body = response.json()
     except (httpx.HTTPError, ValueError):
-        msg = f"The Sync API does not answer at {status_url}; start it with `uv run invoke dev.api`"
-        raise DevStackError(msg) from None
-    worker = body.get("worker") if isinstance(body, dict) else None
-    state = str(worker.get("state", "")) if isinstance(worker, dict) else ""
-    if state not in AVAILABLE_WORKER_STATES:
+        raise DevStackError(not_answering) from None
+    if not isinstance(body, dict):
+        raise DevStackError(not_answering)
+    workers = body.get("workers")
+    if (
+        response.status_code not in {200, 503}
+        or body.get("status") not in {"healthy", "unhealthy"}
+        or not isinstance(workers, dict)
+        or workers.get("state") not in {"known", "unknown"}
+    ):
+        raise DevStackError(not_answering)
+    if workers["state"] == "unknown" or workers.get("live_workers") == 0:
         msg = (
-            f"The Sync API reports no available worker (state {state or 'missing'}); "
-            "start it with `uv run invoke dev.worker`"
+            f"The Sync API reports no live worker (workers {workers['state']}, "
+            f"live workers {workers.get('live_workers')}); start it with `uv run invoke dev.worker`"
         )
         raise DevStackError(msg)
 
@@ -1167,7 +1174,7 @@ def dev_smoke(context: Context) -> None:
     stack = "dev"
     if in_dependencies_mode(context, settings):
         print(
-            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/api/status"
+            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/api/health"
         )
         check_host_processes(settings)
         stack = DEPS_SMOKE_STACK

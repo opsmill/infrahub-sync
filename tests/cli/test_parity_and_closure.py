@@ -254,10 +254,12 @@ def test_only_shared_client_constructs_sync_api_http_requests() -> None:
         if "httpx.Client(" in source or "httpx.AsyncClient(" in source:
             constructors.append(path.relative_to(ROOT))
 
-    # The Microsoft Graph adapter reads its own source API, not the Sync API.
+    # The Microsoft Graph adapter reads its own source API, not the Sync API. The health checks
+    # call the Prefect server's `/health` and `/ready`, not the Sync API.
     assert sorted(constructors) == [
         Path("infrahub_sync/adapters/msgraphsync.py"),
         Path("infrahub_sync/client/client.py"),
+        Path("infrahub_sync/service/health.py"),
     ]
 
 

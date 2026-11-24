@@ -240,3 +240,5 @@ untyped
 writability
 Entra
 OData
+blackbox
+Kuma

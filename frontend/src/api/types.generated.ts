@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Get Version
-         * @description Return the installed server and supported unstable API versions.
+         * @description Return the installed server and Infrahub SDK versions and the supported unstable API versions.
          */
         get: operations["get_version_version_get"];
         put?: never;
@@ -24,7 +24,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/status": {
+    "/health": {
         parameters: {
             query?: never;
             header?: never;
@@ -32,10 +32,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Status
-         * @description Return unauthenticated lifecycle state without provider identifiers.
+         * Get Health
+         * @description Return the health of the components and workers, without authentication (spec 029).
          */
-        get: operations["get_status_status_get"];
+        get: operations["get_health_health_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1013,6 +1013,16 @@ export interface components {
              * @default []
              */
             resumes: components["schemas"]["ResumeResource"][];
+            /**
+             * Automatic Resumes
+             * @default []
+             */
+            automatic_resumes: components["schemas"]["AutomaticResumeResource"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
             plan_summary: components["schemas"]["ApprovedPlanSummaryResource"];
         } & {
             [key: string]: unknown;
@@ -1057,6 +1067,55 @@ export interface components {
             created_at: string;
             /** Expires At */
             expires_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AutomaticResumeResource
+         * @description Sync's decision on resuming one interrupted write without a person (spec 030 contracts/http-api.md).
+         *
+         *     `state` is `waiting-check`, `checking`, `waiting-resume`, `resuming` or `ended`. `decision` is
+         *     `resume` once Sync submitted the resume, and `no-resume` with a `reason` code when it did not.
+         *     `cause_text` and `reason_text` are fixed English sentences built from the codes. `actor` is
+         *     the name the Sync API shows for the reserved actor of the automatic check and resume,
+         *     `Sync (automatic resume)`. The fields are plain strings, so a client still reads a code that
+         *     a later Sync API adds.
+         */
+        AutomaticResumeResource: {
+            /** Interrupted Flow Run Id */
+            interrupted_flow_run_id: string;
+            /** Actor */
+            actor: string;
+            /** Cause */
+            cause: string;
+            /** Cause Text */
+            cause_text: string;
+            /** State */
+            state: string;
+            /** Decision */
+            decision?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Reason Text */
+            reason_text?: string | null;
+            /** Operations Not Checked */
+            operations_not_checked?: number | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Check Flow Run Id */
+            check_flow_run_id?: string | null;
+            /** Resume Flow Run Id */
+            resume_flow_run_id?: string | null;
+            /**
+             * Decided At
+             * Format: date-time
+             */
+            decided_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         } & {
             [key: string]: unknown;
         };
@@ -1370,6 +1429,29 @@ export interface components {
             placeholder: string;
         };
         /**
+         * DependencyHealthResource
+         * @description Report whether one component of the Sync API answered its health check.
+         */
+        DependencyHealthResource: {
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "database" | "object_store" | "task_manager" | "task_manager_db";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "up" | "down";
+            /**
+             * Error
+             * @enum {string}
+             */
+            error: "none" | "timeout" | "connection_refused" | "connection_closed" | "name_resolution_failed" | "unavailable" | "unknown_error";
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ErrorDetail
          * @description Parse the public fields in a general API error.
          */
@@ -1429,6 +1511,18 @@ export interface components {
             cause?: string | null;
             /** Changes */
             changes?: components["schemas"]["ScheduleSettingChangeResource"][] | null;
+            /** Reason */
+            reason?: string | null;
+            /** Reason Detail */
+            reason_detail?: {
+                [key: string]: number | string;
+            } | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Operations Not Checked */
+            operations_not_checked?: number | null;
+            /** Resume Flow Run Id */
+            resume_flow_run_id?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -1510,6 +1604,30 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HealthResource
+         * @description Report the health of the Sync API's components and of its workers.
+         *
+         *     The model does not fix the number or the order of the components: it requires at least one,
+         *     each named once, and a ``status`` that matches the components and the workers.
+         */
+        HealthResource: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "healthy" | "unhealthy";
+            /** Dependencies */
+            dependencies: components["schemas"]["DependencyHealthResource"][];
+            workers: components["schemas"]["WorkersHealthResource"];
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * OrchestrationSummary
@@ -1985,6 +2103,11 @@ export interface components {
              * @default []
              */
             prefect_executions: components["schemas"]["PublicExecutionLink"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
         } & {
             [key: string]: unknown;
         };
@@ -2161,7 +2284,10 @@ export interface components {
          * @description Combine a public run record with its orchestration history.
          *
          *     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
-         *     predates spec 016; `resumes` is then empty.
+         *     predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
+         *     resuming the run's interrupted writes without a person, oldest first, and
+         *     `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). Both are
+         *     empty for a run that no decision concerns, and for a Sync API that predates spec 030.
          */
         RunResource: {
             run: components["schemas"]["PublicRunResource"];
@@ -2173,6 +2299,16 @@ export interface components {
              * @default []
              */
             resumes: components["schemas"]["ResumeResource"][];
+            /**
+             * Automatic Resumes
+             * @default []
+             */
+            automatic_resumes: components["schemas"]["AutomaticResumeResource"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
         } & {
             [key: string]: unknown;
         };
@@ -2334,20 +2470,6 @@ export interface components {
             before: boolean | number | string;
             /** After */
             after: boolean | number | string;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * ServiceStatusResource
-         * @description Report service readiness and worker availability.
-         */
-        ServiceStatusResource: {
-            /**
-             * Service
-             * @constant
-             */
-            service: "ready";
-            worker: components["schemas"]["WorkerStatusResource"];
         } & {
             [key: string]: unknown;
         };
@@ -2519,27 +2641,49 @@ export interface components {
             api_versions: string[];
             /** Stability */
             stability: string;
+            /** Sdk Version */
+            sdk_version?: string | null;
         } & {
             [key: string]: unknown;
         };
         /**
-         * WorkerStatusResource
-         * @description Report bounded worker availability details.
+         * WorkerHealthResource
+         * @description Report one worker that sent a heartbeat within the last 24 hours.
          */
-        WorkerStatusResource: {
+        WorkerHealthResource: {
+            /** Name */
+            name: string;
             /**
              * State
              * @enum {string}
              */
-            state: "ready" | "busy" | "no-live-worker" | "unavailable";
-            /** Detail Available */
-            detail_available: boolean;
+            state: "live" | "stale";
+            /**
+             * Last Heartbeat
+             * Format: date-time
+             */
+            last_heartbeat: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WorkersHealthResource
+         * @description Report the workers of the work pool, or that the work pool could not be read.
+         */
+        WorkersHealthResource: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "known" | "unknown";
+            /** Minimum */
+            minimum: number;
             /** Live Workers */
-            live_workers?: number | null;
+            live_workers: number | null;
             /** Queue Depth */
-            queue_depth?: number | null;
-            /** Observed At */
-            observed_at: string | null;
+            queue_depth: number | null;
+            /** Items */
+            items: components["schemas"]["WorkerHealthResource"][];
         } & {
             [key: string]: unknown;
         };
@@ -2572,7 +2716,7 @@ export interface operations {
             };
         };
     };
-    get_status_status_get: {
+    get_health_health_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2587,7 +2731,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ServiceStatusResource"];
+                    "application/json": components["schemas"]["HealthResource"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResource"] | components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

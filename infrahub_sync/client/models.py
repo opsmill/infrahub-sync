@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
 
 from pydantic import (
     BaseModel,
@@ -20,6 +20,9 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
@@ -118,7 +121,13 @@ _SCHEDULED_RUN_MESSAGE = "a scheduled run requires its schedule and its schedule
 _MANUAL_RUN_MESSAGE = "a manual run cannot name a schedule or a scheduled start time"
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
-_WORKER_STATUS_MESSAGE = "worker status is invalid"
+_HEALTH_ERROR_MESSAGE = "a component error must be none exactly when the component is up"
+_HEALTH_DEPENDENCIES_MESSAGE = "a health report must list at least one component, each once"
+_HEALTH_STATUS_MESSAGE = (
+    "a health report must be healthy exactly when every component is up and enough workers are live"
+)
+_HEALTH_TIME_MESSAGE = "health timestamps must include a timezone"
+_WORKERS_HEALTH_MESSAGE = "worker details must be present exactly when the worker state is known"
 _ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
 _ARTIFACT_OWNER_MESSAGE = "every artifact reference must belong to the product record's run ID"
 _EXECUTION_IDS_MESSAGE = "execution IDs must be unique within a product record"
@@ -479,6 +488,9 @@ class PublicRunResource(_ResourceModel):
     scheduled_start_at: datetime | None = None
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
+    # How many times Sync resumed the run's interrupted write without a person (spec 030).
+    # A Sync API that predates spec 030 returns no value, and the run reads as never resumed.
+    automatic_resume_count: int = Field(default=0, ge=0)
 
     @field_validator("started_at", "finished_at", "scheduled_start_at")
     @classmethod
@@ -633,44 +645,110 @@ class VersionResource(_ResourceModel):
     server_version: str
     api_versions: tuple[str, ...]
     stability: str
+    # The installed `infrahub-sdk` version; `None` from a server that predates the field, or
+    # when the service cannot read the SDK's package metadata.
+    sdk_version: str | None = None
 
 
-class WorkerStatusResource(_ResourceModel):
-    """Report bounded worker availability details."""
+class DependencyHealthResource(_ResourceModel):
+    """Report whether one component of the Sync API answered its health check."""
 
-    state: Literal["ready", "busy", "no-live-worker", "unavailable"]
-    detail_available: bool
-    live_workers: int | None = Field(default=None, ge=0, strict=True)
-    queue_depth: int | None = Field(default=None, ge=0, strict=True)
-    observed_at: datetime | None
+    name: Literal["database", "object_store", "task_manager", "task_manager_db"]
+    status: Literal["up", "down"]
+    error: Literal[
+        "none",
+        "timeout",
+        "connection_refused",
+        "connection_closed",
+        "name_resolution_failed",
+        "unavailable",
+        "unknown_error",
+    ]
 
     @model_validator(mode="after")
-    def _require_status(self) -> WorkerStatusResource:
-        details = (self.live_workers, self.queue_depth, self.observed_at)
-        if not self.detail_available:
-            if self.state != "unavailable" or any(value is not None for value in details):
-                raise ValueError(_WORKER_STATUS_MESSAGE)
-            return self
-        if self.state == "unavailable" or any(value is None for value in details):
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        assert self.live_workers is not None
-        assert self.queue_depth is not None
-        if self.state == "no-live-worker" and self.live_workers != 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state in {"ready", "busy"} and self.live_workers == 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state == "ready" and self.queue_depth != 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state == "busy" and self.queue_depth == 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
+    def _require_error_for_down(self) -> DependencyHealthResource:
+        if (self.status == "up") != (self.error == "none"):
+            raise ValueError(_HEALTH_ERROR_MESSAGE)
         return self
 
 
-class ServiceStatusResource(_ResourceModel):
-    """Report service readiness and worker availability."""
+class WorkerHealthResource(_ResourceModel):
+    """Report one worker that sent a heartbeat within the last 24 hours."""
 
-    service: Literal["ready"]
-    worker: WorkerStatusResource
+    name: str
+    state: Literal["live", "stale"]
+    last_heartbeat: datetime
+
+    @field_validator("last_heartbeat")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _HEALTH_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+
+class WorkersHealthResource(_ResourceModel):
+    """Report the workers of the work pool, or that the work pool could not be read."""
+
+    state: Literal["known", "unknown"]
+    minimum: int = Field(ge=1, strict=True)
+    live_workers: int | None = Field(ge=0, strict=True)
+    queue_depth: int | None = Field(ge=0, strict=True)
+    items: list[WorkerHealthResource]
+
+    @model_validator(mode="after")
+    def _require_details_when_known(self) -> WorkersHealthResource:
+        if self.state == "unknown":
+            if self.live_workers is not None or self.queue_depth is not None or self.items:
+                raise ValueError(_WORKERS_HEALTH_MESSAGE)
+        elif self.live_workers is None or self.queue_depth is None:
+            raise ValueError(_WORKERS_HEALTH_MESSAGE)
+        return self
+
+
+def expected_health_status(
+    dependencies: Sequence[DependencyHealthResource], workers: WorkersHealthResource
+) -> Literal["healthy", "unhealthy"]:
+    """Return the status a health report must carry for these components and workers.
+
+    ``healthy`` exactly when every component is up, the work pool was read, and at least
+    ``minimum`` workers are live. The Sync API builds its report with this rule, and the client
+    refuses a report that breaks it.
+    """
+    if any(dependency.status != "up" for dependency in dependencies):
+        return "unhealthy"
+    if workers.state != "known" or workers.live_workers is None or workers.live_workers < workers.minimum:
+        return "unhealthy"
+    return "healthy"
+
+
+class HealthResource(_ResourceModel):
+    """Report the health of the Sync API's components and of its workers.
+
+    The model does not fix the number or the order of the components: it requires at least one,
+    each named once, and a ``status`` that matches the components and the workers.
+    """
+
+    status: Literal["healthy", "unhealthy"]
+    dependencies: list[DependencyHealthResource]
+    workers: WorkersHealthResource
+    timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _HEALTH_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+    @model_validator(mode="after")
+    def _require_consistent_report(self) -> HealthResource:
+        names = [dependency.name for dependency in self.dependencies]
+        if not names or len(set(names)) != len(names):
+            raise ValueError(_HEALTH_DEPENDENCIES_MESSAGE)
+        if self.status != expected_health_status(self.dependencies, self.workers):
+            raise ValueError(_HEALTH_STATUS_MESSAGE)
+        return self
 
 
 class PrincipalResource(_ResourceModel):
@@ -739,17 +817,57 @@ class ResumeResource(_ResourceModel):
         return checked
 
 
+class AutomaticResumeResource(_ResourceModel):
+    """Sync's decision on resuming one interrupted write without a person (spec 030 contracts/http-api.md).
+
+    `state` is `waiting-check`, `checking`, `waiting-resume`, `resuming` or `ended`. `decision` is
+    `resume` once Sync submitted the resume, and `no-resume` with a `reason` code when it did not.
+    `cause_text` and `reason_text` are fixed English sentences built from the codes. `actor` is
+    the name the Sync API shows for the reserved actor of the automatic check and resume,
+    `Sync (automatic resume)`. The fields are plain strings, so a client still reads a code that
+    a later Sync API adds.
+    """
+
+    interrupted_flow_run_id: str = Field(min_length=1)
+    actor: str
+    cause: str
+    cause_text: str
+    state: str
+    decision: str | None = None
+    reason: str | None = None
+    reason_text: str | None = None
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    start_after: int | None = Field(default=None, ge=0)
+    check_flow_run_id: str | None = Field(default=None, min_length=1)
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
+    decided_at: datetime
+    updated_at: datetime
+
+    @field_validator("decided_at", "updated_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _EXECUTION_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+
 class RunResource(_ResourceModel):
     """Combine a public run record with its orchestration history.
 
     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
-    predates spec 016; `resumes` is then empty.
+    predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
+    resuming the run's interrupted writes without a person, oldest first, and
+    `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). For a run
+    that no decision concerns, and for a Sync API that predates spec 030, `automatic_resumes` is
+    empty and `automatic_resume_count` is 0.
     """
 
     run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
     apply_progress: ApplyProgressResource | None = None
     resumes: tuple[ResumeResource, ...] = ()
+    automatic_resumes: tuple[AutomaticResumeResource, ...] = ()
+    automatic_resume_count: int = Field(default=0, ge=0)
 
 
 class ApprovedPlanSummaryResource(_ResourceModel):
@@ -832,6 +950,14 @@ class EventDetailsResource(_ResourceModel):
     # The settings whose stored value a change of a schedule altered; empty when every setting
     # the change sent already had its value. Only `infrahub_sync.schedule.changed` holds it.
     changes: tuple[ScheduleSettingChangeResource, ...] | None = None
+    # The events of an automatic resume (spec 030), whose `cause` is `rule-6` or `rule-8`:
+    # the reason code of an automatic resume that did not start, with its codes and counts,
+    # and the marker, the operations the check left out and the flow run of one that started.
+    reason: str | None = None
+    reason_detail: dict[str, StrictInt | str] | None = None
+    start_after: int | None = Field(default=None, ge=0)
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod

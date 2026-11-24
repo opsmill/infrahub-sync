@@ -28,6 +28,7 @@ from infrahub_sync.product_store import (
     SCHEDULE_START_OPERATION,
     SCHEDULE_STOPPED_EVENT_TYPE,
     AuditEvent,
+    AutomaticResume,
     BranchReviewKept,
     BranchReviewOutcome,
     ConfigurationNotFoundError,
@@ -1328,6 +1329,265 @@ def test_an_interrupted_scheduled_run_counts_as_failed(projection: ProductProjec
     (event,) = _schedule_events(projection, schedule)
     assert (event.run_id, event.created_at) == (run_id, _FIRST_START + 6 * _DAY)
     assert run_id not in run_ids
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected"),
+    [
+        pytest.param({"state": "waiting-check"}, 2, id="automatic-resume-waits"),
+        pytest.param({"state": "ended", "decision": "no-resume", "reason": "not-resumable"}, 3, id="no-resume"),
+    ],
+)
+def test_an_interrupted_scheduled_run_with_an_automatic_resume_counts_later(
+    projection: ProductProjection, decision: dict[str, object], expected: int
+) -> None:
+    """While its automatic resume row is not ended, the interruption leaves the count as it is (spec 030, R11)."""
+    schedule = _created(projection)
+    _failed_runs(projection, schedule, 2)
+    result = _admit(projection, schedule, _FIRST_START + 2 * _DAY)
+    run_id = result.run_id or ""
+    flow_run_id = f"flow-{run_id}"
+    at = _FIRST_START + 3 * _DAY
+    record = AutomaticResume.model_validate(
+        {
+            "run_id": run_id,
+            "interrupted_flow_run_id": flow_run_id,
+            "cause": "rule-6",
+            "decided_at": at,
+            "updated_at": at,
+            **decision,
+        }
+    )
+
+    assert projection.interrupt_execution(run_id, flow_run_id, terminal_at=at, automatic_resume=record)
+
+    stored = _stored(projection, schedule.schedule_id)
+    assert (stored.consecutive_failures, stored.state) == (expected, "active")
+
+
+# --- a scheduled run that waits for or runs an automatic resume (spec 030, research R11) --
+
+# After the starts of `_failed_runs`, which take one day each.
+_RESUMED_START = _FIRST_START + 10 * _DAY
+_INTERRUPTED_AT = _RESUMED_START + timedelta(hours=1)
+
+
+def _run_with_automatic_resumes(projection: ProductProjection, schedule: ScheduleRecord, resumes: int) -> ProductRun:
+    """Store a scheduled run with its claimed `sync` and ``resumes`` submitted resume executions."""
+    run = _scheduled_run(projection, schedule, _RESUMED_START)
+    sync = f"flow-{run.run_id}"
+    # A worker claims only an execution submitted recently, so the links are submitted now.
+    submitted_at = datetime.now(timezone.utc)
+    links = (
+        PrefectExecutionLink(flow_run_id=sync, purpose="sync", attempt=1, submitted_at=submitted_at),
+        *(
+            PrefectExecutionLink(
+                flow_run_id=f"{sync}-resume-{attempt}", purpose="resume", attempt=attempt, submitted_at=submitted_at
+            )
+            for attempt in range(1, resumes + 1)
+        ),
+    )
+    stored = run.model_copy(update={"prefect_executions": links})
+    projection.create_run(stored)
+    assert projection.claim_execution(run.run_id, sync, worker_id=_WORKER_ID)
+    return stored
+
+
+def _interrupt_with_row(
+    projection: ProductProjection, run_id: str, flow_run_id: str, at: datetime, **decision: object
+) -> None:
+    """Interrupt ``flow_run_id`` and insert its automatic resume row, waiting for the check unless ``decision``."""
+    record = AutomaticResume.model_validate(
+        {
+            "run_id": run_id,
+            "interrupted_flow_run_id": flow_run_id,
+            "cause": "rule-8",
+            "state": "waiting-check",
+            "decided_at": at,
+            "updated_at": at,
+            **decision,
+        }
+    )
+    assert projection.interrupt_execution(run_id, flow_run_id, terminal_at=at, automatic_resume=record)
+
+
+def _move_to_resuming(projection: ProductProjection, run_id: str, flow_run_id: str, resume: str, at: datetime) -> None:
+    """Move the row of ``flow_run_id`` through a check that passed to the automatic resume ``resume``."""
+    assert projection.move_automatic_resume(
+        run_id,
+        flow_run_id,
+        from_state="waiting-check",
+        to_state="checking",
+        updated_at=at,
+        check_flow_run_id=f"{flow_run_id}-check",
+    )
+    assert projection.move_automatic_resume(
+        run_id, flow_run_id, from_state="checking", to_state="waiting-resume", updated_at=at
+    )
+    assert projection.move_automatic_resume(
+        run_id,
+        flow_run_id,
+        from_state="waiting-resume",
+        to_state="resuming",
+        updated_at=at,
+        decision="resume",
+        resume_flow_run_id=resume,
+    )
+
+
+def _end_resume(projection: ProductProjection, run_id: str, resume: str, *, applied: bool, at: datetime) -> None:
+    """End the automatic resume ``resume`` as its worker does: applied, or failed."""
+    assert projection.claim_execution(run_id, resume, worker_id=_WORKER_ID)
+    assert projection.commit_claimed_execution(
+        run_id,
+        resume,
+        worker_id=_WORKER_ID,
+        terminal_at=at,
+        terminal_state="completed" if applied else "failed",
+        terminal_outcome="succeeded" if applied else "failed",
+        writeback=ExecutionFinishWriteback(
+            phase="applied" if applied else "failed",
+            outcome="applied" if applied else "failed",
+            finished_at=at,
+            summary={},
+            results={},
+        ),
+    )
+
+
+def _failures_of(projection: ProductProjection, schedule: ScheduleRecord) -> int:
+    return _stored(projection, schedule.schedule_id).consecutive_failures
+
+
+def test_a_run_with_an_automatic_resume_row_that_is_not_ended_is_in_progress(projection: ProductProjection) -> None:
+    """The overlap policy treats a run that waits for its automatic resume as in progress (FR-018)."""
+    schedule = _created(projection)
+    run = _run_with_automatic_resumes(projection, schedule, 0)
+    sync = f"flow-{run.run_id}"
+    _interrupt_with_row(projection, run.run_id, sync, _INTERRUPTED_AT)
+
+    waiting = projection.run_in_progress(schedule.config_id, _INTERRUPTED_AT, timedelta(minutes=5))
+    assert projection.move_automatic_resume(
+        run.run_id,
+        sync,
+        from_state="waiting-check",
+        to_state="ended",
+        updated_at=_INTERRUPTED_AT,
+        decision="no-resume",
+        reason="refused",
+    )
+    ended = projection.run_in_progress(schedule.config_id, _INTERRUPTED_AT, timedelta(minutes=5))
+
+    assert (waiting, ended) == (run.run_id, None)
+
+
+def test_a_row_that_ends_without_a_resume_counts_one_failed_run_and_can_stop_the_schedule(
+    projection: ProductProjection,
+) -> None:
+    schedule = _created(projection)
+    _failed_runs(projection, schedule, MAX_CONSECUTIVE_FAILURES - 1)
+    run = _run_with_automatic_resumes(projection, schedule, 0)
+    sync = f"flow-{run.run_id}"
+    _interrupt_with_row(projection, run.run_id, sync, _INTERRUPTED_AT)
+    waiting = _failures_of(projection, schedule)
+    ended_at = _INTERRUPTED_AT + timedelta(minutes=2)
+
+    assert projection.move_automatic_resume(
+        run.run_id,
+        sync,
+        from_state="waiting-check",
+        to_state="ended",
+        updated_at=ended_at,
+        decision="no-resume",
+        reason="person-took-over",
+    )
+
+    stored = _stored(projection, schedule.schedule_id)
+    assert waiting == MAX_CONSECUTIVE_FAILURES - 1
+    assert (stored.consecutive_failures, stored.state, stored.state_reason) == (
+        MAX_CONSECUTIVE_FAILURES,
+        "stopped",
+        "repeated-failures",
+    )
+    (event,) = _schedule_events(projection, schedule)
+    assert (event.run_id, event.created_at) == (run.run_id, ended_at)
+
+
+@pytest.mark.parametrize(("applied", "expected"), [(True, 0), (False, 3)], ids=["applied", "failed"])
+def test_the_end_of_an_automatic_resume_counts_for_the_scheduled_run(
+    projection: ProductProjection,
+    applied: bool,  # noqa: FBT001 - one parametrized dimension of the verdict.
+    expected: int,
+) -> None:
+    schedule = _created(projection)
+    _failed_runs(projection, schedule, 2)
+    run = _run_with_automatic_resumes(projection, schedule, 1)
+    sync, resume = f"flow-{run.run_id}", f"flow-{run.run_id}-resume-1"
+    _interrupt_with_row(projection, run.run_id, sync, _INTERRUPTED_AT)
+    _move_to_resuming(projection, run.run_id, sync, resume, _INTERRUPTED_AT)
+
+    _end_resume(projection, run.run_id, resume, applied=applied, at=_INTERRUPTED_AT + timedelta(minutes=5))
+    counted = _failures_of(projection, schedule)
+    # The reconciler ends the row with the decision `resume` afterwards; that move counts nothing.
+    assert projection.move_automatic_resume(
+        run.run_id, sync, from_state="resuming", to_state="ended", updated_at=_INTERRUPTED_AT + timedelta(minutes=6)
+    )
+
+    assert (counted, _failures_of(projection, schedule)) == (expected, expected)
+
+
+def test_a_chain_of_automatic_resumes_counts_once_when_the_last_one_ends(projection: ProductProjection) -> None:
+    """An interrupted automatic resume with a new row leaves the count until the chain ends (R11)."""
+    schedule = _created(projection)
+    _failed_runs(projection, schedule, 2)
+    run = _run_with_automatic_resumes(projection, schedule, 2)
+    sync = f"flow-{run.run_id}"
+    first, second = f"{sync}-resume-1", f"{sync}-resume-2"
+    _interrupt_with_row(projection, run.run_id, sync, _INTERRUPTED_AT)
+    _move_to_resuming(projection, run.run_id, sync, first, _INTERRUPTED_AT)
+    assert projection.claim_execution(run.run_id, first, worker_id=_WORKER_ID)
+
+    _interrupt_with_row(projection, run.run_id, first, _INTERRUPTED_AT + timedelta(minutes=5))
+    while_waiting = _failures_of(projection, schedule)
+    _move_to_resuming(projection, run.run_id, first, second, _INTERRUPTED_AT + timedelta(minutes=6))
+    _end_resume(projection, run.run_id, second, applied=True, at=_INTERRUPTED_AT + timedelta(minutes=9))
+
+    assert (while_waiting, _failures_of(projection, schedule)) == (2, 0)
+
+
+@pytest.mark.parametrize("ends", ["inserted-ended", "moved-to-ended"])
+def test_a_chain_left_interrupted_counts_one_failed_run(projection: ProductProjection, ends: str) -> None:
+    """The second row ends without a resume, at once or later; the run counts as one failed run."""
+    schedule = _created(projection)
+    _failed_runs(projection, schedule, 2)
+    run = _run_with_automatic_resumes(projection, schedule, 1)
+    sync, first = f"flow-{run.run_id}", f"flow-{run.run_id}-resume-1"
+    _interrupt_with_row(projection, run.run_id, sync, _INTERRUPTED_AT)
+    _move_to_resuming(projection, run.run_id, sync, first, _INTERRUPTED_AT)
+    assert projection.claim_execution(run.run_id, first, worker_id=_WORKER_ID)
+    at = _INTERRUPTED_AT + timedelta(minutes=5)
+
+    if ends == "inserted-ended":
+        _interrupt_with_row(
+            projection, run.run_id, first, at, state="ended", decision="no-resume", reason="limit-reached"
+        )
+    else:
+        _interrupt_with_row(projection, run.run_id, first, at)
+        assert projection.move_automatic_resume(
+            run.run_id,
+            first,
+            from_state="waiting-check",
+            to_state="ended",
+            updated_at=at,
+            decision="no-resume",
+            reason="check-failed",
+            reason_detail={"cause": "worker-failed"},
+        )
+    assert projection.move_automatic_resume(
+        run.run_id, sync, from_state="resuming", to_state="ended", updated_at=at + timedelta(minutes=1)
+    )
+
+    assert _failures_of(projection, schedule) == 3
 
 
 def test_a_scheduled_run_that_a_person_cancelled_does_not_change_the_count(projection: ProductProjection) -> None:
