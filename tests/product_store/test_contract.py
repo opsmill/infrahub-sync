@@ -161,6 +161,7 @@ EXPECTED_PUBLIC_NAMES = {
     "StoredCredentialNotFoundError",
     "StoredCredentialPage",
     "StoredCredentialRevision",
+    "VersionCredentialsMissingError",
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
@@ -666,9 +667,15 @@ def _configuration_name(provider: ProductProjection, config_id: str) -> str | No
     return summary.name
 
 
-def _named_configuration_package(name: str, **settings_overrides: object) -> ConfigurationPackage:
-    """Return the package with another name: a name is unique among configurations."""
-    declaration = _configuration_declaration(**settings_overrides)
+def _named_configuration_package(
+    name: str, *, credentials: bool = False, **settings_overrides: object
+) -> ConfigurationPackage:
+    """Return the package with another name: a name is unique among configurations.
+
+    Its blocks name no stored credential unless ``credentials`` is set, so it registers in a
+    store that holds none.
+    """
+    declaration = _configuration_declaration(credentials=credentials, **settings_overrides)
     declaration["configuration"]["name"] = name
     return ConfigurationPackage.model_validate(declaration)
 
@@ -820,7 +827,8 @@ def listing_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
 @pytest.fixture(params=_PROFILES_WITH_POSTGRESQL)
 def name_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
     """The ``provider`` profiles plus a real PostgreSQL server, for the unique configuration name."""
-    yield from _projection_profile(request.param, tmp_path, "the configuration name's PostgreSQL parameter")
+    for projection in _projection_profile(request.param, tmp_path, "the configuration name's PostgreSQL parameter"):
+        yield _with_named_credentials(projection)
 
 
 def _projection_profile(profile: str, tmp_path: Path, purpose: str) -> Iterator[ProductProjection]:
@@ -3971,7 +3979,7 @@ def test_the_unique_index_refuses_a_name_that_passed_the_check_and_names_the_con
 ) -> None:
     """Two registrations can both pass the check; the index refuses the second with the same error."""
     store = SQLiteRunStore(tmp_path / "records.sqlite3")
-    first = store.create_configuration(_configuration_package())
+    first = store.create_configuration(_configuration_package(credentials=False))
     other = store.create_configuration(_named_configuration_package("other-inventory"))
     checks: list[str] = []
     original = SQLiteRunStore._refuse_configuration_name_in_use
@@ -3985,8 +3993,10 @@ def test_the_unique_index_refuses_a_name_that_passed_the_check_and_names_the_con
 
     def write() -> object:
         if operation == "register":
-            return store.create_configuration(_configuration_package(verify_ssl=False))
-        return store.add_configuration_version(other.config_id, _configuration_package(verify_ssl=False))
+            return store.create_configuration(_configuration_package(credentials=False, verify_ssl=False))
+        return store.add_configuration_version(
+            other.config_id, _configuration_package(credentials=False, verify_ssl=False)
+        )
 
     with pytest.raises(ConfigurationNameInUseError) as refusal:
         write()
@@ -3998,7 +4008,7 @@ def test_the_unique_index_refuses_a_name_that_passed_the_check_and_names_the_con
 def test_start_up_refuses_a_database_where_configurations_share_a_name(tmp_path: Path) -> None:
     database = tmp_path / "records.sqlite3"
     store = SQLiteRunStore(database)
-    first = store.create_configuration(_configuration_package())
+    first = store.create_configuration(_configuration_package(credentials=False))
     second = store.create_configuration(_named_configuration_package("second-inventory"))
     store.create_configuration(_named_configuration_package(""))
     store.create_configuration(_named_configuration_package(""))

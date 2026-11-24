@@ -234,7 +234,10 @@ def test_one_credential_serves_packages_with_different_addresses(projection: Pro
     _store(projection, DESTINATION_CREDENTIAL)
 
     first = configs.register(package=_package(url="https://netbox-lab.example.com"), projection=projection)
-    second = configs.register(package=_package(url="https://netbox-prod.example.com"), projection=projection)
+    # A name is unique among configurations, so the second package has its own.
+    other = _package(url="https://netbox-prod.example.com")
+    other["configuration"]["name"] = "from-netbox-prod"
+    second = configs.register(package=other, projection=projection)
 
     assert first.configuration.config_id != second.configuration.config_id
     for registered in (first, second):

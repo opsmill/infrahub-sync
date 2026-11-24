@@ -426,7 +426,7 @@ def test_a_key_that_is_set_but_not_accepted_stops_the_start() -> None:
 
 def test_the_served_api_receives_a_cipher_of_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(ENCRYPTION_KEY_ENV, TEST_ENCRYPTION_KEY_BASE64)
-    monkeypatch.setattr(serve, "RunLivenessReconciler", lambda *_arguments: object())
+    monkeypatch.setattr(serve, "RunLivenessReconciler", lambda *_arguments, **_settings: object())
 
     built = serve.build_app(
         projection_factory=object,

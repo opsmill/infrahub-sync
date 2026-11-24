@@ -7,7 +7,7 @@ FastAPI's included-router entries.
 
 Exempt routes, which read no bearer value at all, so no account is refused on them:
 
-- ``GET /version`` and ``GET /status``: the compatibility and health answers that a client reads
+- ``GET /version`` and ``GET /health``: the compatibility and health answers that a client reads
   before it authenticates.
 - ``POST /auth/sign-in``: it takes a name and a password, not a token; the ``worker`` account is
   refused there by ``tests/service/test_worker_account.py``.
@@ -54,7 +54,7 @@ _WORKER_TOKEN = "worker-token-of-the-environment-1"  # noqa: S105 - a test value
 _T0 = datetime(2026, 11, 20, 9, 0, tzinfo=timezone.utc)
 _METHODS = frozenset({"get", "post", "put", "patch", "delete"})
 # The routes that read no bearer value; see the module docstring for why each is exempt.
-EXEMPT_ROUTES = frozenset({("GET", "/version"), ("GET", "/status"), ("POST", "/auth/sign-in")})
+EXEMPT_ROUTES = frozenset({("GET", "/version"), ("GET", "/health"), ("POST", "/auth/sign-in")})
 WORKER_PREFIX = "/worker/"
 # Every route that accepts the ``worker`` account (spec 027, FR-004 and FR-005). The first is
 # the only route whose answer holds a value; the second answers with states only.

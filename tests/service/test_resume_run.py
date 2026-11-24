@@ -68,7 +68,8 @@ from infrahub_sync.service.service import (
     _PlanLayoutCache,  # noqa: PLC2701  # the cache under test
 )
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
-from tests.configuration.validation_packages import package
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL, package
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import bind_granting_guard
@@ -1575,6 +1576,7 @@ def takeover_api(tmp_path: Path) -> _TakeOverAPI:
         environment_token=True,
     ).resolver
     orchestration = _FakeOrchestration()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
     client = TestClient(create_app(service, resolver))
