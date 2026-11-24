@@ -1,0 +1,35 @@
+dev/specs/031-registered-adapters/alignment-check.md
+  s_a9719f961786d2::t_ecf6a3d94ea044 20,40-42
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_a9719f961786d2::t_299a6e8ddfce76 82-85
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_a9719f961786d2::t_50353f60fbf387 96-97,151-160,181,192,208-213
+dev/specs/031-registered-adapters/critiques/critique-2026-11-24.md
+  s_a9719f961786d2::t_752dc930fc4d9b 332-350
+dev/specs/031-registered-adapters/data-model.md
+  s_a9719f961786d2::t_1347da0917578d 39-40,61-63,125-127,137-139,142
+dev/specs/031-registered-adapters/quickstart.md
+  s_a9719f961786d2::t_9182e747d4acee 64-65
+dev/specs/031-registered-adapters/research.md
+  s_a9719f961786d2::t_a21b2a767d1ae5 359-389,394-397,401,406-408
+dev/specs/031-registered-adapters/spec.md
+  s_a9719f961786d2::t_40537ff2814ad0 118-127,219-221,262-263,414-417,437-441,468,493-496
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_666dee8f8f14ad 249-254,259-265,267-270,300-301,329-332,393-396,467-469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50aa65ae7b5c9a28dcad8e0a7c626026e94d0518",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
