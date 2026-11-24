@@ -14,9 +14,9 @@ from __future__ import annotations
 import asyncio
 import re
 import socket
-import threading
 import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -392,7 +392,8 @@ def object_store_check(
 
     The round's time limit cannot stop the thread that runs the call. While the call that an
     earlier round started has not returned, the check starts no other call and reports `timeout`
-    at once, so a component that does not answer holds at most one thread.
+    at once, so a component that does not answer holds at most one thread. The call runs on a
+    thread of this check's own, so a call cancelled before it started counts as ended.
 
     Raises:
         ValueError: an S3 setting is not accepted; the message names the variable.
@@ -402,26 +403,17 @@ def object_store_check(
     arguments["config"] = arguments["config"].merge(limits)
     client = client_builder("s3", **arguments)
 
-    idle = threading.Event()
-    idle.set()
-
-    def head_bucket() -> None:
-        try:
-            client.head_bucket(Bucket=bucket)
-        finally:
-            idle.set()
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="health-object-store")
+    in_flight: list[Future[Any]] = []
 
     async def check() -> None:
-        if not idle.is_set():
+        if in_flight and not in_flight[0].done():
             raise CheckStillRunningError
-        idle.clear()
-        try:
-            call = asyncio.get_running_loop().run_in_executor(None, head_bucket)
-        except BaseException:
-            # The call was not started, so no thread will mark the check idle.
-            idle.set()
-            raise
-        await call
+        call = executor.submit(client.head_bucket, Bucket=bucket)
+        in_flight[:] = [call]
+        # Cancelling the awaited future, as the round's time limit does, cancels a call that has
+        # not started; a call that has started runs on and is found by the next round.
+        await asyncio.wrap_future(call)
 
     return check
 

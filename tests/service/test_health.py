@@ -7,6 +7,7 @@ import builtins
 import socket
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -598,24 +599,27 @@ async def test_the_object_store_client_is_built_once_for_every_round() -> None:
 
 
 async def test_the_object_store_check_starts_no_second_call_while_the_first_has_not_returned() -> None:
+    started = threading.Event()
     release = threading.Event()
     calls: list[str] = []
 
     class BlockedS3:
         def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803, PLR6301 - the boto3 method and keyword.
             calls.append(Bucket)
+            started.set()
             release.wait(timeout=10)
 
     check = object_store_check({}, "sync-bucket", 1, client_builder=lambda _service, **_arguments: BlockedS3())
     try:
-        with pytest.raises(TimeoutError):
-            await asyncio.wait_for(check(), 0.05)
+        first = asyncio.ensure_future(check())
+        assert await asyncio.to_thread(started.wait, 5)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
 
         # The next round finds the first call still running: it reports a timeout at once.
-        started = time.monotonic()
         with pytest.raises(CheckStillRunningError) as still_running:
-            await check()
-        assert time.monotonic() - started < 0.05
+            await asyncio.wait_for(check(), 1)
         assert classify_error(still_running.value) is ErrorCategory.TIMEOUT
         assert calls == ["sync-bucket"]
     finally:
@@ -632,6 +636,34 @@ async def test_the_object_store_check_starts_no_second_call_while_the_first_has_
                 raise
             await asyncio.sleep(0.01)
     assert calls == ["sync-bucket", "sync-bucket"]
+
+
+async def test_the_object_store_check_recovers_after_a_call_cancelled_before_it_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    submitted: list[Future[None]] = []
+
+    class FakeS3:
+        def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803, PLR6301 - the boto3 method and keyword.
+            calls.append(Bucket)
+
+    def pending_submit(_executor: ThreadPoolExecutor, *_args: object, **_kwargs: object) -> Future[None]:
+        # A call still queued: no thread has picked it up.
+        future: Future[None] = Future()
+        submitted.append(future)
+        return future
+
+    check = object_store_check({}, "sync-bucket", 1, client_builder=lambda _service, **_arguments: FakeS3())
+    with monkeypatch.context() as patch:
+        patch.setattr(ThreadPoolExecutor, "submit", pending_submit)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(check(), 0.01)
+    assert submitted[0].cancelled()
+
+    await check()
+
+    assert calls == ["sync-bucket"]
 
 
 async def test_the_database_check_passes_no_server_options_so_the_url_options_are_kept(
