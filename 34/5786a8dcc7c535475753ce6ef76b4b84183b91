@@ -1,0 +1,33 @@
+changelog/+runs-plan-detail-short-peers.changed.md
+  s_0ca490c1faed1c::t_58ff609630da97 1
+changelog/+runs-plan-samples-action-json.added.md
+  s_0ca490c1faed1c::t_61d69646e0ef3b 1
+docs/docs/reference/cli.mdx
+  s_8c1a7fe9c180a2::t_bfb4df8682804f 702
+infrahub_sync/cli.py
+  s_0ca490c1faed1c::t_d9be4f76e86406 2566
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "345786a8dcc7c535475753ce6ef76b4b84183b91",
+  "prompts": {},
+  "sessions": {
+    "s_0ca490c1faed1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac55537f-b117-4c9b-bb69-11fe9e609baf",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_8c1a7fe9c180a2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca63a7f2-56e4-4997-9e16-befb732a1252",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
