@@ -1,0 +1,50 @@
+frontend/src/api/errors.ts
+  s_ac747e9683a4e0::t_cc2d9ab9c7bb4d 26-28,31-32,38
+  s_ac747e9683a4e0::t_afadf22d6d8b69 52
+frontend/README.md
+  s_ac747e9683a4e0::t_726458a98b3c1c 99,101
+frontend/src/domain/health.test.ts
+  s_ac747e9683a4e0::t_2a26c00219adeb 8,12
+  s_ac747e9683a4e0::t_23f745c0a479ad 84-85,87-123
+frontend/src/api/queries.ts
+  s_ac747e9683a4e0::t_983cc138c80751 24-25
+  s_ac747e9683a4e0::t_03d3c5e141decc 59
+frontend/src/features/health/HealthPage.tsx
+  s_ac747e9683a4e0::t_2062ca2f823af7 5,10
+  s_ac747e9683a4e0::t_4af5d2c76d6931 64,66,68-72
+  s_ac747e9683a4e0::t_209a8ac71f1e6d 82
+  s_ac747e9683a4e0::t_450ced1761860c 81
+docs/docs/operations/day-2-operations.mdx
+  s_ac747e9683a4e0::t_3fb0704c48925e 36-42
+frontend/src/features/health/Board.tsx
+  s_ac747e9683a4e0::t_1f990150e28136 134
+  s_ac747e9683a4e0::t_365fd9ffb58afc 28
+  s_ac747e9683a4e0::t_4fc452a20f3597 63
+  s_ac747e9683a4e0::t_f389ac0b18f86c 143-144,147
+frontend/src/api/errors.test.ts
+  s_ac747e9683a4e0::t_0ae0957356514c 33-38,55
+  s_ac747e9683a4e0::t_9a79b83662223d 56-58
+frontend/src/domain/health.ts
+  s_ac747e9683a4e0::t_bfd358f7208319 45-69
+frontend/src/features/health/parts.tsx
+  s_ac747e9683a4e0::t_1324387535a8bd 6
+  s_ac747e9683a4e0::t_7325c39a51ee34 16
+  s_ac747e9683a4e0::t_9dfd78bf41920b 68
+  s_ac747e9683a4e0::t_e423858d538279 49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "546415f90723db868bab7cd5c932870003743727",
+  "prompts": {},
+  "sessions": {
+    "s_ac747e9683a4e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "549ed312-41da-4cbd-bef8-ee35642932a4",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
