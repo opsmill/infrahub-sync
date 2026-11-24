@@ -351,7 +351,7 @@ def _offline_pool(owner: str) -> PoolStatus:
         detail_available=True,
         queue_depth=0,
         observed_at=NOW,
-        workers=(PoolWorker(owner, "offline", NOW - timedelta(minutes=5), 10.0, name="infrahub-sync-worker-a"),),
+        workers=(PoolWorker(owner, "offline", NOW - timedelta(minutes=5), 10.0, name="infrahub-sync-service-a"),),
     )
 
 
@@ -396,7 +396,7 @@ def test_rule_8_decides_with_the_claiming_worker_name(tmp_path) -> None:
         FLOW_RUN_ID,
         "rule-8",
         "waiting-check",
-        "infrahub-sync-worker-a",
+        "infrahub-sync-service-a",
     )
     assert row.decided_at == NOW
 
@@ -1193,8 +1193,8 @@ def _ended(reason: str, **changes: object) -> AutomaticResume:
     [
         (_ended("no-progress", cause="rule-6"), "Prefect reported the flow run as crashed"),
         (
-            _ended("no-progress", worker_name="infrahub-sync-worker-3b2f"),
-            "the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+            _ended("no-progress", worker_name="infrahub-sync-service-3b2f"),
+            "the worker infrahub-sync-service-3b2f stopped sending heartbeats",
         ),
         (_ended("no-progress"), "the claiming worker stopped sending heartbeats"),
     ],

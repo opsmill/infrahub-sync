@@ -14,7 +14,7 @@ The run resource gains two fields.
       "interrupted_flow_run_id": "6f1c…",
       "actor": "Sync (automatic resume)",
       "cause": "rule-8",
-      "cause_text": "the worker infrahub-sync-worker-3b2f… stopped sending heartbeats",
+      "cause_text": "the worker infrahub-sync-service-3b2f… stopped sending heartbeats",
       "state": "ended",
       "decision": "resume",
       "reason": null,

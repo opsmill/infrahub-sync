@@ -105,7 +105,7 @@ def _automatic_resume(**changes: object) -> dict[str, object]:
         "interrupted_flow_run_id": "flow-apply",
         "actor": "Sync (automatic resume)",
         "cause": "rule-8",
-        "cause_text": "the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+        "cause_text": "the worker infrahub-sync-service-3b2f stopped sending heartbeats",
         "state": "ended",
         "decision": "resume",
         "reason": None,
@@ -153,7 +153,7 @@ def test_a_run_parses_its_automatic_resumes_and_their_count() -> None:
         5999,
         0,
     )
-    assert started.cause_text == "the worker infrahub-sync-worker-3b2f stopped sending heartbeats"
+    assert started.cause_text == "the worker infrahub-sync-service-3b2f stopped sending heartbeats"
     assert started.actor == "Sync (automatic resume)"
     assert (ended.decision, ended.reason, ended.reason_text) == (
         "no-resume",

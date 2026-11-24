@@ -1110,7 +1110,7 @@ def test_an_unavailable_pool_snapshot_has_no_live_worker() -> None:
 
 @pytest.mark.parametrize(
     ("name", "expected"),
-    [("infrahub-sync-worker-1", "infrahub-sync-worker-1"), ("", None), (42, None)],
+    [("infrahub-sync-service-1", "infrahub-sync-service-1"), ("", None), (42, None)],
     ids=("text", "empty", "not-text"),
 )
 def test_pool_status_keeps_a_worker_name_only_when_it_is_text(name: object, expected: str | None) -> None:

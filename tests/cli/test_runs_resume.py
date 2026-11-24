@@ -334,7 +334,7 @@ def test_runs_show_prints_no_progress_lines_for_a_run_without_a_write(client: Ma
 # --- the automatic resume records (spec 030 T025, contracts/cli-and-web.md) ------------------
 
 _DECIDED_AT = datetime(2026, 11, 23, 21, 4, 11, tzinfo=timezone.utc)
-_WORKER_CAUSE = "the worker infrahub-sync-worker-3b2f stopped sending heartbeats"
+_WORKER_CAUSE = "the worker infrahub-sync-service-3b2f stopped sending heartbeats"
 _CRASH_CAUSE = "Prefect reported the flow run as crashed"
 
 

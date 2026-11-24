@@ -120,7 +120,7 @@ that a new plan of the same configuration version shows 0 creates and 0 updates.
    cleared.
 2. **Given** the same run, **When** the operator runs `runs show` or opens the run page after it ends, **Then** the
    resume is shown with "Sync (automatic resume)" in place of an account, with its cause ("the worker
-   `infrahub-sync-worker-…` stopped sending heartbeats"), with the result of the automatic check, and with the number
+   `infrahub-sync-service-…` stopped sending heartbeats"), with the result of the automatic check, and with the number
    of automatic resumes of the run.
 3. **Given** a run interrupted under rule 6 (Prefect reports the flow run as `crashed`), **When** the automatic check
    passes, **Then** Sync starts an automatic resume in the same way as under rule 8.

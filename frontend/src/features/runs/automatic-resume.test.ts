@@ -13,7 +13,7 @@ const row = (fields: Partial<AutomaticResume>): AutomaticResume => ({
   interrupted_flow_run_id: "flow-1",
   actor: "Sync (automatic resume)",
   cause: "rule-8",
-  cause_text: "the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+  cause_text: "the worker infrahub-sync-service-3b2f stopped sending heartbeats",
   state: "ended",
   decided_at: "2026-11-23T21:04:11Z",
   updated_at: "2026-11-23T21:06:40Z",
@@ -33,7 +33,7 @@ describe("automaticResumeBlock", () => {
     );
     expect(text(block)).toEqual([
       "Automatic resume 1: started",
-      "cause: the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+      "cause: the worker infrahub-sync-service-3b2f stopped sending heartbeats",
       "check: passed, 0 differs, 0 not checked",
       "resumed: after operation 6000 by Sync (automatic resume)",
     ]);
@@ -112,7 +112,7 @@ describe("automaticResumeBlock", () => {
     );
     expect(text(block)).toEqual([
       "Automatic resume 1: not started",
-      "cause: the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+      "cause: the worker infrahub-sync-service-3b2f stopped sending heartbeats",
       "check: passed, 0 differs, 2 not checked",
       `reason: ${reasonText}`,
     ]);
@@ -134,7 +134,7 @@ describe("automaticResumeBlock", () => {
     );
     expect(text(block)).toEqual([
       "Automatic resume 1: submitted, no worker started it",
-      "cause: the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+      "cause: the worker infrahub-sync-service-3b2f stopped sending heartbeats",
       "check: passed, 0 differs, 0 not checked",
       "submitted: after operation 6000 by Sync (automatic resume)",
       "reason: no worker picked up the automatic resume in time",
@@ -169,7 +169,7 @@ describe("automaticResumeNext", () => {
     );
     expect(text(automaticResumeBlock(notStarted("check-found-differs"), 1, next))).toEqual([
       "Automatic resume 1: not started",
-      "cause: the worker infrahub-sync-worker-3b2f stopped sending heartbeats",
+      "cause: the worker infrahub-sync-service-3b2f stopped sending heartbeats",
       "reason: the reason check-found-differs",
       `next: ${next}`,
     ]);
