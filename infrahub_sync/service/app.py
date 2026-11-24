@@ -496,7 +496,13 @@ def create_app(
             sdk_version=installed_sdk_version(),
         )
 
-    @application.get("/health", response_model=HealthResource, responses={503: {"model": HealthResource}})
+    # A 503 carries the unhealthy report, or the error envelope when there is no report: no
+    # health checker is configured, or the route fails before the report is built.
+    @application.get(
+        "/health",
+        response_model=HealthResource,
+        responses={503: {"model": HealthResource | ErrorEnvelope}},
+    )
     async def get_health() -> JSONResponse:
         """Return the health of the components and workers, without authentication (spec 029)."""
         return await health_answer()

@@ -3174,9 +3174,13 @@ def test_health_declares_its_report_for_200_and_503_and_needs_no_credential(tmp_
     operation = client.get("/openapi.json").json()["paths"]["/health"]["get"]
 
     assert "security" not in operation
-    for status in ("200", "503"):
-        schema = operation["responses"][status]["content"]["application/json"]["schema"]
-        assert schema == {"$ref": "#/components/schemas/HealthResource"}
+    responses = operation["responses"]
+    assert responses["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/HealthResource"}
+    # A 503 carries the unhealthy report, or the error envelope when no report could be built.
+    assert responses["503"]["content"]["application/json"]["schema"]["anyOf"] == [
+        {"$ref": "#/components/schemas/HealthResource"},
+        {"$ref": "#/components/schemas/ErrorEnvelope"},
+    ]
 
 
 def test_an_api_built_without_a_health_checker_answers_the_service_unavailable_envelope(

@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Get Version
-         * @description Return the installed server and supported unstable API versions.
+         * @description Return the installed server and Infrahub SDK versions and the supported unstable API versions.
          */
         get: operations["get_version_version_get"];
         put?: never;
@@ -1537,6 +1537,9 @@ export interface components {
         /**
          * HealthResource
          * @description Report the health of the Sync API's components and of its workers.
+         *
+         *     The report does not fix the number or the order of its components, so a client keeps
+         *     accepting a report from a newer Sync API that checks one more component.
          */
         HealthResource: {
             /**
@@ -2648,7 +2651,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthResource"];
+                    "application/json": components["schemas"]["HealthResource"] | components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
