@@ -26,20 +26,23 @@ register-to-apply flow was **not** replayed against a live service for this revi
 The end-to-end procedure for connecting a new system to infrahub-sync as a source or a
 destination. This is the canonical procedure; `AGENTS.md` links here.
 
-### Before you start: the service runs only bundled adapters
+### Before you start: an adapter needs a capability declaration
 
-The registered Sync service runs only adapters that ship in this repository. A package names
-its adapter by a short configuration name, such as `netbox`, and the service looks that name
-up in a fixed set of capability declarations. A package that names any other adapter is
-refused at registration, and nothing is stored. Installing the adapter where the worker can
-import it does not change this.
+A package names its adapter by a short configuration name, such as `netbox`, and the service
+looks that name up in the capability declarations. A package that names an adapter with no
+declaration is refused at registration, and nothing is stored. There are two ways to give an
+adapter one:
 
-Adding an adapter therefore means adding two things together: the connector under
-`infrahub_sync/adapters/`, and its capability declaration. This guide teaches that route.
+- **Bundle it.** Add the connector under `infrahub_sync/adapters/` and its entry in
+  `BUILTIN_ADAPTER_CAPABILITIES`. This guide teaches that route.
+- **Ship it in your own distribution.** Publish the adapter through the
+  `infrahub_sync.adapters` entry point, as before, and its declaration through the
+  `infrahub_sync.adapter_capabilities` entry point. See
+  [Declaring an installed adapter's capabilities](#declaring-an-installed-adapters-capabilities).
 
 The worked example in Step 1, `examples/custom_adapter/`, shows the shape of an adapter. Its
-`package.yml` is refused at registration like any other package that names an adapter outside
-the repository. Loading an adapter from a file path is development-only behavior; see
+`package.yml` is refused at registration, like any package that names an adapter with no capability
+declaration: the example publishes none. Loading an adapter from a file path is development-only behavior; see
 [Local adapters](../../adapters/local-adapters.mdx).
 [The current boundary](#the-current-boundary-for-adapters-outside-the-distribution) below
 records the evidence for this limit.
@@ -504,16 +507,65 @@ plans against both sides and writes nothing. Run `sync` or `apply` only with exp
 against a known-safe target. [Run a sync](../../running-a-sync.mdx) covers wait, idempotency,
 delete and failure behavior.
 
+### Declaring an installed adapter's capabilities
+
+An adapter that ships in its own distribution declares its capabilities the same way a bundled
+one does, with an `AdapterConfigurationCapabilities`, but publishes it through an entry point
+instead of adding it to `BUILTIN_ADAPTER_CAPABILITIES`:
+
+```toml
+[project.entry-points."infrahub_sync.adapters"]
+mysystem = "mysystem_sync.adapter"
+
+[project.entry-points."infrahub_sync.adapter_capabilities"]
+mysystem = "mysystem_sync.capabilities:declare"
+```
+
+`declare` takes no arguments and returns the declaration, whose `adapter_name` is the entry
+point's name. Keep it in a module that does not import the adapter itself, so validation does
+not load adapter code to read it. The rules:
+
+- **Sources only.** The declaration's `roles` must be exactly `{"source"}`, and it sets none of
+  the destination fields (`destination_schema_validation`, `destination_schema_accessor` and
+  `destination_access_accessor`); the destination stays qualified for the bundled Infrahub
+  adapter alone.
+- **Bundled adapters win under any spelling.** An installed declaration is never read for a name
+  that is, or normalizes to (case, `-` and `_` ignored, as the plugin loader matches), a bundled
+  adapter, so a distribution cannot replace or alias one.
+- **It must come from installed code**, under the same rule registered execution resolves
+  adapters by (`is_installed_distribution_module` and `module_origin_is_admitted` in
+  `infrahub_sync/plugin_loader.py`), and it must be the distribution's own module, not one in
+  `infrahub_sync`. The entry point's module is judged *before* it is imported,
+  so code that is not installed never runs during validation. An editable install or a file on a
+  path does not qualify.
+- **Exactly one declaration per name.** Two distributions declaring the same name, a
+  declaration that cannot be loaded, one that raises, and one that returns anything but a
+  declaration for its own name all count as no declaration: the package is refused with
+  `missing-adapter`, as before.
+- **It is read when it is asked for.** A stored version validated again later is judged
+  against the declarations installed at that moment.
+
+Install the distribution wherever validation and execution run: the service that registers
+packages and the worker that runs them. In the Compose deployment the worker receives only the
+`INFRAHUB_SYNC_CREDENTIAL_*` variables `docker-compose.yml` lists, so add your adapter's
+credential variables there as well.
+
 ### The current boundary for adapters outside the distribution
 
-**At this revision, an adapter installed outside the distribution has no qualified execution
-path.** A package whose `source.name` or `destination.name` is not a bundled adapter is refused at
-registration, and no configuration or version row is created. One narrower route is admitted but
+The evidence below records the revisions before installed capability declarations existed.
+Point 1's missing registration hook is the `infrahub_sync.adapter_capabilities` entry point
+described above; the other points still describe how a package with *no* declaration is
+refused.
+
+**Before installed capability declarations, an adapter installed outside the distribution had no
+qualified execution path.** A package whose `source.name` or `destination.name` was not a bundled
+adapter was refused at registration, and no configuration or version row was created. One narrower route is admitted but
 not qualified: a package whose `source.name` is a bundled adapter may set `source.adapter` to the
 import path of an adapter class in an installed distribution, and the worker then runs that class
 as the source (`infrahub_sync/configuration/models.py`, `_require_strict_model`; test
 `test_an_installed_dotted_source_with_an_infrahub_destination_may_execute`). The destination may not
-name one. This is recorded here so you do not discover the boundary after writing a connector.
+name one, and still may not: an installed declaration qualifies a source only. A package naming an
+adapter with neither a bundled nor an installed declaration is refused exactly as recorded below.
 
 What the evidence shows, reproduced read-only and in-process against the shipped
 `examples/custom_adapter/package.yml` at revision `61b6a1b9dccae637b522084f563858dfcd5e31a9`.

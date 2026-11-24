@@ -202,11 +202,12 @@ A configuration selects the adapter in one of these ways:
 
 A registered package is stricter. Registration looks up the source and destination `name` in
 `BUILTIN_ADAPTER_CAPABILITIES` (`infrahub_sync/configuration/capabilities.py`), which lists
-only the bundled adapters, and refuses any other name. It also refuses a filesystem `adapter`
+the bundled adapters, and then, for a source only, in the `infrahub_sync.adapter_capabilities`
+entry points installed distributions publish; it refuses any other name. It also refuses a filesystem `adapter`
 target, the `adapters_path` field, and any `adapter` key on the destination
 (`infrahub_sync/configuration/models.py`). A source `adapter` that names a dotted import path or
-an entry point passes that check, but the package is still refused unless its `name` is a
-bundled adapter. Filesystem paths and `adapters_path` apply only to local development loading;
+an entry point passes that check, but the package is still refused unless its `name` has a
+bundled or installed capability declaration. Filesystem paths and `adapters_path` apply only to local development loading;
 see [Local adapters](../../adapters/local-adapters.mdx) and
 [Adding an adapter](../guides/adding-an-adapter.md#the-current-boundary-for-adapters-outside-the-distribution).
 
