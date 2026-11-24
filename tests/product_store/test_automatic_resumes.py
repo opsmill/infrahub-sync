@@ -334,6 +334,38 @@ def test_a_move_to_resuming_saves_the_resume_and_its_start(projection: ProductPr
     )
 
 
+def test_a_submitted_resume_that_no_worker_picked_up_is_counted(projection: ProductProjection) -> None:
+    """The count holds every row with a submitted resume, also one that ended `not-picked-up` (FR-010)."""
+    run_id, flow_run_id = _claimed_apply(projection, "counted")
+    projection.interrupt_execution(
+        run_id,
+        flow_run_id,
+        terminal_at=_INTERRUPTED_AT,
+        automatic_resume=_record(run_id, flow_run_id, state="waiting-resume", check_flow_run_id="flow-check"),
+    )
+    moved_at = _INTERRUPTED_AT + timedelta(seconds=30)
+    assert projection.move_automatic_resume(
+        run_id,
+        flow_run_id,
+        from_state="waiting-resume",
+        to_state="resuming",
+        decision="resume",
+        resume_flow_run_id="flow-resume",
+        updated_at=moved_at,
+    )
+    assert projection.move_automatic_resume(
+        run_id,
+        flow_run_id,
+        from_state="resuming",
+        to_state="ended",
+        decision="no-resume",
+        reason="not-picked-up",
+        updated_at=moved_at,
+    )
+
+    assert projection.automatic_resume_counts([run_id]) == {run_id: 1}
+
+
 def test_a_move_from_a_stale_state_returns_false(projection: ProductProjection) -> None:
     run_id, flow_run_id = _claimed_apply(projection, "stale")
     projection.interrupt_execution(

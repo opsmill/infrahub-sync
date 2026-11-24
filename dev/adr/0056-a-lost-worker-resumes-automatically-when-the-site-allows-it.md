@@ -49,8 +49,10 @@ is safe to repeat (ADR 0027).
     - `approval-missing`: the Sync API requires an approved plan and the run has no approval.
     - `no-progress`: the interrupted execution was an automatic resume, and the progress marker
       did not move past the position that resume started after.
-    - `limit-reached`: the run already received 3 automatic resumes. A resume that a person
-      started does not count.
+    - `limit-reached`: the run already received 3 automatic resumes. A resume that Sync
+      submitted counts, also when no worker picked it up and its row ended `not-picked-up`,
+      with both the started and the not-started event. A resume that a person started does
+      not count.
 - **The steps.** Each loop of the reconciler moves every row that is not `ended` by one step:
   `waiting-check`, `checking`, `waiting-resume`, `resuming`, `ended`. Each move is a
   compare-and-set on the row. A request that renders a run never moves a row. A row submits its

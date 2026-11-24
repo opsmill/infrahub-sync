@@ -2132,7 +2132,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return tuple(_automatic_resume_from_row(row) for row in cursor.fetchall())
 
     def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]:
-        """Return, for each run of ``run_ids`` that has any, the number of rows whose decision is ``resume``."""
+        """Return, for each run of ``run_ids`` that has any, the number of rows whose resume Sync submitted.
+
+        A row whose resume no worker picked up counts too (`AutomaticResume.resume_submitted`).
+        """
         counts: dict[str, int] = {}
         unique = tuple(dict.fromkeys(run_ids))
         with self._reading() as cursor:
@@ -2142,7 +2145,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(
                     self._sql(
                         "SELECT run_id, COUNT(*) FROM automatic_resumes "  # noqa: S608 - placeholders only.
-                        f"WHERE decision = 'resume' AND run_id IN ({placeholders}) GROUP BY run_id"
+                        f"WHERE resume_flow_run_id IS NOT NULL AND run_id IN ({placeholders}) GROUP BY run_id"
                     ),
                     batch,
                 )

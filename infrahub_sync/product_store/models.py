@@ -1428,6 +1428,15 @@ class AutomaticResume(BaseModel):
             raise ValueError(_AUTOMATIC_RESUME_TIME_MESSAGE)
         return value
 
+    @property
+    def resume_submitted(self) -> bool:
+        """Whether Sync submitted the automatic resume of this record.
+
+        It counts toward the limit and toward the run's automatic resumes even when no worker
+        picked it up, which ends the record as ``no-resume``, ``not-picked-up`` (FR-010).
+        """
+        return self.resume_flow_run_id is not None
+
     @model_validator(mode="after")
     def _require_consistent_decision(self) -> AutomaticResume:
         if self.decision is not None and self.state not in _DECIDED_AUTOMATIC_RESUME_STATES:

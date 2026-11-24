@@ -779,7 +779,7 @@ class RunResource(_ResourceModel):
     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
     predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
     resuming the run's interrupted writes without a person, oldest first, and
-    `automatic_resume_count` the number of them whose decision is `resume` (spec 030). Both are
+    `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). Both are
     empty for a run that no decision concerns, and for a Sync API that predates spec 030.
     """
 

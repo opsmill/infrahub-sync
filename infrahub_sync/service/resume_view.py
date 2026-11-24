@@ -310,8 +310,11 @@ _AUTOMATIC_RESUME_REASON_TEXTS = {
 
 
 def automatic_resume_count(rows: Sequence[AutomaticResume]) -> int:
-    """Return how many automatic resumes a run received: its records whose decision is ``resume``."""
-    return sum(row.decision == "resume" for row in rows)
+    """Return how many automatic resumes a run received: its records whose resume Sync submitted.
+
+    A resume that no worker picked up counts too: its record ends ``not-picked-up`` (FR-010).
+    """
+    return sum(row.resume_submitted for row in rows)
 
 
 def automatic_resume_cause_text(row: AutomaticResume) -> str:
@@ -395,5 +398,5 @@ def automatic_resume_view(rows: Sequence[AutomaticResume]) -> tuple[AutomaticRes
                 updated_at=row.updated_at,
             )
         )
-        earlier_resumes += row.decision == "resume"
+        earlier_resumes += row.resume_submitted
     return tuple(view)

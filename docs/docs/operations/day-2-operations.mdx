@@ -245,8 +245,9 @@ plan or run `runs resume` yourself. The reason codes are in `GET /runs/{run_id}`
 
 ### Limits of automatic resume
 
-- A run receives at most 3 automatic resumes. A resume that a person starts does not count, and
-  a person can still resume the run after the limit.
+- A run receives at most 3 automatic resumes. A resume that the Sync API submitted counts, also
+  when no worker picked it up. A resume that a person starts does not count, and a person can
+  still resume the run after the limit.
 - When an automatic resume is interrupted without moving the progress marker forward, the Sync
   API does not resume the run again.
 - The check reads at most 2,000 uncertain operations. A node that differs among the operations

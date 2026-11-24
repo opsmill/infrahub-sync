@@ -237,7 +237,8 @@ def _no_resume_reason(
         return "approval-missing"
     if _automatic_resume_made_no_progress(run, link, previous_rows):
         return "no-progress"
-    if sum(row.decision == "resume" for row in previous_rows) >= AUTOMATIC_RESUME_LIMIT:
+    # A submitted resume counts even when no worker picked it up (FR-010).
+    if sum(row.resume_submitted for row in previous_rows) >= AUTOMATIC_RESUME_LIMIT:
         return "limit-reached"
     return None
 

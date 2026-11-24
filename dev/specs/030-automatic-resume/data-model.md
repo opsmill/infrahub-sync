@@ -63,7 +63,9 @@ insert ─► waiting-check ─► checking ─► waiting-resume ─► resumin
 - **Mutation receipts and executions**: unchanged in shape. The automatic check and resume have the actor
   `sync:automatic-resume` (research R5).
 - **Run resource** (`RunResource`, Sync API): gains `automatic_resumes`, the list of the run's rows, oldest first,
-  and `automatic_resume_count`, the number of rows whose decision is `resume`.
+  and `automatic_resume_count`, the number of rows with a `resume_flow_run_id`: the automatic resumes Sync submitted,
+  including one that no worker picked up, whose row ends `no-resume`, `not-picked-up`. The same count applies to
+  `limit-reached`. Such a row has both the started and the not-started event.
 - **Schedules**: no column change. `_settle_scheduled_run_end` is called later for a run with a row that is not
   `ended` (research R11). When the automatic resume ended before the move to `resuming` named it, for example after a
   restart between the submission and the move, the move counts the run with the verdict of the resume's end, unless

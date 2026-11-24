@@ -44,7 +44,7 @@ from infrahub_sync.service.liveness import (
 )
 from infrahub_sync.service.models import ApplyRunRequest, ResumeRunRequest, VerifyRunRequest
 from infrahub_sync.service.orchestration import Observation, PoolStatus, PoolWorker
-from infrahub_sync.service.resume_view import automatic_resume_view
+from infrahub_sync.service.resume_view import automatic_resume_count, automatic_resume_view
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from infrahub_sync.service.settings import AUTOMATIC_RESUME_ENV, REQUIRE_APPROVAL_ENV
 from tests.service.accounts import seed_accounts
@@ -287,6 +287,23 @@ def test_records_without_an_automatic_resume_do_not_count_toward_the_limit() -> 
     previous = (_resumed("flow-1"), _resumed("flow-2"), _not_resumed("flow-3"), _not_resumed("flow-4"))
 
     assert _reason(_decide(_run(_link()), previous)) is None
+
+
+def _abandoned(resume_flow_run_id: str) -> AutomaticResume:
+    """An earlier record whose automatic resume was submitted as `resume_flow_run_id` and no worker picked up."""
+    return _resumed(resume_flow_run_id).model_copy(
+        update={"state": "ended", "decision": "no-resume", "reason": "not-picked-up"}
+    )
+
+
+def test_a_submitted_resume_that_no_worker_picked_up_counts_toward_the_limit() -> None:
+    """FR-010: Sync submitted three automatic resumes, one of which no worker picked up."""
+    previous = (_abandoned("flow-1"), _resumed("flow-2"), _resumed("flow-3"))
+
+    assert _reason(_decide(_run(_link()), previous)) == "limit-reached"
+    assert automatic_resume_count(previous) == AUTOMATIC_RESUME_LIMIT
+    view = automatic_resume_view((*previous, _not_resumed("flow-4").model_copy(update={"reason": "limit-reached"})))
+    assert view[-1].reason_text == "the run already received 3 automatic resumes, the limit"
 
 
 # --- the liveness reconciler (T010) ------------------------------------------------------
@@ -780,6 +797,25 @@ def test_an_abandoned_resume_ends_the_record_as_not_picked_up(step_api: _StepAPI
 
     ended = _record(step_api, run_id)
     assert (ended.state, ended.decision, ended.reason) == ("ended", "no-resume", "not-picked-up")
+
+
+def test_an_abandoned_resume_counts_as_an_automatic_resume_the_run_received(step_api: _StepAPI) -> None:
+    """The run detail and the run list count the submitted resume; its events say it started, then not."""
+    client, projection, _orchestration, _service = step_api
+    run_id = _interrupted_with_record(step_api)
+    _passed_check(step_api, run_id)
+    _step(step_api)
+    resume = _record(step_api, run_id).resume_flow_run_id
+    assert resume is not None
+    assert projection.abandon_execution(run_id, resume)
+    _step(step_api)
+
+    detail = client.get(f"/runs/{run_id}", headers=_headers("read")).json()
+    listed = client.get("/runs", headers=_headers("read")).json()
+    [item] = [entry for entry in listed["items"] if entry["run_id"] == run_id]
+    assert (detail["automatic_resume_count"], item["automatic_resume_count"]) == (1, 1)
+    events = [event.event_type for event in projection.audit_events(run_id) if event.operation == "automatic-resume"]
+    assert events == [RUN_AUTOMATIC_RESUME_STARTED, RUN_AUTOMATIC_RESUME_NOT_STARTED]
 
 
 def test_a_refused_resume_ends_the_record_with_the_refusal_code(
