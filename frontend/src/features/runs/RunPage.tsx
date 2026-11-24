@@ -304,11 +304,14 @@ const time = (iso: string) => new Date(iso).getTime();
 export function RunPage({ runId }: { runId: string }) {
   const baseRunQuery = runQuery(runId);
   // A plan waiting for review can be verified, applied or cancelled from the command line or
-  // another tab, so it is re-read on the list interval as well.
+  // another tab, so it is re-read on the list interval as well. So is a run whose automatic
+  // resume waits for a live worker: no execution runs then, and the page must see the record end
+  // to offer its own resume again.
   const runQ = useQuery({
     ...baseRunQuery,
     refetchInterval: (query) =>
-      isWaitingPlan(query.state.data as RunResource | undefined)
+      isWaitingPlan(query.state.data as RunResource | undefined) ||
+      automaticResumePending((query.state.data as RunResource | undefined)?.automatic_resumes)
         ? LIST_REFRESH_MS
         : typeof baseRunQuery.refetchInterval === "function"
           ? baseRunQuery.refetchInterval(query)
