@@ -56,9 +56,16 @@ insert is part of the interruption transaction, but it never steps a row: a `GET
 (critique E4).
 
 The reconciler reaches `RunService` through a narrow protocol defined in `liveness.py`, `AutomaticResumeSubmitter`,
-with `submit_check(run_id, key)` and `submit_resume(run_id, key, start_after)`. `RunService` satisfies it, and
+with `submit_check(run_id, key)` and `submit_resume(run_id, key)`. `RunService` satisfies it, and
 `serve.py`, where the reconciler is built, wires it. `service.py` already imports from `liveness.py`, so a direct
 import back would be a cycle (critique E2).
+
+Each step submits first, with the row's idempotency key (R4), and then moves the row with a compare-and-set that
+records the flow run identifier. A restart or another Sync API process between the two repeats the submission with
+the same key, which replays the same receipt.
+
+Changed during implementation: the first text stored `checking` before the submission (R4), and `submit_resume` took
+the position to start after. The position is read from the resume execution after the submission instead.
 
 **Reason**: Each step is short and repeatable, and the state is in the store, so a restart of the Sync API continues
 where it stopped (FR-014). A compare-and-set on the row lets several Sync API processes run the loop at the same time:
@@ -78,10 +85,15 @@ only one moves each row.
 run id of the interrupted execution>` and `automatic-resume:<run_id>:<same>`.
 
 **Reason**: The mutation receipts already give exactly-once submission for a repeated request with the same actor
-and key (`_lookup_existing_receipt`, `reserve_resume`). A restart between storing `checking` and the Prefect
-submission repeats the call with the same key, which replays the same receipt instead of creating a second execution
-(FR-014, SC-005). Reusing the paths also reuses every check of `verify` and `runs resume`: ownership aside, the
+and key (`_lookup_existing_receipt`, `reserve_resume`). A restart between the Prefect submission and the move of the row
+repeats the call with the same key, which replays the same receipt instead of creating a second execution
+(FR-014, SC-005). The keys, not the order of the steps, give the exactly-once submission.
+
+Reusing the paths also reuses every check of `verify` and `runs resume`: ownership aside, the
 checksum, the write lock, the pre-write checks, the left-out confirmation and the approval (FR-008).
+
+Changed during implementation: the first text placed the restart between storing `checking` and the submission;
+the step now submits first and then moves the row (R3).
 
 **Rejected**: a new submission path for automatic executions. It would copy the admission checks and drift from them.
 
@@ -154,8 +166,12 @@ written keeps going after the setting is turned off.
 **Decision**: When the reconciler writes a decision for an interrupted automatic resume, it compares the highest
 saved progress marker of the run (`run_apply_progress`) with the marker the automatic resume started after
 (`resume_start_after`, stored on the previous row). Equal means no progress: the new row ends `no-resume`,
-`no-progress` (FR-009). The count of rows whose decision was `resume` and that reached `resuming` is the count of
-automatic resumes; at 3, the new row ends `no-resume`, `limit-reached` (FR-010). Manual resumes have no row, so they
+`no-progress` (FR-009). The count of rows with a `resume_flow_run_id`, the resumes Sync submitted, is the count of
+automatic resumes; at 3, the new row ends `no-resume`, `limit-reached` (FR-010). A resume that no worker picked up
+counts: its row ends `no-resume`, `not-picked-up`, and keeps its `resume_flow_run_id`.
+
+Changed during implementation: the first text counted only rows whose decision stayed `resume`, so a resume that no
+worker picked up did not count toward the limit. Manual resumes have no row, so they
 never count (FR-011).
 
 ## R11. Schedules
@@ -194,9 +210,15 @@ column changes on existing tables. Pre-release V3 databases are recreated, not m
 ## R15. A person acts while an automatic resume waits
 
 **Decision**: When a person runs `verify` or `runs resume` on a run whose row is in `waiting-check` or
-`waiting-resume`, the request ends the row as `no-resume`, `person-took-over` (FR-019), in its own transaction, and then proceeds as
-today. While the row is in `checking` or `resuming`, the person's request is refused with the existing
-`run-execution-conflict`, because an execution of the run is unfinished.
+`waiting-resume`, the request ends the row as `no-resume`, `person-took-over` (FR-019), in its own transaction, once
+the person's receipt is reserved and the request is accepted, and then proceeds as today. A request that is refused
+leaves the row waiting, so the reconciler still checks and resumes the run. While Sync's own submission of the
+waiting step exists (its receipt is reserved and not refused) but the row has not moved yet, the person's request is
+refused with `409`, `run-execution-conflict`. While the row is in `checking` or `resuming`, the person's request is
+refused with the existing `run-execution-conflict`, because an execution of the run is unfinished.
+
+Changed during implementation: the first text ended the row before the request was handled, so a refused request
+also ended it, and did not refuse a request made between Sync's submission and the move of the row.
 
 **Reason**: A waiting row has submitted nothing, so the person can take over without a race. Refusing the person
 until a worker appears would block the operator on an automatic step they did not ask for.

@@ -200,8 +200,9 @@ worker, and check the run's result, the schedule's failure count and the skipped
   start (FR-010).
 - **An operator cancels the run while an automatic resume is waiting for a worker or running.** The cancellation ends
   the run as today, and no further automatic resume is considered.
-- **An operator runs `runs resume` while an automatic resume is waiting or running.** The run already has an
-  unfinished execution, so the manual resume is refused as today. When the automatic resume is not started (a "no
+- **An operator runs `runs resume` while an automatic check or resume is running.** The run already has an
+  unfinished execution, so the manual resume is refused as today. While Sync waits for a live worker, the person
+  takes over (FR-019). When the automatic resume is not started (a "no
   resume" decision), a manual resume is accepted.
 - **The Sync API restarts between the decision and the submission of the resume.** The decision is stored before
   anything is submitted. After the restart, Sync submits the decided resume once (FR-014).
@@ -263,7 +264,8 @@ worker, and check the run's result, the schedule's failure count and the skipped
 
 - **FR-009**: The system MUST NOT start an automatic resume when the run's previous automatic resume ended without
   moving the progress marker forward.
-- **FR-010**: The system MUST start at most 3 automatic resumes for one run.
+- **FR-010**: The system MUST start at most 3 automatic resumes for one run. A resume that Sync submitted counts, also
+  when no worker picked it up.
 - **FR-011**: Manual resumes MUST NOT count toward the limits of FR-009 and FR-010, and MUST stay available after
   either limit is reached.
 
@@ -301,9 +303,12 @@ worker, and check the run's result, the schedule's failure count and the skipped
 #### A person takes over
 
 - **FR-019**: When a person runs `verify` or `runs resume` on a run whose decision is waiting for a live worker, the
-  system MUST end the decision as "not started: a person took over" and MUST then handle the request as it does
-  today. While the automatic check or the automatic resume runs, the system MUST refuse the person's request as it
-  refuses any request on a run with an unfinished execution.
+  system MUST end the decision as "not started: a person took over" once it has accepted the request, and MUST then
+  handle the request as it does today. A request that the system refuses MUST leave the decision waiting. While Sync
+  submits the waiting check or resume, and while the automatic check or the automatic resume runs, the system MUST
+  refuse the person's request with `409`, as it refuses any request on a run with an unfinished execution.
+  Changed during implementation: the first text ended the decision before the request was handled, so a refused
+  request also ended it, and it did not cover the time between Sync's submission and the move of the decision.
 
 #### Governance
 

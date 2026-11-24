@@ -56,7 +56,10 @@ insert ─► waiting-check ─► checking ─► waiting-resume ─► resumin
 - **`resuming` → `ended`**: when the resume execution has a verdict. If the verdict is `interrupted` under rule 6 or
   rule 8, the interruption transaction inserts the next row.
 - Every move is a compare-and-set on `(run_id, interrupted_flow_run_id, state)`, so only one Sync API process moves a
-  row (FR-014).
+  row (FR-014). The moves to `checking` and `resuming` come after the submission and record its flow run identifier;
+  a repeated submission with the same idempotency key replays the same receipt (research R3, R4).
+- **`waiting-check` or `waiting-resume` → `ended`, `person-took-over`**: when a person's `verify` or `runs resume` is
+  accepted (FR-019, research R15). A refused request leaves the row waiting.
 
 ## Changed records
 
