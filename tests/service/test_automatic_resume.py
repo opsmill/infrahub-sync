@@ -535,8 +535,14 @@ def _finish(
     failed: bool = False,
     results: dict[str, object] | None = None,
 ) -> None:
-    """End a submitted execution as its worker does: completed, or failed, with merged results."""
+    """End a submitted execution as its worker does: completed, or failed, with merged results.
+
+    A `verification` report without a flow run gets this execution's, as the worker writes it.
+    """
     assert flow_run_id is not None
+    verification = (results or {}).get("verification")
+    if isinstance(verification, dict) and "flow_run_id" not in verification:
+        results = {**(results or {}), "verification": {**verification, "flow_run_id": flow_run_id}}
     assert projection.claim_execution(run_id, flow_run_id, worker_id=_STEP_WORKER_ID)
     assert projection.commit_claimed_execution(
         run_id,
@@ -707,6 +713,44 @@ def test_a_failed_check_ends_the_record_with_its_failure_class(step_api: _StepAP
     ended = _record(step_api, run_id)
     assert (ended.state, ended.decision, ended.reason) == ("ended", "no-resume", "check-failed")
     assert ended.reason_detail == {"cause": "destination_unreachable"}
+
+
+def test_a_check_whose_report_belongs_to_another_verify_ends_the_record(step_api: _StepAPI) -> None:
+    """The run's report is another `verify`'s: the check's own result is not known, so Sync does not resume."""
+    projection = step_api[1]
+    run_id = _interrupted_with_record(step_api)
+    _step(step_api)
+    checking = _record(step_api, run_id)
+    report = {"outcome": "verified", "checks": [], "operations": [], "flow_run_id": "flow-another-verify"}
+
+    _finish(projection, run_id, checking.check_flow_run_id, results={"verification": report})
+    _step(step_api)
+
+    ended = _record(step_api, run_id)
+    assert (ended.state, ended.decision, ended.reason) == ("ended", "no-resume", "check-failed")
+    assert ended.reason_detail == {"cause": "report-not-of-this-check"}
+    assert step_api[2].stage_submissions("resume") == []
+
+
+def test_a_check_that_compared_nothing_with_the_destination_ends_the_record(step_api: _StepAPI) -> None:
+    """A report with no `operations` list, such as the empty report of a destination that cannot be read, is no pass."""
+    projection = step_api[1]
+    run_id = _interrupted_with_record(step_api)
+    _step(step_api)
+    checking = _record(step_api, run_id)
+
+    _finish(
+        projection,
+        run_id,
+        checking.check_flow_run_id,
+        results={"verification": {"outcome": "verified", "checks": [], "destination_checked": True}},
+    )
+    _step(step_api)
+
+    ended = _record(step_api, run_id)
+    assert (ended.state, ended.decision, ended.reason) == ("ended", "no-resume", "check-failed")
+    assert ended.reason_detail == {"cause": "destination-not-compared"}
+    assert step_api[2].stage_submissions("resume") == []
 
 
 def test_an_abandoned_check_ends_the_record_as_not_picked_up(step_api: _StepAPI) -> None:

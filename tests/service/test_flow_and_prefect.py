@@ -848,6 +848,8 @@ def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
         "verification_notes": [],
         "checks": ["checkpoint", "lineage"],
         "destination_checked": True,
+        # The `verify` execution that wrote the result, as `_claimed_worker_execution` names it (spec 030).
+        "flow_run_id": str(uuid5(NAMESPACE_URL, run_id)),
     }
     after = projection.lookup_run(run_id).value
     assert after is not None

@@ -30,7 +30,7 @@ interruption transaction inserts it.
 | `approval-missing` | The site requires approval and the run's plan has none. |
 | `no-progress` | The previous automatic resume of the run did not move the progress marker forward. |
 | `limit-reached` | The run already received 3 automatic resumes. |
-| `check-failed` | The check failed a pre-write check, could not reach the destination, or its execution failed. `reason_detail` names the cause. |
+| `check-failed` | The check failed a pre-write check, could not reach the destination, or its execution failed; or the run's report is not the check's own (`report-not-of-this-check`) or holds no per-operation comparison with the destination (`destination-not-compared`). `reason_detail` names the cause. |
 | `check-found-differs` | The check reported at least one `differs`. `reason_detail` holds the count. |
 | `not-picked-up` | The submitted check or resume was abandoned because no worker claimed it in time. |
 | `refused` | `verify_run` or `resume_run` refused the request with a 4xx status. `reason_detail` holds the refusal code. A refusal with a 5xx status is tried again in the next loop. |

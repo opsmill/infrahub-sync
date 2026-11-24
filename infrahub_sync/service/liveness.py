@@ -447,12 +447,12 @@ class RunLivenessReconciler:
             return
         verification = run.results.get("verification")
         report: dict[str, Any] = verification if isinstance(verification, dict) else {}
-        operations = report.get("operations")
-        differs = sum(
-            1
-            for entry in (operations if isinstance(operations, list) else ())
-            if isinstance(entry, dict) and entry.get("state") == "differs"
-        )
+        unusable = _unusable_report_cause(report, link.flow_run_id)
+        if unusable is not None:
+            self._end(row, "check-failed", now, reason_detail={"cause": unusable})
+            return
+        operations: list[Any] = report["operations"]
+        differs = sum(1 for entry in operations if isinstance(entry, dict) and entry.get("state") == "differs")
         truncated = report.get("operations_truncated")
         not_checked = truncated if isinstance(truncated, int) and truncated > 0 else 0
         if differs:
@@ -726,6 +726,22 @@ def _check_failure_cause(run: ProductRun, link: PrefectExecutionLink) -> str:
             if isinstance(value, str) and value:
                 return value
     return f"execution-{link.terminal_state}"
+
+
+def _unusable_report_cause(report: dict[str, Any], check_flow_run_id: str) -> str | None:
+    """Why the run's `verification` report cannot decide the automatic check, or ``None`` when it can.
+
+    ``report-not-of-this-check``: another `verify` wrote the report, for example a person's
+    `verify` after the check, so the check's own result is not known. The worker stores the
+    flow run of the `verify` with its report. ``destination-not-compared``: the report has no
+    ``operations`` list, so the check compared nothing with the destination, because the run
+    no longer required reconciliation or the destination cannot read planned nodes.
+    """
+    if report.get("flow_run_id") != check_flow_run_id:
+        return "report-not-of-this-check"
+    if not isinstance(report.get("operations"), list):
+        return "destination-not-compared"
+    return None
 
 
 def _worker_name(worker_id: str | None, pool: PoolStatus) -> str | None:

@@ -1136,7 +1136,8 @@ The checks, in the order they run and are reported:
 | `lineage` | The plan records an import account, the apply would run with that same import account, and the `source` and `owner` nodes the package names exist in the destination. Reported only for a destination that records lineage, such as Infrahub. |
 
 On success, `GET /runs/{run_id}/results` holds the result under `verification`, with `checks`
-listing every check that passed, in order, and `destination_checked: true`.
+listing every check that passed, in order, `destination_checked: true`, and `flow_run_id`, the
+Prefect flow run of the `verify` that wrote the result.
 
 When a check fails, the verification stage fails, and `GET /runs/{run_id}` reports the failure
 with the name of the check, what was expected and what was found, as for a refused `apply`.

@@ -237,7 +237,7 @@ plan or run `runs resume` yourself. The reason codes are in `GET /runs/{run_id}`
 | `approval-missing` | The Sync API requires an approved plan and the run has no approval. Approve the run, then run `verify` and `runs resume`. |
 | `no-progress` | The previous automatic resume of the run did not move the progress marker forward. |
 | `limit-reached` | The run already received 3 automatic resumes. |
-| `check-failed` | The check failed, for example because the destination was unreachable. The reason names the cause. |
+| `check-failed` | The check failed, for example because the destination was unreachable, or it did not compare the operations of the interrupted write with the destination. The reason names the cause. |
 | `check-found-differs` | The check reported one or more nodes as `differs`. A resume would write the plan's values over them, so a person reviews them. |
 | `not-picked-up` | No worker picked up the check or the resume in time. |
 | `refused` | The Sync API refused the check or the resume, for example because a condition of `runs resume` was not met. The reason names the code. When the Sync API could not serve the request at that time, for example because the task manager or the saved plan was not available, it tries again in its next loop instead. |

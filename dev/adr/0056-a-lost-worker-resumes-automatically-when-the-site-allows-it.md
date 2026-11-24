@@ -57,7 +57,9 @@ is safe to repeat (ADR 0027).
   check or its resume only while the pool has a live worker, so the time it waits does not count
   against the admission time limit.
 - **The check.** The check is a `verify` of the run, submitted through `RunService.verify_run`.
-  The row ends `no-resume` when the check fails (`check-failed`), when it reports an operation
+  The reconciler reads only the report that the check's own flow run wrote, and a report with no
+  per-operation comparison with the destination is not a pass. The row ends `no-resume` when the
+  check fails or its report is not usable (`check-failed`), when it reports an operation
   as `differs` (`check-found-differs`), or when no worker picks it up (`not-picked-up`). The
   2,000-operation limit of `verify` applies: `differs` is counted among the operations the check
   reported, and the row records how many operations the check left out
