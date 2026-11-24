@@ -103,7 +103,68 @@ The review ran at effort `high` over `000b3b29..9c8de6f3`.
   - `runs show` prints the 0-based start position;
   - the `person-took-over` event names the person, not the reserved actor.
 
-## 6. Suggested next steps
+## 6. Pull request, CI and review (morning report)
+
+- **Pull request**: https://github.com/opsmill/infrahub-sync/pull/449, into `feature/v3-develop`, ready for review. Not merged.
+- **Head on GitHub**: `fa3974d0`.
+
+### State of each check at `fa3974d0`
+
+- **Pass**:
+  - Cloudflare Pages, cubic, Detect image input changes;
+  - the image builds for linux/amd64 and linux/arm64;
+  - every linter job: documentation, frontend, Markdown, Python 3.10 to 3.13, documentation style, YAML;
+  - Product store on PostgreSQL;
+  - Unit Tests on py3.10, and on the base install with Python 3.10;
+  - the three "Detect which file has changed" jobs.
+- **Cancelled**: Unit Tests on py3.11, py3.12 and py3.13, each at the 15-minute job limit.
+- **Failed**: Full qualification, only because it depends on the three cancelled jobs.
+- **Skipped**, by their path filters or conditions: image merge, sbom and sign, action-lint, uv_check.
+
+On `c89ddeda` every check passed, on the third attempt of run 45300018949.
+
+### Blocked: the unit test jobs reach the 15-minute limit
+
+`tests / Unit Tests (py3.12)` has been cancelled at `timeout-minutes: 15` (`.github/workflows/workflow-tests.yml`) three times for the same reason:
+
+- run 45300018949, attempt 1, on `c89ddeda`;
+- run 45300018949, attempt 2, on `c89ddeda`;
+- run 45308317418 on `fa3974d0`, where py3.11 and py3.13 were also cancelled.
+
+No test failed. In run 45308317418, py3.13 logged `11351 passed, 9 skipped, 655 deselected, 2 xfailed ... in 897.60s (0:14:57)`, and the job was then cancelled.
+
+The base branch already runs close to the limit: 848 seconds for py3.13 in a slow base run. This branch adds about 23 seconds of tests, plus the tests of the first review round, so it uses part of a margin of less than one minute.
+
+Following the rule "stop after the same failure three times", I did not rerun the jobs again. The only fix for the cause is a change to the workflow file, which this run was not allowed to make. The options are:
+
+1. raise `timeout-minutes` for the unit test jobs;
+2. split the unit test jobs into smaller parts, or run the tests in parallel;
+3. allow a rerun of the cancelled jobs for this pull request.
+
+### Review comments
+
+Round 1: cubic-dev-ai[bot], review 6032369748, 14 threads. Every thread has a reply, and no thread is resolved.
+
+| Comment | File | Outcome |
+|---|---|---|
+| 4674432180 | `changelog/+automatic-resume.added.md` | Fixed in `fa3974d0` |
+| 4674432227 | `docs/docs/operations/day-2-operations.mdx` (`auto resumes: N`) | Fixed in `fa3974d0` |
+| 4674432239 | `frontend/src/features/runs/RunPage.tsx` | Fixed in `ada405df`: the run page keeps polling while an automatic resume has not ended |
+| 4674432245, 4674432256 | ADR 0056 | Fixed in `fa3974d0` |
+| 4674432269 | `docs/docs/development/constitution.md` | Fixed in `fa3974d0`: names both exclusions |
+| 4674432282 | `infrahub_sync/client/models.py` | Fixed in `ed2abb6b`: empty flow run identifiers are refused |
+| 4674432292 | `infrahub_sync/product_store/models.py` | Fixed in `69d5fedb`: a `resuming` record must have decision `resume`, and an `ended` record must have a decision |
+| 4674432322, 4674432334, 4674432340 | `docs/docs/reference/sync-http-api.mdx` | Fixed in `fa3974d0`: the `start_after` example is now 5999 everywhere |
+
+Three comments were declined. Each reply gives the reason, and the code is unchanged:
+
+- **4674432172** (`infrahub_sync/service/service.py`, the left-out confirmation of a scheduled `sync`): reading the schedule's current setting can only be stricter than the setting at admission, never looser. Storing the value from admission time would need a new column in a table that has no migrations.
+- **4674432216** (`AGENTS.md`): "human approval required" there is the rule that an agent asks a person before it runs a command that writes. It is not the Sync API's approval setting.
+- **4674432307** (`development/docker-compose.yml`): the file takes short names from the shell, as ADR 0029 decides. The spec's quickstart was the part that did not match, and it was corrected in `fa3974d0`.
+
+Comments that arrive while CI is blocked get a reply only where I disagree. Any others are listed here as open, with the reason "CI blocked".
+
+## 7. Suggested next steps
 
 1. Run the preview stack check of `quickstart.md` (SC-001, SC-002) on a machine with a free development stack, and add the result to `run-report.md`.
 2. Answer the two open questions in spec.md.
