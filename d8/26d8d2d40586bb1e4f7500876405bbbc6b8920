@@ -1,0 +1,24 @@
+infrahub_sync/service/health.py
+  s_7b1f8b6ee684e7::t_475539d8ca5830 17,90-96,393-396,405-413,415-424
+  s_7b1f8b6ee684e7::t_a56cff73854fb0 453
+tests/service/test_health.py
+  s_7b1f8b6ee684e7::t_475539d8ca5830 8,600-634
+  s_7b1f8b6ee684e7::t_a56cff73854fb0 29
+  s_7b1f8b6ee684e7::t_f970c235cab484 635-636
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d826d8d2d40586bb1e4f7500876405bbbc6b8920",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
