@@ -1,0 +1,24 @@
+infrahub_sync/log.py
+  s_91d5cdaa577a3c::t_ba7bc48f5cbccd 67-81
+tests/test_log.py
+  s_91d5cdaa577a3c::t_ba7bc48f5cbccd 22-23,137-164
+  s_91d5cdaa577a3c::t_a4e997bf4408cb 165-166
+docs/docs/development/guidelines/secret-redaction.md
+  s_91d5cdaa577a3c::t_ba7bc48f5cbccd 140-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a481729557dfda40613b3260aad8e088f8283eba",
+  "prompts": {},
+  "sessions": {
+    "s_91d5cdaa577a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dee066ca-cc9c-4793-8818-ea204d7bebc6",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
