@@ -1,0 +1,21 @@
+dev/specs/031-registered-adapters/spec.md
+  s_a9719f961786d2::t_2d03489f28ac4f 1-517
+dev/specs/031-registered-adapters/checklists/requirements.md
+  s_a9719f961786d2::t_95562926d13b2a 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "379178aeebf7e0920d5b9d0aa2412a467be037a0",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
