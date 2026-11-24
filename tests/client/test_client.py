@@ -69,6 +69,10 @@ def _health(**extra: object) -> dict[str, object]:
     }
 
 
+def _unhealthy_health() -> dict[str, object]:
+    return _health(status="unhealthy", dependencies=[{"name": "database", "status": "down", "error": "timeout"}])
+
+
 def _run(run_id: str = "run-1") -> dict[str, object]:
     return {
         "run": {
@@ -598,6 +602,8 @@ def test_get_health_raises_the_error_envelope_error_for_a_503_envelope() -> None
         ),
         pytest.param(httpx.Response(200, json={"status": "healthy"}), id="200-invalid-body"),
         pytest.param(httpx.Response(503, json={"status": "unhealthy"}), id="503-invalid-body"),
+        pytest.param(httpx.Response(200, json=_unhealthy_health()), id="200-unhealthy-report"),
+        pytest.param(httpx.Response(503, json=_health()), id="503-healthy-report"),
     ],
 )
 def test_get_health_raises_protocol_error_for_any_other_answer(response: httpx.Response) -> None:
