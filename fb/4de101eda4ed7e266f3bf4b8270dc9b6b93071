@@ -1,0 +1,156 @@
+docs/docs/development/knowledge/repository-tour.md
+  s_91d5cdaa577a3c::t_fc657588c9c342 416-418
+infrahub_sync/log.py
+  s_91d5cdaa577a3c::t_4f0a1ec9ece67b 1-101
+  s_91d5cdaa577a3c::t_9acee756a6c5fa 102-104
+  s_91d5cdaa577a3c::t_06fd9fcfebbe02 105-131
+tests/test_log.py
+  s_91d5cdaa577a3c::t_c64f123533b491 114
+  s_91d5cdaa577a3c::t_7d6696006401f7 1-80,82-107,109-113,115-138,143,146
+  s_91d5cdaa577a3c::t_27491cdc643b98 108
+  s_91d5cdaa577a3c::t_8f3fcdbec50a8a 81
+  s_91d5cdaa577a3c::t_3835d56960c81e 139-142
+  s_91d5cdaa577a3c::t_d19688481e13eb 144-145
+  s_91d5cdaa577a3c::t_4f0b88e75b8f91 147-149
+  s_91d5cdaa577a3c::t_f96b47da5cff95 150-188
+AGENTS.md
+  s_e9a60184115a66::t_be998c1e79c81f 149
+docs/docs/development/guidelines/secret-redaction.md
+  s_e9a60184115a66::t_5301e82b89e94d 127-134
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_e9a60184115a66::t_a47320ac8176fa 84-96
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_e9a60184115a66::t_d21bb1251a48e1 366-372
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_e9a60184115a66::t_c11f106afa308c 668-671
+tests/conftest.py
+  s_58b527396c8cb5::t_9e91cc1790a958 80,89,94-96
+tests/service/test_compose_bootstrap.py
+  s_58b527396c8cb5::t_e1cc386b2ff5ef 14,435
+tests/service/test_flow_and_prefect.py
+  s_ac747e9683a4e0::t_71881b4b84c8a0 298
+changelog/+structlog-logging.changed.md
+  s_91d5cdaa577a3c::t_577a9e103c4b30 1
+infrahub_sync/__init__.py
+  s_30954faa6b52fd::t_1ea74f95095fe6 12,25,38-40
+infrahub_sync/adapters/aci.py
+  s_30954faa6b52fd::t_a7084b1ef72706 11,34
+infrahub_sync/adapters/genericrestapi.py
+  s_30954faa6b52fd::t_a4ec648086c5c9 5,21
+infrahub_sync/adapters/infrahub.py
+  s_30954faa6b52fd::t_4964993f7c439c 11,73
+infrahub_sync/adapters/ipfabricsync.py
+  s_30954faa6b52fd::t_a9e988dcb4c424 7,20
+infrahub_sync/adapters/nautobot.py
+  s_30954faa6b52fd::t_3749d3db791626 8,25
+infrahub_sync/adapters/netbox.py
+  s_30954faa6b52fd::t_39dc9c2183f510 7,25
+infrahub_sync/adapters/prometheus.py
+  s_30954faa6b52fd::t_6ea09f54d7147f 7,22
+infrahub_sync/adapters/references.py
+  s_30954faa6b52fd::t_595c5bc1f4b7f3 25-26,44
+infrahub_sync/adapters/rest_api_client.py
+  s_30954faa6b52fd::t_b7af76b9e5f6b0 6,8
+infrahub_sync/adapters/slurpitsync.py
+  s_30954faa6b52fd::t_c6076951c28530 12,25
+infrahub_sync/cache/guardrails.py
+  s_30954faa6b52fd::t_a3ca94d232e982 18-20
+infrahub_sync/cache/incremental.py
+  s_30954faa6b52fd::t_f0ddc02abda65c 13-14,27
+infrahub_sync/cache/locks.py
+  s_30954faa6b52fd::t_b347faf1efed7e 9,18
+infrahub_sync/cache/parquet_io.py
+  s_30954faa6b52fd::t_5050f21e14e1fe 10,17
+infrahub_sync/dependency_graph.py
+  s_30954faa6b52fd::t_b3ad9ebc1097b5 20-21,27
+infrahub_sync/execution.py
+  s_30954faa6b52fd::t_f9622424d8d95a 44,85
+infrahub_sync/generator/__init__.py
+  s_30954faa6b52fd::t_0262061ae62a8e 8,19
+infrahub_sync/orchestration/flow.py
+  s_30954faa6b52fd::t_3e6c79ee971d81 35,47
+infrahub_sync/orchestration/serve.py
+  s_30954faa6b52fd::t_2d059cd25362a4 20-21,47
+infrahub_sync/plan/derive.py
+  s_30954faa6b52fd::t_304e43613b752c 55,92
+infrahub_sync/plan/destination_only_peer.py
+  s_30954faa6b52fd::t_829b5395f72e72 26-27,37
+infrahub_sync/plan/keying.py
+  s_30954faa6b52fd::t_d84739863ca358 22-23,36
+infrahub_sync/plan/problems.py
+  s_30954faa6b52fd::t_185cd372510564 24,59
+infrahub_sync/potenda/__init__.py
+  s_30954faa6b52fd::t_2e5bce2bb12236 11-12,60
+infrahub_sync/product_store/store.py
+  s_30954faa6b52fd::t_b8fa212933e5fd 20,100
+infrahub_sync/service/app.py
+  s_30954faa6b52fd::t_7a21f09e8e4c59 9,73
+infrahub_sync/service/apply_progress.py
+  s_30954faa6b52fd::t_28d71bd58e60c0 31-32,41
+infrahub_sync/service/bootstrap.py
+  s_30954faa6b52fd::t_aa389c536da28e 38,45,74,427-428,431
+infrahub_sync/service/flow.py
+  s_30954faa6b52fd::t_c5286129bb48bb 22,144
+infrahub_sync/service/plan_step.py
+  s_30954faa6b52fd::t_feab617d46539c 24-25,34
+infrahub_sync/service/read_progress.py
+  s_30954faa6b52fd::t_e084d0388290a2 17,29
+infrahub_sync/service/service.py
+  s_30954faa6b52fd::t_43a247bcb9093d 20,119
+infrahub_sync/service/start_check.py
+  s_30954faa6b52fd::t_ae2f811b6cfb29 22-23,34
+infrahub_sync/service/trust_store.py
+  s_30954faa6b52fd::t_53bf7c742c1d58 31,33-35,128-130
+infrahub_sync/utils.py
+  s_30954faa6b52fd::t_203d26aa1deb63 8,25
+tests/test_logging.py
+  s_91d5cdaa577a3c::t_35a6d69514f14c 88,102-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb4de101eda4ed7e266f3bf4b8270dc9b6b93071",
+  "prompts": {},
+  "sessions": {
+    "s_30954faa6b52fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68b2c141-8dbb-4265-a817-fa76f097f99c",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_91d5cdaa577a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dee066ca-cc9c-4793-8818-ea204d7bebc6",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_ac747e9683a4e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "549ed312-41da-4cbd-bef8-ee35642932a4",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e9a60184115a66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d615b40-b458-402a-bfea-e1614506b60f",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
