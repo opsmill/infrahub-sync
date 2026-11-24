@@ -1915,7 +1915,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
             assert operation["security"] == [{"BearerAuth": []}]
 
 
-def test_version_is_unauthenticated_and_declares_the_unstable_api(
+def test_version_is_unauthenticated_and_declares_the_unstable_api_and_sdk(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
     """Lifecycle discovery does not require a bearer token."""
@@ -1930,9 +1930,12 @@ def test_version_is_unauthenticated_and_declares_the_unstable_api(
         "server_version": installed_version("infrahub-sync"),
         "api_versions": ["v3-unstable"],
         "stability": "unstable",
+        "sdk_version": installed_version("infrahub-sdk"),
     }
-    operation = client.get("/openapi.json").json()["paths"]["/version"]["get"]
+    openapi = client.get("/openapi.json").json()
+    operation = openapi["paths"]["/version"]["get"]
     assert "security" not in operation
+    assert "sdk_version" in openapi["components"]["schemas"]["VersionResource"]["properties"]
 
 
 def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(

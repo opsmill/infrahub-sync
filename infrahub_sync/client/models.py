@@ -636,6 +636,9 @@ class VersionResource(_ResourceModel):
     server_version: str
     api_versions: tuple[str, ...]
     stability: str
+    # The installed `infrahub-sdk` version; `None` from a server that predates the field, or
+    # when the service cannot read the SDK's package metadata.
+    sdk_version: str | None = None
 
 
 class WorkerStatusResource(_ResourceModel):

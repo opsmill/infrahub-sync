@@ -28,7 +28,7 @@ from infrahub_sync.product_store import Account, EventOrder
 
 from .account_routes import account_router
 from .auth import Principal, PrincipalResolver
-from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
+from .compatibility import API_STABILITY, API_VERSIONS, installed_sdk_version, installed_server_version
 from .config_routes import (
     CONFIG_ID_PATTERN,
     MAX_REGISTRY_VERSION,
@@ -481,9 +481,12 @@ def create_app(
 
     @application.get("/version")
     def get_version() -> VersionResource:
-        """Return the installed server and supported unstable API versions."""
+        """Return the installed server and Infrahub SDK versions and the supported unstable API versions."""
         return VersionResource(
-            server_version=installed_server_version(), api_versions=API_VERSIONS, stability=API_STABILITY
+            server_version=installed_server_version(),
+            api_versions=API_VERSIONS,
+            stability=API_STABILITY,
+            sdk_version=installed_sdk_version(),
         )
 
     @application.get("/status")

@@ -2608,6 +2608,8 @@ export interface components {
             api_versions: string[];
             /** Stability */
             stability: string;
+            /** Sdk Version */
+            sdk_version?: string | null;
         } & {
             [key: string]: unknown;
         };
