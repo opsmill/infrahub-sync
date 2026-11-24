@@ -1,0 +1,45 @@
+docs/docs/development/knowledge/repository-tour.md
+  s_7b1f8b6ee684e7::t_db087db3adea5f 221-225
+dev/adr/0055-the-health-endpoint-replaces-status.md
+  s_7b1f8b6ee684e7::t_ab60236aa2af42 50-52,56,58-59,62-64,71-73
+  s_7b1f8b6ee684e7::t_db087db3adea5f 31,48-49,60-61,68,70,89-91
+  s_7b1f8b6ee684e7::t_b19bd08f506efe 57,69
+docs/docs/compose-deployment.mdx
+  s_7b1f8b6ee684e7::t_db087db3adea5f 1191-1192
+docs/docs/development-stack.mdx
+  s_7b1f8b6ee684e7::t_db087db3adea5f 160-162
+development/docker-compose.yml
+  s_7b1f8b6ee684e7::t_db087db3adea5f 358-359
+docs/docs/quickstart-compose.mdx
+  s_7b1f8b6ee684e7::t_db087db3adea5f 96-102
+docs/docs/reference/sync-http-api.mdx
+  s_7b1f8b6ee684e7::t_db087db3adea5f 498-501
+infrahub_sync/testcontainers/docker-compose.yml
+  s_7b1f8b6ee684e7::t_db087db3adea5f 375-376
+dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md
+  s_7b1f8b6ee684e7::t_ab60236aa2af42 7-8,92-102
+docker-compose.yml
+  s_7b1f8b6ee684e7::t_db087db3adea5f 375-376
+changelog/+api-health.added.md
+  s_7b1f8b6ee684e7::t_b19bd08f506efe 1
+docs/docs/operations/compose-troubleshooting.mdx
+  s_7b1f8b6ee684e7::t_db087db3adea5f 37-38
+docs/docs/operations/day-2-operations.mdx
+  s_7b1f8b6ee684e7::t_db087db3adea5f 13-15,25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd965d298f55757978d0c66d7ce39b6a7e886031",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
