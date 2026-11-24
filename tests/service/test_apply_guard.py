@@ -10,6 +10,7 @@ facts that fake assumes — that a session-level `lock_timeout` bounds
 from __future__ import annotations
 
 import traceback
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import pytest
@@ -18,9 +19,12 @@ pytest.importorskip("psycopg")
 
 import psycopg
 
+from infrahub_sync.service import apply_guard
 from infrahub_sync.service.apply_guard import (
     DEFAULT_DEADLINE_SECONDS,
+    GUARD_LABEL_PREFIX,
     MAX_DEADLINE_SECONDS,
+    MAX_GUARD_LABEL_BYTES,
     MIN_DEADLINE_SECONDS,
     ApplyGuard,
     ApplyGuardContentionError,
@@ -29,9 +33,12 @@ from infrahub_sync.service.apply_guard import (
     ApplyGuardOwnershipError,
     ApplyGuardReleaseError,
     ApplyGuardUnavailableError,
+    _guard_failure,  # noqa: PLC2701 - the failure builder under test is private.
+    _holder_run_id,  # noqa: PLC2701 - the label parser under test is private.
     advisory_lock_key,
     deadline_milliseconds,
     dsn_secret_values,
+    guard_label,
     hold_apply_guard,
 )
 
@@ -42,6 +49,11 @@ _BACKEND_PID = 4242
 _OTHER_BACKEND_PID = 9797
 _CONFIGURATION = "alpha"
 _ALPHA_KEY = -8187121688807872226
+# The run that holds the guard in every scripted acquisition, and a second run that holds
+# it elsewhere. Production always passes the stage's run ID, so the scripts do too.
+_GENERATED_RUN_ID = "20261123T1012-3fa1b2c4"
+_OTHER_RUN_ID = "20261123T1012-aaaaaaaa"
+_CLOSE = "<close>"
 
 # One canary per exception-graph carrier, each registered under a credential-shaped
 # environment variable so `collect_secret_values` treats it as a secret VALUE.
@@ -60,15 +72,21 @@ class _Statement(NamedTuple):
 
 
 class _FakeCursor:
-    def __init__(self, row: tuple[Any, ...] | None) -> None:
-        self._row = row
+    """A cursor over scripted rows that returns `None` once they are used up."""
+
+    def __init__(self, rows: Sequence[tuple[Any, ...]]) -> None:
+        self._rows = list(rows)
 
     def fetchone(self) -> tuple[Any, ...] | None:
-        return self._row
+        return self._rows.pop(0) if self._rows else None
 
 
 class _FakeSession:
-    """One scripted direct-PostgreSQL session, recording every statement."""
+    """One scripted direct-PostgreSQL session, recording every statement.
+
+    `sequence` records every statement and every close in the order they happened, so a
+    test can check that a statement ran before the session was closed.
+    """
 
     def __init__(
         self,
@@ -77,34 +95,42 @@ class _FakeSession:
         released: bool = True,
         ownership_pid: int = _BACKEND_PID,
         release_pid: int = _BACKEND_PID,
+        holder_rows: Sequence[tuple[Any, ...]] = (),
     ) -> None:
         self.statements: list[_Statement] = []
+        self.sequence: list[str] = []
         self.close_calls = 0
         self.held = held
         self.released = released
         self.ownership_pid = ownership_pid
         self.release_pid = release_pid
+        self.holder_rows = tuple(holder_rows)
         self.failures: dict[str, BaseException] = {}
         self.close_failure: BaseException | None = None
 
     def execute(self, query: str, params: Sequence[Any] | None = None) -> _FakeCursor:
         self.statements.append(_Statement(query, tuple(params or ())))
+        self.sequence.append(query)
         for fragment, error in self.failures.items():
             if fragment in query:
                 raise error
-        return _FakeCursor(self._row(query))
+        return _FakeCursor(self._rows(query))
 
-    def _row(self, query: str) -> tuple[Any, ...] | None:
+    def _rows(self, query: str) -> Sequence[tuple[Any, ...]]:
+        # The holder lookup also reads `pg_locks`, so it is recognised first.
+        if "pg_stat_activity" in query:
+            return self.holder_rows
         if "pg_locks" in query:
-            return (self.ownership_pid, self.held)
+            return [(self.ownership_pid, self.held)]
         if "pg_advisory_unlock" in query:
-            return (self.released, self.release_pid)
+            return [(self.released, self.release_pid)]
         if "pg_advisory_lock" in query:
-            return (None,)
-        return ("configured",)
+            return [(None,)]
+        return [("configured",)]
 
     def close(self) -> None:
         self.close_calls += 1
+        self.sequence.append(_CLOSE)
         if self.close_failure is not None:
             raise self.close_failure
 
@@ -120,7 +146,7 @@ class _Hold:
     `pytest.raises` block.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - one keyword per guard argument a case scripts.
         self,
         session: _FakeSession,
         *,
@@ -128,6 +154,7 @@ class _Hold:
         deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
         secrets: Sequence[str] = (),
         connect_failure: BaseException | None = None,
+        run_id: str | None = _GENERATED_RUN_ID,
     ) -> None:
         self.session = session
         self.connect_calls: list[int] = []
@@ -136,6 +163,7 @@ class _Hold:
         self._deadline_seconds = deadline_seconds
         self._secrets = secrets
         self._connect_failure = connect_failure
+        self._run_id = run_id
 
     def run(self, action: Callable[[ApplyGuard], object] | None = None) -> None:
         """Acquire, optionally run `action` under the hold, then release."""
@@ -151,6 +179,7 @@ class _Hold:
             connect=connect,
             deadline_seconds=self._deadline_seconds,
             secrets=self._secrets,
+            run_id=self._run_id,
         ) as guard:
             self.guard = guard
             if action is not None:
@@ -297,8 +326,12 @@ def test_a_rejected_deadline_refuses_before_any_session_is_opened() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_acquisition_bounds_the_deadline_then_locks_then_proves_ownership() -> None:
-    """The exact statement order, arguments, and session count the provider receives."""
+def test_acquisition_labels_the_session_then_bounds_the_deadline_then_locks_then_proves_ownership() -> None:
+    """The exact statement order, arguments, and session count the provider receives.
+
+    The label statement comes first, before the deadline and the lock request, so a
+    session that holds the key is always labelled (spec 028, critique E6).
+    """
     session = _FakeSession()
     hold = _Hold(session, deadline_seconds=0.3)
     acquisition: list[_Statement] = []
@@ -308,13 +341,31 @@ def test_acquisition_bounds_the_deadline_then_locks_then_proves_ownership() -> N
     assert hold.connect_calls == [1]
     assert hold.guard is not None
     assert hold.guard.key == _ALPHA_KEY
-    assert len(acquisition) == 3
-    assert "set_config" in acquisition[0].sql
-    assert acquisition[0].parameters == ("300",)
-    assert "pg_advisory_lock" in acquisition[1].sql
-    assert acquisition[1].parameters == (_ALPHA_KEY,)
-    assert "pg_locks" in acquisition[2].sql
+    assert len(acquisition) == 4
+    assert "'application_name'" in acquisition[0].sql
+    assert acquisition[0].parameters == (f"{GUARD_LABEL_PREFIX}{_GENERATED_RUN_ID}",)
+    assert "'lock_timeout'" in acquisition[1].sql
+    assert acquisition[1].parameters == ("300",)
+    assert "pg_advisory_lock" in acquisition[2].sql
+    assert acquisition[2].parameters == (_ALPHA_KEY,)
+    assert "pg_locks" in acquisition[3].sql
     assert session.close_calls == 1
+
+
+@pytest.mark.parametrize("run_id", [None, "run 1"])
+def test_acquisition_without_a_writable_label_sends_no_label_statement(run_id: str | None) -> None:
+    """No run ID, or one that cannot be written as a label, leaves the three-statement acquisition."""
+    session = _FakeSession()
+    hold = _Hold(session, deadline_seconds=0.3, run_id=run_id)
+    acquisition: list[_Statement] = []
+
+    hold.run(lambda _: acquisition.extend(session.statements))
+
+    assert len(acquisition) == 3
+    assert "'lock_timeout'" in acquisition[0].sql
+    assert "pg_advisory_lock" in acquisition[1].sql
+    assert "pg_locks" in acquisition[2].sql
+    assert session.executed("'application_name'") == []
 
 
 def test_a_lock_timeout_is_reported_as_contention() -> None:
@@ -327,6 +378,139 @@ def test_a_lock_timeout_is_reported_as_contention() -> None:
         hold.run()
 
     assert hold.guard is None
+    assert session.close_calls == 1
+
+
+def test_a_lock_timeout_reads_the_holder_on_the_same_session_before_closing_it() -> None:
+    """The holder lookup bounds itself, reads the exact key's holder, and only then closes."""
+    session = _FakeSession()
+    session.failures["pg_advisory_lock"] = psycopg.errors.LockNotAvailable("timed out")
+
+    with pytest.raises(ApplyGuardContentionError):
+        _Hold(session).run()
+
+    lock_request = next(index for index, sql in enumerate(session.sequence) if "pg_advisory_lock" in sql)
+    after_lock = session.sequence[lock_request + 1 :]
+    assert len(after_lock) == 3
+    assert "'statement_timeout'" in after_lock[0]
+    assert "pg_stat_activity" in after_lock[1]
+    assert after_lock[2] == _CLOSE
+    assert session.executed("'statement_timeout'")[0].parameters == ("2000",)
+    assert session.executed("pg_stat_activity")[0].parameters == (
+        (_ALPHA_KEY >> 32) & 0xFFFFFFFF,
+        _ALPHA_KEY & 0xFFFFFFFF,
+    )
+
+
+def test_one_holder_row_with_a_valid_label_names_the_holding_run() -> None:
+    """Exactly one other session holds the key, and its label parses: that run is the candidate."""
+    session = _FakeSession(holder_rows=[(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)])
+    session.failures["pg_advisory_lock"] = psycopg.errors.LockNotAvailable("timed out")
+
+    with pytest.raises(ApplyGuardContentionError) as caught:
+        _Hold(session).run()
+
+    assert caught.value.holder_run_id == _OTHER_RUN_ID
+
+
+def test_a_lock_timeout_records_the_time_taken_immediately_before_the_lock_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wait start is read after the deadline is set and before the lock request is sent.
+
+    A time taken at the lock timeout, minus the deadline, can be later than the real start
+    of the wait, which would report a holder that finished during the wait as ended.
+    """
+    session = _FakeSession(holder_rows=[(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)])
+    session.failures["pg_advisory_lock"] = psycopg.errors.LockNotAvailable("timed out")
+    stamped = datetime(2026, 11, 23, 9, 30, tzinfo=timezone.utc)
+
+    def clock() -> datetime:
+        session.sequence.append(_CLOCK_READ)
+        return stamped
+
+    monkeypatch.setattr(apply_guard, "_utc_now", clock)
+
+    with pytest.raises(ApplyGuardContentionError) as caught:
+        _Hold(session).run()
+
+    assert caught.value.wait_started_at == stamped
+    assert session.sequence.count(_CLOCK_READ) == 1
+    clock_read = session.sequence.index(_CLOCK_READ)
+    assert "'lock_timeout'" in session.sequence[clock_read - 1]
+    assert "pg_advisory_lock" in session.sequence[clock_read + 1]
+
+
+_CLOCK_READ = "<clock read>"
+
+
+_CONTENDED_TEXT = "another writer holds this configuration's write guard"
+_LOOKUP_CANARY = "holder-lookup-canary-51c3"
+
+
+@pytest.mark.parametrize(
+    ("holder_rows", "failure_site", "failure"),
+    [
+        pytest.param((), None, None, id="no-row"),
+        pytest.param(
+            [(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",), (f"{GUARD_LABEL_PREFIX}{_GENERATED_RUN_ID}",)],
+            None,
+            None,
+            id="two-rows",
+        ),
+        pytest.param([(f"infrahub-sync-other:{_OTHER_RUN_ID}",)], None, None, id="another-prefix"),
+        # A tail that matches the run-ID pattern, so only the length rule rejects the label.
+        pytest.param([(f"{GUARD_LABEL_PREFIX}{'a' * 43}",)], None, None, id="63-bytes"),
+        pytest.param(
+            [(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)],
+            "'statement_timeout'",
+            psycopg.errors.QueryCanceled(_LOOKUP_CANARY),
+            id="timeout-statement-raises",
+        ),
+        pytest.param(
+            [(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)],
+            "pg_stat_activity",
+            psycopg.OperationalError(_LOOKUP_CANARY),
+            id="query-raises",
+        ),
+        pytest.param(
+            [(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)],
+            "pg_stat_activity",
+            RuntimeError(_LOOKUP_CANARY),
+            id="query-raises-a-non-driver-error",
+        ),
+    ],
+)
+def test_a_holder_that_cannot_be_proven_leaves_the_contention_error_unchanged(
+    holder_rows: Sequence[tuple[Any, ...]], failure_site: str | None, failure: Exception | None
+) -> None:
+    """FR-006, FR-006a: no candidate, and the contention failure keeps its type and text."""
+    session = _FakeSession(holder_rows=holder_rows)
+    session.failures["pg_advisory_lock"] = psycopg.errors.LockNotAvailable("timed out")
+    if failure_site is not None and failure is not None:
+        session.failures[failure_site] = failure
+
+    with pytest.raises(ApplyGuardContentionError) as caught:
+        _Hold(session).run()
+
+    assert type(caught.value) is ApplyGuardContentionError
+    assert str(caught.value) == _CONTENDED_TEXT
+    assert caught.value.holder_run_id is None
+    assert session.close_calls == 1
+    assert session.sequence[-1] == _CLOSE
+    assert _LOOKUP_CANARY not in _reachable_text(caught.value)
+    if failure_site == "'statement_timeout'":
+        assert session.executed("pg_stat_activity") == []
+
+
+def test_a_write_that_takes_the_lock_never_looks_up_a_holder() -> None:
+    """SC-004: the holder lookup costs nothing on a write whose wait did not end in a timeout."""
+    session = _FakeSession(holder_rows=[(f"{GUARD_LABEL_PREFIX}{_OTHER_RUN_ID}",)])
+
+    _Hold(session).run(lambda guard: guard.require_ownership())
+
+    assert session.executed("'statement_timeout'") == []
+    assert session.executed("pg_stat_activity") == []
     assert session.close_calls == 1
 
 
@@ -871,3 +1055,72 @@ def test_a_close_failure_after_a_confirmed_unlock_leaves_the_guard_permanently_r
     assert hold.guard is not None
     assert hold.guard.retired is True
     assert session.close_calls == 1
+
+
+# --- Write-lock session label (spec 028) ---------------------------------------------
+
+
+def test_holder_run_id_reads_a_generated_run_id_after_the_exact_prefix() -> None:
+    assert _holder_run_id(f"infrahub-sync-guard:{_GENERATED_RUN_ID}") == _GENERATED_RUN_ID
+
+
+def test_guard_label_round_trips_a_generated_run_id() -> None:
+    label = guard_label(_GENERATED_RUN_ID)
+    assert label == f"{GUARD_LABEL_PREFIX}{_GENERATED_RUN_ID}"
+    assert _holder_run_id(label) == _GENERATED_RUN_ID
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        pytest.param(f"infrahub-sync-guards:{_GENERATED_RUN_ID}", id="wrong-prefix"),
+        pytest.param(f"Infrahub-sync-guard:{_GENERATED_RUN_ID}", id="prefix-case"),
+        pytest.param(_GENERATED_RUN_ID, id="no-prefix"),
+        pytest.param("", id="empty"),
+        pytest.param(GUARD_LABEL_PREFIX, id="prefix-only"),
+        pytest.param(None, id="none"),
+        pytest.param(b"infrahub-sync-guard:20261123T1012-3fa1b2c4", id="bytes"),
+        pytest.param(42, id="int"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}run 1", id="space"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}run=1", id="equals"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}{_GENERATED_RUN_ID}\n", id="trailing-newline"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}-run", id="leading-dash"),
+        pytest.param(f"{GUARD_LABEL_PREFIX}{'a' * 43}", id="63-bytes"),
+    ],
+)
+def test_holder_run_id_rejects_a_label_that_is_not_well_formed(label: object) -> None:
+    assert _holder_run_id(label) is None
+
+
+def test_holder_run_id_accepts_a_label_of_exactly_62_bytes() -> None:
+    run_id = "a" * (MAX_GUARD_LABEL_BYTES - len(GUARD_LABEL_PREFIX))
+    assert _holder_run_id(f"{GUARD_LABEL_PREFIX}{run_id}") == run_id
+
+
+@pytest.mark.parametrize("length", [43, 44, 128])
+def test_guard_label_refuses_a_run_id_of_43_or_more_characters(length: int) -> None:
+    assert guard_label("a" * length) is None
+
+
+def test_guard_label_writes_a_run_id_of_42_characters() -> None:
+    label = guard_label("a" * 42)
+    assert label is not None
+    assert len(label.encode("utf-8")) == MAX_GUARD_LABEL_BYTES
+
+
+@pytest.mark.parametrize("run_id", ["", "run 1", "run=1", "-run", "r\u00e9sum\u00e9"])
+def test_guard_label_refuses_a_run_id_outside_the_pattern(run_id: str) -> None:
+    assert guard_label(run_id) is None
+
+
+def test_contention_error_has_no_holder_run_id_by_default() -> None:
+    assert ApplyGuardContentionError("contended").holder_run_id is None
+
+
+def test_guard_failure_carries_a_holder_run_id_on_contention_only() -> None:
+    contended = _guard_failure(ApplyGuardContentionError, "contended", None, (), holder_run_id=_GENERATED_RUN_ID)
+    assert isinstance(contended, ApplyGuardContentionError)
+    assert contended.holder_run_id == _GENERATED_RUN_ID
+    assert str(contended) == "contended"
+    unavailable = _guard_failure(ApplyGuardUnavailableError, "unavailable", None, (), holder_run_id=_GENERATED_RUN_ID)
+    assert not hasattr(unavailable, "holder_run_id")

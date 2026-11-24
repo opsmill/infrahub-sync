@@ -150,6 +150,20 @@ export function FailureNotice({
             </>
           )
         )}
+        {f.activeRunId && (
+          // The recorded cause names the run that holds the write guard; this opens it.
+          <p className="[--notice-tone:var(--color-danger)]">
+            <Link
+              to="/runs/$runId"
+              params={{ runId: f.activeRunId }}
+              className={OPEN_RUN}
+              aria-label={`Open run ${f.activeRunId}`}
+            >
+              Open run
+              <ArrowRightIcon className="size-3.5 shrink-0 text-subtle" />
+            </Link>
+          </p>
+        )}
         {cut && !cut.mayHaveWritten && (
           <p>
             The worker stopped before it reported a result. A {cut.purpose} does not write to the

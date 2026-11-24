@@ -24,8 +24,11 @@ The guard is inert on its own: nothing in the supported write path calls it yet.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
+import re
 from contextlib import contextmanager, suppress
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 import psycopg
@@ -38,6 +41,7 @@ from infrahub_sync.execution import (
     collect_secret_values,
     sanitize_exception_chain,
 )
+from infrahub_sync.product_store.models import _IDENTIFIER_PATTERN
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -48,11 +52,24 @@ DEFAULT_DEADLINE_SECONDS = 30.0
 MIN_DEADLINE_SECONDS = 0.001
 MAX_DEADLINE_SECONDS = 300.0
 
+# The write-lock session label: this prefix followed by the holding run's ID. A label
+# longer than 62 bytes is never written and never accepted, because PostgreSQL
+# truncates `application_name` at `NAMEDATALEN - 1` (63 bytes in a standard build),
+# so a 63-byte label may be the cut-off form of a longer one.
+GUARD_LABEL_PREFIX = "infrahub-sync-guard:"
+MAX_GUARD_LABEL_BYTES = 62
+# The run records' identifier pattern. `fullmatch` rather than `match`, because `$`
+# also matches before a trailing newline.
+_RUN_ID = re.compile(_IDENTIFIER_PATTERN)
+
+logger = logging.getLogger(__name__)
+
 _LOCK_NOT_AVAILABLE = "55P03"
 _OID_MASK = 0xFFFFFFFF
 
 # `set_config(..., false)` rather than `SET`, because `SET` takes no parameters and
 # the deadline must never be interpolated into the statement text.
+_SET_LABEL = "SELECT set_config('application_name', %s, false)"
 _SET_DEADLINE = "SELECT set_config('lock_timeout', %s, false)"
 _ACQUIRE = "SELECT pg_advisory_lock(%s)"
 # Reads the holder; it never reacquires. `pg_locks` records a single-`bigint`
@@ -66,6 +83,22 @@ SELECT pg_backend_pid(), EXISTS (
 )
 """
 _RELEASE = "SELECT pg_advisory_unlock(%s), pg_backend_pid()"
+# The holder lookup after a lock timeout. It is bounded by its own `statement_timeout`, so
+# a slow catalog read cannot extend a contended failure by more than two seconds.
+_HOLDER_TIMEOUT = "SELECT set_config('statement_timeout', %s, false)"
+HOLDER_LOOKUP_TIMEOUT_SECONDS = 2
+_HOLDER_TIMEOUT_MILLISECONDS = str(HOLDER_LOOKUP_TIMEOUT_SECONDS * 1000)
+# The label of the session that holds this exact key in this database. At most two rows are
+# read: a candidate is taken only when exactly one session holds the key.
+_HOLDER = """
+SELECT a.application_name
+FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.locktype = 'advisory' AND l.granted
+  AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+  AND l.classid::bigint = %s AND l.objid::bigint = %s AND l.objsubid = 1
+  AND l.pid <> pg_backend_pid()
+LIMIT 2
+"""
 
 _DEADLINE_REFUSED = (
     "the configuration write guard deadline must be a finite value from "
@@ -95,7 +128,22 @@ class ApplyGuardUnavailableError(ApplyGuardError):
 
 
 class ApplyGuardContentionError(ApplyGuardError):
-    """Another writer held the configuration's key for the whole deadline."""
+    """The wait for the configuration's key ended before this writer could take it.
+
+    `holder_run_id` is a candidate run ID parsed from the label of the session that held
+    the key when the wait ended, or `None` when the label is absent, unreadable, or not
+    well formed. It is not confirmed against the run records.
+
+    `wait_started_at` is when this writer started waiting for the key, in UTC: the time the
+    guard took immediately before it sent the lock request. `None` when the guard did not set it.
+    """
+
+    def __init__(
+        self, message: str, *, holder_run_id: str | None = None, wait_started_at: datetime | None = None
+    ) -> None:
+        super().__init__(message)
+        self.holder_run_id = holder_run_id
+        self.wait_started_at = wait_started_at
 
 
 class ApplyGuardOwnershipError(ApplyGuardError):
@@ -143,6 +191,41 @@ def deadline_milliseconds(seconds: float) -> int:
     if not MIN_DEADLINE_SECONDS <= seconds <= MAX_DEADLINE_SECONDS:
         _fail(ApplyGuardDeadlineError(_DEADLINE_REFUSED))
     return math.ceil(seconds * 1000)
+
+
+def guard_label(run_id: str) -> str | None:
+    """Return the session label that names `run_id`, or `None` when it cannot be written.
+
+    The label is written only when the run ID matches the run records' identifier
+    pattern and the whole label is at most `MAX_GUARD_LABEL_BYTES` bytes, so a label
+    that is written can always be parsed back to the same run ID.
+    """
+    if _RUN_ID.fullmatch(run_id) is None:
+        return None
+    label = GUARD_LABEL_PREFIX + run_id
+    if len(label.encode("utf-8")) > MAX_GUARD_LABEL_BYTES:
+        return None
+    return label
+
+
+def _holder_run_id(label: object) -> str | None:
+    """Parse the holding run's ID from one untrusted session label.
+
+    Any session of the same database account can set its own label, so the label is
+    accepted only when it is a `str` of at most `MAX_GUARD_LABEL_BYTES` UTF-8 bytes,
+    starts with the exact prefix, and the rest matches the run ID pattern. The raw
+    label never leaves this function, so it cannot reach a message or a record.
+    """
+    if not isinstance(label, str):
+        return None
+    if len(label.encode("utf-8", errors="surrogatepass")) > MAX_GUARD_LABEL_BYTES:
+        return None
+    if not label.startswith(GUARD_LABEL_PREFIX):
+        return None
+    run_id = label[len(GUARD_LABEL_PREFIX) :]
+    if _RUN_ID.fullmatch(run_id) is None:
+        return None
+    return run_id
 
 
 def dsn_secret_values(dsn: str) -> tuple[str, ...]:
@@ -294,6 +377,7 @@ def hold_apply_guard(
     connect: Callable[[], GuardConnection],
     deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
     secrets: Sequence[str] = (),
+    run_id: str | None = None,
 ) -> Iterator[ApplyGuard]:
     """Hold one configuration's advisory write key for exactly the body's duration.
 
@@ -304,6 +388,9 @@ def hold_apply_guard(
     `secrets` adds values — a keyword DSN's password, via `dsn_secret_values` —
     that the environment collector cannot see, so no driver message can carry
     them out through a failure's cause chain.
+
+    `run_id`, when given and writable as a label (`guard_label`), labels the session
+    so that a writer refused by contention can name this run as the holder.
     """
     milliseconds = deadline_milliseconds(deadline_seconds)
     # Read again at each failure: a value released to the run while the key is held is in the
@@ -314,6 +401,7 @@ def hold_apply_guard(
         connect=connect,
         milliseconds=milliseconds,
         secrets=collected,
+        run_id=run_id,
     )
     try:
         yield guard
@@ -329,13 +417,26 @@ def _acquire(
     connect: Callable[[], GuardConnection],
     milliseconds: int,
     secrets: Sequence[str],
+    run_id: str | None = None,
 ) -> ApplyGuard:
-    """Bound the deadline, take the key, and prove the hold before returning it."""
+    """Label the session, bound the deadline, take the key, and prove the hold before returning it.
+
+    The label is set before the lock request, so a failure to set it fails the acquisition
+    as unavailable and never leaves an unlabelled holder. After a lock timeout, the same
+    session reads the holder's label before it is closed; whatever that read returns, the
+    failure stays a contention failure.
+    """
     failure: ApplyGuardError
     connection: GuardConnection | None = None
+    wait_started_at: datetime | None = None
+    label = None if run_id is None else guard_label(run_id)
     try:
         connection = connect()
+        if label is not None:
+            connection.execute(_SET_LABEL, (label,))
         connection.execute(_SET_DEADLINE, (str(milliseconds),))
+        # Taken before the request, so it is never later than the real start of the wait.
+        wait_started_at = _utc_now()
         connection.execute(_ACQUIRE, (key,))
         row = connection.execute(_OWNERSHIP, _lock_columns(key)).fetchone()
     # One provider boundary; every class is classified rather than escaping.
@@ -350,8 +451,20 @@ def _acquire(
             return ApplyGuard(connection=connection, key=key, backend_pid=row[0], secrets=secrets)
         failure = _guard_failure(ApplyGuardUnavailableError, _UNPROVEN, None, secrets)
     if connection is not None:
-        _discard(connection)
+        # Outside the handler, so an interrupt during the holder read still discards the
+        # session and is re-raised unchanged.
+        try:
+            if isinstance(failure, ApplyGuardContentionError):
+                failure.wait_started_at = wait_started_at
+                failure.holder_run_id = _read_holder(connection, key)
+        finally:
+            _discard(connection)
     _fail(failure)
+
+
+def _utc_now() -> datetime:
+    """Return the current time in UTC. Tests replace it to record when the guard reads it."""
+    return datetime.now(timezone.utc)
 
 
 def _acquisition_failure(exc: Exception, secrets: Sequence[str]) -> ApplyGuardError:
@@ -359,6 +472,32 @@ def _acquisition_failure(exc: Exception, secrets: Sequence[str]) -> ApplyGuardEr
     if isinstance(exc, psycopg.Error) and exc.sqlstate == _LOCK_NOT_AVAILABLE:
         return _guard_failure(ApplyGuardContentionError, _CONTENDED, exc, secrets)
     return _guard_failure(ApplyGuardUnavailableError, _UNAVAILABLE.format(type(exc).__name__), exc, secrets)
+
+
+def _read_holder(connection: GuardConnection, key: int) -> str | None:
+    """Return the run ID the session holding `key` is labelled with, or `None`.
+
+    Best effort: every `Exception` from the lookup gives `None`. A candidate is returned
+    only when exactly one other session holds the key and its label parses
+    (`_holder_run_id`). The debug line records only the outcome class, never the label,
+    because any session of the same database account can set its own label.
+    """
+    try:
+        connection.execute(_HOLDER_TIMEOUT, (_HOLDER_TIMEOUT_MILLISECONDS,))
+        cursor = connection.execute(_HOLDER, _lock_columns(key))
+        first = cursor.fetchone()
+        if first is None:
+            outcome, candidate = "no-row", None
+        elif cursor.fetchone() is not None:
+            outcome, candidate = "several-rows", None
+        else:
+            candidate = _holder_run_id(first[0])
+            outcome = "label-rejected" if candidate is None else "named"
+    # One provider boundary: a failed lookup only costs the candidate.
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        outcome, candidate = "lookup-failed", None
+    logger.debug("write guard holder lookup: %s", outcome)
+    return candidate
 
 
 def _discard(connection: GuardConnection) -> None:
@@ -382,9 +521,18 @@ def _guard_failure(
     message: str,
     cause: BaseException | None,
     secrets: Sequence[str],
+    *,
+    holder_run_id: str | None = None,
 ) -> ApplyGuardError:
-    """Build one guard failure whose cause chain is a redacted, rebuilt copy."""
-    error = error_type(message)
+    """Build one guard failure whose cause chain is a redacted, rebuilt copy.
+
+    `holder_run_id` applies only to a contention failure; it is ignored otherwise.
+    """
+    error = (
+        ApplyGuardContentionError(message, holder_run_id=holder_run_id)
+        if error_type is ApplyGuardContentionError
+        else error_type(message)
+    )
     error.__cause__ = None if cause is None else sanitize_exception_chain(cause, secrets)
     error.__suppress_context__ = True
     return error

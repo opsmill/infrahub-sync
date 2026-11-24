@@ -492,7 +492,7 @@ def test_verify_takes_no_configuration_write_guard(tmp_path: Path, monkeypatch: 
     harness = _harness(tmp_path, monkeypatch)
 
     @contextmanager
-    def guard_forbidden(_configuration_id: str) -> Iterator[None]:
+    def guard_forbidden(_configuration_id: str, _run_id: str) -> Iterator[None]:
         pytest.fail("verify took the configuration write guard")
         yield
 

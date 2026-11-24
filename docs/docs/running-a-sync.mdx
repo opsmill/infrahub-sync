@@ -251,7 +251,24 @@ plan on the same source data lists them again. See
 The review prints control characters and invisible characters in source values as visible
 escapes, such as `\x1b` or `\u202e`, so a value cannot hide or rewrite a line. Only the
 printed review changes: the saved plan and JSON output keep the real values. A value that
-contains the literal text `\x1b` looks the same as an escaped character.
+contains the literal text `\x1b` looks the same as an escaped character, except in an identity
+value, where a literal backslash is printed as `\\`.
+
+Each operation line of `--detail` names the object by its identity, as `key=value` fields
+separated by a space. An identity value is printed between double quotes when it is empty or
+contains a space or other whitespace, `=`, `(`, `)`, `'`, `"` or `\`. Inside the quotes, a
+backslash is printed as `\\` and a double quote as `\"`, so the value ends only at the closing
+quote. A value such as `edge-01` is printed without quotes.
+
+```text
+op_1 create Device name="x site=prod (not executed)"
+op_2 create Device name=edge-01 site="par 1"
+op_3 delete Site name=retired (not executed)
+```
+
+In this example, `op_1` is a create whose name contains the text `site=prod (not executed)`.
+Only text after the last identity field, outside the quotes, is a marker. The `record:` and
+`failed operation:` lines of a failed run print identities the same way.
 
 The plan can contain delete operations for destination objects that the source does not
 contain. Apply never executes a delete. The detailed output marks each delete as
@@ -638,6 +655,43 @@ recorded by an earlier release has none of them and prints as before.
 When the destination branch does not exist, the `cause:` line names the branch, and the
 `hint:` line says to create it or to start the run with `--branch <existing branch>`. A
 failure to read the destination schema also prints a `cause:` and a `hint:` line.
+
+Sync writes to one configuration from one run at a time. When a `sync`, `apply` or `runs resume`
+waits 30 seconds for another write of the same configuration to finish and it does not, the
+write does not start and changes nothing. The command prints the failure type
+`write_guard_contended` and, when Sync can name it, the other run's ID:
+
+```text
+apply failed: ApplyGuardContentionError
+failure type: write_guard_contended
+cause: Sync run <run_id> was writing to this configuration and held its write guard when this write's wait for the guard ended, ...
+active run: <run_id>
+hint: Check that run with `infrahub-sync runs show <run_id>` and wait for it to finish, then plan again.
+```
+
+The `cause:` line is shortened here. Sync names the run whose database session held the
+configuration's write guard when the wait ended, and only when its run records hold that run for
+the same configuration. When Sync cannot prove which run holds the guard, the output has no
+`active run:` line, the `cause:` line says that the run is not known, and the `hint:` line
+names `infrahub-sync runs list`.
+
+When the named run's write had already ended before the wait began and its worker still holds the
+guard, waiting does not help. The guard is released only when that worker stops:
+
+```text
+apply failed: ApplyGuardContentionError
+failure type: write_guard_contended
+cause: Sync run <run_id> held this configuration's write guard when this write's wait for the guard ended, although its write had ended before that wait began, ...
+active run: <run_id>
+hint: The guard is released only when the worker of run <run_id> stops. Ask the administrator of the Sync service to stop or restart that worker, then plan again.
+```
+
+When the refused write is a `runs resume`, the `hint:` line ends with `infrahub-sync verify` and
+`infrahub-sync runs resume` instead of a new plan.
+
+In the web interface, the failed run's failure notice shows the same cause and next action.
+When Sync names the run that holds the guard, the notice also has an **Open run** link to that
+run's page.
 
 `infrahub-sync runs logs RUN_ID` prints the lines that Sync wrote during the run, including
 the ERROR line that holds the cause and the next step. It reads them through the Sync API.

@@ -15,7 +15,7 @@ own unit suite drives. Its provider facts are proven against a real server in
 from __future__ import annotations
 
 import ast
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +36,7 @@ from infrahub_sync.plan.models import ApplyRecord  # noqa: E402
 from infrahub_sync.plan.review import read_saved_plan  # noqa: E402
 from infrahub_sync.plan.writer import write_plan_artifact  # noqa: E402
 from infrahub_sync.product_store import (  # noqa: E402
+    ExecutionMergeWriteback,
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
@@ -72,7 +73,8 @@ class _FakeCursor:
         self._row = row
 
     def fetchone(self) -> tuple[Any, ...] | None:
-        return self._row
+        row, self._row = self._row, None
+        return row
 
 
 class _FakeGuardSession:
@@ -84,14 +86,18 @@ class _FakeGuardSession:
         *,
         acquire_failure: BaseException | None = None,
         release_failure: BaseException | None = None,
+        holder_label: str | None = None,
     ) -> None:
         self.events = events
         self.held = True
         self._acquire_failure = acquire_failure
         self._release_failure = release_failure
+        self._holder_label = holder_label
 
     def execute(self, query: str, params: Sequence[Any] | None = None) -> _FakeCursor:
         _ = params
+        if "pg_stat_activity" in query:
+            return _FakeCursor(None if self._holder_label is None else (self._holder_label,))
         if "pg_advisory_lock" in query:
             if self._acquire_failure is not None:
                 raise self._acquire_failure
@@ -155,6 +161,7 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
     release_failure: BaseException | None = None,
     commit_failure: BaseException | None = None,
     engine: Any = None,  # noqa: ANN401 - the double receives the engine's own keyword mapping.
+    holder_label: str | None = None,
 ) -> _ManagedStage:
     """Wire one bound managed run whose guard, schema read, and engine are observable."""
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
@@ -212,7 +219,9 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
     prepared.projection = projection
 
     def guard_session() -> _FakeGuardSession:
-        session = _FakeGuardSession(events, acquire_failure=acquire_failure, release_failure=release_failure)
+        session = _FakeGuardSession(
+            events, acquire_failure=acquire_failure, release_failure=release_failure, holder_label=holder_label
+        )
         prepared.session = session
         return session
 
@@ -351,6 +360,318 @@ def test_guard_contention_touches_no_destination_and_creates_no_success_evidence
     run = _stored(prepared)
     assert run.reconciliation_required is False
     assert run.outcome == "failed"
+
+
+_HOLDER_FLOW_RUN_ID = "c1d2e3f4-0000-4000-8000-000000000001"
+
+
+def _open_write_of_another_run(
+    prepared: _ManagedStage, run_id: str, binding: tuple[str, int, str] | None = None
+) -> None:
+    """Record another run whose `sync` execution has not ended, of `binding` or this stage's configuration."""
+    projection = prepared.projection
+    config_id, registry_version, package_checksum = prepared.binding if binding is None else binding
+    projection.create_run(
+        ProductRun(
+            run_id=run_id,
+            operation="sync",
+            configuration_reference=f"{config_id}@{registry_version}",
+            config_id=config_id,
+            registry_version=registry_version,
+            package_checksum=package_checksum,
+            actor="owner",
+            started_at=datetime.now(timezone.utc),
+            phase="accepted",
+        )
+    )
+    admitted, _created = projection.reserve_mutation(
+        _receipt(f"m-{run_id}", run_id=run_id, operation="sync"), admit_write=True
+    )
+    projection.add_prefect_execution(
+        run_id,
+        PrefectExecutionLink(
+            flow_run_id=_HOLDER_FLOW_RUN_ID, purpose="sync", attempt=1, submitted_at=datetime.now(timezone.utc)
+        ),
+        receipt_id=admitted.receipt_id,
+    )
+    projection.complete_mutation(
+        admitted.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id=_HOLDER_FLOW_RUN_ID
+    )
+    assert projection.claim_execution(run_id, _HOLDER_FLOW_RUN_ID, worker_id=WORKER_ID)
+
+
+@pytest.mark.parametrize("stage", ["apply", "sync"])
+def test_guard_contention_names_the_run_that_was_writing_to_the_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """INFP-647: a refused concurrent write identifies the active run, and only by its ID."""
+    prepared = _prepare(
+        tmp_path,
+        monkeypatch,
+        stage=stage,
+        acquire_failure=_lock_timeout(),
+        holder_label="infrahub-sync-guard:managed-holder",
+    )
+    _open_write_of_another_run(prepared, "managed-holder")
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _drive(prepared, stage)
+
+    failure = _stored(prepared).results[f"{stage}_failure"]
+    assert failure["error_type"] == "ApplyGuardContentionError"
+    assert failure["failure_type"] == "write_guard_contended"
+    assert failure["active_run_id"] == "managed-holder"
+    assert "Sync run managed-holder was writing to this configuration" in failure["cause"]
+    assert "`infrahub-sync runs show managed-holder`" in failure["next_action"]
+    assert failure["next_action"].endswith("then plan again.")
+    assert "managed-netbox-canary" not in str(failure)
+    assert "managed-infrahub-canary" not in str(failure)
+
+
+@pytest.mark.parametrize("stage", ["apply", "sync"])
+def test_the_configuration_write_guard_receives_the_stage_run_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """Critique E1: the managed write path always labels its guard session with its own run."""
+    prepared = _prepare(tmp_path, monkeypatch, stage=stage)
+    original = service_flow._configuration_write_guard
+    calls: list[tuple[str, str]] = []
+
+    def recording_guard(configuration_id: str, run_id: str) -> Any:  # noqa: ANN401 - the guard's own context manager.
+        calls.append((configuration_id, run_id))
+        return original(configuration_id, run_id)
+
+    monkeypatch.setattr(service_flow, "_configuration_write_guard", recording_guard)
+
+    _drive(prepared, stage)
+
+    assert calls == [(prepared.binding[0], prepared.run_id)]
+
+
+@pytest.mark.parametrize("stage", ["apply", "sync"])
+def test_a_contended_failure_looks_up_the_holder_in_the_run_records_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """One contended failure costs one run-record read for its candidate, and no more."""
+    prepared = _prepare(
+        tmp_path,
+        monkeypatch,
+        stage=stage,
+        acquire_failure=_lock_timeout(),
+        holder_label="infrahub-sync-guard:managed-holder",
+    )
+    _open_write_of_another_run(prepared, "managed-holder")
+    original = prepared.projection.write_holder_state
+    calls: list[tuple[str, str]] = []
+
+    def counting(run_id: str, config_id: str) -> Any:  # noqa: ANN401 - the store's own state record.
+        calls.append((run_id, config_id))
+        return original(run_id, config_id)
+
+    monkeypatch.setattr(prepared.projection, "write_holder_state", counting)
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _drive(prepared, stage)
+
+    assert calls == [("managed-holder", prepared.binding[0])]
+
+
+def _end_write_of_another_run(prepared: _ManagedStage, run_id: str, ended_at: datetime) -> None:
+    """Record the verdict of the write `_open_write_of_another_run` opened, ended at `ended_at`."""
+    assert prepared.projection.commit_claimed_execution(
+        run_id,
+        _HOLDER_FLOW_RUN_ID,
+        worker_id=WORKER_ID,
+        terminal_at=ended_at,
+        terminal_state="failed",
+        terminal_outcome="failed",
+        writeback=ExecutionMergeWriteback(results={}),
+    )
+
+
+_ENDED_CAUSE_FRAGMENT = "although its write had ended before that wait began"
+
+
+def test_a_holder_whose_write_ended_before_the_wait_began_is_reported_as_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that ended its write an hour before this write started waiting, and still holds the guard."""
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label="infrahub-sync-guard:managed-holder"
+    )
+    _open_write_of_another_run(prepared, "managed-holder")
+    _end_write_of_another_run(prepared, "managed-holder", datetime.now(timezone.utc) - timedelta(hours=1))
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    failure = _stored(prepared).results["apply_failure"]
+    assert failure["active_run_id"] == "managed-holder"
+    assert _ENDED_CAUSE_FRAGMENT in failure["cause"]
+    assert "stop or restart that worker" in failure["next_action"]
+
+
+def test_a_holder_whose_write_ended_during_the_wait_is_reported_as_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 1: a holder may release the lock and record its verdict after this write's lock timeout.
+
+    Its write ended after this write started waiting, so the failure must not tell the operator to
+    stop a worker that is healthy. The guard's clock is fixed at the wait start, and the holder's
+    write ends one second later.
+    """
+    from infrahub_sync.service import apply_guard
+
+    wait_started_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    monkeypatch.setattr(apply_guard, "_utc_now", lambda: wait_started_at)
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label="infrahub-sync-guard:managed-holder"
+    )
+    _open_write_of_another_run(prepared, "managed-holder")
+    _end_write_of_another_run(prepared, "managed-holder", wait_started_at + timedelta(seconds=1))
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    failure = _stored(prepared).results["apply_failure"]
+    assert failure["active_run_id"] == "managed-holder"
+    assert "Sync run managed-holder was writing to this configuration" in failure["cause"]
+    assert _ENDED_CAUSE_FRAGMENT not in failure["cause"]
+    assert "`infrahub-sync runs show managed-holder`" in failure["next_action"]
+
+
+def test_a_holder_with_no_open_write_and_no_write_end_time_is_reported_as_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a time at which the holder's write ended, the records cannot show that it ended first."""
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label="infrahub-sync-guard:managed-holder"
+    )
+    config_id, registry_version, package_checksum = prepared.binding
+    prepared.projection.create_run(
+        ProductRun(
+            run_id="managed-holder",
+            operation="sync",
+            configuration_reference=f"{config_id}@{registry_version}",
+            config_id=config_id,
+            registry_version=registry_version,
+            package_checksum=package_checksum,
+            actor="owner",
+            started_at=datetime.now(timezone.utc),
+            phase="accepted",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    failure = _stored(prepared).results["apply_failure"]
+    assert failure["active_run_id"] == "managed-holder"
+    assert "Sync run managed-holder was writing to this configuration" in failure["cause"]
+    assert _ENDED_CAUSE_FRAGMENT not in failure["cause"]
+
+
+def test_a_contention_error_without_a_wait_start_assumes_the_largest_deadline() -> None:
+    """Without the guard's stamp, the wait is taken to have started as early as it could have."""
+    from infrahub_sync.service.apply_guard import (
+        HOLDER_LOOKUP_TIMEOUT_SECONDS,
+        MAX_DEADLINE_SECONDS,
+        ApplyGuardContentionError,
+    )
+
+    stamped = datetime(2026, 11, 23, 9, tzinfo=timezone.utc)
+    assert service_flow._wait_started_at(ApplyGuardContentionError("x", wait_started_at=stamped)) == stamped
+
+    before = datetime.now(timezone.utc)
+    started = service_flow._wait_started_at(ApplyGuardContentionError("x"))
+    after = datetime.now(timezone.utc)
+    earliest = timedelta(seconds=MAX_DEADLINE_SECONDS + HOLDER_LOOKUP_TIMEOUT_SECONDS)
+    assert before - earliest <= started <= after - earliest
+
+
+def test_guard_contention_without_another_write_says_the_active_run_is_not_known(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failing run's own open execution is never named as the run that holds the guard."""
+    prepared = _prepare(tmp_path, monkeypatch, acquire_failure=_lock_timeout())
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    failure = _stored(prepared).results["apply_failure"]
+    assert failure["failure_type"] == "write_guard_contended"
+    assert failure["active_run_id"] is None
+    assert "Which Sync run holds the guard is not known" in failure["cause"]
+
+
+def test_a_failed_lookup_of_the_active_run_still_records_the_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lookup is best effort: its failure must not cost the run its failure record."""
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label="infrahub-sync-guard:managed-holder"
+    )
+
+    def unavailable(*_args: object, **_kwargs: object) -> object:
+        msg = "the product store did not answer"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(prepared.projection, "write_holder_state", unavailable)
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    run = _stored(prepared)
+    assert run.outcome == "failed"
+    failure = run.results["apply_failure"]
+    assert (failure["failure_type"], failure["active_run_id"]) == ("write_guard_contended", None)
+
+
+@pytest.mark.parametrize("candidate", ["failing-run", "unknown-run", "other-configuration"])
+def test_a_candidate_the_run_records_do_not_confirm_is_recorded_as_not_known(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, candidate: str
+) -> None:
+    """FR-003, FR-005, R5: only a run of the same configuration, other than the failing one, is named.
+
+    The failing run's own ID is refused before the run records are read. A label naming a run
+    that does not exist, or a run of another configuration with an open write, is refused by the
+    run records (`write_holder_state` returns `None`).
+    """
+    label_run_id = {
+        "failing-run": "managed-apply",
+        "unknown-run": "managed-unknown",
+        "other-configuration": "managed-elsewhere",
+    }[candidate]
+    prepared = _prepare(
+        tmp_path, monkeypatch, acquire_failure=_lock_timeout(), holder_label=f"infrahub-sync-guard:{label_run_id}"
+    )
+    assert prepared.run_id == "managed-apply"
+    if candidate == "other-configuration":
+        other = prepared.projection.create_configuration(credential_package(name="other-configuration"))
+        assert other.config_id != prepared.binding[0]
+        _open_write_of_another_run(
+            prepared, label_run_id, (other.config_id, other.registry_version, other.package_checksum)
+        )
+    original = prepared.projection.write_holder_state
+    answers: list[object] = []
+
+    def recording(run_id: str, config_id: str) -> Any:  # noqa: ANN401 - the store's own state record.
+        state = original(run_id, config_id)
+        answers.append(state)
+        return state
+
+    monkeypatch.setattr(prepared.projection, "write_holder_state", recording)
+
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
+        _apply(prepared)
+
+    run = _stored(prepared)
+    assert run.outcome == "failed"
+    failure = run.results["apply_failure"]
+    assert (failure["failure_type"], failure["active_run_id"]) == ("write_guard_contended", None)
+    assert "Which Sync run holds the guard is not known" in failure["cause"]
+    assert label_run_id not in str(failure)
+    assert answers == ([] if candidate == "failing-run" else [None])
 
 
 def test_a_failure_before_the_first_dispatch_stays_an_ordinary_failed_run(

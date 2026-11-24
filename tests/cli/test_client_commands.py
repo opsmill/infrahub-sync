@@ -1500,6 +1500,8 @@ def test_runs_plan_unmatched_kind_is_typed_input_error(client: MagicMock) -> Non
 # Built from code points so this source file carries no bidirectional control itself.
 _RLO = chr(0x202E)
 _LRI = chr(0x2066)
+# Whitespace that is not U+0020: a terminal shows it as a space, so it is not escaped.
+_NBSP = chr(0x00A0)
 # Zero-width characters, direction marks, and the line and paragraph separators hide or
 # break up text without a visible glyph.
 _INVISIBLE_CODES = (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x200E, 0x200F, 0x061C, 0x2028, 0x2029)
@@ -1539,9 +1541,9 @@ def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: Mag
     # Split on "\n" only: `splitlines` would also break at an unescaped U+2028 or U+2029.
     lines = result.output.split("\n")
     assert (
-        "op-create create Dev\\x1bice name=edge\\x1b[1A\\x1b[2K\\rop-forged create Device name=fake"
+        'op-create create Dev\\x1bice name="edge\\x1b[1A\\x1b[2K\\rop-forged create Device name=fake'
         "\\t\\n\\x9b2K\\x7f\\u202eevil\\u2066x"
-        "\\u200b\\u200c\\u200d\\u2060\\ufeff\\u200e\\u200f\\u061c\\u2028\\u2029"
+        '\\u200b\\u200c\\u200d\\u2060\\ufeff\\u200e\\u200f\\u061c\\u2028\\u2029"'
     ) in lines
     assert "  destination id: dest\\r1" in lines
     assert "verification_note: note\\x1b[2Kforged" in lines
@@ -1549,15 +1551,83 @@ def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: Mag
     assert "by_kind: Dev\\x1bice=1, Site=1" in lines
 
 
-def test_runs_plan_detail_keeps_ordinary_non_ascii_values_unchanged(client: MagicMock) -> None:
+@pytest.mark.parametrize(
+    ("name", "printed"),
+    [
+        pytest.param("Zürich-東京", "name=Zürich-東京", id="no-delimiter"),
+        pytest.param("Zürich-東京 Łódź", 'name="Zürich-東京 Łódź"', id="with-a-space"),
+    ],
+)
+def test_runs_plan_detail_keeps_ordinary_non_ascii_letters_readable(client: MagicMock, name: str, printed: str) -> None:
     plan = _plan()
-    operation = plan.operations[0].model_copy(update={"identity": {"name": "Zürich-東京 Łódź"}})
+    operation = plan.operations[0].model_copy(update={"identity": {"name": name}})
     client.get_plan.return_value = plan.model_copy(update={"operations": (operation, plan.operations[1])})
 
     result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
 
     assert result.exit_code == 0, result.output
-    assert "op-create create Device name=Zürich-東京 Łódź" in result.output.splitlines()
+    assert f"op-create create Device {printed}" in result.output.splitlines()
+
+
+@pytest.mark.parametrize(
+    ("identity", "printed"),
+    [
+        pytest.param(
+            {"name": "x site=prod (not executed)"},
+            'name="x site=prod (not executed)"',
+            id="forged-field-and-delete-marker",
+        ),
+        pytest.param({"name": "edge 01"}, 'name="edge 01"', id="space"),
+        pytest.param({"name": "site=prod"}, 'name="site=prod"', id="equals-sign"),
+        pytest.param({"name": 'edge"01'}, 'name="edge\\"01"', id="double-quote"),
+        pytest.param({"name": "edge'01"}, 'name="edge\'01"', id="single-quote"),
+        pytest.param({"name": "edge(01"}, 'name="edge(01"', id="opening-parenthesis"),
+        pytest.param({"name": "edge)01"}, 'name="edge)01"', id="closing-parenthesis"),
+        pytest.param({"name": f"edge{_NBSP}01"}, f'name="edge{_NBSP}01"', id="no-break-space"),
+        pytest.param({"name": "edge\t01"}, 'name="edge\\t01"', id="tab"),
+        pytest.param({"name": ""}, 'name=""', id="empty-value"),
+        # A value that tries to close the quotes and add a field: every quote stays escaped.
+        pytest.param({"name": 'x" site="prod'}, 'name="x\\" site=\\"prod"', id="embedded-quotes"),
+        pytest.param({"name": "x\\"}, 'name="x\\\\"', id="trailing-backslash"),
+        pytest.param({"name": 'x\\" site=prod'}, 'name="x\\\\\\" site=prod"', id="backslash-before-a-quote"),
+        # The literal text `\x1b` is quoted, so it differs from an escaped U+001B, printed unquoted.
+        pytest.param({"name": "edge\\x1b"}, 'name="edge\\\\x1b"', id="literal-escape-text"),
+        pytest.param(
+            {"site": "par 1", "name": "edge-01", "role": "a=b"},
+            'name=edge-01 role="a=b" site="par 1"',
+            id="several-fields",
+        ),
+        pytest.param({"name": "edge-01"}, "name=edge-01", id="ordinary-value"),
+        pytest.param({"unit": 12}, "unit=12", id="number"),
+    ],
+)
+def test_runs_plan_detail_shows_where_each_identity_value_starts_and_ends(
+    client: MagicMock, identity: dict[str, object], printed: str
+) -> None:
+    """A source value must not be read as another identity field or as the delete marker."""
+    plan = _plan()
+    operation = plan.operations[0].model_copy(update={"identity": identity})
+    client.get_plan.return_value = plan.model_copy(update={"operations": (operation, plan.operations[1])})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    assert f"op-create create Device {printed}" in lines
+    # The marker of the real delete stays outside the identity, after an unquoted ordinary value.
+    assert "op-delete delete Site name=retired (not executed)" in lines
+    assert sum(line.endswith(" (not executed)") for line in lines) == 1
+
+
+def test_runs_plan_detail_keeps_the_delete_marker_outside_a_quoted_identity(client: MagicMock) -> None:
+    plan = _plan()
+    delete = plan.operations[1].model_copy(update={"identity": {"name": "old site (not executed)"}})
+    client.get_plan.return_value = plan.model_copy(update={"operations": (plan.operations[0], delete)})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert 'op-delete delete Site name="old site (not executed)" (not executed)' in result.output.splitlines()
 
 
 def test_runs_plan_detail_escapes_invisible_format_characters_in_source_values(client: MagicMock) -> None:
