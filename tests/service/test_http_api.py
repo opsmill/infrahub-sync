@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import socket
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -36,6 +38,7 @@ from pydantic import BaseModel
 
 from infrahub_sync.adapters.infrahub import resolved_endpoint
 from infrahub_sync.client import PlanStepTimings
+from infrahub_sync.client.models import HealthResource
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.validation import credential_namespace_finding
@@ -55,7 +58,7 @@ from infrahub_sync.product_store import (
     local_product_projection,
 )
 from infrahub_sync.service import flow as service_flow
-from infrahub_sync.service.app import create_app
+from infrahub_sync.service.app import HealthReporter, create_app
 from infrahub_sync.service.auth import StoreAccountResolver
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.service.models import (
@@ -81,6 +84,7 @@ from infrahub_sync.service.read_progress import StoreSideReadObserver, record_wa
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
+from tests.service.health_fixtures import WORKER_NAME, RaisingHealthChecker, fake_health_checker
 from tests.service.schedule_fixtures import OWNER_TOKEN as SCHEDULE_OWNER_TOKEN
 from tests.service.schedule_fixtures import NoDeploymentSchedules, schedule_api
 
@@ -1901,13 +1905,13 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}/resume",
         "/runs/{run_id}/approve",
         "/runs/{run_id}/cancel",
-        "/status",
+        "/health",
         "/version",
     }
     for path, route in paths.items():
         for operation in route.values():
             # A sign-in presents a name and a password, not a bearer value.
-            if path in {"/status", "/version", "/auth/sign-in"}:
+            if path in {"/health", "/version", "/auth/sign-in"}:
                 assert "security" not in operation
                 continue
             assert "401" in operation["responses"]
@@ -3110,3 +3114,86 @@ def test_the_run_list_filters_on_the_trigger_and_the_schedule_and_returns_the_ru
     )
     assert same_filter.status_code == 200, same_filter.text
     assert other_filter.status_code == 422, other_filter.text
+
+
+# --- GET /health (spec 029, T010) -------------------------------------------------------------
+
+_IP_ADDRESS = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+
+
+def _health_client(tmp_path: Path, checker: HealthReporter) -> TestClient:
+    projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
+    service = RunService(projection, _FakeOrchestration(), secrets=resolver.secret_values)
+    return TestClient(create_app(service, resolver, health_checker=checker))
+
+
+@pytest.mark.parametrize(("healthy", "expected_status"), [(True, 200), (False, 503)])
+def test_health_answers_its_report_without_credentials(tmp_path: Path, expected_status: int, *, healthy: bool) -> None:
+    client = _health_client(tmp_path, fake_health_checker(healthy=healthy))
+
+    response = client.get("/health")
+
+    assert response.status_code == expected_status
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-type"] == "application/json"
+    report = HealthResource.model_validate(response.json())
+    assert report.status == ("healthy" if healthy else "unhealthy")
+    assert report.workers.items[0].name == WORKER_NAME
+    assert "acct_" not in response.text
+    assert socket.gethostname() not in response.text
+    assert "localhost" not in response.text
+    assert _IP_ADDRESS.search(response.text) is None
+    assert installed_version("infrahub-sync") not in response.text
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_head_health_answers_the_status_and_headers_of_get_without_a_body(tmp_path: Path, *, healthy: bool) -> None:
+    client = _health_client(tmp_path, fake_health_checker(healthy=healthy))
+
+    get = client.get("/health")
+    head = client.head("/health")
+
+    assert head.status_code == get.status_code == (200 if healthy else 503)
+    assert dict(head.headers) == dict(get.headers)
+    assert head.content == b""
+
+
+def test_a_health_checker_that_raises_answers_the_service_unavailable_envelope(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = _health_client(tmp_path, RaisingHealthChecker())
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.service.app"):
+        response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "service-unavailable"
+    assert "health-checker-canary" not in response.text + caplog.text
+    assert "db.internal" not in response.text + caplog.text
+
+
+def test_health_declares_its_report_for_200_and_503_and_needs_no_credential(tmp_path: Path) -> None:
+    client = _health_client(tmp_path, fake_health_checker())
+
+    operation = client.get("/openapi.json").json()["paths"]["/health"]["get"]
+
+    assert "security" not in operation
+    responses = operation["responses"]
+    assert responses["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/HealthResource"}
+    # A 503 carries the unhealthy report, or the error envelope when no report could be built.
+    assert responses["503"]["content"]["application/json"]["schema"]["anyOf"] == [
+        {"$ref": "#/components/schemas/HealthResource"},
+        {"$ref": "#/components/schemas/ErrorEnvelope"},
+    ]
+
+
+def test_an_api_built_without_a_health_checker_answers_the_service_unavailable_envelope(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "service-unavailable"

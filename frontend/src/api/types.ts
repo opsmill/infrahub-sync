@@ -28,6 +28,8 @@ export type ChangeScheduleRequest = Schemas["ChangeScheduleRequest"];
 export type ScheduleNextStarts = Schemas["ScheduleNextStarts"];
 export type Principal = Schemas["PrincipalResource"];
 export type SyncEvent = Schemas["EventResource"];
+/** The body of `GET /health`, for a 200 and for a 503 answer. */
+export type HealthReport = Schemas["HealthResource"];
 
 /** A source or destination as a registered package declares it. */
 export interface DeclaredAdapter {

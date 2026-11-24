@@ -2,7 +2,13 @@ import { QueryClient } from "@tanstack/react-query";
 import createFetchClient from "openapi-fetch";
 import createQueryHooks from "openapi-react-query";
 
-import { isEnvelope, isTimeout, REQUEST_TIMEOUT_MS, SyncApiUnavailable } from "./errors";
+import {
+  isEnvelope,
+  isHealthReport,
+  isTimeout,
+  REQUEST_TIMEOUT_MS,
+  SyncApiUnavailable,
+} from "./errors";
 import { bearer, clearToken, getToken, onTokenCleared, refusesHeldToken, setToken } from "./token";
 import type { paths } from "./types.generated";
 
@@ -81,6 +87,12 @@ export async function fetchWithToken(url: string, signal?: AbortSignal): Promise
   throw isEnvelope(body) ? body : new SyncApiUnavailable(response.status);
 }
 
+/** A 503 from `GET /health` whose body is the health report, not an error envelope. */
+const isHealthAnswer = (request: Request, response: Response, body: unknown): boolean =>
+  response.status === 503 &&
+  new URL(request.url).pathname.endsWith("/api/health") &&
+  isHealthReport(body);
+
 fetchClient.use({
   onRequest({ request }) {
     // A request that already names a token keeps it.
@@ -100,6 +112,8 @@ fetchClient.use({
     } catch {
       body = undefined;
     }
+    // `GET /health` answers its report with a 503 when a component is down; `healthQuery` reads it.
+    if (isHealthAnswer(request, response, body)) return;
     if (!isEnvelope(body)) throw new SyncApiUnavailable(response.status);
   },
 });

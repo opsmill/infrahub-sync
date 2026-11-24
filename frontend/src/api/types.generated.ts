@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Get Version
-         * @description Return the installed server and supported unstable API versions.
+         * @description Return the installed server and Infrahub SDK versions and the supported unstable API versions.
          */
         get: operations["get_version_version_get"];
         put?: never;
@@ -24,7 +24,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/status": {
+    "/health": {
         parameters: {
             query?: never;
             header?: never;
@@ -32,10 +32,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Status
-         * @description Return unauthenticated lifecycle state without provider identifiers.
+         * Get Health
+         * @description Return the health of the components and workers, without authentication (spec 029).
          */
-        get: operations["get_status_status_get"];
+        get: operations["get_health_health_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1429,6 +1429,29 @@ export interface components {
             placeholder: string;
         };
         /**
+         * DependencyHealthResource
+         * @description Report whether one component of the Sync API answered its health check.
+         */
+        DependencyHealthResource: {
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "database" | "object_store" | "task_manager" | "task_manager_db";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "up" | "down";
+            /**
+             * Error
+             * @enum {string}
+             */
+            error: "none" | "timeout" | "connection_refused" | "connection_closed" | "name_resolution_failed" | "unavailable" | "unknown_error";
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ErrorDetail
          * @description Parse the public fields in a general API error.
          */
@@ -1581,6 +1604,30 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HealthResource
+         * @description Report the health of the Sync API's components and of its workers.
+         *
+         *     The model does not fix the number or the order of the components: it requires at least one,
+         *     each named once, and a ``status`` that matches the components and the workers.
+         */
+        HealthResource: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "healthy" | "unhealthy";
+            /** Dependencies */
+            dependencies: components["schemas"]["DependencyHealthResource"][];
+            workers: components["schemas"]["WorkersHealthResource"];
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * OrchestrationSummary
@@ -2427,20 +2474,6 @@ export interface components {
             [key: string]: unknown;
         };
         /**
-         * ServiceStatusResource
-         * @description Report service readiness and worker availability.
-         */
-        ServiceStatusResource: {
-            /**
-             * Service
-             * @constant
-             */
-            service: "ready";
-            worker: components["schemas"]["WorkerStatusResource"];
-        } & {
-            [key: string]: unknown;
-        };
-        /**
          * SessionResource
          * @description The answer of a sign-in: the session token, the account and the idle period of a session.
          *
@@ -2614,23 +2647,43 @@ export interface components {
             [key: string]: unknown;
         };
         /**
-         * WorkerStatusResource
-         * @description Report bounded worker availability details.
+         * WorkerHealthResource
+         * @description Report one worker that sent a heartbeat within the last 24 hours.
          */
-        WorkerStatusResource: {
+        WorkerHealthResource: {
+            /** Name */
+            name: string;
             /**
              * State
              * @enum {string}
              */
-            state: "ready" | "busy" | "no-live-worker" | "unavailable";
-            /** Detail Available */
-            detail_available: boolean;
+            state: "live" | "stale";
+            /**
+             * Last Heartbeat
+             * Format: date-time
+             */
+            last_heartbeat: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WorkersHealthResource
+         * @description Report the workers of the work pool, or that the work pool could not be read.
+         */
+        WorkersHealthResource: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "known" | "unknown";
+            /** Minimum */
+            minimum: number;
             /** Live Workers */
-            live_workers?: number | null;
+            live_workers: number | null;
             /** Queue Depth */
-            queue_depth?: number | null;
-            /** Observed At */
-            observed_at: string | null;
+            queue_depth: number | null;
+            /** Items */
+            items: components["schemas"]["WorkerHealthResource"][];
         } & {
             [key: string]: unknown;
         };
@@ -2663,7 +2716,7 @@ export interface operations {
             };
         };
     };
-    get_status_status_get: {
+    get_health_health_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2678,7 +2731,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ServiceStatusResource"];
+                    "application/json": components["schemas"]["HealthResource"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResource"] | components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

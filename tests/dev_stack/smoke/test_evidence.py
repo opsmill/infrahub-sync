@@ -66,7 +66,7 @@ def test_the_transcript_records_a_response_body_the_hook_receives_unread(tmp_pat
     """
     path = tmp_path / "transcript.jsonl"
     with _client(path, lambda _request: httpx.Response(200, content=iter([b'{"ok":', b"true}"]))) as client:
-        client.get("/status")
+        client.get("/health")
 
     (record,) = _records(path)
     assert json.loads(record["response_body"]) == {"ok": True}

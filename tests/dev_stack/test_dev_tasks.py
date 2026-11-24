@@ -970,3 +970,25 @@ def test_a_preset_with_netbox_passes_the_stack_project_to_netbox(monkeypatch: py
     dev._start_netbox(Context(), settings)
 
     assert calls == [({"COMPOSE_PROJECT_NAME": "netbox-dev"}, "infrahub-sync-024")]
+
+
+class _FakeHealthAnswer:
+    def __init__(self, status_code: int, body: object) -> None:
+        self.status_code = status_code
+        self._body = body
+
+    def json(self) -> object:
+        return self._body
+
+
+@pytest.mark.parametrize("body", [[], ["workers"], "healthy", 7, None])
+def test_check_host_processes_names_dev_api_for_an_answer_that_is_not_a_json_object(
+    monkeypatch: pytest.MonkeyPatch, body: object
+) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", lambda *_args, **_kwargs: _FakeHealthAnswer(200, body))
+    settings = cast("dev.DevSettings", SimpleNamespace(sync_api_url="http://127.0.0.1:8001"))
+
+    with pytest.raises(dev.DevStackError, match=r"dev\.api"):
+        dev.check_host_processes(settings)

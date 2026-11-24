@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
 SERVICE_FLOW_NAME = "infrahub-sync-service"
 SERVICE_DEPLOYMENT_NAME = "run"
+# The Sync worker entrypoint registers each worker as `<prefix>-<uuid4>`; the health report reads it too.
+SERVICE_WORKER_NAME_PREFIX: Final = "infrahub-sync-service"
 _TERMINAL_STATE_TYPES = frozenset({StateType.COMPLETED, StateType.FAILED, StateType.CRASHED, StateType.CANCELLED})
 # Freshness uses three intervals; cap it at the largest age two datetimes can express.
 _MAX_DATETIME_AGE = datetime.max.replace(tzinfo=timezone.utc) - datetime.min.replace(tzinfo=timezone.utc)

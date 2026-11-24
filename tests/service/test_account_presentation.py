@@ -51,6 +51,7 @@ from infrahub_sync.service.resume_view import automatic_resume_view
 from infrahub_sync.service.schedules import ScheduleService
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.configuration.validation_packages import package_data
+from tests.service.health_fixtures import fake_health_checker
 from tests.service.schedule_fixtures import FakeOrchestration
 from tests.service.test_approval import _RecordingOrchestration
 
@@ -234,7 +235,14 @@ def _api_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Api:
     schedules = ScheduleService(
         store, FakeOrchestration(), resolver, delivered_write_targets=("branch-review", "default-branch")
     )
-    application = create_app(service, resolver, ConfigurationRoutes(product_projection=store), schedules=schedules)
+    application = create_app(
+        service,
+        resolver,
+        ConfigurationRoutes(product_projection=store),
+        schedules=schedules,
+        # Its answer lists workers, so a health answer is proven to make no account read.
+        health_checker=fake_health_checker(),
+    )
     return _Api(
         client=TestClient(application),
         store=store,
@@ -663,7 +671,7 @@ def test_a_reason_that_contains_an_identifier_stays_as_typed(api: _Api) -> None:
     assert approved.json()["run"]["approval"]["approved_by"] == _ADMINISTRATOR
 
 
-@pytest.mark.parametrize("path", ["/version", "/status", "/configs", "/no-such-route"])
+@pytest.mark.parametrize("path", ["/version", "/health", "/configs", "/no-such-route"])
 def test_an_answer_with_no_identifier_makes_no_account_read(api: _Api, path: str) -> None:
     _register(api)
     api.reads.clear()
