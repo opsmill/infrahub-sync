@@ -23,8 +23,13 @@ const isWorker = (value: unknown): boolean =>
   typeof value.state === "string" &&
   typeof value.last_heartbeat === "string";
 
+// The page draws the error category as text. It has a fallback for a name or a category it does not
+// know, so any text is accepted.
 const isDependency = (value: unknown): boolean =>
-  isObject(value) && typeof value.name === "string" && typeof value.status === "string";
+  isObject(value) &&
+  typeof value.name === "string" &&
+  typeof value.status === "string" &&
+  typeof value.error === "string";
 
 const isWorkers = (value: unknown): boolean => {
   if (!isObject(value)) return false;

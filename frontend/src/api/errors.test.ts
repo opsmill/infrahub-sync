@@ -36,6 +36,14 @@ describe("isHealthReport", () => {
       "a component without a status",
       { ...report, dependencies: [{ name: "database", error: "none" }] },
     ],
+    [
+      "a component without an error category",
+      { ...report, dependencies: [{ name: "database", status: "up" }] },
+    ],
+    [
+      "a component whose error category is not text",
+      { ...report, dependencies: [{ name: "database", status: "down", error: {} }] },
+    ],
     ["a timestamp that is not text", { ...report, timestamp: 1 }],
     ["workers that are not an object", { ...report, workers: [] }],
     [
