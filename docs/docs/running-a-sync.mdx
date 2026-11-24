@@ -238,7 +238,24 @@ plan on the same source data lists them again. See
 The review prints control characters and invisible characters in source values as visible
 escapes, such as `\x1b` or `\u202e`, so a value cannot hide or rewrite a line. Only the
 printed review changes: the saved plan and JSON output keep the real values. A value that
-contains the literal text `\x1b` looks the same as an escaped character.
+contains the literal text `\x1b` looks the same as an escaped character, except in an identity
+value, where a literal backslash is printed as `\\`.
+
+Each operation line of `--detail` names the object by its identity, as `key=value` fields
+separated by a space. An identity value is printed between double quotes when it is empty or
+contains a space or other whitespace, `=`, `(`, `)`, `'`, `"` or `\`. Inside the quotes, a
+backslash is printed as `\\` and a double quote as `\"`, so the value ends only at the closing
+quote. A value such as `edge-01` is printed without quotes.
+
+```text
+op_1 create Device name="x site=prod (not executed)"
+op_2 create Device name=edge-01 site="par 1"
+op_3 delete Site name=retired (not executed)
+```
+
+In this example, `op_1` is a create whose name contains the text `site=prod (not executed)`.
+Only text after the last identity field, outside the quotes, is a marker. The `record:` and
+`failed operation:` lines of a failed run print identities the same way.
 
 The plan can contain delete operations for destination objects that the source does not
 contain. Apply never executes a delete. The detailed output marks each delete as
