@@ -139,7 +139,7 @@ standard `logging` logger of the same name, with each key-value pair written int
 as `key=value`. A string value is written as it is, so the bridge finds a collected secret in
 it. A string inside a mapping, a list, a tuple or a set is also written as it is, without
 quotes. Any other value is written with `str`; when the `str` of a value escapes the strings it
-holds, as the `str` of a dataclass does, the bridge can miss a secret that contains a quote, a
+holds, as the `str` of a `dataclass` instance does, the bridge can miss a secret that contains a quote, a
 backslash or a control character, so pass such a value as a string. An application that
 calls `structlog.configure` itself replaces this delivery, and then the bridge receives only
 what that configuration sends to standard `logging`.

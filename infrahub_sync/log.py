@@ -69,16 +69,25 @@ def _render_value(value: object) -> str:
     `RunLoggerBridge` replaces a secret by a literal search of the message. `repr` would
     escape a quote, a backslash or a control character of a string, and the search would then
     miss a secret that holds one. A string is therefore written without quotes, also inside a
-    mapping, a list, a tuple or a set. Any other value is written with `str`.
+    mapping, a list, a tuple or a set. Any other value is written with `str`. A container
+    that holds itself is written as `...` where it repeats, as `repr` does.
     """
-    if isinstance(value, str):
-        return value
-    if isinstance(value, Mapping):
-        items = ", ".join(f"{_render_value(key)}: {_render_value(item)}" for key, item in value.items())
-        return f"{{{items}}}"
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return f"[{', '.join(_render_value(item) for item in value)}]"
-    return str(value)
+    return _render_item(value, frozenset())
+
+
+def _render_item(item: object, path: frozenset[int]) -> str:
+    """Return the text of `item`; `path` holds the ids of the containers that enclose it."""
+    if isinstance(item, str):
+        return item
+    if not isinstance(item, (Mapping, list, tuple, set, frozenset)):
+        return str(item)
+    if id(item) in path:
+        return "..."
+    inner = path | {id(item)}
+    if isinstance(item, Mapping):
+        pairs = ", ".join(f"{_render_item(key, inner)}: {_render_item(part, inner)}" for key, part in item.items())
+        return f"{{{pairs}}}"
+    return f"[{', '.join(_render_item(part, inner) for part in item)}]"
 
 
 def render_for_logging(

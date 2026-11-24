@@ -172,6 +172,29 @@ def test_container_values_are_written_without_quotes(caplog: pytest.LogCaptureFi
     assert record.getMessage() == "devices read names=[a, b] counts={site: 2} missing=None"
 
 
+def test_container_that_holds_itself_is_written_once(caplog: pytest.LogCaptureFixture) -> None:
+    names: list[object] = ["a"]
+    names.append(names)
+    counts: dict[str, object] = {"site": 2}
+    counts["self"] = counts
+
+    with caplog.at_level(logging.INFO, logger=PACKAGE_LOGGER_NAME):
+        structlog.get_logger(LOGGER_NAME).info("devices read", names=names, counts=counts)
+
+    (record,) = caplog.records
+    assert record.getMessage() == "devices read names=[a, ...] counts={site: 2, self: ...}"
+
+
+def test_container_repeated_side_by_side_is_written_each_time(caplog: pytest.LogCaptureFixture) -> None:
+    shared = ["a"]
+
+    with caplog.at_level(logging.INFO, logger=PACKAGE_LOGGER_NAME):
+        structlog.get_logger(LOGGER_NAME).info("devices read", names=[shared, shared])
+
+    (record,) = caplog.records
+    assert record.getMessage() == "devices read names=[[a], [a]]"
+
+
 def test_service_logging_reports_info_lines() -> None:
     package_logger = logging.getLogger(PACKAGE_LOGGER_NAME)
     package_logger.setLevel(logging.ERROR)
