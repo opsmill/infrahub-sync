@@ -40,7 +40,7 @@ from .config_routes import (
     parse_bounded_integer,
     parse_page_limit,
 )
-from .liveness import RunLivenessReconciler
+from .liveness import AUTOMATIC_RESUME_ACTOR, RunLivenessReconciler
 from .models import (
     ApplyRunRequest,
     ApprovedRunResource,
@@ -357,6 +357,11 @@ def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
             raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
         resolution = resolver.resolve(token)
+        if resolution.principal is not None and resolution.principal.actor == AUTOMATIC_RESUME_ACTOR:
+            # The reserved actor of the automatic check and resume is never a request's actor,
+            # whatever resolver is configured: only the liveness reconciler acts as it (research R5).
+            service.record_authentication_refusal(request.url.path, "reserved-actor")
+            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
         if resolution.principal is not None:
             return resolution.principal
         if resolution.refusal == "token-expired":

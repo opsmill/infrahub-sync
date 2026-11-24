@@ -1,8 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useId, useState } from "react";
+import { Fragment, type ReactNode, useId, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import type { Orchestration, Plan, Run } from "#/api/types";
+import type { AutomaticResume, Orchestration, Plan, Run } from "#/api/types";
 import { ArrowRightIcon } from "#/components/icons";
 import { CopyButton, FOCUS, InlineCode, Notice } from "#/components/page";
 import { BranchBadge, When } from "#/components/run-status";
@@ -11,6 +11,7 @@ import { executableCount, type FailureDetail, fmt, phaseLabel } from "#/domain/r
 import type { System } from "#/domain/systems";
 import { useNow } from "#/lib/time";
 
+import { automaticResumeBlock } from "./automatic-resume";
 import { identityParts } from "./plan-values";
 
 const LABEL = "block text-subtle text-xs";
@@ -602,6 +603,44 @@ export function InFlightNotice({ open }: { open: Orchestration }) {
           )}
           Check that a worker is running.
         </p>
+      </Body>
+    </Notice>
+  );
+}
+
+/* ---------- automatic resume: Sync's decision on resuming an interrupted write ---------- */
+
+/**
+ * One automatic resume record of the run, with the text of `infrahub-sync runs show`: why the
+ * write ended, what the check found, where the resume started, or why Sync did not resume.
+ */
+export function AutomaticResumeNotice({
+  row,
+  number,
+  next,
+}: {
+  row: AutomaticResume;
+  number: number;
+  /** What the operator can do after Sync did not resume the run (`automaticResumeNext`). */
+  next?: string;
+}) {
+  const block = automaticResumeBlock(row, number, next);
+  return (
+    <Notice
+      tone={block.notStarted ? "warning" : "neutral"}
+      role="note"
+      id={`automatic-resume-${number}`}
+      title={block.title}
+    >
+      <Body>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1 text-[13px]">
+          {block.lines.map((line) => (
+            <Fragment key={line.label}>
+              <dt className="text-subtle">{capitalise(line.label)}</dt>
+              <dd className="text-foreground [overflow-wrap:anywhere]">{line.text}</dd>
+            </Fragment>
+          ))}
+        </dl>
       </Body>
     </Notice>
   );

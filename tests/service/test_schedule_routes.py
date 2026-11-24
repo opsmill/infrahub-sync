@@ -144,7 +144,7 @@ def test_the_served_api_delivers_both_write_targets(monkeypatch: pytest.MonkeyPa
         received.update(settings, providers=len(providers))
         return "the schedule service"
 
-    monkeypatch.setattr(serve, "RunLivenessReconciler", lambda *_arguments: object())
+    monkeypatch.setattr(serve, "RunLivenessReconciler", lambda *_arguments, **_options: object())
     built = serve.build_app(
         projection_factory=object,
         resolver_factory=lambda: SimpleNamespace(secret_values=("a-token",)),

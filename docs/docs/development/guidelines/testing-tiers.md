@@ -44,10 +44,16 @@ uv run invoke tests.tests-unit
 This is the single offline default, and it is what a change has to keep green. It runs:
 
 ```text
-pytest -m "not integration and not smoke and not docker and not compose"
+pytest -m "not integration and not smoke and not docker and not compose" -n auto
 ```
 
 So it excludes four marker families: `integration`, `smoke`, `docker` and `compose`. It needs no network, no credentials and no running stack.
+
+The tests run in parallel through pytest-xdist, with one worker process per processor core. On a CI runner with 2 processor cores, the run takes about 3.5 minutes instead of about 14, which keeps the unit test jobs inside their 15-minute limit. To run the tests in one process, for example to find a test that depends on the order of other tests, pass `--workers 0`:
+
+```bash
+uv run invoke tests.tests-unit --workers 0
+```
 
 **It does need the `docker compose` CLI on your PATH.** Unmarked modules under
 `tests/compose/` and `tests/dev_stack/` run `docker compose … config --format json` to resolve

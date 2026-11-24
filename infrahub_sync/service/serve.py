@@ -248,6 +248,8 @@ def build_app(
         orchestration,
         policy,
         work_pool,
+        # The reconciler submits the automatic check and resume through the run service.
+        submitter=service,
     )
     schedules = schedule_service_factory(
         projection,

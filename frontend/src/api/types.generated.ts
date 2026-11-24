@@ -1013,6 +1013,16 @@ export interface components {
              * @default []
              */
             resumes: components["schemas"]["ResumeResource"][];
+            /**
+             * Automatic Resumes
+             * @default []
+             */
+            automatic_resumes: components["schemas"]["AutomaticResumeResource"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
             plan_summary: components["schemas"]["ApprovedPlanSummaryResource"];
         } & {
             [key: string]: unknown;
@@ -1057,6 +1067,55 @@ export interface components {
             created_at: string;
             /** Expires At */
             expires_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AutomaticResumeResource
+         * @description Sync's decision on resuming one interrupted write without a person (spec 030 contracts/http-api.md).
+         *
+         *     `state` is `waiting-check`, `checking`, `waiting-resume`, `resuming` or `ended`. `decision` is
+         *     `resume` once Sync submitted the resume, and `no-resume` with a `reason` code when it did not.
+         *     `cause_text` and `reason_text` are fixed English sentences built from the codes. `actor` is
+         *     the name the Sync API shows for the reserved actor of the automatic check and resume,
+         *     `Sync (automatic resume)`. The fields are plain strings, so a client still reads a code that
+         *     a later Sync API adds.
+         */
+        AutomaticResumeResource: {
+            /** Interrupted Flow Run Id */
+            interrupted_flow_run_id: string;
+            /** Actor */
+            actor: string;
+            /** Cause */
+            cause: string;
+            /** Cause Text */
+            cause_text: string;
+            /** State */
+            state: string;
+            /** Decision */
+            decision?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Reason Text */
+            reason_text?: string | null;
+            /** Operations Not Checked */
+            operations_not_checked?: number | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Check Flow Run Id */
+            check_flow_run_id?: string | null;
+            /** Resume Flow Run Id */
+            resume_flow_run_id?: string | null;
+            /**
+             * Decided At
+             * Format: date-time
+             */
+            decided_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         } & {
             [key: string]: unknown;
         };
@@ -1452,6 +1511,18 @@ export interface components {
             cause?: string | null;
             /** Changes */
             changes?: components["schemas"]["ScheduleSettingChangeResource"][] | null;
+            /** Reason */
+            reason?: string | null;
+            /** Reason Detail */
+            reason_detail?: {
+                [key: string]: number | string;
+            } | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Operations Not Checked */
+            operations_not_checked?: number | null;
+            /** Resume Flow Run Id */
+            resume_flow_run_id?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -2032,6 +2103,11 @@ export interface components {
              * @default []
              */
             prefect_executions: components["schemas"]["PublicExecutionLink"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
         } & {
             [key: string]: unknown;
         };
@@ -2208,7 +2284,10 @@ export interface components {
          * @description Combine a public run record with its orchestration history.
          *
          *     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
-         *     predates spec 016; `resumes` is then empty.
+         *     predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
+         *     resuming the run's interrupted writes without a person, oldest first, and
+         *     `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). Both are
+         *     empty for a run that no decision concerns, and for a Sync API that predates spec 030.
          */
         RunResource: {
             run: components["schemas"]["PublicRunResource"];
@@ -2220,6 +2299,16 @@ export interface components {
              * @default []
              */
             resumes: components["schemas"]["ResumeResource"][];
+            /**
+             * Automatic Resumes
+             * @default []
+             */
+            automatic_resumes: components["schemas"]["AutomaticResumeResource"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
         } & {
             [key: string]: unknown;
         };

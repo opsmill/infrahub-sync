@@ -831,7 +831,9 @@ in the same envelope:
   `scheduled_start_at`, the start time of the cadence in UTC. It is `manual` for every other run,
   and `schedule_id` and `scheduled_start_at` are then `null`. A scheduled run records the
   schedule's owner as its `actor`; its `started_at` is later than `scheduled_start_at` when the
-  run started late or waited for another run.
+  run started late or waited for another run. `automatic_resume_count` is the number of times
+  the service submitted a resume of the run by itself, including a resume that no worker picked up; see
+  [Automatic resume of an interrupted run](#automatic-resume-of-an-interrupted-run).
 - `GET /configs` orders configurations by `created_at`, newest first. Each item carries
   `config_id`, `name`, `latest_version` and `created_at`.
 - `GET /configs/{config_id}/versions` orders versions by `registry_version`, newest first. Each
@@ -1025,7 +1027,9 @@ that the event does not use is `null`, and an event that records no fact has `de
 | `left_out` | The plan's count of records left out. | `infrahub_sync.run.synced` and `infrahub_sync.run.failed` of a scheduled run. |
 | `branch`, `proposed_change_id` | The branch and the proposed change of a run with branch review. | The events of a proposed change. |
 | `replaced_run_id` | The earlier run whose proposed change or branch was replaced. | `infrahub_sync.schedule.proposed_change_replaced`. |
-| `cause` | A refusal code or a failure class, never text from Infrahub. | `start_failed` and `proposed_change_failed`. |
+| `cause` | A refusal code or a failure class, never text from Infrahub. For an automatic resume, `rule-6` (Prefect reported the flow run as crashed) or `rule-8` (the worker stopped sending heartbeats). | `start_failed`, `proposed_change_failed`, `automatic_resume_started` and `automatic_resume_not_started`. |
+| `reason`, `reason_detail` | The reason code of an automatic resume that did not start, and its codes and counts: `differs` for `check-found-differs`, `cause` for `check-failed`, `code` for `refused`. | `infrahub_sync.run.automatic_resume_not_started`. |
+| `start_after`, `operations_not_checked`, `resume_flow_run_id` | The position an automatic resume starts after, the uncertain operations its check did not read, and the resume's flow run. | `infrahub_sync.run.automatic_resume_started`. |
 | `changes` | The settings whose stored value the change altered: one `{field, before, after}` entry per setting, described below. | `infrahub_sync.schedule.changed`. An event recorded before this key existed has `changes: null`. |
 
 Each entry of `changes` names a setting by its field of `POST /schedules/{schedule_id}/change`
@@ -1061,6 +1065,8 @@ The event types are:
 | `infrahub_sync.run.resumed` | A resume stage succeeded: the rest of the saved plan was applied. |
 | `infrahub_sync.run.synced` | A sync stage succeeded. |
 | `infrahub_sync.run.failed` | A stage failed, or was interrupted. `outcome` is `failed`, or `ambiguous` when the stage may have written to the destination. The Sync API records this event, with `outcome` `ambiguous`, when it ends an execution whose worker stopped without recording a result. |
+| `infrahub_sync.run.automatic_resume_started` | The service submitted an automatic resume of an interrupted run, after its automatic check passed. `outcome` is `resume`. `actor` is `Sync (automatic resume)` and `operation` is `automatic-resume`. |
+| `infrahub_sync.run.automatic_resume_not_started` | The service ended an automatic resume without resuming the run. `outcome` is `no-resume` and `details.reason` holds the reason code. A resume that no worker picked up has both events: `automatic_resume_started` when the service submitted it, then this event with `not-picked-up`. `actor` is `Sync (automatic resume)`, or the person whose `verify` or resume took over (`person-took-over`). |
 | `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled, or a cancel request withdrew a finished plan. `actor` and `reason` come from the cancel request. For a withdrawal, the Sync API records this event itself, with the `run.accepted` event of the request. |
 | `infrahub_sync.config.registered` | A configuration was registered as version 1. |
 | `infrahub_sync.config.version_registered` | A new version of a configuration was registered. |
@@ -1246,7 +1252,8 @@ The checks, in the order they run and are reported:
 | `lineage` | The plan records an import account, the apply would run with that same import account, and the `source` and `owner` nodes the package names exist in the destination. Reported only for a destination that records lineage, such as Infrahub. |
 
 On success, `GET /runs/{run_id}/results` holds the result under `verification`, with `checks`
-listing every check that passed, in order, and `destination_checked: true`.
+listing every check that passed, in order, `destination_checked: true`, and `flow_run_id`, the
+Prefect flow run of the `verify` that wrote the result.
 
 When a check fails, the verification stage fails, and `GET /runs/{run_id}` reports the failure
 with the name of the check, what was expected and what was found, as for a refused `apply`.
@@ -1477,7 +1484,7 @@ run. It refuses a resume before any write:
 | 409 | `left-out-confirmation-required` | The plan leaves out records and `confirm_left_out` is not `true`. |
 | 409 | `approval-required` / `approval-checksum-mismatch` | The service requires approval and the run has none for this checksum. The `approval-required` message names `infrahub-sync approve RUN_ID --expected-checksum CHECKSUM`; an interrupted run can be approved. |
 | 409 | `verify-required` | No verification passed on the run after its latest interruption. |
-| 409 | `run-execution-conflict` | Another resume of the run is unfinished. |
+| 409 | `run-execution-conflict` | Another resume of the run is unfinished, or the service is submitting, or runs, the automatic check or resume of the run. |
 | 410 / 503 | `artifact-expired` / `plan-unavailable` | The saved plan expired or cannot be read. |
 
 Every resume request, accepted or refused, is recorded in the run's audit history and event
@@ -1486,6 +1493,75 @@ write. When a resume ends `succeeded`, the run's phase becomes `applied` and
 `reconciliation_required` becomes `false`. When a resume is interrupted, the run stays
 resumable, and the next resume needs a new verification. A resume writes the plan's values over
 every node that the verification reported as `differs`.
+
+#### Automatic resume of an interrupted run
+
+When the service runs with `INFRAHUB_SYNC_AUTOMATIC_RESUME` set to `true`, `1`, `yes` or `on`
+(in any case), it resumes a run by itself after it ended the run's `apply`, `sync` or resume as
+interrupted because Prefect reported the flow run as crashed or because the claiming worker
+stopped sending heartbeats. It waits for a live worker, runs a verification, and, when the
+verification passes and reports no operation as `differs`, submits a resume. The setting is off
+by default, accepts the same values as `INFRAHUB_SYNC_REQUIRE_APPROVAL`, and any other value stops
+the service at startup. While it is off, the service records nothing about automatic resume.
+
+`GET /runs/{run_id}` returns one entry under `automatic_resumes` for each interrupted write that
+the service recorded for automatic resume, oldest first, and the number of automatic resumes the
+service submitted for the run under `automatic_resume_count`. For a run that no automatic resume
+concerns, `automatic_resumes` is an empty list and `automatic_resume_count` is `0`:
+
+```json
+"automatic_resume_count": 1,
+"automatic_resumes": [
+  {
+    "interrupted_flow_run_id": "6f1c…",
+    "actor": "Sync (automatic resume)",
+    "cause": "rule-8",
+    "cause_text": "the worker infrahub-sync-service-3b2f… stopped sending heartbeats",
+    "state": "ended",
+    "decision": "resume",
+    "reason": null,
+    "reason_text": null,
+    "operations_not_checked": 0,
+    "start_after": 5999,
+    "check_flow_run_id": "a81d…",
+    "resume_flow_run_id": "c02e…",
+    "decided_at": "2026-11-23T21:04:11Z",
+    "updated_at": "2026-11-23T21:06:40Z"
+  }
+]
+```
+
+| Field | Holds |
+| --- | --- |
+| `interrupted_flow_run_id` | The flow run of the interrupted write. |
+| `actor` | The actor of the automatic check and resume, always `Sync (automatic resume)`. |
+| `cause` | `rule-6` when Prefect reported the flow run as crashed, `rule-8` when the claiming worker stopped sending heartbeats. `cause_text` states it in English. |
+| `state` | `waiting-check` (waiting for a live worker to run the check), `checking`, `waiting-resume` (waiting for a live worker to resume), `resuming` or `ended`. |
+| `decision` | `resume` once the service submitted the resume, `no-resume` when it ended without one, and `null` before. |
+| `reason`, `reason_text` | The code and the English sentence of a `no-resume` entry, else `null`. |
+| `operations_not_checked` | The uncertain operations that the check did not read, beyond its limit of 2,000. |
+| `start_after` | The position the automatic resume started after. |
+| `check_flow_run_id`, `resume_flow_run_id` | The flow runs of the check and of the resume, once submitted. |
+| `decided_at`, `updated_at` | When the service recorded the entry, and when the entry last changed. |
+
+The reason codes are `not-resumable`, `approval-missing`, `no-progress`, `limit-reached`,
+`check-failed`, `check-found-differs`, `not-picked-up`, `refused` and `person-took-over`; see
+[Automatic resume of an interrupted write](../operations/day-2-operations.mdx#automatic-resume-of-an-interrupted-write).
+The fields are plain strings, so a client also reads a code that a later release adds.
+
+The check and the resume run with the actor `sync:automatic-resume`, which every answer shows as
+`Sync (automatic resume)`, including the `actor` of the entry in `resumes`. No credential
+authenticates as this actor, and no account can take its name. They record the
+`infrahub_sync.run.verified`, `infrahub_sync.run.resumed` and `infrahub_sync.run.failed` events,
+and the service records `infrahub_sync.run.automatic_resume_started` and
+`infrahub_sync.run.automatic_resume_not_started`; see [List events](#list-events).
+
+A `POST /runs/{run_id}/verify` or `POST /runs/{run_id}/resume` from a person while an entry is
+`waiting-check` or `waiting-resume` ends that entry as `no-resume`, `person-took-over`, and is
+then handled as usual. The entry ends only when the service accepts the request, so a request
+that is refused, such as a resume refused with `409 verify-required`, leaves the entry waiting. When the service is already submitting the check or the resume of that
+entry, or while an entry is `checking` or `resuming`, the request is refused with
+`409 run-execution-conflict`.
 
 ### Require an approved plan
 

@@ -75,8 +75,8 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the bundled store is scaled to zero to leave it out, why the worker receives a fixed
   list of credential variables, and why the CA directory is the one read-only shared mount.
 - [0027 — An interrupted apply resumes from its saved position](0027-an-interrupted-apply-resumes-from-its-saved-position.md)
-  — why an apply saves a progress marker, why `verify` is admitted on an interrupted run and
-  reports each uncertain operation, and why a resume on the same run clears
+  — **amended by 0056** — why an apply saves a progress marker, why `verify` is admitted on an
+  interrupted run and reports each uncertain operation, and why a resume on the same run clears
   `reconciliation_required`. Partly supersedes 0010.
 - [0028 — The bundled object store runs from the Silo image](0028-the-bundled-object-store-runs-from-the-silo-image.md)
   — why every Sync Compose stack runs the object store from a pinned `pgsty/silo` release, the
@@ -173,6 +173,11 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the health answer follows Infrahub's shape, why workers count through a minimum and a
   stale record never fails it, why the database check reads only, and why the worker container
   healthcheck reads a file that the worker's own timer writes.
+- [0056 — A write whose worker disappeared resumes automatically when the site allows it](0056-a-lost-worker-resumes-automatically-when-the-site-allows-it.md)
+  — why the liveness reconciler resumes a write after rule 6 (`crashed`) or rule 8 only when
+  `INFRAHUB_SYNC_AUTOMATIC_RESUME` is on, why a `verify` runs first, why a run is not resumed
+  after 3 automatic resumes or after one that saved no progress, and how fixed idempotency keys
+  submit each step once. Amends 0027.
 
 ## Related
 

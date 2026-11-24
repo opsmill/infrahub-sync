@@ -53,9 +53,17 @@ from infrahub_sync.product_store.models import (
     not_approvable_message,
 )
 
+from .auth import Principal
 from .credentials import contains_token_prefix
-from .events import RUN_CANCELLED, account_event, run_decision_type, run_event
-from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
+from .events import RUN_CANCELLED, account_event, automatic_resume_event, run_decision_type, run_event
+from .liveness import (
+    AUTOMATIC_RESUME_ACTOR,
+    CancellationSelectionUnavailableError,
+    SubmissionOutcome,
+    automatic_check_key,
+    automatic_resume_key,
+    select_cancellable_execution,
+)
 from .models import (
     ApplyRunRequest,
     ApprovedPlanSummaryResource,
@@ -92,6 +100,8 @@ from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
 from .resume_view import (
     apply_progress_view,
+    automatic_resume_count,
+    automatic_resume_view,
     run_has_saved_plan,
     run_is_resumable,
     run_resumes,
@@ -105,8 +115,6 @@ if TYPE_CHECKING:
 
     from infrahub_sync.configuration import ConfigurationPackage
     from infrahub_sync.product_store import Account
-
-    from .auth import Principal
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +156,11 @@ def _refusal_code(receipt: MutationReceipt) -> str | None:
     return code if isinstance(code, str) else None
 
 
+def _stored_refusal(receipt: MutationReceipt) -> bool:
+    """Whether the reservation answered the request with a stored refusal instead of admitting it."""
+    return receipt.state == "accepted" and receipt.response_status is not None and receipt.response_status >= 400
+
+
 def _reservation_outcome(receipt: MutationReceipt) -> str:
     """Name what an already-answered receipt is: a replay, or this run's stored refusal."""
     assert receipt.response_status is not None  # an accepted receipt always stores its status.
@@ -168,6 +181,10 @@ def _not_resumable_before_plan(run: ProductRun) -> str | None:
     if not run_has_saved_plan(run):
         return NO_SAVED_PLAN_MESSAGE
     return None
+
+
+# The state an automatic resume record must be in for the reserved actor to run each operation.
+_AUTOMATIC_RESUME_WAITING_STATES = {"verify": "waiting-check", "resume": "waiting-resume"}
 
 
 class ServiceAPIError(Exception):
@@ -317,7 +334,7 @@ class AccountAccess:
         return None if account is None else account.account_id
 
 
-class RunService:
+class RunService:  # pylint: disable=too-many-public-methods  # the routes and the automatic resume submitter
     """Direct application service; Prefect owns all execution mechanics."""
 
     def __init__(
@@ -536,6 +553,7 @@ class RunService:
             # `run-execution-conflict`, which the audit history records. Reading its plan first
             # would answer 503 instead (research R14).
             self._plan(run_id)
+        self._refuse_during_automatic_submission(run, principal, "verify", request.reason)
         receipt = self._reserve_existing(
             run,
             principal,
@@ -544,6 +562,8 @@ class RunService:
             reason=request.reason,
             body=body,
         )
+        if not _stored_refusal(receipt):
+            self._take_over_automatic_resume(run, principal)
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
     async def apply_run(
@@ -701,12 +721,15 @@ class RunService:
                 outcome="refused-checksum",
             )
         self._require_left_out_confirmation(run_id, plan, request, principal, operation)
+        self._refuse_during_automatic_submission(run, principal, operation, request.reason)
         requested = self._run_receipt(
             run_id, principal, idempotency_key, operation=operation, reason=request.reason, body=body
         )
         reserved, created = self._projection.reserve_resume(run_id, requested, secrets=self._secrets)
         self._require_matching_receipt(reserved, requested)
         refusal = _refusal_code(reserved) if reserved.state == "accepted" else None
+        if refusal is None:
+            self._take_over_automatic_resume(run, principal)
         if created and refusal is not None:
             # The store answered the request with its refusal; the event records which one.
             self._audit(
@@ -714,6 +737,159 @@ class RunService:
             )
             return self._stored_response(reserved)
         return await self._resume_or_replay(reserved, parameters, principal, request.reason)
+
+    async def submit_check(self, run_id: str, idempotency_key: str) -> SubmissionOutcome:
+        """Submit the automatic check of the run: a `verify` by the reserved actor (spec 030, research R4).
+
+        Implements ``AutomaticResumeSubmitter``. The same key replays the same receipt, so a
+        repeated call submits nothing new.
+        """
+        principal = Principal(actor=AUTOMATIC_RESUME_ACTOR)
+        try:
+            status, body = await self.verify_run(run_id, VerifyRunRequest(), principal, idempotency_key)
+        except ServiceAPIError as error:
+            return SubmissionOutcome(refusal=error.code, status=error.status)
+        return self._submission_outcome(principal, idempotency_key, status, body)
+
+    async def submit_resume(self, run_id: str, idempotency_key: str) -> SubmissionOutcome:
+        """Submit the automatic resume of the run by the reserved actor (spec 030, research R4, R6).
+
+        Implements ``AutomaticResumeSubmitter``. The request names the saved plan's checksum and
+        confirms the writes; it confirms the records the plan leaves out only when the
+        interrupted write was admitted with that confirmation (`_admitted_left_out`).
+        """
+        principal = Principal(actor=AUTOMATIC_RESUME_ACTOR)
+        try:
+            run = self._required_run(run_id)
+            plan = self._plan(run_id)
+            request = ResumeRunRequest(
+                expected_checksum=plan.checksum,
+                confirm_writes=True,
+                confirm_left_out=plan.summary.left_out > 0 and self._admitted_left_out(run),
+            )
+            status, body = await self.resume_run(run_id, request, principal, idempotency_key)
+        except ServiceAPIError as error:
+            return SubmissionOutcome(refusal=error.code, status=error.status)
+        return self._submission_outcome(principal, idempotency_key, status, body)
+
+    def _refuse_during_automatic_submission(
+        self, run: ProductRun, principal: Principal, operation: str, reason: str | None
+    ) -> None:
+        """Refuse a person's `verify` or `runs resume` while Sync submits the automatic check or resume (FR-019).
+
+        Called by `verify_run` and `resume_run` for a principal that is not the reserved actor,
+        after every refusal that reserves nothing and before the receipt is reserved. The
+        reconciler submits first and moves the record second. A record that still waits but
+        whose automatic check or resume already has a receipt is therefore being submitted:
+        the person does not take over, and the request is refused, so the automatic execution
+        keeps its record and the reconciler's move still succeeds.
+
+        Raises:
+            ServiceAPIError: ``409 run-execution-conflict`` while the automatic check or resume
+                of a waiting record is being submitted.
+        """
+        if principal.actor == AUTOMATIC_RESUME_ACTOR:
+            return
+        for row in self._projection.automatic_resumes_of(run.run_id):
+            if row.state == "waiting-check":
+                key, step = automatic_check_key(row), "check"
+            elif row.state == "waiting-resume":
+                key, step = automatic_resume_key(row), "resume"
+            else:
+                continue
+            submitted = self._projection.lookup_mutation(AUTOMATIC_RESUME_ACTOR, sha256(key.encode()).hexdigest()).value
+            if submitted is not None and (submitted.response_status is None or submitted.response_status < 400):
+                raise self._refusal(
+                    409,
+                    "run-execution-conflict",
+                    f"Sync is submitting the automatic {step} of this run; wait for it to end",
+                    run_id=run.run_id,
+                    actor=principal.actor,
+                    operation=operation,
+                    reason=reason,
+                    outcome="refused-run-execution-conflict",
+                )
+
+    def _take_over_automatic_resume(self, run: ProductRun, principal: Principal) -> None:
+        """End the run's automatic resume record that waits for a live worker, because a person acts (FR-019).
+
+        Called by `verify_run` and `resume_run` once the person's receipt is reserved and not
+        refused, so a request that the reservation refuses leaves the record waiting and the
+        reconciler still checks and resumes the run. The person's request then proceeds as it
+        does today (research R15). The record ends as `no-resume`, `person-took-over`, with its
+        `automatic_resume_not_started` event in the same transaction; the event names the
+        person as its actor.
+
+        `_refuse_during_automatic_submission` runs before the reservation. In one Sync API
+        process the check, the reservation and this move run with no await between them, so
+        the reconciler cannot reserve its receipt in between. Two Sync API processes can
+        still interleave there; the reconciler then logs the automatic execution it submitted
+        after the person took over (`RunLivenessReconciler._after_submission`).
+        """
+        if principal.actor == AUTOMATIC_RESUME_ACTOR:
+            return
+        for row in self._projection.automatic_resumes_of(run.run_id):
+            if row.state not in {"waiting-check", "waiting-resume"}:
+                continue
+            now = datetime.now(timezone.utc)
+            ended = row.model_copy(
+                update={"state": "ended", "decision": "no-resume", "reason": "person-took-over", "updated_at": now}
+            )
+            # A `False` move means another Sync API process moved the record first; the
+            # reservation below then meets its unfinished execution, as any request does.
+            self._projection.move_automatic_resume(
+                run.run_id,
+                row.interrupted_flow_run_id,
+                from_state=row.state,
+                to_state="ended",
+                event=automatic_resume_event(ended, run, actor=principal.actor, created_at=now),
+                decision="no-resume",
+                reason="person-took-over",
+                updated_at=now,
+            )
+
+    def _admitted_left_out(self, run: ProductRun) -> bool:
+        """Whether the write that the run's waiting automatic resume record names confirmed the left-out records.
+
+        The mutation receipt stores a fingerprint of its request, not the request, so the
+        confirmation is read from how the write was admitted (research R6): an `apply` or a
+        `resume` of a plan that leaves out records is admitted only with the confirmation, which
+        its receipt holds; a manual `sync` cannot confirm and stops before it writes; a scheduled
+        `sync` writes when its schedule's left-out setting is on.
+        """
+        row = next(
+            (row for row in self._projection.automatic_resumes_of(run.run_id) if row.state == "waiting-resume"), None
+        )
+        link = (
+            None
+            if row is None
+            else next(
+                (link for link in run.prefect_executions if link.flow_run_id == row.interrupted_flow_run_id), None
+            )
+        )
+        if link is None:
+            return False
+        if link.purpose in {"apply", "resume"}:
+            return self._projection.lookup_mutation_for_execution(run.run_id, link.flow_run_id, link.purpose).available
+        if link.purpose == "sync" and run.trigger_type == "scheduled" and run.schedule_id is not None:
+            schedule = self._projection.lookup_schedule(run.schedule_id).value
+            return schedule is not None and schedule.write_when_left_out
+        return False
+
+    def _submission_outcome(
+        self, principal: Principal, idempotency_key: str, status: int, body: dict[str, Any]
+    ) -> SubmissionOutcome:
+        """The flow run identifier of an accepted submission, read from its receipt, or the refusal's code."""
+        if status >= 400:
+            error = body.get("error")
+            code = error.get("code") if isinstance(error, dict) else None
+            return SubmissionOutcome(refusal=code if isinstance(code, str) else "refused", status=status)
+        key_digest = sha256(idempotency_key.encode()).hexdigest()
+        receipt = self._projection.lookup_mutation(principal.actor, key_digest).value
+        if receipt is None or receipt.flow_run_id is None:
+            # Not confirmed yet: the next loop repeats the call with the same key.
+            return SubmissionOutcome(refusal="orchestration-unavailable", status=503)
+        return SubmissionOutcome(flow_run_id=receipt.flow_run_id)
 
     def _refuse_cancelled(self, run: ProductRun, principal: Principal, operation: str, reason: str | None) -> None:
         """Refuse to approve or apply a run in phase ``cancelled``, before any receipt is reserved.
@@ -1464,7 +1640,8 @@ class RunService:
         page = self._projection.list_runs(run_filters, after=after, limit=page_size)
         last = page.items[-1] if page.has_more else None
         next_cursor = None if last is None else timestamp_cursor(last.started_at, last.run_id, filters)
-        return public_run_page(page.items, next_cursor)
+        counts = self._projection.automatic_resume_counts([run.run_id for run in page.items])
+        return public_run_page(page.items, next_cursor, counts)
 
     def list_events(  # pylint: disable=too-many-arguments
         self,
@@ -1867,18 +2044,28 @@ class RunService:
 
     def _owned_run(self, run_id: str, principal: Principal, operation: str, reason: str | None) -> ProductRun:
         run = self._required_run(run_id)
-        if not principal.administrator and run.actor != principal.actor:
-            raise self._refusal(
-                403,
-                "forbidden",
-                "only the initiating actor or an administrator may mutate this run",
-                run_id=run_id,
-                actor=principal.actor,
-                operation=operation,
-                reason=reason,
-                outcome="refused-authorization",
-            )
-        return run
+        if principal.actor == AUTOMATIC_RESUME_ACTOR:
+            # The reserved actor of the automatic check and resume acts only on a run whose
+            # automatic resume record waits for that step: `verify` while it waits for the check,
+            # `resume` while it waits for the resume (research R5). It is never the run's actor
+            # and never an administrator, so it does not reach the rule below.
+            waiting = _AUTOMATIC_RESUME_WAITING_STATES.get(operation)
+            if waiting is not None and any(
+                row.state == waiting for row in self._projection.automatic_resumes_of(run_id)
+            ):
+                return run
+        elif principal.administrator or run.actor == principal.actor:
+            return run
+        raise self._refusal(
+            403,
+            "forbidden",
+            "only the initiating actor or an administrator may mutate this run",
+            run_id=run_id,
+            actor=principal.actor,
+            operation=operation,
+            reason=reason,
+            outcome="refused-authorization",
+        )
 
     def _required_run(self, run_id: str) -> ProductRun:
         result = self._projection.lookup_run(run_id)
@@ -2094,11 +2281,15 @@ class RunService:
                 )
             )
         operations = self._plan_operations(run)
+        automatic_resumes = self._projection.automatic_resumes_of(run.run_id)
+        count = automatic_resume_count(automatic_resumes)
         return RunResource(
-            run=public_run_resource(run),
+            run=public_run_resource(run, automatic_resume_count=count),
             orchestration=tuple(orchestration),
             apply_progress=apply_progress_view(run, operations),
             resumes=run_resumes(run, lambda link: self._resume_receipt(run, link, pending), operations),
+            automatic_resumes=automatic_resume_view(automatic_resumes),
+            automatic_resume_count=count,
         )
 
     def _event(

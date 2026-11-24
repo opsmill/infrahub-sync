@@ -529,6 +529,8 @@ $ infrahub-sync runs [OPTIONS] COMMAND [ARGS]...
 
 List runs, newest first: run, configuration@version, branch, trigger type, phase, outcome, actor, start time.
 
+A run that Sync resumed without a person adds `auto resumes: N`, the number of automatic resumes.
+
 **Usage**:
 
 ```console
@@ -638,6 +640,8 @@ last save is not known to have succeeded. While a resume runs, they are the next
 and the recorded deletes between them; while a first apply or `sync` runs, none are uncertain. A `resume`
 line counts the creates and updates that resume wrote; the `written:` line of a failed write counts those of
 every execution of the run.
+Then one `Automatic resume N:` block per decision of Sync on resuming the run&#x27;s interrupted write without a
+person: whether it started, its cause, the result of its check, where it resumed, and why it did not start.
 Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
 scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
 
