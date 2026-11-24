@@ -65,7 +65,9 @@ insert ─► waiting-check ─► checking ─► waiting-resume ─► resumin
 - **Run resource** (`RunResource`, Sync API): gains `automatic_resumes`, the list of the run's rows, oldest first,
   and `automatic_resume_count`, the number of rows whose decision is `resume`.
 - **Schedules**: no column change. `_settle_scheduled_run_end` is called later for a run with a row that is not
-  `ended` (research R11).
+  `ended` (research R11). When the automatic resume ended before the move to `resuming` named it, for example after a
+  restart between the submission and the move, the move counts the run with the verdict of the resume's end, unless
+  the resume was interrupted and its next row is not `ended`.
 
 ## Constants
 

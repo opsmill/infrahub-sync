@@ -9,6 +9,7 @@ submitted executions as a worker does.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -29,6 +30,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.product_store.models import ExecutionFinishWriteback
 from infrahub_sync.service.app import create_app
+from infrahub_sync.service.liveness import automatic_resume_key
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.settings import AUTOMATIC_RESUME_ENV, REQUIRE_APPROVAL_ENV
 from tests.service.accounts import seed_accounts
@@ -286,3 +288,88 @@ def test_a_branch_review_run_gets_not_resumable_and_counts_as_failed(api: _StepA
     assert _rows(api, run_id) == [("ended", "no-resume", "not-resumable")]
     assert orchestration.stage_submissions("verify") == []
     assert _failures(projection, schedule_id) == _FAILED_RUNS_BEFORE + 1
+
+
+def _resume_submitted_before_the_move(api: _StepAPI, run_id: str) -> str:
+    """The reconciler submitted the automatic resume, and the Sync API stopped before the move to `resuming`.
+
+    A worker claims the resume. Returns its flow run; the record still waits for the resume.
+    """
+    projection, service = api[1], api[3]
+    _passed_check(api, run_id)
+    submitted = asyncio.run(service.submit_resume(run_id, automatic_resume_key(_record(api, run_id))))
+    assert submitted.flow_run_id is not None
+    assert _record(api, run_id).state == "waiting-resume"
+    assert projection.claim_execution(run_id, submitted.flow_run_id, worker_id=_STEP_WORKER_ID)
+    return submitted.flow_run_id
+
+
+@pytest.mark.parametrize(("applied", "failures"), [(True, 0), (False, _FAILED_RUNS_BEFORE + 1)])
+def test_an_automatic_resume_that_ends_before_the_move_counts_once(
+    api: _StepAPI,
+    applied: bool,  # noqa: FBT001 - one parametrized dimension.
+    failures: int,
+) -> None:
+    """The resume ends before the replayed submission records it: the move counts the run once (research R11)."""
+    projection = api[1]
+    schedule_id, run_id = _scheduled_sync(api)
+    _rule_8(api)
+    resume = _resume_submitted_before_the_move(api, run_id)
+    _end(projection, run_id, resume, applied=applied)
+    before_the_move = _failures(projection, schedule_id)
+
+    _step(api)
+    _step(api)
+
+    assert before_the_move == _FAILED_RUNS_BEFORE
+    assert _rows(api, run_id) == [("ended", "resume", None)]
+    assert _failures(projection, schedule_id) == failures
+
+
+def test_an_automatic_resume_interrupted_before_the_move_counts_once_when_the_next_record_ends(
+    api: _StepAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resume is interrupted before the move and the next record ends at once: the move counts one failed run."""
+    projection = api[1]
+    schedule_id, run_id = _scheduled_sync(api)
+    _rule_8(api)
+    _resume_submitted_before_the_move(api, run_id)
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+    _rule_8(api)
+    before_the_move = _failures(projection, schedule_id)
+
+    _step(api)
+    _step(api)
+
+    assert before_the_move == _FAILED_RUNS_BEFORE
+    assert _rows(api, run_id) == [("ended", "resume", None), ("ended", "no-resume", "approval-missing")]
+    assert _failures(projection, schedule_id) == _FAILED_RUNS_BEFORE + 1
+
+
+def test_an_automatic_resume_interrupted_before_the_move_waits_for_the_next_record(api: _StepAPI) -> None:
+    """The next record waits for its check: the move counts nothing, and the next automatic resume counts the run."""
+    projection = api[1]
+    schedule_id, run_id = _scheduled_sync(api)
+    _rule_8(api)
+    first = _resume_submitted_before_the_move(api, run_id)
+    position = _STEP_MARKER + 5
+    marker = ApplyProgress(
+        position=position,
+        operation_id=f"op_{position:016x}",
+        total=_STEP_TOTAL,
+        start_after=_STEP_MARKER,
+        saved_at=datetime.now(timezone.utc),
+    )
+    assert projection.record_apply_progress(run_id, first, marker) == "saved"
+    _rule_8(api)
+
+    _step(api)
+    after_the_move = _failures(projection, schedule_id)
+    _step(api)
+    second = _resumed_by_sync(api, run_id, progress=True)
+    _end(projection, run_id, second, applied=True)
+    _step(api)
+
+    assert after_the_move == _FAILED_RUNS_BEFORE
+    assert _rows(api, run_id) == [("ended", "resume", None), ("ended", "resume", None)]
+    assert _failures(projection, schedule_id) == 0

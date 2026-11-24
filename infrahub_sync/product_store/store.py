@@ -2224,7 +2224,51 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 self._settle_scheduled_run_end(
                     cursor, run_id, interrupted_flow_run_id, verdict="failed", ended_at=moved.updated_at
                 )
+            if moved_row and to_state == "resuming" and moved.resume_flow_run_id is not None:
+                self._settle_resume_ended_before_its_move(
+                    cursor, run_id, moved.resume_flow_run_id, ended_at=moved.updated_at
+                )
         return moved_row
+
+    def _settle_resume_ended_before_its_move(
+        self, cursor: _Cursor, run_id: str, resume_flow_run_id: str, *, ended_at: datetime
+    ) -> None:
+        """Count a scheduled run whose automatic resume ended before the row named it (research R11).
+
+        The end of an automatic resume counts for the run's ``sync`` through the row's
+        ``resume_flow_run_id``, which the move to ``resuming`` sets after the submission. When a
+        restart or a lost answer delays that move, the resume can end first, and its end then
+        counted nothing. The move counts it here instead, with the verdict its end would have
+        given. A resume that was interrupted and whose next row is not ``ended`` counts nothing:
+        that row's end counts the run.
+
+        The resume's execution row is locked before its verdict is read, so on PostgreSQL the
+        transaction that ends the execution and this move cannot both miss each other: one
+        waits for the other, and exactly one of them counts the run.
+        """
+        cursor.execute(
+            self._sql("UPDATE prefect_executions SET flow_run_id = flow_run_id WHERE run_id = ? AND flow_run_id = ?"),
+            (run_id, resume_flow_run_id),
+        )
+        cursor.execute(
+            self._sql(
+                "SELECT terminal_state, terminal_outcome FROM prefect_executions "
+                "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NOT NULL"
+            ),
+            (run_id, resume_flow_run_id),
+        )
+        ended = cursor.fetchone()
+        if ended is None:
+            return
+        cursor.execute(
+            self._sql("SELECT state FROM automatic_resumes WHERE run_id = ? AND interrupted_flow_run_id = ?"),
+            (run_id, resume_flow_run_id),
+        )
+        next_row = cursor.fetchone()
+        if next_row is not None and str(next_row[0]) != "ended":
+            return
+        verdict = _scheduled_run_verdict(str(ended[0]), str(ended[1]))
+        self._settle_scheduled_run_end(cursor, run_id, resume_flow_run_id, verdict=verdict, ended_at=ended_at)
 
     def commit_claimed_execution(
         self,

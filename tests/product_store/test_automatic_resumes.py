@@ -296,6 +296,44 @@ def test_a_move_from_the_stored_state_saves_the_fields(projection: ProductProjec
     assert _open_rows_of(projection, run_id) == ()
 
 
+def test_a_move_to_resuming_saves_the_resume_and_its_start(projection: ProductProjection) -> None:
+    """The move to `resuming` also reads the resume's execution, which has no verdict yet (research R11)."""
+    run_id, flow_run_id = _claimed_apply(projection, "resuming")
+    projection.interrupt_execution(
+        run_id, flow_run_id, terminal_at=_INTERRUPTED_AT, automatic_resume=_record(run_id, flow_run_id)
+    )
+    moved_at = _INTERRUPTED_AT + timedelta(seconds=30)
+    assert projection.move_automatic_resume(
+        run_id,
+        flow_run_id,
+        from_state="waiting-check",
+        to_state="checking",
+        check_flow_run_id="flow-check",
+        updated_at=moved_at,
+    )
+    assert projection.move_automatic_resume(
+        run_id, flow_run_id, from_state="checking", to_state="waiting-resume", updated_at=moved_at
+    )
+    assert projection.move_automatic_resume(
+        run_id,
+        flow_run_id,
+        from_state="waiting-resume",
+        to_state="resuming",
+        decision="resume",
+        start_after=4,
+        resume_flow_run_id="flow-resume",
+        updated_at=moved_at,
+    )
+
+    (stored,) = projection.automatic_resumes_of(run_id)
+    assert (stored.state, stored.decision, stored.start_after, stored.resume_flow_run_id) == (
+        "resuming",
+        "resume",
+        4,
+        "flow-resume",
+    )
+
+
 def test_a_move_from_a_stale_state_returns_false(projection: ProductProjection) -> None:
     run_id, flow_run_id = _claimed_apply(projection, "stale")
     projection.interrupt_execution(
