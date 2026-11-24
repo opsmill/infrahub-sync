@@ -1,0 +1,38 @@
+dev/specs/031-registered-adapters/critiques/critique-2026-11-24.md
+  s_a9719f961786d2::t_41e7eb940634f2 132
+  s_a9719f961786d2::t_107e096cd58480 1-14,16,18,20-25,27-56,58-95,98,101-118,120-125,127-131,134-153,155-199,201-237,239-270
+  s_a9719f961786d2::t_104869ee98781a 133
+  s_a9719f961786d2::t_5779d48bedbb3d 15,17,19,26,57,96-97,99-100,119,126,154,200,238,271-300
+dev/specs/031-registered-adapters/contracts/adapter-file.md
+  s_a9719f961786d2::t_5af5b34fe6020e 13-14,55,90-91,100,122-128
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_a9719f961786d2::t_3a6573109bc104 48,52-54,79-80
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_a9719f961786d2::t_7bfe6834f0b942 48-49,73-75,93,96-98,105,112-116,123-124,131-132,134-135,138,147,150-152,156-157,171-175,184-188
+dev/specs/031-registered-adapters/data-model.md
+  s_a9719f961786d2::t_56cde1d8ed446e 3,21,34-37,41-64,67,73,76,80-87,110-113,116-117,121-123,127-129,131-133,138-139
+dev/specs/031-registered-adapters/plan.md
+  s_a9719f961786d2::t_e867f9a56517cf 18-22,24-26,38,70,79,83,186-200,204-227,234-239
+dev/specs/031-registered-adapters/quickstart.md
+  s_a9719f961786d2::t_ef7b9857c9fc5d 36-37,40-41,44-52,54-56,62-64,90-95
+dev/specs/031-registered-adapters/research.md
+  s_a9719f961786d2::t_9a8fca3419b364 67-71,77-81,91-104,122-125,169-171,192-201,225-237,239-242,246-248,269,271-275,278-285,287-290,292-299,304-314,317-322,326-329,331-334,338-340,347-349,354-355,363-365
+dev/specs/031-registered-adapters/spec.md
+  s_a9719f961786d2::t_3fec1ddcaa2166 104-118,152-159,161,206-210,236-237,249-256,300-311,350-352,372-373,384-385,391-404,410-416,430-438,444-454,463-464,483-484,500-503,519-520,579-584
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "606ff8a8a209e8213d44b20406260f71374c8915",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
