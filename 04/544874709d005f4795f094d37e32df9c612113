@@ -1,0 +1,39 @@
+infrahub_sync/cli.py
+  s_434345d0e8e321::t_3ce462dc660ac9 1630-1633,1636,1638,1640,1645,1647-1649
+  s_434345d0e8e321::t_d5d62411a893c7 1503-1505
+  s_434345d0e8e321::t_938283ce16bcd8 2547-2556
+  s_434345d0e8e321::t_4a38d32110cf78 1475-1490,1494-1495
+  s_434345d0e8e321::t_5f994f54db20b0 2558-2563
+  s_434345d0e8e321::t_78b11e8d463757 2523
+  s_434345d0e8e321::t_c3985e27ca6f22 126-127
+  s_434345d0e8e321::t_c826399f87d368 2575-2578,2581
+  s_434345d0e8e321::t_3c26325e9cade8 2501
+  s_434345d0e8e321::t_9a6cbde015bcf4 2487-2494,2500,2502-2504,2508-2510,2512,2521-2522,2524-2525
+  s_434345d0e8e321::t_c44ae48b76889e 128,1608-1629,1634-1635,1646,1669-1679,2511,2513-2520,2579-2580
+changelog/+runs-plan-detail-short-peers.changed.md
+  s_434345d0e8e321::t_523314defb7492 1
+docs/docs/running-a-sync.mdx
+  s_434345d0e8e321::t_e9f6ae200fc28c 245-251,253-255
+  s_434345d0e8e321::t_dcc95eaddda279 225-227,230-244,252
+  s_434345d0e8e321::t_9cf15dfda43a9f 256-272,332
+docs/docs/reference/cli.mdx
+  s_434345d0e8e321::t_d82a1fea7154c7 699-703
+tests/cli/test_client_commands.py
+  s_434345d0e8e321::t_cca3ddff55a64f 3101-3318
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04544874709d005f4795f094d37e32df9c612113",
+  "prompts": {},
+  "sessions": {
+    "s_434345d0e8e321": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "106b3a66-d06d-48fd-a133-64fdf518c199",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
