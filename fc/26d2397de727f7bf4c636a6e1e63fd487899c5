@@ -1,0 +1,78 @@
+infrahub_sync/adapter_files/declaration.py
+  s_a9719f961786d2::t_2db50f76ec2776 1-93,96-99,104,106-109,111,114-436,438-459,461-480,482-540,542-574
+  s_a9719f961786d2::t_e615f166091033 94-95
+  s_a9719f961786d2::t_15ae95fa38840f 100-103
+  s_a9719f961786d2::t_1fa82b36a39c7f 105
+  s_a9719f961786d2::t_9152253593daae 110
+  s_a9719f961786d2::t_3ee64b57c4f246 112-113
+  s_a9719f961786d2::t_eea4a028031f60 437
+  s_a9719f961786d2::t_ddbea69137e79a 460
+  s_a9719f961786d2::t_fa50a61ef3e38b 481
+  s_a9719f961786d2::t_2cf68ab06694e6 541
+dev/specs/031-registered-adapters/contracts/adapter-file.md
+  s_a9719f961786d2::t_328df146b2a0bc 59
+  s_a9719f961786d2::t_529ce0edcc77b9 66-96,100-111
+tests/adapter_files/test_packaged_declarations.py
+  s_a9719f961786d2::t_04822570956627 1-11,13-24,27-29,34-164,167,169-256,258-275
+  s_a9719f961786d2::t_327dbc286bfde6 12
+  s_a9719f961786d2::t_b1eba394176768 25-26
+  s_a9719f961786d2::t_3cf6c57d5eca35 30-33
+  s_a9719f961786d2::t_a16fce2e9fa299 165-166
+  s_a9719f961786d2::t_c2db3f8611c38d 168
+  s_a9719f961786d2::t_db19f3420b53fd 257
+tests/adapter_files/test_declaration.py
+  s_a9719f961786d2::t_a3799f937e382a 498-499,501-504
+  s_a9719f961786d2::t_7048fbe0f894e1 311-314
+  s_a9719f961786d2::t_c86caf135d94c5 1-6,8-63,65-74,76-117,119-308,310,315-497,500,505-512
+  s_a9719f961786d2::t_03bc1ff947d57a 7
+  s_a9719f961786d2::t_12bb67843afffa 64
+  s_a9719f961786d2::t_8d2da4b1a7c675 75
+  s_a9719f961786d2::t_7b59b8a4beeb3b 118
+  s_a9719f961786d2::t_09a405ec493911 309
+changelog/+declarations-as-data.housekeeping.md
+  s_a9719f961786d2::t_dc4ca919426c5f 1
+dev/specs/031-registered-adapters/tasks.md
+  s_1b0ef72bb8cbc8::t_c918a5705992a5 91,98,100,104
+infrahub_sync/adapters/declarations/aci.adapter.json
+  s_1b0ef72bb8cbc8::t_65f5ad151b14ef 1-37
+infrahub_sync/adapters/declarations/genericrestapi.adapter.json
+  s_1b0ef72bb8cbc8::t_52ab7d52927c1b 1-64
+infrahub_sync/adapters/declarations/ipfabricsync.adapter.json
+  s_1b0ef72bb8cbc8::t_902a3e35e45b68 1-32
+infrahub_sync/adapters/declarations/nautobot.adapter.json
+  s_1b0ef72bb8cbc8::t_64da690c71e52a 1-35
+infrahub_sync/adapters/declarations/netbox.adapter.json
+  s_1b0ef72bb8cbc8::t_0c4f95a959873f 1-34
+infrahub_sync/adapters/declarations/peeringmanager.adapter.json
+  s_1b0ef72bb8cbc8::t_7a699bb69fe06c 1-64
+infrahub_sync/adapters/declarations/prometheus.adapter.json
+  s_1b0ef72bb8cbc8::t_0f36b6a6e172cf 1-52
+infrahub_sync/adapters/declarations/slurpitsync.adapter.json
+  s_1b0ef72bb8cbc8::t_32983b15469fa8 1-31
+infrahub_sync/adapters/infrahub.adapter.json
+  s_1b0ef72bb8cbc8::t_ca92f2d9d7fd17 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc26d2397de727f7bf4c636a6e1e63fd487899c5",
+  "prompts": {},
+  "sessions": {
+    "s_1b0ef72bb8cbc8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-03a-ae542a8beae5f5b3",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
