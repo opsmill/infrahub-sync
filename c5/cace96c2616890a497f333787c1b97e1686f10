@@ -1,0 +1,191 @@
+tests/service/health_fixtures.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-71
+dev/specs/029-api-health/quickstart.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-118
+tests/dev_stack/test_deps_mode.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 117-134,136,140-141,148,446,454,459-468,470-489,494,499-511,517-518
+tests/service/test_health.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-695
+docs/docs/use-with-an-ai-agent.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 25-26
+infrahub_sync/service/serve.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 6,9,12,21-29,48,50-51,56,61,66-67,117-165,197-199,203-204,239-245,261-263,303
+tests/dev_stack/smoke/test_evidence.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 69
+docker-compose.yml
+  s_e30c79edd0b063::t_a1c1060a19a39c 285-288,376-401
+tests/compose/lifecycle.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 205-212,247-268,270-271
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 199,202-203
+docs/docs/reference/python-api.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 38,45-49
+  s_e30c79edd0b063::t_1512866c97da69 50
+infrahub_sync/service/health.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-459
+tests/dev_stack/smoke/test_health.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-33
+dev/adr/README.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 131,172-175
+README.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 101
+frontend/src/api/client.ts
+  s_e30c79edd0b063::t_a1c1060a19a39c 5-11,90-95,115-116
+tests/dev_stack/test_dev_tasks.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 973-994
+tests/client/test_not_sync_api.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 49-50,52,55-56
+dev/adr/0055-the-health-endpoint-replaces-status.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-109
+changelog/+api-status-removed.changed.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1
+infrahub_sync/testcontainers/docker-compose.yml
+  s_e30c79edd0b063::t_a1c1060a19a39c 285-288,376-401
+docs/docs/development/knowledge/repository-tour.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 203-226
+dev/specs/029-api-health/research.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-219
+frontend/src/api/errors.ts
+  s_e30c79edd0b063::t_a1c1060a19a39c 1,17-51
+  s_e30c79edd0b063::t_5bafbba78871cd 52-53
+dev/specs/029-api-health/tasks.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-166
+tests/cli/test_parity_and_closure.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 257-258,262
+infrahub_sync/service/orchestration.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 37-38
+tests/service/test_health_postgresql.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-47
+infrahub_sync/client/__init__.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 41,47,91-92,124,130,181-182
+frontend/src/domain/run-state.ts
+  s_e30c79edd0b063::t_a1c1060a19a39c 1,621-635
+frontend/src/api/errors.test.ts
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-65
+changelog/+api-health.added.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1
+dev/specs/029-api-health/alignment-check.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-34
+frontend/src/features/runs/StartRunDialog.tsx
+  s_e30c79edd0b063::t_a1c1060a19a39c 8,13-19,153,241-247
+frontend/src/routes/__root.tsx
+  s_e30c79edd0b063::t_a1c1060a19a39c 26,34-40,89,112,131,150-152,202,205-206,245,247,360,362,368
+.vale/styles/spelling-exceptions.txt
+  s_e30c79edd0b063::t_a1c1060a19a39c 243-244
+dev/specs/029-api-health/checklists/requirements.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-41
+dev/specs/029-api-health/data-model.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-66
+tests/compose/test_worker_healthcheck.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-40
+tests/service/test_web_site.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 272,280,283,287,456-462
+  s_e30c79edd0b063::t_ce56168901e0b6 463-464
+tests/service/test_worker_termination.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 12,17,82,84,101-102
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 21,243,246
+frontend/src/domain/worker-state.test.ts
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-67
+docs/docs/reference/sync-http-api.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 70,351,353-355,373-391,395-404,407-420,424-505
+dev/specs/029-api-health/spec.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-271
+tests/service/test_serve_site.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 99-100
+infrahub_sync/service/app.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 8,22,417-424,432,436-439,504-530
+tests/service/test_serve.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-94
+dev/specs/029-api-health/plan.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-198
+tests/service/test_liveness_policy.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 582,605-606,746,783,787,848,887,890-892,895
+docs/docs/operations/day-2-operations.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 13-16,19,22,24,26-29,31-34,57
+docs/docs/development-stack.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 157,160-162,266,604
+infrahub_sync/service/web.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 4,47,223
+frontend/src/api/queries.ts
+  s_e30c79edd0b063::t_a1c1060a19a39c 7,11,47-59
+tests/dev_stack/smoke/test_config_lifecycle.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 199,208,210-212,258,284-286,324
+frontend/src/api/types.ts
+  s_e30c79edd0b063::t_a1c1060a19a39c 31-32
+dev/specs/029-api-health/opsmill-implement-report.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-108
+infrahub_sync/client/client.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 60,98-99,267-268,270-277,279,281,283,285-294,296
+tests/client/test_client.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 56-75,276,318,335,524-565,580-615
+tests/client/test_models.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 27,935-1044
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 21,242,245
+tests/service/test_schedule_routes.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 8,163-164
+tests/service/test_worker_alive.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-219
+docs/docs/operations/compose-troubleshooting.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 13,37-38
+infrahub_sync/service/models.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 33,41,64-65,87,95,118-119
+frontend/src/api/health-query.test.ts
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-74
+docs/docs/compose-deployment.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 150-151,289-290,697,819,1116,1120,1148,1186,1190-1195,1197-1224,1226-1227,1229-1233,1237,1240-1277,1351-1352,1371,1383,1396
+tasks/dev.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 36,1006,1008-1012,1016-1017,1019,1022-1033,1035-1036,1177
+infrahub_sync/service/worker_alive.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-99
+dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 8,92-102
+infrahub_sync/client/models.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 8,24-26,124-130,653-654,656-666,669-671,675-707,709-751
+dev/specs/029-api-health/critiques/critique-20261123.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-217
+dev/specs/029-api-health/verification.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-211
+development/docker-compose.yml
+  s_e30c79edd0b063::t_a1c1060a19a39c 278-281,357-382
+tests/compose/test_documentation.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 153,396-418,424-433
+  s_e30c79edd0b063::t_361527259bbd4f 434-435
+infrahub_sync/service/settings.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 15-17,44-45,61-70,228-282,295-296
+tests/compose/test_lifecycle.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 36,46,125
+tests/service/test_http_api.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 6-7,41,61,87,1908,1914,3117-3199
+docs/docs/quickstart-compose.mdx
+  s_e30c79edd0b063::t_a1c1060a19a39c 9,91,95-104
+infrahub_sync/service/worker.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 7,27,35,39,98,603-629,641-643,645,665-666
+tests/service/test_orchestration_pool.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-115
+tests/service/test_settings.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-87
+dev/specs/029-api-health/contracts/health-api.md
+  s_e30c79edd0b063::t_a1c1060a19a39c 1-146
+tests/service/test_account_presentation.py
+  s_e30c79edd0b063::t_a1c1060a19a39c 54,238-245,674
+frontend/src/api/types.generated.ts
+  s_e30c79edd0b063::t_2a0e49936ebcff 16,27,35-36,38,1431-1453,1608-1631,2650-2651,2653-2655,2660-2680,2682,2684-2686,2719,2734-2743
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5cace96c2616890a497f333787c1b97e1686f10",
+  "prompts": {},
+  "sessions": {
+    "s_e30c79edd0b063": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ffd05d37-52a6-4c18-b655-cc3af9364009",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
