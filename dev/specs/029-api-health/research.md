@@ -93,7 +93,7 @@ serves every caller that arrived during it (critique E1). A unit test with a fak
 round for ten concurrent callers.
 
 `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`: whole seconds, 1 to 60, default 3.
-`INFRAHUB_SYNC_HEALTH_MIN_WORKERS`: whole number, at least 1, default 1. Both are read by
+`INFRAHUB_SYNC_HEALTH_MIN_WORKERS`: whole number, 1 to 999999999, default 1. Both are read by
 `validate_settings()` (`infrahub_sync/service/settings.py:200`), which `create_app` already calls,
 and refuse start with a `ValueError` that names the variable, as `session_idle_seconds()` does.
 libpq raises a `connect_timeout` below 2 to 2 seconds; the outer `wait_for` still ends the check at

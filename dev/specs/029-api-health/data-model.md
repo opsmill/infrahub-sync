@@ -53,7 +53,7 @@ copy of the rule.
 | Variable | Values | Default | Read by |
 | --- | --- | --- | --- |
 | `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` | whole seconds, 1–60 | 3 | Sync API |
-| `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` | whole number ≥ 1 | 1 | Sync API |
+| `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` | whole number from 1 to 999999999 | 1 | Sync API |
 | `PREFECT_WORKER_HEARTBEAT_SECONDS` | existing | 10 in Compose | worker healthcheck (threshold) |
 
 A value outside its range stops the Sync API at start with a message that names the variable.

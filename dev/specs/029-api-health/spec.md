@@ -177,7 +177,7 @@ live worker; call `SyncClient.get_health()`; request `/api` and follow the redir
   this decision for `GET /api/health` and for the liveness monitor of the Sync API, so that the
   two cannot disagree.
 - **FR-007**: The answer MUST be 503 when `live_workers` is below the setting
-  `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` (whole number, default 1, minimum 1), and when the workers
+  `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` (whole number, default 1, from 1 to 999999999), and when the workers
   could not be read (state `unknown`), because the minimum cannot then be confirmed. A `stale`
   worker MUST NOT cause 503 on its own.
 - **FR-008**: `GET /api/health` MUST answer without authentication. The response MUST NOT contain
