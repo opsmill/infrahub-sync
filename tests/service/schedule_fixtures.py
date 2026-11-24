@@ -34,6 +34,8 @@ from infrahub_sync.service.orchestration import (
 )
 from infrahub_sync.service.schedules import ScheduleService
 from infrahub_sync.service.service import RunService
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import IDLE_SECONDS, TOKEN_NAME, AccountSpec, seed_accounts
 
 if TYPE_CHECKING:
@@ -162,8 +164,12 @@ class FakeOrchestration:
 
 
 def package(name: str = "from-netbox", *, branch: str | None = None) -> ConfigurationPackage:
-    """Return a configuration package; with ``branch`` it declares its own destination branch."""
-    settings: dict[str, Any] = {"url": "https://infrahub.example", "token": {"$credential": "token"}}
+    """Return a configuration package whose blocks each name a stored credential.
+
+    With ``branch`` it declares its own destination branch. `schedule_api` stores the two
+    credentials, so its store accepts the package.
+    """
+    settings: dict[str, Any] = {"url": "https://infrahub.example"}
     if branch is not None:
         settings["branch"] = branch
     return ConfigurationPackage.model_validate(
@@ -173,15 +179,15 @@ def package(name: str = "from-netbox", *, branch: str | None = None) -> Configur
                 "name": name,
                 "source": {
                     "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                    "credential": SOURCE_CREDENTIAL,
+                    "settings": {"url": "https://netbox.example"},
                 },
-                "destination": {"name": "infrahub", "settings": settings},
+                "destination": {"name": "infrahub", "credential": DESTINATION_CREDENTIAL, "settings": settings},
                 "order": [],
                 "schema_mapping": [],
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
@@ -323,6 +329,7 @@ def schedule_api(
     monkeypatch.setattr(service_flow, "_destination_not_ready", lambda *_args: None)
     projection = local_product_projection(tmp_path.resolve())
     seed_accounts(projection, accounts, environment_token=ADMIN_ACCOUNT_NAME in accounts)
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     config_id = projection.create_configuration(package()).config_id
     return restarted(
         ScheduleApi(projection, FakeOrchestration(), None, None, None, config_id),  # ty: ignore[invalid-argument-type]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import shlex
@@ -1316,6 +1317,18 @@ def test_sync_cleanup_only_owns_created_containers_and_pins_compose(monkeypatch,
     monkeypatch.delenv("COMPOSE_FILE", raising=False)
     monkeypatch.setattr(bench.dev, "attach_dev_worker", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: ["worker"])
+    monkeypatch.setattr(bench.netbox, "netbox_token", lambda _env: "benchmark-netbox-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", "benchmark-api-token")
+    stack.infrahub_token = "benchmark-infrahub-token"  # noqa: S105 -- a test value
+    stored = []
+
+    def store(service_url, admin_token, values) -> None:
+        """Record the stored credentials by name and digest, after the stack is up."""
+        assert any("up" in command for command in commands)
+        digests = {name: hashlib.sha256(value.encode()).hexdigest() for name, value in values.items()}
+        stored.append((service_url, hashlib.sha256(admin_token.encode()).hexdigest(), digests))
+
+    monkeypatch.setattr(bench.dev, "store_development_credentials", store)
 
     def docker(command, **_kwargs: object):
         """Simulate container creation at each setup phase and record lifecycle commands."""
@@ -1341,6 +1354,13 @@ def test_sync_cleanup_only_owns_created_containers_and_pins_compose(monkeypatch,
             stack.start_sync()
     stack.close()
     assert stack.started_sync == (phase in {"start-created", "ready"})
+    # The credentials the shipped package names are stored through the Sync API once it runs.
+    expected = {
+        "netbox-token": hashlib.sha256(b"benchmark-netbox-token").hexdigest(),
+        "infrahub-token": hashlib.sha256(b"benchmark-infrahub-token").hexdigest(),
+    }
+    api_token = hashlib.sha256(b"benchmark-api-token").hexdigest()
+    assert stored == ([(dev.API_URL, api_token, expected)] if phase == "ready" else [])
     lifecycle = [command for command in commands if command[:2] == ["docker", "compose"]]
     assert all(
         command[command.index("--project-name") : command.index("--project-name") + 4]

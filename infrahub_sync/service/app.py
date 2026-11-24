@@ -12,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from infrahub_sync.client.models import (
     DEFAULT_LOG_LIMIT,
@@ -22,7 +23,12 @@ from infrahub_sync.client.models import (
     HealthResource,
     PlanReportPageResource,
 )
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.execution import redaction_scope
 from infrahub_sync.plan.models import PROBLEM_TYPES
 from infrahub_sync.product_store import Account, EventOrder
 
@@ -40,6 +46,10 @@ from .config_routes import (
     parse_bounded_integer,
     parse_page_limit,
 )
+from .credential_actions import CredentialActions, destination_credential_values
+from .credential_crypto import CredentialCipher
+from .credential_routes import credential_router
+from .events import ACCOUNT_REFUSED
 from .liveness import AUTOMATIC_RESUME_ACTOR, RunLivenessReconciler
 from .models import (
     ApplyRunRequest,
@@ -99,6 +109,7 @@ _HTTP_ERROR_CODES = {404: "not-found", 405: "method-not-allowed"}
 # gets one general message, so no caller-supplied text reaches the response.
 _CONFIGURATION_REFUSAL_MESSAGES: dict[str | None, str] = {
     UNSUPPORTED_STORE_REASON: UNSUPPORTED_STORE_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON: CREDENTIAL_FORMAT_REMOVED_MESSAGE,
     V2_CONFIGURATION_REASON: V2_CONFIGURATION_MESSAGE,
 }
 
@@ -323,13 +334,19 @@ def _include_routers(
     configuration_routes: ConfigurationRoutes | None,
     *,
     schedules: ScheduleService | None,
+    credential_cipher: CredentialCipher | None,
+    authenticate_worker: Callable[..., Principal],
 ) -> None:
     """Add the routes built outside ``create_app``.
 
     They are the configurations, the schedules, the approval, the events, the run logs, the saved
-    plan and the accounts.
+    plan, the accounts and the stored credentials.
     """
     if configuration_routes is not None:
+        if isinstance(configuration_routes, ConfigurationRoutes):
+            # `validate` reads the destination schema with the token of a stored credential,
+            # decrypted in this process and returned nowhere (spec 027, FR-004).
+            configuration_routes.read_stored_credentials_with(destination_credential_values(service, credential_cipher))
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
     if schedules is not None:
         application.include_router(schedule_router(schedules, authenticate, idempotency_key))
@@ -338,20 +355,80 @@ def _include_routers(
     application.include_router(run_logs_router(service, authenticate))
     application.include_router(plan_router(service, authenticate))
     application.include_router(account_router(service, authenticate))
+    application.include_router(
+        credential_router(
+            CredentialActions(service, credential_cipher), authenticate, idempotency_key, authenticate_worker
+        )
+    )
+
+
+_BEARER_AUTH = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+WORKER_ONLY_MESSAGE = "the worker account is accepted on the worker routes only"
+WORKER_REQUIRED_MESSAGE = "this route accepts the worker account only"
 
 
 def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable[..., Principal]:
     """Return the dependency that resolves the bearer value of a request to its principal.
 
     A missing or unknown value answers ``401 unauthenticated``. An API token after its expiry date
-    answers ``401 token-expired``. Every refusal is recorded, without the value.
+    answers ``401 token-expired``. The ``worker`` account answers ``403 forbidden``: every route
+    that uses this dependency is outside the worker routes, which use ``require_worker`` instead
+    (spec 027, research R4). Every refusal is recorded, without the value.
     """
-    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+    resolve = _principal_resolver(service, resolver)
 
     def authenticate(
         request: Request,
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER_AUTH)],
     ) -> Principal:
+        principal = resolve(request, credentials)
+        if principal.worker:
+            _record_refused_authorization(service, principal, request)
+            raise ServiceAPIError(403, "forbidden", WORKER_ONLY_MESSAGE)
+        return principal
+
+    return authenticate
+
+
+def require_worker(service: RunService, resolver: PrincipalResolver) -> Callable[..., Principal]:
+    """Return the dependency of the worker routes: it accepts the ``worker`` account and no other.
+
+    An unknown, missing or expired value is refused as by ``authenticate``. Every other account,
+    an administrator included, answers ``403 forbidden`` (spec 027, FR-005). Every refusal is
+    recorded, without the value.
+    """
+    resolve = _principal_resolver(service, resolver)
+
+    def authenticate_worker(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER_AUTH)],
+    ) -> Principal:
+        principal = resolve(request, credentials)
+        if not principal.worker:
+            _record_refused_authorization(service, principal, request)
+            raise ServiceAPIError(403, "forbidden", WORKER_REQUIRED_MESSAGE)
+        return principal
+
+    return authenticate_worker
+
+
+def _record_refused_authorization(service: RunService, principal: Principal, request: Request) -> None:
+    """Record a known account refused on a route, as ``require_administrator`` does; no token value."""
+    service.record_account_event(
+        ACCOUNT_REFUSED,
+        actor=principal.actor,
+        account_id=principal.actor,
+        operation=request.url.path,
+        outcome="refused-authorization",
+    )
+
+
+def _principal_resolver(
+    service: RunService, resolver: PrincipalResolver
+) -> Callable[[Request, HTTPAuthorizationCredentials | None], Principal]:
+    """Return the step that both dependencies share: the bearer value to its principal, or a ``401``."""
+
+    def resolve(request: Request, credentials: HTTPAuthorizationCredentials | None) -> Principal:
         token = credentials.credentials.lstrip(" ") if credentials is not None else ""
         if not token:
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
@@ -370,7 +447,34 @@ def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable
         service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
         raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
 
-    return authenticate
+    return resolve
+
+
+class RedactionScopeMiddleware:  # pylint: disable=too-few-public-methods
+    """Bind one redaction registry for each request (spec 027, research R6).
+
+    A stored value that the Sync API decrypts while it answers a request is added to this
+    registry by `CredentialCipher.decrypt` before it is returned, so each message, answer and
+    log line of the request is redacted with it. The registry ends with the request, so the
+    value is in no list while another request is answered. The work that the application does
+    outside a request (its start, the liveness loop) has no registry: a decryption there must
+    bind its own `redaction_scope`.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pass an HTTP request on inside a new redaction scope.
+
+        Every other scope is passed on with no registry: the `lifespan` scope lasts until the
+        process stops, so a registry bound for it would keep its values for that long.
+        """
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        with redaction_scope():
+            await self._app(scope, receive, send)
 
 
 def _account_reader(service: RunService) -> AccountReader:
@@ -429,6 +533,7 @@ def create_app(
     reconciler: RunLivenessReconciler | None = None,
     *,
     schedules: ScheduleService | None = None,
+    credential_cipher: CredentialCipher | None = None,
     health_checker: HealthReporter | None = None,
 ) -> FastAPI:
     """Create the service application from explicit providers.
@@ -440,6 +545,11 @@ def create_app(
     With ``schedules``, the application serves the schedule routes. When the API process starts,
     it stops the schedules that can no longer run and makes the Prefect schedules match the stored
     schedules, once (spec 021, research R6, R8 and R13).
+
+    The stored credential routes are always served. Without ``credential_cipher``, which holds the
+    key of ``INFRAHUB_SYNC_ENCRYPTION_KEY``, they list and show credentials and answer every change
+    with ``503 credential-key-not-configured`` (spec 027). A Sync API process always has the key
+    (``serve.build_process_service``); only an application built in a test has none.
 
     Raises:
         ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
@@ -471,6 +581,7 @@ def create_app(
                 status=exc.status,
                 family=exc.family,
                 reason=exc.reason,
+                details=exc.details,
             )
         )
         return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"))
@@ -671,6 +782,18 @@ def create_app(
         status, content = await service.cancel_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    _include_routers(application, service, authenticate, idempotency_key, configuration_routes, schedules=schedules)
+    _include_routers(
+        application,
+        service,
+        authenticate,
+        idempotency_key,
+        configuration_routes,
+        schedules=schedules,
+        credential_cipher=credential_cipher,
+        authenticate_worker=require_worker(service, resolver),
+    )
+    # Added last, so it is the outermost middleware: the registry is bound before any route,
+    # exception handler or other middleware of the request runs, and all of them share it.
+    application.add_middleware(RedactionScopeMiddleware)
 
     return application

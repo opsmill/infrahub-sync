@@ -14,17 +14,18 @@ Seams the caller (``_run_worker`` in the integration test) relies on, enumerated
 future change cannot silently drop one:
 
 - Monkeypatches, applied to ``infrahub_sync.service.flow`` and ``infrahub_sync.execution``
-  inside the child, all five of them: ``stage_scratch``, ``build_runtime_model_plan``,
-  ``_prefect_flow_run_id``, ``_require_current_worker_identity``, and
-  ``get_potenda_from_instance``. Only the last of these is an extraction surface
-  (``ExtractingEngine`` stands in for the source/destination the environment has none of);
-  the other four exist because this environment has no Prefect server and no real scratch
-  root to compare against.
+  inside the child, all six of them: ``stage_scratch``, ``build_runtime_model_plan``,
+  ``_prefect_flow_run_id``, ``_require_current_worker_identity``,
+  ``release_run_credentials`` and ``get_potenda_from_instance``. Only the last of these is
+  an extraction surface (``ExtractingEngine`` stands in for the source/destination the
+  environment has none of); ``release_run_credentials`` answers the stored credentials of
+  the stage, because this environment has no Sync API; the other four exist because this
+  environment has no Prefect server and no real scratch root to compare against.
 - Environment canaries the parent sets and later inspects: ``INFRAHUB_SYNC_CACHE_DIR``
   (a retired setting that must stay unused) and a working directory that is deliberately
   not the stage root (a stage that reaches for either is what the test catches).
-- ``INFRAHUB_SYNC_CONFIG_DIRECTORY`` and the two ``INFRAHUB_SYNC_CREDENTIAL_`` tokens, the
-  environment the child needs to resolve its configuration and construct adapters.
+- ``INFRAHUB_SYNC_CONFIG_DIRECTORY``, the environment the child needs to resolve its
+  configuration.
 - The serialized JSON input document (read from the file path given as ``sys.argv[1]``):
   ``report``, ``stage``, ``run_id``, ``binding``, ``flow_run_id``, ``worker_id``,
   ``fingerprint``, ``expected_checksum``, and ``confirm_writes``.
@@ -152,10 +153,13 @@ def main() -> None:  # noqa: PLR0915 - one linear worker script, kept readable a
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
     import infrahub_sync.execution as execution_module
+    from infrahub_sync.configuration.credential_admission import STAGE_CREDENTIAL_BLOCKS
     from infrahub_sync.plan.config_version import resolve_config_version
     from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
     from infrahub_sync.service import flow as service_flow
+    from infrahub_sync.service.credential_client import ReleasedBlock
     from infrahub_sync.service.scratch import stage_scratch as real_stage_scratch
+    from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
 
     report_path = Path(payload["report"])
     stage = payload["stage"]
@@ -218,6 +222,16 @@ def main() -> None:  # noqa: PLR0915 - one linear worker script, kept readable a
             source=None,
         )
 
+    def released(_run_id: str, _flow_run_id: str) -> dict[str, ReleasedBlock]:
+        """Answer the stored credentials of the stage, as the worker route of the Sync API does."""
+        blocks = {
+            "source": ReleasedBlock(name=SOURCE_CREDENTIAL, revision=1, fields={"token": "qualification-source-token"}),
+            "destination": ReleasedBlock(
+                name=DESTINATION_CREDENTIAL, revision=1, fields={"token": "qualification-destination-token"}
+            ),
+        }
+        return {block: blocks[block] for block in STAGE_CREDENTIAL_BLOCKS[stage]}
+
     # `setattr` rather than plain assignment: these replace the product's own typed
     # functions with narrower stand-ins, exactly as `monkeypatch.setattr` does in the
     # in-process unit suites, but this script has no pytest fixture to call it with.
@@ -225,6 +239,7 @@ def main() -> None:  # noqa: PLR0915 - one linear worker script, kept readable a
     setattr(service_flow, "build_runtime_model_plan", models)  # noqa: B010
     setattr(service_flow, "_prefect_flow_run_id", lambda: flow_run_id)  # noqa: B010
     setattr(service_flow, "_require_current_worker_identity", lambda *_args: None)  # noqa: B010
+    setattr(service_flow, "release_run_credentials", released)  # noqa: B010
     setattr(execution_module, "get_potenda_from_instance", engine_factory)  # noqa: B010
 
     os.environ["PREFECT__WORKER_ID"] = worker_id

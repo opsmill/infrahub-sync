@@ -31,6 +31,8 @@ from infrahub_sync.service.orchestration import CancellationResult, Observation,
 from infrahub_sync.service.schedule_admission import admit_scheduled_start
 from infrahub_sync.service.schedule_cadence import next_start
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import seed_accounts
 from tests.service.schedule_fixtures import OWNER_TOKEN as SCHEDULE_OWNER_TOKEN
 from tests.service.schedule_fixtures import WORKER_ID as SCHEDULE_WORKER_ID
@@ -84,18 +86,19 @@ def _package() -> ConfigurationPackage:
                 "name": "events-inventory",
                 "source": {
                     "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                    "credential": SOURCE_CREDENTIAL,
+                    "settings": {"url": "https://netbox.example"},
                 },
                 "destination": {
                     "name": "infrahub",
-                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
+                    "credential": DESTINATION_CREDENTIAL,
+                    "settings": {"url": "https://infrahub.example"},
                 },
                 "order": [],
                 "schema_mapping": [],
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
@@ -431,6 +434,7 @@ def _finish_open_execution(projection: ProductProjection, run_id: str, stage: st
 def test_a_planned_and_applied_run_reads_back_its_timeline(events_api: tuple[TestClient, ProductProjection]) -> None:
     """US1 independent test: plan accepted, planned, apply accepted, applied, each with its resources."""
     client, projection = events_api
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_package())
     created = client.post(
         "/runs",

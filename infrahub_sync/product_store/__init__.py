@@ -6,6 +6,7 @@ from infrahub_sync.product_store.accounts import (
     AccountNotActiveError,
     AccountTokenNameTakenError,
     DuplicateCredentialError,
+    EnvironmentAccountConflictError,
     SignInAttemptsFullError,
 )
 from infrahub_sync.product_store.models import (
@@ -32,6 +33,7 @@ from infrahub_sync.product_store.models import (
     ConfigurationVersion,
     ConfigurationVersionPage,
     ConfigurationVersionSummary,
+    CredentialUse,
     EventDetails,
     EventFilters,
     EventOrder,
@@ -59,7 +61,9 @@ from infrahub_sync.product_store.models import (
     ScheduleRecord,
     ScheduleSettingChange,
     SignInAttempt,
-    WorkerEnvironment,
+    StoredCredential,
+    StoredCredentialPage,
+    StoredCredentialRevision,
 )
 from infrahub_sync.product_store.store import (
     NO_SAVED_PLAN_MESSAGE,
@@ -92,6 +96,14 @@ from infrahub_sync.product_store.store import (
     production_product_projection,
     read_bootstrap_record,
     run_apply_progress,
+)
+from infrahub_sync.product_store.stored_credentials import (
+    CredentialIdentifierAllocationError,
+    CredentialInUseError,
+    CredentialNameTakenError,
+    StoredCredentialInvalidError,
+    StoredCredentialNotFoundError,
+    VersionCredentialsMissingError,
 )
 
 __all__ = (
@@ -129,6 +141,10 @@ __all__ = (
     "ConfigurationVersionAllocationError",
     "ConfigurationVersionPage",
     "ConfigurationVersionSummary",
+    "CredentialIdentifierAllocationError",
+    "CredentialInUseError",
+    "CredentialNameTakenError",
+    "CredentialUse",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicateConfigurationError",
@@ -137,6 +153,7 @@ __all__ = (
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
     "EarlierProductDatabaseError",
+    "EnvironmentAccountConflictError",
     "EventDetails",
     "EventFilters",
     "EventOrder",
@@ -176,7 +193,12 @@ __all__ = (
     "ScheduledStartRun",
     "SignInAttempt",
     "SignInAttemptsFullError",
-    "WorkerEnvironment",
+    "StoredCredential",
+    "StoredCredentialInvalidError",
+    "StoredCredentialNotFoundError",
+    "StoredCredentialPage",
+    "StoredCredentialRevision",
+    "VersionCredentialsMissingError",
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",

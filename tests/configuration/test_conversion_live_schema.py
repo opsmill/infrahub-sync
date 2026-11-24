@@ -139,10 +139,10 @@ def _result() -> ConversionResult:
             "source": {"name": "netbox", "settings": {"url": "https://netbox.example.com"}},
             "destination": {
                 "name": "infrahub",
-                "settings": {"url": "https://infrahub.example.com", "token": {"$credential": "infrahub-token"}},
+                "credential": "infrahub-token",
+                "settings": {"url": "https://infrahub.example.com"},
             },
         },
-        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_X"}},
     }
     return ConversionResult(package=package)
 
@@ -170,11 +170,12 @@ def test_failed_read_is_noted_and_package_unchanged(monkeypatch: pytest.MonkeyPa
     assert any("not read (unauthorized)" in note.text for note in result.notes)
 
 
-def test_schema_read_sends_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_schema_read_sends_no_token_and_names_no_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, Any] = {}
 
     def accessor(package: ConfigurationPackage, branch: str) -> dict[str, Any]:
         seen["settings"] = dict(package.configuration.destination.settings or {})
+        seen["credential"] = package.configuration.destination.credential
         seen["branch"] = branch
         return _SNAPSHOT
 
@@ -185,9 +186,10 @@ def test_schema_read_sends_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
     original = _result()
     read_live_destination_schema(original.package or {})
     assert "token" not in seen["settings"]
+    assert seen["credential"] is None
     assert seen["branch"] == "main"
     assert original.package is not None
-    assert "token" in original.package["configuration"]["destination"]["settings"]
+    assert original.package["configuration"]["destination"]["credential"] == "infrahub-token"
 
 
 @pytest.mark.parametrize(("declared", "expected"), [("feature-x", "feature-x"), (5, "main"), ("", "main")])

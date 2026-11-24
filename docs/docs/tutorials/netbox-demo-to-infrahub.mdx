@@ -156,10 +156,11 @@ Create a token in the public NetBox demo instance so Infrahub Sync can read data
 4. Create an API token.
 5. Copy the complete generated token value.
 
-Export the token locally:
+Export the token locally. The development tasks read this variable and store its value in the
+Sync API as the stored credential `netbox-token`:
 
 ```bash
-export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="nbt_..."
+export INFRAHUB_SYNC_DEV_NETBOX_TOKEN="nbt_..."
 ```
 
 Export the complete `nbt_...` token value. Do not include an authorization prefix such as `Bearer`, and do not copy only the short **Key** field.
@@ -170,11 +171,11 @@ The Sync service is a Sync API, a worker that connects to NetBox and Infrahub, a
 server, PostgreSQL, and object storage. The development stack builds the service image from
 your checkout and starts all of them in containers.
 
-1. Give the worker the Infrahub token. The worker reads both credentials from its environment
-   when its container starts:
+1. Give the development tasks the Infrahub token. They store its value in the Sync API as the
+   stored credential `infrahub-token`:
 
 ```bash
-export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="${INFRAHUB_API_TOKEN}"
+export INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN="${INFRAHUB_API_TOKEN}"
 ```
 
 2. Start the stack against Infrahub's network:
@@ -191,6 +192,11 @@ followed by the Sync API address, its bearer token, and the Prefect UI address. 
 name comes from the project name `infrahub` you gave `docker compose -p` in
 [Start Infrahub](#start-infrahub).
 
+Once the Sync API is healthy, `dev.start` stores the two exported tokens in it and prints
+`Stored the credentials the shipped examples name: infrahub-token, netbox-token`. The example
+package names these two stored credentials. The worker gets both values from the Sync API for
+each run; its container holds no NetBox or Infrahub token.
+
 3. Point the CLI at the Sync API and check the service:
 
 ```bash
@@ -201,12 +207,24 @@ curl -sf "${INFRAHUB_SYNC_API_URL}/api/health"
 
 The response reports `"status": "healthy"` when every component is up and a worker is live;
 `curl -f` fails when the answer is `503`. The API token
-authenticates the CLI to the Sync API. It is separate from
-`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, which the worker uses to access Infrahub.
+authenticates the CLI to the Sync API. It is separate from the stored credential
+`infrahub-token`, which the worker uses to access Infrahub.
 
-If you change either credential later, export the new value and run
-`uv run invoke dev.start --infrahub-network infrahub_default` again. It recreates the worker with the new environment and connects it to Infrahub's
-network again.
+View the two stored credentials. The output shows their names, fields and revisions, never a
+value:
+
+```bash
+uv run infrahub-sync credentials list
+```
+
+If you change either token later, replace the stored value. The command asks for the new token
+and does not echo it. The next run uses it, and no container restarts:
+
+```bash
+uv run infrahub-sync credentials set netbox-token
+```
+
+[Manage stored credentials](../guides/credentials.mdx) describes these commands.
 
 For the addresses, the image rebuild after a code change, and the other stack commands, see
 [Local development stack](../development-stack.mdx#run-from-source).
@@ -234,8 +252,9 @@ API container answers at its service name, `infrahub-server`, on port 8000.
 
 The worker reads `source.settings.url` and `destination.settings.url` from the registered
 package itself, not from the environment. `INFRAHUB_ADDRESS` is used only by `infrahubctl`.
-Only the two credentials come from the worker's environment, resolved through the
-`credentials` block at the bottom of the file.
+The package holds no token. Its source block names the stored credential `netbox-token` and its
+destination block names `infrahub-token`, each with a `credential` key. The worker gets their
+values from the Sync API for each run.
 
 The copied configuration is named `from-netbox`. Open `.netbox/from-netbox.yml` in an editor
 and scan the top-level keys under `configuration`:
@@ -459,26 +478,26 @@ docker compose -p infrahub down --volumes
 
 ## Troubleshooting
 
-### `infrahub-sync` fails with `Both url and token must be specified`
+### Registration or a plan is refused with `credential-not-found`
 
-```text
-ERROR | infrahub_sync.cli | Failed to initialize the Sync Instance: Error initializing InfrahubAdapter: Both url and token must be specified!
-```
-
-The service worker cannot resolve a credential reference declared by the package. The
-package contains credential references and declarations, but secret
-credential values belong only in the worker environment. The package names
-`INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, and the worker reads
-their values when its container starts. Export both, then run `uv run invoke dev.start --infrahub-network infrahub_default`, which
-recreates the worker with the new values:
+The package names the stored credentials `netbox-token` and `infrahub-token`. The Sync API
+refuses to register the package, or to start a run of it, while one of them does not exist.
+`dev.start` stores a credential only when it has a value for it: export
+`INFRAHUB_SYNC_DEV_NETBOX_TOKEN` and `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN`, then run `dev.start`
+again:
 
 ```bash
-export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<your-netbox-token>"
-export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+export INFRAHUB_SYNC_DEV_NETBOX_TOKEN="<your-netbox-token>"
+export INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 uv run invoke dev.start --infrahub-network infrahub_default
 ```
 
-This error names whichever adapter (NetBox or Infrahub) is missing its variables — the same message is raised for either one.
+You can also create a missing credential with the CLI. The command asks for the token and does
+not echo it:
+
+```bash
+uv run infrahub-sync credentials create netbox-token
+```
 
 ### A run cannot reach `infrahub-server`
 

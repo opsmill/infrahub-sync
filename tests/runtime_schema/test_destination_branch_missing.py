@@ -13,7 +13,7 @@ from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.runtime_schema import DestinationSchemaUnavailableError, build_runtime_model_plan
 from infrahub_sync.runtime_schema import worker as worker_module
 from infrahub_sync.runtime_schema.errors import DestinationBranchNotFoundError
-from tests.configuration.validation_packages import package_data
+from tests.configuration.validation_packages import credential_package_data
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,14 +28,12 @@ _MAPPING = [
 ]
 
 
-@pytest.fixture(name="credentials", autouse=True)
-def _credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "netbox-branch-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-branch-canary")
+# The fields that the Sync API released to the run for each block of the package.
+_RELEASED = {"source": {"token": "netbox-branch-canary"}, "destination": {"token": "infrahub-branch-canary"}}
 
 
 def _package() -> ConfigurationPackage:
-    content = package_data()
+    content = credential_package_data()
     content["configuration"]["schema_mapping"] = copy.deepcopy(_MAPPING)
     return parse_configuration_package(content)
 
@@ -53,7 +51,7 @@ def _plan_on(branch: str, tmp_path: Path) -> None:
     package = _package()
     build_runtime_model_plan(
         package=package,
-        instance=resolve_runtime_instance(package, directory=str(tmp_path)),
+        instance=resolve_runtime_instance(package, directory=str(tmp_path), released=_RELEASED),
         run_branch=branch,
         scope="both",
     )

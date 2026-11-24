@@ -15,7 +15,7 @@ import pytest
 
 from infrahub_sync.configuration import ConfigurationPackage, parse_configuration_package
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
-from infrahub_sync.execution import RunResult
+from infrahub_sync.execution import RunResult, redaction_scope
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store.models import ConfigurationVersion, LookupResult, ProductRun
@@ -31,7 +31,7 @@ from infrahub_sync.runtime_schema import (
 )
 from infrahub_sync.runtime_schema import worker as worker_module
 from infrahub_sync.utils import get_potenda_from_instance
-from tests.configuration.validation_packages import package_data
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, credential_package_data
 from tests.runtime_schema.installed_distribution import install_distribution
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ pytest.importorskip("opsmill_prefect_extras")
 from infrahub_sync.plan.ownership import WriteDispatchTracker
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.scratch import stage_scratch
-from tests.service.execution_fixtures import bind_granting_guard
+from tests.service.execution_fixtures import bind_granting_guard, serve_released_credentials
 
 _SNAPSHOT: dict[str, Any] = {
     "BuiltinTag": {
@@ -81,7 +81,7 @@ _MAPPING = [
 
 
 def _package_content(**overrides: object) -> dict[str, Any]:
-    content = package_data()
+    content = credential_package_data()
     content["configuration"]["schema_mapping"] = copy.deepcopy(_MAPPING)
     content["configuration"].update(overrides)
     return content
@@ -111,10 +111,22 @@ def _spy(monkeypatch: pytest.MonkeyPatch) -> _SnapshotSpy:
     return spy
 
 
+# The fields that the Sync API releases to a run for each block of the package.
+_RELEASED = {"source": {"token": "netbox-worker-canary"}, "destination": {"token": "infrahub-worker-canary"}}
+
+
 @pytest.fixture(name="credentials", autouse=True)
-def _credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "netbox-worker-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-worker-canary")
+def _credentials(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Answer the worker's request for the stored credentials, inside the redaction list of a run."""
+    serve_released_credentials(monkeypatch, service_flow, _RELEASED)
+    # The flow binds the redaction list before its stage; the worker's client refuses without one.
+    with redaction_scope():
+        yield
+
+
+def _run_credentials(run_id: str) -> Any:  # noqa: ANN401 - the holder of the flow.
+    """The holder that the flow gives a stage: it asks the Sync API once for the stage execution."""
+    return service_flow._RunCredentials(run_id, f"flow-{run_id}")
 
 
 @pytest.fixture(name="netbox_driver", autouse=True)
@@ -141,7 +153,7 @@ def _netbox_driver(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 def _instance(package: ConfigurationPackage, tmp_path: Path) -> SyncInstance:
     from infrahub_sync.configuration.runtime import resolve_runtime_instance
 
-    return resolve_runtime_instance(package, directory=str(tmp_path))
+    return resolve_runtime_instance(package, directory=str(tmp_path), released=_RELEASED)
 
 
 def _plan(
@@ -192,6 +204,7 @@ def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _
         projection=cast("ProductProjection", projection),
         run_branch=None,
         stage="plan",
+        credentials=_run_credentials("run-runtime-models"),
     )
 
     assert name == package.configuration.name
@@ -225,6 +238,7 @@ def test_registered_composition_carries_generic_peers_into_ordering(
         projection=cast("ProductProjection", _StubProjection(package, binding)),
         run_branch=None,
         stage="plan",
+        credentials=_run_credentials("run-generic-order"),
     )
 
     assert instance._runtime_models is not None
@@ -316,6 +330,7 @@ def test_only_stages_that_construct_adapters_read_the_schema(
         projection=cast("ProductProjection", projection),
         run_branch=None,
         stage=stage,
+        credentials=_run_credentials(f"run-{stage}"),
     )
 
     assert len(spy.branches) == expected_reads
@@ -335,6 +350,7 @@ def test_a_saved_plan_apply_builds_no_source_requirements(spy: _SnapshotSpy) -> 
         projection=cast("ProductProjection", projection),
         run_branch=None,
         stage="apply",
+        credentials=_run_credentials("run-apply"),
     )
 
     plan = instance._runtime_models
@@ -442,7 +458,8 @@ def test_a_non_infrahub_destination_refuses_before_any_schema_read(spy: _Snapsho
     content = _package_content()
     content["configuration"]["destination"] = {
         "name": "peeringmanager",
-        "settings": {"url": "https://peering.example.net", "token": {"$credential": "infrahub-token"}},
+        "credential": DESTINATION_CREDENTIAL,
+        "settings": {"url": "https://peering.example.net"},
     }
 
     with pytest.raises(UnsupportedDestinationProfileError):

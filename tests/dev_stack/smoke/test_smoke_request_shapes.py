@@ -69,12 +69,16 @@ def test_the_registered_package_uses_no_filesystem_adapter() -> None:
 
 
 def test_the_registered_package_declares_no_credential_value() -> None:
-    """Only a credential *reference* is posted; the worker resolves it from its own env."""
-    rendered = repr(smoke.smoke_package(INFRAHUB_URL))
+    """Only the name of a stored credential is posted; the Sync API releases the value to the worker."""
+    package = smoke.smoke_package(INFRAHUB_URL)
+    rendered = repr(package)
 
-    assert "$credential" in rendered
-    assert "INFRAHUB_API_TOKEN" in rendered
-    assert "token': '" not in rendered
+    for side in ("source", "destination"):
+        assert package["configuration"][side]["credential"] == "infrahub-token"
+        assert "token" not in package["configuration"][side]["settings"]
+    assert "credentials" not in package
+    assert "$credential" not in rendered
+    assert "INFRAHUB_SYNC_CREDENTIAL_" not in rendered
 
 
 # ======================================================================================

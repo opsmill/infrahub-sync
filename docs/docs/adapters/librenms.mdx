@@ -28,7 +28,7 @@ from LibreNMS to Infrahub. Writing data back into LibreNMS is not supported.
 
 The repository contains a mapping example: [`examples/librenms_to_infrahub/config.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/librenms_to_infrahub/config.yml). It is a `config.yml` file, not a package, and registration refuses it as it is. To use it, convert it as described in [Convert a config.yml file](../configuration-package.mdx#convert-a-configyml-file).
 
-The package declares the LibreNMS connection in `source.settings`. Credentials are `$credential` references:
+The package declares the LibreNMS connection in `source.settings`. The block names a stored credential that holds the LibreNMS API token, which the `x-auth-token` method needs:
 
 ```yaml
 format_version: 1
@@ -36,25 +36,23 @@ configuration:
   name: from-librenms
   source:
     name: genericrestapi
+    credential: librenms-token
     settings:
       url: "https://librenms.example.com"
       api_endpoint: "api/v0"
       auth_method: "x-auth-token"
-      token:
-        $credential: librenms-token
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "https://infrahub.example.com"
-      token:
-        $credential: infrahub-token
-credentials:
-  librenms-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_LIBRENMS_TOKEN
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
-See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.
+An administrator creates both credentials before the package is registered. Each command asks for the token and does not echo it:
+
+```bash
+infrahub-sync credentials create librenms-token
+infrahub-sync credentials create infrahub-token
+```
+
+See [Manage stored credentials](../guides/credentials.mdx) for the commands. See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.

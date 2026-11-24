@@ -12,6 +12,7 @@ pytest.importorskip("prefect")
 
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.service import deploy, serve, settings
+from tests.helpers.stored_credentials import set_process_start_settings
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -87,6 +88,7 @@ def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pyte
 
 
 def test_a_retired_host_name_is_ignored_by_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_process_start_settings(monkeypatch)
     monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_HOST", "10.0.0.1")
     monkeypatch.setattr(serve, "build_app", lambda **_factories: object())
     captured: dict[str, Any] = {}

@@ -205,6 +205,13 @@ class DuplicateCredentialError(ValueError):
     """The store already holds this token or session digest, or the generated row identifier."""
 
 
+class EnvironmentAccountConflictError(ValueError):
+    """An account with the name that the environment defines exists and the environment does not manage it.
+
+    Nothing was written. The message names the account, never a value of it.
+    """
+
+
 class AccountNotActiveError(ValueError):
     """The account is missing, disabled or deleted, or its password changed after the caller read it.
 
@@ -531,13 +538,18 @@ def apply_environment_account(
     token_name: str,
     token_digest: str | None,
     now: datetime,
+    administrator: bool = True,
+    claim_existing: bool = True,
 ) -> Account:
     """Make the account that the environment defines match the environment, and return it.
 
     The caller owns the transaction and, on PostgreSQL, the lock that serializes two processes.
 
-    - The account is created when no account has the name, as an active administrator that the
-      environment manages. An existing account gets those three states back when one differs.
+    - The account is created when no account has the name, as an active account that the
+      environment manages, at the level ``administrator`` gives. An existing account gets those
+      three states back when one differs.
+    - With ``claim_existing`` false, an existing account that the environment does not manage is
+      refused, before any write, instead of being taken over.
     - ``password_hash_for`` receives the stored hash, or nothing for a new account. It returns the
       hash to store, or nothing when the stored hash already fits the password. A new hash for an
       existing account ends the sessions of the account.
@@ -549,6 +561,10 @@ def apply_environment_account(
     the same environment leaves every row as it is. The row of the name is locked before it is read, so a concurrent
     deletion either ends before the read, and the account is created again, or waits for the
     transaction.
+
+    Raises:
+        EnvironmentAccountConflictError: ``claim_existing`` is false and an account with the name
+            exists that the environment does not manage. Nothing was written.
     """
     cursor.execute(sql(_LOCK_ACCOUNT_BY_NAME_KEY), (name_key(name),))
     account = read_account_by_name(cursor, sql, name)
@@ -558,14 +574,18 @@ def apply_environment_account(
             sql,
             name=name,
             password_hash=password_hash_for(None),
-            administrator=True,
+            administrator=administrator,
             environment_managed=True,
             now=now,
         )
     else:
-        if not account.administrator or account.disabled or not account.environment_managed:
+        if not claim_existing and not account.environment_managed:
+            msg = f"an account named {name} exists and the environment of the Sync API does not manage it"
+            raise EnvironmentAccountConflictError(msg)
+        if account.administrator != administrator or account.disabled or not account.environment_managed:
             cursor.execute(
-                sql(_UPDATE_ACCOUNT_ENVIRONMENT_FLAGS), (True, False, True, _utc_iso(now), account.account_id)
+                sql(_UPDATE_ACCOUNT_ENVIRONMENT_FLAGS),
+                (administrator, False, True, _utc_iso(now), account.account_id),
             )
         password_hash = password_hash_for(account.password_hash)
         if password_hash is not None:

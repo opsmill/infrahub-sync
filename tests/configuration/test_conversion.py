@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -11,20 +12,23 @@ import pytest
 import yaml
 
 from infrahub_sync.configuration import conversion
-from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES, credential_field_map
 from infrahub_sync.configuration.conversion import (
-    COMPOSE_WORKER_CREDENTIAL_VARIABLES,
     V2_ENVIRONMENT_FIRST,
     ConversionResult,
     CredentialEntry,
-    CredentialReference,
+    CredentialSettingEntry,
     EnvironmentSetting,
     SettingOriginEntry,
     convert_v2_configuration,
-    credential_reference,
+    credential_name,
     visible_v2_variables,
 )
-from infrahub_sync.configuration.models import ValidationFinding, parse_configuration_package
+from infrahub_sync.configuration.models import (
+    CREDENTIAL_NAME_PATTERN,
+    ValidationFinding,
+    parse_configuration_package,
+)
 from infrahub_sync.configuration.validation import collect_findings
 
 if TYPE_CHECKING:
@@ -108,51 +112,43 @@ def test_non_credential_row_is_not_a_credential_setting(adapter: str, setting: s
     assert setting not in BUILTIN_ADAPTER_CAPABILITIES[adapter].credential_setting_paths
 
 
-# --- credential_reference ---------------------------------------------------------------
+# --- credential_name ---------------------------------------------------------------------
 
-_CREDENTIAL_SETTINGS = [
-    (adapter, setting)
-    for adapter, capabilities in sorted(BUILTIN_ADAPTER_CAPABILITIES.items())
-    for setting in capabilities.credential_setting_paths
-]
-
-_EXPECTED_REFERENCES = {
-    ("aci", "username"): ("aci-username", "INFRAHUB_SYNC_CREDENTIAL_ACI_USERNAME"),
-    ("aci", "password"): ("aci-password", "INFRAHUB_SYNC_CREDENTIAL_ACI_PASSWORD"),
-    ("genericrestapi", "token"): ("genericrestapi-token", "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_TOKEN"),
-    ("genericrestapi", "username"): ("genericrestapi-username", "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_USERNAME"),
-    ("genericrestapi", "password"): ("genericrestapi-password", "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_PASSWORD"),
-    ("infrahub", "token"): ("infrahub-token", "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"),
-    ("ipfabricsync", "auth"): ("ipfabricsync-auth", "INFRAHUB_SYNC_CREDENTIAL_IPFABRICSYNC_AUTH"),
-    ("nautobot", "token"): ("nautobot-token", "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN"),
-    ("netbox", "token"): ("netbox-token", "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"),
-    ("peeringmanager", "token"): ("peeringmanager-token", "INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_TOKEN"),
-    ("peeringmanager", "username"): ("peeringmanager-username", "INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_USERNAME"),
-    ("peeringmanager", "password"): ("peeringmanager-password", "INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_PASSWORD"),
-    ("prometheus", "token"): ("prometheus-token", "INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN"),
-    ("prometheus", "username"): ("prometheus-username", "INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME"),
-    ("prometheus", "password"): ("prometheus-password", "INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD"),
-    ("slurpitsync", "api_key"): ("slurpitsync-api-key", "INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_API_KEY"),
-    ("slurpitsync", "token"): ("slurpitsync-token", "INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_TOKEN"),
+_EXPECTED_NAMES: dict[tuple[str, tuple[str, ...]], str] = {
+    ("aci", ("username", "password")): "aci-account",
+    ("genericrestapi", ("token",)): "genericrestapi-token",
+    ("genericrestapi", ("username", "password")): "genericrestapi-account",
+    ("infrahub", ("token",)): "infrahub-token",
+    ("ipfabricsync", ("auth",)): "ipfabricsync-auth",
+    ("nautobot", ("token",)): "nautobot-token",
+    ("netbox", ("token",)): "netbox-token",
+    ("peeringmanager", ("token",)): "peeringmanager-token",
+    ("peeringmanager", ("username", "password")): "peeringmanager-account",
+    ("prometheus", ("token",)): "prometheus-token",
+    ("prometheus", ("username", "password")): "prometheus-account",
+    ("slurpitsync", ("api_key",)): "slurpitsync-api-key",
 }
 
 
-def test_expected_references_cover_every_credential_setting() -> None:
-    assert set(_EXPECTED_REFERENCES) == set(_CREDENTIAL_SETTINGS)
-
-
 @pytest.mark.parametrize(
-    ("adapter", "setting"), _CREDENTIAL_SETTINGS, ids=[f"{a}-{s}" for a, s in _CREDENTIAL_SETTINGS]
+    ("adapter", "settings"), list(_EXPECTED_NAMES), ids=[f"{a}-{'-'.join(s)}" for a, s in _EXPECTED_NAMES]
 )
-def test_credential_reference(adapter: str, setting: str) -> None:
-    """The reference and identifier follow spec FR-006 for every bundled credential setting."""
-    assert credential_reference(adapter, setting) == CredentialReference(*_EXPECTED_REFERENCES[adapter, setting])
+def test_credential_name(adapter: str, settings: tuple[str, ...]) -> None:
+    """One setting gives ``<adapter>-<setting>``; a username and a password give ``<adapter>-account``."""
+    name = credential_name(adapter, settings)
+    assert name == _EXPECTED_NAMES[adapter, settings]
+    assert re.fullmatch(CREDENTIAL_NAME_PATTERN, name)
 
 
 @pytest.mark.parametrize(("adapter", "setting"), [("netbox", "url"), ("aci", "verify"), ("infrahub", "branch")])
-def test_credential_reference_refuses_a_setting_that_is_not_a_credential(adapter: str, setting: str) -> None:
+def test_credential_name_refuses_a_setting_that_is_not_a_credential(adapter: str, setting: str) -> None:
     with pytest.raises(ValueError, match="is not a credential setting"):
-        credential_reference(adapter, setting)
+        credential_name(adapter, (setting,))
+
+
+def test_credential_name_refuses_no_setting() -> None:
+    with pytest.raises(ValueError, match="needs no credential"):
+        credential_name("prometheus", ())
 
 
 # --- visible_v2_variables ---------------------------------------------------------------
@@ -261,7 +257,15 @@ def _configuration(result: ConversionResult) -> Mapping[str, Any]:
 
 
 def _credential(result: ConversionResult, location: str) -> CredentialEntry:
+    """Return the entry of one block, by its location (``source.credential``)."""
     matches = [entry for entry in result.credentials if entry.location == location]
+    assert len(matches) == 1, result.credentials
+    return matches[0]
+
+
+def _credential_setting(result: ConversionResult, location: str) -> CredentialSettingEntry:
+    """Return the entry of one credential setting, by its location (``source.settings.token``)."""
+    matches = [setting for entry in result.credentials for setting in entry.settings if setting.location == location]
     assert len(matches) == 1, result.credentials
     return matches[0]
 
@@ -278,7 +282,7 @@ def _example(directory: str) -> dict[str, Any]:
     return loaded
 
 
-# --- T009: credentials (FR-006 to FR-009) -----------------------------------------------
+# --- Credentials: one stored credential named by each block (spec 027 FR-009) ------------
 
 
 @pytest.mark.parametrize(
@@ -290,93 +294,105 @@ def _example(directory: str) -> dict[str, Any]:
     ],
     ids=["literal", "placeholder", "no-value"],
 )
-def test_source_token_becomes_a_reference(token: str | None, origin: str, origin_variable: str | None) -> None:
+def test_source_token_becomes_a_named_credential(token: str | None, origin: str, origin_variable: str | None) -> None:
     settings: dict[str, Any] = {"url": "https://netbox.example.com"}
     if token is not None:
         settings["token"] = token
     result = _convert(_config(settings))
-    configuration = _configuration(result)
-    assert configuration["source"]["settings"]["token"] == {"$credential": "netbox-token"}
+    source = _configuration(result)["source"]
+    assert source["credential"] == "netbox-token"
+    assert "token" not in source["settings"]
     assert result.package is not None
-    assert result.package["credentials"]["netbox-token"] == {
-        "provider": "env",
-        "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
-    }
-    entry = _credential(result, "source.settings.token")
-    assert entry.origin == origin
-    assert entry.origin_variable == origin_variable
-    assert entry.reference == "netbox-token"
-    assert entry.identifier == "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"
+    assert "credentials" not in result.package
+    entry = _credential(result, "source.credential")
+    assert (entry.name, entry.fields) == ("netbox-token", ("token",))
+    assert entry.command == "infrahub-sync credentials create netbox-token"
+    setting = _credential_setting(result, "source.settings.token")
+    assert (setting.field, setting.origin, setting.origin_variable) == ("token", origin, origin_variable)
     assert _CANARY not in repr(result)
+
+
+def test_block_keeps_name_then_credential_then_settings() -> None:
+    assert list(_configuration(_convert(_config()))["source"]) == ["name", "credential", "settings"]
 
 
 def test_literal_adds_the_still_holds_warning() -> None:
     result = _convert(_config({"url": "https://netbox.example.com", "token": _CANARY}))
-    entry = _credential(result, "source.settings.token")
+    entry = _credential(result, "source.credential")
     assert any("config.yml still holds a literal value for source.settings.token" in w for w in entry.warnings)
 
 
 @pytest.mark.parametrize("token", ["${NETBOX_TOKEN}", None])
-def test_placeholder_or_no_value_adds_no_literal_warning(token: str | None) -> None:
+def test_placeholder_or_no_value_adds_no_warning(token: str | None) -> None:
     settings: dict[str, Any] = {"url": "https://netbox.example.com"}
     if token is not None:
         settings["token"] = token
-    entry = _credential(_convert(_config(settings)), "source.settings.token")
-    assert not any("literal" in warning for warning in entry.warnings)
+    assert _credential(_convert(_config(settings)), "source.credential").warnings == ()
 
 
-def test_destination_infrahub_token_uses_the_infrahub_reference() -> None:
+def test_destination_infrahub_token_names_the_infrahub_credential() -> None:
     result = _convert(_config())
-    configuration = _configuration(result)
-    assert configuration["destination"]["settings"]["token"] == {"$credential": "infrahub-token"}
-    entry = _credential(result, "destination.settings.token")
-    assert (entry.origin, entry.origin_variable) == ("variable", "INFRAHUB_API_TOKEN")
-    assert entry.identifier == "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
+    destination = _configuration(result)["destination"]
+    assert destination["credential"] == "infrahub-token"
+    assert "token" not in destination["settings"]
+    setting = _credential_setting(result, "destination.settings.token")
+    assert (setting.origin, setting.origin_variable) == ("variable", "INFRAHUB_API_TOKEN")
 
 
 _REST = {"api_endpoint": "/api"}
+_ACCOUNT = ("username", "password")
 
 
 @pytest.mark.parametrize(
-    ("source_name", "settings", "referenced"),
+    ("source_name", "settings", "filled", "name", "fields"),
     [
-        ("netbox", {}, {"token"}),
-        ("nautobot", {}, {"token"}),
-        ("infrahub", {}, {"token"}),
-        ("aci", {}, {"username", "password"}),
-        ("ipfabricsync", {}, {"auth"}),
-        ("genericrestapi", _REST, {"token"}),
-        ("genericrestapi", {**_REST, "auth_method": "token"}, {"token"}),
-        ("genericrestapi", {**_REST, "auth_method": "x-auth-token"}, {"token"}),
-        ("genericrestapi", {**_REST, "auth_method": "api-key"}, {"token"}),
-        ("genericrestapi", {**_REST, "auth_method": "key"}, {"token"}),
-        ("genericrestapi", {**_REST, "auth_method": "basic"}, {"username", "password"}),
-        ("genericrestapi", {**_REST, "auth_method": "none"}, set()),
-        ("peeringmanager", {}, {"token"}),
-        ("peeringmanager", {"auth_method": "basic"}, {"username", "password"}),
-        ("peeringmanager", {"auth_method": "none"}, set()),
-        ("prometheus", {}, set()),
-        ("prometheus", {"auth_method": "none"}, set()),
-        ("prometheus", {"auth_method": "basic"}, {"username", "password"}),
-        ("prometheus", {"auth_method": "bearer"}, {"token"}),
-        ("slurpitsync", {}, {"api_key"}),
+        ("netbox", {}, {"token"}, "netbox-token", ("token",)),
+        ("nautobot", {}, {"token"}, "nautobot-token", ("token",)),
+        ("infrahub", {}, {"token"}, "infrahub-token", ("token",)),
+        ("aci", {}, {"username", "password"}, "aci-account", _ACCOUNT),
+        ("ipfabricsync", {}, {"auth"}, "ipfabricsync-auth", ("token",)),
+        ("genericrestapi", _REST, {"token"}, "genericrestapi-token", ("token",)),
+        ("genericrestapi", {**_REST, "auth_method": "token"}, {"token"}, "genericrestapi-token", ("token",)),
+        ("genericrestapi", {**_REST, "auth_method": "x-auth-token"}, {"token"}, "genericrestapi-token", ("token",)),
+        ("genericrestapi", {**_REST, "auth_method": "api-key"}, {"token"}, "genericrestapi-token", ("token",)),
+        ("genericrestapi", {**_REST, "auth_method": "key"}, {"token"}, "genericrestapi-token", ("token",)),
+        (
+            "genericrestapi",
+            {**_REST, "auth_method": "basic"},
+            {"username", "password"},
+            "genericrestapi-account",
+            _ACCOUNT,
+        ),
+        ("genericrestapi", {**_REST, "auth_method": "none"}, set(), None, ()),
+        ("peeringmanager", {}, {"token"}, "peeringmanager-token", ("token",)),
+        ("peeringmanager", {"auth_method": "basic"}, {"username", "password"}, "peeringmanager-account", _ACCOUNT),
+        ("peeringmanager", {"auth_method": "none"}, set(), None, ()),
+        ("prometheus", {}, set(), None, ()),
+        ("prometheus", {"auth_method": "none"}, set(), None, ()),
+        ("prometheus", {"auth_method": "basic"}, {"username", "password"}, "prometheus-account", _ACCOUNT),
+        ("prometheus", {"auth_method": "bearer"}, {"token"}, "prometheus-token", ("token",)),
+        ("slurpitsync", {}, {"api_key"}, "slurpitsync-api-key", ("token",)),
     ],
 )
-def test_credential_references_follow_the_v2_authentication_method(
-    source_name: str, settings: dict[str, Any], referenced: set[str]
+def test_block_credential_follows_the_authentication_method(
+    source_name: str, settings: dict[str, Any], filled: set[str], name: str | None, fields: tuple[str, ...]
 ) -> None:
+    """``filled`` are the settings the stored credential fills; ``fields`` the stored fields it must hold."""
     address = "base_url" if source_name == "ipfabricsync" else "url"
     result = _convert(_config({address: "https://source.example.com", **settings}, source_name=source_name))
-    source = _configuration(result)["source"]["settings"]
+    source = _configuration(result)["source"]
     declared = set(BUILTIN_ADAPTER_CAPABILITIES[source_name].credential_setting_paths)
-    assert {entry.location for entry in result.credentials if entry.location.startswith("source.")} == {
-        f"source.settings.{setting}" for setting in referenced
+    assert source.get("credential") == name
+    assert declared & set(source["settings"]) == set()
+    entries = [entry for entry in result.credentials if entry.location == "source.credential"]
+    assert [(entry.name, entry.fields) for entry in entries] == ([] if name is None else [(name, fields)])
+    assert {setting.location for entry in entries for setting in entry.settings} == {
+        f"source.settings.{setting}" for setting in filled
     }
-    assert declared & set(source) == referenced
     not_referenced = {
         note.text.split(" ", 3)[2] for note in result.notes if note.text.startswith("not referenced: source.")
     }
-    assert not_referenced == {f"source.settings.{setting}" for setting in declared - referenced}
+    assert not_referenced == {f"source.settings.{setting}" for setting in declared - filled}
 
 
 @pytest.mark.parametrize(
@@ -401,16 +417,19 @@ def test_slurpit_token_is_not_referenced_because_v2_did_not_read_it() -> None:
     }
 
 
-def test_unused_credential_that_holds_a_value_or_placeholder_is_still_referenced() -> None:
+def test_unused_credential_that_holds_a_value_is_left_out_and_noted() -> None:
+    """A block whose method needs no credential cannot name one, so the value has no place in the package."""
     settings = {"url": "https://prometheus.example.com", "username": _CANARY, "token": "${PROM_TOKEN}", "password": ""}
     result = _convert(_config(settings, source_name="prometheus"))
-    source = _configuration(result)["source"]["settings"]
-    assert source["username"] == {"$credential": "prometheus-username"}
-    assert source["token"] == {"$credential": "prometheus-token"}
-    assert "password" not in source
-    assert _credential(result, "source.settings.username").origin == "literal"
-    assert _credential(result, "source.settings.token").origin == "placeholder"
-    assert "prometheus-password" not in (result.package or {})["credentials"]
+    source = _configuration(result)["source"]
+    assert "credential" not in source
+    assert {"username", "token", "password"} & set(source["settings"]) == set()
+    assert all(entry.location != "source.credential" for entry in result.credentials)
+    notes = {note.text for note in result.notes}
+    reason = "auth_method none, the v2 default, does not use it"
+    assert f"not referenced: source.settings.username ({reason}); its value in config.yml is left out" in notes
+    assert f"not referenced: source.settings.token ({reason}); its value in config.yml is left out" in notes
+    assert f"not referenced: source.settings.password ({reason})" in notes
     assert _CANARY not in repr(result)
 
 
@@ -441,63 +460,77 @@ def test_authentication_method_placeholder_is_refused_once() -> None:
     assert [item.location for item in result.refusals] == ["source.settings.auth_method"]
 
 
-def test_device42_example_references_username_and_password_but_no_token() -> None:
+def test_device42_example_names_one_credential_with_a_username_and_a_password() -> None:
     result = _convert(_example("device42_to_infrahub"))
-    source = _configuration(result)["source"]["settings"]
-    assert source["username"] == {"$credential": "genericrestapi-username"}
-    assert source["password"] == {"$credential": "genericrestapi-password"}
-    assert "token" not in source
-    assert result.package is not None
-    assert "genericrestapi-token" not in result.package["credentials"]
+    source = _configuration(result)["source"]
+    assert source["credential"] == "genericrestapi-account"
+    assert {"username", "password", "token"} & set(source["settings"]) == set()
+    entry = _credential(result, "source.credential")
+    assert entry.fields == ("username", "password")
+    assert entry.command == "infrahub-sync credentials create genericrestapi-account --username <username>"
 
 
-def test_prometheus_example_references_no_source_credential() -> None:
+def test_prometheus_example_names_no_source_credential() -> None:
     result = _convert(_example("prometheus_to_infrahub (node_exporter)"))
-    assert {entry.location for entry in result.credentials} == {"destination.settings.token"}
-    assert result.package is not None
-    assert set(result.package["credentials"]) == {"infrahub-token"}
+    assert {entry.location for entry in result.credentials} == {"destination.credential"}
+    assert "credential" not in _configuration(result)["source"]
 
 
-def test_device42_package_resolves_with_only_its_referenced_variables(monkeypatch: pytest.MonkeyPatch) -> None:
-    from infrahub_sync.configuration.runtime import resolve_runtime_instance
-
+def test_device42_package_needs_the_fields_the_report_lists() -> None:
+    """The fields in the report are the ones registration asks of the named credential."""
     result = _convert(_example("device42_to_infrahub"))
     assert result.package is not None
-    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_TOKEN", raising=False)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_USERNAME", "device42-user")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_PASSWORD", _CANARY)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-token-value")
     package = parse_configuration_package(copy.deepcopy(dict(result.package)))
-    instance = resolve_runtime_instance(package, directory="/registered")
-    assert instance.source.settings is not None
-    assert instance.source.settings["username"] == "device42-user"
-    assert instance.source.settings["password"] == _CANARY
-    assert "token" not in instance.source.settings
+    source = package.configuration.source
+    needed = credential_field_map(source.name, dict(source.settings or {})).fields
+    assert needed == set(_credential(result, "source.credential").fields)
+    assert [finding for finding in collect_findings(package) if finding.severity == "error"] == []
 
 
 def test_setting_without_v2_variable_and_value_has_origin_none() -> None:
     result = _convert(_config({"url": "https://slurpit.example.com"}, source_name="slurpitsync"))
-    entry = _credential(result, "source.settings.api_key")
-    assert (entry.origin, entry.origin_variable) == ("none", None)
+    setting = _credential_setting(result, "source.settings.api_key")
+    assert (setting.field, setting.origin, setting.origin_variable) == ("token", "none", None)
 
 
-@pytest.mark.parametrize(
-    ("source_name", "location"),
-    [
-        ("netbox", "source.settings.token"),
-        ("aci", "source.settings.password"),
-        ("infrahub", "destination.settings.token"),
-    ],
-)
-def test_worker_receives_follows_the_compose_variables(source_name: str, location: str) -> None:
-    settings = {"url": "https://source.example.com"}
-    entry = _credential(_convert(_config(settings, source_name=source_name)), location)
-    receives = entry.identifier in COMPOSE_WORKER_CREDENTIAL_VARIABLES
-    assert entry.worker_receives is receives
-    worker_warnings = [w for w in entry.warnings if "does not pass" in w]
-    assert bool(worker_warnings) is not receives
-    if not receives:
-        assert entry.identifier in worker_warnings[0]
+@pytest.mark.parametrize("source_name", ["netbox", "aci", "infrahub", "slurpitsync"])
+def test_no_result_names_a_credential_variable_or_the_env_provider(source_name: str) -> None:
+    """The old format (a ``credentials`` block, ``provider: env``, ``$credential``) is never produced."""
+    result = _convert(_config({"url": "https://source.example.com"}, source_name=source_name))
+    assert result.package is not None
+    text = repr(result)
+    assert "INFRAHUB_SYNC_CREDENTIAL_" not in text
+    assert "$credential" not in text
+    assert "provider" not in text
+    assert all(not hasattr(entry, "identifier") for entry in result.credentials)
+
+
+def test_a_credential_name_in_the_file_is_kept() -> None:
+    data = _config()
+    data["source"]["credential"] = "lab-netbox"
+    result = _convert(data)
+    assert _configuration(result)["source"]["credential"] == "lab-netbox"
+    assert _credential(result, "source.credential").name == "lab-netbox"
+    assert all(entry.location != "source.credential" for entry in result.dropped)
+
+
+@pytest.mark.parametrize("name", ["Lab_NetBox", 7, ""], ids=["pattern", "not-text", "empty"])
+def test_a_credential_name_in_the_file_that_cannot_be_a_name_is_dropped(name: object) -> None:
+    data = _config()
+    data["source"]["credential"] = name
+    result = _convert(data)
+    assert _configuration(result)["source"]["credential"] == "netbox-token"
+    dropped = {entry.location: entry.reason for entry in result.dropped}
+    assert "is not a credential name" in dropped["source.credential"]
+
+
+def test_a_credential_name_in_a_block_that_needs_none_is_dropped() -> None:
+    data = _config({"url": "https://prometheus.example.com"}, source_name="prometheus")
+    data["source"]["credential"] = "prometheus-token"
+    result = _convert(data)
+    assert "credential" not in _configuration(result)["source"]
+    dropped = {entry.location: entry.reason for entry in result.dropped}
+    assert "needs no credential" in dropped["source.credential"]
 
 
 # --- T010: environment-first settings (FR-010 to FR-014, FR-029, FR-030) ----------------
@@ -958,16 +991,19 @@ def test_v1_netbox_example_converts_like_the_v2_example() -> None:
     v2_configuration = _configuration(v2_result)
     assert v1_result.package is not None
     assert v2_result.package is not None
-    assert v1_result.package["credentials"] == v2_result.package["credentials"]
+    assert "credentials" not in v1_result.package
+    assert "credentials" not in v2_result.package
     assert v1_configuration["source"] == v2_configuration["source"]
     assert v1_configuration["destination"] == v2_configuration["destination"]
     expected = copy.deepcopy(v1_input)
-    expected["source"]["settings"]["token"] = {"$credential": "netbox-token"}
-    expected["destination"]["settings"]["token"] = {"$credential": "infrahub-token"}
+    del expected["source"]["settings"]["token"]
+    expected["source"]["credential"] = "netbox-token"
+    expected["destination"]["settings"].pop("token", None)
+    expected["destination"]["credential"] = "infrahub-token"
     assert dict(v1_configuration) == expected
     assert "incremental" not in v1_configuration
-    assert _credential(v1_result, "source.settings.token").origin == "literal"
-    assert _credential(v2_result, "source.settings.token").origin == "variable"
+    assert _credential_setting(v1_result, "source.settings.token").origin == "literal"
+    assert _credential_setting(v2_result, "source.settings.token").origin == "variable"
 
 
 # --- T020: refusals (FR-015, FR-016) ----------------------------------------------------
@@ -1120,15 +1156,16 @@ def test_a_refusal_never_carries_a_credential_value(data: dict[str, Any]) -> Non
 
 
 @pytest.mark.parametrize("origin", ["placeholder", "variable"])
-def test_credential_entry_needs_the_variable_for_its_origin(origin: Literal["placeholder", "variable"]) -> None:
+def test_credential_setting_entry_needs_the_variable_for_its_origin(origin: Literal["placeholder", "variable"]) -> None:
     with pytest.raises(ValueError, match="origin_variable"):
-        CredentialEntry(
-            location="source.settings.token",
-            origin=origin,
-            reference="netbox-token",
-            identifier="INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
-            worker_receives=True,
-        )
+        CredentialSettingEntry(location="source.settings.token", field="token", origin=origin)
+
+
+def test_credential_entry_gives_the_command_that_creates_it() -> None:
+    token = CredentialEntry(location="source.credential", name="netbox-token", fields=("token",))
+    account = CredentialEntry(location="source.credential", name="aci-account", fields=("username", "password"))
+    assert token.command == "infrahub-sync credentials create netbox-token"
+    assert account.command == "infrahub-sync credentials create aci-account --username <username>"
 
 
 def test_setting_origin_entry_needs_the_variable_for_the_variable_origin() -> None:
@@ -1194,7 +1231,7 @@ def test_env_vars_list_equal_to_the_defaults_keeps_them() -> None:
 def test_env_vars_list_is_named_as_the_credential_origin() -> None:
     settings = {"url": "https://rest.example.com", "api_endpoint": "/api", "token_env_vars": ["MY_TOKEN"]}
     result = _convert(_config(settings, source_name="genericrestapi"))
-    entry = _credential(result, "source.settings.token")
+    entry = _credential_setting(result, "source.settings.token")
     assert entry.origin == "variable"
     assert entry.origin_variable == "a variable named in token_env_vars"
 
@@ -1206,12 +1243,13 @@ def test_peering_manager_env_vars_settings_are_dropped_not_refused() -> None:
     assert "source.settings.token_env_vars" in {entry.location for entry in result.dropped}
 
 
-def test_source_and_destination_sharing_a_credential_reference_is_noted() -> None:
+def test_source_and_destination_naming_the_same_credential_is_noted() -> None:
     data = _config({"url": "https://a.example.com"}, {"url": "https://b.example.com"}, source_name="infrahub")
     result = _convert(data)
+    configuration = _configuration(result)
+    assert configuration["source"]["credential"] == configuration["destination"]["credential"] == "infrahub-token"
     assert any(
-        "source.settings.token and destination.settings.token share the credential reference infrahub-token"
-        in note.text
+        "source.credential and destination.credential name the same stored credential infrahub-token" in note.text
         for note in result.notes
     )
 

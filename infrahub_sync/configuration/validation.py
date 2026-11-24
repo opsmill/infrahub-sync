@@ -18,14 +18,9 @@ from hashlib import blake2b
 from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urlsplit
 
-from pydantic import ValidationError
-
-from .capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, UnknownCredentialMethodError, credential_field_map
 from .credentials import (
-    _ENV_CREDENTIAL_IDENTIFIER,
-    _ENV_IDENTIFIER,
     _TRUNCATION_MARKER,
-    ENV_CREDENTIAL_PREFIX,
     CredentialConfigurationError,
     _bounded_location,
     _render_setting_name_list,
@@ -35,7 +30,6 @@ from .models import (
     _MAX_FINDING_TEXT_LENGTH,
     REDACTED,
     ConfigurationPackage,
-    CredentialReferenceNode,
     ValidationFinding,
     safe_pointer_component,
     sort_findings,
@@ -47,7 +41,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from .capabilities import AdapterConfigurationCapabilities, AdapterRole
-    from .models import CredentialReference
 
 # Absolute settings name where to connect; relative ones name a path beneath it. Applying one
 # rule to both would refuse every legitimate relative endpoint.
@@ -62,19 +55,16 @@ _MAX_REPORTED_FINDINGS = 256
 
 _CODE_ADAPTER_ROLE_MISMATCH = "adapter-role-mismatch"
 _CODE_ADAPTER_VALIDATOR_FINDING = "adapter-validator-finding"
-_CODE_CREDENTIAL_PATH_NOT_DECLARED = "credential-path-not-declared"
+_CODE_CREDENTIAL_NOT_USED = "credential-not-used"
 _CODE_ENDPOINT_NOT_ABSOLUTE = "endpoint-not-absolute"
 _CODE_ENDPOINT_NOT_RELATIVE = "endpoint-not-relative"
 _CODE_FINDING_LIMIT_REACHED = "finding-limit-reached"
 _CODE_INLINE_CREDENTIAL_VALUE = "inline-credential-value"
-_CODE_MALFORMED_CREDENTIAL_REFERENCE = "malformed-credential-reference"
 _CODE_MISSING_ADAPTER = "missing-adapter"
 _CODE_UNSUPPORTED_SYNC_STORE = UNSUPPORTED_STORE_REASON
 _CODE_SETTING_CONTAINS_CREDENTIAL_MATERIAL = "setting-contains-credential-material"
 _CODE_SETTING_NOT_A_STRING = "setting-not-a-string"
 _CODE_UNDECLARED_SETTING = "undeclared-setting"
-_CODE_UNKNOWN_CREDENTIAL_PROVIDER = "unknown-credential-provider"
-_CODE_UNKNOWN_CREDENTIAL_REFERENCE = "unknown-credential-reference"
 
 # "~2" marks a truncated diagnostic pointer, and the finding pointer grammar refuses it: a "~"
 # there must introduce "~0" or "~1". This marker is legal and, in a finding as the core emits
@@ -94,9 +84,7 @@ _LOCATION_DIGEST_LENGTH = 8
 # The checks whose findings the location-precedence rule arbitrates between. A role's own name
 # is the check identity for everything judged against that role's declared surface, including
 # its adapter-owned validator, so two problems that role reports at one pointer both survive.
-_CHECK_CREDENTIALS = "credentials"
 _CHECK_STORE = "store"
-_CHECK_WALK = "walk"
 _CHECK_OMISSIONS = "omissions"
 _CHECK_OPTIONAL_FEATURES = "features"
 
@@ -251,77 +239,15 @@ def _unbounded_settings_pointer(prefix: str, path: str) -> str:
     return prefix + "".join(f"/{_unbounded_component(component)}" for component in path.split("."))
 
 
-def credential_namespace_finding(
-    name: str, reference: CredentialReference, *, secrets: Sequence[str] = ()
-) -> ValidationFinding | None:
-    """Check the env namespace without resolving values or exposing the identifier."""
-    if reference.provider != "env" or _ENV_CREDENTIAL_IDENTIFIER.fullmatch(reference.identifier) is not None:
-        return None
-    return _accumulated(
-        code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
-        location=f"/credentials/{_rendered_component(name, secrets)}",
-        unbounded_location=f"/credentials/{_unbounded_component(name)}",
-        message=(
-            f"credential reference {_rendered_component(name, secrets)!r} names an "
-            "environment identifier outside the credential namespace; it must start "
-            f"with {ENV_CREDENTIAL_PREFIX!r} followed by a name"
-        ),
-    ).finding
-
-
-def _accumulate_reference_declarations(
-    package: ConfigurationPackage, secrets: Sequence[str]
-) -> list[_AccumulatedFinding]:
-    """Validate provider names and identifiers without resolving credential values."""
-    accumulated: list[_AccumulatedFinding] = []
-    # Insertion order, not sorted: it decides which defect the wrapper reports.
-    for name, reference in package.credentials.items():
-        location = f"/credentials/{_rendered_component(name, secrets)}"
-        unbounded = f"/credentials/{_unbounded_component(name)}"
-        if reference.provider != "env":
-            accumulated.append(
-                _accumulated(
-                    code=_CODE_UNKNOWN_CREDENTIAL_PROVIDER,
-                    location=location,
-                    unbounded_location=unbounded,
-                    message=(
-                        f"credential reference {_rendered_component(name, secrets)!r} uses provider "
-                        f"{_rendered_component(reference.provider, secrets)!r}, which is not installed"
-                    ),
-                )
-            )
-        if _ENV_IDENTIFIER.fullmatch(reference.identifier) is None:
-            accumulated.append(
-                _accumulated(
-                    code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
-                    location=location,
-                    unbounded_location=unbounded,
-                    message=(
-                        f"credential reference {_rendered_component(name, secrets)!r} has an invalid "
-                        "environment identifier"
-                    ),
-                )
-            )
-        elif (finding := credential_namespace_finding(name, reference, secrets=secrets)) is not None:
-            accumulated.append(_AccumulatedFinding(finding=finding, legacy_message=finding.message))
-    return accumulated
-
-
 def _accumulate_undeclared_settings(
     *,
     settings: Mapping[str, object],
     allowed_settings: frozenset[str],
     prefix: str,
     render: Callable[[Iterable[str]], str],
-    owned_locations: list[str],
     secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
-    """Report one finding per undeclared name, so N undeclared settings give N findings.
-
-    A name the surface does not declare is condemned whole: this check owns that setting and
-    everything under it. A name the surface does declare is not owned here, because judging
-    the name says nothing about the value.
-    """
+    """Report one finding per undeclared name, so N undeclared settings give N findings."""
     unsupported = set(settings) - allowed_settings
     if not unsupported:
         return []
@@ -330,13 +256,11 @@ def _accumulate_undeclared_settings(
     legacy_message = render(unsupported)
     accumulated: list[_AccumulatedFinding] = []
     for name in sorted(unsupported):
-        unbounded = f"{prefix}/{_unbounded_component(name)}"
-        owned_locations.append(unbounded)
         accumulated.append(
             _accumulated(
                 code=_CODE_UNDECLARED_SETTING,
                 location=f"{prefix}/{_rendered_component(name, secrets)}",
-                unbounded_location=unbounded,
+                unbounded_location=f"{prefix}/{_unbounded_component(name)}",
                 message=render({name}),
                 legacy_message=legacy_message,
             )
@@ -344,74 +268,27 @@ def _accumulate_undeclared_settings(
     return accumulated
 
 
-def _accumulate_reference_node(
-    package: ConfigurationPackage,
-    value: object,
-    *,
-    location: str,
-    unbounded_location: str,
-    secrets: Sequence[str],
-) -> list[_AccumulatedFinding]:
-    """Validate one node at a declared credential-bearing setting path."""
-    if not isinstance(value, Mapping) or "$credential" not in value:
-        return [
-            _accumulated(
-                code=_CODE_INLINE_CREDENTIAL_VALUE,
-                location=location,
-                unbounded_location=unbounded_location,
-                message=f"{location} contains an inline credential value",
-            )
-        ]
-    try:
-        node = CredentialReferenceNode.model_validate(value)
-    except ValidationError:
-        return [
-            _accumulated(
-                code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
-                location=location,
-                unbounded_location=unbounded_location,
-                message=f"{location} contains a malformed credential reference",
-            )
-        ]
-    if node.reference_name not in package.credentials:
-        return [
-            _accumulated(
-                code=_CODE_UNKNOWN_CREDENTIAL_REFERENCE,
-                location=location,
-                unbounded_location=unbounded_location,
-                message=(
-                    f"{location} names unknown credential reference "
-                    f"{_rendered_component(node.reference_name, secrets)!r}"
-                ),
-            )
-        ]
-    return []
-
-
 def _accumulate_credential_paths(
-    package: ConfigurationPackage,
-    settings: Mapping[str, object],
-    paths: tuple[str, ...],
-    prefix: str,
-    owned_locations: list[str],
-    *,
-    secrets: Sequence[str],
+    settings: Mapping[str, object], paths: tuple[str, ...], prefix: str, *, secrets: Sequence[str]
 ) -> list[_AccumulatedFinding]:
-    """Judge every declared credential-bearing path present in these settings, and own it."""
+    """Refuse a value at every declared credential-bearing path present in these settings.
+
+    A block takes its credential from the stored credential it names with ``credential``. A
+    block that names one is refused at parse time when it also declares a credential setting,
+    so a value found here belongs to a block that names none.
+    """
     accumulated: list[_AccumulatedFinding] = []
     for path in paths:
         present, value = _setting_at_path(settings, path)
         if not present or value is None:
             continue
-        unbounded = _unbounded_settings_pointer(prefix, path)
-        owned_locations.append(unbounded)
-        accumulated.extend(
-            _accumulate_reference_node(
-                package,
-                value,
-                location=_settings_pointer(prefix, path, secrets),
-                unbounded_location=unbounded,
-                secrets=secrets,
+        location = _settings_pointer(prefix, path, secrets)
+        accumulated.append(
+            _accumulated(
+                code=_CODE_INLINE_CREDENTIAL_VALUE,
+                location=location,
+                unbounded_location=_unbounded_settings_pointer(prefix, path),
+                message=f"{location} contains an inline credential value",
             )
         )
     return accumulated
@@ -566,7 +443,6 @@ def _accumulate_adapter(
     *,
     role: AdapterRole,
     settings: Mapping[str, object],
-    owned_locations: list[str],
     secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Run every check a declared adapter surface supports, in the shipped order."""
@@ -593,7 +469,6 @@ def _accumulate_adapter(
                 "declared settings "
                 f"for the {role} role: {_render_setting_name_list(names, secrets)}"
             ),
-            owned_locations=owned_locations,
             secrets=secrets,
         )
     )
@@ -602,19 +477,17 @@ def _accumulate_adapter(
         if value is None:
             continue
         location = _settings_pointer(prefix, setting_name, secrets)
-        owned_locations.append(_unbounded_settings_pointer(prefix, setting_name))
         accumulated.extend(_accumulate_url_setting(value, setting_name=setting_name, location=location))
     accumulated.extend(_accumulate_adapter_validator(package, capabilities, role=role, secrets=secrets))
     paths = capabilities.credential_setting_paths
-    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations, secrets=secrets))
+    accumulated.extend(_accumulate_credential_paths(settings, paths, prefix, secrets=secrets))
     return accumulated
 
 
-def _accumulate_store(package: ConfigurationPackage, owned_locations: list[str]) -> list[_AccumulatedFinding]:
+def _accumulate_store(package: ConfigurationPackage) -> list[_AccumulatedFinding]:
     """Refuse a store block without inspecting or exposing its settings."""
     if package.configuration.store is None:
         return []
-    owned_locations.append("/configuration/store")
     return [
         _accumulated(
             code=_CODE_UNSUPPORTED_SYNC_STORE,
@@ -629,72 +502,40 @@ def _is_within(location: str, prefixes: tuple[str, ...]) -> bool:
     return any(location == prefix or location.startswith(f"{prefix}/") for prefix in prefixes)
 
 
-def _accumulate_reference_nodes(
-    value: object,
-    *,
-    location: str,
-    unbounded_location: str,
-    owned_locations: tuple[str, ...],
-    accumulated: list[_AccumulatedFinding],
-    secrets: Sequence[str],
-) -> None:
-    """Report every use of the reserved ``$credential`` key no surface check has authority over.
+def _accumulate_unused_credential(
+    adapter: Any, *, role: AdapterRole, secrets: Sequence[str]
+) -> list[_AccumulatedFinding]:
+    """Refuse a named credential the block's adapter and ``auth_method`` never use.
 
-    A surface check owns the setting it judged and everything beneath it, so a node under an
-    owned pointer belongs to a defect that check already reported — or sits in a subtree no
-    surface exists to judge. Reporting it here would give one defect a second, vaguer finding
-    at a deeper pointer.
-
-    Ownership is decided on the **unbounded** pointer. Truncation and redaction both map
-    distinct declared keys onto one rendered component, and a check that owned a rendered
-    pointer would prune an unrelated node that merely renders the same way.
+    A package that names a credential it does not use would keep that credential in use, and
+    so undeletable, for nothing. An ``auth_method`` the adapter does not accept is not judged
+    here: whether the block needs a credential is then unknown.
     """
-    # The one question, asked once per node. Pruning here rather than at the "$credential"
-    # test below is the same answer: every descendant of an owned pointer is within it too.
-    if _is_within(unbounded_location, owned_locations):
-        return
-    if isinstance(value, Mapping):
-        if "$credential" in value:
-            accumulated.append(
-                _accumulated(
-                    code=_CODE_CREDENTIAL_PATH_NOT_DECLARED,
-                    location=location,
-                    unbounded_location=unbounded_location,
-                    message=f"{_bounded_location(location)} is not a credential-bearing setting",
-                )
-            )
-            return
-        # Insertion order, not sorted: it decides which defect the wrapper reports.
-        for key, item in value.items():
-            _accumulate_reference_nodes(
-                item,
-                location=f"{location}/{_rendered_component(key, secrets)}",
-                unbounded_location=f"{unbounded_location}/{_unbounded_component(key)}",
-                owned_locations=owned_locations,
-                accumulated=accumulated,
-                secrets=secrets,
-            )
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            _accumulate_reference_nodes(
-                item,
-                location=f"{location}/{index}",
-                unbounded_location=f"{unbounded_location}/{index}",
-                owned_locations=owned_locations,
-                accumulated=accumulated,
-                secrets=secrets,
-            )
+    name = adapter.credential
+    if name is None:
+        return []
+    try:
+        field_map = credential_field_map(adapter.name, adapter.settings or {})
+    except UnknownCredentialMethodError:
+        return []
+    if field_map.needs_credential:
+        return []
+    return [
+        _accumulated(
+            code=_CODE_CREDENTIAL_NOT_USED,
+            location=f"/configuration/{role}/credential",
+            message=(
+                f"{role} names credential {_rendered_component(name, secrets)!r}, but adapter "
+                f"{_rendered_component(adapter.name, secrets)!r} with this auth_method uses no credential"
+            ),
+        )
+    ]
 
 
 def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> tuple[_AccumulatedFinding, ...]:
     """Run every check in the shipped execution order, never raising for a declared defect."""
     accumulated: list[_AccumulatedFinding] = []
-    # Every unbounded pointer a surface check has authority over. A check appends the setting
-    # it judged, and a surface that turns out not to exist appends its whole settings subtree —
-    # the case where a check could not judge. The walk below reports nowhere within them.
-    owned_locations: list[str] = []
-    accumulated.extend(_from_check(_CHECK_CREDENTIALS, _accumulate_reference_declarations(package, secrets)))
-    accumulated.extend(_from_check(_CHECK_STORE, _accumulate_store(package, owned_locations)))
+    accumulated.extend(_from_check(_CHECK_STORE, _accumulate_store(package)))
     source = package.configuration.source
     destination = package.configuration.destination
     source_capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(source.name)
@@ -722,7 +563,6 @@ def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> t
                     ],
                 )
             )
-            owned_locations.append(f"/configuration/{role}/settings")
             continue
         accumulated.extend(
             _from_check(
@@ -732,23 +572,11 @@ def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> t
                     capabilities,
                     role=role,
                     settings=adapter.settings or {},
-                    owned_locations=owned_locations,
                     secrets=secrets,
                 ),
             )
         )
-    # Last: the surface checks above give a more precise reason for a node on an unsupported
-    # setting than "not credential-bearing" would.
-    walked: list[_AccumulatedFinding] = []
-    _accumulate_reference_nodes(
-        package.declared_content(),
-        location="",
-        unbounded_location="",
-        owned_locations=tuple(owned_locations),
-        accumulated=walked,
-        secrets=secrets,
-    )
-    accumulated.extend(_from_check(_CHECK_WALK, walked))
+        accumulated.extend(_from_check(role, _accumulate_unused_credential(adapter, role=role, secrets=secrets)))
     # The warning families run last, appended after the shipped execution order, so a
     # package carrying any legacy defect keeps its shipped first-error message at the
     # wrapper. Warnings before an error here are what the wrapper's first-*error* rule
@@ -816,7 +644,7 @@ def collect_findings(package: ConfigurationPackage, secrets: Sequence[str] = ())
 
 
 def validate_package_credentials(package: ConfigurationPackage) -> None:
-    """Prove bundled adapter settings contain references rather than credential values."""
+    """Prove that the declared package holds no credential value and no other declared defect."""
     accumulated = _accumulate(package)
     for item in accumulated:
         # The first *error* of the untruncated, execution-ordered accumulation: the defect

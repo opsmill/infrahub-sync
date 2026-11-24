@@ -240,8 +240,13 @@ def bearer(value: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {value}"}
 
 
-def build_account_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AccountApi:
-    """Return the API with ``admin``, ``root`` and ``alice``, under the text gate and a clock at ``T0``."""
+def build_account_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, credential_key: bytes | None = None
+) -> AccountApi:
+    """Return the API with ``admin``, ``root`` and ``alice``, under the text gate and a clock at ``T0``.
+
+    With ``credential_key``, the credential routes encrypt with it; without, they answer ``503``.
+    """
     monkeypatch.setenv(SESSION_IDLE_SECONDS_ENV, str(IDLE_SECONDS))
     gate = TextGate()
     monkeypatch.setattr(credentials, "PASSWORD_VERIFICATION_GATE", gate)
@@ -264,9 +269,14 @@ def build_account_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Accoun
     resolver = StoreAccountResolver(store, idle_seconds=IDLE_SECONDS, admin_token=ADMIN_TOKEN, clock=clock)
     service = RunService(store, cast("Any", Orchestration()), secrets=resolver.secret_values, clock=clock)
     routes = ConfigurationRoutes(product_projection=store, secrets=resolver.secret_values)
-    api = AccountApi(
-        client=TestClient(create_app(service, resolver, routes)), store=store, service=service, clock=clock, gate=gate
-    )
+    cipher = None
+    if credential_key is not None:
+        # Imported here: `cryptography` belongs to the `service` extra.
+        from infrahub_sync.service.credential_crypto import CredentialCipher
+
+        cipher = CredentialCipher(credential_key)
+    application = create_app(service, resolver, routes, credential_cipher=cipher)
+    api = AccountApi(client=TestClient(application), store=store, service=service, clock=clock, gate=gate)
     api.add("root", administrator=True)
     api.add("alice")
     return api

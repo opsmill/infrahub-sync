@@ -6,14 +6,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Annotated, Any, Generic, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator, model_validator
 
-from infrahub_sync.configuration.worker_credentials import is_credential_name
+from infrahub_sync.configuration.capabilities import (
+    CredentialField,  # noqa: TC001 - Pydantic resolves this annotation at runtime.
+)
+from infrahub_sync.configuration.models import CREDENTIAL_NAME_PATTERN
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 from infrahub_sync.plan.identity import OPERATION_ID_PATTERN
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # A schedule's generated identifier: ``s-`` and 32 hexadecimal characters.
@@ -458,35 +464,6 @@ class ConfigurationBaseline(BaseModel):
     updated_at: datetime
 
 
-class WorkerEnvironment(BaseModel):
-    """The credential variable names one worker held at its last poll (spec 007 FR-035).
-
-    Names only, never values: each is a set, non-empty variable of the credential namespace.
-    `worker_id` is the worker's name, the identity it has before Prefect resolves its record.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    worker_id: str = Field(min_length=1, max_length=256)
-    credential_names: tuple[str, ...]
-    observed_at: datetime
-
-    @field_validator("observed_at")
-    @classmethod
-    def _aware(cls, value: datetime) -> datetime:
-        """Read a time without a zone as UTC, so it compares with the liveness cutoff, which is in UTC."""
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
-
-    @field_validator("credential_names")
-    @classmethod
-    def _names_only(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        """Refuse anything that is not a credential variable name, so no value can be stored here."""
-        if not all(is_credential_name(name) for name in value):
-            msg = "credential_names holds only variable names of the credential namespace"
-            raise ValueError(msg)
-        return tuple(sorted(set(value)))
-
-
 class BootstrapRecord(BaseModel):
     """The Sync version and work pool the service bootstrap last set up (spec 018 FR-007b).
 
@@ -562,7 +539,7 @@ class MutationReceipt(BaseModel):
     target_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     request_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     reason: str | None = Field(min_length=1)
-    resource_kind: Literal["run", "configuration", "configuration-registry", "schedule"] = "run"
+    resource_kind: Literal["run", "configuration", "configuration-registry", "schedule", "credential"] = "run"
     resource_id: str = Field(min_length=1)
     run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     prefect_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -587,12 +564,12 @@ class MutationReceipt(BaseModel):
         if self.resource_kind == "run" and (self.run_id is None or self.prefect_key is None):
             msg = "a run mutation receipt requires its run and Prefect identifiers"
             raise ValueError(msg)
-        # A receipt of a configuration route or of a schedule route names no run: a schedule
+        # A receipt of a configuration, schedule or credential route names no run: a schedule
         # request creates none, and a scheduled run's own receipt has the resource kind ``run``.
         if self.resource_kind != "run" and any(
             value is not None for value in (self.run_id, self.prefect_key, self.flow_run_id, self.target_run_id)
         ):
-            resource = "schedule" if self.resource_kind == "schedule" else "configuration"
+            resource = self.resource_kind if self.resource_kind in {"schedule", "credential"} else "configuration"
             msg = f"a {resource} mutation receipt cannot carry run or Prefect identifiers"
             raise ValueError(msg)
         if self.state == "accepted" and (self.response_status is None or self.response_body is None):
@@ -775,16 +752,24 @@ RunPage: TypeAlias = StorePage[ProductRun]
 
 
 # An event's dotted type, ``infrahub_sync.<resource>.<action>`` (spec 012, FR-012).
-EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|schedule|account)\.[a-z_]+$"
+EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|schedule|account|credential)\.[a-z_]+$"
 # The kinds of resource an event names besides its primary resource, in the order an event lists them.
-RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "schedule", "branch"]
-_RELATED_KIND_ORDER: dict[str, int] = {"account": 0, "config": 1, "config_version": 2, "schedule": 3, "branch": 4}
+RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "schedule", "branch", "credential"]
+_RELATED_KIND_ORDER: dict[str, int] = {
+    "account": 0,
+    "config": 1,
+    "config_version": 2,
+    "schedule": 3,
+    "branch": 4,
+    "credential": 5,
+}
 
 
 class RelatedResource(BaseModel):
     """One resource an event names besides its primary resource.
 
-    The resource is the actor's account, a configuration, a version, a schedule or a branch.
+    The resource is the actor's account, a configuration, a version, a schedule, a branch or a
+    stored credential, which an event names by its name.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -850,6 +835,8 @@ class EventDetails(BaseModel):
     # The earlier run whose branch or proposed change was replaced.
     replaced_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     cause: str | None = Field(default=None, min_length=1)
+    # The revision of the stored credential an event names (spec 027).
+    revision: int | None = Field(default=None, ge=1)
     # The settings whose stored value a change of a schedule altered, in the order of the
     # change request's fields. Empty when every setting the change sent already had its value.
     changes: tuple[ScheduleSettingChange, ...] | None = None
@@ -1059,6 +1046,104 @@ class ResolvedCredential(BaseModel):
     last_used_at: datetime | None = None
 
     _aware = field_validator("expires_at", "last_used_at")(_require_aware)
+
+
+CREDENTIAL_ID_PATTERN = r"^cred_[0-9a-f]{32}$"
+# The name of a stored credential: lower case, a letter first, at most 63 characters. It cannot change.
+# The pattern a package block uses to name one, so the two cannot drift apart.
+STORED_CREDENTIAL_NAME_PATTERN = CREDENTIAL_NAME_PATTERN
+STORED_CREDENTIAL_DESCRIPTION_MAX_LENGTH = 500
+_CREDENTIAL_KEY_ID_PATTERN = r"^[0-9a-f]{16}$"
+CredentialBlock: TypeAlias = Literal["source", "destination"]
+CredentialStage: TypeAlias = Literal["plan", "verify", "apply", "sync", "resume"]
+# The sets of fields a credential may hold (FR-013). Every other set, all three fields included,
+# is refused.
+CREDENTIAL_FIELD_SETS: frozenset[frozenset[str]] = frozenset(
+    {frozenset({"token"}), frozenset({"username", "password"}), frozenset({"username", "token"})}
+)
+
+
+def is_credential_field_set(fields: Iterable[str]) -> bool:
+    """Return whether these field names, without repetition, are one of the allowed sets."""
+    names = tuple(fields)
+    return len(names) == len(set(names)) and frozenset(names) in CREDENTIAL_FIELD_SETS
+
+
+def _sorted_field_set(value: tuple[str, ...]) -> tuple[str, ...]:
+    if not is_credential_field_set(value):
+        msg = "the fields must be token, username and password, or username and token"
+        raise ValueError(msg)
+    return tuple(sorted(value))
+
+
+class StoredCredential(BaseModel):
+    """One stored credential, without its value: the names of its fields and its current revision.
+
+    ``created_by`` and ``updated_by`` are account identifiers; the HTTP boundary shows names.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    credential_id: str = Field(pattern=CREDENTIAL_ID_PATTERN)
+    name: str = Field(pattern=STORED_CREDENTIAL_NAME_PATTERN)
+    description: str = Field(default="", max_length=STORED_CREDENTIAL_DESCRIPTION_MAX_LENGTH)
+    current_revision: int = Field(ge=1)
+    # The fields of the current revision, sorted.
+    fields: tuple[CredentialField, ...]
+    created_by: str = Field(min_length=1)
+    created_at: datetime
+    updated_by: str = Field(min_length=1)
+    updated_at: datetime
+
+    _aware = field_validator("created_at", "updated_at")(_require_aware)
+    _field_set = field_validator("fields")(_sorted_field_set)
+
+
+class StoredCredentialRevision(BaseModel):
+    """One encrypted value of a credential, as the Sync API decrypts it (research R3).
+
+    The nonce and the ciphertext are left out of the representation, and the ciphertext of
+    every serialized form, so that neither reaches a log or an answer.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    credential_id: str = Field(pattern=CREDENTIAL_ID_PATTERN)
+    revision: int = Field(ge=1)
+    fields: tuple[CredentialField, ...]
+    key_id: str = Field(pattern=_CREDENTIAL_KEY_ID_PATTERN)
+    nonce: bytes = Field(min_length=1, repr=False, exclude=True)
+    ciphertext: bytes = Field(min_length=1, repr=False, exclude=True)
+    created_by: str = Field(min_length=1)
+    created_at: datetime
+
+    _aware = field_validator("created_at")(_require_aware)
+    _field_set = field_validator("fields")(_sorted_field_set)
+
+
+class CredentialUse(BaseModel):
+    """The revision of a credential that one stage execution received for one block (research R9).
+
+    ``credential_id`` keeps the revision unambiguous after the credential is deleted and another
+    one takes its name.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(min_length=1)
+    flow_run_id: str = Field(min_length=1)
+    stage: CredentialStage
+    block: CredentialBlock
+    credential_id: str = Field(pattern=CREDENTIAL_ID_PATTERN)
+    credential_name: str = Field(pattern=STORED_CREDENTIAL_NAME_PATTERN)
+    revision: int = Field(ge=1)
+    released_at: datetime
+
+    _aware = field_validator("released_at")(_require_aware)
+
+
+# One page of stored credentials, by name.
+StoredCredentialPage: TypeAlias = StorePage[StoredCredential]
 
 
 ScheduleWriteTarget: TypeAlias = Literal["branch-review", "default-branch"]

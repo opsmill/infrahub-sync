@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
+import httpx
 import pytest
 import yaml
 from typer.testing import CliRunner
@@ -12,6 +16,9 @@ from typer.testing import CliRunner
 from infrahub_sync import cli
 from infrahub_sync.cli import app
 from infrahub_sync.configuration.conversion import V2_NON_CREDENTIAL_VARIABLES
+
+if TYPE_CHECKING:
+    from tests.cli.conftest import FakeSyncAPI
 
 ROOT = Path(__file__).resolve().parents[2]
 NETBOX_EXAMPLE = ROOT / "tests/data/v2_examples/netbox_to_infrahub/config.yml"
@@ -50,15 +57,19 @@ def test_yes_writes_the_package_next_to_the_input_after_the_report(config_file: 
     written = yaml.safe_load(package.read_text(encoding="utf-8"))
     assert written["format_version"] == 1
     assert written["configuration"]["name"] == "from-netbox"
-    assert set(written["credentials"]) == {"netbox-token", "infrahub-token"}
+    assert "credentials" not in written
+    assert written["configuration"]["source"]["credential"] == "netbox-token"
+    assert written["configuration"]["destination"]["credential"] == "infrahub-token"
+    assert "token" not in written["configuration"]["source"]["settings"]
+    assert "token" not in written["configuration"]["destination"]["settings"]
+    assert "INFRAHUB_SYNC_CREDENTIAL_" not in stdout
+    assert ".env" not in stdout
     assert stdout.startswith('Converting config.yml (v1 or v2 configuration "from-netbox")')
     sections = ["Credentials (", "Settings taken from", "Notes:", "Next steps:"]
     positions = [stdout.index(section) for section in sections]
     assert positions == sorted(positions)
-    assert (
-        "  1. Set INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN in .env"
-        in stdout
-    )
+    assert "  1. infrahub-sync credentials create netbox-token" in stdout
+    assert "  2. infrahub-sync credentials create infrahub-token" in stdout
     assert f"  3. infrahub-sync configs register {package}" in stdout
     assert set(config_file.parent.iterdir()) == {config_file, package}
 
@@ -78,7 +89,9 @@ def test_report_is_printed_before_the_question_and_nothing_is_written_before_it(
     code, stdout, stderr = _convert(str(config_file))
 
     assert code == 0, stderr
-    assert "Credentials (set these in the Sync deployment's .env file):" in stdout
+    assert "Credentials (create each stored credential before you register the package):" in stdout
+    assert "netbox-token (token)" in stdout
+    assert "infrahub-token (token)" in stdout
     assert package.exists()
 
 
@@ -409,3 +422,239 @@ def test_refusal_without_a_printable_value_has_an_empty_value_column(tmp_path: P
     )
     assert _CANARY not in stderr
     assert not (tmp_path / "package.yml").exists()
+
+
+# --- the stored credentials to create (spec 027, User Story 3) ----------------------------
+
+_LITERAL = "canary-literal-credential-value-5d1e"
+_LITERAL_DIGEST = hashlib.sha256(_LITERAL.encode()).hexdigest()
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _holds_literal(text: str) -> bool:
+    """Whether a text holds the literal credential value; the value never reaches an assertion message."""
+    size = len(_LITERAL)
+    return any(
+        hashlib.sha256(text[start : start + size].encode()).hexdigest() == _LITERAL_DIGEST
+        for start in range(max(len(text) - size + 1, 0))
+    )
+
+
+@pytest.fixture
+def account_config_file(tmp_path: Path) -> Path:
+    """A v2 file whose source takes a username and a password, and whose destination takes a token.
+
+    The password and the token are literal values in the file, as some v2 files hold them.
+    """
+    target = tmp_path / "config.yml"
+    target.write_text(
+        yaml.safe_dump(
+            {
+                "name": "from-cisco-aci",
+                "source": {
+                    "name": "aci",
+                    "settings": {
+                        "url": "https://apic.example.com",
+                        "username": "${CISCO_APIC_USERNAME}",
+                        "password": _LITERAL,
+                    },
+                },
+                "destination": {
+                    "name": "infrahub",
+                    "settings": {"url": "https://infrahub.example.com", "token": _LITERAL},
+                },
+                "schema_mapping": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return target
+
+
+def test_report_lists_each_credential_with_its_fields_and_its_command(account_config_file: Path) -> None:
+    code, stdout, stderr = _convert(str(account_config_file), "--yes")
+
+    assert code == 0, stderr
+    lines = stdout.splitlines()
+    assert (
+        f"  {'source.credential':<28} aci-account (username, password): "
+        "infrahub-sync credentials create aci-account --username <username>"
+    ) in lines
+    assert (
+        f"  {'destination.credential':<28} infrahub-token (token): infrahub-sync credentials create infrahub-token"
+    ) in lines
+    assert (
+        f"  {'source.settings.username':<28} ${{CISCO_APIC_USERNAME}} in config.yml -> field username of aci-account"
+        in lines
+    )
+    assert f"  {'source.settings.password':<28} a literal value in config.yml -> field password of aci-account" in lines
+    assert (
+        f"  {'destination.settings.token':<28} a literal value in config.yml -> field token of infrahub-token" in lines
+    )
+    steps = lines[lines.index("Next steps:") + 1 :]
+    assert steps == [
+        "  1. infrahub-sync credentials create infrahub-token",
+        "  2. infrahub-sync credentials create aci-account --username <username>",
+        f"  3. infrahub-sync configs register {account_config_file.parent / 'package.yml'}",
+    ]
+
+
+def test_report_and_package_never_hold_a_literal_credential_value(account_config_file: Path) -> None:
+    code, stdout, stderr = _convert(str(account_config_file), "--yes")
+
+    assert code == 0
+    package = (account_config_file.parent / "package.yml").read_text(encoding="utf-8")
+    assert not _holds_literal(stdout)
+    assert not _holds_literal(stderr)
+    assert not _holds_literal(package)
+    written = yaml.safe_load(package)["configuration"]
+    assert written["source"]["credential"] == "aci-account"
+    assert not {"username", "password"} & set(written["source"]["settings"])
+    assert "token" not in written["destination"]["settings"]
+    assert (
+        "  warning: config.yml still holds a literal value for source.settings.password; remove it once V3 works"
+        in (stdout.splitlines())
+    )
+
+
+def test_help_describes_the_stored_credentials_of_the_report() -> None:
+    result = RUNNER.invoke(app, ["configs", "convert", "--help"], terminal_width=200)
+
+    text = " ".join(_ANSI.sub("", result.output).split())
+    assert result.exit_code == 0
+    assert "each stored credential to create" in text
+    assert "infrahub-sync credentials create" in text
+    assert "environment variable the Sync worker reads" not in text
+    assert "Compose" not in text
+
+
+def _refused_registration(*credentials: dict[str, Any], reason: str = "credential-not-found") -> httpx.Response:
+    """Return the answer of the Sync API to a registration that names stored credentials it cannot use."""
+    error: dict[str, Any] = {
+        "code": "configs-validation",
+        "message": "the configuration service refused the request",
+        "status": 422,
+        "family": "validation",
+        "reason": reason,
+        "details": {"credentials": list(credentials)},
+    }
+    return httpx.Response(422, json={"error": error})
+
+
+def _register(package: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[int, str, str]:
+    monkeypatch.setenv("INFRAHUB_SYNC_API_URL", "http://127.0.0.1:8001")
+    monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", "ifs_convert_test_token")
+    result = RUNNER.invoke(app, ["configs", "register", str(package)])
+    return result.exit_code, result.stdout, result.stderr
+
+
+def test_registration_before_the_credentials_exist_names_each_missing_credential_and_its_fields(
+    account_config_file: Path, sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, _, stderr = _convert(str(account_config_file), "--yes")
+    assert code == 0, stderr
+    package = account_config_file.parent / "package.yml"
+    sync_api.answers["POST /configs"] = _refused_registration(
+        {"block": "source", "name": "aci-account", "code": "credential-not-found", "fields": ["password", "username"]},
+        {"block": "destination", "name": "infrahub-token", "code": "credential-not-found", "fields": ["token"]},
+    )
+
+    code, _, stderr = _register(package, monkeypatch)
+
+    assert code == 1
+    sent = cast("dict[str, Any]", sync_api.body())["package"]["configuration"]
+    assert sent["source"]["credential"] == "aci-account"
+    assert sent["destination"]["credential"] == "infrahub-token"
+    lines = stderr.splitlines()
+    assert "reason: credential-not-found" in lines
+    assert (
+        "credential: source names aci-account, which does not exist; it needs username, password; "
+        "an administrator creates it with: infrahub-sync credentials create aci-account --username <username>"
+    ) in lines
+    assert (
+        "credential: destination names infrahub-token, which does not exist; it needs token; "
+        "an administrator creates it with: infrahub-sync credentials create infrahub-token"
+    ) in lines
+    assert not _holds_literal(stderr)
+
+
+@pytest.mark.parametrize(
+    ("fields", "line"),
+    [
+        pytest.param(
+            ["token"],
+            "which does not hold token; an administrator sets it with: infrahub-sync credentials set netbox-token",
+            id="token",
+        ),
+        # `credentials set` replaces every field, so the command takes the username again.
+        pytest.param(
+            ["password"],
+            "which does not hold password; an administrator sets it with: "
+            "infrahub-sync credentials set netbox-token --username <username>",
+            id="password",
+        ),
+        pytest.param(
+            ["password", "username"],
+            "which does not hold username, password; an administrator sets it with: "
+            "infrahub-sync credentials set netbox-token --username <username>",
+            id="username-and-password",
+        ),
+    ],
+)
+def test_registration_names_the_fields_that_a_stored_credential_does_not_hold(
+    config_file: Path, sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch, fields: list[str], line: str
+) -> None:
+    assert _convert(str(config_file), "--yes")[0] == 0
+    sync_api.answers["POST /configs"] = _refused_registration(
+        {"block": "source", "name": "netbox-token", "code": "credential-field-missing", "fields": fields},
+        reason="credential-field-missing",
+    )
+
+    code, _, stderr = _register(config_file.parent / "package.yml", monkeypatch)
+
+    assert code == 1
+    assert f"credential: source names netbox-token, {line}" in stderr.splitlines()
+
+
+def test_registration_refused_by_a_sync_api_that_sends_no_details_prints_the_reason_only(
+    config_file: Path, sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _convert(str(config_file), "--yes")[0] == 0
+    answer = _refused_registration().json()
+    del answer["error"]["details"]
+    sync_api.answers["POST /configs"] = httpx.Response(422, json=answer)
+
+    code, _, stderr = _register(config_file.parent / "package.yml", monkeypatch)
+
+    assert code == 1
+    assert "reason: credential-not-found" in stderr.splitlines()
+    assert "credential:" not in stderr
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        pytest.param({"credentials": "netbox-token"}, id="not-a-list"),
+        pytest.param({"credentials": [{"block": "source", "name": "netbox-token"}]}, id="no-code"),
+        pytest.param(
+            {"credentials": [{"block": "worker", "name": "n", "code": "credential-not-found", "fields": []}]},
+            id="unknown-block",
+        ),
+        pytest.param(
+            {"credentials": [{"block": "source", "name": "n", "code": "credential-not-found", "fields": [1]}]},
+            id="field-not-a-text",
+        ),
+    ],
+)
+def test_registration_refusal_with_malformed_details_is_a_protocol_error(
+    config_file: Path, sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch, details: dict[str, Any]
+) -> None:
+    assert _convert(str(config_file), "--yes")[0] == 0
+    answer = _refused_registration().json()
+    answer["error"]["details"] = details
+    sync_api.answers["POST /configs"] = httpx.Response(422, json=answer)
+
+    code, _, stderr = _register(config_file.parent / "package.yml", monkeypatch)
+
+    assert code == 1
+    assert stderr.splitlines()[0] == "error: protocol"

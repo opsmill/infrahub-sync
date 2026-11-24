@@ -36,8 +36,8 @@ import { MappingList } from "./detail-mapping";
 import { MappingDetail } from "./detail-mapping-panel";
 import { PackageDropArea } from "./PackageDropArea";
 import {
+  blockCredentials,
   blockingNamesake,
-  credentialVariables,
   declaredContent,
   defaultBranch,
   isAbort,
@@ -359,7 +359,7 @@ export function PackageReview({
     : compared === undefined
       ? `Add a version to ${name}`
       : reviewTitle(name ?? "", (compared ?? 0) + 1);
-  const credentials = content ? credentialVariables(content) : [];
+  const credentials = content ? blockCredentials(content) : [];
   const sourceLabel = configuration ? describeSystem(configuration.source).label : "Source";
   const destinationLabel = configuration
     ? describeSystem(configuration.destination).label
@@ -542,17 +542,17 @@ export function PackageReview({
 
           <section aria-labelledby="review-credentials" className="flex flex-col gap-1.5">
             <h3 id="review-credentials" className="font-medium text-foreground text-sm">
-              Credential variables
+              Stored credentials
             </h3>
             {credentials.length === 0 ? (
               <p className="text-foreground-muted text-sm">
-                The package refers to no credential variable.
+                The package names no stored credential.
               </p>
             ) : (
               <ul className="flex flex-wrap gap-1.5">
-                {credentials.map((variable) => (
-                  <li key={variable}>
-                    <code className={CODE_CHIP}>{variable}</code>
+                {credentials.map(({ block, name }) => (
+                  <li key={block} className="text-foreground-muted text-sm">
+                    {block}: <code className={CODE_CHIP}>{name}</code>
                   </li>
                 ))}
               </ul>

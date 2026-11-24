@@ -1,7 +1,6 @@
 """HTTP-only adapter for the shared configuration application service."""
 
-import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from functools import wraps
 from hashlib import sha256
@@ -28,6 +27,8 @@ from infrahub_sync.client.models import (
     ValidationReportResource,
 )
 from infrahub_sync.configuration import ValidationFinding
+from infrahub_sync.configuration.credential_admission import STORED_CREDENTIAL_CODES, StoredCredentialFinding
+from infrahub_sync.configuration.removed_credential_format import CREDENTIAL_FORMAT_REMOVED_REASON
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.canonical import canonical_json_bytes
@@ -47,7 +48,6 @@ from .events import (
     config_decision_type,
     config_event,
 )
-from .liveness import LivenessPolicy
 from .models import ConfigErrorEnvelope, ConfigMutationRequest, ErrorEnvelope
 from .paging import (
     DEFAULT_LIMIT,
@@ -169,11 +169,22 @@ def _registrable_document(document: str) -> dict[str, Any]:
 class ConfigurationAPIError(Exception):
     """Fixed public representation of one shared configuration-service refusal."""
 
-    def __init__(self, status: int, family: str, *, reason: str | None = None, proven_pre_effect: bool = False) -> None:
+    def __init__(
+        self,
+        status: int,
+        family: str,
+        *,
+        reason: str | None = None,
+        proven_pre_effect: bool = False,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         self.status = status
         self.family = family
         self.reason = reason
         self.proven_pre_effect = proven_pre_effect
+        # Set on a refused registration that names stored credentials which cannot serve their
+        # blocks: `{"credentials": [{"block", "name", "code", "fields"}]}`, with no value.
+        self.details = details
 
 
 def _provider_error_boundary(operation: Any) -> Any:
@@ -236,20 +247,22 @@ class ConfigurationRoutes:
         product_projection: ProductProjection,
         service: Any = configs,
         secrets: tuple[str, ...] = (),
-        worker_liveness_seconds: float | None = None,
     ) -> None:
         self._projection = product_projection
         self._service = service
         self._secrets = secrets
-        # How recently a worker must have published its credential variable names to count as
-        # live: the service liveness rule, from the same setting `serve` reads.
-        self._worker_liveness_seconds = (
-            LivenessPolicy.from_environment(
-                worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10")
-            ).stall_threshold_seconds
-            if worker_liveness_seconds is None
-            else worker_liveness_seconds
-        )
+        # Reads the fields of a stored credential for the destination schema read of `validate`;
+        # the application sets it, with its encryption key (spec 027, FR-004).
+        self._credential_values: Callable[[str], Mapping[str, str]] | None = None
+
+    def read_stored_credentials_with(self, credential_values: Callable[[str], Mapping[str, str]]) -> None:
+        """Set the function that reads the fields of a stored credential for the destination schema read.
+
+        ``validate`` with a branch reads the destination schema. When the destination names a
+        stored credential, the read takes its token from this function, which decrypts it
+        inside the request. Without it, that read becomes one finding and sends no request.
+        """
+        self._credential_values = credential_values
 
     def _call(self, operation: Any, **kwargs: Any) -> Any:
         """Translate configuration service refusals into fixed API classifications.
@@ -273,8 +286,21 @@ class ConfigurationRoutes:
             if error_type is self._service.ConfigsRequestError:
                 raise ConfigurationAPIError(400, "request", proven_pre_effect=True) from None
             if error_type is self._service.ConfigsValidationError:
-                reason = UNSUPPORTED_STORE_REASON if error.reason == UNSUPPORTED_STORE_REASON else None
-                raise ConfigurationAPIError(422, "validation", reason=reason, proven_pre_effect=True) from None
+                # The fixed reasons a refusal may name: the unsupported store, the removed
+                # credential format (spec 027, FR-021), and the codes of a named stored
+                # credential that cannot serve its block (FR-008).
+                named = (
+                    error.reason in {UNSUPPORTED_STORE_REASON, CREDENTIAL_FORMAT_REMOVED_REASON}
+                    or error.reason in STORED_CREDENTIAL_CODES
+                )
+                reason = error.reason if named else None
+                raise ConfigurationAPIError(
+                    422,
+                    "validation",
+                    reason=reason,
+                    proven_pre_effect=True,
+                    details=self._stored_credential_details(error.stored_credentials),
+                ) from None
             if error_type is self._service.ConfigsNotFoundError:
                 raise ConfigurationAPIError(404, "not-found", reason=error.reason, proven_pre_effect=True) from None
             if error_type is self._service.ConfigsStorageError:
@@ -282,6 +308,21 @@ class ConfigurationRoutes:
             if error_type is self._service.ConfigsInternalError:
                 raise ConfigurationAPIError(503, "internal") from None
             raise ConfigurationAPIError(503, "configs") from None
+
+    def _stored_credential_details(self, refused: tuple[StoredCredentialFinding, ...]) -> dict[str, Any] | None:
+        """Return the details of a registration refused for its stored credentials, or ``None``.
+
+        One entry for each block whose named credential does not exist or does not hold a field
+        the block needs: the block, the credential name, the code and the field names. A name
+        comes from the package, so it is redacted as the message of a finding is. A block, a
+        code and a field name come from fixed lists. No entry holds a credential value.
+        """
+        if not refused:
+            return None
+        entries = [item.entry() for item in refused]
+        for entry in entries:
+            entry["name"] = configs.redact_public_field("message", str(entry["name"]), self._secrets)
+        return {"credentials": entries}
 
     def register(
         self,
@@ -402,11 +443,12 @@ class ConfigurationRoutes:
         whole before the diagnostic bounds cut it, and the same set is applied again to every
         finding on the returned page.
 
-        With ``branch``, the destination checks run against that Infrahub branch and the
-        package's credential references are compared with what the live workers hold (spec
-        007 FR-034 to FR-036). Without it, validation judges declared content only, as before.
-        """
+        With ``branch``, a destination that names a stored credential is read with its token,
+        decrypted inside this request and returned in no finding (spec 027, FR-004).
 
+        With ``branch``, the destination checks run against that Infrahub branch (spec 007
+        FR-034 to FR-036). Without it, validation judges declared content only, as before.
+        """
         report = self._call(
             self._service.validate,
             config_id=config_id,
@@ -466,8 +508,7 @@ class ConfigurationRoutes:
         if branch is None:
             return {}
         return {
-            "destination_schema": DestinationSchemaOptions(branch=branch),
-            "worker_liveness_seconds": self._worker_liveness_seconds,
+            "destination_schema": DestinationSchemaOptions(branch=branch, credential_values=self._credential_values)
         }
 
     def _findings_page(self, findings: Sequence[ValidationFinding], *, offset: int, limit: int) -> dict[str, Any]:

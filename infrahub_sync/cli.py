@@ -28,7 +28,7 @@ import typer
 import yaml
 from pydantic import ValidationError
 
-from infrahub_sync import cli_accounts, cli_session
+from infrahub_sync import cli_accounts, cli_credentials, cli_session
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
@@ -82,6 +82,11 @@ from infrahub_sync.configuration.conversion import (
     visible_v2_variables,
 )
 from infrahub_sync.configuration.conversion_report import next_step_lines, refusal_lines, report_lines
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+    STORED_VERSION_FORMAT_REMOVED_MESSAGE,
+)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.demo import prepare as demo_prepare
 from infrahub_sync.demo.errors import DemoError
@@ -410,7 +415,27 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         isinstance(error, APIError) and error.code == UNSUPPORTED_STORE_REASON
     ):
         result = (result[0], (*result[1], ("message", UNSUPPORTED_STORE_MESSAGE)))
-    return result[0], (*result[1], *_name_in_use_message(error), *_account_message(error))
+    return result[0], (
+        *result[1],
+        *_removed_format_message(error),
+        *_name_in_use_message(error),
+        *_account_message(error),
+        *cli_credentials.in_use_fields(error),
+        *cli_credentials.refused_credential_fields(error),
+    )
+
+
+def _removed_format_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return the fixed message of a refusal for the removed credential format, as one more error field.
+
+    A refused registration says what replaces the format, and a refused run says to register a
+    new version (spec 027, FR-021).
+    """
+    if isinstance(error, ConfigsAPIError) and error.reason == CREDENTIAL_FORMAT_REMOVED_REASON:
+        return (("message", CREDENTIAL_FORMAT_REMOVED_MESSAGE),)
+    if isinstance(error, APIError) and error.code == CREDENTIAL_FORMAT_REMOVED_REASON:
+        return (("message", STORED_VERSION_FORMAT_REMOVED_MESSAGE),)
+    return ()
 
 
 def _configuration_with_the_name(error: SyncClientError) -> tuple[str, str] | None:
@@ -432,10 +457,12 @@ def _name_in_use_message(error: SyncClientError) -> tuple[tuple[str, object], ..
 
 
 def _account_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
-    """Return the fixed message of a refusal of an account route, as one more error field."""
+    """Return the fixed message of a refusal of an account or credential route, as one more error field."""
     if not isinstance(error, APIError) or isinstance(error, ConfigsAPIError):
         return ()
-    message = cli_accounts.ACCOUNT_ERROR_MESSAGES.get(error.code)
+    message = cli_accounts.ACCOUNT_ERROR_MESSAGES.get(error.code) or cli_credentials.error_message(
+        error.status, error.code
+    )
     return () if message is None else (("message", message),)
 
 
@@ -563,20 +590,19 @@ def _stdin_is_interactive() -> bool:
     return sys.stdin.isatty()
 
 
-cli_accounts.register(
-    app,
-    cli_accounts.CommandSupport(
-        client=_client,
-        sign_in_client=_sign_in_client,
-        session_client=_session_client,
-        api_url=_api_url,
-        client_errors=_client_errors,
-        echo_fields=_echo_fields,
-        display=_display,
-        # Looked up at each call, so a test that replaces the function is honored.
-        stdin_is_interactive=lambda: _stdin_is_interactive(),  # noqa: PLW0108  # pylint: disable=unnecessary-lambda
-    ),
+_COMMAND_SUPPORT = cli_accounts.CommandSupport(
+    client=_client,
+    sign_in_client=_sign_in_client,
+    session_client=_session_client,
+    api_url=_api_url,
+    client_errors=_client_errors,
+    echo_fields=_echo_fields,
+    display=_display,
+    # Looked up at each call, so a test that replaces the function is honored.
+    stdin_is_interactive=lambda: _stdin_is_interactive(),  # noqa: PLW0108  # pylint: disable=unnecessary-lambda
 )
+cli_accounts.register(app, _COMMAND_SUPPORT)
+cli_credentials.register(app, _COMMAND_SUPPORT)
 
 
 def _is_not_found(error: SyncClientError) -> bool:
@@ -899,8 +925,8 @@ def configs_validate(
         None,
         "--branch",
         help=(
-            "Also check the mapping, the import account's permissions and the workers' credential "
-            "variables against this Infrahub branch. Exits 1 when a finding on the returned page is "
+            "Also check the mapping and the import account's permissions against this Infrahub "
+            "branch, read with the destination's stored credential. Exits 1 when a finding on the returned page is "
             "an error; read every page with --offset to check them all."
         ),
     ),
@@ -1039,8 +1065,8 @@ def configs_check(
         None,
         "--branch",
         help=(
-            "Also check the mapping, the import account's permissions and the workers' credential "
-            "variables against this Infrahub branch. `destination_read` says whether the service read "
+            "Also check the mapping and the import account's permissions against this Infrahub "
+            "branch, read with the destination's stored credential. `destination_read` says whether the service read "
             "the branch's schema."
         ),
     ),
@@ -1108,13 +1134,16 @@ def configs_convert(
     without a terminal unless --yes is given.
 
     \b
-    The report names each credential setting that v2 used with the
-    environment variable the Sync worker reads in V3, each address with its origin (a flag, a v2
-    variable, or config.yml), each dropped key with its reason, and notes.
-    It warns when config.yml still holds a literal credential, when the
-    shipped Compose file does not pass a credential variable to the Sync
-    worker, when an address is localhost or 127.0.0.1, and when an address
-    came from a generic variable name.
+    The package names one stored credential in each block that uses
+    authentication, with `credential: <name>`, and holds no credential setting.
+    The report lists each stored credential to create, with the fields it needs
+    (a token, or a username and a password) and its command, for example
+    `infrahub-sync credentials create netbox-token`. An administrator runs each
+    command before the package is registered; the command asks for the value.
+    The report also lists each address with its origin (a flag, a v2 variable,
+    or config.yml), each dropped key with its reason, and notes. It warns when
+    config.yml still holds a literal credential, when an address is localhost
+    or 127.0.0.1, and when an address came from a generic variable name.
 
     \b
     Exit status 1, nothing written, when the configuration has any of:
@@ -1295,6 +1324,19 @@ def _echo_apply_progress(resource: RunResource) -> None:
         typer.echo(
             _display(f"resume {number}: {resume.actor} {resume.requested_at.isoformat()} {start} {outcome}{wrote}")
         )
+
+
+def _echo_credentials_used(resource: RunResource) -> None:
+    """Print the stored credential and the revision that each stage of a run received for each block.
+
+    Nothing is printed for a run whose stages received no stored credential. The lines hold a
+    stage, a block, a name and a revision only: the Sync API answers no value on this route.
+    """
+    if not resource.credentials_used:
+        return
+    typer.echo("Credentials used:")
+    for used in resource.credentials_used:
+        typer.echo(_display(f"  {used.stage} {used.block}: {used.name} revision {used.revision}"))
 
 
 # What `runs show` prints for an automatic resume record that has not ended.
@@ -2481,6 +2523,10 @@ def runs_show(
     person: whether it started, its cause, the result of its check, where it resumed, and why it did not start.
     Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
     scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
+    A run with a stage that received the values of a stored credential adds a `Credentials used:` section, with one
+    line per stage and block: `<stage> <block>: <name> revision <number>`. The name and the revision are the ones
+    recorded when the stage received the values, so a plan and its apply can show two revisions of one credential,
+    and a credential that was deleted since still shows. No line holds a value.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
@@ -2496,6 +2542,7 @@ def runs_show(
             ("scheduled_start_at", scheduled_start.isoformat() if scheduled_start is not None else None),
         )
     )
+    _echo_credentials_used(resource)
     # The latest execution of each stage; the orchestration list is in run order.
     latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
     # A failed stage's cause and next action, as the run's results recorded them (FR-002).

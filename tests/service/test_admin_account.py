@@ -33,6 +33,7 @@ from infrahub_sync.service.settings import (
     session_idle_seconds,
     validate_settings,
 )
+from tests.helpers.stored_credentials import set_process_start_settings
 from tests.product_store.test_contract import _PROFILES_WITH_POSTGRESQL, _projection_profile
 
 if TYPE_CHECKING:
@@ -398,6 +399,7 @@ def test_an_idle_period_that_is_not_a_whole_number_from_60_to_the_maximum_is_ref
 
 
 def test_main_stops_with_the_message_of_a_bad_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_process_start_settings(monkeypatch)
     monkeypatch.setattr(serve, "install_custom_ca_bundle", lambda: None)
 
     with pytest.raises(SystemExit) as stopped:

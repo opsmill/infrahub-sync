@@ -40,13 +40,14 @@ dependency, and registers the `from-netbox` configuration package. Use
 `examples/nautobot-v1_to_infrahub/` for Nautobot 1.x or `examples/nautobot-v2_to_infrahub/`
 for Nautobot 2.0 and later as a configuration reference, and replace its model and field
 names with the equivalents in your Infrahub schema. Neither Nautobot example ships a
-package envelope yet; wrap its `config.yml` in a `format_version`/`configuration`/`credentials`
+package envelope yet; wrap its `config.yml` in a `format_version`/`configuration`
 package as described below before registering it. The Nautobot 2.0 example's
-`source.settings.token` is also an inline placeholder value, not a real credential — replace
-it with a `$credential` reference before registering, as described in
+`source.settings.token` is also an inline placeholder value, not a real credential. Remove
+it and name a stored credential in the source block with `credential: <name>` before
+registering, as described in
 [Credentials](./configuration-package.mdx#credentials). Registration rejects a literal token
-in `configuration`. The Nautobot 1.x example sets no `source.settings.token` at all; add a
-`$credential` reference for it before registering.
+in `configuration`. The Nautobot 1.x example sets no `source.settings.token` at all; name a
+stored credential in its source block too.
 
 ## Phase 2 — Build the sync project
 

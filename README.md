@@ -115,9 +115,12 @@ in the documentation. In short:
   The later `dev.start` and `dev.restart` commands then keep the worker on that network.
 - `uv run invoke netbox.seed --dataset demo` starts a local NetBox with the official demo
   data. The worker joins NetBox's network and reaches it at `http://netbox:8080`.
-- Set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` (and, with your own Infrahub,
-  `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`), then run `uv run invoke dev.start` again, so
-  the worker has the tokens.
+- `uv run invoke dev.start` stores the two credentials that the shipped examples name,
+  `infrahub-token` and `netbox-token`, in the stack's Sync API. By default it uses the admin
+  token of the stack's own Infrahub and, while the local NetBox runs, its development token. To
+  store another value, for example the token of your own Infrahub, export
+  `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN` or `INFRAHUB_SYNC_DEV_NETBOX_TOKEN`, then run
+  `uv run invoke dev.start` again.
 
 When you are finished, run `uv run invoke dev.destroy` to stop the stack and delete its data.
 
@@ -139,6 +142,11 @@ service:
 export INFRAHUB_SYNC_API_URL=https://sync.example.com
 export INFRAHUB_SYNC_API_TOKEN=<token>
 
+# An administrator creates the two stored credentials that the package names.
+# Each command asks for the token and does not echo it.
+uv run infrahub-sync credentials create netbox-token
+uv run infrahub-sync credentials create infrahub-token
+
 uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
   --reason "register NetBox import"
 uv run infrahub-sync plan --config-id <config-id> --version <version> \
@@ -149,8 +157,9 @@ uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \
 ```
 
 The worker uses the source and destination URLs in the registered package. Environment
-variables such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not change them; only the tokens
-come from the worker's environment. Read the
+variables such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not change them. The tokens are stored
+credentials: the Sync API stores each value encrypted, and the worker gets the values of a run
+from the Sync API, not from its environment. Read the
 [example prerequisites](examples/netbox_to_infrahub/README.md) before you register it.
 
 For a complete walkthrough, see the

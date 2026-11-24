@@ -106,8 +106,12 @@ fixed message, an execution in which all three fields are unset and a stored run
 no registered configuration, before it resolves a configuration or contacts a source or
 destination system. By then the worker has contacted Prefect and claimed the execution.
 
-The worker reads endpoint settings from the package and resolves credential references
-in its environment. Each stage uses private
+The worker reads endpoint settings from the package. It gets the values of the stored
+credentials that the package names from the Sync API, through
+`POST /api/worker/runs/{run_id}/credentials`, after it claimed the execution, and reads no
+source or destination credential from its environment. The direct Prefect flow is different:
+it runs a v2 file outside a registered package, and its adapters still read variables such as
+`NETBOX_TOKEN` from the environment of the serving process. Each stage uses private
 temporary files and exchanges plans through object storage; it reads no shared cache
 location. See the [registered-run lifecycle](sync-architecture.md#one-registered-run) for
 planning, verification, approved writes and result persistence.

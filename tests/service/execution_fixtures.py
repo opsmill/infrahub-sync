@@ -10,17 +10,24 @@ Not a test module: no assertions live here.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from hashlib import sha256
 from itertools import count
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import unquote
+
+import httpx
 
 from infrahub_sync.cache.sidecars import RunFile
+from infrahub_sync.configuration.credential_admission import CREDENTIAL_BLOCKS, STAGE_CREDENTIAL_BLOCKS
 from infrahub_sync.plan.writer import PLAN_DIR_NAME
 from infrahub_sync.product_store import MutationReceipt
 from infrahub_sync.product_store.bundle import BUNDLE_MEDIA_TYPE, PLAN_CHECKPOINT_ARTIFACT_ID, write_bundle
+from infrahub_sync.service import credential_client
 from infrahub_sync.service.checkpoints import publish_plan_checkpoint
+from infrahub_sync.service.settings import WorkerSettings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -30,6 +37,8 @@ if TYPE_CHECKING:
     from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection
 
 _ORDINAL = count(1)
+# The address and the token of a Sync API that exists in no network: the transport answers.
+_RELEASE_SETTINGS = WorkerSettings(api_url="http://sync-api.test", token="worker-token-of-a-fixture")  # noqa: S106
 _WRITE_PURPOSES = ("apply", "sync")
 
 
@@ -185,3 +194,47 @@ def write_applied_sidecar(run_directory: Path, *, mode: str = "apply") -> None:
         raise ValueError(msg)
     run_directory.mkdir(parents=True, exist_ok=True)
     RunFile(path=run_directory / "run.json", status="applied", mode=mode).save()
+
+
+def serve_released_credentials(
+    monkeypatch: Any,  # noqa: ANN401 - pytest's MonkeyPatch.
+    flow_module: Any,  # noqa: ANN401 - the module whose worker client is replaced.
+    values: Mapping[str, Mapping[str, str]],
+    *,
+    projection: ProductProjection | None = None,
+) -> list[str]:
+    """Answer the worker route that releases stored credentials, and return the list of run identifiers asked.
+
+    `values` maps a block (`source`, `destination`) to the fields that the Sync API releases for
+    it. With `projection`, the answer holds only the blocks that the stage of the asking
+    execution connects to, as the route does: an apply, a resume and a verify get no source
+    value. The stage calls the worker's own client, `credential_client.release_run_credentials`,
+    so each value enters the redaction list of the run as it does in a worker. The client sends
+    through a transport that answers in the test process: no request leaves it.
+    """
+    asked: list[str] = []
+
+    def stage_blocks(run_id: str, flow_run_id: str) -> tuple[str, ...]:
+        run = projection.lookup_run(run_id).value if projection is not None else None
+        purposes = [link.purpose for link in run.prefect_executions if link.flow_run_id == flow_run_id] if run else []
+        return STAGE_CREDENTIAL_BLOCKS.get(purposes[-1], CREDENTIAL_BLOCKS) if purposes else CREDENTIAL_BLOCKS
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        # The path is `/api/worker/runs/{run_id}/credentials`.
+        run_id = unquote(request.url.path.split("/")[-2])
+        asked.append(run_id)
+        needed = stage_blocks(run_id, json.loads(request.content)["flow_run_id"])
+        blocks = {
+            block: {"name": f"{block}-credential", "revision": 1, "fields": dict(fields)}
+            for block, fields in values.items()
+            if block in needed
+        }
+        return httpx.Response(200, json={"run_id": run_id, "blocks": blocks})
+
+    def release(run_id: str, flow_run_id: str) -> dict[str, credential_client.ReleasedBlock]:
+        return credential_client.release_run_credentials(
+            run_id, flow_run_id, settings=_RELEASE_SETTINGS, transport=httpx.MockTransport(answer)
+        )
+
+    monkeypatch.setattr(flow_module, "release_run_credentials", release)
+    return asked

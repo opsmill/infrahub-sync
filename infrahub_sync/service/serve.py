@@ -12,11 +12,12 @@ from prefect.client.orchestration import get_client
 from prefect.settings import get_current_settings
 
 from infrahub_sync.execution import collect_secret_values
-from infrahub_sync.product_store.accounts import DuplicateCredentialError
+from infrahub_sync.product_store.accounts import DuplicateCredentialError, EnvironmentAccountConflictError
 
 from .app import create_app
-from .auth import StoreAccountResolver, apply_admin_account
+from .auth import WORKER_ACCOUNT_NAME, StoreAccountResolver, apply_admin_account, apply_worker_account
 from .config_routes import ConfigurationRoutes
+from .credential_crypto import CredentialCipher
 from .credentials import no_account_hash
 from .health import (
     Check,
@@ -44,13 +45,19 @@ from .service import RunService
 from .settings import (
     ADMIN_ACCOUNT_PASSWORD_ENV,
     ADMIN_ACCOUNT_TOKEN_ENV,
+    ENCRYPTION_KEY_ENV,
+    WORKER_TOKEN_ENV,
     AccountSettingsError,
+    CredentialSettingsError,
     HealthSettingsError,
     admin_account_settings,
+    credential_settings,
+    encryption_key,
     health_check_timeout_seconds,
     health_min_workers,
     session_idle_seconds,
     web_directory,
+    worker_account_token,
 )
 from .start_check import StartRefusedError, check_bootstrap_record
 from .storage import S3_BUCKET_ENV, _database_url, _required_setting, service_product_projection
@@ -63,11 +70,13 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from starlette.applications import Starlette
 
-logger = structlog.get_logger(__name__)
+    from infrahub_sync.product_store import ProductProjection
 
 # The write targets of a schedule that this build can run. A request for another write target
 # is refused with ``schedule-setting-not-available``.
 DELIVERED_SCHEDULE_WRITE_TARGETS: frozenset[str] = frozenset({"branch-review", "default-branch"})
+
+logger = structlog.get_logger(__name__)
 
 
 class _ClientPerCallOrchestration:
@@ -185,13 +194,25 @@ def build_app(
     Without a ``resolver_factory``, the ``admin`` account of the store is made to match
     ``INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`` and ``INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN``, the
     password is removed from the environment of the process, and callers are resolved from the
-    accounts of the store.
+    accounts of the store. When ``INFRAHUB_SYNC_WORKER_TOKEN`` is set, the ``worker`` account is
+    made to match it too. ``INFRAHUB_SYNC_ENCRYPTION_KEY`` gives the credential routes their key.
+
+    This factory accepts an environment without the key or without the worker token, for an
+    application that a test builds in its own process: it then logs each missing variable, the
+    credential routes answer every change with ``503 credential-key-not-configured``, and no
+    ``worker`` account is applied. A Sync API process never starts that way:
+    ``build_process_service`` refuses a start without either variable before it calls this
+    factory.
 
     Raises:
         TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
         AccountSettingsError: when a variable of the ``admin`` account or the idle period of a
             session holds a value that is not accepted, or when another account already has the
-            token of ``admin`` as an API token. The message names the variable.
+            token of ``admin`` as an API token. The message names the variable. Its subclass
+            ``CredentialSettingsError`` when the encryption key or the worker token is not
+            accepted, when another
+            account already holds it, or when an account named ``worker`` exists that the
+            environment does not manage.
         StartRefusedError: when the bootstrap record is missing or names another Sync version
             or work pool, or cannot be read.
         HealthSettingsError: when ``INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`` or
@@ -205,6 +226,12 @@ def build_app(
     # Validated before any dependency is built, so a bad address stops start-up with no side effect.
     prefect_ui_url = prefect_ui_url_from_environment()
     admin_account = admin_account_settings() if resolver_factory is None else None
+    worker_token = worker_account_token() if resolver_factory is None else None
+    # A process start has the key: `build_process_service` refuses a start without it. Only an
+    # application built in a test gets here without one, and its credential routes answer `503`.
+    credential_key = encryption_key()
+    if credential_key is None:
+        logger.warning("stored credentials cannot be changed: the variable is not set", variable=ENCRYPTION_KEY_ENV)
     idle_seconds = session_idle_seconds()
     work_pool = os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default")
     start_check(work_pool)
@@ -223,7 +250,10 @@ def build_app(
         # Made now, so the first sign-in with an unknown name does not compute it and take
         # longer than a sign-in with a known name.
         no_account_hash()
-        resolver = StoreAccountResolver(projection, idle_seconds=idle_seconds, admin_token=admin_account.token)
+        _apply_worker_account(projection, worker_token)
+        resolver = StoreAccountResolver(
+            projection, idle_seconds=idle_seconds, admin_token=admin_account.token, worker_token=worker_token
+        )
     # The configuration diagnostics quote declared keys, so this surface needs the ordinary
     # environment secrets as well as the `admin` token that the environment defines.
     configuration_secrets = tuple(dict.fromkeys((*collect_secret_values(), *resolver.secret_values)))
@@ -259,8 +289,40 @@ def build_app(
         secrets=resolver.secret_values,
     )
     return app_factory(
-        service, resolver, configuration_routes, reconciler, schedules=schedules, health_checker=health_checker
+        service,
+        resolver,
+        configuration_routes,
+        reconciler,
+        schedules=schedules,
+        health_checker=health_checker,
+        credential_cipher=None if credential_key is None else CredentialCipher(credential_key),
     )
+
+
+def _apply_worker_account(projection: ProductProjection, token: str | None) -> None:
+    """Apply the ``worker`` account of ``INFRAHUB_SYNC_WORKER_TOKEN``, or log that none is applied.
+
+    Raises:
+        CredentialSettingsError: an account named ``worker`` exists that the environment does not
+            manage, or another account already has the worker token as an API token. The message
+            names the account or the variable, never a value.
+    """
+    if token is None:
+        # Only an application built in a test: `build_process_service` refuses a process start
+        # without the variable.
+        logger.warning("worker account not applied: the variable is not set", variable=WORKER_TOKEN_ENV)
+        return
+    try:
+        apply_worker_account(projection, token)
+    except EnvironmentAccountConflictError:
+        msg = (
+            f"an account named {WORKER_ACCOUNT_NAME} exists that the environment does not manage; "
+            f"{WORKER_TOKEN_ENV} defines that account, so delete the existing account"
+        )
+        raise CredentialSettingsError(msg) from None
+    except DuplicateCredentialError:
+        msg = f"{WORKER_TOKEN_ENV} is the value of an API token of another account; choose another value"
+        raise CredentialSettingsError(msg) from None
 
 
 def build_service(
@@ -296,10 +358,35 @@ def build_service(
     return create_site(api, web_directory())
 
 
+def build_process_service() -> Starlette:
+    """Construct the application that a Sync API process serves, or refuse the start.
+
+    It is the factory of every process start: ``main`` calls it, and so does an ASGI server that
+    is given a factory (``uvicorn --factory``, as ``dev.api`` does). ``INFRAHUB_SYNC_ENCRYPTION_KEY``
+    and ``INFRAHUB_SYNC_WORKER_TOKEN`` are required here, and they are checked before anything is
+    built, so a refused start opens no database.
+
+    Raises:
+        CredentialSettingsError: the encryption key is unset, empty, not base64 or not 32 bytes
+            once decoded; or the worker token is unset, empty or not accepted, or equals the token
+            of the ``admin`` account. The message names the variable, never a value.
+        TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
+        AccountSettingsError: when a variable of the ``admin`` account or the idle period of a
+            session holds a value that is not accepted.
+        StartRefusedError: when the bootstrap record does not name this version and work pool.
+    """
+    credential_settings()
+    return build_service()
+
+
 def main() -> None:
-    """Serve the Sync API and the web interface; Prefect workers and deployments are separate."""
+    """Serve the Sync API and the web interface; Prefect workers and deployments are separate.
+
+    A start without ``INFRAHUB_SYNC_ENCRYPTION_KEY`` or ``INFRAHUB_SYNC_WORKER_TOKEN``, or with a
+    value that is not accepted, exits with a message that names the variable.
+    """
     try:
-        app = build_service()
+        app = build_process_service()
     except (TrustStoreError, AccountSettingsError, HealthSettingsError, StartRefusedError) as error:
         raise SystemExit(str(error)) from None
     uvicorn.run(app, host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)

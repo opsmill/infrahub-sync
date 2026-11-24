@@ -19,6 +19,8 @@ from infrahub_sync.product_store.bundle import (
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.models import EMITTED_RESOURCES, EmittedArtifactListResource
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.schedule_fixtures import NoDeploymentSchedules
 
@@ -74,18 +76,19 @@ def _package() -> ConfigurationPackage:
                 "name": "registered-inventory",
                 "source": {
                     "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                    "credential": SOURCE_CREDENTIAL,
+                    "settings": {"url": "https://netbox.example"},
                 },
                 "destination": {
                     "name": "infrahub",
-                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
+                    "credential": DESTINATION_CREDENTIAL,
+                    "settings": {"url": "https://infrahub.example"},
                 },
                 "order": [],
                 "schema_mapping": [],
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
@@ -95,6 +98,7 @@ def published(tmp_path: Path) -> tuple[TestClient, ProductProjection, RunService
     """One run carrying both a public review artifact and both internal checkpoints."""
     projection = local_product_projection(tmp_path.resolve())
     resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_package())
     projection.create_run(
         ProductRun(

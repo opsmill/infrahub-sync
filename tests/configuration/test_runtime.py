@@ -10,7 +10,6 @@ def test_runtime_instance_resolves_declared_credentials_without_ambient_lookup(m
     from infrahub_sync.configuration.runtime import resolve_runtime_instance
 
     registered = "registered-canary"
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_TOKEN", registered)
     monkeypatch.setenv("NETBOX_TOKEN", "ambient-canary")
     package = ConfigurationPackage.model_validate(
         {
@@ -19,22 +18,25 @@ def test_runtime_instance_resolves_declared_credentials_without_ambient_lookup(m
                 "name": "registered",
                 "source": {
                     "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                    "credential": "token",
+                    "settings": {"url": "https://netbox.example"},
                 },
                 "destination": {
                     "name": "infrahub",
-                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
+                    "credential": "token",
+                    "settings": {"url": "https://infrahub.example"},
                 },
                 "order": [],
                 "schema_mapping": [],
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
-    instance = resolve_runtime_instance(package, directory="/registered")
+    # The Sync API releases the fields of the named credential for each block.
+    released = {"source": {"token": registered}, "destination": {"token": registered}}
+    instance = resolve_runtime_instance(package, directory="/registered", released=released)
     assert instance.source.settings is not None
     assert instance.destination.settings is not None
     assert instance.source.settings["token"] == registered
@@ -60,7 +62,6 @@ def test_null_adapter_settings_still_carry_the_registered_context(monkeypatch) -
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {},
         }
     )
 

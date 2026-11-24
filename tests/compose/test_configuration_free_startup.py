@@ -97,26 +97,22 @@ with psycopg.connect(os.environ["INFRAHUB_SYNC_DATABASE_URL"]) as connection:
 
 
 def declared_package() -> dict[str, Any]:
-    """A valid declared package whose external inputs resolve to nothing."""
+    """A valid declared package whose addresses resolve to nothing and whose blocks name no stored credential.
+
+    A package that names a stored credential is refused until that credential exists, and this
+    module's deployment stores none. Without a `credential`, registration needs nothing but the content.
+    """
     return {
         "format_version": 1,
         "configuration": {
             "name": DECLARED_NAME,
             "source": {
                 "name": "infrahub",
-                "settings": {
-                    "url": UNREACHABLE_SOURCE,
-                    "branch": "main",
-                    "token": {"$credential": "startup-token"},
-                },
+                "settings": {"url": UNREACHABLE_SOURCE, "branch": "main"},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": UNREACHABLE_DESTINATION,
-                    "branch": "main",
-                    "token": {"$credential": "startup-token"},
-                },
+                "settings": {"url": UNREACHABLE_DESTINATION, "branch": "main"},
             },
             "schema_mapping": [
                 {
@@ -127,8 +123,6 @@ def declared_package() -> dict[str, Any]:
                 }
             ],
         },
-        # Nothing sets this variable, so the reference is declared and unresolved.
-        "credentials": {"startup-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_R2_ABSENT_TOKEN"}},
     }
 
 
@@ -143,13 +137,12 @@ def started(
 ) -> Iterator[Deployment]:
     """One fresh project of the operator file, taken to READY with no configuration.
 
-    Its `.env` carries the required credentials and nothing else: no destination
-    or source credential is set, which is the whole point of this module.
+    Its `.env` carries the required credentials and nothing else, and no credential
+    is stored in the Sync API, which is the whole point of this module.
     """
     environment_file = operator_environment(
         tmp_path_factory.mktemp(f"startup{uuid.uuid4().hex[:8]}"),
         image=sync_image,
-        destination_token="",
         canaries=canaries,
         api_port=int(API_PORT),
         prefect_port=int(PREFECT_PORT),
@@ -175,13 +168,14 @@ def principal(started: Deployment) -> str:
     return started.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN")
 
 
-def test_a_deployment_with_no_configuration_reaches_ready(started: Deployment) -> None:
+def test_a_deployment_with_no_configuration_reaches_ready(started: Deployment, principal: str) -> None:
     """No package, no credentials, no destination — and a live worker anyway."""
     assert started.status() == "READY"
     assert worker_state(started) in {"ready", "busy"}
-    assert not started.setting("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"), (
-        "the fixture supplied a destination credential"
-    )
+    with api_client(started, principal) as client:
+        listed = client.get("/credentials")
+    assert listed.status_code == 200, listed.status_code
+    assert listed.json()["items"] == [], "the fixture stored a credential"
     assert probe_json(started, SCHEMA_TABLES) > 0, "the deployment came back with no product schema"
     assert probe_json(started, REGISTRY) == [], "a start registered something"
     assert probe_json(started, AUDIT) == [], "a start recorded an audit event"

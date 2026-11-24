@@ -14,6 +14,12 @@ export type Plan = Schemas["PlanResource"];
 export type PlanOperation = Schemas["PlanOperationResource"];
 export type PlanLastChange = Schemas["PlanLastChangeResource"];
 export type RunLogLine = Schemas["RunLogLine"];
+/** A stored credential as the Sync API returns it: the names of its fields, never a value. */
+export type Credential = Schemas["CredentialResource"];
+/** One page of `GET /credentials`; `next_offset` is `null` on the last page. */
+export type CredentialPage = Schemas["CredentialPage"];
+/** One stored credential that a stage of a run read, with the revision it read. */
+export type CredentialUsed = Schemas["CredentialUsedResource"];
 export type PackageCheck = Schemas["PackageCheckResource"];
 export type ValidationFinding = Schemas["ValidationFindingResource"];
 /**
@@ -34,6 +40,8 @@ export type HealthReport = Schemas["HealthResource"];
 /** A source or destination as a registered package declares it. */
 export interface DeclaredAdapter {
   name: string;
+  /** The name of the stored credential the block reads; a package never holds a value. */
+  credential?: string | null;
   settings?: Record<string, unknown> | null;
 }
 
@@ -66,7 +74,6 @@ export interface ConfigurationVersion {
   declared_content: {
     format_version: number;
     configuration: DeclaredConfiguration;
-    credentials?: Record<string, { provider: string; identifier: string }>;
   };
 }
 
@@ -101,7 +108,10 @@ export interface ApiErrorBody {
     status: number;
     run_id?: string | null;
     reason?: string | null;
-    /** Values the refusal names, such as the configuration of `configuration-name-in-use`. */
+    /**
+     * Values the refusal names, such as the configuration of `configuration-name-in-use`, or the
+     * configurations and schedules that name a credential on `credential-in-use`.
+     */
     details?: Record<string, unknown> | null;
   };
 }

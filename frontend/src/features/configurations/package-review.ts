@@ -74,9 +74,9 @@ export function readFailureHint(destinationRead: string): string | undefined {
     case "nobranch":
       return "The validation branch does not exist in Infrahub. Change the validation branch to validate again.";
     case "credentials":
-      return "The Sync API does not hold the destination token the package references. Set that credential variable in the Sync API's environment, then validate again.";
+      return "The Sync API cannot read a token from the stored credential the destination names. Check on the Credentials page that it exists and holds a token, then validate again.";
     case "rejected":
-      return "Infrahub refused the destination token. Check the token held for the package's credential, then validate again.";
+      return "Infrahub refused the destination token. Check the value of the stored credential the destination names, then validate again.";
     default:
       return undefined;
   }
@@ -86,36 +86,22 @@ export function readFailureHint(destinationRead: string): string | undefined {
 export const warningFindings = (check: PackageCheck) =>
   check.findings.filter((f) => f.severity === "warning");
 
-/** Every `$credential` reference name in declared settings, depth first. */
-function* referenceNames(value: unknown): Generator<string> {
-  if (Array.isArray(value)) {
-    for (const child of value) yield* referenceNames(child);
-    return;
-  }
-  if (value === null || typeof value !== "object") return;
-  const mapping = value as Record<string, unknown>;
-  const keys = Object.keys(mapping);
-  const reference = mapping.$credential;
-  if (keys.length === 1 && keys[0] === "$credential" && typeof reference === "string") {
-    yield reference;
-    return;
-  }
-  for (const child of Object.values(mapping)) yield* referenceNames(child);
+/** One block of a package and the stored credential it names. */
+export interface BlockCredential {
+  block: "Source" | "Destination";
+  name: string;
 }
 
 /**
- * The variable names the configuration's credential references point to, without their values.
- * Like the worker check of the Sync API (`referenced_credential_variables`), only a declared
- * reference with the `env` provider that a setting uses names a variable.
+ * The stored credential that each block of the configuration names, source first, without a
+ * value: a package names a stored credential with `credential: <name>` and never holds a value.
  */
-export function credentialVariables(content: DeclaredContent): string[] {
-  const declared = content.credentials ?? {};
-  const names = new Set<string>();
-  for (const name of referenceNames(content.configuration)) {
-    const reference = declared[name];
-    if (reference?.provider === "env") names.add(reference.identifier);
-  }
-  return [...names].sort();
+export function blockCredentials(content: DeclaredContent): BlockCredential[] {
+  const { source, destination } = content.configuration;
+  const named: BlockCredential[] = [];
+  if (source.credential) named.push({ block: "Source", name: source.credential });
+  if (destination.credential) named.push({ block: "Destination", name: destination.credential });
+  return named;
 }
 
 /** The rename a new version makes, or nothing when the name stays the same. */

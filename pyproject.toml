@@ -85,6 +85,10 @@ prefect = [
 # `opsmill_prefect_extras/VENDORED.md` for the freeze and re-adoption rules.
 service = [
     "boto3>=1.35,<2; python_version >= '3.11'",
+    # The Sync API encrypts stored credentials with AES-256-GCM (`AESGCM`). Prefect already
+    # resolves it, so the image does not grow; the base install stays free of it. The range
+    # matches the release in `uv.lock`.
+    "cryptography>=50,<51; python_version >= '3.11'",
     # Same reason as in `prefect`: the Prefect server factory needs this FastAPI release.
     "fastapi==0.141.1; python_version >= '3.11'",
     # `infrahubctl` ships in the SDK's `[ctl]` extra. It belongs to this profile,

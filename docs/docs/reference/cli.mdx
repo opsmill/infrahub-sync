@@ -53,6 +53,7 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 * `demo`: Prepare a Sync deployment for the NetBox...
 * `tokens`: List, create and delete the API tokens of...
 * `accounts`: Manage local accounts.
+* `credentials`: List and view stored credentials.
 
 ## `infrahub-sync login`
 
@@ -404,7 +405,7 @@ $ infrahub-sync configs validate [OPTIONS] {CONFIG} {version}
 
 * `--offset <int>`: Finding offset.  [default: 0]
 * `--limit <int>`: Maximum findings to return.  [default: 256]
-* `--branch <str>`: Also check the mapping, the import account&#x27;s permissions and the workers&#x27; credential variables against this Infrahub branch. Exits 1 when a finding on the returned page is an error; read every page with --offset to check them all.
+* `--branch <str>`: Also check the mapping and the import account&#x27;s permissions against this Infrahub branch, read with the destination&#x27;s stored credential. Exits 1 when a finding on the returned page is an error; read every page with --offset to check them all.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs check`
@@ -429,7 +430,7 @@ $ infrahub-sync configs check [OPTIONS] {package}
 
 * `--offset <int>`: Finding offset.  [default: 0]
 * `--limit <int>`: Maximum findings to return.  [default: 256]
-* `--branch <str>`: Also check the mapping, the import account&#x27;s permissions and the workers&#x27; credential variables against this Infrahub branch. `destination_read` says whether the service read the branch&#x27;s schema.
+* `--branch <str>`: Also check the mapping and the import account&#x27;s permissions against this Infrahub branch, read with the destination&#x27;s stored credential. `destination_read` says whether the service read the branch&#x27;s schema.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs convert`
@@ -445,13 +446,16 @@ wrote it. It prints a report, asks before it writes, and writes nothing
 without a terminal unless --yes is given.
 
 
-The report names each credential setting that v2 used with the
-environment variable the Sync worker reads in V3, each address with its origin (a flag, a v2
-variable, or config.yml), each dropped key with its reason, and notes.
-It warns when config.yml still holds a literal credential, when the
-shipped Compose file does not pass a credential variable to the Sync
-worker, when an address is localhost or 127.0.0.1, and when an address
-came from a generic variable name.
+The package names one stored credential in each block that uses
+authentication, with `credential: &lt;name&gt;`, and holds no credential setting.
+The report lists each stored credential to create, with the fields it needs
+(a token, or a username and a password) and its command, for example
+`infrahub-sync credentials create netbox-token`. An administrator runs each
+command before the package is registered; the command asks for the value.
+The report also lists each address with its origin (a flag, a v2 variable,
+or config.yml), each dropped key with its reason, and notes. It warns when
+config.yml still holds a literal credential, when an address is localhost
+or 127.0.0.1, and when an address came from a generic variable name.
 
 
 Exit status 1, nothing written, when the configuration has any of:
@@ -644,6 +648,10 @@ Then one `Automatic resume N:` block per decision of Sync on resuming the run&#x
 person: whether it started, its cause, the result of its check, where it resumed, and why it did not start.
 Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
 scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
+A run with a stage that received the values of a stored credential adds a `Credentials used:` section, with one
+line per stage and block: `&lt;stage&gt; &lt;block&gt;: &lt;name&gt; revision &lt;number&gt;`. The name and the revision are the ones
+recorded when the stage received the values, so a plan and its apply can show two revisions of one credential,
+and a credential that was deleted since still shows. No line holds a value.
 
 **Usage**:
 
@@ -1281,4 +1289,160 @@ $ infrahub-sync accounts delete-token [OPTIONS] {name} {token_id}
 **Options**:
 
 * `--reason <str>`: Optional audit reason for the deletion.
+* `--help`: Show this message and exit.
+
+## `infrahub-sync credentials`
+
+List and view stored credentials. Creating, changing and deleting one needs an administrator. No command prints a value.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List stored credentials by name: name,...
+* `show`: View one stored credential: its...
+* `create`: Create a stored credential with its first...
+* `set`: Replace the value of a stored credential,...
+* `describe`: Change the description of a stored...
+* `delete`: Delete a stored credential and every...
+
+### `infrahub-sync credentials list`
+
+List stored credentials by name: name, fields, revision, the account that last changed it, and when.
+
+The fields column holds the names of the fields, such as `token` or `username,password`. No value is shown.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials list [OPTIONS]
+```
+
+**Options**:
+
+* `--json`: Print the answer of the Sync API as JSON. It holds the names of the fields and no value.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials show`
+
+View one stored credential: its description, the names of its fields, its revision and who changed it.
+
+No value is shown.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials show [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+
+**Options**:
+
+* `--json`: Print the answer of the Sync API as JSON. It holds the names of the fields and no value.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials create`
+
+Create a stored credential with its first value. Needs an administrator.
+
+Without --username, the command asks for a token without echo, or reads it from standard input
+with --token-stdin. With --username, it asks for a password, or reads it with --password-stdin;
+with --username and --token-stdin, the credential holds a username and a token. The value is
+never an argument, and the command prints the credential without it.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials create [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+
+**Options**:
+
+* `--description <str>`: What the credential is for.
+* `--username <str>`: Username of the credential. A username is not a secret, so it is an option value. With it, the command reads a password, or a token with --token-stdin.
+* `--token-stdin`: Read the token from standard input instead of a prompt.
+* `--password-stdin`: Read the password from standard input instead of a prompt. Requires --username.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials set`
+
+Replace the value of a stored credential, and print its new revision. Needs an administrator.
+
+The new value replaces every field of the credential, so give --username again for a credential
+that has one. The value is read as `credentials create` reads it. Runs that start afterwards use
+the new value.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials set [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+
+**Options**:
+
+* `--username <str>`: Username of the credential. A username is not a secret, so it is an option value. With it, the command reads a password, or a token with --token-stdin.
+* `--token-stdin`: Read the token from standard input instead of a prompt.
+* `--password-stdin`: Read the password from standard input instead of a prompt. Requires --username.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials describe`
+
+Change the description of a stored credential. Its value and its revision stay. Needs an administrator.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials describe [OPTIONS] {name} {text}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+* `text`: The new description. It replaces the earlier one.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `infrahub-sync credentials delete`
+
+Delete a stored credential and every revision of its value. This cannot be reversed. Needs an administrator.
+
+The Sync API refuses the deletion while the latest version of a configuration, or a schedule
+that is not deleted, names the credential; the command then prints those configurations and
+schedules and exits 1. An older version does not block the deletion: a run of it is refused
+before it starts. The records of earlier runs keep the name and the revision they used.
+
+**Usage**:
+
+```console
+$ infrahub-sync credentials delete [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Name of the credential, as a configuration package names it in `credential:`.  [required]
+
+**Options**:
+
+* `--yes`: Delete without asking for confirmation.
 * `--help`: Show this message and exit.

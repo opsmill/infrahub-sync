@@ -23,11 +23,16 @@ from infrahub_sync.configuration import validation as validation_module
 from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.validation import collect_findings
-from infrahub_sync.configuration.worker_credentials import referenced_credential_variables
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, normalize_destination_schema
-from tests.configuration.validation_packages import package, package_data
+from tests.configuration.validation_packages import (
+    DESTINATION_CREDENTIAL,
+    SOURCE_CREDENTIAL,
+    credential_package_data,
+    package,
+)
+from tests.helpers.stored_credentials import create_stored_credential_names
 
 if TYPE_CHECKING:
     from collections.abc import ItemsView, Iterator
@@ -73,20 +78,24 @@ def _registered(tmp_path: Path, data: dict[str, Any] | None = None) -> tuple[str
     root = tmp_path / "product-cache"
     root.mkdir()
     projection = local_product_projection(root)
+    # The store holds the two credentials that the package names, so registration accepts it.
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     registered = configs_service.register(
-        package=package_data() if data is None else data,
+        package=credential_package_data() if data is None else data,
         projection=projection,
     )
-    # A live worker holds every credential variable the package references, so the
-    # opt-in's worker credential check (spec 007 FR-035) adds no finding to these cases.
-    projection.publish_worker_environment(
-        "worker",
-        [
-            identifier
-            for _name, identifier in referenced_credential_variables(package(package_data() if data is None else data))
-        ],
-    )
     return registered.version.config_id, projection
+
+
+def _stored_fields(name: str) -> dict[str, str]:
+    """Return the fields of the stored credential that the destination names."""
+    del name
+    return {"token": "test-token"}
+
+
+def _opt_in() -> DestinationSchemaOptions:
+    """Ask for the destination schema checks, with the way to read the destination's stored credential."""
+    return DestinationSchemaOptions(credential_values=_stored_fields)
 
 
 def _validate(
@@ -103,7 +112,7 @@ def _validate(
 
 
 def _mapping_package_data(kind: str) -> dict[str, Any]:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["schema_mapping"] = [{"name": kind, "mapping": "dcim.devices"}]
     return data
 
@@ -152,7 +161,7 @@ def test_the_opt_in_performs_no_network_io_when_the_snapshot_is_injected(
 
     monkeypatch.setattr(socket, "socket", _refuse)
 
-    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=_opt_in())
 
     assert accessor.calls == ["main"]
     assert report.findings == ()
@@ -186,10 +195,10 @@ def test_the_opt_in_records_the_snapshot_fingerprint(tmp_path: Path, monkeypatch
     _inject_accessor(monkeypatch)
     config_id, projection = _registered(tmp_path)
 
-    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=_opt_in())
 
     assert report.destination_schema_fingerprint == compute_consumed_schema_fingerprint(
-        configuration=package(package_data()).configuration, snapshot=normalize_destination_schema(_SNAPSHOT)
+        configuration=package(credential_package_data()).configuration, snapshot=normalize_destination_schema(_SNAPSHOT)
     )
 
 
@@ -197,8 +206,8 @@ def test_the_opt_in_report_is_identical_across_invocations(tmp_path: Path, monke
     _inject_accessor(monkeypatch)
     config_id, projection = _registered(tmp_path, _mapping_package_data("NopeKind"))
 
-    first = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
-    second = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
+    first = _validate(config_id, projection, destination_schema=_opt_in())
+    second = _validate(config_id, projection, destination_schema=_opt_in())
 
     assert first.findings == second.findings
     assert first.findings != ()
@@ -224,7 +233,7 @@ def test_core_and_schema_findings_merge_in_the_stable_sort_order(
     monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
     monkeypatch.setattr(validation_module, "BUILTIN_ADAPTER_CAPABILITIES", table)
 
-    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=_opt_in())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-mismatch", "/configuration/schema_mapping/0/name"),
@@ -255,7 +264,7 @@ def test_a_failed_schema_read_returns_a_report_rather_than_a_refusal(
     monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
     config_id, projection = _registered(tmp_path)
 
-    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=_opt_in())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-read-failed", "/configuration/destination")
@@ -291,10 +300,10 @@ def test_the_opt_in_against_a_non_declaring_destination_reports_both_gate_findin
     )
     monkeypatch.setattr(validation_module, "BUILTIN_ADAPTER_CAPABILITIES", table)
     monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
-    data = package_data()
+    data = credential_package_data()
     config_id, projection = _registered(tmp_path, data)
 
-    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=_opt_in())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-validation-unsupported", "/configuration/destination"),
@@ -326,7 +335,6 @@ def _mock_live_schema_read(monkeypatch: pytest.MonkeyPatch, response: object) ->
     No table injection: the built-in ``infrahub`` declaration already carries the real
     accessor, so the whole normalization boundary runs under public ``validate()``.
     """
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _fake_client(address: str, config: object) -> _ReturningClient:
         del address, config
@@ -371,7 +379,7 @@ def test_a_metaclass_raising_response_exception_lands_as_a_rejected_finding(
     _mock_live_schema_read(monkeypatch, _RaisingItems())
     config_id, projection = _registered(tmp_path)
 
-    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=_opt_in())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-read-failed", "/configuration/destination")
@@ -399,7 +407,7 @@ def test_a_response_cannot_forge_its_own_schema_read_reason(tmp_path: Path, monk
     _mock_live_schema_read(monkeypatch, {"InfraDevice": _ForgingNode()})
     config_id, projection = _registered(tmp_path)
 
-    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=_opt_in())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-read-failed", "/configuration/destination")

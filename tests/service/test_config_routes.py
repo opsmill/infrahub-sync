@@ -42,6 +42,7 @@ from infrahub_sync.service.paging import timestamp_cursor
 from infrahub_sync.service.serve import build_app
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from tests.configuration.validation_packages import package, package_data
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.schedule_fixtures import NoDeploymentSchedules
 
@@ -1905,13 +1906,28 @@ def test_an_administrator_checks_a_document_in_yaml_or_json(tmp_path: Path, docu
 
 
 def test_the_registered_example_package_document_is_checked(tmp_path: Path) -> None:
-    client, _projection = _event_client(tmp_path)
+    client, projection = _event_client(tmp_path)
     document = (_EXAMPLES / "netbox_to_infrahub" / "package.yml").read_text(encoding="utf-8")
+    # The example names two stored credentials; registration and the check refuse it without them.
+    create_stored_credential_names(projection, "netbox-token", "infrahub-token")
 
     response = _check(client, {"document": document})
 
     assert response.status_code == 200, response.text
     assert response.json()["package_checksum"] == package(yaml.safe_load(document)).checksum()
+
+
+def test_a_check_refuses_a_package_whose_stored_credential_does_not_exist(tmp_path: Path) -> None:
+    """Registration refuses a missing stored credential (spec 027, FR-007), so the check does too."""
+    client, _projection = _event_client(tmp_path)
+    document = (_EXAMPLES / "netbox_to_infrahub" / "package.yml").read_text(encoding="utf-8")
+
+    response = _check(client, {"document": document})
+
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert (error["family"], error["reason"]) == ("validation", "credential-not-found")
+    assert {entry["name"] for entry in error["details"]["credentials"]} == {"netbox-token", "infrahub-token"}
 
 
 @pytest.mark.parametrize(

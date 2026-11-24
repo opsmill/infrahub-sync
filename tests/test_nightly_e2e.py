@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
 import xml.etree.ElementTree as ET  # noqa: S405 -- generated local reports only
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -60,6 +62,38 @@ def test_environment_reads_the_preset_the_stack_starts(runner: ModuleType, monke
         runner.environment()
 
     assert presets == [runner.STACK_PRESET] == ["infrahub"]
+
+
+def test_environment_gives_dev_start_the_tokens_it_stores_as_credentials(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`dev.start` runs with this environment and stores `infrahub-token` and `netbox-token` from it."""
+    from tasks import netbox
+
+    settings = SimpleNamespace(
+        infrahub_url="http://127.0.0.1:8091",
+        infrahub_admin_token="nightly-infrahub-token",  # noqa: S106 -- a test value
+        sync_api_url="http://127.0.0.1:8001",
+        admin_token="nightly-admin-token",  # noqa: S106 -- a test value
+        netbox_credential=False,
+    )
+    host = {dev.DATABASE_URL_VARIABLE: "postgresql://store", "INFRAHUB_SYNC_S3_BUCKET": "bucket"}
+    host[dev.S3_ENDPOINT_VARIABLE] = "http://127.0.0.1:9010"
+    monkeypatch.setattr(dev, "dev_settings", lambda **_kwargs: settings)
+    monkeypatch.setattr(dev, "host_environment", lambda *_args: host)
+    monkeypatch.setattr(netbox, "load_netbox_env", dict)
+    monkeypatch.setattr(netbox, "netbox_token", lambda _env: "nightly-netbox-token")
+    monkeypatch.setattr(netbox, "netbox_url", lambda _env: "http://127.0.0.1:8080")
+
+    env = runner.environment()
+
+    for name in (dev.INFRAHUB_CREDENTIAL_VARIABLE, dev.NETBOX_CREDENTIAL_VARIABLE):
+        monkeypatch.setenv(name, env[name])
+    stored = dev.development_credentials(cast("dev.DevSettings", settings))
+    assert {name: hashlib.sha256(value.encode()).hexdigest() for name, value in stored.items()} == {
+        "infrahub-token": hashlib.sha256(b"nightly-infrahub-token").hexdigest(),
+        "netbox-token": hashlib.sha256(b"nightly-netbox-token").hexdigest(),
+    }
 
 
 def test_logs_writes_timeout_report_without_a_report_directory(

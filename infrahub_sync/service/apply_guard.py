@@ -35,7 +35,12 @@ import psycopg
 from psycopg import conninfo
 from typing_extensions import LiteralString
 
-from infrahub_sync.execution import MIN_SECRET_LENGTH, collect_secret_values, sanitize_exception_chain
+from infrahub_sync.execution import (
+    MIN_SECRET_LENGTH,
+    LiveSecretValues,
+    collect_secret_values,
+    sanitize_exception_chain,
+)
 from infrahub_sync.product_store.models import _IDENTIFIER_PATTERN
 
 if TYPE_CHECKING:
@@ -266,7 +271,8 @@ class ApplyGuard:
         self._connection = connection
         self._key = key
         self._backend_pid = backend_pid
-        self._secrets = tuple(secrets)
+        # Kept by reference: `hold_apply_guard` passes a list that is read again at each use.
+        self._secrets = secrets
         self._state: Literal["held", "released", "retired"] = "held"
 
     @property
@@ -387,7 +393,9 @@ def hold_apply_guard(
     so that a writer refused by contention can name this run as the holder.
     """
     milliseconds = deadline_milliseconds(deadline_seconds)
-    collected = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
+    # Read again at each failure: a value released to the run while the key is held is in the
+    # run's redaction registry, and a list computed here would not hold it.
+    collected = LiveSecretValues((*collect_secret_values(), *secrets))
     guard = _acquire(
         key=advisory_lock_key(configuration_id),
         connect=connect,
@@ -408,7 +416,7 @@ def _acquire(
     key: int,
     connect: Callable[[], GuardConnection],
     milliseconds: int,
-    secrets: tuple[str, ...],
+    secrets: Sequence[str],
     run_id: str | None = None,
 ) -> ApplyGuard:
     """Label the session, bound the deadline, take the key, and prove the hold before returning it.
