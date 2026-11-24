@@ -2563,7 +2563,7 @@ def runs_plan(
         min=1,
         help=(
             "For each destination kind and action, print the operation count and this number of its "
-            "first operations; cannot be combined with --detail."
+            "first operations; cannot be combined with --detail, --problems, --left-out, --kept or --json."
         ),
     ),
     as_json: bool = typer.Option(
