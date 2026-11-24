@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
 
 from pydantic import (
     BaseModel,
@@ -20,6 +20,9 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
@@ -119,6 +122,10 @@ _MANUAL_RUN_MESSAGE = "a manual run cannot name a schedule or a scheduled start 
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
 _HEALTH_ERROR_MESSAGE = "a component error must be none exactly when the component is up"
+_HEALTH_DEPENDENCIES_MESSAGE = "a health report must list at least one component, each once"
+_HEALTH_STATUS_MESSAGE = (
+    "a health report must be healthy exactly when every component is up and enough workers are live"
+)
 _HEALTH_TIME_MESSAGE = "health timestamps must include a timezone"
 _WORKERS_HEALTH_MESSAGE = "worker details must be present exactly when the worker state is known"
 _ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
@@ -696,8 +703,28 @@ class WorkersHealthResource(_ResourceModel):
         return self
 
 
+def expected_health_status(
+    dependencies: Sequence[DependencyHealthResource], workers: WorkersHealthResource
+) -> Literal["healthy", "unhealthy"]:
+    """Return the status a health report must carry for these components and workers.
+
+    ``healthy`` exactly when every component is up, the work pool was read, and at least
+    ``minimum`` workers are live. The Sync API builds its report with this rule, and the client
+    refuses a report that breaks it.
+    """
+    if any(dependency.status != "up" for dependency in dependencies):
+        return "unhealthy"
+    if workers.state != "known" or workers.live_workers is None or workers.live_workers < workers.minimum:
+        return "unhealthy"
+    return "healthy"
+
+
 class HealthResource(_ResourceModel):
-    """Report the health of the Sync API's components and of its workers."""
+    """Report the health of the Sync API's components and of its workers.
+
+    The report does not fix the number or the order of its components, so a client keeps
+    accepting a report from a newer Sync API that checks one more component.
+    """
 
     status: Literal["healthy", "unhealthy"]
     dependencies: list[DependencyHealthResource]
@@ -710,6 +737,15 @@ class HealthResource(_ResourceModel):
         checked = _timezone(value, _HEALTH_TIME_MESSAGE)
         assert checked is not None
         return checked
+
+    @model_validator(mode="after")
+    def _require_consistent_report(self) -> HealthResource:
+        names = [dependency.name for dependency in self.dependencies]
+        if not names or len(set(names)) != len(names):
+            raise ValueError(_HEALTH_DEPENDENCIES_MESSAGE)
+        if self.status != expected_health_status(self.dependencies, self.workers):
+            raise ValueError(_HEALTH_STATUS_MESSAGE)
+        return self
 
 
 class PrincipalResource(_ResourceModel):

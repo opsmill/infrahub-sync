@@ -948,3 +948,64 @@ def test_health_report_accepts_timestamps_with_a_timezone() -> None:
 def test_health_report_refuses_a_timestamp_without_a_timezone(body: dict[str, object]) -> None:
     with pytest.raises(ValidationError, match="health timestamps must include a timezone"):
         HealthResource.model_validate(body)
+
+
+_DOWN_DATABASE = {"name": "database", "status": "down", "error": "timeout"}
+_UP_OBJECT_STORE = {"name": "object_store", "status": "up", "error": "none"}
+_UNKNOWN_WORKERS = {"state": "unknown", "minimum": 1, "live_workers": None, "queue_depth": None, "items": []}
+_TOO_FEW_WORKERS = {"state": "known", "minimum": 2, "live_workers": 1, "queue_depth": 0, "items": []}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(dependencies=[]), id="no-component"),
+        pytest.param(
+            _health_body(
+                dependencies=[
+                    {"name": "database", "status": "up", "error": "none"},
+                    {"name": "database", "status": "up", "error": "none"},
+                ]
+            ),
+            id="duplicate-component",
+        ),
+    ],
+)
+def test_health_report_refuses_an_empty_or_repeated_component_list(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="at least one component, each once"):
+        HealthResource.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(dependencies=[_DOWN_DATABASE]), id="healthy-with-a-component-down"),
+        pytest.param(_health_body(workers=_UNKNOWN_WORKERS), id="healthy-with-unknown-workers"),
+        pytest.param(_health_body(workers=_TOO_FEW_WORKERS), id="healthy-with-too-few-workers"),
+        pytest.param(_health_body(status="unhealthy"), id="unhealthy-with-everything-up"),
+    ],
+)
+def test_health_report_refuses_a_status_that_does_not_match_its_parts(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="healthy exactly when every component is up"):
+        HealthResource.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_health_body(status="unhealthy", dependencies=[_DOWN_DATABASE]), id="component-down"),
+        pytest.param(_health_body(status="unhealthy", workers=_UNKNOWN_WORKERS), id="unknown-workers"),
+        pytest.param(_health_body(status="unhealthy", workers=_TOO_FEW_WORKERS), id="too-few-workers"),
+    ],
+)
+def test_health_report_accepts_unhealthy_when_a_part_fails(body: dict[str, object]) -> None:
+    assert HealthResource.model_validate(body).status == "unhealthy"
+
+
+def test_health_report_accepts_any_number_and_order_of_components() -> None:
+    body = _health_body(dependencies=[_UP_OBJECT_STORE, {"name": "database", "status": "up", "error": "none"}])
+
+    assert [dependency.name for dependency in HealthResource.model_validate(body).dependencies] == [
+        "object_store",
+        "database",
+    ]

@@ -39,6 +39,7 @@ from infrahub_sync.client.models import (
     HealthResource,
     WorkerHealthResource,
     WorkersHealthResource,
+    expected_health_status,
 )
 
 from .orchestration import SERVICE_WORKER_NAME_PREFIX, PoolStatus, normalized_pool_status, worker_is_live
@@ -233,12 +234,11 @@ def workers_health(pool: PoolStatus | None, now: datetime, minimum: int) -> Work
 def overall_status(
     dependencies: Sequence[DependencyHealthResource], workers: WorkersHealthResource
 ) -> Literal["healthy", "unhealthy"]:
-    """Healthy only when every component is up and enough workers are known to be live (research R-6)."""
-    if any(dependency.status != "up" for dependency in dependencies):
-        return "unhealthy"
-    if workers.state != "known" or workers.live_workers is None or workers.live_workers < workers.minimum:
-        return "unhealthy"
-    return "healthy"
+    """Healthy only when every component is up and enough workers are known to be live (research R-6).
+
+    The rule is the one `HealthResource` enforces, so the service cannot build a report the client refuses.
+    """
+    return expected_health_status(dependencies, workers)
 
 
 def _utc_now() -> datetime:
