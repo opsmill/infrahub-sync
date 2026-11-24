@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 import socket
+import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -84,6 +85,13 @@ class DependencyUnavailableError(Exception):
 
     def __init__(self) -> None:
         super().__init__("the component answered that it cannot serve")
+
+
+class CheckStillRunningError(TimeoutError):
+    """The call that a previous round started has not returned, so no second call is started."""
+
+    def __init__(self) -> None:
+        super().__init__("the previous check of this component has not returned")
 
 
 # Markers in the text of a psycopg 3.3.6 `OperationalError`, which carries no `OSError` in its
@@ -382,6 +390,10 @@ def object_store_check(
     The client is built once, from the same settings as the product store's, with timeouts equal
     to the limit and no retries, so the thread that runs the call ends close to the limit.
 
+    The round's time limit cannot stop the thread that runs the call. While the call that an
+    earlier round started has not returned, the check starts no other call and reports `timeout`
+    at once, so a component that does not answer holds at most one thread.
+
     Raises:
         ValueError: an S3 setting is not accepted; the message names the variable.
     """
@@ -390,8 +402,26 @@ def object_store_check(
     arguments["config"] = arguments["config"].merge(limits)
     client = client_builder("s3", **arguments)
 
+    idle = threading.Event()
+    idle.set()
+
+    def head_bucket() -> None:
+        try:
+            client.head_bucket(Bucket=bucket)
+        finally:
+            idle.set()
+
     async def check() -> None:
-        await asyncio.to_thread(client.head_bucket, Bucket=bucket)
+        if not idle.is_set():
+            raise CheckStillRunningError
+        idle.clear()
+        try:
+            call = asyncio.get_running_loop().run_in_executor(None, head_bucket)
+        except BaseException:
+            # The call was not started, so no thread will mark the check idle.
+            idle.set()
+            raise
+        await call
 
     return check
 
@@ -420,6 +450,7 @@ def task_manager_db_check(api_url: str, limit: int, transport: httpx.AsyncBaseTr
 
 __all__ = [
     "DEPENDENCY_NAMES",
+    "CheckStillRunningError",
     "DependencyCheck",
     "DependencyName",
     "DependencyUnavailableError",

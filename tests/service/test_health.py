@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import socket
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -25,6 +26,7 @@ from structlog.testing import capture_logs
 from infrahub_sync.client.models import HealthResource
 from infrahub_sync.service.health import (
     DEPENDENCY_NAMES,
+    CheckStillRunningError,
     DependencyCheck,
     DependencyUnavailableError,
     ErrorCategory,
@@ -593,6 +595,43 @@ async def test_the_object_store_client_is_built_once_for_every_round() -> None:
     await check()
 
     assert builds == 1
+
+
+async def test_the_object_store_check_starts_no_second_call_while_the_first_has_not_returned() -> None:
+    release = threading.Event()
+    calls: list[str] = []
+
+    class BlockedS3:
+        def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803, PLR6301 - the boto3 method and keyword.
+            calls.append(Bucket)
+            release.wait(timeout=10)
+
+    check = object_store_check({}, "sync-bucket", 1, client_builder=lambda _service, **_arguments: BlockedS3())
+    try:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(check(), 0.05)
+
+        # The next round finds the first call still running: it reports a timeout at once.
+        started = time.monotonic()
+        with pytest.raises(CheckStillRunningError) as still_running:
+            await check()
+        assert time.monotonic() - started < 0.05
+        assert classify_error(still_running.value) is ErrorCategory.TIMEOUT
+        assert calls == ["sync-bucket"]
+    finally:
+        release.set()
+
+    # Once the first call returned, the next round calls the object store again.
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            await check()
+            break
+        except CheckStillRunningError:
+            if time.monotonic() > deadline:
+                raise
+            await asyncio.sleep(0.01)
+    assert calls == ["sync-bucket", "sync-bucket"]
 
 
 async def test_the_database_check_passes_no_server_options_so_the_url_options_are_kept(
