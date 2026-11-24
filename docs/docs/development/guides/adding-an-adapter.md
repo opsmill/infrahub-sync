@@ -119,8 +119,8 @@ class MysystemModel(DiffSyncModelMixin, DiffSyncModel):
 ```
 
 Follow [Writing an adapter](../guidelines/writing-an-adapter.md): mixin first, `structlog`,
-optional-dependency import with `# ty: ignore[unresolved-import]`, credentials from the
-environment and never from an inline setting value.
+optional-dependency import with `# ty: ignore[unresolved-import]`, and credentials read through
+`select_runtime_credential`, never from a value written in a package.
 
 #### Step 3: implement `list_records` and `record_to_data`
 
@@ -598,7 +598,7 @@ For the development-time plugin loader and what it is and is not, see
 - [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`. A destination without both cannot write through registered `sync` or through saved-plan `apply`; if that is the intended position, confirmed the write gate refuses cleanly and that `plan` and plan review still work.
 - [ ] An `AdapterConfigurationCapabilities` entry added to `BUILTIN_ADAPTER_CAPABILITIES`, with roles, allowed settings and credential paths that match the module.
 - [ ] `tests/configuration/test_contracts.py` expected set updated, and `tests/configuration/test_adapter_setting_conformance.py` satisfied.
-- [ ] Optional SDK imported with `# ty: ignore[unresolved-import]`; credentials from environment references; no secrets logged or committed.
+- [ ] Optional SDK imported with `# ty: ignore[unresolved-import]`; credentials read through `select_runtime_credential`; no secrets logged or committed.
 - [ ] `uv run invoke format` and `uv run invoke lint` are clean; `uv run ty check .` exits 0.
 - [ ] `configs register`, `configs validate` and `plan` succeed for the example, and the plan reviews as expected against a known destination state.
 - [ ] Unit tests added under `tests/adapters/`; `uv run invoke tests.tests-unit` passes offline.

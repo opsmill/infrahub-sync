@@ -91,6 +91,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
+    from infrahub_sync.client import SyncClient
+
 NAMESPACE = "INFRAHUB-SYNC-DEV"
 
 API_URL = "http://127.0.0.1:8001"
@@ -117,10 +119,22 @@ DEFAULT_INFRAHUB_NETWORK = "infrahub_default"
 # publishes port 8000 on this host. The worker's `host.docker.internal` route is in the file.
 HOST_INFRAHUB_URL = "http://host.docker.internal:8000"
 PRESET_VARIABLE = "INFRAHUB_SYNC_DEV_PRESET"
-# The credential a registered package's `infrahub-token` reference resolves.
-INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
-# The credential a registered package's `netbox-token` reference resolves.
-NETBOX_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"
+# The stored credentials the shipped examples name (`credential: <name>` in each block). The
+# tasks store them through the Sync API after the stack starts (`store_development_credentials`).
+INFRAHUB_CREDENTIAL = "infrahub-token"
+NETBOX_CREDENTIAL = "netbox-token"
+# The shell variable whose value, when set, is stored as `infrahub-token`. Only the tasks
+# read it: no Compose file passes a source or destination credential to a Sync service.
+INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN"
+# The same for `netbox-token`.
+NETBOX_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_DEV_NETBOX_TOKEN"
+# The variable that gives a `sync-worker` the address of the Sync API it reads credential values from.
+WORKER_API_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
+# The variable that gives the Sync API the key it encrypts stored credentials with.
+ENCRYPTION_KEY_VARIABLE = "INFRAHUB_SYNC_ENCRYPTION_KEY"
+# The Sync API's refusal of a credential change while it has no encryption key.
+KEY_NOT_CONFIGURED_CODE = "credential-key-not-configured"
+CREDENTIAL_EXISTS_CODE = "credential-exists"
 # The variable of the Sync API that holds the API token of its `admin` account.
 ADMIN_TOKEN_VARIABLE = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"  # noqa: S105 -- the name of a variable
 DEV_IMAGE = "infrahub-sync:dev"
@@ -174,7 +188,8 @@ DEPS_SMOKE_STACK = "dev-deps"
 DEPS_PROFILES = ("infrahub",)
 # Where `dev.api` listens: loopback only, like every publication of the stack.
 HOST_PROCESS_ADDRESS = "127.0.0.1"
-API_FACTORY = "infrahub_sync.service.serve:build_service"
+# The factory that refuses a start without the encryption key or the worker token, as `main` does.
+API_FACTORY = "infrahub_sync.service.serve:build_process_service"
 DATABASE_URL_VARIABLE = "INFRAHUB_SYNC_DATABASE_URL"
 S3_ENDPOINT_VARIABLE = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 # The bundled store's service, the host name its endpoint names inside the stack.
@@ -762,20 +777,89 @@ def _destroy(context: Context, *, project: str = "") -> None:
     compose(context, "down --volumes --remove-orphans", ComposeTarget(project=project, profiles=ALL_PROFILES), pty=True)
 
 
-def _stack_env(settings: DevSettings) -> dict[str, str]:
-    """The shell values the Sync services read, beyond what the shell already sets.
+def development_credentials(settings: DevSettings) -> dict[str, str]:
+    """The token of each stored credential the shipped examples name, by credential name.
 
-    With the stack's own Infrahub, the worker's Infrahub credential defaults to that
-    Infrahub's initial admin token, so the smoke package can write to it. With the
-    `preview` and `demo` presets, or while the local NetBox runs, the NetBox credential defaults to
-    the local NetBox's development token. A value the shell exports wins.
+    A value the shell exports in INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN or INFRAHUB_SYNC_DEV_NETBOX_TOKEN
+    wins. Without one, `infrahub-token` is the initial admin token of the stack's own
+    Infrahub, and `netbox-token` is the local NetBox's development token with the `preview`
+    and `demo` presets or while the local NetBox runs. A credential with no value is left out.
     """
-    environment: dict[str, str] = {}
-    if settings.infrahub is not None and not os.environ.get(INFRAHUB_CREDENTIAL_VARIABLE):
-        environment[INFRAHUB_CREDENTIAL_VARIABLE] = settings.infrahub_admin_token
-    if settings.netbox_credential and not os.environ.get(NETBOX_CREDENTIAL_VARIABLE):
-        environment[NETBOX_CREDENTIAL_VARIABLE] = netbox_token(load_netbox_env())
-    return environment
+    infrahub = os.environ.get(INFRAHUB_CREDENTIAL_VARIABLE) or settings.infrahub_admin_token
+    netbox = os.environ.get(NETBOX_CREDENTIAL_VARIABLE, "")
+    if not netbox and settings.netbox_credential:
+        netbox = netbox_token(load_netbox_env())
+    values = {INFRAHUB_CREDENTIAL: infrahub, NETBOX_CREDENTIAL: netbox}
+    return {name: value for name, value in values.items() if value}
+
+
+def _open_client(service_url: str, token: str) -> SyncClient:
+    """Open the shared Sync API client; imported here so the tasks package loads without it."""
+    from infrahub_sync.client import SyncClient  # noqa: PLC0415 -- lazy, as the other HTTP imports of this module
+
+    return SyncClient(service_url, token)
+
+
+def store_development_credentials(service_url: str, admin_token: str, values: Mapping[str, str]) -> None:
+    """Store each development credential in the Sync API, as the `admin` account.
+
+    A credential that does not exist is created; one that exists gets the value again, so the
+    step can run on every start. The values go to the Sync API in a request body only: no
+    value is printed, logged, written to a file or passed on a command line.
+
+    A Sync API without an encryption key stores no credential. That case is printed and does
+    not stop the task, because the stack still serves every request that needs no stored
+    credential.
+
+    Raises:
+        DevStackError: the Sync API has no API token for `admin`, cannot be reached, or
+            refuses a credential for another reason. The message names the credential and
+            the refusal code, never a value.
+    """
+    from infrahub_sync.client import APIError, SyncClientError  # noqa: PLC0415 -- lazy, see `_open_client`
+
+    if not values:
+        print(f" - [{NAMESPACE}] No development credential to store: the stack has no token for Infrahub or NetBox")
+        return
+    names = ", ".join(values)
+    if not admin_token:
+        msg = f"the Sync API has no {ADMIN_TOKEN_VARIABLE}, so the tasks cannot store the credentials {names}"
+        raise DevStackError(msg)
+    current = ""
+    try:
+        with _open_client(service_url, admin_token) as client:
+            for current, token in values.items():
+                _store_credential(client, current, token)
+    except APIError as exc:
+        if exc.code == KEY_NOT_CONFIGURED_CODE:
+            print(
+                f" - [{NAMESPACE}] The Sync API has no {ENCRYPTION_KEY_VARIABLE}, so it stores no credential; "
+                f"not stored: {names}. A package that names one of them cannot run"
+            )
+            return
+        msg = f"the Sync API refused the stored credential {current} ({exc.status} {exc.code})"
+        raise DevStackError(msg) from exc
+    except SyncClientError as exc:
+        msg = f"the stored credentials {names} could not be sent to the Sync API at {service_url}: {type(exc).__name__}"
+        raise DevStackError(msg) from exc
+    print(f" - [{NAMESPACE}] Stored the credentials the shipped examples name: {names}")
+
+
+def _store_credential(client: SyncClient, name: str, token: str) -> None:
+    """Create one stored credential, or replace its value when it exists."""
+    from infrahub_sync.client import APIError  # noqa: PLC0415 -- lazy, see `_open_client`
+
+    try:
+        client.create_credential(name, token=token, description="Development stack: stored by `invoke dev.start`")
+    except APIError as exc:
+        if exc.code != CREDENTIAL_EXISTS_CODE:
+            raise
+        client.set_credential_value(name, token=token)
+
+
+def _store_stack_credentials(settings: DevSettings) -> None:
+    """Store the development credentials in the stack's Sync API, once its containers run."""
+    store_development_credentials(settings.sync_api_url, settings.admin_token, development_credentials(settings))
 
 
 def _attach_worker(context: Context, settings: DevSettings) -> None:
@@ -964,7 +1048,10 @@ def host_environment(settings: DevSettings, service: Literal["sync-api", "sync-w
     environment["PREFECT_API_URL"] = f"{settings.prefect_url}/api"
     if service == "sync-api":
         environment["INFRAHUB_SYNC_SERVICE_HOST"] = HOST_PROCESS_ADDRESS
-    environment.update(_stack_env(settings))
+    else:
+        # The container reaches the Sync API by its service name; the host process reaches the
+        # loopback publication, where `dev.api` or the `sync-api` container listens.
+        environment[WORKER_API_URL_VARIABLE] = settings.sync_api_url
     return environment
 
 
@@ -1061,16 +1148,21 @@ def _start_stack(context: Context, *, preset: str = "", infrahub_network: str = 
 
 
 def _run_stack(context: Context, settings: DevSettings) -> None:
-    """Start the containers of resolved settings, seed the smoke dataset when the preset has it, print the URLs."""
+    """Start the containers of resolved settings, store the development credentials, seed, print the URLs.
+
+    The credentials are stored through the Sync API once `up --wait` reports it healthy. The
+    smoke dataset is loaded only when the preset has it.
+    """
     _rebuild_when_stale(context, settings)
     _start_netbox(context, settings)
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
-        ComposeTarget(project=settings.project, profiles=settings.profiles, env=_stack_env(settings)),
+        ComposeTarget(project=settings.project, profiles=settings.profiles),
         pty=True,
     )
     _attach_worker(context, settings)
+    _store_stack_credentials(settings)
     _report_left_running(context, settings)
     _seed_preview(context, settings)
     _print_urls(settings)
@@ -1116,7 +1208,7 @@ def dev_restart(context: Context) -> None:
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --force-recreate --no-deps {services}",
-        ComposeTarget(project=settings.project, profiles=settings.profiles, env=_stack_env(settings)),
+        ComposeTarget(project=settings.project, profiles=settings.profiles),
         pty=True,
     )
     _attach_worker(context, settings)
@@ -1227,6 +1319,10 @@ def dev_deps(context: Context, preset: str = "", infrahub_network: str = "") -> 
     print(f" - [{NAMESPACE}] PostgreSQL  {_publication_address(settings.postgres)}")
     print(f" - [{NAMESPACE}] Object store {object_store or 'not set'}")
     print(f" - [{NAMESPACE}] Next: `uv run invoke dev.api` and `uv run invoke dev.worker`, each in its own terminal")
+    print(
+        f" - [{NAMESPACE}] No Sync API runs yet, so no credential is stored; once `dev.api` runs, create the "
+        f"credentials a package names with `uv run infrahub-sync credentials create`, for example {INFRAHUB_CREDENTIAL}"
+    )
 
 
 @task(name="api")

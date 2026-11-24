@@ -14,7 +14,6 @@ such case first asserts the value is really collected and really present before 
 
 from __future__ import annotations
 
-import copy
 import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -38,6 +37,8 @@ from infrahub_sync.service.config_routes import ConfigurationRoutes
 from infrahub_sync.service.orchestration import Submission
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.settings import ADMIN_ACCOUNT_PASSWORD_ENV, ADMIN_ACCOUNT_TOKEN_ENV
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import seed_accounts
 
 if TYPE_CHECKING:
@@ -86,40 +87,39 @@ SHAPED_SECRETS = {
 }
 
 
-def _package(*, undeclared: str, credential_path: str) -> dict[str, Any]:
-    """One valid package whose two secret-named settings are declared at registration."""
-    return copy.deepcopy(
-        {
-            "format_version": 1,
-            "configuration": {
-                "name": "secret-containment",
-                "source": {
-                    "name": "netbox",
-                    "settings": {
-                        "url": "https://demo.netbox.dev",
-                        "token": {"$credential": "netbox-token"},
-                        undeclared: "declared at registration",
-                        credential_path: {"$credential": "netbox-token"},
-                    },
-                },
-                "destination": {
-                    "name": "infrahub",
-                    "settings": {"url": "http://localhost:8000", "token": {"$credential": "infrahub-token"}},
-                },
+def _package(*, undeclared: str | None = None) -> dict[str, Any]:
+    """One valid package whose blocks each name a stored credential.
+
+    With `undeclared`, the source declares one more setting under that name.
+    """
+    settings: dict[str, Any] = {"url": "https://demo.netbox.dev"}
+    if undeclared is not None:
+        settings[undeclared] = "declared at registration"
+    return {
+        "format_version": 1,
+        "configuration": {
+            "name": "secret-containment",
+            "source": {"name": "netbox", "credential": SOURCE_CREDENTIAL, "settings": settings},
+            "destination": {
+                "name": "infrahub",
+                "credential": DESTINATION_CREDENTIAL,
+                "settings": {"url": "http://localhost:8000"},
             },
-            "credentials": {
-                "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
-                "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
-            },
-        }
-    )
+        },
+    }
+
+
+def _projection(tmp_path: Path) -> ProductProjection:
+    """A store that holds the two credentials the package names, so registration accepts it."""
+    projection = local_product_projection(tmp_path)
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    return projection
 
 
 def _nested_package() -> dict[str, Any]:
     """A valid package carrying a plain value at the deep path, so registration accepts it."""
-    package = _package(undeclared="canaryplain", credential_path="canarypath")
+    package = _package()
     settings = package["configuration"]["source"]["settings"]
-    del settings["canaryplain"], settings["canarypath"]
     leaf: dict[str, Any] = {NESTED_SECRET: "declared at registration"}
     for branch in reversed(NESTED_BRANCHES[1:]):
         leaf = {branch: leaf}
@@ -218,10 +218,13 @@ def _capabilities(*, allowed: tuple[str, ...], credential_paths: tuple[str, ...]
 
 
 def _named_source_package(adapter_name: str) -> dict[str, Any]:
-    """A valid package whose source role names `adapter_name`."""
-    package = _package(undeclared="canaryplain", credential_path="canarypath")
-    settings = package["configuration"]["source"]["settings"]
-    del settings["canaryplain"], settings["canarypath"]
+    """A valid package whose source role names `adapter_name`.
+
+    No stored credential has fields for an adapter outside the bundled ones, so the source
+    names no credential.
+    """
+    package = _package()
+    del package["configuration"]["source"]["credential"]
     package["configuration"]["source"]["name"] = adapter_name
     return package
 
@@ -262,18 +265,26 @@ def _register_then_narrow(
     projection: ProductProjection,
     *,
     undeclared: str,
-    credential_path: str,
+    credential_path: str | None = None,
 ) -> ConfigurationVersion:
-    """Register while the declaration accepts both settings, then withdraw both from it.
+    """Register while the declaration accepts the settings, then withdraw them from it.
 
     Revalidating a persisted version against the *current* declaration is the product's own
-    contract, and it is the only way a registered package reports these two families.
+    contract, and it is the only way a registered package reports these families. With
+    `credential_path`, the package holds a plain value at that setting, and the declaration
+    first accepts the setting as a plain one, then declares it as a credential setting: the
+    value is then reported as `inline-credential-value`, in a message that holds its pointer.
     """
-    _install(monkeypatch, _capabilities(allowed=(undeclared, credential_path), credential_paths=(credential_path,)))
-    registered = configs.register(
-        package=_package(undeclared=undeclared, credential_path=credential_path), projection=projection
-    )
-    _install(monkeypatch, _capabilities(allowed=(credential_path,), credential_paths=()))
+    if credential_path is None:
+        _install(monkeypatch, _capabilities(allowed=(undeclared,), credential_paths=()))
+        registered = configs.register(package=_package(undeclared=undeclared), projection=projection)
+        _install(monkeypatch, _capabilities(allowed=(), credential_paths=()))
+        return registered.version
+    _install(monkeypatch, _capabilities(allowed=(undeclared, credential_path), credential_paths=()))
+    package = _package(undeclared=undeclared)
+    package["configuration"]["source"]["settings"][credential_path] = "declared at registration"
+    registered = configs.register(package=package, projection=projection)
+    _install(monkeypatch, _capabilities(allowed=(credential_path,), credential_paths=(credential_path,)))
     return registered.version
 
 
@@ -295,8 +306,6 @@ def _validate(
 @pytest.fixture
 def environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every canary in place before `build_app` collects them."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "netbox-token-value-0003")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-token-value-0004")
     monkeypatch.setenv("SYNC_SHORT_TOKEN", SHORT_SECRET)
     monkeypatch.setenv("SYNC_BOUND_TOKEN", BOUND_SECRET)
     monkeypatch.setenv("SYNC_LONG_TOKEN", LONG_SECRET)
@@ -323,8 +332,8 @@ def test_a_secret_named_setting_is_absent_from_the_serialized_findings(
 ) -> None:
     """A declared key carrying a collected value never reaches the response, at any length."""
     _ = description, environment
-    projection = local_product_projection(tmp_path)
-    version = _register_then_narrow(monkeypatch, projection, undeclared=secret, credential_path="canarypath")
+    projection = _projection(tmp_path)
+    version = _register_then_narrow(monkeypatch, projection, undeclared=secret)
 
     body = json.dumps(_validate(monkeypatch, projection, version))
 
@@ -337,7 +346,7 @@ def test_both_reproduced_finding_families_are_reported_and_carry_no_secret(
 ) -> None:
     """The two families the defect was reproduced in are still produced, and are safe."""
     _ = environment
-    projection = local_product_projection(tmp_path)
+    projection = _projection(tmp_path)
     version = _register_then_narrow(monkeypatch, projection, undeclared=LONG_SECRET, credential_path=BOUND_SECRET)
 
     report = _validate(monkeypatch, projection, version)
@@ -345,7 +354,7 @@ def test_both_reproduced_finding_families_are_reported_and_carry_no_secret(
     body = json.dumps(report)
 
     assert "undeclared-setting" in codes, report
-    assert "credential-path-not-declared" in codes, report
+    assert "inline-credential-value" in codes, report
     for secret in (LONG_SECRET, BOUND_SECRET):
         assert secret not in body
         assert secret[:64] not in body
@@ -372,12 +381,9 @@ def test_a_collected_value_of_any_shape_is_removed_from_the_serialized_findings(
     secret = SHAPED_SECRETS[shape]
     assert secret in collect_secret_values(), f"{secret!r} is not collected, so nothing would redact it"
 
-    projection = local_product_projection(tmp_path)
-    package = _package(undeclared="canaryplain", credential_path="canarypath")
-    del package["configuration"]["source"]["settings"]["canaryplain"]
-    package["configuration"]["source"]["settings"]["canarypath"] = {"$credential": "netbox-token"}
+    projection = _projection(tmp_path)
+    package = _package()
     package["omissions"] = [{"kind": "BuiltinTag", "reason": f"Q-002 {secret}"}]
-    _install(monkeypatch, _capabilities(allowed=("canarypath",), credential_paths=("canarypath",)))
     registered = configs.register(package=package, projection=projection)
 
     # What the producer emits with no secrets supplied — the leak this boundary must remove.
@@ -403,7 +409,7 @@ def test_two_secret_named_settings_stay_distinguishable_after_redaction(
 ) -> None:
     """Redaction is lossy, so two pointers it maps together keep the existing location tag."""
     _ = environment
-    projection = local_product_projection(tmp_path)
+    projection = _projection(tmp_path)
     version = _register_then_narrow(monkeypatch, projection, undeclared=LONG_SECRET, credential_path=BOUND_SECRET)
 
     report = _validate(monkeypatch, projection, version)
@@ -447,7 +453,7 @@ def test_a_withdrawn_adapter_declaration_never_exposes_an_adapter_name_prefix(
     longer than the finding text bound leaves a prefix unless it is redacted before bounding.
     """
     _ = environment
-    projection = local_product_projection(tmp_path)
+    projection = _projection(tmp_path)
     _install(monkeypatch, _with_source_adapter(ADAPTER_NAME_SECRET))
     registered = configs.register(package=_named_source_package(ADAPTER_NAME_SECRET), projection=projection)
     _install(monkeypatch, dict(capabilities_module.BUILTIN_ADAPTER_CAPABILITIES))
@@ -475,7 +481,7 @@ def test_a_registered_adapter_name_never_reaches_a_finding_message_unredacted(
     quotes caller content, and a name longer than the finding text bound leaves a prefix.
     """
     _ = environment
-    projection = local_product_projection(tmp_path)
+    projection = _projection(tmp_path)
     _install(monkeypatch, _with_source_adapter(ADAPTER_NAME_SECRET))
     registered = configs.register(package=_named_source_package(ADAPTER_NAME_SECRET), projection=projection)
     _install(monkeypatch, _with_source_adapter(ADAPTER_NAME_SECRET, ADAPTER_NAME_DRIFT[code]))
@@ -504,12 +510,9 @@ def test_an_omission_reason_ending_in_whitespace_never_exposes_a_secret_prefix(
         "the trailing-space value is not collected, so nothing would redact it"
     )
 
-    projection = local_product_projection(tmp_path)
-    package = _package(undeclared="canaryplain", credential_path="canarypath")
-    del package["configuration"]["source"]["settings"]["canaryplain"]
-    package["configuration"]["source"]["settings"]["canarypath"] = {"$credential": "netbox-token"}
+    projection = _projection(tmp_path)
+    package = _package()
     package["omissions"] = [{"kind": "BuiltinTag", "reason": TRAILING_SPACE_SECRET}]
-    _install(monkeypatch, _capabilities(allowed=("canarypath",), credential_paths=("canarypath",)))
     registered = configs.register(package=package, projection=projection)
 
     report = _validate(monkeypatch, projection, registered.version)
@@ -531,7 +534,7 @@ def test_a_deep_declared_credential_path_never_exposes_a_secret_component_prefix
     through a secret component leaves a prefix no whole-value match can remove.
     """
     _ = environment
-    projection = local_product_projection(tmp_path)
+    projection = _projection(tmp_path)
     _install(monkeypatch, _capabilities(allowed=(NESTED_BRANCHES[0],), credential_paths=()))
     registered = configs.register(package=_nested_package(), projection=projection)
     _install(

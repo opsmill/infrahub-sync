@@ -54,6 +54,8 @@ from tests.cli.test_client_commands import (
     _terminal,
     client,  # noqa: F401 - the fixture is used by name.
 )
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
 from tests.service.failure_cases import CASES, CREDENTIALS, ERROR_TEXT, HOLDER_RUN_ID, FailureCase, forbidden_values
@@ -111,6 +113,7 @@ def _service(tmp_path: Path) -> tuple[ProductProjection, TestClient, str]:
     """A product store with one claimed run, and a client of the Sync API over it."""
     projection = local_product_projection((tmp_path / "store").resolve())
     resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     projection.create_run(
         ProductRun(

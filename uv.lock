@@ -1378,6 +1378,7 @@ prefect = [
 ]
 service = [
     { name = "boto3", marker = "python_full_version >= '3.11'" },
+    { name = "cryptography", marker = "python_full_version >= '3.11'" },
     { name = "fastapi", marker = "python_full_version >= '3.11'" },
     { name = "infrahub-sdk", extra = ["ctl"], marker = "(python_full_version >= '3.11' and extra == 'extra-13-infrahub-sync-service') or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
     { name = "prefect", marker = "python_full_version >= '3.11'" },
@@ -1400,6 +1401,7 @@ testcontainers = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=1.35,<2" },
+    { name = "cryptography", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=50,<51" },
     { name = "diffsync", specifier = ">=2.1,<3.0" },
     { name = "fastapi", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = "==0.141.1" },
     { name = "fastapi", marker = "extra == 'prefect'", specifier = "==0.141.1" },

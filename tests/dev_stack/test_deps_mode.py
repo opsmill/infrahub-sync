@@ -7,6 +7,7 @@ every command the tasks run and every URL they call (FR-020, FR-021, FR-022, D-2
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 from contextlib import nullcontext
@@ -33,8 +34,10 @@ SYNC_ENV = {
     "AWS_ACCESS_KEY_ID": "devaccesskey",
     "INFRAHUB_SYNC_SERVICE_WORK_POOL": "infrahub-sync",
     "PREFECT_API_URL": "http://prefect-server:4200/api",
-    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "",
 }
+# The development values of the settings of stored credentials, as the Compose file resolves them.
+ENCRYPTION_KEY = "aW5mcmFodWItc3luYy1kZXYtZW5jcnlwdGlvbi1rZXk="
+WORKER_TOKEN = "infrahub-sync-dev-worker-token"  # noqa: S105 -- the public development value
 CORE_RUNNING = "postgres\nobject-store\nprefect-server\ninfrahub-server\n"
 CA_TARGET = "/etc/infrahub-sync/ca"
 # A CA mount that is a named volume: no host directory to trust.
@@ -59,11 +62,18 @@ def _resolved(*, infrahub: bool) -> dict[str, Any]:
                 "INFRAHUB_SYNC_SERVICE_HOST": "0.0.0.0",  # noqa: S104 -- the container's value
                 "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": "infrahub-sync-dev-password",
                 "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": "infrahub-sync-dev-token",
+                "INFRAHUB_SYNC_ENCRYPTION_KEY": ENCRYPTION_KEY,
+                "INFRAHUB_SYNC_WORKER_TOKEN": WORKER_TOKEN,
             },
             "volumes": [SOURCE_MOUNT, CA_VOLUME],
         },
         "sync-worker": {
-            "environment": {**SYNC_ENV, "PREFECT_WORKER_HEARTBEAT_SECONDS": "10"},
+            "environment": {
+                **SYNC_ENV,
+                "PREFECT_WORKER_HEARTBEAT_SECONDS": "10",
+                "INFRAHUB_SYNC_API_URL": "http://sync-api:8000",
+                "INFRAHUB_SYNC_WORKER_TOKEN": WORKER_TOKEN,
+            },
             "volumes": [SOURCE_MOUNT, CA_VOLUME],
         },
     }
@@ -238,7 +248,7 @@ def test_dev_api_runs_in_the_foreground_against_the_loopback_publications(
 
     command, kwargs = fake.calls[-1]
     assert command == (
-        f"{sys.executable} -m uvicorn --factory infrahub_sync.service.serve:build_service --host 127.0.0.1 --port 8001"
+        f"{sys.executable} -m uvicorn --factory infrahub_sync.service.serve:build_process_service --host 127.0.0.1 --port 8001"
     )
     assert kwargs["pty"] is True
     assert not kwargs.get("asynchronous")
@@ -248,9 +258,16 @@ def test_dev_api_runs_in_the_foreground_against_the_loopback_publications(
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
     assert environment["PREFECT_API_URL"] == "http://127.0.0.1:4230/api"
     assert environment["INFRAHUB_SYNC_SERVICE_HOST"] == "127.0.0.1"
+    # The Sync API refuses to start without these two; the development stack gives both a value.
+    assert len(base64.b64decode(environment["INFRAHUB_SYNC_ENCRYPTION_KEY"], validate=True)) == 32
+    assert len(environment["INFRAHUB_SYNC_WORKER_TOKEN"]) >= 16
     assert environment["INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"]
     assert environment["INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"] == dev.API_TOKEN
-    assert environment[dev.INFRAHUB_CREDENTIAL_VARIABLE] == ADMIN_TOKEN
+    # The key and the token of the `worker` account are the container's own.
+    assert environment["INFRAHUB_SYNC_ENCRYPTION_KEY"] == ENCRYPTION_KEY
+    assert environment["INFRAHUB_SYNC_WORKER_TOKEN"] == WORKER_TOKEN
+    # No Sync process is given a source or destination credential.
+    assert not [name for name in environment if name.startswith("INFRAHUB_SYNC_CREDENTIAL_")]
     # No PID file, no other file either.
     assert list(tmp_path.iterdir()) == []
 
@@ -273,18 +290,24 @@ def test_dev_worker_runs_in_the_foreground_against_the_loopback_publications(
     assert environment["PREFECT_API_URL"] == "http://127.0.0.1:4230/api"
     assert environment["PREFECT_WORKER_HEARTBEAT_SECONDS"] == "10"
     assert "INFRAHUB_SYNC_SERVICE_HOST" not in environment
+    # The host worker reaches the Sync API on its loopback publication, not by its service
+    # name, with the container's own token of the `worker` account. It holds no key.
+    assert environment[dev.WORKER_API_URL_VARIABLE] == "http://127.0.0.1:8001"
+    assert environment["INFRAHUB_SYNC_WORKER_TOKEN"] == WORKER_TOKEN
+    assert "INFRAHUB_SYNC_ENCRYPTION_KEY" not in environment
     assert list(tmp_path.iterdir()) == []
 
 
-def test_a_credential_the_shell_exports_reaches_the_host_worker(
+def test_the_host_worker_is_given_no_credential_the_shell_exports(
     context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The exported token is stored through the Sync API by `dev.start`; the worker reads it from there."""
     monkeypatch.setenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, "exported")
 
     _body(dev.dev_worker)(context)
 
-    # Left out of `env`, so the exported value the process inherits applies.
     assert dev.INFRAHUB_CREDENTIAL_VARIABLE not in fake.calls[-1][1]["env"]
+    assert "exported" not in fake.calls[-1][1]["env"].values()
 
 
 def test_host_processes_need_the_loopback_publications() -> None:

@@ -4,24 +4,23 @@ configuration:
 
   source:
     name: slurpitsync
+    credential: slurpit-api-key
     settings:
       url: "https://<SLURPIT-ENDPOINT>"
-      api_key:
-        $credential: slurpit-api-key
 
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "http://localhost:8000"
-      token:
-        $credential: infrahub-token
 
-  # Each credential above is a reference, resolved by the service worker from
-  # its own environment. No credential value is ever written here, posted to
-  # the Sync API, or recorded in a registered version. Export the values
-  # before starting the worker:
-  #   export INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY="..."
-  #   export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="..."
+  # Each block names a stored credential. The Sync API stores the value and
+  # releases it to the worker for a run; this file holds no value. An
+  # administrator creates the two credentials before registering this package.
+  # The first command asks for the Slurp'it API key, and the second for the
+  # Infrahub token, both without echo:
+  #   uv run infrahub-sync credentials create slurpit-api-key
+  #   uv run infrahub-sync credentials create infrahub-token
 
   # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
   # Uncomment and edit only if you need to override the computed order:
@@ -209,13 +208,3 @@ configuration:
         - name: ip_prefix
           mapping: vrf_prefix
           reference: InfraPrefix
-
-# What each `$credential` above points at. `env` is the installed provider; the
-# identifier is the exact environment variable name the worker reads.
-credentials:
-  slurpit-api-key:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN

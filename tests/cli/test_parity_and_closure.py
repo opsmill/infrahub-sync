@@ -108,6 +108,12 @@ CLI_CLIENT_PARITY = (
     ("accounts delete NAME", "delete_account", "DELETE /accounts/{name}"),
     ("accounts tokens NAME", "list_account_tokens", "GET /accounts/{name}/tokens"),
     ("accounts delete-token NAME TOKEN_ID", "delete_account_token", "DELETE /accounts/{name}/tokens/{token_id}"),
+    ("credentials list", "iter_credentials", "GET /credentials"),
+    ("credentials show NAME", "get_credential", "GET /credentials/{name}"),
+    ("credentials create NAME", "create_credential", "POST /credentials"),
+    ("credentials set NAME", "set_credential_value", "PUT /credentials/{name}/value"),
+    ("credentials describe NAME TEXT", "set_credential_description", "PATCH /credentials/{name}"),
+    ("credentials delete NAME", "delete_credential", "DELETE /credentials/{name}"),
 )
 
 
@@ -171,6 +177,12 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "delete_account",
         "list_account_tokens",
         "delete_account_token",
+        "iter_credentials",
+        "get_credential",
+        "create_credential",
+        "set_credential_value",
+        "set_credential_description",
+        "delete_credential",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 
@@ -184,7 +196,7 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
     assert "plan" in help_text
     assert "verify" in help_text
     assert "whoami" in help_text
-    for command in ("login", "logout", "password", "tokens", "accounts"):
+    for command in ("login", "logout", "password", "tokens", "accounts", "credentials"):
         assert command in help_text
     # `diff` is a hidden, deprecated alias of `plan`.
     assert "diff" not in help_text
@@ -255,10 +267,14 @@ def test_only_shared_client_constructs_sync_api_http_requests() -> None:
             constructors.append(path.relative_to(ROOT))
 
     # The Microsoft Graph adapter reads its own source API, not the Sync API. The health checks
-    # call the Prefect server's `/health` and `/ready`, not the Sync API.
+    # call the Prefect server's `/health` and `/ready`, not the Sync API. The shared client serves
+    # every route for accounts. The worker's credential client calls the one worker route, with
+    # the worker token and its own retry and redaction rules (spec 027, research R6); its answer
+    # holds values, so it does not pass through the shared client.
     assert sorted(constructors) == [
         Path("infrahub_sync/adapters/msgraphsync.py"),
         Path("infrahub_sync/client/client.py"),
+        Path("infrahub_sync/service/credential_client.py"),
         Path("infrahub_sync/service/health.py"),
     ]
 
@@ -420,10 +436,13 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
     required = (
         "uv sync --extra dev --extra prefect --extra service",
         "uv run invoke dev.start --infrahub-network infrahub_default",
-        "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
-        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
+        "INFRAHUB_SYNC_DEV_NETBOX_TOKEN",
+        "INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN",
+        "uv run infrahub-sync credentials list",
         "INFRAHUB_SYNC_API_URL",
         "INFRAHUB_SYNC_API_TOKEN",
-        "The worker reads both credentials from its environment",
+        "The worker gets both values from the Sync API",
+        "netbox-token",
+        "infrahub-token",
     )
     assert not [token for token in required if token not in text]

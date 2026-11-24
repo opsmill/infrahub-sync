@@ -58,7 +58,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
 from tests.product_store.postgresql_isolation import isolated_schema_fixture
-from tests.product_store.test_contract import _named_configuration_package
+from tests.product_store.test_contract import _named_configuration_package, _with_named_credentials
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -115,7 +115,7 @@ def _schedule(projection: ProductProjection, **overrides: object) -> ScheduleRec
     if "config_id" not in values:
         # A name is unique among configurations, so each configuration gets its own.
         package = _named_configuration_package(f"configuration-{uuid4().hex[:8]}")
-        values["config_id"] = projection.create_configuration(package).config_id
+        values["config_id"] = _with_named_credentials(projection).create_configuration(package).config_id
     return ScheduleRecord.model_validate(values)
 
 

@@ -38,13 +38,16 @@ from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.checkpoints import FINAL_RUN_FILE_MEMBER, publish_plan_checkpoint
 from infrahub_sync.service.flow import service_sync_run
-from tests.configuration.validation_packages import package
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL, credential_package
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.plan.artifact_fixtures import operation_record
-from tests.service.execution_fixtures import append_execution
+from tests.service.execution_fixtures import append_execution, serve_released_credentials
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
 
+# The fields that the Sync API releases for each block of the registered package.
+RELEASED = {"source": {"token": "apply-source-canary"}, "destination": {"token": "apply-destination-canary"}}
 FLOW_RUN_ID = "b41d5f3c-9a52-4a1b-8c77-1f0e6d2b8a45"
 WORKER_ID = "5a9c8d71-3e2b-4f06-9d18-7c4b0a3e5f62"
 SCHEMA_FINGERPRINT = "c" * 64
@@ -152,12 +155,12 @@ class _Row:
 @pytest.fixture
 def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Harness:
     """A registered apply whose only plan copy is the published plan checkpoint."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "apply-destination-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "apply-source-canary")
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     run_id = "run-apply-from-checkpoint"
     inner = local_product_projection(tmp_path / "product")
-    registered = inner.create_configuration(package())
+    create_stored_credential_names(inner, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    serve_released_credentials(monkeypatch, service_flow, RELEASED, projection=inner)
+    registered = inner.create_configuration(credential_package())
     binding = (registered.config_id, registered.registry_version, registered.package_checksum)
     inner.create_run(
         ProductRun(
@@ -184,7 +187,7 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Harness:
     stored = inner.lookup_configuration_version(binding[0], binding[1]).value
     assert stored is not None
     runtime = resolve_runtime_instance(
-        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
+        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path), released=RELEASED
     )
     runtime._configuration_binding = binding
     authored = tmp_path / "planning-worker" / runtime.name / run_id

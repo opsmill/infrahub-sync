@@ -41,8 +41,8 @@ REQUIRED_VARIABLE = re.compile(r"\$\{(?P<name>[A-Z_][A-Z0-9_]*):\?")
 # A value Compose would change if `.env` held it unquoted: `$NAME`, `$$` and `${NAME}` are
 # interpolated, and the space and `#` end an unquoted value. Not a real credential.
 LITERAL_VALUE = "dummy-$token $$double ${NAME} it's #kept"
-# A variable the root file passes to `sync-worker` and that no test default sets.
-LITERAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"
+# A variable the root file passes to `sync-worker` unchanged; the exported value replaces its test default.
+LITERAL_VARIABLE = "INFRAHUB_SYNC_WORKER_TOKEN"
 
 
 def _env_file(directory: Path) -> dict[str, str]:
@@ -193,6 +193,32 @@ def test_compose_resolves_the_project_with_the_test_defaults(tmp_path: Path) -> 
     (published,) = services["sync-api"]["ports"]
     assert published["host_ip"] == "127.0.0.1"
     assert str(published.get("published", "")) in {"", "0"}
+
+
+def test_the_test_defaults_of_stored_credentials_are_accepted_by_the_api_and_the_worker(tmp_path: Path) -> None:
+    """The test deployment stores credentials: its key, worker token and API address pass the start-up checks.
+
+    No service is given a credential in an `INFRAHUB_SYNC_CREDENTIAL_*` variable; a test stores
+    the token of Infrahub through the Sync API.
+    """
+    from infrahub_sync.service.settings import ENCRYPTION_KEY_BYTES, credential_settings, worker_settings
+
+    compose = InfrahubSyncDockerCompose.create(directory=tmp_path, image="infrahub-sync:s010-ci", environ={})
+
+    services = _resolved_services(compose)
+
+    api = credential_settings(services["sync-api"]["environment"])
+    worker = worker_settings(services["sync-worker"]["environment"])
+    assert len(api.encryption_key) == ENCRYPTION_KEY_BYTES
+    assert worker.api_url == "http://sync-api:8000"
+    assert "INFRAHUB_SYNC_ENCRYPTION_KEY" not in services["sync-worker"]["environment"]
+    held = sorted(
+        f"{name}: {setting}"
+        for name, definition in services.items()
+        for setting in (definition.get("environment") or {})
+        if setting.startswith("INFRAHUB_SYNC_CREDENTIAL_")
+    )
+    assert held == []
 
 
 def test_compose_takes_an_exported_value_literally(tmp_path: Path) -> None:

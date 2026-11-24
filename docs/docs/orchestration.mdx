@@ -47,7 +47,10 @@ UTC. The Sync API refuses the request, and stores nothing, when:
   time zone is not known (`schedule-timezone-invalid`);
 - another schedule that is not deleted has the same name (`schedule-name-in-use`);
 - the configuration already has a schedule that is not deleted (`schedule-exists-for-configuration`).
-  The message names that schedule.
+  The message names that schedule;
+- the version names a stored credential that does not exist (`credential-not-found`). The message
+  lists the missing names and the command that creates each one. A change that pins another
+  version is refused the same way.
 
 When the Sync API stores a change to a schedule but cannot confirm that Prefect matches it, it
 answers `503 orchestration-unavailable`. Prefect may then still hold the schedule as it was before
@@ -635,14 +638,16 @@ Whatever starts the runs, plan for these operational concerns:
 
 To run the CLI from an orchestrator in a container, use the Infrahub Sync image (or the
 Compose deployment's `cli` service) with `INFRAHUB_SYNC_API_URL` and
-`INFRAHUB_SYNC_API_TOKEN` set. Register the configuration package with the service, and put
-source and destination credentials in the deployment's `.env`, where the worker
-resolves them — see [Container image](./container-image.mdx) and
-[Compose deployment](./compose-deployment.mdx). The Compose deployment gives the source
-credentials (for example `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`)
-only to the `sync-worker` service. `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` goes to
-`sync-worker` and `sync-api`, which reads the destination schema when it validates a
-package. `cli` receives only the Sync API URL and token.
+`INFRAHUB_SYNC_API_TOKEN` set. An administrator stores the source and destination credentials
+in the Sync API with `infrahub-sync credentials create`, and the configuration package names
+them; see [Manage stored credentials](./guides/credentials.mdx),
+[Container image](./container-image.mdx) and [Compose deployment](./compose-deployment.mdx).
+No container receives a source or destination credential in its environment: the worker gets
+the values of a run from the Sync API, and `sync-api` reads the destination schema with the
+stored value when it validates a package. `cli` receives only the Sync API URL and token.
+
+This differs from the direct Prefect flow, described in
+[Prefect remote run](./reference/prefect-remote-run.mdx). The direct Prefect flow runs a `config.yml` file outside a registered package, so it uses no stored credential: its adapters read the address, the token, the username and the password from the environment of the serving process. The Sync API and its worker read no such variable for a registered package; there, each block names a stored credential.
 
 ## What this release does not include
 

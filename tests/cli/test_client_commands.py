@@ -1928,6 +1928,30 @@ def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, clien
     assert "Remove the store block to keep sync data in memory." in result.output
 
 
+@pytest.mark.parametrize("operation", ["register", "plan"])
+def test_removed_credential_format_refusal_names_what_replaces_it(
+    tmp_path: Path, client: MagicMock, operation: str
+) -> None:
+    """A 422 credential-format-removed response says to name stored credentials (spec 027, FR-021)."""
+    if operation == "register":
+        package_path = tmp_path / "package.json"
+        package_path.write_text("{}", encoding="utf-8")
+        client.register_config.side_effect = ConfigsAPIError(
+            422, "configs-validation", "validation", "credential-format-removed"
+        )
+        arguments = ("configs", "register", str(package_path), "--reason", "register inventory")
+    else:
+        client.plan.side_effect = APIError(422, "credential-format-removed")
+        arguments = ("plan", "--config", "edge-sync", "--version", "1", "--reason", "plan inventory")
+
+    result = _invoke(client, *arguments)
+
+    assert result.exit_code == 1
+    assert "`credentials` block" in result.output
+    assert "credential: <name>" in result.output
+    assert ("register a new version" in result.output) is (operation == "plan")
+
+
 @pytest.mark.parametrize(
     ("arguments", "method"),
     [

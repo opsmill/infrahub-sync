@@ -91,7 +91,6 @@ def deployment_without_prefect(
     environment_file = operator_environment(
         tmp_path_factory.mktemp(f"noprefect{uuid.uuid4().hex[:8]}"),
         image=image_without_prefect,
-        destination_token="",
         canaries=canaries,
     )
     deployment = Deployment(instance=f"noprefect{uuid.uuid4().hex[:12]}", environment_file=environment_file)

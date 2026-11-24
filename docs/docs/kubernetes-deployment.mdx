@@ -29,7 +29,6 @@ this page use that release name, in the namespace `infrahub-sync`.
 | `infrahub-sync-postgresql-init` | ConfigMap | The script that creates both PostgreSQL databases and their roles when they are missing. PostgreSQL runs it on an empty volume, and the bootstrap Job runs it each time. |
 | `infrahub-sync-object-store` | StatefulSet, Service | The object store for plans and run files, on the Silo image. |
 | `infrahub-sync` | Secret | The credentials, when you set them as values instead of naming your own Secret. |
-| `infrahub-sync-worker-credentials` | Secret | Source credentials set in `worker.credentials`. Only the worker reads it. |
 | `infrahub-sync-ca` | ConfigMap | CA certificates set in `caCertificates.certificates`. |
 
 PostgreSQL and the object store each keep their data on a volume claim of 10Gi, with access mode
@@ -88,6 +87,33 @@ period. A container from an earlier image fails to start, because the image has 
 `/usr/bin/tini`. No release contains these yet, so the minimum Sync version is not known yet. The
 release that the chart's current `appVersion` names does not contain them.
 
+### Stored credentials and the chart
+
+The chart passes the three variables that the Sync API and the worker need for stored credentials:
+
+- `INFRAHUB_SYNC_ENCRYPTION_KEY`, from `credentials.encryptionKey`, on the Sync API only: the key
+  that encrypts stored credentials, 32 bytes, base64-encoded.
+- `INFRAHUB_SYNC_WORKER_TOKEN`, from `credentials.workerToken`, on the Sync API and the worker: the
+  token of the `worker` account.
+- `INFRAHUB_SYNC_API_URL` on the worker: the address of the Sync API. By default it is the Sync API
+  Service of the release, `http://infrahub-sync-api:<api.service.port>`; `worker.apiUrl` replaces it.
+
+The chart passes no source or destination credential. An administrator stores the tokens and
+passwords of sources and destinations in the Sync API, and a package names them. See
+[Manage stored credentials](./guides/credentials.mdx).
+
+- Changing the encryption key is not supported in this version.
+- Losing the key means entering every credential again with `infrahub-sync credentials set`. Keep a
+  copy of the key outside the cluster.
+- The worker's request to the Sync API holds the worker token, and the answer holds the values. With
+  the default address, that request is plain HTTP inside the cluster. To encrypt it, set
+  `worker.apiUrl` to an `https://` address, such as a TLS proxy in front of the Sync API; the worker
+  trusts the certificates of [a private certificate authority](#trust-a-private-certificate-authority).
+
+The chart change is in the `opsmill/infrahub-helm` pull request that adds the chart, which is not
+merged. The chart's `appVersion` names a Sync release without stored credentials; it is not known
+which Sync release will contain them.
+
 ## Prerequisites
 
 - A Kubernetes cluster where you can create a namespace, and a default storage class or a storage
@@ -132,9 +158,7 @@ kubectl -n infrahub-sync create secret generic infrahub-sync --from-env-file=.en
 ```
 
 Each container reads only the keys it needs, so other lines of the file, such as
-`INFRAHUB_SYNC_API_TOKEN` or `VERSION`, are stored in the Secret and not read. This includes source
-credentials such as `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`: the worker reads them only from the
-Secrets described in [Settings](#settings), so put them there. To write a new
+`INFRAHUB_SYNC_API_TOKEN` or `VERSION`, are stored in the Secret and not read. To write a new
 `.env` file with random values, follow [The `.env` file](./compose-deployment.mdx#configuration-prerequisites)
 of the Compose deployment page, and keep the file at mode 0600, out of version control.
 
@@ -150,7 +174,8 @@ of the Compose deployment page, and keep the file at mode 0600, out of version c
 | `INFRAHUB_SYNC_PREFECT_PASSWORD` | with the bundled PostgreSQL | PostgreSQL, Prefect server |
 | `INFRAHUB_SYNC_DATABASE_URL` | with your own PostgreSQL | Sync API, worker, bootstrap |
 | `INFRAHUB_SYNC_PREFECT_DATABASE_URL` | with your own PostgreSQL | Prefect server |
-| `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | never | Sync API, worker |
+| `INFRAHUB_SYNC_ENCRYPTION_KEY` | always | Sync API |
+| `INFRAHUB_SYNC_WORKER_TOKEN` | always | Sync API, worker |
 
 The two `INFRAHUB_SYNC_ADMIN_ACCOUNT_*` keys define `admin`, the administrator account that
 always exists. Only the Sync API container receives them; the worker does not.
@@ -166,6 +191,12 @@ The Sync API applies both keys each time it starts. When a value is not accepted
 start, and its log names the variable and never shows the value. The
 [`admin` account](./guides/accounts.mdx#the-admin-account) section of the accounts guide
 describes what the Sync API refuses to change on `admin`.
+
+`INFRAHUB_SYNC_ENCRYPTION_KEY` is 32 bytes, base64-encoded, and `INFRAHUB_SYNC_WORKER_TOKEN` follows
+the rules of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` and must differ from it. When the chart creates the
+Secret from values, it refuses to render a key or a token that breaks these rules. With your own
+Secret, the Sync API refuses to start instead, and its log names the variable. See
+[Stored credentials and the chart](#stored-credentials-and-the-chart).
 
 With the bundled PostgreSQL, the chart builds both connection strings in the pod environment from
 the role, the database and the password, so `INFRAHUB_SYNC_PRODUCT_PASSWORD` and
@@ -366,24 +397,6 @@ api:
 
 [Automatic resume of an interrupted write](./operations/day-2-operations.mdx#automatic-resume-of-an-interrupted-write)
 describes when the Sync API resumes a run, and when it does not.
-
-Source credentials go to the worker only:
-
-- `worker.credentials` maps a variable name to its value, for example
-  `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`. The chart creates a Secret from the map. It refuses a
-  name that does not match `^INFRAHUB_SYNC_CREDENTIAL_[A-Za-z0-9_]+$`.
-- `worker.credentialsExistingSecrets` lists Secrets you create. Each key of each Secret becomes a
-  variable of the worker, so name the keys `INFRAHUB_SYNC_CREDENTIAL_<NAME>`. Do not list the
-  credentials Secret here: the worker would then receive every key of it, including the
-  PostgreSQL passwords.
-
-A package references these variables by name, as
-[Credentials in a package](./compose-deployment.mdx#credentials-in-a-package) describes. The destination
-token `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` is a key of the credentials Secret, and the
-Sync API and the worker both read it. To give the worker another token, set that key in
-`worker.credentials`: the worker then reads it from there and not from the credentials Secret.
-Do not put that key in a Secret of `worker.credentialsExistingSecrets` while the credentials
-Secret also holds it, because the credentials Secret's value wins.
 
 The init containers of the Prefect server and the bootstrap Job set the resource requests and
 limits of `initContainers.resources`: 10m CPU and 64Mi memory requested, and a 128Mi memory limit,

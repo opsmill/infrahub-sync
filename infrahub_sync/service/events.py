@@ -8,6 +8,7 @@ missing or invalid token gets no type, because the event list never returns it.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from infrahub_sync.product_store import (
@@ -20,10 +21,14 @@ from infrahub_sync.product_store import (
     RelatedResource,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 _RUN_PREFIX = "infrahub_sync.run."
 _CONFIG_PREFIX = "infrahub_sync.config."
 _SCHEDULE_PREFIX = "infrahub_sync.schedule."
 _ACCOUNT_PREFIX = "infrahub_sync.account."
+_CREDENTIAL_PREFIX = "infrahub_sync.credential."
 # The event a successful stage records, by stage.
 _STAGE_SUCCESS_TYPES = {
     "plan": f"{_RUN_PREFIX}planned",
@@ -153,6 +158,88 @@ def schedule_decision_type(operation: str, outcome: str) -> str | None:
             raise ValueError(msg) from None
     msg = f"no schedule event type for the request outcome {outcome!r}"
     raise ValueError(msg)
+
+
+# The events of the stored credentials (spec 027, contracts/http-api.md). Each names the
+# credential by its name and its revision, never a value.
+CREDENTIAL_CREATED = f"{_CREDENTIAL_PREFIX}created"
+CREDENTIAL_VALUE_CHANGED = f"{_CREDENTIAL_PREFIX}value_changed"
+CREDENTIAL_UPDATED = f"{_CREDENTIAL_PREFIX}updated"
+CREDENTIAL_DELETED = f"{_CREDENTIAL_PREFIX}deleted"
+CREDENTIAL_REFUSED = f"{_CREDENTIAL_PREFIX}refused"
+CREDENTIAL_RELEASED = f"{_CREDENTIAL_PREFIX}released"
+
+
+def credential_event(  # pylint: disable=too-many-arguments
+    event_type: str,
+    *,
+    actor: str,
+    operation: str,
+    name: str | None,
+    revision: int | None = None,
+    outcome: str = "accepted",
+    cause: str | None = None,
+    created_at: datetime | None = None,
+) -> AuditEvent:
+    """Build the event of one credential action, which names the credential and its revision.
+
+    ``actor`` is an account identifier. ``name`` is ``None`` for a refusal that came before the
+    request named a credential that can be recorded. The event holds no value.
+    """
+    related = [RelatedResource(kind="account", id=actor)]
+    if name is not None:
+        related.append(RelatedResource(kind="credential", id=name))
+    details = None if revision is None and cause is None else EventDetails(revision=revision, cause=cause)
+    return AuditEvent(
+        event_id=f"a-{uuid4().hex}",
+        run_id=None,
+        actor=actor,
+        operation=operation,
+        reason=None,
+        outcome=outcome,
+        created_at=created_at or datetime.now(timezone.utc),
+        event_type=event_type,
+        related=tuple(related),
+        details=details,
+    )
+
+
+def credentials_released_event(  # pylint: disable=too-many-arguments
+    *,
+    actor: str,
+    operation: str,
+    run_id: str,
+    config_id: str | None,
+    registry_version: int | None,
+    released: Sequence[tuple[str, int]],
+    created_at: datetime,
+) -> AuditEvent:
+    """Build the one event of a release of stored values to a stage execution of a run.
+
+    ``released`` holds the name and the revision of each credential released. The event names
+    every credential. ``details.revision`` is set when one credential was released: the details
+    of an event hold one revision, and ``run_credential_uses`` holds the revision of each block.
+    The event holds no value.
+    """
+    names = sorted({name for name, _revision in released})
+    revisions = {revision for _name, revision in released}
+    related = [RelatedResource(kind="account", id=actor)]
+    related.extend(RelatedResource(kind="credential", id=name) for name in names)
+    single = len(names) == 1 and len(revisions) == 1
+    return AuditEvent(
+        event_id=f"a-{uuid4().hex}",
+        run_id=run_id,
+        actor=actor,
+        operation=operation,
+        reason=None,
+        outcome="accepted",
+        created_at=created_at,
+        event_type=CREDENTIAL_RELEASED,
+        config_id=config_id,
+        registry_version=registry_version,
+        related=tuple(related),
+        details=EventDetails(revision=next(iter(revisions))) if single else None,
+    )
 
 
 def stage_result_type(stage: str, outcome: str) -> str:

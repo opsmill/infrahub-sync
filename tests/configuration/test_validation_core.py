@@ -29,9 +29,14 @@ from infrahub_sync.configuration import (
     validate_package_credentials,
     validation,
 )
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
 from infrahub_sync.configuration.validation import collect_findings
-from tests.configuration.test_validation_compatibility import SHIPPED_REFUSALS
-from tests.configuration.validation_packages import package, package_data
+from tests.configuration.test_validation_compatibility import SHIPPED_REFUSALS, mutated_package_data
+from tests.configuration.validation_packages import (
+    credential_package,
+    credential_package_data,
+    package,
+)
 
 _NARROW_TYPE = "UnknownAdapterCapabilitiesError"
 _FINDING_TEXT_BOUND = 256
@@ -42,95 +47,67 @@ def _triples(package_content: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 def test_a_valid_package_produces_no_findings() -> None:
-    assert collect_findings(package()) == ()
+    assert collect_findings(credential_package()) == ()
 
 
 def test_independent_defects_each_become_one_finding() -> None:
     """Independent defects each become one finding."""
-    data = package_data()
-    data["credentials"]["netbox-token"]["provider"] = "vault"
+    data = credential_package_data()
+    # A block that names a stored credential declares no token setting, so this block names none.
+    inline_value = "declared-in-line"
+    del data["configuration"]["source"]["credential"]
+    data["configuration"]["source"]["settings"]["token"] = inline_value
     data["configuration"]["source"]["settings"]["url"] = "demo.netbox.dev"
     data["configuration"]["destination"]["settings"]["bogus_dest"] = 1
-    data["configuration"]["store"] = {"type": "redis", "settings": {"password": {"$credential": "nope"}}}
+    data["configuration"]["store"] = {"type": "redis", "settings": {"password": "declared-in-line"}}
 
     assert _triples(data) == [
         ("undeclared-setting", "/configuration/destination/settings/bogus_dest"),
+        ("inline-credential-value", "/configuration/source/settings/token"),
         ("endpoint-not-absolute", "/configuration/source/settings/url"),
         ("unsupported-sync-store", "/configuration/store"),
-        ("unknown-credential-provider", "/credentials/netbox-token"),
     ]
 
 
 def test_findings_are_returned_in_the_stable_cross_interface_order() -> None:
-    data = package_data()
-    data["credentials"]["netbox-token"]["provider"] = "vault"
+    data = credential_package_data()
+    data["configuration"]["store"] = {"type": "redis", "settings": {}}
+    data["configuration"]["source"]["settings"]["url"] = "demo.netbox.dev"
     data["configuration"]["destination"]["settings"]["bogus_dest"] = 1
     findings = collect_findings(package(data))
 
+    assert len(findings) == 3
     assert findings == sort_findings(findings)
 
 
 def test_execution_first_error_and_sort_first_finding_are_different_findings() -> None:
-    # OES-16. The pinned pair: the credential declaration executes first and sorts last, while
-    # the destination setting executes fourth and sorts first. A fixture whose two orders agree
+    # OES-16. The pinned pair: the store check executes first and sorts last, while the
+    # destination setting executes last and sorts first. A fixture whose two orders agree
     # would prove nothing.
-    data = package_data()
-    data["credentials"]["netbox-token"]["provider"] = "vault"
+    data = credential_package_data()
+    data["configuration"]["store"] = {"type": "redis", "settings": {}}
     data["configuration"]["destination"]["settings"]["bogus_dest"] = 1
 
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package(data))
 
     findings = collect_findings(package(data))
-    assert str(caught.value) == "credential reference 'netbox-token' uses provider 'vault', which is not installed"
+    assert str(caught.value) == UNSUPPORTED_STORE_MESSAGE
     assert findings[0].location == "/configuration/destination/settings/bogus_dest"
     assert findings[0].code == "undeclared-setting"
-    assert findings[-1].location == "/credentials/netbox-token"
-
-
-@pytest.mark.parametrize(
-    ("node", "expected_code"),
-    [
-        pytest.param({"$credential": "nope"}, "unknown-credential-reference", id="unknown-reference"),
-        pytest.param(
-            {"$credential": "netbox-token", "fallback": "declared-in-line"},
-            "malformed-credential-reference",
-            id="malformed-reference",
-        ),
-    ],
-)
-def test_the_owning_check_is_authoritative_at_a_declared_credential_path(
-    node: dict[str, Any],
-    expected_code: str,
-) -> None:
-    # The whole-package walk revisits the same node the adapter check already judged. Reporting
-    # both would give one defect two byte-identical findings.
-    data = package_data()
-    data["configuration"]["source"]["settings"]["token"] = node
-
-    assert _triples(data) == [(expected_code, "/configuration/source/settings/token")]
-
-
-def test_a_reference_at_an_undeclared_setting_name_yields_one_finding() -> None:
-    # One typo. The surface check owns the location and gives the precise reason; the walk
-    # would add "not a credential-bearing setting" at the same pointer, which is the vaguer
-    # reason the check order already exists to make unreachable.
-    data = package_data()
-    data["configuration"]["source"]["settings"]["api_key"] = {"$credential": "netbox-token"}
-
-    assert _triples(data) == [("undeclared-setting", "/configuration/source/settings/api_key")]
+    assert findings[-1].location == "/configuration/store"
 
 
 def _nested_under_an_undeclared_setting(data: dict[str, Any]) -> None:
-    data["configuration"]["source"]["settings"]["api_key"] = {"deep": {"$credential": "netbox-token"}}
+    data["configuration"]["source"]["settings"]["bogus_nested"] = {"deep": {"deeper": "declared-in-line"}}
 
 
 def _nested_under_a_refused_url(data: dict[str, Any]) -> None:
-    data["configuration"]["source"]["settings"]["url"] = {"deep": {"$credential": "netbox-token"}}
+    data["configuration"]["source"]["settings"]["url"] = {"deep": {"deeper": "declared-in-line"}}
 
 
 def _nested_under_a_refused_store_setting(data: dict[str, Any]) -> None:
-    node = {"deep": {"$credential": "netbox-token"}}
+    node = {"deep": {"deeper": "declared-in-line"}}
     data["configuration"]["store"] = {"type": "redis", "settings": {"password": node}}
 
 
@@ -139,7 +116,7 @@ def _nested_under_a_refused_store_setting(data: dict[str, Any]) -> None:
     [
         pytest.param(
             _nested_under_an_undeclared_setting,
-            ("undeclared-setting", "/configuration/source/settings/api_key"),
+            ("undeclared-setting", "/configuration/source/settings/bogus_nested"),
             id="undeclared-setting",
         ),
         pytest.param(
@@ -150,66 +127,37 @@ def _nested_under_a_refused_store_setting(data: dict[str, Any]) -> None:
         pytest.param(
             _nested_under_a_refused_store_setting,
             ("unsupported-sync-store", "/configuration/store"),
-            id="inline-credential-value",
+            id="unsupported-sync-store",
         ),
     ],
 )
-def test_a_surface_check_owns_the_setting_it_judged_and_everything_beneath_it(
+def test_a_value_nested_beneath_a_refused_setting_adds_no_second_finding(
     mutate: Callable[[dict[str, Any]], None],
     expected: tuple[str, str],
 ) -> None:
-    # The flat form of each of these is one finding. Nesting the reference one level deeper
-    # must not turn one defect into two, and the second would be the vaguer reason at the
-    # deeper pointer — exactly what the surface checks run first to make unreachable.
-    data = package_data()
+    # The flat form of each of these is one finding. A value nested beneath the refused
+    # setting must not turn one defect into two, with a second finding at the deeper pointer.
+    data = credential_package_data()
     mutate(data)
 
     assert _triples(data) == [expected]
 
 
-def test_a_role_mismatch_and_a_misplaced_reference_stay_two_findings() -> None:
-    # Not the same defect twice. netbox declares verify_ssl under a role-independent settings
-    # surface, so the reference is misplaced on its own merits whether or not the adapter can
-    # serve the destination role. Suppressing either would under-report.
-    data = package_data()
-    data["configuration"]["destination"] = {
-        "name": "netbox",
-        "settings": {"verify_ssl": {"$credential": "netbox-token"}},
-    }
+def test_a_role_mismatch_and_an_undeclared_setting_stay_two_findings() -> None:
+    # Not the same defect twice. The setting is undeclared on its own merits whether or not the
+    # adapter can serve the destination role. Suppressing either would under-report.
+    data = credential_package_data()
+    data["configuration"]["destination"] = {"name": "netbox", "settings": {"bogus_dest": 1}}
 
     assert _triples(data) == [
         ("adapter-role-mismatch", "/configuration/destination"),
-        ("credential-path-not-declared", "/configuration/destination/settings/verify_ssl"),
-    ]
-
-
-def test_the_walk_still_reports_where_no_surface_check_has_authority() -> None:
-    # The counter-test to the ownership rule: suppressing the walk wholesale would pass every
-    # test above and silence its real job. "order" is declared as strings and cannot carry a
-    # node, so the reachable uncovered surfaces are a declared setting that is not
-    # credential-bearing, the package-level schema mapping, and structures nested inside it.
-    data = package_data()
-    data["configuration"]["source"]["settings"]["verify_ssl"] = {"$credential": "netbox-token"}
-    data["configuration"]["schema_mapping"] = [
-        {
-            "name": "Device",
-            "fields": [
-                {"name": "token", "static": {"$credential": "netbox-token"}},
-                {"name": "nested", "static": {"outer": [{"inner": {"$credential": "netbox-token"}}]}},
-            ],
-        }
-    ]
-
-    assert _triples(data) == [
-        ("credential-path-not-declared", "/configuration/schema_mapping/0/fields/0/static"),
-        ("credential-path-not-declared", "/configuration/schema_mapping/0/fields/1/static/outer/0/inner"),
-        ("credential-path-not-declared", "/configuration/source/settings/verify_ssl"),
+        ("undeclared-setting", "/configuration/destination/settings/bogus_dest"),
     ]
 
 
 def _shared_validator_package_data() -> dict[str, Any]:
     """One package-level mapping defect judged by two adapters sharing one validator."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"] = {"name": "genericrestapi", "settings": {"url": "https://api.example"}}
     data["configuration"]["destination"] = {"name": "infrahub", "settings": {"url": "https://ih.example"}}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "https://evil.example/devices"}]
@@ -240,46 +188,28 @@ def test_one_mapping_defect_judged_by_two_adapters_yields_one_finding(monkeypatc
     assert findings[0].message.startswith("genericrestapi ")
 
 
-def test_two_defects_in_one_declaration_still_yield_two_findings() -> None:
+def test_two_defects_one_check_reports_at_one_pointer_still_yield_two_findings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The precedence rule is per check, not per finding: one check reporting two different
-    # problems at one pointer is two defects, and collapsing them would under-report.
-    data = package_data()
-    data["credentials"]["both-bad"] = {"provider": "vault", "identifier": "NOT-VALID"}
+    # problems at one pointer is two defects, and collapsing them would under-report. The
+    # destination role reports the role mismatch and its validator's finding at one pointer.
+    monkeypatch.setattr(
+        validation,
+        "BUILTIN_ADAPTER_CAPABILITIES",
+        _capabilities_with(_validator_reporting_at("/configuration/destination"), "nautobot"),
+    )
+    data = credential_package_data()
+    data["configuration"]["destination"] = {"name": "nautobot", "settings": {}}
 
     assert _triples(data) == [
-        ("malformed-credential-reference", "/credentials/both-bad"),
-        ("unknown-credential-provider", "/credentials/both-bad"),
-    ]
-
-
-def test_an_environment_identifier_outside_the_credential_prefix_is_one_finding() -> None:
-    # A well-formed variable name is not enough: the worker's own infrastructure settings live
-    # in the same environment, so only the credential namespace is resolvable.
-    data = package_data()
-    data["credentials"]["worker-secret"] = {"provider": "env", "identifier": "AWS_SECRET_ACCESS_KEY"}
-
-    findings = collect_findings(package(data))
-
-    assert [(finding.code, finding.location) for finding in findings] == [
-        ("malformed-credential-reference", "/credentials/worker-secret"),
-    ]
-    assert "'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in findings[0].message
-    assert "AWS_SECRET_ACCESS_KEY" not in findings[0].message
-
-
-def test_a_reference_outside_the_declared_paths_is_still_reported_by_the_walk() -> None:
-    data = package_data()
-    data["configuration"]["schema_mapping"] = [
-        {"name": "Device", "fields": [{"name": "token", "static": {"$credential": "netbox-token"}}]}
-    ]
-
-    assert _triples(data) == [
-        ("credential-path-not-declared", "/configuration/schema_mapping/0/fields/0/static"),
+        ("adapter-note", "/configuration/destination"),
+        ("adapter-role-mismatch", "/configuration/destination"),
     ]
 
 
 def test_a_missing_adapter_is_expressible_as_a_finding() -> None:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["name"] = "NetBox"
 
     assert _triples(data) == [("missing-adapter", "/configuration/source")]
@@ -289,7 +219,7 @@ def test_a_missing_adapter_suppresses_only_its_own_role() -> None:
     # Its settings cannot be judged against a surface that does not exist, so claiming a finding
     # about them would be inventing one. Everything else still runs.
     """A missing adapter suppresses only its own role."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["name"] = "NetBox"
     data["configuration"]["source"]["settings"]["bogus_source"] = 1
     data["configuration"]["destination"]["settings"]["bogus_dest"] = 1
@@ -303,23 +233,23 @@ def test_a_missing_adapter_suppresses_only_its_own_role() -> None:
 
 
 def test_an_undeclared_store_type_suppresses_only_its_own_settings() -> None:
-    # Refusing the whole store owns its settings; unrelated adapter defects still report.
+    # Refusing the whole store reports nothing about its settings; unrelated adapter defects still report.
     """Refuse an unknown store without suppressing unrelated findings."""
-    data = package_data()
-    data["configuration"]["store"] = {"type": "mystery", "settings": {"url": {"$credential": "netbox-token"}}}
+    data = credential_package_data()
+    data["configuration"]["store"] = {"type": "mystery", "settings": {"url": "declared-in-line", "bogus_store": 1}}
     data["configuration"]["destination"]["settings"]["bogus_dest"] = 1
-    data["configuration"]["source"]["settings"]["verify_ssl"] = {"$credential": "netbox-token"}
+    data["configuration"]["source"]["settings"]["url"] = "demo.netbox.dev"
 
     assert _triples(data) == [
         ("undeclared-setting", "/configuration/destination/settings/bogus_dest"),
-        ("credential-path-not-declared", "/configuration/source/settings/verify_ssl"),
+        ("endpoint-not-absolute", "/configuration/source/settings/url"),
         ("unsupported-sync-store", "/configuration/store"),
     ]
 
 
 def test_an_undeclared_store_type_carrying_nothing_is_refused() -> None:
     """An undeclared store type carrying nothing is refused."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["store"] = {"type": "mystery", "settings": {}}
 
     assert _triples(data) == [("unsupported-sync-store", "/configuration/store")]
@@ -361,10 +291,10 @@ def _capabilities_with(
 
 
 def _both_roles_package_data(mapping: str = "https://evil.example/devices") -> dict[str, Any]:
-    data = package_data()
-    settings = {"url": "https://ih.example", "token": {"$credential": "netbox-token"}}
-    data["configuration"]["source"] = {"name": "infrahub", "settings": settings}
-    data["configuration"]["destination"] = {"name": "infrahub", "settings": dict(settings)}
+    data = credential_package_data()
+    block = {"name": "infrahub", "credential": "netbox-token", "settings": {"url": "https://ih.example"}}
+    data["configuration"]["source"] = block
+    data["configuration"]["destination"] = {**block, "settings": dict(block["settings"])}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": mapping}]
     return data
 
@@ -398,7 +328,7 @@ def test_one_adapter_serving_both_roles_reports_its_validator_finding_once(
 
 
 def test_an_adapter_validator_keeps_its_own_code_and_location() -> None:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"] = {"name": "genericrestapi", "settings": {"url": "https://api.example"}}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "https://evil.example/devices"}]
 
@@ -427,8 +357,10 @@ def test_a_source_validator_cannot_silence_a_finding_in_the_destination_subtree(
         "BUILTIN_ADAPTER_CAPABILITIES",
         _capabilities_with(_validator_reporting_at("/configuration/destination/settings/token"), "netbox"),
     )
-    data = package_data()
+    data = credential_package_data()
     inline_value = "declared-in-line"
+    # A block that names a stored credential declares no token setting, so this block names none.
+    del data["configuration"]["destination"]["credential"]
     data["configuration"]["destination"]["settings"]["token"] = inline_value
 
     findings = collect_findings(package(data))
@@ -461,7 +393,7 @@ def test_a_finding_outside_the_validator_role_subtree_is_contained(
         _capabilities_with(_validator_reporting_at(location), "netbox"),
     )
 
-    assert _triples(package_data()) == [("adapter-validator-finding", "/configuration/source")]
+    assert _triples(credential_package_data()) == [("adapter-validator-finding", "/configuration/source")]
 
 
 @pytest.mark.parametrize(
@@ -485,7 +417,7 @@ def test_a_finding_inside_the_validator_role_subtree_is_kept(
         _capabilities_with(_validator_reporting_at(location), "netbox"),
     )
 
-    assert _triples(package_data()) == [("adapter-note", location)]
+    assert _triples(credential_package_data()) == [("adapter-note", location)]
 
 
 def test_an_adapter_validator_cannot_mint_a_warning(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -506,7 +438,7 @@ def test_an_adapter_validator_cannot_mint_a_warning(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(validation, "BUILTIN_ADAPTER_CAPABILITIES", _capabilities_with(_validator, "netbox"))
 
-    findings = collect_findings(package(package_data()))
+    findings = collect_findings(package(credential_package_data()))
 
     assert [(finding.code, finding.severity, finding.location) for finding in findings] == [
         ("adapter-validator-finding", "error", "/configuration/source"),
@@ -548,7 +480,7 @@ def test_the_first_check_to_report_at_a_pointer_silences_a_different_check_there
     declared["netbox"] = replace(declared["netbox"], validator=_validator_reporting("source-note"))
     declared["infrahub"] = replace(declared["infrahub"], validator=_validator_reporting("destination-note"))
     monkeypatch.setattr(validation, "BUILTIN_ADAPTER_CAPABILITIES", declared)
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "/devices"}]
 
     assert _triples(data) == [("source-note", _ROLE_INDEPENDENT_POINTER)]
@@ -702,7 +634,7 @@ def test_a_returned_finding_the_contract_refuses_is_contained_inside_the_role_su
         _capabilities_with(_constructed_finding_validator(fields), "netbox"),
     )
 
-    findings = collect_findings(package(package_data()))
+    findings = collect_findings(package(credential_package_data()))
 
     assert [(finding.code, finding.location) for finding in findings] == [
         ("adapter-validator-finding", "/configuration/source"),
@@ -711,51 +643,26 @@ def test_a_returned_finding_the_contract_refuses_is_contained_inside_the_role_su
     assert all(character.isprintable() for finding in findings for character in finding.location + finding.message)
 
 
-def _pointer_cut_on_an_escape() -> dict[str, Any]:
-    """A declared package whose pointer cut lands on the "~" of a "~1" escape.
-
-    The 256-character cut is taken over the escaped pointer, so it can separate a "~" from the
-    "0" or "1" that completes it, and the finding grammar refuses a lone "~". The offsets are
-    chosen so the cut falls exactly there: the escape comes from a "/" in a declared key, and
-    the key below it pushes the pointer past the bound without moving the escape.
-    """
-    data = package_data()
-    node: Any = {"$credential": "netbox-token"}
-    node = {"z" * 20: node}
-    node = {("x" * 16) + "/y": node}
-    for _ in range(3):
-        node = {"n" * 60: node}
-    data["configuration"]["source"]["settings"]["verify_ssl"] = node
-    return data
-
-
-def test_a_pointer_cut_on_an_escape_still_yields_a_well_formed_finding() -> None:
-    # Without the trailing-"~" drop this raises pydantic.ValidationError out of collect_findings,
-    # uncontained: a declared package makes the validator itself crash rather than report.
-    findings = collect_findings(package(_pointer_cut_on_an_escape()))
-
-    assert [finding.code for finding in findings] == ["credential-path-not-declared"]
-    assert not findings[0].location.rstrip("~").endswith("~")
-    assert _TRUNCATED_POINTER.search(findings[0].location) is not None
-    assert len(findings[0].location) <= _FINDING_TEXT_BOUND
-
-
 _OVER_CAP_DEFECTS = 300
 _FINDING_CAP = 256
 # The empty pointer, which every real pointer sorts after because they all begin with "/".
 _LIMIT_POINTER = ""
 
 
+_OVER_CAP_DEFECTS_PER_ROLE = _OVER_CAP_DEFECTS // 2
+
+
 def _over_cap_package_data(*, reversed_declaration: bool) -> dict[str, Any]:
-    # Credential declarations are walked in insertion order, so reversing them reverses the
-    # execution order too. Undeclared settings would not work here: that check already emits
-    # sorted, so a truncation taken in execution order would survive the reordering unnoticed.
-    data = package_data()
-    names = [f"ref{index:03}" for index in range(_OVER_CAP_DEFECTS)]
+    # Undeclared settings on both roles. The source role runs first and sorts last, so a
+    # truncation taken in execution order would keep every source finding and cut the
+    # destination ones, and the test below pins the opposite.
+    data = credential_package_data()
+    names = [f"undeclared{index:03}" for index in range(_OVER_CAP_DEFECTS_PER_ROLE)]
     if reversed_declaration:
         names.reverse()
-    for name in names:
-        data["credentials"][name] = {"provider": "vault", "identifier": "INFRAHUB_SYNC_CREDENTIAL_DECLARED_TOKEN"}
+    for role in ("source", "destination"):
+        for name in names:
+            data["configuration"][role]["settings"][name] = 1
     return data
 
 
@@ -765,8 +672,13 @@ def test_the_finding_count_is_bounded_and_the_bound_reports_itself_first() -> No
     assert len(findings) == _FINDING_CAP + 1
     assert findings[0].code == "finding-limit-reached"
     assert findings[0].location == _LIMIT_POINTER
-    assert {finding.code for finding in findings[1:]} == {"unknown-credential-provider"}
-    assert findings[1].location == "/credentials/ref000"
+    assert {finding.code for finding in findings[1:]} == {"undeclared-setting"}
+    assert findings[1].location == "/configuration/destination/settings/undeclared000"
+    # The cut is taken after the sort: every destination finding is kept, although the source runs first.
+    kept_for_the_destination = [
+        finding for finding in findings if finding.location.startswith("/configuration/destination/")
+    ]
+    assert len(kept_for_the_destination) == _OVER_CAP_DEFECTS_PER_ROLE
 
 
 def test_a_reordered_equivalent_package_yields_an_identical_finding_set() -> None:
@@ -788,7 +700,7 @@ def test_no_two_findings_share_a_location_severity_and_code_over_the_cap(declara
 
 
 def _many_omissions_package_data(*, contradiction_at: int | None = None) -> dict[str, Any]:
-    data = package_data()
+    data = credential_package_data()
     if contradiction_at is not None:
         data["configuration"]["schema_mapping"] = [{"name": f"Kind{contradiction_at:03}", "mapping": "x"}]
     data["omissions"] = [{"kind": f"Kind{index:03}"} for index in range(_FINDING_CAP + 1)]
@@ -832,19 +744,16 @@ FROZEN_CODES = frozenset(
     {
         "adapter-role-mismatch",
         "adapter-validator-finding",
-        "credential-path-not-declared",
+        "credential-not-used",
         "endpoint-not-absolute",
         "endpoint-not-relative",
         "finding-limit-reached",
         "inline-credential-value",
-        "malformed-credential-reference",
         "missing-adapter",
         "unsupported-sync-store",
         "setting-contains-credential-material",
         "setting-not-a-string",
         "undeclared-setting",
-        "unknown-credential-provider",
-        "unknown-credential-reference",
     }
 )
 
@@ -895,55 +804,41 @@ def test_the_core_can_emit_exactly_the_frozen_code_enumeration() -> None:
 
 def _totality_package_data() -> dict[str, Any]:
     # A missing adapter makes its role unevaluable, so it goes on one role and every other
-    # family is spread across the other role, the store, and the credential declarations.
-    data = package_data()
-    data["credentials"]["bad-provider"] = {"provider": "vault", "identifier": "INFRAHUB_SYNC_CREDENTIAL_DECLARED_TOKEN"}
-    data["credentials"]["bad-identifier"] = {"provider": "env", "identifier": "NOT-VALID"}
+    # family is spread across the other role and the store.
+    data = credential_package_data()
     data["configuration"]["source"] = {
         "name": "genericrestapi",
         "settings": {
             "url": "api.example",
             "api_endpoint": "https://evil.example/api",
-            "token": {"$credential": "nope"},
+            "token": "declared-in-line",
             "username": "declared-in-line",
-            "password": {"$credential": "netbox-token", "fallback": "declared-in-line"},
-            "response_key_pattern": {"$credential": "netbox-token"},
+            "password": "declared-in-line",
             "bogus_source": 1,
+            "bogus_other": 1,
         },
     }
     data["configuration"]["destination"] = {"name": "NetBox", "settings": {"url": "http://localhost:8000"}}
-    data["configuration"]["store"] = {
-        "type": "redis",
-        "settings": {
-            "url": {"$credential": "nope"},
-            "password": "declared-in-line",
-            "host": {"$credential": "netbox-token"},
-            "bogus_store": 1,
-        },
-    }
+    data["configuration"]["store"] = {"type": "redis", "settings": {"password": "declared-in-line", "bogus_store": 1}}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "https://evil.example/devices"}]
     return data
 
 
 def test_one_package_carrying_every_reachable_family_keeps_the_sort_total() -> None:
-    # Nine of these codes appear more than once and are separated only by location, which is
+    # Two of these codes appear more than once and are separated only by location, which is
     # the collision a per-family test cannot see.
     """Order all reachable findings deterministically."""
     findings = collect_findings(package(_totality_package_data()))
 
     keys = [(finding.location, finding.severity, finding.code) for finding in findings]
     assert len(set(keys)) == len(keys)
-    assert len(keys) == 12
+    assert len(keys) == 10
     assert {finding.code for finding in findings} == {
-        "credential-path-not-declared",
         "endpoint-not-absolute",
         "endpoint-not-relative",
         "inline-credential-value",
-        "malformed-credential-reference",
         "missing-adapter",
         "undeclared-setting",
-        "unknown-credential-provider",
-        "unknown-credential-reference",
         # The adapter's own code, passed through rather than replaced.
         "unsupported-sync-store",
         "unsafe-rest-request-endpoint",
@@ -954,10 +849,10 @@ def _collision_prone_package_data() -> dict[str, Any]:
     """The two collisions a per-family fixture cannot see, in one package.
 
     A shared adapter validator judging one package-level mapping under both roles, and a
-    credential reference at a setting name the adapter does not declare.
+    value at a setting name the adapter does not declare.
     """
     data = _shared_validator_package_data()
-    data["configuration"]["source"]["settings"]["api_key"] = {"$credential": "netbox-token"}
+    data["configuration"]["source"]["settings"]["api_key"] = {"nested": "declared-in-line"}
     return data
 
 
@@ -969,11 +864,21 @@ def test_the_collision_prone_package_reports_each_defect_once(monkeypatch: pytes
     ]
 
 
+def _unused_credential_package_data() -> dict[str, Any]:
+    """A source that names a stored credential its ``auth_method`` never uses (spec 027)."""
+    data = credential_package_data()
+    data["configuration"]["source"] = {
+        "name": "prometheus",
+        "credential": "unused",
+        "settings": {"url": "http://localhost:9090", "auth_method": "none"},
+    }
+    return data
+
+
 def _reachable_codes(monkeypatch: pytest.MonkeyPatch) -> set[str]:
     reached: set[str] = set()
     for _name, mutate, _message in SHIPPED_REFUSALS:
-        data = package_data()
-        mutate(data)
+        data = mutated_package_data(mutate)
         reached.update(finding.code for finding in collect_findings(package(data)))
     reached.update(
         finding.code
@@ -985,6 +890,7 @@ def _reachable_codes(monkeypatch: pytest.MonkeyPatch) -> set[str]:
             )
         )
     )
+    reached.update(finding.code for finding in collect_findings(package(_unused_credential_package_data())))
     monkeypatch.setattr(validation, "BUILTIN_ADAPTER_CAPABILITIES", _capabilities_with(_raising_validator))
     reached.update(finding.code for finding in collect_findings(package(_both_roles_package_data(mapping="/x"))))
     return reached
@@ -1039,38 +945,29 @@ _TRUNCATED_POINTER = re.compile(r"\\u2026[0-9a-f]{8}$")
 def test_a_hostile_declaration_still_yields_a_well_formed_finding() -> None:
     # A finding pointer is bounded and refuses a lone "~", while the diagnostic truncation
     # marker is "~2". So the marker changes form here, to one escaping can never produce.
-    over_length_key = package_data()
+    over_length_key = credential_package_data()
     over_length_key["configuration"]["source"]["settings"]["k" * 5000] = 1
-    deep_node: Any = {"$credential": "netbox-token"}
-    for _ in range(8):
-        deep_node = {"n" * 60: deep_node}
-    deep_nesting = package_data()
-    deep_nesting["configuration"]["source"]["settings"]["verify_ssl"] = deep_node
 
     truncated_component = collect_findings(package(over_length_key))
-    truncated_pointer = collect_findings(package(deep_nesting))
 
     assert [finding.code for finding in truncated_component] == ["undeclared-setting"]
     assert _TRUNCATED_POINTER.search(truncated_component[0].location) is not None
-    assert [finding.code for finding in truncated_pointer] == ["credential-path-not-declared"]
-    assert _TRUNCATED_POINTER.search(truncated_pointer[0].location) is not None
-    assert len(truncated_pointer[0].location) == _FINDING_TEXT_BOUND
-    assert len(truncated_pointer[0].message) == _FINDING_TEXT_BOUND
+    assert len(truncated_component[0].location) <= _FINDING_TEXT_BOUND
+    assert len(truncated_component[0].message) <= _FINDING_TEXT_BOUND
 
 
-def _pointer_bound_collision() -> dict[str, Any]:
-    """Two distinct ``$credential`` nodes whose pointers share a >256-character prefix."""
-    data = package_data()
-    node: Any = {"a": {"$credential": "netbox-token"}, "b": {"$credential": "netbox-token"}}
-    for _ in range(8):
-        node = {"n" * 60: node}
-    data["configuration"]["source"]["settings"]["verify_ssl"] = node
+def _escape_at_the_component_bound() -> dict[str, Any]:
+    """Two undeclared settings whose names hold a "/" at the component bound and differ after it."""
+    data = credential_package_data()
+    shared = ("k" * 63) + "/"
+    data["configuration"]["source"]["settings"][f"{shared}a"] = 1
+    data["configuration"]["source"]["settings"][f"{shared}b"] = 1
     return data
 
 
 def _component_bound_collision() -> dict[str, Any]:
     """Two undeclared settings whose names differ only past the component bound."""
-    data = package_data()
+    data = credential_package_data()
     shared = "k" * 70
     data["configuration"]["source"]["settings"][f"{shared}a"] = 1
     data["configuration"]["source"]["settings"][f"{shared}b"] = 1
@@ -1080,7 +977,7 @@ def _component_bound_collision() -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("build", "expected_code"),
     [
-        pytest.param(_pointer_bound_collision, "credential-path-not-declared", id="pointer-bound"),
+        pytest.param(_escape_at_the_component_bound, "undeclared-setting", id="escape-at-the-component-bound"),
         pytest.param(_component_bound_collision, "undeclared-setting", id="component-bound"),
     ],
 )
@@ -1088,7 +985,7 @@ def test_two_defects_under_one_truncated_pointer_stay_distinguishable(
     build: Callable[[], dict[str, Any]],
     expected_code: str,
 ) -> None:
-    # Truncation is lossy at both bounds, so without a digest of the untruncated pointer two
+    # Truncation is lossy, so without a digest of the untruncated pointer two
     # separate defects arrive as one byte-identical finding twice and the operator cannot tell
     # them apart. The module's global "no two findings share (location, severity, code)" claim
     # is what that falsifies.
@@ -1101,19 +998,9 @@ def test_two_defects_under_one_truncated_pointer_stay_distinguishable(
     assert all(_TRUNCATED_POINTER.search(finding.location) is not None for finding in findings)
 
 
-def _normalized_walk_collision() -> dict[str, Any]:
-    """Two undeclared ``$credential`` nodes whose keys differ only by a trailing space."""
-    data = package_data()
-    data["configuration"]["source"]["settings"]["verify_ssl"] = {
-        "leaked": {"$credential": "netbox-token"},
-        "leaked ": {"$credential": "netbox-token"},
-    }
-    return data
-
-
 def _normalized_setting_collision() -> dict[str, Any]:
     """Two undeclared adapter settings whose names differ only by a trailing space."""
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["settings"]["zz"] = 1
     data["configuration"]["source"]["settings"]["zz "] = 1
     return data
@@ -1121,20 +1008,17 @@ def _normalized_setting_collision() -> dict[str, Any]:
 
 def _normalized_empty_component_collision() -> dict[str, Any]:
     """An empty declared key and a whitespace-only one, which normalize onto each other."""
-    data = package_data()
-    data["configuration"]["source"]["settings"]["verify_ssl"] = {
-        "": {"$credential": "netbox-token"},
-        " ": {"$credential": "netbox-token"},
-    }
+    data = credential_package_data()
+    data["configuration"]["source"]["settings"][""] = 1
+    data["configuration"]["source"]["settings"][" "] = 1
     return data
 
 
 @pytest.mark.parametrize(
     ("build", "expected_code"),
     [
-        pytest.param(_normalized_walk_collision, "credential-path-not-declared", id="walk"),
         pytest.param(_normalized_setting_collision, "undeclared-setting", id="adapter-setting"),
-        pytest.param(_normalized_empty_component_collision, "credential-path-not-declared", id="empty-component"),
+        pytest.param(_normalized_empty_component_collision, "undeclared-setting", id="empty-component"),
     ],
 )
 def test_two_defects_the_finding_model_normalizes_together_stay_distinguishable(
@@ -1160,7 +1044,7 @@ def test_two_defects_at_one_normalized_pointer_keep_their_own_codes() -> None:
     # Distinguishability is not only about deduplication deleting a finding. Two independent
     # defects whose keys differ only by what the model strips must not be rendered at one
     # pointer either, or the operator is told to look in one place for two different keys.
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["source"]["settings"]["url "] = "demo.netbox.dev"
     data["configuration"]["source"]["settings"]["url"] = "demo.netbox.dev"
 
@@ -1176,9 +1060,8 @@ def test_two_defects_at_one_normalized_pointer_keep_their_own_codes() -> None:
     [
         pytest.param(_totality_package_data, id="every-family"),
         pytest.param(_collision_prone_package_data, id="collision-prone"),
-        pytest.param(_pointer_bound_collision, id="pointer-bound"),
+        pytest.param(_escape_at_the_component_bound, id="escape-at-the-component-bound"),
         pytest.param(_component_bound_collision, id="component-bound"),
-        pytest.param(_normalized_walk_collision, id="normalized-walk"),
         pytest.param(_normalized_setting_collision, id="normalized-adapter-setting"),
         pytest.param(_normalized_empty_component_collision, id="normalized-empty-component"),
     ],
@@ -1202,3 +1085,29 @@ def test_every_frozen_code_is_documented_for_an_operator() -> None:
 
     assert "### Finding codes" in documented
     assert {code for code in FROZEN_CODES if f"`{code}`" not in documented} == set()
+
+
+# No declared content reaches the pointer bound since the reference walk was removed (spec 027):
+# every pointer of the core is a fixed path, or one settings pointer with one bounded component.
+# The bound still guards a pointer that an adapter-owned validator returns, so it is called here.
+_POINTER_BOUND = 256
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        pytest.param("/configuration/source/settings/" + "a" * 300, id="cut-in-plain-text"),
+        pytest.param("/configuration/source/settings/" + "a" * 212 + "~0" * 40, id="cut-on-an-escape"),
+    ],
+)
+def test_a_pointer_past_the_bound_is_cut_to_a_well_formed_pointer_that_keeps_two_defects_apart(prefix: str) -> None:
+    from infrahub_sync.configuration import validation as validation_module
+
+    first = validation_module._finding_location(f"{prefix}/x")
+    second = validation_module._finding_location(f"{prefix}/y")
+
+    assert first != second
+    for location in (first, second):
+        assert len(location) <= _POINTER_BOUND
+        finding = ValidationFinding(code="undeclared-setting", severity="error", location=location, message="m")
+        assert finding.location == location

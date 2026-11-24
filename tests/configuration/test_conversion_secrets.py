@@ -253,6 +253,11 @@ def test_command_output_never_holds_the_canary(example: str, tmp_path: Path, cap
     assert CANARY not in stdout
     assert CANARY not in stderr
     assert CANARY not in caplog.text
+    # The literal values are left out, not moved: the package names stored credentials only.
+    assert "credentials" not in yaml.safe_load(package)
+    assert "$credential" not in package
+    assert "INFRAHUB_SYNC_CREDENTIAL_" not in package + stdout
+    assert "infrahub-sync credentials create infrahub-token" in stdout
 
 
 @pytest.mark.parametrize("refused", list(REFUSED_INPUTS.values()), ids=list(REFUSED_INPUTS))

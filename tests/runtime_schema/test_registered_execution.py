@@ -30,7 +30,7 @@ from infrahub_sync.plugin_loader import PluginLoadError
 from infrahub_sync.runtime_schema import build_runtime_model_plan
 from infrahub_sync.runtime_schema import worker as worker_module
 from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
-from tests.configuration.validation_packages import package_data
+from tests.configuration.validation_packages import credential_package_data
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -41,6 +41,8 @@ TAG_ATTRIBUTES = {
     "name": {"kind": "Text", "optional": False, "default_value": None, "unique": True},
     "description": {"kind": "Text", "optional": True, "default_value": None, "unique": False},
 }
+# The fields that the Sync API released to the run for each block of the package.
+RELEASED = {"source": {"token": "netbox-execution-canary"}, "destination": {"token": "infrahub-execution-canary"}}
 SNAPSHOT: dict[str, Any] = {
     "BuiltinTag": {
         "human_friendly_id": ["name__value"],
@@ -210,8 +212,6 @@ def _providers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[dict
     clients["schema_branches"] = schema_branches
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", _read_schema)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "netbox-execution-canary")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-execution-canary")
     yield clients
     _forget_netbox_adapter()
 
@@ -224,14 +224,14 @@ def _registered_instance(
     source_adapter: str | None = None,
 ) -> SyncInstance:
     """One registered package resolved and prepared exactly as the worker prepares it."""
-    content = package_data()
+    content = credential_package_data()
     content["configuration"]["schema_mapping"] = MAPPING
     if branch is not None:
         content["configuration"]["destination"]["settings"]["branch"] = branch
     if source_adapter is not None:
         content["configuration"]["source"]["adapter"] = source_adapter
     package: ConfigurationPackage = parse_configuration_package(content)
-    instance = resolve_runtime_instance(package, directory=str(tmp_path / "config"))
+    instance = resolve_runtime_instance(package, directory=str(tmp_path / "config"), released=RELEASED)
     (tmp_path / "config").mkdir(exist_ok=True)
     instance._runtime_models = build_runtime_model_plan(
         package=package, instance=instance, run_branch=run_branch, scope="both"
@@ -308,7 +308,7 @@ def test_registered_engine_and_saved_plan_apply_use_snapshot_generic_peers(
         "relationships": {},
     }
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", lambda _package, _branch: snapshot)
-    content = package_data()
+    content = credential_package_data()
     content["configuration"]["schema_mapping"] = [
         {"name": "LocationSite", "mapping": "dcim.sites", "fields": [{"name": "name", "mapping": "name"}]},
         {
@@ -321,7 +321,7 @@ def test_registered_engine_and_saved_plan_apply_use_snapshot_generic_peers(
         },
     ]
     package = parse_configuration_package(content)
-    instance = resolve_runtime_instance(package, directory=str(tmp_path / "config"))
+    instance = resolve_runtime_instance(package, directory=str(tmp_path / "config"), released=RELEASED)
     (tmp_path / "config").mkdir()
     instance._runtime_models = build_runtime_model_plan(
         package=package, instance=instance, run_branch=None, scope="both"

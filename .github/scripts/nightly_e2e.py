@@ -77,8 +77,9 @@ def environment() -> dict[str, str]:
     The Sync API and the worker run in the development stack's containers. The tests run on
     the host, so they get the worker's environment moved onto the stack's loopback
     publications (`dev.host_environment`), plus the host addresses of Infrahub, the Sync API
-    and NetBox. `dev.start` reads the same environment, so the worker container receives the
-    NetBox credential from it.
+    and NetBox. `dev.start` reads the same environment: once the stack runs, it stores the
+    Infrahub token and the NetBox token through the Sync API as the stored credentials
+    `infrahub-token` and `netbox-token`, which the shipped packages name.
     """
     from tasks import dev  # noqa: PLC0415 -- suite-only dependency
     from tasks.netbox import load_netbox_env, netbox_token, netbox_url  # noqa: PLC0415 -- suite-only dependency
@@ -94,15 +95,15 @@ def environment() -> dict[str, str]:
         {
             "INFRAHUB_ADDRESS": settings.infrahub_url,
             "INFRAHUB_API_TOKEN": settings.infrahub_admin_token,
-            # What a registered package's `infrahub-token` reference resolves.
+            # The value `dev.start` stores as the credential `infrahub-token`.
             dev.INFRAHUB_CREDENTIAL_VARIABLE: settings.infrahub_admin_token,
             "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(ROOT / "examples"),
             "INFRAHUB_SYNC_API_URL": settings.sync_api_url,
             "INFRAHUB_SYNC_API_TOKEN": settings.admin_token,
             "NETBOX_URL": netbox_url(netbox),
             "NETBOX_TOKEN": netbox_token(netbox),
-            # What the worker resolves for a registered package's `netbox-token`.
-            "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": netbox_token(netbox),
+            # The value `dev.start` stores as the credential `netbox-token`.
+            dev.NETBOX_CREDENTIAL_VARIABLE: netbox_token(netbox),
             "APPLY_GUARD_TEST_POSTGRESQL_DSN": store_url,
             "PRODUCT_STORE_TEST_POSTGRESQL_DSN": store_url,
             "INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL": store_url,

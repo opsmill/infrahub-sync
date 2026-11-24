@@ -283,7 +283,7 @@ def _time(value: str) -> datetime:
 def _recreate(services: tuple[str, ...], *, require_approval: bool) -> None:
     """Recreate Sync services of the stack's own project with `REQUIRE_APPROVAL` set.
 
-    The worker keeps its Infrahub credential: the values `dev.restart` passes are passed too.
+    The worker is given no credential: it reads `infrahub-token` from the Sync API, which keeps it.
     """
     settings = dev.dev_settings()
     command = [
@@ -299,7 +299,6 @@ def _recreate(services: tuple[str, ...], *, require_approval: bool) -> None:
     ]
     environment = {
         **os.environ,
-        **dev._stack_env(settings),
         "REQUIRE_APPROVAL": "true" if require_approval else "false",
     }
     subprocess.run(  # noqa: S603 -- fixed argv against the development stack

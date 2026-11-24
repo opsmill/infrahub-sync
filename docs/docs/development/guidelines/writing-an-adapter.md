@@ -101,37 +101,29 @@ token = os.environ.get("NETBOX_TOKEN") or settings.get("token")
 
 - The SDK (`pynetbox`, `pynautobot`, …) is not a core dependency. Import it at module top with
   the `# ty: ignore[unresolved-import]` comment, and document the install extra.
-- Resolve credentials from environment variables first, falling back to `settings`. Never
-  hardcode, print, commit, or log a secret. Keep example configs sanitized.
-- An adapter that gains a credential setting needs a credential variable that the Compose
-  worker receives, because Compose passes only the variables the file names. Use the name the
-  adapter's documentation page and examples already use; otherwise `<ADAPTER>_<SETTING>`.
-  Change these places in one commit:
-    - the `sync-worker` environment of the root `docker-compose.yml`, as
-      `INFRAHUB_SYNC_CREDENTIAL_<NAME>: "${INFRAHUB_SYNC_CREDENTIAL_<NAME>:-}"`. Two tests read
-      it: `tests/configuration/test_conversion_worker_variables.py` compares its names and
-      their order with the constant below, and
-      `test_the_worker_holds_exactly_the_documented_credential_variables` in
-      `tests/compose/test_compose_contract.py` compares its names with
-      `ADAPTER_CREDENTIAL_NAMES` and with a fixed count, which changes too;
-    - the same place in `infrahub_sync/testcontainers/docker-compose.yml`.
-      `tests/testcontainers/test_packaging.py` fails when the copy is not byte-equal to the
-      root file;
-    - `COMPOSE_WORKER_CREDENTIAL_SUFFIXES` in `infrahub_sync/configuration/credentials.py`, in
-      the root file's order;
-    - `ADAPTER_CREDENTIAL_NAMES` in `tests/compose/test_compose_contract.py`.
-      `test_the_list_names_every_credential_setting_of_every_bundled_adapter` fails when a
-      credential setting of a bundled adapter has no name there;
-    - the table "Credential variables the worker receives" in
-      `docs/docs/compose-deployment.mdx`.
-      `test_the_page_documents_every_variable_the_compose_file_reads` in
-      `tests/compose/test_documentation.py` fails when the page does not name a variable that
-      the root file reads; it does not check in which table the name appears;
-    - the `sync-worker` environment of `development/docker-compose.yml`. No test compares this
-      list with the root file's, so change it by hand.
+- Read each credential setting through `select_runtime_credential` in
+  `infrahub_sync/configuration/credentials.py`, as the bundled `netbox`, `nautobot`, `infrahub`,
+  `aci`, `prometheus` and `genericrestapi` adapters do. For a registered package it returns the setting
+  only: the worker filled it with the value that the Sync API released for the run, and no
+  environment variable is read. Outside a registered package, which is the direct Prefect flow
+  and direct adapter use, it reads the adapter's environment variables first and falls back to
+  `settings`. Never hardcode, print, commit, or log a secret. Keep example configs sanitized.
+- A registered package names a stored credential in the block (`credential: <name>`) and holds
+  no credential setting ([ADR 0057](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)). An adapter that gains a credential setting changes these places
+  in one commit:
+    - `credential_setting_paths` of the adapter's declaration in
+      `infrahub_sync/configuration/capabilities.py`, so that a value in `settings` is refused;
+    - the map of stored fields in the same file: `_FIXED_CREDENTIAL_FIELDS` for an adapter that
+      always needs the same fields, or `V2_AUTHENTICATION_METHODS` in
+      `conversion_authentication.py` for an adapter with an `auth_method`. A stored credential
+      holds only `token`, `username` and `password`, so the map says which of them fills the
+      setting. `tests/configuration/test_credential_field_map.py` fails when a bundled adapter
+      with credential settings has no map;
+    - the adapter's documentation page, with the fields that its block needs.
 
-  [Pin a code constant to the deployment file it mirrors](testing.md#pin-a-code-constant-to-the-deployment-file-it-mirrors)
-  is the rule behind the first test.
+  No Compose file changes: no service receives a source or destination credential as a
+  variable, and `test_no_service_is_given_a_credential_variable` in
+  `tests/compose/test_compose_contract.py` fails when one does.
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 

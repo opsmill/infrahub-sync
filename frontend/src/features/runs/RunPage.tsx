@@ -45,6 +45,7 @@ import { useDocumentTitle } from "#/lib/title";
 import { automaticResumePending } from "./automatic-resume";
 import { ChangeCount, ChangesDock, type ChangesState, useChangesShortcut } from "./ChangesDock";
 import { ChangesSheet, useChangesSheet } from "./ChangesSheet";
+import { CredentialsUsed } from "./CredentialsUsed";
 import { usePlanDownload } from "./plan-download";
 import {
   ApplyButton,
@@ -684,6 +685,7 @@ export function RunPage({ runId }: { runId: string }) {
           automaticResumes={resource.automatic_resumes}
         />
         <RunFiles run={run} />
+        <CredentialsUsed used={resource.credentials_used ?? []} />
         <Details run={run} name={name} source={source} destination={destination} />
       </div>
       {dialog === "verify" && <VerifyDialog run={run} onClose={close} onDone={focusHeading} />}

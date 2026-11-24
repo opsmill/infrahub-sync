@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -23,9 +23,15 @@ from pydantic import TypeAdapter, ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
+from infrahub_sync.configuration.credential_admission import (
+    StoredCredentialCheckError,
+    named_credentials,
+    stored_credential_findings,
+)
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redact_ordered, redaction_order
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import accounts as account_statements
+from infrahub_sync.product_store import stored_credentials as credential_statements
 from infrahub_sync.product_store.accounts import (
     SIGN_IN_ATTEMPTS_BOUND,
     AccountIdentifierAllocationError,
@@ -63,6 +69,8 @@ from infrahub_sync.product_store.models import (
     ConfigurationVersion,
     ConfigurationVersionPage,
     ConfigurationVersionSummary,
+    CredentialBlock,
+    CredentialUse,
     EventFilters,
     EventOrder,
     EventPage,
@@ -88,7 +96,9 @@ from infrahub_sync.product_store.models import (
     SchedulePage,
     ScheduleRecord,
     SignInAttempt,
-    WorkerEnvironment,
+    StoredCredential,
+    StoredCredentialPage,
+    StoredCredentialRevision,
     already_approved_body,
     approval_error_body,
     not_approvable_message,
@@ -97,6 +107,7 @@ from infrahub_sync.product_store.models import (
 if TYPE_CHECKING:
     # Typing only: importing the engine package at runtime would load the whole engine into the store.
     from infrahub_sync.potenda.read_progress import Side
+    from infrahub_sync.product_store.stored_credentials import Encrypt
 
 logger = logging.getLogger(__name__)
 
@@ -186,9 +197,6 @@ CREATE TABLE IF NOT EXISTS configuration_versions_unvalidated (
     PRIMARY KEY (config_id, registry_version),
     FOREIGN KEY (config_id, registry_version) REFERENCES configuration_versions(config_id, registry_version)
 );
-CREATE TABLE IF NOT EXISTS worker_environments (
-    worker_id TEXT PRIMARY KEY, credential_names TEXT NOT NULL, observed_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS accounts (
     account_id TEXT PRIMARY KEY, short_id TEXT NOT NULL UNIQUE, name TEXT, name_key TEXT, password_hash TEXT,
     administrator BOOLEAN NOT NULL DEFAULT FALSE, disabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -240,6 +248,27 @@ CREATE TABLE IF NOT EXISTS schedule_branches (
     FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (schedule_id) REFERENCES schedules(schedule_id)
 );
+CREATE TABLE IF NOT EXISTS stored_credentials (
+    credential_id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '',
+    current_revision INTEGER NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stored_credential_revisions (
+    credential_id TEXT NOT NULL, revision INTEGER NOT NULL, fields TEXT NOT NULL, key_id TEXT NOT NULL,
+    nonce TEXT NOT NULL, ciphertext TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY (credential_id, revision),
+    FOREIGN KEY (credential_id) REFERENCES stored_credentials(credential_id)
+);
+CREATE TABLE IF NOT EXISTS configuration_version_credentials (
+    config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, block TEXT NOT NULL, credential_name TEXT NOT NULL,
+    PRIMARY KEY (config_id, registry_version, block),
+    FOREIGN KEY (config_id, registry_version) REFERENCES configuration_versions(config_id, registry_version)
+);
+CREATE TABLE IF NOT EXISTS run_credential_uses (
+    run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, stage TEXT NOT NULL, block TEXT NOT NULL,
+    credential_id TEXT NOT NULL, credential_name TEXT NOT NULL, revision INTEGER NOT NULL, released_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, flow_run_id, block), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
+);
 CREATE TABLE IF NOT EXISTS automatic_resumes (
     run_id TEXT NOT NULL, interrupted_flow_run_id TEXT NOT NULL, cause TEXT NOT NULL, worker_name TEXT,
     state TEXT NOT NULL, decision TEXT, reason TEXT, reason_detail TEXT, operations_not_checked INTEGER,
@@ -249,12 +278,17 @@ CREATE TABLE IF NOT EXISTS automatic_resumes (
     FOREIGN KEY (run_id, interrupted_flow_run_id) REFERENCES prefect_executions(run_id, flow_run_id)
 );
 """
+# The stored credential tables (spec 027) are new tables, created whole on an earlier database;
+# none adds a column to an existing table, so ``_COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD`` is unchanged.
+# The nonce and the ciphertext of a revision are base64 text: the store has no binary column, and
+# one schema text serves SQLite and PostgreSQL.
 # The columns that a build with schedules added to tables that already existed. The store
 # has no migration: a new column is part of its ``CREATE TABLE`` statement and reaches only a
 # new database. A database whose table lacks one of them was created by an earlier build, and
 # start-up refuses it before it creates anything (spec 021, research R12). The same refusal
-# covers the receipt ``CHECK`` constraint and triggers of an earlier build, which do not accept
-# the resource kind ``schedule`` and are never replaced.
+# covers the receipt ``CHECK`` constraint and triggers of a build before schedules, which do not
+# accept the resource kind ``schedule``. A later kind replaces the check by its name instead
+# (see ``_MUTATION_RECEIPT_RESOURCE_CONSTRAINT``).
 _COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD: dict[str, tuple[str, ...]] = {
     "product_runs": ("trigger_type", "schedule_id", "scheduled_start_at"),
     "audit_events": ("details",),
@@ -342,6 +376,12 @@ _SCHEDULE_UNIQUE_INDEXES: tuple[str, ...] = (
     "CREATE UNIQUE INDEX IF NOT EXISTS schedules_name_not_deleted ON schedules (name) WHERE state <> 'deleted'",
     "CREATE UNIQUE INDEX IF NOT EXISTS schedules_config_not_deleted ON schedules (config_id) WHERE state <> 'deleted'",
 )
+# The versions that name a credential, for the check that refuses to delete one in use (spec 027,
+# research R8): the link holds the name, so a credential deleted and created again is found.
+_STORED_CREDENTIAL_INDEXES: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS configuration_version_credentials_name "
+    "ON configuration_version_credentials (credential_name)",
+)
 # The read state of each side of a plan or sync execution: one JSON document per side, so the
 # two read threads never write the same column (spec 013, research R3).
 _SIDE_READ_COLUMNS: dict[Side, str] = {"source": "source_read", "destination": "destination_read"}
@@ -365,13 +405,21 @@ _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
     "OR (config_id IS NOT NULL AND registry_version IS NOT NULL AND package_checksum IS NOT NULL)"
 )
+# The receipt check is named after the resource kinds it accepts. A build that adds a kind
+# gives the check a new name, and start-up drops the check of an earlier build by its name
+# before it creates the new one (spec 027 adds ``credential``). Without the new name, the
+# check of an earlier build would be found and kept, and would refuse the new kind.
 _SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES = (
+    "mutation_receipts_resource_kinds_insert",
+    "mutation_receipts_resource_kinds_update",
+)
+_EARLIER_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES = (
     "mutation_receipts_resource_consistent_insert",
     "mutation_receipts_resource_consistent_update",
 )
 _SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK = """NOT (
     (NEW.resource_kind = 'run' AND NEW.run_id IS NOT NULL AND NEW.prefect_key IS NOT NULL)
-    OR (NEW.resource_kind IN ('configuration', 'configuration-registry', 'schedule') AND NEW.run_id IS NULL
+    OR (NEW.resource_kind IN ('configuration', 'configuration-registry', 'schedule', 'credential') AND NEW.run_id IS NULL
         AND NEW.prefect_key IS NULL AND NEW.target_run_id IS NULL AND NEW.flow_run_id IS NULL)
 )"""
 _SQLITE_MUTATION_RECEIPT_RESOURCE_INSERT_TRIGGER = f"""
@@ -386,10 +434,11 @@ BEFORE UPDATE ON mutation_receipts
 FOR EACH ROW WHEN {_SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK}
 BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent'); END;
 """
-_MUTATION_RECEIPT_RESOURCE_CONSTRAINT = "mutation_receipts_resource_consistent"
+_MUTATION_RECEIPT_RESOURCE_CONSTRAINT = "mutation_receipts_resource_kinds"
+_EARLIER_MUTATION_RECEIPT_RESOURCE_CONSTRAINTS = ("mutation_receipts_resource_consistent",)
 _MUTATION_RECEIPT_RESOURCE_CHECK = (
     "(resource_kind = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL) OR "
-    "(resource_kind IN ('configuration', 'configuration-registry', 'schedule') AND run_id IS NULL "
+    "(resource_kind IN ('configuration', 'configuration-registry', 'schedule', 'credential') AND run_id IS NULL "
     "AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)"
 )
 _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME = "product_runs_configuration_binding_insert"
@@ -527,6 +576,7 @@ _SQLITE_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
 # An account identifier has 128 random bits and a short identifier 32. A second attempt is
 # needed about once in four billion creations for each account that exists.
 _ACCOUNT_IDENTIFIER_ATTEMPTS = 4
+_CREDENTIAL_IDENTIFIER_ATTEMPTS = 4
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
 _JSON_LIST_ADAPTER = TypeAdapter(list[str])
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
@@ -635,12 +685,6 @@ manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
 WHERE run_id = ? AND artifact_id = ? AND visibility = ?"""
 _SELECT_CONFIGURATION_BASELINE = """SELECT config_id, source_row_counts, runs_since_full_extract, updated_at
 FROM configuration_baselines WHERE config_id = ?"""
-_UPSERT_WORKER_ENVIRONMENT = """INSERT INTO worker_environments (worker_id, credential_names, observed_at)
-VALUES (?, ?, ?)
-ON CONFLICT (worker_id) DO UPDATE SET credential_names = EXCLUDED.credential_names,
-observed_at = EXCLUDED.observed_at"""
-_SELECT_WORKER_ENVIRONMENTS = """SELECT worker_id, credential_names, observed_at FROM worker_environments
-ORDER BY worker_id"""
 # The table holds one row at most: `record_id` is always 1, so a write for another version or
 # work pool replaces the first. A write for the same version and work pool changes nothing, so
 # a repeated bootstrap on a converged deployment leaves the database as it was (spec 018 FR-010).
@@ -1044,11 +1088,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]: ...
 
-    def publish_worker_environment(self, environment: WorkerEnvironment) -> None: ...
-
     def write_bootstrap_record(self, record: BootstrapRecord) -> None: ...
-
-    def worker_environments(self) -> tuple[WorkerEnvironment, ...]: ...
 
     def add_prefect_execution(
         self, run_id: str, link: PrefectExecutionLink, *, receipt_id: str, allocate_attempt: bool = False
@@ -1406,6 +1446,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         token_name: str,
         token_digest: str | None,
         now: datetime | None = None,
+        administrator: bool = True,
+        claim_existing: bool = True,
     ) -> Account: ...
 
     def read_sign_in_attempt(self, name: str) -> SignInAttempt | None: ...
@@ -1415,6 +1457,61 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     ) -> SignInAttempt: ...
 
     def clear_sign_in_attempts(self, name: str, *, event: AuditEvent | None = None) -> bool: ...
+
+    def create_stored_credential(
+        self,
+        *,
+        name: str,
+        description: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential: ...
+
+    def lookup_stored_credential(self, name: str) -> StoredCredential | None: ...
+
+    def list_stored_credentials(self, *, offset: int = 0, limit: int = DEFAULT_LIMIT) -> StoredCredentialPage: ...
+
+    def change_stored_credential_value(
+        self,
+        *,
+        name: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential: ...
+
+    def set_stored_credential_description(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential: ...
+
+    def delete_stored_credential(
+        self, *, name: str, event_for: Callable[[StoredCredential], AuditEvent] | None = None
+    ) -> StoredCredential: ...
+
+    def lookup_stored_credential_revision(
+        self, credential_id: str, revision: int
+    ) -> StoredCredentialRevision | None: ...
+
+    def record_version_credentials(
+        self, config_id: str, registry_version: int, credentials: Mapping[CredentialBlock, str]
+    ) -> None: ...
+
+    def version_credentials(self, config_id: str, registry_version: int) -> dict[CredentialBlock, str]: ...
+
+    def record_credential_uses(self, uses: Sequence[CredentialUse], *, event: AuditEvent | None = None) -> None: ...
+
+    def credential_uses(self, run_id: str) -> tuple[CredentialUse, ...]: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
@@ -1559,8 +1656,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     @staticmethod
     def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
-        """Create the indexes for listing runs and configurations, and the unique indexes of names."""
-        for statement in (*_RUN_LISTING_INDEXES, *_CONFIGURATION_UNIQUE_INDEXES, *_SCHEDULE_UNIQUE_INDEXES):
+        """Create the listing indexes, the unique indexes of names and the index of version credentials."""
+        for statement in (
+            *_RUN_LISTING_INDEXES,
+            *_CONFIGURATION_UNIQUE_INDEXES,
+            *_SCHEDULE_UNIQUE_INDEXES,
+            *_STORED_CREDENTIAL_INDEXES,
+        ):
             cursor.execute(statement)
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
@@ -1570,14 +1672,32 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 _SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES,
             )
             return {str(row[0]) for row in cursor.fetchall()} >= set(_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES)
+        return self._postgresql_receipt_constraint_exists(cursor, _MUTATION_RECEIPT_RESOURCE_CONSTRAINT)
+
+    def _postgresql_receipt_constraint_exists(self, cursor: _Cursor, name: str) -> bool:
         cursor.execute(
             self._sql(
                 "SELECT 1 FROM information_schema.table_constraints "
                 "WHERE table_name = ? AND constraint_name = ? AND table_schema = current_schema()"
             ),
-            ("mutation_receipts", _MUTATION_RECEIPT_RESOURCE_CONSTRAINT),
+            ("mutation_receipts", name),
         )
         return cursor.fetchone() is not None
+
+    def _drop_earlier_mutation_receipt_resource_constraint(self, cursor: _Cursor) -> None:
+        """Drop the receipt check of an earlier build, which refuses a resource kind this build adds.
+
+        On SQLite, ``DROP TRIGGER IF EXISTS`` changes nothing when the trigger is absent. On
+        PostgreSQL, the constraint is dropped only when the catalog names it, so a database that
+        never had it receives no ``ALTER TABLE``.
+        """
+        if self._dialect == "sqlite":
+            for name in _EARLIER_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES:
+                cursor.execute(f"DROP TRIGGER IF EXISTS {name}")
+            return
+        for name in _EARLIER_MUTATION_RECEIPT_RESOURCE_CONSTRAINTS:
+            if self._postgresql_receipt_constraint_exists(cursor, name):
+                cursor.execute(f"ALTER TABLE mutation_receipts DROP CONSTRAINT IF EXISTS {name}")
 
     def _ensure_mutation_receipt_resource_constraint(self, cursor: _Cursor) -> None:
         """Give mutation receipts their database-enforced resource shape.
@@ -1586,6 +1706,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         two, and two processes can both find the pair incomplete. ``IF NOT EXISTS`` on each
         trigger makes both cases complete the pair instead of failing on the trigger that exists.
         """
+        self._drop_earlier_mutation_receipt_resource_constraint(cursor)
         if self._mutation_receipt_resource_constraint_exists(cursor):
             return
         if self._dialect == "sqlite":
@@ -2483,18 +2604,6 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             ),
         )
 
-    def publish_worker_environment(self, environment: WorkerEnvironment) -> None:
-        """Replace one worker's published credential variable names (spec 007 FR-035)."""
-        with self._transaction() as cursor:
-            cursor.execute(
-                self._sql(_UPSERT_WORKER_ENVIRONMENT),
-                (
-                    environment.worker_id,
-                    _json(list(environment.credential_names)),
-                    environment.observed_at.isoformat(),
-                ),
-            )
-
     def write_bootstrap_record(self, record: BootstrapRecord) -> None:
         """Replace the one bootstrap record when it names another version or work pool (spec 018 FR-007b)."""
         connection = self._connect()
@@ -2513,22 +2622,6 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
-
-    def worker_environments(self) -> tuple[WorkerEnvironment, ...]:
-        """Return every worker's last published credential variable names, by worker."""
-        with self._reading() as cursor:
-            cursor.execute(self._sql(_SELECT_WORKER_ENVIRONMENTS))
-            rows = cursor.fetchall()
-        return tuple(
-            WorkerEnvironment.model_validate(
-                {
-                    "worker_id": row[0],
-                    "credential_names": tuple(_JSON_LIST_ADAPTER.validate_json(str(row[1]))),
-                    "observed_at": row[2],
-                }
-            )
-            for row in rows
-        )
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
         """Return the configuration's durable safety reference, if a write has set one."""
@@ -3787,6 +3880,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         try:
             cursor = connection.cursor()
             try:
+                self._require_named_credentials(cursor, package)
                 cursor.execute(self._sql(_INSERT_CONFIGURATION), (config_id, version.created_at.isoformat()))
                 self._insert_configuration_version_row(
                     cursor,
@@ -3795,6 +3889,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     registered_by=registered_by,
                     registration_reason=registration_reason,
                 )
+                self._insert_version_credentials(cursor, version, package)
                 connection.commit()
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 # DB-API drivers do not share an integrity-error base class;
@@ -3812,6 +3907,37 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
         return version
+
+    def _require_named_credentials(self, cursor: _Cursor, package: ConfigurationPackage) -> None:
+        """Lock the stored credentials the package names and check that each one can serve its block.
+
+        Runs first in the transaction that registers the version. The rows stay locked until
+        that transaction ends, so no deletion and no value change of a named credential
+        commits between this check and the version (spec 027, research R8, critique E4).
+
+        Raises:
+            StoredCredentialCheckError: a named credential does not exist, or does not hold a
+                field its block needs. Nothing was written.
+        """
+        named = named_credentials(package)
+        if not named:
+            return
+        held = credential_statements.lock_and_read_fields(cursor, self._sql, tuple(named.values()))
+        findings = stored_credential_findings(package, held.get)
+        if findings:
+            raise StoredCredentialCheckError(findings)
+
+    def _insert_version_credentials(
+        self, cursor: _Cursor, version: ConfigurationVersion, package: ConfigurationPackage
+    ) -> None:
+        """Record the credential each block of the version names, in the transaction that inserts it."""
+        credential_statements.write_version_credentials(
+            cursor,
+            self._sql,
+            config_id=version.config_id,
+            registry_version=version.registry_version,
+            credentials=named_credentials(package),
+        )
 
     def _insert_configuration_version_row(
         self,
@@ -3892,6 +4018,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             try:
                 cursor = connection.cursor()
                 try:
+                    self._require_named_credentials(cursor, package)
                     cursor.execute(self._sql(_SELECT_NEXT_CONFIGURATION_VERSION), (config_id,))
                     next_row = cursor.fetchone()
                     next_version = int(next_row[0]) if next_row is not None else 1
@@ -3910,6 +4037,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         registered_by=registered_by,
                         registration_reason=registration_reason,
                     )
+                    self._insert_version_credentials(cursor, version, package)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # DB-API drivers do not share an integrity-error base class;
@@ -4111,6 +4239,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             ValueError: The schedule is not in the state ``active``.
             ScheduleNameInUseError: A schedule that is not deleted has the name.
             ScheduleExistsForConfigurationError: The configuration has a schedule that is not deleted.
+            VersionCredentialsMissingError: A stored credential the version names does not exist.
         """
         if schedule.state != "active":
             msg = "a schedule is created in the state active"
@@ -4118,6 +4247,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         try:
             with self._transaction() as cursor:
                 self._refuse_schedule_conflict(cursor, schedule)
+                credential_statements.lock_version_credentials(
+                    cursor, self._sql, config_id=schedule.config_id, registry_version=schedule.registry_version
+                )
                 cursor.execute(self._sql(_INSERT_SCHEDULE), _schedule_values(schedule))
                 for event in events:
                     self._insert_event(cursor, event)
@@ -4229,6 +4361,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             ScheduleChangedError: ``expected_updated_at`` is given and differs from the stored value.
             ScheduleTransitionError: The stored state cannot move to the requested state.
             ValueError: The change sets the name, the configuration or the creation time.
+            VersionCredentialsMissingError: The change pins another version, and a stored
+                credential that version names does not exist.
         """
         with self._transaction() as cursor:
             stored = self._locked_schedule(cursor, schedule.schedule_id)
@@ -4245,6 +4379,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             if schedule.state not in _SCHEDULE_TRANSITIONS[stored.state]:
                 msg = f"a schedule in the state {stored.state!r} cannot move to the state {schedule.state!r}"
                 raise ScheduleTransitionError(msg)
+            if schedule.state != "deleted" and schedule.registry_version != stored.registry_version:
+                # The same lock and check as a creation: a deletion of a credential that the new
+                # version names cannot commit beside this change.
+                credential_statements.lock_version_credentials(
+                    cursor, self._sql, config_id=schedule.config_id, registry_version=schedule.registry_version
+                )
             # A schedule that leaves a stop for repeated failures counts its failed runs from zero
             # again: when it is resumed, and when a resume stores another reason to stop it, so a
             # later change that makes it active does not keep the old count.
@@ -5053,6 +5193,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         token_name: str,
         token_digest: str | None,
         now: datetime | None = None,
+        administrator: bool = True,
+        claim_existing: bool = True,
     ) -> Account:
         """Make the account that the environment defines match the environment, in one transaction.
 
@@ -5062,6 +5204,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         Raises:
             DuplicateCredentialError: another token of the store already holds this digest.
+            EnvironmentAccountConflictError: ``claim_existing`` is false and an account with the
+                name exists that the environment does not manage. Nothing was written.
         """
         try:
             with self._transaction() as cursor:
@@ -5077,6 +5221,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     token_name=token_name,
                     token_digest=token_digest,
                     now=_now(now),
+                    administrator=administrator,
+                    claim_existing=claim_existing,
                 )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # DB-API drivers do not share an integrity-error base class;
@@ -5119,6 +5265,178 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             if event is not None:
                 self._insert_event(cursor, event)
             return cleared
+
+    def create_stored_credential(
+        self,
+        *,
+        name: str,
+        description: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential:
+        """Create a credential and its revision 1, and the event ``event_for`` builds, in one transaction.
+
+        ``encrypt`` is called with the new identifier and revision 1 inside the transaction.
+
+        Raises:
+            StoredCredentialInvalidError: the name, the description or the set of fields breaks a rule.
+            CredentialNameTakenError: a credential already has this name.
+            CredentialIdentifierAllocationError: every generated identifier was already in use.
+        """
+        created_at = _now(now)
+        for _attempt in range(_CREDENTIAL_IDENTIFIER_ATTEMPTS):
+            try:
+                with self._transaction() as cursor:
+                    credential = credential_statements.create_credential(
+                        cursor,
+                        self._sql,
+                        name=name,
+                        description=description,
+                        fields=fields,
+                        encrypt=encrypt,
+                        actor=actor,
+                        now=created_at,
+                    )
+                    if event_for is not None:
+                        self._insert_event(cursor, event_for(credential))
+                    return credential
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # DB-API drivers do not share an integrity-error base class;
+                # inspect only documented SQLite/PostgreSQL uniqueness markers.
+                if not _is_unique_violation(exc):
+                    raise
+            # The refused transaction is over. A new read tells a taken name from an identifier
+            # that is in use; only the second is worth another attempt. The driver's error is
+            # not chained: it can quote the refused row.
+            if self.lookup_stored_credential(name) is not None:
+                msg = f"The credential name {name!r} is already taken"
+                raise credential_statements.CredentialNameTakenError(msg)
+        msg = "Could not choose an unused credential identifier"
+        raise credential_statements.CredentialIdentifierAllocationError(msg)
+
+    def lookup_stored_credential(self, name: str) -> StoredCredential | None:
+        """Return the credential with this name, or ``None``."""
+        with self._reading() as cursor:
+            return credential_statements.read_credential_by_name(cursor, self._sql, name)
+
+    def list_stored_credentials(self, *, offset: int = 0, limit: int = DEFAULT_LIMIT) -> StoredCredentialPage:
+        """Return one page of credentials sorted by name, in byte order."""
+        with self._reading() as cursor:
+            return credential_statements.list_credentials(
+                cursor, self._sql, dialect=self._dialect, offset=offset, limit=limit
+            )
+
+    def change_stored_credential_value(
+        self,
+        *,
+        name: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential:
+        """Write the next revision of a credential with the whole new set of fields, in one transaction.
+
+        ``encrypt`` is called with the identifier and the next revision once the row is locked.
+
+        Raises:
+            StoredCredentialInvalidError: the set of fields breaks a rule.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        with self._transaction() as cursor:
+            credential = credential_statements.change_value(
+                cursor, self._sql, name=name, fields=fields, encrypt=encrypt, actor=actor, now=_now(now)
+            )
+            if event_for is not None:
+                self._insert_event(cursor, event_for(credential))
+            return credential
+
+    def set_stored_credential_description(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential:
+        """Replace the description of a credential; its revision stays.
+
+        Raises:
+            StoredCredentialInvalidError: the description is too long.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        with self._transaction() as cursor:
+            credential = credential_statements.set_description(
+                cursor, self._sql, name=name, description=description, actor=actor, now=_now(now)
+            )
+            if event_for is not None:
+                self._insert_event(cursor, event_for(credential))
+            return credential
+
+    def delete_stored_credential(
+        self, *, name: str, event_for: Callable[[StoredCredential], AuditEvent] | None = None
+    ) -> StoredCredential:
+        """Delete a credential that nothing current names, with its revisions and the event, in one transaction.
+
+        The transaction locks the credential row first, as a registration that names the
+        credential does, and as a schedule does that is created or changed to pin a version that
+        names it, so the two cannot both pass their check (research R8, critique E4).
+
+        Returns:
+            The credential as it was before the deletion.
+
+        Raises:
+            StoredCredentialNotFoundError: no credential has this name.
+            CredentialInUseError: the latest version of a configuration, or a schedule that is
+                not deleted, names the credential. Nothing was removed and no event was written.
+        """
+        with self._transaction() as cursor:
+            credential = credential_statements.delete_credential(cursor, self._sql, name)
+            if event_for is not None:
+                self._insert_event(cursor, event_for(credential))
+            return credential
+
+    def lookup_stored_credential_revision(self, credential_id: str, revision: int) -> StoredCredentialRevision | None:
+        """Return one revision of a credential, with its key identifier, nonce and ciphertext."""
+        with self._reading() as cursor:
+            return credential_statements.read_revision(cursor, self._sql, credential_id, revision)
+
+    def record_version_credentials(
+        self, config_id: str, registry_version: int, credentials: Mapping[CredentialBlock, str]
+    ) -> None:
+        """Record the credential name each block of a version names, in a transaction of its own.
+
+        Registration calls ``stored_credentials.write_version_credentials`` with its own cursor
+        instead, so the rows are written with the version.
+        """
+        with self._transaction() as cursor:
+            credential_statements.write_version_credentials(
+                cursor, self._sql, config_id=config_id, registry_version=registry_version, credentials=credentials
+            )
+
+    def version_credentials(self, config_id: str, registry_version: int) -> dict[CredentialBlock, str]:
+        """Return the credential name each block of a version names."""
+        with self._reading() as cursor:
+            return credential_statements.read_version_credentials(
+                cursor, self._sql, config_id=config_id, registry_version=registry_version
+            )
+
+    def record_credential_uses(self, uses: Sequence[CredentialUse], *, event: AuditEvent | None = None) -> None:
+        """Record the revisions a stage execution received, and ``event``, in one transaction."""
+        with self._transaction() as cursor:
+            credential_statements.record_credential_uses(cursor, self._sql, uses)
+            if event is not None:
+                self._insert_event(cursor, event)
+
+    def credential_uses(self, run_id: str) -> tuple[CredentialUse, ...]:
+        """Return the credentials every stage execution of a run received."""
+        with self._reading() as cursor:
+            return credential_statements.read_credential_uses(cursor, self._sql, run_id)
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         with self._transaction() as cursor:
@@ -6007,6 +6325,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             ScheduleNameInUseError: A schedule that is not deleted has the name.
             ScheduleExistsForConfigurationError: The configuration has a schedule that is not
                 deleted; the error holds its identifier and its name.
+            VersionCredentialsMissingError: A stored credential the version names does not exist.
         """
         self._records.create_schedule(
             _redacted_schedule(schedule, secrets), events=tuple(_redact_event(event, secrets) for event in events)
@@ -6039,7 +6358,8 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
 
         Raises:
             ScheduleNotFoundError, ScheduleDeletedError, ScheduleChangedError,
-            ScheduleTransitionError, ValueError: see `_RelationalRunStore.update_schedule`.
+            ScheduleTransitionError, ValueError, VersionCredentialsMissingError: see
+                `_RelationalRunStore.update_schedule`.
         """
         return self._records.update_schedule(
             _redacted_schedule(schedule, secrets),
@@ -6411,6 +6731,8 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         token_name: str,
         token_digest: str | None,
         now: datetime | None = None,
+        administrator: bool = True,
+        claim_existing: bool = True,
     ) -> Account:
         """Make the account that the environment defines match the environment, in one transaction.
 
@@ -6423,6 +6745,8 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
 
         Raises:
             DuplicateCredentialError: another token of the store already holds this digest.
+            EnvironmentAccountConflictError: ``claim_existing`` is false and an account with the
+                name exists that the environment does not manage. Nothing was written.
         """
         return self._records.apply_environment_account(
             name=name,
@@ -6430,6 +6754,8 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             token_name=token_name,
             token_digest=token_digest,
             now=now,
+            administrator=administrator,
+            claim_existing=claim_existing,
         )
 
     def read_sign_in_attempt(self, name: str) -> SignInAttempt | None:
@@ -6467,6 +6793,143 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         Return whether a row was deleted. The event is written either way.
         """
         return self._records.clear_sign_in_attempts(name, event=_redacted_event(event, secrets))
+
+    def create_stored_credential(
+        self,
+        *,
+        name: str,
+        description: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Create a credential and its revision 1 from the value ``encrypt`` encrypts.
+
+        The store receives the key identifier, the nonce and the ciphertext, never the value.
+        ``encrypt`` is called with the new identifier and revision 1 inside the transaction, and
+        the secret-safe event that ``event_for`` builds is written in the same transaction.
+
+        Raises:
+            StoredCredentialInvalidError: the name, the description or the set of fields breaks a rule.
+            CredentialNameTakenError: a credential already has this name.
+        """
+        return self._records.create_stored_credential(
+            name=name,
+            description=description,
+            fields=fields,
+            encrypt=encrypt,
+            actor=actor,
+            now=now,
+            event_for=_redacted_event_for(event_for, secrets),
+        )
+
+    def lookup_stored_credential(self, name: str) -> StoredCredential | None:
+        """Return the credential with this name, or ``None``."""
+        return self._records.lookup_stored_credential(name)
+
+    def list_stored_credentials(self, *, offset: int = 0, limit: int = DEFAULT_LIMIT) -> StoredCredentialPage:
+        """Return one page of credentials sorted by name, in byte order."""
+        return self._records.list_stored_credentials(offset=offset, limit=limit)
+
+    def change_stored_credential_value(
+        self,
+        *,
+        name: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Write the next revision of a credential with the whole new set of fields.
+
+        ``encrypt`` is called with the identifier and the next revision once the row is locked.
+
+        Raises:
+            StoredCredentialInvalidError: the set of fields breaks a rule.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        return self._records.change_stored_credential_value(
+            name=name,
+            fields=fields,
+            encrypt=encrypt,
+            actor=actor,
+            now=now,
+            event_for=_redacted_event_for(event_for, secrets),
+        )
+
+    def set_stored_credential_description(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Replace the description of a credential; its revision stays.
+
+        Raises:
+            StoredCredentialInvalidError: the description is too long.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        return self._records.set_stored_credential_description(
+            name=name,
+            description=description,
+            actor=actor,
+            now=now,
+            event_for=_redacted_event_for(event_for, secrets),
+        )
+
+    def delete_stored_credential(
+        self,
+        *,
+        name: str,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Delete a credential that nothing current names, with every revision (FR-010).
+
+        The secret-safe event that ``event_for`` builds is written in the same transaction.
+
+        Returns:
+            The credential as it was before the deletion.
+
+        Raises:
+            StoredCredentialNotFoundError: no credential has this name.
+            CredentialInUseError: the latest version of a configuration, or a schedule that is
+                not deleted, names the credential.
+        """
+        return self._records.delete_stored_credential(name=name, event_for=_redacted_event_for(event_for, secrets))
+
+    def lookup_stored_credential_revision(self, credential_id: str, revision: int) -> StoredCredentialRevision | None:
+        """Return one revision of a credential, with its key identifier, nonce and ciphertext."""
+        return self._records.lookup_stored_credential_revision(credential_id, revision)
+
+    def record_version_credentials(
+        self, config_id: str, registry_version: int, credentials: Mapping[CredentialBlock, str]
+    ) -> None:
+        """Record the credential name each block of a version names (research R8)."""
+        self._records.record_version_credentials(config_id, registry_version, credentials)
+
+    def version_credentials(self, config_id: str, registry_version: int) -> dict[CredentialBlock, str]:
+        """Return the credential name each block of a version names; a block that names none is absent."""
+        return self._records.version_credentials(config_id, registry_version)
+
+    def record_credential_uses(
+        self, uses: Sequence[CredentialUse], *, event: AuditEvent | None = None, secrets: Sequence[str] = ()
+    ) -> None:
+        """Record the revisions a stage execution received, replacing an earlier release, with the event."""
+        self._records.record_credential_uses(uses, event=_redacted_event(event, secrets))
+
+    def credential_uses(self, run_id: str) -> tuple[CredentialUse, ...]:
+        """Return the credentials every stage execution of a run received (research R9)."""
+        return self._records.credential_uses(run_id)
 
     def record_results(
         self,
@@ -6558,22 +7021,6 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return one configuration's durable source-count and full-extract reference."""
         return self._records.lookup_configuration_baseline(config_id)
 
-    def publish_worker_environment(
-        self, worker_id: str, credential_names: Iterable[str], *, observed_at: datetime | None = None
-    ) -> None:
-        """Record the credential variable NAMES one worker holds now; never a value (spec 007 FR-035).
-
-        Each call replaces that worker's previous names, so the record follows the variables
-        the worker holds at its latest poll.
-        """
-        self._records.publish_worker_environment(
-            WorkerEnvironment(
-                worker_id=worker_id,
-                credential_names=tuple(credential_names),
-                observed_at=observed_at or datetime.now(timezone.utc),
-            )
-        )
-
     def write_bootstrap_record(
         self, sync_version: str, work_pool: str, *, completed_at: datetime | None = None
     ) -> BootstrapRecord:
@@ -6592,14 +7039,6 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         )
         self._records.write_bootstrap_record(record)
         return record
-
-    def live_worker_environments(self, *, observed_after: datetime) -> tuple[WorkerEnvironment, ...]:
-        """Return the publications of the workers that published at or after `observed_after`, by worker."""
-        return tuple(
-            environment
-            for environment in self._records.worker_environments()
-            if environment.observed_at >= observed_after
-        )
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
         """Resolve only a published, public, run-owned reference, with explicit unavailability."""
@@ -7442,6 +7881,15 @@ def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
 
 def _redacted_event(event: AuditEvent | None, secrets: Sequence[str]) -> AuditEvent | None:
     return None if event is None else _redact_event(event, secrets)
+
+
+def _redacted_event_for(
+    event_for: Callable[[StoredCredential], AuditEvent] | None, secrets: Sequence[str]
+) -> Callable[[StoredCredential], AuditEvent] | None:
+    """Wrap a builder of a stored credential's event so that the event it builds is secret-safe."""
+    if event_for is None:
+        return None
+    return lambda credential: _redact_event(event_for(credential), secrets)
 
 
 def _audit_from_row(row: Sequence[Any], related: Sequence[tuple[str, str]] = ()) -> AuditEvent:

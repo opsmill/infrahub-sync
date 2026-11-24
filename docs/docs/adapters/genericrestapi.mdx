@@ -8,7 +8,7 @@ Use the Generic REST API adapter to read data from a system with a REST/JSON API
 
 In a [configuration package](../configuration-package.mdx), name `genericrestapi` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
-On a Compose deployment, from source or from a release package, the worker receives the `INFRAHUB_SYNC_CREDENTIAL_*` variables this page names. The other environment variables on this page apply only to direct adapter use and do not reach the worker. The worker also receives the credential variables of the other bundled adapters. For `username` and `password`, use `INFRAHUB_SYNC_CREDENTIAL_REST_API_USERNAME` and `INFRAHUB_SYNC_CREDENTIAL_REST_API_PASSWORD`. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
+The worker gets the values of the stored credential that the block names from the Sync API for each run. For a registered package, it reads no token, username or password from its environment, and address variables do not replace the declared URLs. The environment variables on this page apply only to direct adapter use. See [Credentials](./choosing-an-adapter.mdx#credentials).
 
 ## Sync directions supported
 
@@ -24,7 +24,7 @@ In a registered package, each `mapping` must be a relative path without a query 
 
 ## Configuration
 
-Set `source.name` to `genericrestapi`. In a registered package, `token`, `username`, and `password` are `$credential` references:
+Set `source.name` to `genericrestapi`. The block names a stored credential that holds the fields its `auth_method` needs; the package holds no token, username or password:
 
 ```yaml
 format_version: 1
@@ -32,18 +32,16 @@ configuration:
   name: rest-api-example
   source:
     name: genericrestapi
+    credential: rest-api-token
     settings:
       url: "https://api.example.com"
       api_endpoint: "api/v1"
       auth_method: "token"
-      token:
-        $credential: rest-api-token
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "https://infrahub.example.com"
-      token:
-        $credential: infrahub-token
   schema_mapping:
     - name: InfraDevice
       mapping: devices
@@ -55,14 +53,24 @@ configuration:
           mapping: serial
         - name: type
           static: "Network Device"
-credentials:
-  rest-api-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_REST_API_TOKEN
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
+
+An administrator creates both credentials before the package is registered. Each command asks for the token and does not echo it:
+
+```bash
+infrahub-sync credentials create rest-api-token
+infrahub-sync credentials create infrahub-token
+```
+
+For `auth_method: basic`, create a credential that holds a username and a password. The command asks for the password:
+
+```bash
+infrahub-sync credentials create rest-api-account --username <username>
+```
+
+| Key of the block | Required | Description |
+| --- | --- | --- |
+| `credential` | For every method except `none` | Name of a stored credential. The `token`, `x-auth-token`, `api-key` and `key` methods need the field `token`. `basic` needs the fields `username` and `password`. With `none`, do not name a credential. See [Manage stored credentials](../guides/credentials.mdx). |
 
 ### Configuration parameters
 
@@ -71,9 +79,6 @@ credentials:
 | `url` | Base URL of the API | None | Yes |
 | `api_endpoint` | Path between the base URL and each mapping path | `/api/v0` | No |
 | `auth_method` | Authentication method: `token`, `x-auth-token`, `api-key`, `key`, `basic`, or `none` | `token` | No |
-| `token` | API token, for the `token`, `x-auth-token`, `api-key`, and `key` methods | None | For those methods |
-| `username` | Username for `basic` | None | For `basic` |
-| `password` | Password for `basic` | None | For `basic` |
 | `verify_ssl` | Verify TLS certificates | `true` | No |
 | `timeout` | Request timeout in seconds | `30` | No |
 | `response_key_pattern` | Key that holds the records in each response. See [Response handling](#response-handling). | None | No |
@@ -93,7 +98,7 @@ The authentication methods send these headers:
 
 ### Direct adapter use
 
-A registered package uses its declared settings and resolved credentials. For direct adapter use without a registered package, these environment variables take precedence over the declared settings:
+A registered package uses its declared settings and the fields of its stored credential. For direct adapter use without a registered package, these environment variables take precedence over the declared settings:
 
 | Setting | Environment variables |
 |---------|----------------------|
@@ -154,7 +159,7 @@ The [LibreNMS](./librenms.mdx), [Observium](./observium.mdx), [Device42](./devic
 
 ### Authentication failures
 
-1. Check that the worker environment sets the variable that each credential names.
+1. Check that the stored credential the block names exists and holds the fields that `auth_method` needs: `infrahub-sync credentials show <name>` lists its fields. If the value is wrong, an administrator replaces it with `infrahub-sync credentials set <name>`.
 2. Check that `auth_method` matches what your API expects.
 3. Check that `url` and `api_endpoint` together form the correct API path.
 

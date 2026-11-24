@@ -33,6 +33,8 @@ from infrahub_sync.product_store import ProductProjection, ProductRun, local_pro
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.service import RunService
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.plan.conftest import load_plan_problem_fixture
 from tests.plan.problem_plan import RUN_ID as PLAN_RUN_ID
 from tests.plan.problem_plan import PlannedFixture, plan_fixture
@@ -53,6 +55,7 @@ def _service(tmp_path: Path) -> tuple[ProductProjection, TestClient]:
     """A product store with one accepted plan run, and a client of the Sync API over it."""
     projection = local_product_projection((tmp_path / "store").resolve())
     resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     projection.create_run(
         ProductRun(

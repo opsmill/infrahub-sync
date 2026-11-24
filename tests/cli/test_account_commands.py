@@ -674,9 +674,10 @@ def test_no_command_takes_a_password_or_a_token_as_an_argument_or_an_option_valu
             where = f"{' '.join(path)}: {parameter.name}"
             assert parameter.param_type_name == "option", where
             assert parameter.is_flag, where
-            assert parameter.opts == ["--password-stdin"], where
-    # login, password, accounts create, accounts set-password.
-    assert checked == 4
+            assert parameter.opts in (["--password-stdin"], ["--token-stdin"]), where
+    # login, password, accounts create, accounts set-password, and the two options of each of
+    # credentials create and credentials set.
+    assert checked == 8
 
 
 def test_the_rule_finds_a_command_that_takes_a_password_value() -> None:

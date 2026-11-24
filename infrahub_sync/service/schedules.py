@@ -21,8 +21,16 @@ from uuid import uuid4
 import structlog
 from pydantic import ValidationError
 
-from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
-from infrahub_sync.execution import collect_secret_values, redact
+from infrahub_sync.configuration import (
+    ConfigurationPackageParseError,
+    RemovedCredentialFormatError,
+    parse_stored_configuration_package,
+)
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+    STORED_VERSION_FORMAT_REMOVED_MESSAGE,
+)
+from infrahub_sync.execution import LiveSecretValues, collect_secret_values, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     AuditEvent,
@@ -39,6 +47,7 @@ from infrahub_sync.product_store import (
     ScheduleNotFoundError,
     ScheduleRecord,
     ScheduleSettingChange,
+    VersionCredentialsMissingError,
 )
 from infrahub_sync.product_store.models import DEFAULT_START_LATE_SECONDS, SCHEDULE_ID_PATTERN, ScheduleSettingName
 
@@ -362,7 +371,8 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         self._orchestration = orchestration
         self._resolver = resolver
         self._delivered_write_targets = frozenset(delivered_write_targets)
-        self._secrets = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
+        # Read again at each use, so the list holds the values registered in the current request.
+        self._secrets = LiveSecretValues((*collect_secret_values(), *secrets))
         self._clock = clock
 
     # ------------------------------------------------------------------
@@ -526,6 +536,9 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 f"the configuration {request.config_id!r} already has the schedule {error.name!r} "
                 f"({error.schedule_id}); a configuration has one schedule",
             ) from None
+        except VersionCredentialsMissingError as error:
+            self._projection.release_mutation(reserved.receipt_id, secrets=self._secrets)
+            raise self._credentials_missing(context, error) from None
         return await self._answer(reserved, 201, context.of(schedule), now)
 
     async def change(
@@ -915,6 +928,8 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             wanted = wanted.model_copy(update={"prefect_synced": False, "updated_at": now})
             try:
                 self._projection.update_schedule(wanted, expected_updated_at=schedule.updated_at, secrets=self._secrets)
+            except VersionCredentialsMissingError as error:
+                raise self._released(reserved, self._credentials_missing(context, error)) from None
             except (ScheduleChangedError, ScheduleDeletedError):
                 # Another writer, such as the worker that stops a schedule, saved a change in between.
                 reread = self._projection.lookup_schedule(schedule_id).value
@@ -971,6 +986,16 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
             "schedule-stopped",
             f"the schedule is stopped with the reason {reason}: {_RESUME_ACTIONS[reason]}",
         )
+
+    def _credentials_missing(self, context: _Request, error: VersionCredentialsMissingError) -> ServiceAPIError:
+        """Return ``422 credential-not-found`` for a version that names missing stored credentials, with its event.
+
+        The message lists the missing names, as a registration does, and the command that an
+        administrator runs to create each one (contracts/http-api.md); a name is not secret.
+        """
+        commands = ", ".join(f"`infrahub-sync credentials create {name}`" for name in error.names)
+        message = f"{error}; an administrator creates each one with {commands}"
+        return self._refusal(context, 422, "credential-not-found", message)
 
     def _released(self, receipt: MutationReceipt | None, error: ServiceAPIError) -> ServiceAPIError:
         """Make the receipt of a refused request available for a later attempt, and return the refusal."""
@@ -1148,8 +1173,10 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
         """Return the destination branch that the configuration version declares, or ``None``.
 
         Raises:
-            ServiceAPIError: ``404 configuration-version-not-found``, or ``503
-                configuration-version-invalid`` for a registered version that cannot be read.
+            ServiceAPIError: ``404 configuration-version-not-found``, ``422
+                credential-format-removed`` for a version stored in the removed credential
+                format (spec 027, FR-021), or ``503 configuration-version-invalid`` for any
+                other registered version that cannot be read.
         """
         stored = self._projection.lookup_configuration_version(config_id, registry_version).value
         if stored is None:
@@ -1160,7 +1187,13 @@ class ScheduleService:  # pylint: disable=too-many-instance-attributes
                 "the requested configuration version does not exist",
             )
         try:
-            package = parse_configuration_package(stored.declared_content)
+            package = parse_stored_configuration_package(stored.declared_content).package
+        except RemovedCredentialFormatError:
+            # No run of this version can start, so no schedule may name it. The message is fixed
+            # text, the same as on the run routes, and names nothing of the stored content.
+            raise self._refusal(
+                context, 422, CREDENTIAL_FORMAT_REMOVED_REASON, STORED_VERSION_FORMAT_REMOVED_MESSAGE
+            ) from None
         except ConfigurationPackageParseError:
             raise self._refusal(
                 context, 503, "configuration-version-invalid", "the registered configuration version is invalid"

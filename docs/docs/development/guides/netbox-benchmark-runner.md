@@ -71,7 +71,7 @@ The runner reads the destination's host address and initial admin token from the
 destination's own resolved Compose configuration, the development file's `infrahub`
 profile under the `infrahub-sync-benchmark` project. The address is the port that
 configuration publishes for `infrahub-server` (`INFRAHUB_PORT`, default `8000`).
-`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`
+`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` and `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN`
 do not change the destination. When the host reaches Docker at another address, pass
 `--infrahub-url` or set `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`; `--infrahub-url` takes
 precedence over the variable. Either one changes only the host name. A URL that names
@@ -112,9 +112,11 @@ credential settings are supplied for the local services. If a release cannot run
 mapping or flags, the cell fails; the runner never changes sync behavior to obtain a
 benchmark result.
 
-Credentials come from the existing local task environment settings and are passed to
-processes or containers through their environment. The registered package contains
-credential references. The runner suppresses provider output and legacy token banners;
+For v3, the registered package names the stored credentials `netbox-token` and
+`infrahub-token`. Once the Sync API runs, the runner stores both through it, with the tokens of
+the benchmark's NetBox and Infrahub; no Sync service receives either token in a variable. For
+v2, the runner removes the `credential` key from each block and passes `NETBOX_TOKEN` and
+`INFRAHUB_API_TOKEN` to the v2 process through its environment. The runner suppresses provider output and legacy token banners;
 result errors describe the failed operation without exposing credentials.
 The legacy v2 adapter generator needs the destination credential in configuration
 settings. The runner supplies it in a file readable only by your user during generation,

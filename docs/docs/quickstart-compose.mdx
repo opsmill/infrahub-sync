@@ -54,7 +54,7 @@ directory.
 
 ## Write the credentials
 
-The file needs seven credentials, and defaults none of them. This generates random
+The file needs nine credentials, and defaults none of them. This generates random
 values for each, including the password of the `admin` account. It also gives
 `admin` an API token, and gives the bundled CLI the same token:
 
@@ -71,6 +71,8 @@ INFRAHUB_SYNC_PREFECT_AUTH_STRING=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
 INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=$(rand 24)
+INFRAHUB_SYNC_ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)
+INFRAHUB_SYNC_WORKER_TOKEN=$(rand 24)
 INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=$admin_token
 INFRAHUB_SYNC_API_TOKEN=$admin_token
 EOF

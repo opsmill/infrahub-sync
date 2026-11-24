@@ -12,13 +12,14 @@ step by step, see [Create a sync project](./creating-a-sync-project.mdx).
 
 ## Package shape
 
-A package has three top-level keys:
+A package has two top-level keys:
 
 | Key | Required | Content |
 | --- | --- | --- |
 | `format_version` | No | The package format. Only `1` is accepted, and it is the default. |
 | `configuration` | Yes | The source, the destination, and the mappings. See [Sync instance configuration](./reference/config.mdx). |
-| `credentials` | No | The credential references that the configuration uses. See [Credentials](#credentials). |
+
+A top-level `credentials` key is refused. See [Credentials](#credentials).
 
 This outline shows only the structure. It is not a complete package; the `...` parts are
 placeholders:
@@ -27,10 +28,9 @@ placeholders:
 format_version: 1
 configuration:
   name: from-netbox
-  source: ...          # adapter name and settings
-  destination: ...     # adapter name and settings
+  source: ...          # adapter name, stored credential name and settings
+  destination: ...     # adapter name, stored credential name and settings
   schema_mapping: ...  # list of mappings
-credentials: ...       # credential references
 ```
 
 For complete packages, see
@@ -39,49 +39,66 @@ and the package in [Create a sync project](./creating-a-sync-project.mdx).
 
 ## Credentials
 
-A credential-bearing setting, such as a token or a password, never contains the value. It
-contains a `$credential` reference to an entry in the top-level `credentials` block:
+A package never contains a token or a password. Each adapter block names a stored credential
+with `credential: <name>`, next to the adapter name and `settings`:
 
 ```yaml
 configuration:
   source:
+    name: netbox
+    credential: netbox-token
     settings:
-      token:
-        $credential: netbox-token
-
-credentials:
-  netbox-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
+      url: https://netbox.example.com
+  destination:
+    name: infrahub
+    credential: infrahub-token
+    settings:
+      url: http://infrahub-server:8000
 ```
 
-Each entry declares a `provider` and an `identifier`. `env` is the only provider in this
-release, and the identifier is the name of the environment variable that the Sync worker
-reads when a run starts. The identifier must start with `INFRAHUB_SYNC_CREDENTIAL_`;
-validation refuses any other identifier. Set that variable where the worker runs. On a Compose deployment,
-set it in `.env` and run `docker compose up -d --wait`; see
-[Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot).
-Registration refuses a package that contains a literal credential value.
+An administrator creates each credential in the Sync API before the package is registered, for
+example with `infrahub-sync credentials create netbox-token`. The Sync API stores the value
+encrypted. When a worker runs a stage, it gets the values of that run from the Sync API and
+fills the credential settings of each block from them. [Manage stored
+credentials](./guides/credentials.mdx) describes the commands, the fields that each adapter
+needs, and the refusals.
 
-The API checks every `env` declaration in previously registered versions, including
-unused declarations. An invalid identifier returns HTTP 422 with error code
-`malformed-credential-reference` before a new run is created or worker execution is
-submitted. This check also applies to verification and apply of existing runs, even when
-only the source credential is invalid and apply would not read it. Retrying a request whose
-worker submission was not recorded as accepted also checks the version. Retrying an already
-accepted request with the same idempotency key returns its stored response.
+These rules apply:
 
-Register a new version with identifiers that start with `INFRAHUB_SYNC_CREDENTIAL_`
-followed by a nonempty name made only of ASCII letters, digits, and underscores. Recreate affected saved plans by planning from the new version
-before you verify or apply them. Existing versions and their saved plans are not rewritten.
-The API checks declarations without resolving credential values.
+- A block names at most one credential. The name starts with a lowercase letter and holds 1 to 63
+  lowercase letters, digits and hyphens.
+- A block does not write its credential settings, such as `token`, `username` or `password`, in
+  `settings`. Registration refuses a package that contains a literal credential value.
+- A block whose authentication method needs no credential, for example `auth_method: none`, must
+  not name one.
+- Registration refuses a package that names a credential that does not exist, or one that lacks
+  a field the block needs.
+- The checksum of a version covers the credential name. To point a block to another credential,
+  register a new version. A change of the stored value needs no new version.
+
+### The earlier credential format is removed
+
+An earlier build declared a top-level `credentials` block with the `env` provider, and wrote a
+`$credential` reference in each credential setting. Both are removed:
+
+- Registration refuses a package that holds a `credentials` key, empty or not, or a
+  `$credential` reference. The message names `credential: <name>`.
+- A version that was registered with a `$credential` reference is refused with HTTP 422 and the
+  code `credential-format-removed` when a plan, a sync, a verify, an apply, an approval or a
+  resume of it starts, and when a schedule that names it is created or changed. Its read
+  commands, such as `configs show` and `runs show`, still work.
+- A version that was registered with no secret holds an empty `credentials` block. It is read as
+  before and keeps its checksum.
+
+To use such a configuration again, follow
+[Versions registered with the earlier format](./guides/credentials.mdx#versions-registered-with-the-earlier-format).
 
 ## Connection settings
 
 The worker connects to the URLs declared in the registered package. Environment variables
-such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not replace them. Only the credential values
-come from the worker environment. To change a URL, a branch, or any other setting, edit the
-file and register it as a new version with `configs version`.
+such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not replace them, and the worker reads no token
+or password from its environment for a registered package. To change a URL, a branch, or any
+other setting, edit the file and register it as a new version with `configs version`.
 
 Declare URLs that the worker can reach. On a Compose deployment, `localhost` in a package
 refers to the worker container.
@@ -148,7 +165,9 @@ these causes first:
 
 - An adapter name that is not bundled. See [Choose an adapter](./adapters/choosing-an-adapter.mdx).
 - A setting that the adapter does not accept.
-- A literal credential value instead of a `$credential` reference.
+- A literal credential value in `settings`, instead of `credential: <name>` in the block.
+- A `credentials` block or a `$credential` reference, which are removed.
+- A stored credential that does not exist, or that lacks a field the block needs.
 - A URL setting that is not an absolute URL.
 
 ## Check a package before registering it
@@ -165,16 +184,19 @@ infrahub-sync configs check package.yml --branch main
 - The command needs an administrator token, as `configs register` does. The Sync API refuses
   any other token with HTTP 403 and records the refused attempt in the audit history. With
   `--branch`, the Sync API connects to the destination URL that the file declares and sends
-  the destination token that the service holds, so only an administrator can choose that URL.
+  the token of the stored credential that the destination names, so only an administrator can
+  choose that URL.
 - The file is a YAML or JSON package. The CLI reads it and sends its content to the Sync API.
 - Without `--branch`, the command checks the declared content against the adapter
-  declarations of the Sync release that runs now. With `--branch`, it also checks the mapping,
-  the import account's permissions and the workers' credential variables against that
-  Infrahub branch, as `configs validate --branch` does.
+  declarations of the Sync release that runs now, and whether each stored credential that a
+  block names exists and holds the fields the block needs. With `--branch`, it also checks the
+  mapping and the import account's permissions against that Infrahub branch, as
+  `configs validate --branch` does.
 - For the same file, branch and destination state, the findings are the findings that
   `configs validate` reports for the version that registering the file creates.
 - A file that registration refuses gets the same refusal, for example
-  `code: configs-validation`. A v2 `config.yml` is refused with a message that names
+  `code: configs-validation`, also when a block names a stored credential that does not exist
+  or lacks a field the block needs. A v2 `config.yml` is refused with a message that names
   `infrahub-sync configs convert`; see [Convert a config.yml file](#convert-a-configyml-file).
 
 The command prints `package_checksum`, `destination_read`, `destination_schema_fingerprint`,
@@ -240,16 +262,15 @@ The review step then shows:
   package, for a new configuration or for a version that renames its configuration.
   Configuration names are unique, so **Register** stays disabled. Select **Add as a new
   version** to review the same file as a new version of configuration N;
-- the names of the environment variables that the credential references point to, without
-  their values;
+- the name of the stored credential that the source and the destination each name, without
+  a value;
 - the validation result against the branch in the **Validation branch** field. The field
   defaults to the destination's `branch` setting in the package, or to `main`. Change it to
   validate again against another branch;
 - an optional reason, which the Sync API records with the version.
 
 **Register** is enabled only when the result is "Valid against branch B". Warnings are listed
-under that result and do not disable **Register**: for example, the Sync API reports a warning
-when no worker has published which credential variables it holds. When an error finding is
+under that result and do not disable **Register**. When an error finding is
 listed, fix the package and drop it again. When the Sync API cannot
 reach the destination, the review step shows "Could not validate: the destination cannot be
 reached" and the button becomes **Register without validation**. When the check itself does not
@@ -292,7 +313,8 @@ findings after an upgrade.
 infrahub-sync configs validate <config-id> <version>
 ```
 
-Without `--branch`, the check reads only the declared content. It does not connect to the
+Without `--branch`, the check reads the declared content, and whether each stored credential
+that a block names exists and holds the fields the block needs. It does not connect to the
 source or the destination, so it does not test URLs, tokens, or the destination schema.
 
 Each finding has a `code`, a `severity` of `error` or `warning`, a `location` in the package
@@ -329,9 +351,10 @@ the keys it drops, and the configurations it refuses.
 To convert a file by hand instead:
 
 1. Add `format_version: 1`, and indent the whole file under a `configuration:` key.
-2. Replace each literal credential value with a `$credential` reference, and declare the
-   reference in a top-level `credentials` block.
-3. Add a token credential to the Infrahub destination. Most `config.yml` examples omit it.
+2. Remove each credential setting, such as `token`, from `settings`, and name a stored credential
+   in the block with `credential: <name>`.
+3. Name a stored credential in the Infrahub destination block too. Most `config.yml` examples
+   omit its token.
 4. Replace example URLs with addresses that the Sync worker can reach.
 5. Remove settings that the adapter does not accept in a registered package. The adapter
    pages list the accepted settings.
@@ -339,5 +362,7 @@ To convert a file by hand instead:
    `{kind: CoreAccountGroup, name: <name>}`. A registered package refuses a bare name.
 
 A `config.yml` file is used directly only by the
-[Prefect remote run](./reference/prefect-remote-run.mdx). In that use, adapters read environment variables such as
-`NETBOX_URL` before the declared settings.
+[Prefect remote run](./reference/prefect-remote-run.mdx). In that use, the adapters read
+environment variables of the serving process, such as `NETBOX_URL` and `NETBOX_TOKEN`, before
+the declared settings, and no stored credential is used. The Sync API and its worker read no
+such variable for a registered package.

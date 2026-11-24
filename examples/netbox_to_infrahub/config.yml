@@ -34,28 +34,25 @@ name: from-netbox
 
 source:
   name: netbox
+  credential: netbox-token
   settings:
     url: "https://demo.netbox.dev"
-    token:
-      $credential: netbox-token
 
 destination:
   name: infrahub
+  credential: infrahub-token
   settings:
     url: "http://localhost:8000"
-    token:
-      $credential: infrahub-token
 
-# This file is the `configuration` body of package.yml, byte for byte, which is
-# where the `credentials` block naming these two references lives. Each token is
-# a reference, resolved by the service worker from its own environment. No
-# credential value is ever written here. The worker uses the URLs in the
-# registered package.yml, so keep its configuration body synchronized with
-# this file. Environment variables supply only the two credentials. Export
-# them before starting the worker:
-#   export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="nbt_..."
-#   export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="..."
-# The CLI separately uses INFRAHUB_SYNC_API_URL and INFRAHUB_SYNC_API_TOKEN to
+# This file is the `configuration` body of package.yml, byte for byte. Each
+# block names a stored credential. The Sync API stores the value and releases
+# it to the worker for a run; this file holds no value. The worker uses the
+# URLs in the registered package.yml, so keep its configuration body
+# synchronized with this file. An administrator creates the two credentials
+# before registering package.yml; each command asks for the token without echo:
+#   uv run infrahub-sync credentials create netbox-token
+#   uv run infrahub-sync credentials create infrahub-token
+# The CLI uses INFRAHUB_SYNC_API_URL and INFRAHUB_SYNC_API_TOKEN to
 # authenticate to the Sync API.
 
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.

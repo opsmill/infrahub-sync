@@ -64,6 +64,7 @@ from infrahub_sync.product_store.store import (
     SQLiteRunStore,
     _RelationalRunStore,
 )
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.product_store.postgresql_isolation import dsn_or_skip, isolated_schema
 
 # This intentionally mirrors infrahub_sync/product_store/__init__.py's __all__, hand-maintained
@@ -103,11 +104,16 @@ EXPECTED_PUBLIC_NAMES = {
     "ConfigurationVersionAllocationError",
     "ConfigurationVersionPage",
     "ConfigurationVersionSummary",
+    "CredentialIdentifierAllocationError",
+    "CredentialInUseError",
+    "CredentialNameTakenError",
+    "CredentialUse",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicateConfigurationError",
     "DuplicateConfigurationNamesError",
     "DuplicateCredentialError",
+    "EnvironmentAccountConflictError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
     "EarlierProductDatabaseError",
@@ -150,7 +156,12 @@ EXPECTED_PUBLIC_NAMES = {
     "ScheduledStartRun",
     "SignInAttempt",
     "SignInAttemptsFullError",
-    "WorkerEnvironment",
+    "StoredCredential",
+    "StoredCredentialInvalidError",
+    "StoredCredentialNotFoundError",
+    "StoredCredentialPage",
+    "StoredCredentialRevision",
+    "VersionCredentialsMissingError",
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
@@ -218,6 +229,8 @@ class _CursorAdapter:
             "CAST(%s AS TIMESTAMPTZ)",
             "infrahub_sync_execution_timestamp_microseconds(?)",
         )
+        # PostgreSQL's byte-order collation; SQLite's is BINARY.
+        stripped = stripped.replace('COLLATE "C"', "COLLATE BINARY")
         self._cursor.execute(stripped.replace("%s", "?"), parameters)
         return self
 
@@ -606,36 +619,46 @@ def _append_execution(
     return target.add_prefect_execution(run_id, link, receipt_id=receipt.receipt_id, allocate_attempt=allocate_attempt)
 
 
-def _configuration_declaration(**settings_overrides: object) -> dict[str, Any]:
-    settings: dict[str, object] = {
-        "url": "https://demo.netbox.dev",
-        "token": {"$credential": "netbox-token"},
-    }
+def _configuration_declaration(*, credentials: bool = True, **settings_overrides: object) -> dict[str, Any]:
+    """Return a package whose blocks each name a stored credential; `credentials=False` names none."""
+    settings: dict[str, object] = {"url": "https://demo.netbox.dev"}
     settings.update(settings_overrides)
+    source: dict[str, object] = {"name": "netbox", "credential": "netbox-token", "settings": settings}
+    destination: dict[str, object] = {
+        "name": "infrahub",
+        "credential": "infrahub-token",
+        "settings": {"url": "http://localhost:8000"},
+    }
+    if "token" in settings_overrides or not credentials:
+        # A block that names a stored credential declares no token setting, so this block names none.
+        del source["credential"]
+    if not credentials:
+        del destination["credential"]
     return {
         "format_version": 1,
         "configuration": {
             "name": "from-netbox",
-            "source": {"name": "netbox", "settings": settings},
-            "destination": {
-                "name": "infrahub",
-                "settings": {"url": "http://localhost:8000", "token": {"$credential": "infrahub-token"}},
-            },
+            "source": source,
+            "destination": destination,
             "order": [],
             "schema_mapping": [],
             "diffsync_flags": [],
             "incremental": None,
         },
         "package_metadata": {"adapter_api_version": 1},
-        "credentials": {
-            "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
-        },
     }
 
 
-def _configuration_package(**settings_overrides: object) -> ConfigurationPackage:
-    return ConfigurationPackage.model_validate(_configuration_declaration(**settings_overrides))
+def _with_named_credentials(projection: ProductProjection) -> ProductProjection:
+    """Write the two credentials that `_configuration_declaration` names into the store, and return the store."""
+    create_stored_credential_names(projection, "netbox-token", "infrahub-token")
+    return projection
+
+
+def _configuration_package(*, credentials: bool = True, **settings_overrides: object) -> ConfigurationPackage:
+    return ConfigurationPackage.model_validate(
+        _configuration_declaration(credentials=credentials, **settings_overrides)
+    )
 
 
 def _configuration_name(provider: ProductProjection, config_id: str) -> str | None:
@@ -644,9 +667,15 @@ def _configuration_name(provider: ProductProjection, config_id: str) -> str | No
     return summary.name
 
 
-def _named_configuration_package(name: str, **settings_overrides: object) -> ConfigurationPackage:
-    """Return the package with another name: a name is unique among configurations."""
-    declaration = _configuration_declaration(**settings_overrides)
+def _named_configuration_package(
+    name: str, *, credentials: bool = False, **settings_overrides: object
+) -> ConfigurationPackage:
+    """Return the package with another name: a name is unique among configurations.
+
+    Its blocks name no stored credential unless ``credentials`` is set, so it registers in a
+    store that holds none.
+    """
+    declaration = _configuration_declaration(credentials=credentials, **settings_overrides)
     declaration["configuration"]["name"] = name
     return ConfigurationPackage.model_validate(declaration)
 
@@ -760,14 +789,18 @@ def test_sqlite_unique_constraint_codes_are_duplicates(error_code: int) -> None:
 @pytest.fixture(params=("local", "postgresql-emulated"))
 def provider(request, tmp_path: Path) -> ProductProjection:
     if request.param == "local":
-        return ProductProjection(
-            SQLiteRunStore(tmp_path / "local.sqlite3"),
-            FileArtifactStore(tmp_path / "objects"),
+        return _with_named_credentials(
+            ProductProjection(
+                SQLiteRunStore(tmp_path / "local.sqlite3"),
+                FileArtifactStore(tmp_path / "objects"),
+            )
         )
     fake_s3 = _FakeS3()
-    return ProductProjection(
-        PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
-        S3ArtifactStore(fake_s3, bucket="product-artifacts", prefix="contract"),
+    return _with_named_credentials(
+        ProductProjection(
+            PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
+            S3ArtifactStore(fake_s3, bucket="product-artifacts", prefix="contract"),
+        )
     )
 
 
@@ -787,13 +820,15 @@ def redaction_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
 @pytest.fixture(params=_PROFILES_WITH_POSTGRESQL)
 def listing_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
     """The ``provider`` profiles plus a real PostgreSQL server, for the run list's SQL."""
-    yield from _projection_profile(request.param, tmp_path, "the run list's PostgreSQL parameter")
+    for projection in _projection_profile(request.param, tmp_path, "the run list's PostgreSQL parameter"):
+        yield _with_named_credentials(projection)
 
 
 @pytest.fixture(params=_PROFILES_WITH_POSTGRESQL)
 def name_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
     """The ``provider`` profiles plus a real PostgreSQL server, for the unique configuration name."""
-    yield from _projection_profile(request.param, tmp_path, "the configuration name's PostgreSQL parameter")
+    for projection in _projection_profile(request.param, tmp_path, "the configuration name's PostgreSQL parameter"):
+        yield _with_named_credentials(projection)
 
 
 def _projection_profile(profile: str, tmp_path: Path, purpose: str) -> Iterator[ProductProjection]:
@@ -1089,7 +1124,8 @@ def test_configuration_version_foreign_key_is_enforced(tmp_path: Path) -> None:
     store = SQLiteRunStore(tmp_path / "records.sqlite3")
 
     with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
-        store.add_configuration_version("missing-configuration", _configuration_package())
+        # The raw store holds no stored credential, so the package names none.
+        store.add_configuration_version("missing-configuration", _configuration_package(credentials=False))
 
 
 def test_child_insert_uniqueness_is_not_misreported_as_a_duplicate_run(tmp_path: Path) -> None:
@@ -3615,7 +3651,7 @@ def test_production_factories_share_exact_configuration_run_and_artifact_state(t
             prefix="shared-state",
         )
 
-    api_projection = build()
+    api_projection = _with_named_credentials(build())
     worker_projection = build()
     version = api_projection.create_configuration(_configuration_package())
     expected_run = ProductRun(
@@ -3777,7 +3813,8 @@ def test_insert_configuration_version_row_rejects_a_checksum_content_mismatch(tm
     ``package.declared_content()``; nothing else checks they correspond, and an append-only
     table gets no later chance to catch drift between the two."""
     store = SQLiteRunStore(tmp_path / "records.sqlite3")
-    first = store.create_configuration(_configuration_package())
+    # The raw store holds no stored credential, so the packages of this test name none.
+    first = store.create_configuration(_configuration_package(credentials=False))
     mismatched = ConfigurationVersion(
         config_id=first.config_id,
         registry_version=2,
@@ -3807,7 +3844,7 @@ def test_configuration_registry_survives_store_reconstruction(profile: str, tmp_
             S3ArtifactStore(fake_s3, bucket="artifacts"),
         )
 
-    before_restart = build()
+    before_restart = _with_named_credentials(build())
     first = before_restart.create_configuration(_configuration_package())
     second, _ = before_restart.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
 
@@ -3942,7 +3979,7 @@ def test_the_unique_index_refuses_a_name_that_passed_the_check_and_names_the_con
 ) -> None:
     """Two registrations can both pass the check; the index refuses the second with the same error."""
     store = SQLiteRunStore(tmp_path / "records.sqlite3")
-    first = store.create_configuration(_configuration_package())
+    first = store.create_configuration(_configuration_package(credentials=False))
     other = store.create_configuration(_named_configuration_package("other-inventory"))
     checks: list[str] = []
     original = SQLiteRunStore._refuse_configuration_name_in_use
@@ -3956,8 +3993,10 @@ def test_the_unique_index_refuses_a_name_that_passed_the_check_and_names_the_con
 
     def write() -> object:
         if operation == "register":
-            return store.create_configuration(_configuration_package(verify_ssl=False))
-        return store.add_configuration_version(other.config_id, _configuration_package(verify_ssl=False))
+            return store.create_configuration(_configuration_package(credentials=False, verify_ssl=False))
+        return store.add_configuration_version(
+            other.config_id, _configuration_package(credentials=False, verify_ssl=False)
+        )
 
     with pytest.raises(ConfigurationNameInUseError) as refusal:
         write()
@@ -3969,7 +4008,7 @@ def test_the_unique_index_refuses_a_name_that_passed_the_check_and_names_the_con
 def test_start_up_refuses_a_database_where_configurations_share_a_name(tmp_path: Path) -> None:
     database = tmp_path / "records.sqlite3"
     store = SQLiteRunStore(database)
-    first = store.create_configuration(_configuration_package())
+    first = store.create_configuration(_configuration_package(credentials=False))
     second = store.create_configuration(_named_configuration_package("second-inventory"))
     store.create_configuration(_named_configuration_package(""))
     store.create_configuration(_named_configuration_package(""))
@@ -4091,11 +4130,12 @@ def test_create_configuration_raises_a_typed_error_on_a_config_id_collision(
     escape a public API, like every sibling method (``DuplicateRunError``,
     ``DuplicateArtifactError``, ``DuplicatePrefectExecutionError``)."""
     store = SQLiteRunStore(tmp_path / "records.sqlite3")
-    first = store.create_configuration(_configuration_package())
+    # The raw store holds no stored credential, so the packages of this test name none.
+    first = store.create_configuration(_configuration_package(credentials=False))
     monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: first.config_id)
 
     with pytest.raises(DuplicateConfigurationError, match=re.escape(first.config_id)):
-        store.create_configuration(_configuration_package(verify_ssl=False))
+        store.create_configuration(_configuration_package(credentials=False, verify_ssl=False))
 
 
 def test_add_configuration_version_on_unknown_configuration_is_refused(provider: ProductProjection) -> None:
@@ -4113,7 +4153,10 @@ def test_unknown_configuration_lookup_and_list_are_explicit(provider: ProductPro
 
 def test_registration_rejects_an_inline_credential_value_before_any_persistence(tmp_path: Path) -> None:
     database = tmp_path / "local.sqlite3"
-    projection = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
+    # The store holds the credential that the destination names, so only the inline value is refused.
+    projection = _with_named_credentials(
+        ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
+    )
     canary = "inline-credential-canary-649"
     hostile = ConfigurationPackage.model_validate(_configuration_declaration(token=canary))
 
@@ -4189,11 +4232,12 @@ def test_configuration_version_allocation_exhaustion_raises_a_typed_error(tmp_pa
     the store's ``DuplicateRunError`` / ``WriteAdmissionConflictError`` idiom, not a bare
     ``RuntimeError`` that a caller catching ``ValueError`` would not see."""
     database = tmp_path / "records.sqlite3"
-    first = SQLiteRunStore(database).create_configuration(_configuration_package())
+    # The raw store holds no stored credential, so the packages of this test name none.
+    first = SQLiteRunStore(database).create_configuration(_configuration_package(credentials=False))
     store = _AlwaysConflictingConfigurationVersionStore(database)
 
     with pytest.raises(ConfigurationVersionAllocationError):
-        store.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
+        store.add_configuration_version(first.config_id, _configuration_package(credentials=False, verify_ssl=False))
 
 
 @pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
@@ -4213,7 +4257,7 @@ def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_sqlite
     else:
         records = _RoundCountingPostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3"))
         artifacts = S3ArtifactStore(_FakeS3(), bucket="artifacts")
-    provider = ProductProjection(records, artifacts)
+    provider = _with_named_credentials(ProductProjection(records, artifacts))
     first = provider.create_configuration(_configuration_package())
     package = _configuration_package(verify_ssl=False)
 
@@ -4966,7 +5010,7 @@ def test_reconstructing_the_store_restores_a_dropped_update_trigger(tmp_path: Pa
 
 @pytest.mark.parametrize(
     "dropped",
-    ["mutation_receipts_resource_consistent_insert", "mutation_receipts_resource_consistent_update"],
+    list(product_store_store._SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES),
 )
 def test_reconstructing_the_store_restores_a_missing_receipt_trigger(tmp_path: Path, dropped: str) -> None:
     """SQLite commits each receipt trigger on its own, so a start-up can stop after the first.

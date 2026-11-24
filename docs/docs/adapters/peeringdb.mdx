@@ -27,7 +27,7 @@ PeeringDB is read through the Generic REST API adapter, which supports only **on
 
 The repository contains a mapping example: [`examples/peeringdb_to_infrahub/config.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/peeringdb_to_infrahub/config.yml). It is a `config.yml` file, not a package, and registration refuses it as it is. To use it, convert it as described in [Convert a config.yml file](../configuration-package.mdx#convert-a-configyml-file).
 
-The package declares the PeeringDB connection in `source.settings`. Credentials are `$credential` references:
+The package declares the PeeringDB connection in `source.settings`. The block names a stored credential that holds the PeeringDB API key, which the `api-key` method needs:
 
 ```yaml
 format_version: 1
@@ -35,26 +35,26 @@ configuration:
   name: from-peeringdb
   source:
     name: genericrestapi
+    credential: peeringdb-api-key
     settings:
       url: "https://www.peeringdb.com"
       api_endpoint: "api"
       auth_method: "api-key" # Or "none" for PeeringDB's public, rate-limited access
-      token:
-        $credential: peeringdb-api-key
       response_key_pattern: "data" # PeeringDB wraps lists under "data"
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "https://infrahub.example.com"
-      token:
-        $credential: infrahub-token
-credentials:
-  peeringdb-api-key:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_PEERINGDB_API_KEY
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
-See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.
+An administrator creates both credentials before the package is registered. The first command asks for the PeeringDB API key, the second for the Infrahub token, and neither echoes it:
+
+```bash
+infrahub-sync credentials create peeringdb-api-key
+infrahub-sync credentials create infrahub-token
+```
+
+With `auth_method: "none"`, remove `credential` from the source block: validation refuses a block that names a credential its method does not use.
+
+See [Manage stored credentials](../guides/credentials.mdx) for the commands. See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.

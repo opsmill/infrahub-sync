@@ -33,6 +33,8 @@ from infrahub_sync.service.app import create_app
 from infrahub_sync.service.liveness import automatic_resume_key
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.settings import AUTOMATIC_RESUME_ENV, REQUIRE_APPROVAL_ENV
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.service.accounts import seed_accounts
 from tests.service.test_automatic_resume import (
     _STEP_MARKER,
@@ -76,6 +78,7 @@ def api(tmp_path: Path) -> _StepAPI:
         environment_token=True,
     ).resolver
     orchestration = _LiveOrchestration()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
     client = TestClient(create_app(service, resolver))

@@ -8,7 +8,7 @@ import ReferenceLink from "../../src/components/Card";
 
 In a [configuration package](../configuration-package.mdx), name `aci` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
-On a Compose deployment, from source or from a release package, the worker receives the `INFRAHUB_SYNC_CREDENTIAL_*` variables this page names. The other environment variables on this page apply only to direct adapter use and do not reach the worker. The worker also receives the credential variables of the other bundled adapters. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
+The worker gets the values of the stored credential that the block names from the Sync API for each run. For a registered package, it reads no token, username or password from its environment, and address variables do not replace the declared URLs. The environment variables on this page apply only to direct adapter use. See [Credentials](./choosing-an-adapter.mdx#credentials).
 
 The example package is [`examples/aci_to_infrahub/package.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/aci_to_infrahub/package.yml).
 
@@ -26,7 +26,7 @@ Cisco ACI is a source only. Infrahub Sync does not write to ACI.
 
 ## Configuration
 
-Set `source.name` to `aci`. In a registered package, `username` and `password` are `$credential` references:
+Set `source.name` to `aci`. The block names a stored credential that holds the APIC username and password; the package holds neither:
 
 ```yaml
 format_version: 1
@@ -34,35 +34,34 @@ configuration:
   name: from-cisco-aci
   source:
     name: aci
+    credential: apic-account
     settings:
       url: "https://apic.example.com"
-      username:
-        $credential: apic-username
-      password:
-        $credential: apic-password
       api_endpoint: "api"   # Optional, default: api
       verify: true          # Optional; a boolean, or a string such as "false" or "0"
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "https://infrahub.example.com"
-      token:
-        $credential: infrahub-token
-credentials:
-  apic-username:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME
-  apic-password:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
+
+An administrator creates both credentials before the package is registered. The first command asks for the APIC password, the second for the Infrahub token, and neither echoes it:
+
+```bash
+infrahub-sync credentials create apic-account --username <APIC username>
+infrahub-sync credentials create infrahub-token
+```
+
+| Key of the block | Required | Description |
+| --- | --- | --- |
+| `credential` | Yes | Name of a stored credential that holds the fields `username` and `password` of the APIC account. See [Manage stored credentials](../guides/credentials.mdx). |
+
+Do not write `username` or `password` in `settings`.
 
 ### Environment variables
 
-A registered package uses its declared `url`, its resolved `username` and `password`, and its declared `verify` setting. The worker environment does not replace any of them.
+A registered package uses its declared `url`, the `username` and `password` of its stored credential, and its declared `verify` setting. The worker environment does not replace any of them.
 
 For direct adapter use without a registered package, these variables take precedence over the declared settings:
 

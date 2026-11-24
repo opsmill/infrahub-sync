@@ -90,10 +90,15 @@ changes these steps of an image change:
 - The CLI: upgrade the CLI together with the Sync API. An earlier CLI cannot read the new
   response of `configs register` and `configs version`: the command stores the version and then
   fails. The registration is kept; read it with `configs show CONFIG_ID --version VERSION`.
-- The `worker_environments` table: each worker writes the names of its credential variables
-  to this new table, never their values. Each worker restart adds a row under a new worker name,
-  and the rows of earlier worker processes stay in the table. If you return to an earlier
-  image, the table stays in the database and the earlier release does not read it.
+- Stored credentials: `sync-api` needs `INFRAHUB_SYNC_ENCRYPTION_KEY` and
+  `INFRAHUB_SYNC_WORKER_TOKEN`, and each worker needs `INFRAHUB_SYNC_WORKER_TOKEN`. The
+  `INFRAHUB_SYNC_CREDENTIAL_*` variables are no longer read. A registered version that used a
+  `$credential` reference is refused with `422 credential-format-removed`; see
+  [Versions registered with the earlier format](../guides/credentials.mdx#versions-registered-with-the-earlier-format).
+  A `worker_environments` table of an earlier release stays in the database, and nothing reads
+  or writes it. If you return to an earlier image, that release needs the
+  `INFRAHUB_SYNC_CREDENTIAL_*` variables again and cannot run a version that names a stored
+  credential.
 - Warm incremental reads: no adapter bundled with Sync reads only the records changed since
   the last run, and the Sync API and the Prefect flow always read every record. A custom
   source adapter that defines `safe_cursor_before_load` reads this way only when it also
@@ -120,14 +125,19 @@ Moving or renaming the directory starts a different, empty deployment. Set
 
 ## Change credentials
 
-Source and destination tokens belong in `.env`. Packages contain references to them,
-not their values. To add or change a token, edit its line in `.env` as
-[The `.env` file](../compose-deployment#configuration-prerequisites) describes, then
-run `docker compose up -d --wait`, which recreates the services whose environment
-changed. `docker compose restart` keeps the environment the containers already had.
+Source and destination tokens are stored credentials of the Sync API, not lines of `.env`. A
+package names a stored credential and never holds its value. To add a token, an administrator
+runs `infrahub-sync credentials create <name>`; to change one, `infrahub-sync credentials set
+<name>`. No service is recreated, and the next stage that starts uses the new value. See
+[Manage stored credentials](../guides/credentials.mdx).
 
-This release has no tested procedure for rotating the source, destination, database
-and object store credentials.
+`INFRAHUB_SYNC_ENCRYPTION_KEY` and `INFRAHUB_SYNC_WORKER_TOKEN` are lines of `.env`. Changing
+the encryption key is not supported; if it is lost, an administrator sets the value of every
+stored credential again. To change the worker token, edit it and run
+`docker compose up -d --wait`, which recreates `sync-api` and `sync-worker`;
+`docker compose restart` keeps the environment the containers already had.
+
+This release has no tested procedure for rotating the database and object store credentials.
 
 The `admin` account of the Sync API takes its password and its API token from
 `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` in `.env`.

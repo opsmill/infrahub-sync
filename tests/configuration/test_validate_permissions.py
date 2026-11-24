@@ -28,8 +28,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from infrahub_sdk import exceptions as sdk_exceptions
 
-from infrahub_sync.configuration.schema_validation import collect_destination_schema_findings
-from tests.configuration.validation_packages import package, package_data
+from infrahub_sync.configuration.schema_validation import (
+    DestinationSchemaOptions,
+    collect_destination_schema_findings,
+)
+from tests.configuration.validation_packages import credential_package, credential_package_data
 
 if TYPE_CHECKING:
     from infrahub_sync.configuration.models import ValidationFinding
@@ -166,14 +169,13 @@ def _validate(
 ) -> tuple[list[ValidationFinding], _StandInClient]:
     """Validate a one-kind package on `branch` against the stand-in client; return the new findings."""
     client = _StandInClient(permissions, nodes or {})
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", _TOKEN)
 
     def _client(address: str, config: object) -> _StandInClient:
         del address, config
         return client
 
     monkeypatch.setattr("infrahub_sdk.InfrahubClientSync", _client)
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["destination"]["settings"]["branch"] = branch
     data["configuration"]["destination"]["settings"].update(lineage or {})
     data["configuration"]["schema_mapping"] = [
@@ -184,7 +186,9 @@ def _validate(
             "fields": [{"name": "name", "mapping": "name"}],
         }
     ]
-    findings = collect_destination_schema_findings(package(data)).findings
+    # The destination names a stored credential; the caller reads its fields for the validation.
+    options = DestinationSchemaOptions(credential_values=lambda _name: {"token": _TOKEN})
+    findings = collect_destination_schema_findings(credential_package(data), options).findings
     # The stand-in schema read succeeds, so no finding here comes from a failed read.
     assert "destination-schema-read-failed" not in {finding.code for finding in findings}
     assert set(client.schema.branches) == {branch}

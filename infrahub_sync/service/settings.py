@@ -14,7 +14,15 @@ directory is logged and treated as unset.
 not accepted stops the service. ``INFRAHUB_SYNC_SESSION_IDLE_SECONDS`` is the period without
 activity after which a session ends. ``INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`` is the time limit of
 each health check and ``INFRAHUB_SYNC_HEALTH_MIN_WORKERS`` the number of live workers below which the
-health report is unhealthy. No message of this module contains a value.
+health report is unhealthy.
+
+``INFRAHUB_SYNC_ENCRYPTION_KEY`` and ``INFRAHUB_SYNC_WORKER_TOKEN`` are read by ``sync-api``: the key
+of stored credentials and the token of the ``worker`` account. Both are required: a ``sync-api``
+process refuses to start without either, or with a value that is not accepted.
+``INFRAHUB_SYNC_WORKER_TOKEN`` and ``INFRAHUB_SYNC_API_URL`` are read by each ``sync-worker`` to
+reach the Sync API, when a run names a stored credential: a worker without either starts, and each
+such run fails before it reads the source, with a cause that names both variables. No message of this
+module contains a value.
 
 ``INFRAHUB_SYNC_AUTOMATIC_RESUME`` makes the Sync service resume an interrupted ``apply`` without a
 person. It is off unless set, it is read again each time an ``apply`` is found interrupted, and it
@@ -23,10 +31,12 @@ is validated once when the application is created, like ``INFRAHUB_SYNC_REQUIRE_
 
 from __future__ import annotations
 
+import base64
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import structlog
 
@@ -41,6 +51,10 @@ WEB_DIRECTORY_ENV = "INFRAHUB_SYNC_WEB_DIRECTORY"
 ADMIN_ACCOUNT_PASSWORD_ENV = "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"
 ADMIN_ACCOUNT_TOKEN_ENV = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"
 SESSION_IDLE_SECONDS_ENV = "INFRAHUB_SYNC_SESSION_IDLE_SECONDS"
+ENCRYPTION_KEY_ENV = "INFRAHUB_SYNC_ENCRYPTION_KEY"
+WORKER_TOKEN_ENV = "INFRAHUB_SYNC_WORKER_TOKEN"
+WORKER_API_URL_ENV = "INFRAHUB_SYNC_API_URL"
+ENCRYPTION_KEY_BYTES = 32
 HEALTH_CHECK_TIMEOUT_ENV = "INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT"
 HEALTH_MIN_WORKERS_ENV = "INFRAHUB_SYNC_HEALTH_MIN_WORKERS"
 
@@ -187,19 +201,189 @@ def admin_account_settings(environ: Mapping[str, str] | None = None) -> AdminAcc
     token = env.get(ADMIN_ACCOUNT_TOKEN_ENV, "")
     if not token:
         return AdminAccountSettings(password=password)
+    _check_environment_token(ADMIN_ACCOUNT_TOKEN_ENV, token, AccountSettingsError)
+    return AdminAccountSettings(password=password, token=token)
+
+
+def _check_environment_token(name: str, token: str, error: type[AccountSettingsError]) -> None:
+    """Refuse a token that the environment defines and that a request could never present.
+
+    Raises:
+        AccountSettingsError: of the given class; the message names the variable and the rule.
+    """
     if len(token) < ADMIN_ACCOUNT_TOKEN_MIN_LENGTH:
-        msg = f"{ADMIN_ACCOUNT_TOKEN_ENV} must have at least {ADMIN_ACCOUNT_TOKEN_MIN_LENGTH} characters"
-        raise AccountSettingsError(msg)
+        msg = f"{name} must have at least {ADMIN_ACCOUNT_TOKEN_MIN_LENGTH} characters"
+        raise error(msg)
     if not (token.isascii() and token.isprintable()) or token != token.strip():
         # A request presents the token in an HTTP header, which the Sync API reads as Latin-1 and
         # without surrounding spaces: any other token could never match. A byte that is not UTF-8
         # reaches Python as a lone surrogate, which has no digest.
-        msg = f"{ADMIN_ACCOUNT_TOKEN_ENV} must hold printable ASCII characters only, with no space at either end"
-        raise AccountSettingsError(msg)
+        msg = f"{name} must hold printable ASCII characters only, with no space at either end"
+        raise error(msg)
     if token.startswith(TOKEN_PREFIXES):
-        msg = f"{ADMIN_ACCOUNT_TOKEN_ENV} must not start with {' or '.join(TOKEN_PREFIXES)}"
-        raise AccountSettingsError(msg)
-    return AdminAccountSettings(password=password, token=token)
+        msg = f"{name} must not start with {' or '.join(TOKEN_PREFIXES)}"
+        raise error(msg)
+
+
+class CredentialSettingsError(AccountSettingsError):
+    """A variable of stored credentials holds a value that is not accepted.
+
+    It is an :class:`AccountSettingsError`, so a start that reports a bad account variable reports
+    this one the same way. The message names the variable and the rule, never the value.
+    """
+
+
+@dataclass(frozen=True)
+class CredentialSettings:
+    """The encryption key of stored credentials and the token of the ``worker`` account, for ``sync-api``."""
+
+    encryption_key: bytes = field(repr=False)
+    worker_token: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class WorkerSettings:
+    """The address of the Sync API and the token that a ``sync-worker`` presents to it."""
+
+    api_url: str
+    token: str = field(repr=False)
+
+
+def _encryption_key(env: Mapping[str, str]) -> bytes:
+    """Return the decoded encryption key.
+
+    Raises:
+        CredentialSettingsError: the key is unset, empty, not base64, or not 32 bytes once decoded.
+    """
+    value = env.get(ENCRYPTION_KEY_ENV, "").strip()
+    if not value:
+        msg = f"{ENCRYPTION_KEY_ENV} must be set: it is the base64 encoding of the 32-byte key of stored credentials"
+        raise CredentialSettingsError(msg)
+    try:
+        key = base64.b64decode(value, validate=True)
+    except ValueError:
+        # `binascii.Error` for a character or a padding that is not base64, `ValueError` for a
+        # character that is not ASCII. Never the error text: it can quote the value.
+        msg = f"{ENCRYPTION_KEY_ENV} must be base64 text"
+        raise CredentialSettingsError(msg) from None
+    if len(key) != ENCRYPTION_KEY_BYTES:
+        msg = f"{ENCRYPTION_KEY_ENV} must decode to {ENCRYPTION_KEY_BYTES} bytes"
+        raise CredentialSettingsError(msg)
+    return key
+
+
+def _worker_token(env: Mapping[str, str]) -> str:
+    """Return the token of the ``worker`` account.
+
+    Raises:
+        CredentialSettingsError: the token is unset or empty, or breaks a rule of the ``admin`` token.
+    """
+    token = env.get(WORKER_TOKEN_ENV, "")
+    if not token:
+        msg = f"{WORKER_TOKEN_ENV} must be set: it is the token of the worker account"
+        raise CredentialSettingsError(msg)
+    _check_environment_token(WORKER_TOKEN_ENV, token, CredentialSettingsError)
+    return token
+
+
+def credential_settings(environ: Mapping[str, str] | None = None) -> CredentialSettings:
+    """Return the validated variables of stored credentials that a ``sync-api`` process requires at its start.
+
+    Raises:
+        CredentialSettingsError: the encryption key is unset, empty, not base64 or not 32 bytes
+            once decoded; or the worker token is unset, empty, shorter than 16 characters, holds
+            a character that is not printable ASCII, starts or ends with a space, starts with
+            ``ifs_pat_`` or ``ifs_ses_``, or equals the token of the ``admin`` account.
+    """
+    env = os.environ if environ is None else environ
+    key = _encryption_key(env)
+    token = _worker_token(env)
+    _check_differs_from_admin_token(env, token)
+    return CredentialSettings(encryption_key=key, worker_token=token)
+
+
+def _check_differs_from_admin_token(env: Mapping[str, str], token: str) -> None:
+    """Refuse a worker token equal to the token of the ``admin`` account.
+
+    Raises:
+        CredentialSettingsError: the two variables hold the same value.
+    """
+    admin_token = env.get(ADMIN_ACCOUNT_TOKEN_ENV, "")
+    # A start-up check of two values the operator already holds: no timing to protect.
+    if admin_token and token == admin_token:
+        msg = f"{WORKER_TOKEN_ENV} must differ from {ADMIN_ACCOUNT_TOKEN_ENV}"
+        raise CredentialSettingsError(msg)
+
+
+def worker_account_token(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return the token of the ``worker`` account that ``sync-api`` applies, or ``None`` when it is unset.
+
+    An empty value counts as unset. A ``sync-api`` process refuses to start without the variable
+    (``serve.build_process_service``), so only an application that a test builds in its own
+    process gets ``None``, and it applies no ``worker`` account; the rules of a value that is set
+    are those of :func:`credential_settings`.
+
+    Raises:
+        CredentialSettingsError: the token is shorter than 16 characters, holds a character that is
+            not printable ASCII, starts or ends with a space, starts with ``ifs_pat_`` or
+            ``ifs_ses_``, or equals the token of the ``admin`` account.
+    """
+    env = os.environ if environ is None else environ
+    if not env.get(WORKER_TOKEN_ENV, ""):
+        return None
+    token = _worker_token(env)
+    _check_differs_from_admin_token(env, token)
+    return token
+
+
+def encryption_key(environ: Mapping[str, str] | None = None) -> bytes | None:
+    """Return the decoded key of stored credentials that ``sync-api`` uses, or ``None`` when it is unset.
+
+    An empty value counts as unset. A ``sync-api`` process refuses to start without the variable
+    (``serve.build_process_service``), so only an application that a test builds in its own
+    process gets ``None``, and its credential routes answer ``503
+    credential-key-not-configured``; a value that is set must follow the rules of
+    :func:`credential_settings`.
+
+    Raises:
+        CredentialSettingsError: the key is not base64, or not 32 bytes once decoded.
+    """
+    env = os.environ if environ is None else environ
+    if not env.get(ENCRYPTION_KEY_ENV, "").strip():
+        return None
+    return _encryption_key(env)
+
+
+def worker_settings(environ: Mapping[str, str] | None = None) -> WorkerSettings:
+    """Return the validated variables that a ``sync-worker`` reads to reach the Sync API.
+
+    Raises:
+        CredentialSettingsError: the worker token breaks a rule of :func:`credential_settings`
+            other than the comparison with the ``admin`` token, which a worker does not hold; or
+            the address is unset, empty, has a space at either end, is not an ``http://`` or
+            ``https://`` address with a host, or holds a user name or password.
+    """
+    env = os.environ if environ is None else environ
+    token = _worker_token(env)
+    address = env.get(WORKER_API_URL_ENV, "")
+    if not address:
+        msg = f"{WORKER_API_URL_ENV} must be set: it is the address of the Sync API, for example http://sync-api:8000"
+        raise CredentialSettingsError(msg)
+    try:
+        parts = urlsplit(address)
+        hostname = parts.hostname
+    except ValueError:
+        parts, hostname = None, None
+    if parts is None or address != address.strip() or parts.scheme not in {"http", "https"} or not hostname:
+        msg = (
+            f"{WORKER_API_URL_ENV} must be an http:// or https:// address with a host, for example http://sync-api:8000"
+        )
+        raise CredentialSettingsError(msg)
+    if parts.username is not None or parts.password is not None:
+        # A password in the address would reach every log line that names the address.
+        msg = f"{WORKER_API_URL_ENV} must not hold a user name or password"
+        raise CredentialSettingsError(msg)
+    return WorkerSettings(api_url=address, token=token)
 
 
 def session_idle_seconds(environ: Mapping[str, str] | None = None) -> int:
