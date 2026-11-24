@@ -222,11 +222,56 @@ A `sync` run shows the same lines for its `sync` stage.
 ```bash
 infrahub-sync runs plan RUN_ID --detail
 infrahub-sync runs plan RUN_ID --detail --kind <destination-kind>
+infrahub-sync runs plan RUN_ID --detail --action <create|update|delete>
+infrahub-sync runs plan RUN_ID --samples 3
+infrahub-sync runs plan RUN_ID --json
 ```
 
-`runs plan` prints the summary and the checksum. `--detail` also prints every operation, and
-`--kind` limits the list to one destination kind. A kind that matches no operation is an
-input error.
+`runs plan` prints the summary and the checksum. `--detail` also prints every operation.
+`--kind` limits the list to one destination kind, and `--action` limits it to creates, updates
+or deletes. The two can be combined. A kind that matches no operation is an input error.
+
+Each operation starts with one line: the operation ID, the action, the destination kind and the
+identity of the node. The lines below it show the values the operation writes (`payload`) and
+one line for each peer of each relationship:
+
+```text
+op_3f2a9c0d1e4b5a67 create InterfacePhysical device=Rack-1,DM-Akron,rtr01 name=ge-0/0/0
+  payload: {"mtu":1500,"name":"ge-0/0/0"}
+  device -> DcimDevice[Rack-1,DM-Akron,rtr01]
+  tags -> BuiltinTag[core]
+  tags -> BuiltinTag[prod]
+```
+
+A peer is printed by its kind and its identity values, without the names of the identity
+fields. The values are in the alphabetical order of the field names. When an identity field
+refers to another peer, the identity values of that peer are printed in its place. In the
+example, the identity of the device has the fields `location` and `name`, and the identity of
+its rack has the fields `name` and `site`: the device `rtr01` is in the rack `Rack-1` of the
+site `DM-Akron`. An identity value of a peer is printed between double quotes in the same cases as
+an identity value of the node, and also when it contains a comma or a square bracket, so each
+value ends only at the next comma outside quotes. `<field> -> no peers` means that the operation removes every peer of a
+relationship that can hold several.
+
+To review a plan that is too large to read in full, start with `--samples <number>`. For each
+destination kind and action, it prints the number of operations and that number of its first
+operations, in the order that apply writes them:
+
+```text
+InterfacePhysical create: 3 of 1420 operations shown
+op_3f2a9c0d1e4b5a67 create InterfacePhysical device=Rack-1,DM-Akron,rtr01 name=ge-0/0/0
+  payload: {"mtu":1500,"name":"ge-0/0/0"}
+  device -> DcimDevice[Rack-1,DM-Akron,rtr01]
+...
+```
+
+`--samples` does not print the other operations of a kind and action. Print them with `--detail`,
+`--kind` and `--action`. `--kind` and `--action` also limit the output of `--samples`. `--samples`
+and `--detail` cannot be combined.
+
+`--json` prints the plan that the Sync API returns as one JSON object, with the field names and
+the kind of every peer. Use it when a value contains a comma, or to query a large plan with a
+tool such as `jq`. It cannot be combined with another option.
 
 The `operations` line counts only creates, updates and deletes. A plan with `operations: 0`
 writes nothing, but its `left_out`, `problems` and `kept_without_relationship` counts can still
@@ -303,7 +348,7 @@ infrahub-sync runs plan RUN_ID --kept
 Each option reads every page and prints one line per entry: the problem type or the cause, the
 kind, the record's identity (or its source ID when the identity is not known), and the reason.
 `--kind` limits a list to one kind, and `--type` limits `--problems` to one problem type.
-`--problems`, `--left-out`, `--kept` and `--detail` cannot be combined.
+`--problems`, `--left-out`, `--kept`, `--detail` and `--samples` cannot be combined.
 
 The problem types are:
 
