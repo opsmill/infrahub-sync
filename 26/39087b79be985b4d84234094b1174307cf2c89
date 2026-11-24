@@ -1,0 +1,25 @@
+frontend/src/api/errors.test.ts
+  s_7b1f8b6ee684e7::t_4c893b4d4fca30 1-19,27-34,39,48,57-65
+  s_7b1f8b6ee684e7::t_3b5c104b37425c 20-26,35-38,40-47,49-56
+frontend/src/api/errors.ts
+  s_7b1f8b6ee684e7::t_4c893b4d4fca30 17-38,41-42,46-50
+frontend/src/api/health-query.test.ts
+  s_7b1f8b6ee684e7::t_4c893b4d4fca30 62,67-69
+  s_7b1f8b6ee684e7::t_3b5c104b37425c 63-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2639087b79be985b4d84234094b1174307cf2c89",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
