@@ -1,1 +1,1 @@
-The offline unit tier (`invoke tests.tests-unit`) runs its tests in parallel with pytest-xdist, one worker per CPU, so the CI unit test jobs finish inside their 15-minute limit. `--workers 0` runs them in one process.
+The offline unit tier (`invoke tests.tests-unit`) runs its tests in parallel with pytest-xdist, one worker per processor core, so the CI unit test jobs finish inside their 15-minute limit. `--workers 0` runs them in one process.
