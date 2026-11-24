@@ -1,0 +1,33 @@
+tests/configuration/test_declaration_parity.py
+  s_a9719f961786d2::t_5b2fcf34764cee 1-370
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_1eaed9746b9136 84
+tests/data/declaration_parity/credential_field_maps.json
+  s_1b0ef72bb8cbc8::t_5b7a3856fc06e2 1-1141
+tests/data/declaration_parity/findings.json
+  s_1b0ef72bb8cbc8::t_27b1e61fe1774e 1-7879
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "036ed67b7887ead0a17b6e35f3964c9043d47962",
+  "prompts": {},
+  "sessions": {
+    "s_1b0ef72bb8cbc8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-03a-ae542a8beae5f5b3",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
