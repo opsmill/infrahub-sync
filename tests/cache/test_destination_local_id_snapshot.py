@@ -205,7 +205,7 @@ def test_a_snapshot_missing_the_column_despite_a_safe_cursor_forces_a_full_desti
     potenda._schema_subhash = "HASHFIXED"
     write_prior_run(tmp_path, [{"name": "device-a", "description": "first"}], source_ids=["device-a"])
 
-    with caplog.at_level("INFO"):
+    with caplog.at_level("INFO", logger="infrahub_sync"):
         potenda.load_one_side(side="B", adapter=destination)
 
     assert any(call[0] in {"full_load", "model_loader"} for call in destination.calls), (

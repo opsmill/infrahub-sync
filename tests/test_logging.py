@@ -119,7 +119,19 @@ def test_logging_flags_remain_active_on_converted_commands(
 
     from infrahub_sync.cli import app
 
-    result = CliRunner().invoke(app, [*global_options, *command])
+    package_logger = logging.getLogger("infrahub_sync")
+    level = package_logger.level
+    handlers = list(package_logger.handlers)
+    try:
+        result = CliRunner().invoke(app, [*global_options, *command])
 
-    assert result.exit_code == 0, result.output
-    assert logging.getLogger("infrahub_sync").level == expected_level
+        assert result.exit_code == 0, result.output
+        assert package_logger.level == expected_level
+    finally:
+        # `main` leaves the package logger at the level of the invocation; a later test in the
+        # same process that reads an INFO record through `caplog` would otherwise see nothing.
+        package_logger.setLevel(level)
+        for handler in list(package_logger.handlers):
+            if handler not in handlers:
+                package_logger.removeHandler(handler)
+                handler.close()
