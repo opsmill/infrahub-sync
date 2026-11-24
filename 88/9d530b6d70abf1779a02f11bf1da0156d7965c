@@ -1,0 +1,38 @@
+infrahub_sync/product_store/store.py
+  s_58b527396c8cb5::t_d3a58c01850dfa 5818-5819
+  s_58b527396c8cb5::t_77679421cf8c2a 4909-4910
+infrahub_sync/product_store/__init__.py
+  s_58b527396c8cb5::t_09f415c22cfe57 187
+  s_58b527396c8cb5::t_abe92f470aff12 99
+infrahub_sync/product_store/stored_credentials.py
+  s_58b527396c8cb5::t_f69b797b97e0cd 499-501
+  s_58b527396c8cb5::t_ed7d2a40667b7f 461-463
+infrahub_sync/service/schedules.py
+  s_58b527396c8cb5::t_b2e6719ac8b0d0 910-911,913-915
+  s_58b527396c8cb5::t_5bbed9c8907081 48
+docs/docs/guides/credentials.mdx
+  s_58b527396c8cb5::t_8a02a09e9d3d23 179-184
+docs/docs/reference/sync-http-api.mdx
+  s_58b527396c8cb5::t_caf9d23c62b1dd 1675
+  s_58b527396c8cb5::t_0ac59c646c5d6c 389-392
+tests/service/test_schedule_routes.py
+  s_58b527396c8cb5::t_b28e3b65e0af44 459,461,467,470-474,482-483,485,491,493-497
+docs/docs/orchestration.mdx
+  s_58b527396c8cb5::t_e80f32c2a9d781 52-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "889d530b6d70abf1779a02f11bf1da0156d7965c",
+  "prompts": {},
+  "sessions": {
+    "s_58b527396c8cb5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2685459-a84a-4ba6-882b-83245360d394",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
