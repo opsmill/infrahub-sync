@@ -1,0 +1,25 @@
+infrahub_sync/service/settings.py
+  s_7b1f8b6ee684e7::t_64f2b05b68166b 61-64,253,260,262-263
+docs/docs/reference/sync-http-api.mdx
+  s_7b1f8b6ee684e7::t_64f2b05b68166b 463
+tests/service/test_settings.py
+  s_7b1f8b6ee684e7::t_64f2b05b68166b 41-42,46-47,53-54
+docs/docs/compose-deployment.mdx
+  s_7b1f8b6ee684e7::t_64f2b05b68166b 150,289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1793d091d4c890d4339f3a8a30377c9534b7dbab",
+  "prompts": {},
+  "sessions": {
+    "s_7b1f8b6ee684e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d4652b-a0e5-4537-8d30-55f7486b0d07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
