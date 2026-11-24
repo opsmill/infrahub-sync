@@ -1,0 +1,25 @@
+frontend/src/features/health/HealthPage.test.tsx
+  s_0ca490c1faed1c::t_869d729931a509 1-112
+frontend/vite.config.ts
+  s_0ca490c1faed1c::t_c4a77aef1d850c 42-43,47
+frontend/package.json
+  s_0ca490c1faed1c::t_b022fb59088f28 42-43,48
+frontend/pnpm-lock.yaml
+  s_0ca490c1faed1c::t_60a0ef1dabced6 114-119,132-134,146,542-550,1620-1634,1793-1798,1887-1890,1903-1905,1955-1958,2038-2041,2054-2059,2064-2066,2077-2079,2103-2111,2306-2311,2350-2353,2435-2438,2589-2603,2633-2636,2771-2778,2782-2789,2811-2817,3103-3104,4044-4053,4213-4220,4285-4291,4300-4301,4336-4337,4416-4421,4433-4439,4444-4445,4452-4453,4470-4492,4711-4718,4750-4751,4873-4876,4994-5007,5028-5029,5079,5097,5101-5106,5109-5118,5127-5130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ebd2b22622d5dc002bc1e33afd3b6482da8cc0c",
+  "prompts": {},
+  "sessions": {
+    "s_0ca490c1faed1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac55537f-b117-4c9b-bb69-11fe9e609baf",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
