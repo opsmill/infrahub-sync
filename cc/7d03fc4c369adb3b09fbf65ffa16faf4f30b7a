@@ -1,0 +1,21 @@
+infrahub_sync/log.py
+  s_91d5cdaa577a3c::t_c94f2af9af7d20 92,97-99
+tests/test_log.py
+  s_91d5cdaa577a3c::t_0212d8eff749cc 93-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc7d03fc4c369adb3b09fbf65ffa16faf4f30b7a",
+  "prompts": {},
+  "sessions": {
+    "s_91d5cdaa577a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dee066ca-cc9c-4793-8818-ea204d7bebc6",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
