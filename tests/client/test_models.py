@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from infrahub_sync.client.models import (
     ApplyRunRequest,
     ApproveRunRequest,
+    AutomaticResumeResource,
     CancelRunRequest,
     ChangeScheduleRequest,
     ConfigMutationRequest,
@@ -904,3 +905,29 @@ def test_a_package_check_request_serializes_only_the_field_it_carries() -> None:
 def test_a_package_check_request_refuses_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         PackageCheckRequest(package={"format_version": 1}, reason="no reason field")  # ty: ignore[unknown-argument]
+
+
+_AUTOMATIC_RESUME = {
+    "interrupted_flow_run_id": "flow-1",
+    "actor": "Sync (automatic resume)",
+    "cause": "rule-6",
+    "cause_text": "Prefect reported the flow run as crashed",
+    "state": "resuming",
+    "decision": "resume",
+    "check_flow_run_id": "flow-2",
+    "resume_flow_run_id": "flow-3",
+    "decided_at": "2026-11-24T09:00:00Z",
+    "updated_at": "2026-11-24T09:05:00Z",
+}
+
+
+@pytest.mark.parametrize("field", ["interrupted_flow_run_id", "check_flow_run_id", "resume_flow_run_id"])
+def test_an_automatic_resume_refuses_an_empty_flow_run_id(field: str) -> None:
+    AutomaticResumeResource.model_validate(_AUTOMATIC_RESUME)
+    with pytest.raises(ValidationError):
+        AutomaticResumeResource.model_validate({**_AUTOMATIC_RESUME, field: ""})
+
+
+def test_an_automatic_resume_event_refuses_an_empty_resume_flow_run_id() -> None:
+    with pytest.raises(ValidationError):
+        EventDetailsResource.model_validate({"resume_flow_run_id": ""})

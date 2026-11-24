@@ -756,7 +756,7 @@ class AutomaticResumeResource(_ResourceModel):
     a later Sync API adds.
     """
 
-    interrupted_flow_run_id: str
+    interrupted_flow_run_id: str = Field(min_length=1)
     actor: str
     cause: str
     cause_text: str
@@ -766,8 +766,8 @@ class AutomaticResumeResource(_ResourceModel):
     reason_text: str | None = None
     operations_not_checked: int | None = Field(default=None, ge=0)
     start_after: int | None = Field(default=None, ge=0)
-    check_flow_run_id: str | None = None
-    resume_flow_run_id: str | None = None
+    check_flow_run_id: str | None = Field(default=None, min_length=1)
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
     decided_at: datetime
     updated_at: datetime
 
@@ -785,8 +785,9 @@ class RunResource(_ResourceModel):
     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
     predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
     resuming the run's interrupted writes without a person, oldest first, and
-    `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). Both are
-    empty for a run that no decision concerns, and for a Sync API that predates spec 030.
+    `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). For a run
+    that no decision concerns, and for a Sync API that predates spec 030, `automatic_resumes` is
+    empty and `automatic_resume_count` is 0.
     """
 
     run: PublicRunResource
@@ -884,7 +885,7 @@ class EventDetailsResource(_ResourceModel):
     reason_detail: dict[str, StrictInt | str] | None = None
     start_after: int | None = Field(default=None, ge=0)
     operations_not_checked: int | None = Field(default=None, ge=0)
-    resume_flow_run_id: str | None = None
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
 
     @field_validator("start_at", "first_start_at", "last_start_at")
     @classmethod
