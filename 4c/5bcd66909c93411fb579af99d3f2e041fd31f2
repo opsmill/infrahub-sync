@@ -1,0 +1,39 @@
+dev/specs/031-registered-adapters/alignment-check.md
+  s_a9719f961786d2::t_66dc80b5cc496e 20,38-39
+dev/specs/031-registered-adapters/checklists/requirements.md
+  s_a9719f961786d2::t_0f9ded94059c86 42-47
+dev/specs/031-registered-adapters/contracts/adapter-file.md
+  s_a9719f961786d2::t_81a4a722b1fa04 55,91
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_a9719f961786d2::t_54fd43cebc4988 38,48,95
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_a9719f961786d2::t_ebaf1621ae09f3 79,93,96,140-142,174,195-196
+dev/specs/031-registered-adapters/critiques/critique-2026-11-24.md
+  s_a9719f961786d2::t_ca6331c30f316e 287-328
+dev/specs/031-registered-adapters/data-model.md
+  s_a9719f961786d2::t_66471c0850cf17 63-64,88-91
+dev/specs/031-registered-adapters/plan.md
+  s_a9719f961786d2::t_3f2aee9d38f120 77,83,142,147,158-162,211-214,239-242,246-248
+dev/specs/031-registered-adapters/research.md
+  s_a9719f961786d2::t_66bad08c9c7de0 101-113,138-141,166-168,173,211,244-245,251,253-257,262-263,265-267,269-271,348-361,403,485-486
+dev/specs/031-registered-adapters/spec.md
+  s_a9719f961786d2::t_e5c50e9f591cac 68,109-113,120,307-312,395-398,423-425,597-599
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_27b736a0c9b22a 49-50,73-74,143-145,247-249,262-265,269-270,272-273,283-286,313-314,318-320,324-326,362,452-454
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c5bcd66909c93411fb579af99d3f2e041fd31f2",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
