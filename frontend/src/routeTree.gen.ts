@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as CredentialsRouteImport } from './routes/credentials'
+import { Route as HealthRouteImport } from './routes/health'
 import { Route as ConfigsConfigIdRouteImport } from './routes/configs.$configId'
 import { Route as RunsIndexRouteImport } from './routes/runs.index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
@@ -37,6 +38,11 @@ const AccountsRoute = AccountsRouteImport.update({
 const CredentialsRoute = CredentialsRouteImport.update({
   id: '/credentials',
   path: '/credentials',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HealthRoute = HealthRouteImport.update({
+  id: '/health',
+  path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConfigsConfigIdRoute = ConfigsConfigIdRouteImport.update({
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/credentials': typeof CredentialsRoute
+  '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/credentials': typeof CredentialsRoute
+  '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/credentials': typeof CredentialsRoute
+  '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/accounts'
     | '/credentials'
+    | '/health'
     | '/configs/$configId'
     | '/runs/$runId'
     | '/schedules/$scheduleId'
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/accounts'
     | '/credentials'
+    | '/health'
     | '/configs/$configId'
     | '/runs/$runId'
     | '/schedules/$scheduleId'
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/accounts'
     | '/credentials'
+    | '/health'
     | '/configs/$configId'
     | '/runs/$runId'
     | '/schedules/$scheduleId'
@@ -140,6 +152,7 @@ export interface RootRouteChildren {
   AccountRoute: typeof AccountRoute
   AccountsRoute: typeof AccountsRoute
   CredentialsRoute: typeof CredentialsRoute
+  HealthRoute: typeof HealthRoute
   ConfigsConfigIdRoute: typeof ConfigsConfigIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
   SchedulesScheduleIdRoute: typeof SchedulesScheduleIdRoute
@@ -175,6 +188,13 @@ declare module '@tanstack/react-router' {
       path: '/credentials'
       fullPath: '/credentials'
       preLoaderRoute: typeof CredentialsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/health': {
+      id: '/health'
+      path: '/health'
+      fullPath: '/health'
+      preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/configs/$configId': {
@@ -220,6 +240,7 @@ const rootRouteChildren: RootRouteChildren = {
   AccountRoute: AccountRoute,
   AccountsRoute: AccountsRoute,
   CredentialsRoute: CredentialsRoute,
+  HealthRoute: HealthRoute,
   ConfigsConfigIdRoute: ConfigsConfigIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,
   SchedulesScheduleIdRoute: SchedulesScheduleIdRoute,

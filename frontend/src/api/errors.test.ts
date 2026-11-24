@@ -30,6 +30,20 @@ describe("isHealthReport", () => {
   it.each([
     ["a status that is not healthy or unhealthy", { ...report, status: "degraded" }],
     ["dependencies that are not a list", { ...report, dependencies: {} }],
+    ["a component that is not an object", { ...report, dependencies: ["database"] }],
+    ["a component without a name", { ...report, dependencies: [{ status: "up", error: "none" }] }],
+    [
+      "a component without a status",
+      { ...report, dependencies: [{ name: "database", error: "none" }] },
+    ],
+    [
+      "a component without an error category",
+      { ...report, dependencies: [{ name: "database", status: "up" }] },
+    ],
+    [
+      "a component whose error category is not text",
+      { ...report, dependencies: [{ name: "database", status: "down", error: {} }] },
+    ],
     ["a timestamp that is not text", { ...report, timestamp: 1 }],
     ["workers that are not an object", { ...report, workers: [] }],
     [
@@ -46,6 +60,10 @@ describe("isHealthReport", () => {
       { ...report, workers: { ...workers, queue_depth: "0" } },
     ],
     ["workers items that are not a list", { ...report, workers: { ...workers, items: null } }],
+    [
+      "unknown workers without a list of workers",
+      { ...report, status: "unhealthy", workers: { state: "unknown" } },
+    ],
     [
       "a worker without a name",
       { ...report, workers: { ...workers, items: [{ ...worker, name: 1 }] } },

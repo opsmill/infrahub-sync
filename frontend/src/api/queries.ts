@@ -23,6 +23,8 @@ type EventPage = components["schemas"]["EventPage"];
 export const LIST_REFRESH_MS = 10_000;
 /** A run in progress is re-read on this interval. */
 const RUN_REFRESH_MS = 2_000;
+/** The health report is re-read on this interval; the Health page names it. */
+export const HEALTH_REFRESH_MS = 15_000;
 
 /** The largest page the Sync API serves. */
 const PAGE_LIMIT = 200;
@@ -56,7 +58,7 @@ export const healthQuery = () =>
       if (response.status === 503 && isHealthReport(error)) return error;
       throw error;
     },
-    refetchInterval: 15_000,
+    refetchInterval: HEALTH_REFRESH_MS,
     retryDelay: 1_000,
   });
 
