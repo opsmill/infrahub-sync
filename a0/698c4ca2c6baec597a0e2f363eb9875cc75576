@@ -1,0 +1,21 @@
+docs/docs/development/guidelines/testing-tiers.md
+  s_e30c79edd0b063::t_967ccaa83dc07f 52
+changelog/+parallel-unit-tests.housekeeping.md
+  s_e30c79edd0b063::t_4fe6369f875bf6 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a0698c4ca2c6baec597a0e2f363eb9875cc75576",
+  "prompts": {},
+  "sessions": {
+    "s_e30c79edd0b063": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ffd05d37-52a6-4c18-b655-cc3af9364009",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
