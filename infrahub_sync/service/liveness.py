@@ -50,22 +50,39 @@ _WORKER_LOST_STATE = "crashed"
 # Refusal codes of a submission that a later loop tries again with the same idempotency key:
 # Prefect did not confirm the submission, and the receipt stays reserved for the next try.
 _RETRIED_REFUSALS = frozenset({"orchestration-unavailable"})
+# Every refusal with this HTTP status or a higher one is tried again too. The service never
+# stores such a refusal on a receipt, so the same key does not replay it.
+_FIRST_SERVER_ERROR = 500
 
 logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
 class SubmissionOutcome:
-    """What one automatic submission gave: the flow run identifier, or the code of the refusal."""
+    """What one automatic submission gave: the flow run identifier, or the code and HTTP status of the refusal."""
 
     flow_run_id: str | None = None
     refusal: str | None = None
+    # The HTTP status of the refusal; `None` when the refusal carries none.
+    status: int | None = None
 
     def __post_init__(self) -> None:
         """Refuse an outcome that is both, or neither, a submission and a refusal."""
         if (self.flow_run_id is None) == (self.refusal is None):
             msg = "a submission outcome holds a flow run identifier or a refusal code, and only one of them"
             raise ValueError(msg)
+
+    @property
+    def retried(self) -> bool:
+        """Whether a later loop tries the refused submission again with the same idempotency key.
+
+        A refusal with a 5xx status, or one whose code is in ``_RETRIED_REFUSALS``, says the
+        service could not serve the request now, not that the request is wrong: a database,
+        Prefect or the saved plan was not available. A 4xx refusal ends the record.
+        """
+        return self.refusal is not None and (
+            self.refusal in _RETRIED_REFUSALS or (self.status is not None and self.status >= _FIRST_SERVER_ERROR)
+        )
 
 
 class AutomaticResumeSubmitter(Protocol):
@@ -384,12 +401,13 @@ class RunLivenessReconciler:
             if not self._move(row, to_state, now, **fields):
                 self._log_lost_take_over(row, outcome.flow_run_id)
             return
-        if outcome.refusal in _RETRIED_REFUSALS:
+        if outcome.retried:
             logger.info(
                 "automatic resume submission not confirmed, next loop tries again",
                 run_id=row.run_id,
                 state=row.state,
                 reason=outcome.refusal,
+                status=outcome.status,
             )
             return
         self._end(row, "refused", now, reason_detail={"code": str(outcome.refusal)})

@@ -33,7 +33,7 @@ interruption transaction inserts it.
 | `check-failed` | The check failed a pre-write check, could not reach the destination, or its execution failed. `reason_detail` names the cause. |
 | `check-found-differs` | The check reported at least one `differs`. `reason_detail` holds the count. |
 | `not-picked-up` | The submitted check or resume was abandoned because no worker claimed it in time. |
-| `refused` | `verify_run` or `resume_run` refused the request. `reason_detail` holds the refusal code. |
+| `refused` | `verify_run` or `resume_run` refused the request with a 4xx status. `reason_detail` holds the refusal code. A refusal with a 5xx status is tried again in the next loop. |
 | `person-took-over` | A person ran `verify` or `runs resume` while the row waited for a live worker (FR-019). |
 
 ### State transitions

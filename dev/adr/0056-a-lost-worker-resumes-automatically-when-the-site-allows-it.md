@@ -69,9 +69,11 @@ is safe to repeat (ADR 0027).
   request, not the request, so the confirmation of left-out records is derived: it is given when
   the plan leaves out records and the interrupted write was an `apply` or a `resume` with a
   receipt; a scheduled `sync` uses the schedule's `write_when_left_out`; a manual `sync` gets
-  none. A refusal of the check or the resume ends the row as `refused` with its code, except
-  `orchestration-unavailable`, which the next loop tries again with the same key. A resume that
-  no worker picks up ends the row as `not-picked-up`.
+  none. A refusal of the check or the resume with a 4xx status ends the row as `refused` with
+  its code. A refusal with a 5xx status, such as `orchestration-unavailable` or
+  `plan-unavailable`, says the service could not serve the request at that time: the next loop
+  tries again with the same key and logs one line for each try. A resume that no worker picks
+  up ends the row as `not-picked-up`.
 - **Exactly once.** The reconciler submits first and compare-and-sets the row second, with the
   new flow run identifier. The idempotency keys are fixed:
   `automatic-check:<run>:<interrupted flow run>` and `automatic-resume:<run>:<interrupted flow

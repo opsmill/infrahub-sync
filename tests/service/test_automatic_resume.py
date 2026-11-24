@@ -754,6 +754,38 @@ def test_a_refused_resume_ends_the_record_with_the_refusal_code(
     assert step_api[2].stage_submissions("resume") == []
 
 
+@pytest.mark.parametrize("step", ["check", "resume"])
+def test_a_submission_the_service_cannot_serve_now_is_tried_again(
+    step_api: _StepAPI, monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    """A 503 refusal, such as an unreadable saved plan, leaves the record waiting and logs one line per try."""
+    _client, _projection, orchestration, service = step_api
+    run_id = _interrupted_with_record(step_api)
+    if step == "resume":
+        _passed_check(step_api, run_id)
+    waiting = _record(step_api, run_id).state
+    plan = service._plan
+
+    def unavailable(run: str) -> object:
+        raise ServiceAPIError(503, "plan-unavailable", "the saved plan is not readable now", run_id=run)
+
+    monkeypatch.setattr(service, "_plan", unavailable)
+    with capture_logs() as logs:
+        _step(step_api)
+
+    assert _record(step_api, run_id).state == waiting
+    [retry] = [
+        entry for entry in logs if entry["event"] == "automatic resume submission not confirmed, next loop tries again"
+    ]
+    assert (retry["run_id"], retry["reason"]) == (run_id, "plan-unavailable")
+
+    monkeypatch.setattr(service, "_plan", plan)
+    _step(step_api)
+
+    assert _record(step_api, run_id).state == ("checking" if step == "check" else "resuming")
+    assert len(orchestration.stage_submissions("verify" if step == "check" else "resume")) == 1
+
+
 def test_the_automatic_resume_confirms_the_left_out_records_the_apply_confirmed(step_api: _StepAPI) -> None:
     """The interrupted apply was admitted with `confirm_left_out`, so the resume repeats it (research R6)."""
     run_id = _interrupted_with_record(step_api, left_out=3)

@@ -240,7 +240,7 @@ plan or run `runs resume` yourself. The reason codes are in `GET /runs/{run_id}`
 | `check-failed` | The check failed, for example because the destination was unreachable. The reason names the cause. |
 | `check-found-differs` | The check reported one or more nodes as `differs`. A resume would write the plan's values over them, so a person reviews them. |
 | `not-picked-up` | No worker picked up the check or the resume in time. |
-| `refused` | The Sync API refused the check or the resume, for example because a condition of `runs resume` was not met. The reason names the code. |
+| `refused` | The Sync API refused the check or the resume, for example because a condition of `runs resume` was not met. The reason names the code. When the Sync API could not serve the request at that time, for example because the task manager or the saved plan was not available, it tries again in its next loop instead. |
 | `person-took-over` | A person ran `verify` or `runs resume` while the Sync API waited for a live worker. |
 
 ### Limits of automatic resume

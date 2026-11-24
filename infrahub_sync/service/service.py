@@ -786,7 +786,7 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
         try:
             status, body = await self.verify_run(run_id, VerifyRunRequest(), principal, idempotency_key)
         except ServiceAPIError as error:
-            return SubmissionOutcome(refusal=error.code)
+            return SubmissionOutcome(refusal=error.code, status=error.status)
         return self._submission_outcome(principal, idempotency_key, status, body)
 
     async def submit_resume(self, run_id: str, idempotency_key: str) -> SubmissionOutcome:
@@ -807,7 +807,7 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
             )
             status, body = await self.resume_run(run_id, request, principal, idempotency_key)
         except ServiceAPIError as error:
-            return SubmissionOutcome(refusal=error.code)
+            return SubmissionOutcome(refusal=error.code, status=error.status)
         return self._submission_outcome(principal, idempotency_key, status, body)
 
     def _refuse_during_automatic_submission(
@@ -921,12 +921,12 @@ class RunService:  # pylint: disable=too-many-public-methods  # the routes and t
         if status >= 400:
             error = body.get("error")
             code = error.get("code") if isinstance(error, dict) else None
-            return SubmissionOutcome(refusal=code if isinstance(code, str) else "refused")
+            return SubmissionOutcome(refusal=code if isinstance(code, str) else "refused", status=status)
         key_digest = sha256(idempotency_key.encode()).hexdigest()
         receipt = self._projection.lookup_mutation(principal.actor, key_digest).value
         if receipt is None or receipt.flow_run_id is None:
             # Not confirmed yet: the next loop repeats the call with the same key.
-            return SubmissionOutcome(refusal="orchestration-unavailable")
+            return SubmissionOutcome(refusal="orchestration-unavailable", status=503)
         return SubmissionOutcome(flow_run_id=receipt.flow_run_id)
 
     def _refuse_cancelled(self, run: ProductRun, principal: Principal, operation: str, reason: str | None) -> None:
