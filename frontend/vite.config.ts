@@ -39,11 +39,12 @@ const config = defineConfig({
       },
     },
   },
-  // Unit tests of the pure functions in src/. The pattern keeps Vitest out of the
+  // Unit tests of the pure functions in src/, in `*.test.ts` files. A `*.test.tsx` file renders a
+  // component and starts with `// @vitest-environment jsdom`. The pattern keeps Vitest out of the
   // vendor/infrahub submodule, which carries its own tests.
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
   },
 });
 
