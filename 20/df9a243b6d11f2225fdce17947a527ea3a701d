@@ -1,0 +1,21 @@
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_91d5cdaa577a3c::t_d5a92366531188 369-371
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_91d5cdaa577a3c::t_d5a92366531188 668-670
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "20df9a243b6d11f2225fdce17947a527ea3a701d",
+  "prompts": {},
+  "sessions": {
+    "s_91d5cdaa577a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dee066ca-cc9c-4793-8818-ea204d7bebc6",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
