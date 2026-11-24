@@ -1,0 +1,612 @@
+docs/docs/reference/cli.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 56,408,433,449-458,651-654,1290-1445
+docs/docs/running-a-sync.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 71-81,100-102,115-117
+docs/docs/development/guidelines/secret-redaction.md
+  s_0ca490c1faed1c::t_5c2358385e749e 275-319
+docs/docs/guides/accounts.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 40-53,410-411
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 44-45,54-57,59-60,68-70,122-123,129-130,143-144,167-169,175,180,213-214,237,239,261-274,354-355
+tests/adapters/test_aci_verify_precedence.py
+  s_0ca490c1faed1c::t_5c2358385e749e 118-119,126-128
+tests/service/test_artifact_confidentiality.py
+  s_0ca490c1faed1c::t_5c2358385e749e 22-23,79-80,84-85,101
+tests/service/test_worker_route_boundary.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-213
+infrahub_sync/client/client.py
+  s_0ca490c1faed1c::t_5c2358385e749e 12-13,16,27,34,59-60,148-152,157-208,471-473,767-887,1503,1506-1507,1510-1511,1679,1684-1692,1715-1733
+  s_0ca490c1faed1c::t_33a153b37bb920 1734
+infrahub_sync/product_store/models.py
+  s_0ca490c1faed1c::t_5c2358385e749e 9,14-17,21-23,542,567,572,755,757-765,771-772,838-839,1051-1146
+  s_0ca490c1faed1c::t_bf10a8be14bd90 1147-1148
+frontend/src/routes/credentials.tsx
+  s_0ca490c1faed1c::t_5c2358385e749e 1-14
+tests/service/test_sync_store_policy.py
+  s_0ca490c1faed1c::t_5c2358385e749e 19-25,40-41,46,61,91-92,113,155-156,160,182-183,187
+infrahub_sync/cli_credentials.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-358
+dev/specs/027-stored-credentials/overnight-log.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-203
+tests/dev_stack/smoke/test_scheduled_run.py
+  s_0ca490c1faed1c::t_5c2358385e749e 286
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_0ca490c1faed1c::t_5c2358385e749e 109-114
+dev/specs/027-stored-credentials/contracts/cli.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-23
+docs/docs/adapters/prometheus.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 126-131,315-318
+docs/docs/reference/sync-http-api.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 204-398,483-488,544-549,926,990-995,1329-1330,1939
+tests/service/test_serve_site.py
+  s_0ca490c1faed1c::t_5c2358385e749e 19,100-101,118
+tests/service/test_worker_proposed_change_states_route.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-625
+tests/runtime_schema/test_destination_branch_missing.py
+  s_0ca490c1faed1c::t_5c2358385e749e 16,31-32,36,54
+tests/runtime_schema/test_registered_source_declaration.py
+  s_0ca490c1faed1c::t_5c2358385e749e 16,39
+README.md
+  s_0ca490c1faed1c::t_5c2358385e749e 118-123,145-149,160-162
+docs/docs/reference/config.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 97-98,107-109
+tests/compose/test_suite_inputs.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-132
+docs/docs/adapters/aci.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 11,29,37,44,49-61,64
+infrahub_sync/service/auth.py
+  s_0ca490c1faed1c::t_5c2358385e749e 8-9,32-35,45-46,56-61,117,123,128,133,164,178-183,216-239
+  s_0ca490c1faed1c::t_d1a45e807f7884 240
+changelog/+stored-credentials.added.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1
+infrahub_sync/service/models.py
+  s_0ca490c1faed1c::t_5c2358385e749e 33,88
+tests/compose/lifecycle.py
+  s_0ca490c1faed1c::t_5c2358385e749e 10,24,61-71,141-155,404-407,426-427,488-489,496-498,506-507,511-512
+tests/dev_stack/test_deps_mode.py
+  s_0ca490c1faed1c::t_5c2358385e749e 10,38-40,65-66,71-76,251,261-263,266-270,293-297,301,304,310
+infrahub_sync/service/app.py
+  s_0ca490c1faed1c::t_5c2358385e749e 15,26-29,31,49-52,112,337-338,343,346-349,358-367,374-376,378,382-404,406-431,450-477,536,549-553,584,785-797
+infrahub_sync/configuration/removed_credential_format.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-94
+frontend/src/features/configurations/PackageReview.tsx
+  s_0ca490c1faed1c::t_5c2358385e749e 39,362,545,549,553-555
+.vale/styles/spelling-exceptions.txt
+  s_0ca490c1faed1c::t_5c2358385e749e 245
+docker-compose.yml
+  s_0ca490c1faed1c::t_5c2358385e749e 275-283,337-341
+tests/integration/isolated_worker_program.py
+  s_0ca490c1faed1c::t_5c2358385e749e 17-23,27-28,156,160,162,225-234,242
+infrahub_sync/product_store/configs.py
+  s_0ca490c1faed1c::t_5c2358385e749e 38,42,46-50,57-60,67,81,116-121,123-127,131,674,681-684,688,702-703,705-718,729-740,910-913,915-917,919,921-926,973-974,976,983,1015-1018,1029,1078,1085-1089
+docs/docs/guides/credentials.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 1-357
+tests/service/test_credential_deletion.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-499
+tests/product_store/test_credential_admission.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-484
+tests/integration/test_isolated_worker_handoff_integration.py
+  s_0ca490c1faed1c::t_5c2358385e749e 52-53,178-181
+tests/service/test_validation_secret_containment.py
+  s_0ca490c1faed1c::t_5c2358385e749e 40-41,90-106,108-116,121,221-227,268,270,273-276,278-287,335-336,349,357,384-385,412,456,484,513-514,537
+dev/specs/027-stored-credentials/quickstart.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-74
+infrahub_sync/cli.py
+  s_0ca490c1faed1c::t_5c2358385e749e 31,85-89,412-432,454,457-459,587-596,598-599,922-923,1062-1063,1131-1140,1323-1335,2448-2451,2467
+tests/test_nightly_e2e.py
+  s_0ca490c1faed1c::t_5c2358385e749e 5,11-12,67-96
+  s_0ca490c1faed1c::t_1c85c2120e00ca 97-98
+dev/specs/027-stored-credentials/tasks.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-299
+changelog/+upgrade-steps.changed.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1
+dev/specs/027-stored-credentials/research.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-291
+docs/docs/adapters/ipfabric.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 11,69,77,83,88-99
+docs/docs/operations/day-2-operations.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 100-108,135-139,141-147
+infrahub_sync/service/config_routes.py
+  s_0ca490c1faed1c::t_5c2358385e749e 3,30-31,172-180,185-187,254-265,289-303,312-326,446-447,449-451,511
+infrahub_sync/runtime_schema/worker.py
+  s_0ca490c1faed1c::t_5c2358385e749e 22,193-200
+infrahub_sync/testcontainers/docker-compose.yml
+  s_0ca490c1faed1c::t_5c2358385e749e 275-283,337-341
+tests/configuration/test_validation_compatibility.py
+  s_0ca490c1faed1c::t_5c2358385e749e 9,23,55-56,150,152,163-164,167-170,190,198-204,213,228,237,247,260-261,267-269
+tests/compose/test_credential_leaks.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1,4-7,9-11,16-17,36,43,59-63,72-77,96,124,126-129,132-134,136-138,145,161-167,211-213
+docs/docs/quickstart-compose.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 57,74-75
+tests/integration/test_destination_schema_live_read.py
+  s_0ca490c1faed1c::t_5c2358385e749e 44-45,51-57,65,97
+tests/cli/test_credentials_command.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-779
+infrahub_sync/configuration/conversion_live_schema.py
+  s_0ca490c1faed1c::t_5c2358385e749e 10-11,64-67
+tests/configuration/test_validate_permissions.py
+  s_0ca490c1faed1c::t_5c2358385e749e 31-35,178,189-191
+docs/docs/development/knowledge/index.md
+  s_0ca490c1faed1c::t_5c2358385e749e 63-64
+tests/client/test_models.py
+  s_0ca490c1faed1c::t_5c2358385e749e 484
+infrahub_sync/configuration/schema_validation.py
+  s_0ca490c1faed1c::t_5c2358385e749e 43-44,46,58-65,101-107,111-113,360-393,445-447,480-483
+tests/compose/test_container_cli.py
+  s_0ca490c1faed1c::t_5c2358385e749e 41-44,46-48,57,63,66
+docs/docs/adapters/peering-manager.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 11,58,66,73,78-89
+docs/docs/development/guidelines/testing-tiers.md
+  s_0ca490c1faed1c::t_5c2358385e749e 342-348,352,385,640-646,735-738
+tests/cli/test_convert_command.py
+  s_0ca490c1faed1c::t_5c2358385e749e 5-6,9,11,20-22,60-66,71-72,92-94,425-660
+tests/integration/test_managed_write_guard_live.py
+  s_0ca490c1faed1c::t_5c2358385e749e 178-179,183-184
+tests/plan/test_report_credentials_absent.py
+  s_0ca490c1faed1c::t_5c2358385e749e 7-10,70-71,73-74,109
+frontend/src/features/runs/RunPage.tsx
+  s_0ca490c1faed1c::t_5c2358385e749e 48,688
+infrahub_sync/service/service.py
+  s_0ca490c1faed1c::t_5c2358385e749e 25-39,42,88,216,231-244,352,380-382,450-452,528,530-542,549-553,558,564-566,569-586,609,673,758,1119,1159,1196-1233,2064-2065,2068,2090,2391-2397
+tests/service/test_managed_write_guard.py
+  s_0ca490c1faed1c::t_5c2358385e749e 48-53,56,64-65,170-172,201,650
+docs/docs/adapters/choosing-an-adapter.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 40,42
+infrahub_sync/configuration/credentials.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1,5-7,15,22
+tests/service/test_schedule_routes.py
+  s_0ca490c1faed1c::t_5c2358385e749e 15-16,20-26,151,173,175,442-501,902-949
+infrahub_sync/service/settings.py
+  s_0ca490c1faed1c::t_5c2358385e749e 17-25,34,39,54-57,204-213,215-216,221-222,224-386
+changelog/+v2-configuration-conversion.added.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1
+dev/adr/0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md
+  s_0ca490c1faed1c::t_5c2358385e749e 3-6
+tests/service/test_credential_failure_cause.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-116
+frontend/src/features/credentials/fields.ts
+  s_0ca490c1faed1c::t_5c2358385e749e 1-55
+tests/product_store/test_credential_deletion.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-488
+tests/service/test_stored_credentials_helper.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-140
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 159-160,163,174-175,178,195-199,210-225,227,255-257,481,483-487,490-491,495-500
+tests/service/test_registered_schema_guard.py
+  s_0ca490c1faed1c::t_5c2358385e749e 34,50-51,57,72-73,108,177-178,202,293-294
+docs/docs/adapters/infrahub.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 41,46,70,76,107,197,300
+tests/service/test_admin_account.py
+  s_0ca490c1faed1c::t_5c2358385e749e 36,402
+docs/docs/development/guidelines/testing.md
+  s_0ca490c1faed1c::t_5c2358385e749e 99-105,108
+docs/docs/tutorials/try-the-netbox-demo.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 118-128
+tests/dev_stack/conftest.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-86
+infrahub_sync/configuration/conversion.py
+  s_0ca490c1faed1c::t_5c2358385e749e 12-16,33-47,53,134,195,303,320-321,333,410,480,482-484,489-490,494-496,596-600,609-610,645,648-651,653-659,663-664,666-668,670,673-676,678-698,700,703-704,710-719,722-740
+tests/service/test_approval.py
+  s_0ca490c1faed1c::t_5c2358385e749e 20-26,31-37,94-95,99-100,126,224-297,302
+tests/service/test_stage_stored_credentials.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-442
+infrahub_sync/configuration/capabilities.py
+  s_0ca490c1faed1c::t_5c2358385e749e 8-10,14,17,30,198-232,237-238,242,255-261,870-949
+infrahub_sync/configuration/conversion_report.py
+  s_0ca490c1faed1c::t_5c2358385e749e 14,25,47-53,108-109
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_0ca490c1faed1c::t_5c2358385e749e 74,115-119
+tests/configuration/test_validation_core.py
+  s_0ca490c1faed1c::t_5c2358385e749e 32,34-39,50,55-59,62,66,73-75,79,84-85,87-88,95,98,102,106,110,119,130,134,138-140,146-150,154,160,191-193,195-203,206-207,212,222,236,238-239,241,245,252,294-297,331,360,362-363,396,420,441,483,637,652-654,656-660,663-665,675-681,703,747,807-808,814,816,818,822,828,835,852,855,867-877,881,893,948,955-964,970,980,988,1003,1011-1013,1021,1047,1063,1088-1113
+tests/service/test_serve.py
+  s_0ca490c1faed1c::t_5c2358385e749e 19,22,26,58-60
+frontend/src/features/runs/CredentialsUsed.tsx
+  s_0ca490c1faed1c::t_5c2358385e749e 1-154
+frontend/src/api/actions.ts
+  s_0ca490c1faed1c::t_5c2358385e749e 218-286
+docs/docs/orchestration.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 50-53,641-650
+infrahub_sync/product_store/__init__.py
+  s_0ca490c1faed1c::t_5c2358385e749e 9,36,64-66,100-107,144-147,156,196-201
+tests/configuration/validation_packages.py
+  s_0ca490c1faed1c::t_5c2358385e749e 10-12,19-20,24-25,31-32,42-58,60
+tests/dev_stack/smoke/test_smoke_request_shapes.py
+  s_0ca490c1faed1c::t_5c2358385e749e 72-74,76-81
+tests/plan/test_format_5.py
+  s_0ca490c1faed1c::t_5c2358385e749e 304-305,317-318
+infrahub_sync/product_store/store.py
+  s_0ca490c1faed1c::t_5c2358385e749e 11,26-30,34,72-73,99-101,110,251-271,281-284,289-291,379-384,408-411,413-416,422,437-438,441,579,1449-1450,1461-1515,1659-1665,1675-1677,1683,1687-1701,1709,3883,3892,3911-3941,4021,4040,4242,4250-4252,4364-4365,4382-4387,5196-5197,5207-5208,5224-5225,5269-5440,6328,6361-6362,6734-6735,6748-6749,6757-6758,6797-6933,7886-7892
+  s_0ca490c1faed1c::t_d97b5aa6bce0cc 7893-7894
+dev/specs/027-stored-credentials/critiques/critique-20261120.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-146
+tests/configuration/test_conversion_live_schema.py
+  s_0ca490c1faed1c::t_5c2358385e749e 142-143,173,178,189,192
+tests/configuration/test_runtime.py
+  s_0ca490c1faed1c::t_5c2358385e749e 21-22,26-27,37-39
+tests/product_store/test_stored_credentials.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-498
+docs/docs/development/knowledge/local-accounts.md
+  s_0ca490c1faed1c::t_5c2358385e749e 175-202
+infrahub_sync/configuration/__init__.py
+  s_0ca490c1faed1c::t_5c2358385e749e 19,24,36-37,44
+infrahub_sync/configuration/runtime.py
+  s_0ca490c1faed1c::t_5c2358385e749e 9-10,34-62,64-68,70-74,76-84,91,96-97,107-110
+tests/runtime_schema/test_worker_path.py
+  s_0ca490c1faed1c::t_5c2358385e749e 18,34,49,84,114-117,119-129,156,207,241,333,353,461-462
+docs/docs/development/knowledge/v2-configuration-conversion.md
+  s_0ca490c1faed1c::t_5c2358385e749e 42-46,62-71,73-74
+infrahub_sync/testcontainers/helpers.py
+  s_0ca490c1faed1c::t_5c2358385e749e 58-64,66-67,85-88,102-111
+  s_0ca490c1faed1c::t_bc45840219c1e9 112-113
+tests/service/test_automatic_resume.py
+  s_0ca490c1faed1c::t_5c2358385e749e 50-51,492
+AGENTS.md
+  s_0ca490c1faed1c::t_5c2358385e749e 112,128
+tests/service/test_environment_names.py
+  s_0ca490c1faed1c::t_5c2358385e749e 15,91
+tests/service/test_failure_cause_credentials.py
+  s_0ca490c1faed1c::t_5c2358385e749e 57-58,116
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_0ca490c1faed1c::t_5c2358385e749e 104-126
+docs/docs/reference/prefect-remote-run.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 76-78
+tests/cli/test_cli_session.py
+  s_0ca490c1faed1c::t_5c2358385e749e 293-294,296
+infrahub_sync/client/models.py
+  s_0ca490c1faed1c::t_5c2358385e749e 113-114,822-836,879-881,888,970-971,1284,1306-1309,1592-1614,1730-1741
+infrahub_sync/service/branch_review.py
+  s_0ca490c1faed1c::t_5c2358385e749e 101-107,177-180
+tests/compose/test_testcontainers_fixture.py
+  s_0ca490c1faed1c::t_5c2358385e749e 34,53,55-56,61-63,81-83,85-86,91-92,165-168
+tests/cli/test_client_commands.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1931-1954
+tests/cli/test_parity_and_closure.py
+  s_0ca490c1faed1c::t_5c2358385e749e 111-116,180-185,199,270-273,277,439-441,444-446
+tests/configuration/test_conversion_secrets.py
+  s_0ca490c1faed1c::t_5c2358385e749e 256-260
+tests/product_store/test_unused_worker_environments_table.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-55
+tests/service/test_account_presentation.py
+  s_0ca490c1faed1c::t_5c2358385e749e 39,55,245,436-455,472-473,478-479
+tests/configuration/test_runtime_released_values.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-141
+tests/service/test_credential_crypto.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-134
+tests/service/test_resume_run.py
+  s_0ca490c1faed1c::t_5c2358385e749e 71-72,1579
+tests/product_store/test_validate_destination_schema.py
+  s_0ca490c1faed1c::t_5c2358385e749e 29-35,81-82,84,90-100,115,164,198,201,209-210,236,267,303,306,382,410
+infrahub_sync/client/__init__.py
+  s_0ca490c1faed1c::t_5c2358385e749e 12,42-44,128-130,157
+tests/service/test_sync_left_out_stop.py
+  s_0ca490c1faed1c::t_5c2358385e749e 48-50,63-64,140-142,174
+tests/configuration/test_credential_field_map.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-154
+docs/docs/adapters/peeringdb.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 30,38,46,51-60
+dev/specs/027-stored-credentials/opsmill-implement-report.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-262
+docs/docs/use-with-an-ai-agent.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 98,122-124,146,156,161-162
+tests/configuration/test_parse_diagnostics.py
+  s_0ca490c1faed1c::t_5c2358385e749e 26-27,32-33,70,111,113,117-119,123-125,157,166-168,177-182,185-186,190-192,196,200-203,276,282-284,286,306-307,444-449,502-510,894,943,1034-1037,1041,1046,1052-1053,1141
+development/docker-compose.yml
+  s_0ca490c1faed1c::t_5c2358385e749e 47-53,277-283,320-324
+tests/compose/test_source_credentials.py
+  s_0ca490c1faed1c::t_5c2358385e749e 5-6,28,31,89,101,109,132-133,142-143,147-148,187-201,207,220,222,226-227,229,231-232,236-237,239,242-244,248-249,252-253,260-262,265-266,269,276,278-280,282-284,291,293,295,303,305-307,309,412-419,422,425,428-447,453,495,497-498,503,506-507,512,529-530,537-573,576-577,581-586,593,609-610,618,622-623,625-629,632-634,646-647,650,654,656,660,665-667,669,674-677,679,682-685,691-692,695-715,719,721
+dev/specs/027-stored-credentials/alignment-check.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-41
+tests/configuration/test_infrahub_lineage_validation.py
+  s_0ca490c1faed1c::t_5c2358385e749e 14,20,53,65,74-76,88,99,107,110-111,114
+docs/docs/kubernetes-deployment.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 90-116,161,177-178,195-200
+examples/prefect_remote_run/requests/README.md
+  s_0ca490c1faed1c::t_5c2358385e749e 47-48
+frontend/src/features/credentials/CredentialForm.tsx
+  s_0ca490c1faed1c::t_5c2358385e749e 1-422
+frontend/src/features/credentials/CredentialDelete.tsx
+  s_0ca490c1faed1c::t_5c2358385e749e 1-181
+dev/adr/README.md
+  s_0ca490c1faed1c::t_5c2358385e749e 75,119,122,181-185
+tests/plan/test_report_models.py
+  s_0ca490c1faed1c::t_5c2358385e749e 121-125
+tests/service/test_apply_checkpoint_order.py
+  s_0ca490c1faed1c::t_5c2358385e749e 41-42,44,49-50,161-163,190
+frontend/src/features/credentials/CredentialsPage.tsx
+  s_0ca490c1faed1c::t_5c2358385e749e 1-367
+tests/service/test_serve_required_settings.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-149
+infrahub_sync/service/credential_crypto.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-156
+docs/docs/development/constitution.md
+  s_0ca490c1faed1c::t_5c2358385e749e 121-127,160-162,236
+tests/runtime_schema/test_entry_point_resolution.py
+  s_0ca490c1faed1c::t_5c2358385e749e 240,253-255,261
+docs/docs/adapters/device42.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 29,37,45,50-57
+docs/docs/adapters/observium.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 31,39,46,51-58
+infrahub_sync/configuration/models.py
+  s_0ca490c1faed1c::t_5c2358385e749e 41-55,85-87,144-151,185-189,194,239-260,266-267,356-366,460-464,474-481,656,807-818,821,833-834,855-872,890-891,900-901,929-933,935-947,961-962
+dev/specs/027-stored-credentials/checklists/requirements.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-40
+tests/helpers/removed_credential_format.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-96
+tests/configuration/test_removed_credential_format.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-540
+infrahub_sync/service/failure_cause.py
+  s_0ca490c1faed1c::t_5c2358385e749e 64-65,264-266,478,562-630,634-635,637-643,734
+tests/service/test_schedule_automatic_resume.py
+  s_0ca490c1faed1c::t_5c2358385e749e 36-37,81
+docs/docs/development/knowledge/repository-tour.md
+  s_0ca490c1faed1c::t_5c2358385e749e 45-48,85-88,92-94,99-101,236-272
+tests/helpers/stored_credentials.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-265
+infrahub_sync/configuration/conversion_credentials.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-141
+tests/service/test_start_check.py
+  s_0ca490c1faed1c::t_5c2358385e749e 31,229-230
+infrahub_sync/service/credential_actions.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-946
+changelog/+credential-env-provider.removed.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1
+docs/docs/development/knowledge/sync-architecture.md
+  s_0ca490c1faed1c::t_5c2358385e749e 58-59,307
+infrahub_sync/product_store/stored_credentials.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-577
+tasks/dev.py
+  s_0ca490c1faed1c::t_5c2358385e749e 94-95,122-137,191-192,780-781,783-786,788-862,1051-1054,1151-1155,1161,1165,1211,1322-1325
+examples/netbox_to_infrahub/README.md
+  s_0ca490c1faed1c::t_5c2358385e749e 23-26
+frontend/src/features/configurations/package-review.ts
+  s_0ca490c1faed1c::t_5c2358385e749e 77,79,89-92,96-97,99-104
+pyproject.toml
+  s_0ca490c1faed1c::t_5c2358385e749e 88-91
+tests/service/test_worker_credentials_route.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-494
+docs/docs/adapters/slurpit.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 11,68,79-81,90,96,100-103,105-107,110-115,118-120
+infrahub_sync/service/schedule_admission.py
+  s_0ca490c1faed1c::t_5c2358385e749e 19-24,459-463
+tests/service/test_events_route.py
+  s_0ca490c1faed1c::t_5c2358385e749e 34-35,89-90,94-95,437
+infrahub_sync/service/credential_models.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-136
+tests/product_store/test_contract.py
+  s_0ca490c1faed1c::t_5c2358385e749e 67,107-110,116,159-164,232-233,622-624,626-636,641-642,652-661,670-678,792-796,799-803,823-824,830-831,1127-1128,3654,3816-3817,3847,3982,3996-3999,4011,4133-4134,4138,4156-4159,4235-4236,4240,4260,5013
+docs/docs/adapters/nautobot.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 79,87,94,99-110
+dev/adr/0040-a-v2-configuration-converts-locally-by-v2-rules.md
+  s_0ca490c1faed1c::t_5c2358385e749e 3-6
+examples/slurpit_to_infrahub/config.yml
+  s_0ca490c1faed1c::t_5c2358385e749e 5-9,15,21
+dev/specs/027-stored-credentials/contracts/http-api.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-178
+tests/runtime_schema/test_stored_credential_execution.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-404
+tests/configuration/test_conversion_examples.py
+  s_0ca490c1faed1c::t_5c2358385e749e 100-122,124-140,143-151
+infrahub_sync/service/apply_guard.py
+  s_0ca490c1faed1c::t_5c2358385e749e 38-43,274-275,396-398,419
+tests/product_store/test_configs_service.py
+  s_0ca490c1faed1c::t_5c2358385e749e 37-44,57-60,82,91,119,121,145,149,159-160,177,188,208,222,287,316-317,366,422,460,571,576,622,648,924,940-947,950-958,999,1054,1108,1179-1181,1203,1225,1311,1318-1319,1342,1563,1580,1596,1624,1626,1653,1662,1679,1687-1689,1774,1781,1786-1798,1801,1803,1886-1892,1895-1896
+infrahub_sync/service/serve.py
+  s_0ca490c1faed1c::t_5c2358385e749e 15,18,20,48-49,51,54-55,60,73,79-80,197-205,211-215,229-234,253-256,292-298,302-327,361-381,383-387,389
+tests/configuration/test_block_credential.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-182
+tests/compose/test_external_store.py
+  s_0ca490c1faed1c::t_5c2358385e749e 33,68-69,489-490,673-674,678-679,729-736
+dev/specs/027-stored-credentials/plan.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-218
+docs/docs/compose-deployment.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 109-113,172-173,200-201,302-303,306-316,319-320,322-325,327-393,398,404,409-410,420-423,435,890-891,896-897,908-909,1025-1028,1038-1041
+changelog/+compose-store-credentials-ca.added.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1
+tests/compose/conftest.py
+  s_0ca490c1faed1c::t_5c2358385e749e 37,165-168,482,494-495,498-499,547-548
+tests/service/test_approval_required.py
+  s_0ca490c1faed1c::t_5c2358385e749e 27-28,122-123,127-128,148
+tests/service/test_credential_revisions_on_runs.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-256
+infrahub_sync/client/errors.py
+  s_0ca490c1faed1c::t_5c2358385e749e 5-6,91-92,101-105,112-127,139,143-144
+tests/runtime_schema/test_registered_execution.py
+  s_0ca490c1faed1c::t_5c2358385e749e 33,44-45,227,234,311,324
+docs/docs/v2-to-v3.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 23,43-44,122-126,140-164,186-187,191-221,261,263-266,277-284,296
+tests/compose/test_compose_contract.py
+  s_0ca490c1faed1c::t_5c2358385e749e 60-61,107-119,924,928-937,940-942,944-947,950,952,954,956-1020,1207-1262
+tests/helpers/__init__.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1
+frontend/src/routeTree.gen.ts
+  s_0ca490c1faed1c::t_5c2358385e749e 15,38-42,78,90,103,117,129,141,154,186-192,242
+tests/service/test_released_value_redaction.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-503
+tests/service/test_cancel_planned_run.py
+  s_0ca490c1faed1c::t_5c2358385e749e 38-39,98-99,103-104,131
+tests/service/test_verify_destination.py
+  s_0ca490c1faed1c::t_5c2358385e749e 30,43-44,46-51,66-67,167-169,194,243-244,507,509-510,524
+dev/adr/0039-workers-publish-the-names-of-their-credential-variables.md
+  s_0ca490c1faed1c::t_5c2358385e749e 3-4
+docs/docs/adapters/netbox.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 35,43,49,54-65,71
+infrahub_sync/configuration/credential_admission.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-181
+infrahub_sync/configuration/stored_package.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-49
+examples/slurpit_to_infrahub/package.yml
+  s_0ca490c1faed1c::t_5c2358385e749e 7,13,17-23
+frontend/src/api/queries.ts
+  s_0ca490c1faed1c::t_5c2358385e749e 11-12,468-502,778-925,932,980-983
+infrahub_sync/service/account_actions.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1,46,70,82,84,118-121,464-467,591-602,719,767,812,847,922,975,1017
+docs/docs/creating-a-sync-project.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 29,35,65,79-80,86-104
+tests/service/schedule_fixtures.py
+  s_0ca490c1faed1c::t_5c2358385e749e 37-38,167-172,182-183,185,332
+tests/compose/test_lifecycle.py
+  s_0ca490c1faed1c::t_5c2358385e749e 162-164,187-189
+docs/docs/reference/schema-mapping.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 461
+frontend/src/routes/__root.tsx
+  s_0ca490c1faed1c::t_5c2358385e749e 407,411,540-548
+  s_0ca490c1faed1c::t_d83cf022322369 549
+tests/client/test_credential_methods.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-270
+tests/configuration/test_conversion.py
+  s_0ca490c1faed1c::t_5c2358385e749e 6,15,20,24,27-31,115-129,134,136-140,144,146-151,260,266-272,285,297,302-304,306-311,315-318,321,326,330,333,335-339,343,347,349-374,377-378,380,383,385-390,395,420-421,424-432,463,465-470,473,475-476,479-480,484-487,492-493,496-533,994-995,999-1002,1005-1006,1159,1161-1168,1234,1246,1249-1250,1252
+tests/dev_stack/smoke/test_service_api.py
+  s_0ca490c1faed1c::t_5c2358385e749e 73-76,88-89,93-94
+docs/docs/configuration-package.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 15,21-22,31-32,42-43,48-49,51-56,59-94,99-101,168-170,187-188,191-194,198-199,265-266,273,316-317,354-357,365-368
+infrahub_sync/service/presentation.py
+  s_0ca490c1faed1c::t_5c2358385e749e 31-41
+tests/service/test_credential_client.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-556
+tests/service/test_registered_plan_apply.py
+  s_0ca490c1faed1c::t_5c2358385e749e 26-27,33,42-43,52-55,83,267-268,277-278,305,361-362,369
+tests/testcontainers/test_image_selection.py
+  s_0ca490c1faed1c::t_5c2358385e749e 44-45,198-221
+  s_0ca490c1faed1c::t_441116699848f9 222-223
+tests/dev_stack/smoke/test_netbox_package.py
+  s_0ca490c1faed1c::t_5c2358385e749e 200-207
+dev/specs/027-stored-credentials/contracts/web-interface.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-16
+dev/specs/027-stored-credentials/notes.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-207
+docs/docs/reference/durable-product-records.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 34,51-54,60,64,67,74-90,124,342-389,548-549
+infrahub_sync/service/schedules.py
+  s_0ca490c1faed1c::t_5c2358385e749e 24-33,50,374-375,539-541,931-932,990-999,1176-1179,1190-1196
+tests/service/test_plan_report_routes.py
+  s_0ca490c1faed1c::t_5c2358385e749e 36-37,58
+examples/aci_to_infrahub/config.yml
+  s_0ca490c1faed1c::t_5c2358385e749e 10,18
+tests/compose/test_documentation.py
+  s_0ca490c1faed1c::t_5c2358385e749e 266
+tests/product_store/test_schedules.py
+  s_0ca490c1faed1c::t_5c2358385e749e 61,118
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 48-49,65-68,70-71,79-81,133-134,140-141,154-155,175-176,182,188,226-227,236,238,260-273,353-354
+tests/runtime_schema/test_dotted_provenance.py
+  s_0ca490c1faed1c::t_5c2358385e749e 186,197-199,205
+tests/service/account_api.py
+  s_0ca490c1faed1c::t_5c2358385e749e 243-249,272-279
+tests/service/test_trust_store_entry_points.py
+  s_0ca490c1faed1c::t_5c2358385e749e 14,57-58,81-82
+tests/service/test_http_api.py
+  s_0ca490c1faed1c::t_5c2358385e749e 84-90,126-129,142-143,147-148,227,299,301,306,308-311,313,328,335,337-341,389-391,466,1710-1712,1735-1736
+frontend/src/api/types.ts
+  s_0ca490c1faed1c::t_5c2358385e749e 17-22,43-44,111-114
+infrahub_sync/execution.py
+  s_0ca490c1faed1c::t_5c2358385e749e 33,75,189-191,194-195,466-476,478-491,493,498-589,616-621,1498,1510
+tests/test_benchmark_runner.py
+  s_0ca490c1faed1c::t_5c2358385e749e 6,1320-1331,1357-1363
+docs/docs/development/guides/adding-an-adapter.md
+  s_0ca490c1faed1c::t_5c2358385e749e 122-123,601
+docs/docs/development-stack.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 9-13,87-90,147-149,307-329,339,343-344,368-369,527-530,533-534,543-544
+docs/docs/adapters/librenms.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 31,39,46,51-58
+tests/service/test_credential_settings.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-175
+dev/specs/027-stored-credentials/contracts/environment.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-23
+tests/image/conftest.py
+  s_0ca490c1faed1c::t_5c2358385e749e 171-175,260-262
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 43,45-47,49-50
+tests/dev_stack/test_compose_valid.py
+  s_0ca490c1faed1c::t_5c2358385e749e 34-40,85-87,89-90,95-116
+dev/specs/027-stored-credentials/spec.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-373
+examples/aci_to_infrahub/package.yml
+  s_0ca490c1faed1c::t_5c2358385e749e 7-13,16,24
+dev/specs/027-stored-credentials/data-model.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-122
+changelog/+validate-branch.added.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1
+tests/service/test_credential_routes.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-510
+tests/compose/test_configuration_free_startup.py
+  s_0ca490c1faed1c::t_5c2358385e749e 100-104,111,115,140-141,171,175-178
+tests/service/test_worker_account.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-466
+tests/dev_stack/test_dev_tasks.py
+  s_0ca490c1faed1c::t_5c2358385e749e 17,22-23,147-160,361-362,376,534,678,686-687,710,734,737,746,783,984-1111
+  s_0ca490c1faed1c::t_4cd50e95b40cca 1112-1113
+infrahub_sync/product_store/accounts.py
+  s_0ca490c1faed1c::t_5c2358385e749e 208-214,541-542,548-552,564-567,577,582-585,587-588
+infrahub_sync/service/credential_client.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-417
+dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md
+  s_0ca490c1faed1c::t_5c2358385e749e 1-243
+infrahub_sync/service/flow.py
+  s_0ca490c1faed1c::t_5c2358385e749e 15,34-45,47,59,61,132-138,166,175-180,637-639,688-716,891,893-900,922-928,933-948,955-975,981-983,989-990,999-1008,1023,1027-1030,1056-1064,1067,1071-1079,1084-1085,1117,1145,1256,1260-1264,1298,1317,1320-1322,1378,1424,1482,2166-2170,2173-2203,2239,2243-2245,2275
+tests/cli/test_account_commands.py
+  s_0ca490c1faed1c::t_5c2358385e749e 677-680
+examples/netbox_to_infrahub/package.yml
+  s_0ca490c1faed1c::t_5c2358385e749e 38,44,47-56
+infrahub_sync/service/events.py
+  s_0ca490c1faed1c::t_5c2358385e749e 11,24-26,31,163-242
+  s_0ca490c1faed1c::t_9e8877cb163649 243-244
+tests/service/test_stored_destination_token.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-357
+tests/service/test_worker_configuration_directory.py
+  s_0ca490c1faed1c::t_5c2358385e749e 20,23-25,36-37,75,77-81,85-94,96
+tests/test_stored_credential_marker.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-653
+tests/service/test_config_routes.py
+  s_0ca490c1faed1c::t_5c2358385e749e 45,1909,1911-1912,1920-1930
+  s_0ca490c1faed1c::t_4a008893dfd40e 1931-1932
+docs/docs/development/knowledge/configuration-foundation.md
+  s_0ca490c1faed1c::t_5c2358385e749e 9-10,18-19,22-26,29-82,154,174-175,179-180
+infrahub_sync/service/credential_routes.py
+  s_0ca490c1faed1c::t_5c2358385e749e 1-186
+tests/configuration/test_schema_validation.py
+  s_0ca490c1faed1c::t_5c2358385e749e 39,45,129-141,154,172,187,233,239,243,252,258,261,273-275,291-292,312,323,336,363,382,397,400,413,417,428,433,450,512,515,532-533,541,547,564,567,660-662,666,670,678,682,684,723-724,733-734,795,825-826,856-857,896,899,904,907,1082,1104
+tasks/bench.py
+  s_0ca490c1faed1c::t_5c2358385e749e 286-291,293,308-315,416-418
+docs/docs/development/adr-index.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 52
+docs/docs/adapters/genericrestapi.mdx
+  s_0ca490c1faed1c::t_5c2358385e749e 11,27,35,42,58-74,101,162
+docs/sidebars.ts
+  s_0ca490c1faed1c::t_5c2358385e749e 39
+.github/scripts/nightly_e2e.py
+  s_0ca490c1faed1c::t_5c2358385e749e 80-82,98,105-106
+examples/netbox_to_infrahub/config.yml
+  s_0ca490c1faed1c::t_5c2358385e749e 37,43,47-55
+tests/service/execution_fixtures.py
+  s_0ca490c1faed1c::t_5c2358385e749e 13,19-21,24,28,30,40-41,197-240
+examples/prefect_remote_run/README.md
+  s_0ca490c1faed1c::t_5c2358385e749e 184-187
+infrahub_sync/configuration/validation.py
+  s_0ca490c1faed1c::t_5c2358385e749e 21,58,250,263,272,274-279,285-291,483,487,505-508,510-512,514-532,538,579,647
+tests/configuration/test_contracts.py
+  s_0ca490c1faed1c::t_5c2358385e749e 51-52,59-60,64-65,78-80,274-275,278,288-289,292,310,319,333,345,354,368,394,410,575,612,629,644,656,667,675,685,693,701,710,718,726,751,753,757,759,763-765,769-771,807,828,857,929,964,1034,1099,1122,1139,1177,1211,1229,1242-1244,1257,1276,1362,1381,1405,1430,1499,1517,1602,1671,1686,1704,1721,1738,1771,1794-1796,1812,1815,1831,1835,1906,1915,2017,2020-2021,2033,2036-2037,2045,2083,2097
+tests/service/test_sync_checkpoint_order.py
+  s_0ca490c1faed1c::t_5c2358385e749e 42-43,45-50,55-56,137-139,167
+tests/service/test_schedule_branch_review.py
+  s_0ca490c1faed1c::t_5c2358385e749e 29-30,40-41,43,54-58,88-117,119-125,510,513-514,516-523
+frontend/src/api/types.generated.ts
+  s_0ca490c1faed1c::t_3eb0069bf1fce4 880-1000,1137-1141,1310-1313,1450-1468,1572-1644,1676-1683,1742-1743,2244-2255,2358-2391,2567-2571,2583-2587,6806-7416
+uv.lock
+  s_0ca490c1faed1c::t_1a8c6e680c5b1c 1381,1404
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "535be72d5e6b51ac91e6844b6184282c69aec6f1",
+  "prompts": {},
+  "sessions": {
+    "s_0ca490c1faed1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac55537f-b117-4c9b-bb69-11fe9e609baf",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
