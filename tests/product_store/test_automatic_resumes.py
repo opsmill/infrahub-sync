@@ -167,6 +167,11 @@ def test_a_consistent_record_is_accepted(changes: dict[str, object]) -> None:
         pytest.param({"state": "waiting-check", "decision": "resume"}, id="decision-while-waiting-check"),
         pytest.param({"state": "checking", "decision": "no-resume", "reason": "refused"}, id="decision-while-checking"),
         pytest.param({"state": "waiting-resume", "decision": "resume"}, id="decision-while-waiting-resume"),
+        pytest.param({"state": "resuming"}, id="resuming-without-decision"),
+        pytest.param(
+            {"state": "resuming", "decision": "no-resume", "reason": "refused"}, id="no-resume-while-resuming"
+        ),
+        pytest.param({"state": "ended"}, id="ended-without-decision"),
         pytest.param({"state": "ended", "decision": "no-resume"}, id="no-resume-without-reason"),
         pytest.param({"state": "ended", "decision": "resume", "reason": "refused"}, id="reason-with-resume"),
         pytest.param({"state": "waiting-check", "reason": "refused"}, id="reason-without-decision"),

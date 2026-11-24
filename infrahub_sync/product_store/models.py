@@ -1442,6 +1442,12 @@ class AutomaticResume(BaseModel):
         if self.decision is not None and self.state not in _DECIDED_AUTOMATIC_RESUME_STATES:
             msg = "an automatic resume record holds a decision only in the states resuming and ended"
             raise ValueError(msg)
+        if self.state in _DECIDED_AUTOMATIC_RESUME_STATES and self.decision is None:
+            msg = "an automatic resume record in the states resuming and ended holds a decision"
+            raise ValueError(msg)
+        if self.state == "resuming" and self.decision != "resume":
+            msg = "an automatic resume record in the state resuming holds the decision resume"
+            raise ValueError(msg)
         if (self.decision == "no-resume") is (self.reason is None):
             msg = "an automatic resume record holds a reason when its decision is no-resume, and only then"
             raise ValueError(msg)
