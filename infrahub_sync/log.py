@@ -89,14 +89,14 @@ def render_for_logging(
     The event and its positional arguments stay separate, so `logging` formats a
     `"%s"`-style message as before and the record keeps its `args`. The key-value pairs are
     appended to the message. An `extra` mapping becomes attributes of the record, as it
-    does in a direct `logging` call.
+    does in a direct `logging` call; any other `extra` value is a key-value pair.
     """
     event = str(event_dict.pop("event", ""))
     positional = tuple(event_dict.pop("positional_args", ()))
     keywords: dict[str, Any] = {name: event_dict.pop(name) for name in _LOGGING_KEYWORDS if name in event_dict}
-    extra = event_dict.pop("extra", None)
-    if isinstance(extra, Mapping):
-        keywords["extra"] = dict(extra)
+    # An `extra` that is not a mapping stays in the event and is written as a key-value pair.
+    if isinstance(event_dict.get("extra"), Mapping):
+        keywords["extra"] = dict(event_dict.pop("extra"))
     if event_dict:
         pairs = " ".join(f"{key}={_render_value(value)}" for key, value in event_dict.items())
         if positional:

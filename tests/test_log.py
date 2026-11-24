@@ -90,6 +90,14 @@ def test_extra_mapping_becomes_record_attributes(caplog: pytest.LogCaptureFixtur
     assert record.__dict__["run_id"] == "run-1"
 
 
+def test_extra_that_is_not_a_mapping_is_written_into_the_message(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=PACKAGE_LOGGER_NAME):
+        structlog.get_logger(LOGGER_NAME).info("plan refused", extra="run-1")
+
+    (record,) = caplog.records
+    assert record.getMessage() == "plan refused extra=run-1"
+
+
 def test_exception_keeps_its_traceback_on_the_record(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO, logger=PACKAGE_LOGGER_NAME):
         try:
