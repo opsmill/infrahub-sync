@@ -144,6 +144,20 @@ def test_a_stopped_apply_prints_the_rejected_write_and_what_it_wrote(client: Mag
     assert _block(output, "apply") == _REJECTED_WRITE_LINES
 
 
+def test_a_failed_run_shows_where_each_identity_value_starts_and_ends(client: MagicMock) -> None:  # noqa: F811
+    """A source value must not be read as the marker of a partly written operation."""
+    forged = "rtr1 (may have written part of its change)"
+    failure = _rejected_write()
+    failure["may_have_partially_written"] = False
+    failure["failed_operation_detail"]["identity"] = {"location": "r1", "name": forged}
+    failure["record"] = {"kind": "DcimDevice", "identity": {"name": forged}, "source_id": "7"}
+
+    lines = _block(_failed_command(client, "apply", failure), "apply")
+
+    assert f'record: DcimDevice name="{forged}" source ID 7' in lines
+    assert f'failed operation: op_518aada155d790ad update DcimDevice location=r1 name="{forged}"' in lines
+
+
 def test_runs_show_prints_the_same_lines(client: MagicMock) -> None:  # noqa: F811 - the imported fixture.
     resource = _run(operation="apply", phase="apply-interrupted", outcome="ambiguous")
     failed_run = resource.run.model_copy(update={"results": {"apply_failure": _rejected_write()}})
@@ -162,3 +176,74 @@ def test_infrahub_message_is_printed_with_its_control_characters_made_visible(
 
     assert "\x1b" not in output
     assert "Infrahub message: planned\\x1b[2J is not valid" in _block(output, "apply")
+
+
+_CONTENDED_CAUSE = (
+    "Sync run service-run-0 was writing to this configuration and held its write guard when this write's "
+    "wait for the guard ended, so this write did not start and changed nothing"
+)
+_CONTENDED_NEXT_ACTION = (
+    "Check that run with `infrahub-sync runs show service-run-0` and wait for it to finish, then plan again."
+)
+
+
+def _contended(stage: str) -> dict[str, Any]:
+    """The record of a write that could not take the configuration's write guard (INFP-647)."""
+    return {
+        "stage": stage,
+        "outcome": "failed",
+        "error_type": "ApplyGuardContentionError",
+        "cause_type": "LockNotAvailable",
+        "failure_type": "write_guard_contended",
+        "system": None,
+        "active_run_id": "service-run-0",
+        "cause": _CONTENDED_CAUSE,
+        "next_action": _CONTENDED_NEXT_ACTION,
+    }
+
+
+@pytest.mark.parametrize("stage", ["sync", "apply"])
+def test_a_contended_write_prints_the_active_run_and_how_to_check_it(
+    client: MagicMock,  # noqa: F811 - the imported fixture.
+    stage: str,
+) -> None:
+    output = _failed_command(client, stage, _contended(stage))
+
+    assert _block(output, stage) == [
+        f"{stage} failed: ApplyGuardContentionError",
+        "failure type: write_guard_contended",
+        f"cause: {_CONTENDED_CAUSE}",
+        "active run: service-run-0",
+        f"hint: {_CONTENDED_NEXT_ACTION}",
+    ]
+
+
+_ENDED_CAUSE = (
+    "Sync run service-run-0 held this configuration's write guard when this write's wait for the guard "
+    "ended, although its write had ended before that wait began, so this write did not start and changed nothing"
+)
+_ENDED_NEXT_ACTION = (
+    "The guard is released only when the worker of run service-run-0 stops. Ask the administrator of the "
+    "Sync service to stop or restart that worker, then plan again."
+)
+
+
+@pytest.mark.parametrize("stage", ["sync", "apply"])
+def test_a_contended_write_whose_holder_write_ended_prints_how_to_release_the_guard(
+    client: MagicMock,  # noqa: F811 - the imported fixture.
+    stage: str,
+) -> None:
+    """Spec 028 US3: the active run, the cause and the next action, and no wait for the run."""
+    record = {**_contended(stage), "cause": _ENDED_CAUSE, "next_action": _ENDED_NEXT_ACTION}
+
+    output = _failed_command(client, stage, record)
+
+    block = _block(output, stage)
+    assert block == [
+        f"{stage} failed: ApplyGuardContentionError",
+        "failure type: write_guard_contended",
+        f"cause: {_ENDED_CAUSE}",
+        "active run: service-run-0",
+        f"hint: {_ENDED_NEXT_ACTION}",
+    ]
+    assert "wait for it to finish" not in output

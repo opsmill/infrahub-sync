@@ -103,7 +103,13 @@ from infrahub_sync.runtime_schema.errors import RuntimeSchemaError
 from infrahub_sync.utils import PlanApplier
 
 from . import branch_review as review_ops
-from .apply_guard import ApplyGuard, hold_apply_guard
+from .apply_guard import (
+    HOLDER_LOOKUP_TIMEOUT_SECONDS,
+    MAX_DEADLINE_SECONDS,
+    ApplyGuard,
+    ApplyGuardContentionError,
+    hold_apply_guard,
+)
 from .apply_progress import StoreApplyProgressObserver
 from .checkpoints import (
     CheckpointUnavailableError,
@@ -1055,8 +1061,8 @@ def _destination_report(
     return result
 
 
-def _configuration_write_guard(configuration_id: str) -> AbstractContextManager[ApplyGuard]:
-    """Return the hold of one registered configuration's write guard.
+def _configuration_write_guard(configuration_id: str, run_id: str) -> AbstractContextManager[ApplyGuard]:
+    """Return the hold of one registered configuration's write guard, labelled with `run_id`.
 
     Everything destination-sensitive belongs inside that hold: the live schema read, the
     runtime models built from it, and every operation dispatched against them. A snapshot
@@ -1064,9 +1070,12 @@ def _configuration_write_guard(configuration_id: str) -> AbstractContextManager[
     been changing, so it cannot gate a write that happens after the wait.
 
     The dedicated session it opens is the guard's alone. It is never handed to an adapter
-    or to the product store.
+    or to the product store. Its label names `run_id`, so a write refused by contention can
+    name this run as the holder.
     """
-    return hold_apply_guard(configuration_id, connect=service_guard_session, secrets=service_guard_secrets())
+    return hold_apply_guard(
+        configuration_id, connect=service_guard_session, secrets=service_guard_secrets(), run_id=run_id
+    )
 
 
 def resume_start_after(projection: ProductProjection, run_id: str) -> int | None:
@@ -1255,7 +1264,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             expected_checksum=expected_checksum,
             base_directory=scratch.root,
         )
-        with _configuration_write_guard(parameter_binding[0]) as guard:
+        with _configuration_write_guard(parameter_binding[0], run_id) as guard:
             ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
             # The live schema read, and the comparison it exists for, both under the guard
             # and both before any adapter is constructed: the registered pre-write gate.
@@ -1312,7 +1321,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     else:
         # One guard across planning, verification, and the write it approves: a plan
         # generated outside it could go stale behind another writer before being applied.
-        with _configuration_write_guard(parameter_binding[0]) as guard:
+        with _configuration_write_guard(parameter_binding[0], run_id) as guard:
             ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
             if branch_review is not None:
                 _create_run_branch(branch_review, instance.destination.settings or {})
@@ -1545,6 +1554,8 @@ def _failure_evidence(
     record: ApplyRecord | None,
     secrets: Sequence[str],
     resumable: bool = False,
+    active_run_id: str | None = None,
+    active_run_ended: bool = False,
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
 
@@ -1560,6 +1571,12 @@ def _failure_evidence(
 
     `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
     (spec 016); a template's next action then names `verify` and `runs resume`.
+
+    `active_run_id` is the run that held the configuration's write guard when this write's
+    wait for it ended (`_active_write_run`): the candidate comes from the label of the session
+    that held the lock and is confirmed in the run records. `failure_record` records it for
+    that failure only. `active_run_ended` is true when that run's write had ended before this
+    write started waiting; it selects the cause and next action and is not recorded.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
@@ -1584,7 +1601,17 @@ def _failure_evidence(
     evidence.update(operator_cause(exc, secrets))
     if resumable:
         evidence.update(resumable_next_action(exc, secrets))
-    evidence.update(_structured_cause(stage, exc, secrets, evidence, resumable=resumable))
+    evidence.update(
+        _structured_cause(
+            stage,
+            exc,
+            secrets,
+            evidence,
+            resumable=resumable,
+            active_run_id=active_run_id,
+            active_run_ended=active_run_ended,
+        )
+    )
     if stage in ("verify", *_SAVED_PLAN_WRITE_STAGES):
         # The pre-write check a verify or an apply failed on, by name, so an operator reads
         # which check refuses the apply, and both stages name the same one (SC-004). Both
@@ -1606,8 +1633,15 @@ def _failure_evidence(
     return evidence
 
 
-def _structured_cause(
-    stage: str, exc: Exception, secrets: Sequence[str], recorded: Mapping[str, Any], *, resumable: bool = False
+def _structured_cause(  # pylint: disable=too-many-arguments
+    stage: str,
+    exc: Exception,
+    secrets: Sequence[str],
+    recorded: Mapping[str, Any],
+    *,
+    resumable: bool = False,
+    active_run_id: str | None = None,
+    active_run_ended: bool = False,
 ) -> dict[str, Any]:
     """The `failure_record` fields, keeping the cause and next action `operator_cause` recorded.
 
@@ -1616,7 +1650,14 @@ def _structured_cause(
     error here records `internal_error`.
     """
     try:
-        fields = failure_record(stage, exc, secrets=secrets, resumable=resumable)
+        fields = failure_record(
+            stage,
+            exc,
+            secrets=secrets,
+            resumable=resumable,
+            active_run_id=active_run_id,
+            active_run_ended=active_run_ended,
+        )
     except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.warning("failure record fields could not be built (%s)", type(unexpected).__name__)
         fields = dict.fromkeys(FAILURE_RECORD_KEYS)
@@ -1638,6 +1679,50 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
     """
     carried = getattr(exc, "apply_record", None)
     return carried if isinstance(carried, ApplyRecord) else record
+
+
+def _active_write_run(projection: ProductProjection, stored: ProductRun, exc: Exception) -> tuple[str | None, bool]:
+    """The run that held the configuration's write guard when this write's wait for it ended.
+
+    Returns `(run_id, ended)`, or `(None, False)` when the run is not known. Only an
+    `ApplyGuardContentionError` carries a candidate: the run ID parsed from the label of the
+    session that held the lock. The candidate is accepted only when it is not the failing run
+    and the run records hold a run of the same configuration with that ID. The error's text
+    is never read. A lookup that fails gives `(None, False)`, so the failure record is still
+    stored and says the run is not known.
+
+    `ended` is true only when the run has no claimed, open write and its last write ended
+    before this write started waiting (`_wait_started_at`). A run whose write ended during the
+    wait may have released the lock and recorded its verdict after the lock timeout, so it is
+    reported as writing; telling the operator to stop a healthy worker would be wrong.
+    """
+    if not isinstance(exc, ApplyGuardContentionError) or stored.config_id is None:
+        return None, False
+    candidate = exc.holder_run_id
+    if candidate is None or candidate == stored.run_id:
+        return None, False
+    try:
+        state = projection.write_holder_state(candidate, stored.config_id)
+        if state is None:
+            return None, False
+        ended = not state.writing and state.write_ended_at is not None and state.write_ended_at < _wait_started_at(exc)
+    except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        logger.warning("the run that holds the write guard could not be looked up (%s)", type(unexpected).__name__)
+        return None, False
+    return candidate, ended
+
+
+def _wait_started_at(exc: ApplyGuardContentionError) -> datetime:
+    """When the failing write started waiting for the guard.
+
+    The guard stamps it as the time it took immediately before sending the lock request. Without
+    that stamp, the earliest moment the wait can have started is used: now, minus the largest
+    accepted deadline and the holder lookup's own bound. An earlier start reports fewer runs
+    as ended, so the estimate errs toward "writing".
+    """
+    if exc.wait_started_at is not None:
+        return exc.wait_started_at
+    return datetime.now(timezone.utc) - timedelta(seconds=MAX_DEADLINE_SECONDS + HOLDER_LOOKUP_TIMEOUT_SECONDS)
 
 
 @dataclass(frozen=True)
@@ -1728,8 +1813,16 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         # already interrupted, as for a failed `verify` or a resume that failed before its first
         # write: the next step is `verify`, then `runs resume` (spec 016), not a new plan.
         resumable = stored.phase != "cancelled" and (ambiguous or stored.reconciliation_required)
+        active_run_id, active_run_ended = _active_write_run(projection, stored, exc)
         evidence = _failure_evidence(
-            stage, exc, outcome=terminal_outcome, record=record, secrets=secrets, resumable=resumable
+            stage,
+            exc,
+            outcome=terminal_outcome,
+            record=record,
+            secrets=secrets,
+            resumable=resumable,
+            active_run_id=active_run_id,
+            active_run_ended=active_run_ended,
         )
         # The execution that wrote the record: results are merged, so a later execution of the
         # same purpose that never records a failure leaves this record in place (spec 016,

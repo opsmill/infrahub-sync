@@ -152,6 +152,10 @@ _WRITE_TARGET_CHANGE_HELP = (
 # or the server cannot move the cursor, erase a line, hide text, or show a forged one.
 _ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 _READABLE_ESCAPES = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
+# Characters that make an identity value ambiguous on a `key=value` line: `=` reads as another
+# field, a parenthesis as a marker such as `(not executed)`, a quote as a value boundary, and a
+# backslash as the escape character used inside the quotes.
+_IDENTITY_DELIMITERS = frozenset("=\"'()\\")
 
 app = typer.Typer(
     help="Synchronize registered configurations through the Sync API.",
@@ -1451,8 +1455,23 @@ def _delete_disclosure(plan: PlanResource) -> None:
         typer.echo("0 delete operations are recorded; apply has no deletes to skip.")
 
 
+def _identity_value(value: object) -> str:
+    """Render one identity value so that its start and its end are visible on the line.
+
+    A value that is empty, or that contains whitespace or one of `_IDENTITY_DELIMITERS`, is
+    printed between double quotes, with each backslash and double quote inside it preceded by a
+    backslash. The value then cannot be read as another `key=value` field or as a marker that
+    follows the identity, and it cannot close its own quotes. Any other value is printed as it is.
+    """
+    text = str(value)
+    if text and not any(character.isspace() or character in _IDENTITY_DELIMITERS for character in text):
+        return text
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _identity_text(identity: Mapping[str, Any]) -> str:
-    return " ".join(f"{key}={identity[key]}" for key in sorted(identity))
+    # Quoting is decided on the real value; `_display` escapes the finished line afterwards.
+    return " ".join(f"{key}={_identity_value(identity[key])}" for key in sorted(identity))
 
 
 def _last_change_line(record: PlanLastChangeResource) -> str:
@@ -1661,6 +1680,10 @@ def _failure_lines(failure: Mapping[str, Any], record: StageFailureResource | No
     """The spec 007 lines of a failure record that follow `cause:` (contracts/cli.md), unescaped."""
     if record is None:
         return
+    if record.active_run_id:
+        # The run that was writing to the same configuration when this write could not take the
+        # configuration's write guard (`write_guard_contended`).
+        yield f"active run: {record.active_run_id}"
     if record.infrahub_message:
         yield f"Infrahub message: {record.infrahub_message}"
     if record.record is not None:

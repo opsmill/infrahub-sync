@@ -70,7 +70,7 @@ _WORKER_SCRIPT = textwrap.dedent(
     from infrahub_sync.service.flow import _configuration_write_guard
 
     configuration_id = sys.argv[1]
-    with _configuration_write_guard(configuration_id) as guard:
+    with _configuration_write_guard(configuration_id, "20260903T1100-guardchild") as guard:
         ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=WriteDispatchTracker())
         print("HELD", flush=True)
         sys.stdin.readline()

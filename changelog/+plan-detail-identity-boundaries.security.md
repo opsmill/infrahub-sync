@@ -1,0 +1,1 @@
+`runs plan --detail` and the `record:` and `failed operation:` lines of a failed run now print an identity value between double quotes when it is empty or contains whitespace, `=`, a parenthesis, a quote or a backslash, so a source value such as `x site=prod (not executed)` cannot be read as another identity field or as the marker of a delete that apply skips.
