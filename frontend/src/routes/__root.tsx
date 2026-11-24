@@ -26,7 +26,7 @@ import { signOut } from "#/api/client";
 import { describeError, healthQuery, meQuery, versionQuery } from "#/api/queries";
 import { announce, LiveRegion } from "#/components/announcer";
 import { FOCUS, FOCUS_RAC } from "#/components/classes";
-import { StateIcon } from "#/components/icons";
+import { ArrowRightIcon, StateIcon } from "#/components/icons";
 import { Mark } from "#/components/mark";
 import { Notice } from "#/components/page";
 import { When } from "#/components/run-status";
@@ -205,9 +205,10 @@ function StatusMenu() {
   const w = status.data?.workers;
   const checkedAt = status.data?.timestamp;
   const workerRows = s.showDetail && w;
+  const [open, setOpen] = useState(false);
 
   return (
-    <PopoverTrigger>
+    <PopoverTrigger isOpen={open} onOpenChange={setOpen}>
       <Button
         variant="ghost"
         size="sm"
@@ -274,6 +275,18 @@ function StatusMenu() {
               )}
             </div>
           )}
+          {/* The Health page lists every component and worker; the link closes the details. */}
+          <Link
+            to="/health"
+            onClick={() => setOpen(false)}
+            className={cn(
+              "-mx-1.5 mt-3 inline-flex h-8 items-center gap-1 rounded-md px-1.5 font-medium text-[13px] text-accent transition-colors duration-150 ease-out hover:bg-accent-surface pointer-coarse:h-11 motion-reduce:transition-none",
+              FOCUS
+            )}
+          >
+            Open the Health page
+            <ArrowRightIcon className="size-3.5 shrink-0" />
+          </Link>
         </PopoverDialog>
       </Popover>
     </PopoverTrigger>

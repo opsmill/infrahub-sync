@@ -1,0 +1,1 @@
+The web interface has a Health page at `/health`. It shows whether each component of the Sync API answered its health check, the number of workers online and required, the executions waiting for a worker, and the live and stale workers of the last 24 hours. The Sync service details in the header link to it.

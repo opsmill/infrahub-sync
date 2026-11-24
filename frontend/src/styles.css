@@ -20,6 +20,8 @@ body,
  */
 html {
   background-color: var(--background);
+  /* Keeps the width of the page when its scrollbar appears, for example when a list is opened. */
+  scrollbar-gutter: stable;
   scroll-padding-top: calc(var(--header-height, 49px) + 0.5rem);
   scroll-padding-bottom: 1.5rem;
 }

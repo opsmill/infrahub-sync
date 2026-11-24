@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AccountsRouteImport } from './routes/accounts'
+import { Route as HealthRouteImport } from './routes/health'
 import { Route as ConfigsConfigIdRouteImport } from './routes/configs.$configId'
 import { Route as RunsIndexRouteImport } from './routes/runs.index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
@@ -31,6 +32,11 @@ const AccountRoute = AccountRouteImport.update({
 const AccountsRoute = AccountsRouteImport.update({
   id: '/accounts',
   path: '/accounts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HealthRoute = HealthRouteImport.update({
+  id: '/health',
+  path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConfigsConfigIdRoute = ConfigsConfigIdRouteImport.update({
@@ -63,6 +69,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
+  '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
@@ -73,6 +80,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
+  '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
@@ -84,6 +92,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
+  '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
   '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
@@ -96,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/accounts'
+    | '/health'
     | '/configs/$configId'
     | '/runs/$runId'
     | '/schedules/$scheduleId'
@@ -106,6 +116,7 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/accounts'
+    | '/health'
     | '/configs/$configId'
     | '/runs/$runId'
     | '/schedules/$scheduleId'
@@ -116,6 +127,7 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/accounts'
+    | '/health'
     | '/configs/$configId'
     | '/runs/$runId'
     | '/schedules/$scheduleId'
@@ -127,6 +139,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AccountRoute: typeof AccountRoute
   AccountsRoute: typeof AccountsRoute
+  HealthRoute: typeof HealthRoute
   ConfigsConfigIdRoute: typeof ConfigsConfigIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
   SchedulesScheduleIdRoute: typeof SchedulesScheduleIdRoute
@@ -155,6 +168,13 @@ declare module '@tanstack/react-router' {
       path: '/accounts'
       fullPath: '/accounts'
       preLoaderRoute: typeof AccountsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/health': {
+      id: '/health'
+      path: '/health'
+      fullPath: '/health'
+      preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/configs/$configId': {
@@ -199,6 +219,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AccountRoute: AccountRoute,
   AccountsRoute: AccountsRoute,
+  HealthRoute: HealthRoute,
   ConfigsConfigIdRoute: ConfigsConfigIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,
   SchedulesScheduleIdRoute: SchedulesScheduleIdRoute,
