@@ -1,0 +1,28 @@
+adapters/webex/tests/test_webex_registered_credentials.py
+  s_a9719f961786d2::t_ce4f256c86d248 1-17,21-38,40-228
+  s_a9719f961786d2::t_81089f65a55f2a 39
+  s_a9719f961786d2::t_fee6297528446b 18-20
+tests/adapters_parity/test_webex_project.py
+  s_a9719f961786d2::t_a6ea99980f3e6d 240-242,335-336,501-505,869-871,926-946
+  s_a9719f961786d2::t_a607cc5d860808 1-239,243-334,337-500,506-868,872-925
+adapters/webex/tests/test_webex.py
+  s_a9719f961786d2::t_70a5c80a145f01 1-322
+adapters/webex/tests/test_webex_client.py
+  s_a9719f961786d2::t_70a5c80a145f01 1-626
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "916db139f67031b84186990beae333bb9368790a",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

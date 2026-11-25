@@ -1,0 +1,34 @@
+adapters/webex/README.md
+  s_a9719f961786d2::t_a4d5084480a82e 45,47-51,53-58,60-61,71-74,78,84-105,108,110,112-113
+adapters/webex/infrahub-sync-adapter.json
+  s_a9719f961786d2::t_fbfed8423b5644 21
+  s_a9719f961786d2::t_333a3669158014 24-27
+adapters/webex/tests/test_webex_registered_credentials.py
+  s_a9719f961786d2::t_14741e4d2508fb 1,34,79,83-86,88-89,91,95,108,110-113,117,119-145,148-149,199-209,245-259
+adapters/webex/infrahub_sync_webex/client.py
+  s_a9719f961786d2::t_4821c695fc0a8b 75-76,92-93,95-98,114,116-118,121-128,144,146,169
+docs/docs/adapters/webex.mdx
+  s_a9719f961786d2::t_43477afccb98b8 23,58,60-62,64,72,74,77-83,104-107,123-124,220
+examples/webex_to_infrahub/config.yml
+  s_a9719f961786d2::t_43477afccb98b8 23-25
+tests/adapters_parity/test_webex_project.py
+  s_a9719f961786d2::t_45294d7f9cc26a 391,474-477
+  s_a9719f961786d2::t_eaa43b05bb1687 62-67,114-119,326,328,333,359-360,373-374,381,383-384,386,390,394-397,404,459-463,465-466,468,478-479,483,491-504,562-565
+  s_a9719f961786d2::t_4821c695fc0a8b 132-133,149-150,152-155,171-179,181-182,185,194,196,201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b6903e61833892890a8848f73de8340c63a37f0",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

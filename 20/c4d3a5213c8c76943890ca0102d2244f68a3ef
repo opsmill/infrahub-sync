@@ -1,0 +1,31 @@
+examples/webex_to_infrahub/config.yml
+  s_a9719f961786d2::t_d344ef13ea3936 1-105
+docs/sidebars.ts
+  s_a9719f961786d2::t_3703e70b5408b6 71
+examples/webex_to_infrahub/schema.yml
+  s_a9719f961786d2::t_ca49ced19341cc 1-67
+examples/webex_to_infrahub/README.md
+  s_a9719f961786d2::t_1ea812cf228e3e 1-34
+docs/docs/adapters/webex.mdx
+  s_a9719f961786d2::t_2b79a9e24ea32b 1-235
+adapters/webex/README.md
+  s_a9719f961786d2::t_9b6dcdb809fac4 72
+  s_a9719f961786d2::t_bec82c244841b8 94-96
+  s_a9719f961786d2::t_ceec59694cd339 1-71,73-93,97-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "20c4d3a5213c8c76943890ca0102d2244f68a3ef",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

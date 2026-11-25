@@ -1,0 +1,48 @@
+tests/adapter_files/test_build.py
+  s_a9719f961786d2::t_a75c5e3158a3db 926-940
+  s_a9719f961786d2::t_42b48c7ab3f71b 17-18,26,30,36
+  s_a9719f961786d2::t_0dca2fe3781098 454-577,579-681,683-705,709-776
+  s_a9719f961786d2::t_7013d318684bd1 385-389
+  s_a9719f961786d2::t_19915d171d501c 578,682
+  s_a9719f961786d2::t_2b93bc5c18b846 706-708
+  s_a9719f961786d2::t_68f0e0f6e957fb 925
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_a9719f961786d2::t_68e0f38c5c00d2 118-119
+  s_a9719f961786d2::t_2745bdc2bbaeac 136-173
+infrahub_sync/adapter_files/build.py
+  s_a9719f961786d2::t_178200f59c8797 276-278,281-282
+  s_a9719f961786d2::t_2b93bc5c18b846 333,606
+  s_a9719f961786d2::t_3b5aa4d6a7f1c3 54,58
+  s_a9719f961786d2::t_2ab62d4de3ba4d 431-432
+  s_a9719f961786d2::t_cf9c6678082e75 323-332,334-419,423
+  s_a9719f961786d2::t_4987023d9bbd32 539-572
+  s_a9719f961786d2::t_12bb4f2fd4995f 17-19
+  s_a9719f961786d2::t_9044a0c5610bad 434
+  s_a9719f961786d2::t_74e51a6a0890b0 581,583-590
+  s_a9719f961786d2::t_6612e1191c7b05 607,609
+  s_a9719f961786d2::t_314f42b1d1680f 631
+  s_a9719f961786d2::t_5f9e67c7f94489 878-882
+  s_a9719f961786d2::t_5323dd6c99a9fd 903
+  s_a9719f961786d2::t_d148c8731d68e5 917
+changelog/+adapter-build-local-projects.added.md
+  s_a9719f961786d2::t_fb2f2e3daf7da5 1
+tests/adapter_files/test_image.py
+  s_a9719f961786d2::t_9a7ff2249a6ae0 40
+  s_a9719f961786d2::t_b6f6192752a32f 277-313
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28c1fe2b7c78b02ef1b651f4a24d4b917451ddab",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

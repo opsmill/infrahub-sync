@@ -1,0 +1,30 @@
+changelog/+peeringmanager-adapter-project.housekeeping.md
+  s_a9719f961786d2::t_1144790c1108bc 1
+adapters/peeringmanager/infrahub_sync_peeringmanager/__init__.py
+  s_a9719f961786d2::t_252f73b4f34f39 1-7
+adapters/peeringmanager/infrahub-sync-adapter.json
+  s_a9719f961786d2::t_f8f3f7c314c815 1-66
+adapters/peeringmanager/infrahub_sync_peeringmanager/adapter.py
+  s_a9719f961786d2::t_b5f8c66bc32981 1-47
+adapters/peeringmanager/pyproject.toml
+  s_a9719f961786d2::t_bebafa5edad710 1-42,45-49,51-62
+  s_a9719f961786d2::t_a0103aa6a56793 43-44,50
+adapters/peeringmanager/uv.lock
+  s_a9719f961786d2::t_6816114fda2519 1-1236
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34d827a418385c0b1c5eaea97c71806052ba632f",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
