@@ -1,0 +1,39 @@
+infrahub_sync/cli_adapters.py
+  s_a9719f961786d2::t_2ceaa23fa647c1 1,23,32-38,43,82-89,145,320-406,408-467,519
+  s_a9719f961786d2::t_868b941d5203bd 407
+infrahub_sync/cli.py
+  s_a9719f961786d2::t_2ceaa23fa647c1 607-608,892-922,924-951
+  s_a9719f961786d2::t_a98773e06e1d1d 923
+  s_a9719f961786d2::t_379d2ef20ecb17 952-953
+infrahub_sync/cli_accounts.py
+  s_a9719f961786d2::t_2ceaa23fa647c1 90-91
+tests/cli/test_parity_and_closure.py
+  s_a9719f961786d2::t_ebd394e03111db 122-123,196-197
+tests/cli/test_adapters_command.py
+  s_a9719f961786d2::t_ebd394e03111db 1-4,368-507,509,511-518,521-616
+  s_a9719f961786d2::t_e34ff0ed02c2d4 508,510,519-520
+  s_a9719f961786d2::t_04aa4f38bf7f34 617-618
+docs/docs/reference/cli.mdx
+  s_a9719f961786d2::t_e34ff0ed02c2d4 283,336-364,1487,1504,1580-1614
+  s_a9719f961786d2::t_20c60c2664e34a 1615
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_a9719f961786d2::t_97be9d410cb44a 61,64-72,74,77-84
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_97be9d410cb44a 354
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "599d7843f33f61f15be576b8453fb43875fa545c",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
