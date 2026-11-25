@@ -1,0 +1,37 @@
+.dockerignore
+  s_a9719f961786d2::t_625972b8e6bf1b 13-14
+Dockerfile
+  s_a9719f961786d2::t_0aa4f06395e937 177-179
+  s_a9719f961786d2::t_72d0273aeeaecc 76-89,92-95,97
+  s_a9719f961786d2::t_ea036cbb721c15 90-91,96
+tests/image/test_build_context.py
+  s_a9719f961786d2::t_604bf180e61c78 20
+infrahub_sync/adapter_files/build.py
+  s_62e4e1d7fb71b0::t_97d32981ff8901 101-103,275-276,285
+tests/adapter_files/test_image.py
+  s_62e4e1d7fb71b0::t_dbba66bd3a73a2 198-209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2c70059632e90fcc754c659abe51dd7f6a16a3e9",
+  "prompts": {},
+  "sessions": {
+    "s_62e4e1d7fb71b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8226840d9a21177d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

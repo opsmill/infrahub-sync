@@ -1,0 +1,22 @@
+tests/demo/test_wheel_assets.py
+  s_a9719f961786d2::t_e9a621d351d4bc 57-60
+.github/file-filters.yml
+  s_a9719f961786d2::t_6683d5c6ae4a56 96
+  s_a9719f961786d2::t_935bc961362b52 82-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3735448433e8ebb8016f1c761bb5bb1fab15d8bb",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
