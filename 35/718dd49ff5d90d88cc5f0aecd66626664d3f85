@@ -1,0 +1,40 @@
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_369f6318eebd6b::t_1c4f1f7c4ffc56 54-57
+infrahub_sync/runtime_schema/errors.py
+  s_369f6318eebd6b::t_cb57ce318636f0 36-37
+  s_369f6318eebd6b::t_0d1555c2b41530 45-46
+docs/docs/reference/python-api.mdx
+  s_369f6318eebd6b::t_8a5e597de68756 121-170
+docs/docs/reference/config.mdx
+  s_369f6318eebd6b::t_796e1bb47d62a3 10-13
+changelog/+stored-credential-wording.fixed.md
+  s_369f6318eebd6b::t_bcda5e88946575 1
+tasks/dev.py
+  s_0165a4a2fbe30b::t_52bd7f5de932f9 27,348,591,595
+tests/dev_stack/test_dev_tasks.py
+  s_0165a4a2fbe30b::t_1f32ec31b2594a 664
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35718dd49ff5d90d88cc5f0aecd66626664d3f85",
+  "prompts": {},
+  "sessions": {
+    "s_0165a4a2fbe30b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aresearch-registry-3570b3b32e469007",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_369f6318eebd6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f37f8221-0ffa-48f9-8bd2-594af436ab33",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
