@@ -1,0 +1,33 @@
+dev/adr/0058-a-maintained-adapter-is-a-registered-file.md
+  s_a9719f961786d2::t_e55ecc5edc4e87 61-62
+docs/docs/development/guides/adding-an-adapter.md
+  s_55512ec0cdc566::t_0343c257080b5c 511-516,545-547,555-564
+docs/docs/reference/durable-product-records.mdx
+  s_55512ec0cdc566::t_c8c559ee22573d 58
+docs/docs/reference/sync-http-api.mdx
+  s_55512ec0cdc566::t_b0b26eda41334b 479-481
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "807bb4b022c63e5267b91bee65eb67599b610e07",
+  "prompts": {},
+  "sessions": {
+    "s_55512ec0cdc566": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-06a-5077ba0e3e65d53c",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
