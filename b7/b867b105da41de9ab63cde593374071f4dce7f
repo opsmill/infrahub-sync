@@ -1,0 +1,21 @@
+frontend/src/features/credentials/fields.test.ts
+  s_110c8940c96ad0::t_9a4b2c65595ad0 115,129-139
+frontend/src/features/credentials/fields.ts
+  s_110c8940c96ad0::t_320ca0363d0913 62,69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7b867b105da41de9ab63cde593374071f4dce7f",
+  "prompts": {},
+  "sessions": {
+    "s_110c8940c96ad0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-05b-2ecea101b529c26d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
