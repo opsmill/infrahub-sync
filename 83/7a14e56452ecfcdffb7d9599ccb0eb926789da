@@ -1,0 +1,32 @@
+changelog/+webex-adapter-project.housekeeping.md
+  s_a9719f961786d2::t_9b6dcdb809fac4 1
+adapters/webex/infrahub_sync_webex/adapter.py
+  s_a9719f961786d2::t_70a5c80a145f01 1-202
+adapters/webex/infrahub_sync_webex/__init__.py
+  s_a9719f961786d2::t_70a5c80a145f01 1-7
+adapters/webex/infrahub_sync_webex/client.py
+  s_a9719f961786d2::t_70a5c80a145f01 1-476
+adapters/webex/infrahub-sync-adapter.json
+  s_a9719f961786d2::t_190fc7ffc6c4d5 1-62
+adapters/webex/pyproject.toml
+  s_a9719f961786d2::t_3935d143ea3674 69-74
+  s_a9719f961786d2::t_b6091682944e3f 1-68,75-93
+adapters/webex/uv.lock
+  s_a9719f961786d2::t_06784adffe5a5c 1-1274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "837a14e56452ecfcdffb7d9599ccb0eb926789da",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
