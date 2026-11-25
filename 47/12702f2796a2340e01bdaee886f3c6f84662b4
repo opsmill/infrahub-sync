@@ -1,0 +1,35 @@
+tests/adapter_files/test_signature.py
+  s_a9719f961786d2::t_afbf315f78e010 1-197
+infrahub_sync/adapter_signing_keys.json
+  s_a9719f961786d2::t_61e542c78941e6 1-3
+infrahub_sync/adapter_files/signature.py
+  s_a9719f961786d2::t_615a58d1f89c2a 1-144
+changelog/+adapter-file-checks.housekeeping.md
+  s_9fc0199b2e97a5::t_f4eb619acb9682 1
+dev/specs/031-registered-adapters/tasks.md
+  s_9fc0199b2e97a5::t_87b3576d0c602d 127,134,136,143,153,157,162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4712702f2796a2340e01bdaee886f3c6f84662b4",
+  "prompts": {},
+  "sessions": {
+    "s_9fc0199b2e97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-04a-12d2ebba5d3f4e3b",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
