@@ -344,3 +344,27 @@ export function isNoAnswer(error: unknown): boolean {
   if (error instanceof SyncApiUnavailable) return error.status >= 500 || error.status === 408;
   return isEnvelope(error) && error.error.status >= 500;
 }
+
+/**
+ * The state of the stored credentials that the findings of a check are about, as one string:
+ * each name with its revision, or "absent". `undefined` while the stored credentials are not
+ * read, or when no finding is about a stored credential. A change of this string after a check
+ * means that a credential was created, deleted or given a new value, so the check is out of date.
+ */
+export function checkedCredentialState(
+  findings: readonly { code: string; location?: string | null }[],
+  content: DeclaredContent | undefined,
+  stored: readonly { name: string; revision: number }[] | undefined
+): string | undefined {
+  const names = new Set(
+    findings.flatMap((f) => {
+      const credential = checkedCredential(f, content);
+      return credential ? [credential.name] : [];
+    })
+  );
+  if (names.size === 0 || stored === undefined) return undefined;
+  return [...names]
+    .sort()
+    .map((name) => `${name}:${stored.find((c) => c.name === name)?.revision ?? "absent"}`)
+    .join(" ");
+}

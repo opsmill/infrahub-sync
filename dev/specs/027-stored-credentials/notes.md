@@ -221,9 +221,13 @@ Decided on 2026-11-25 by the maintainer, from a prototype with two versions at
   remedy is away from the "Register" button that the user pressed.
 - The check that runs before registration reports the same two codes as findings and disables
   "Register", so the refusal above appears only when, between the check and the registration, a
-  credential is deleted or its value is replaced by one that lacks a field the block needs. Each of these findings of the check therefore shows the same
-  link or the same sentence under its message, and the notice of the findings has a
-  "Validate again" button. This part was not in the prototype and the maintainer has not
-  reviewed it.
+  credential is deleted or its value is replaced by one that lacks a field the block needs.
+  Each of these findings of the check therefore shows the same link or the same sentence under
+  its message.
+- While such a finding is shown, the review reads the stored credentials again, at the interval
+  of the Credentials page and when the tab gets the focus back. When the credential of a finding
+  is created, deleted or gets a new revision, the review runs the check again by itself. The
+  notice of the findings keeps a "Validate again" button for a change that this does not detect.
+  This part was not in the prototype, and the maintainer has not reviewed it.
 - Code: `frontend/src/features/configurations/CredentialRefusal.tsx`, with the text in
   `frontend/src/features/configurations/package-review.ts`.

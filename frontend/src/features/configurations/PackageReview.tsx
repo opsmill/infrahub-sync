@@ -34,7 +34,11 @@ import { plural } from "#/domain/run-state";
 import { describeSystem } from "#/domain/systems";
 import { DialogFrame, Field, INPUT, MutationError, ReasonField } from "#/features/runs/form";
 
-import { CheckedCredentialRemedy, CredentialRefusal } from "./CredentialRefusal";
+import {
+  CheckedCredentialRemedy,
+  CredentialRefusal,
+  useRecheckOnCredentialChange,
+} from "./CredentialRefusal";
 import { MappingList } from "./detail-mapping";
 import { MappingDetail } from "./detail-mapping-panel";
 import { PackageDropArea } from "./PackageDropArea";
@@ -242,6 +246,12 @@ export function PackageReview({
       check.isIdle ||
       kind === "unchecked" ||
       (checkedBranch !== null && effectiveBranch !== checkedBranch));
+  useRecheckOnCredentialChange({
+    findings: check.data?.findings,
+    content,
+    paused: validating || sent !== undefined,
+    onRecheck: () => runCheckRef.current(checkedBranch ?? effectiveBranch),
+  });
   const comparisonReady = compared === null || (compared !== undefined && base.data !== undefined);
   /** The configuration or its newest version could not be read, so nothing can be compared. */
   const comparisonFailed = (!isNew && config.isError) || base.isError;

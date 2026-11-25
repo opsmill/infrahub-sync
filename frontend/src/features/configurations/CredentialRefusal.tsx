@@ -1,13 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 import { cn } from "tailwind-variants";
 
 import { type CredentialFinding, credentialsQuery, describeError, meQuery } from "#/api/queries";
+import type { DeclaredContent } from "#/api/types";
 import { FOCUS } from "#/components/classes";
 import { CheckIcon } from "#/components/icons";
 import { CODE_CHIP, Notice } from "#/components/page";
 
 import {
+  checkedCredential,
+  checkedCredentialState,
   credentialRefusalNextStep,
   credentialRefusalTitle,
   type RefusedCredential,
@@ -128,4 +132,42 @@ export function CredentialRefusal({
       {codeLine && <p className="font-mono text-subtle text-xs">{codeLine}</p>}
     </Notice>
   );
+}
+
+/**
+ * Runs the check again when a stored credential that one of its findings is about changes.
+ *
+ * A finding about a stored credential goes out of date when an administrator creates the
+ * credential or gives it a new value, in another tab or from the CLI. While such a finding is
+ * shown, the stored credentials are read again at the interval of the Credentials page and when
+ * the tab gets the focus back. The state at the time of the check is kept; when the revision of a
+ * named credential differs from it, or the credential appears or disappears, `onRecheck` is
+ * called once. "Validate again" stays for a change that this does not detect.
+ */
+export function useRecheckOnCredentialChange({
+  findings,
+  content,
+  paused,
+  onRecheck,
+}: {
+  /** The findings of the latest check; a new array for each check. */
+  findings: readonly { code: string; location?: string | null }[] | undefined;
+  content: DeclaredContent | undefined;
+  /** A check is running, or the registration is sent. */
+  paused: boolean;
+  onRecheck: () => void;
+}) {
+  const aboutCredentials = (findings ?? []).some((f) => checkedCredential(f, content));
+  const stored = useQuery({ ...credentialsQuery(), enabled: aboutCredentials }).data;
+  const state = checkedCredentialState(findings ?? [], content, stored);
+  const baseline = useRef<{ findings: unknown; state: string }>(undefined);
+  const recheck = useRef(onRecheck);
+  recheck.current = onRecheck;
+  useEffect(() => {
+    if (state === undefined || paused) return;
+    const previous = baseline.current;
+    baseline.current = { findings, state };
+    // The same check, and a credential of one of its findings changed since.
+    if (previous && previous.findings === findings && previous.state !== state) recheck.current();
+  }, [state, findings, paused]);
 }

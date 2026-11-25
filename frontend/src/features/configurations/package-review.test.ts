@@ -4,6 +4,7 @@ import {
   blockingNamesake,
   CONFIGURATION_NAME_IN_USE,
   checkedCredential,
+  checkedCredentialState,
   credentialRefusalNextStep,
   credentialRefusalTitle,
   nameInUseOf,
@@ -306,5 +307,56 @@ describe("a refusal for an auth_method that the adapter does not accept", () => 
     expect(
       credentialRefusalNextStep([missing], [{ name: "infrahub-token", fields: ["token"] }])
     ).toBe("Every credential can be used now. Press Register again.");
+  });
+});
+
+describe("checkedCredentialState", () => {
+  const content = {
+    configuration: {
+      name: "from-netbox",
+      source: { name: "netbox", credential: "netbox-token" },
+      destination: { name: "infrahub", credential: "infrahub-token" },
+    },
+  } as unknown as Parameters<typeof checkedCredentialState>[1];
+  const findings = [
+    { code: "credential-not-found", location: "/configuration/source/credential" },
+    { code: "credential-field-missing", location: "/configuration/destination/credential" },
+    { code: "missing-mapping", location: "/configuration/schema_mapping" },
+  ];
+
+  it("gives each named credential with its revision, or absent", () => {
+    const stored = [{ name: "infrahub-token", revision: 3 }];
+    expect(checkedCredentialState(findings, content, stored)).toBe(
+      "infrahub-token:3 netbox-token:absent"
+    );
+  });
+
+  it("changes when a credential is created or gets a new value", () => {
+    const before = checkedCredentialState(findings, content, [
+      { name: "infrahub-token", revision: 3 },
+    ]);
+    const created = checkedCredentialState(findings, content, [
+      { name: "infrahub-token", revision: 3 },
+      { name: "netbox-token", revision: 1 },
+    ]);
+    const changed = checkedCredentialState(findings, content, [
+      { name: "infrahub-token", revision: 4 },
+    ]);
+    expect(created).not.toBe(before);
+    expect(changed).not.toBe(before);
+  });
+
+  it("does not change for a credential that no finding is about", () => {
+    const one = checkedCredentialState(findings, content, [{ name: "other", revision: 1 }]);
+    const two = checkedCredentialState(findings, content, [{ name: "other", revision: 2 }]);
+    expect(one).toBe(two);
+  });
+
+  it("is undefined before the stored credentials are read", () => {
+    expect(checkedCredentialState(findings, content, undefined)).toBeUndefined();
+  });
+
+  it("is undefined when no finding is about a stored credential", () => {
+    expect(checkedCredentialState(findings.slice(2), content, [])).toBeUndefined();
   });
 });

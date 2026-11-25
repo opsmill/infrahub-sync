@@ -7,14 +7,22 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { credentialsQuery, meQuery } from "#/api/queries";
 import type { DeclaredContent, PackageCheck } from "#/api/types";
 
-import { CredentialRefusal } from "./CredentialRefusal";
+import { CredentialRefusal, useRecheckOnCredentialChange } from "./CredentialRefusal";
 import { ValidationResult } from "./PackageReview";
 
 const content = {
@@ -171,5 +179,72 @@ describe("CredentialRefusal", () => {
     expect(notice).toContain("lacks a token.");
     expect(notice).toContain("Correct the package, then add it again.");
     expect(notice).not.toContain("Press Register again");
+  });
+});
+
+describe("useRecheckOnCredentialChange", () => {
+  const stored = (revision?: number) =>
+    revision === undefined ? [] : [{ name: "apic-account", revision, fields: ["username"] }];
+
+  function watch(initial: { paused: boolean; findings: PackageCheck["findings"] }) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+    });
+    client.setQueryData(credentialsQuery().queryKey, stored() as never);
+    const onRecheck = vi.fn();
+    const hook = renderHook(
+      (props: typeof initial) => useRecheckOnCredentialChange({ ...props, content, onRecheck }),
+      {
+        initialProps: initial,
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        ),
+      }
+    );
+    /** Stores the credential with this revision, and waits until the hook has read it. */
+    const store = async (revision?: number) => {
+      await act(async () => {
+        client.setQueryData(credentialsQuery().queryKey, stored(revision) as never);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    };
+    return { onRecheck, store, ...hook };
+  }
+
+  it("does not run the check for the state that the check found", async () => {
+    const { onRecheck } = watch({ paused: false, findings: check.findings });
+    expect(onRecheck).not.toHaveBeenCalled();
+  });
+
+  it("runs the check once when the credential of a finding is created", async () => {
+    const { onRecheck, store } = watch({ paused: false, findings: check.findings });
+    await store(1);
+    expect(onRecheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the check again when the credential gets a new value", async () => {
+    const { onRecheck, store } = watch({ paused: false, findings: check.findings });
+    await store(1);
+    await store(2);
+    expect(onRecheck).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits while a check runs or the registration is sent", async () => {
+    const { onRecheck, store } = watch({ paused: true, findings: check.findings });
+    await store(1);
+    expect(onRecheck).not.toHaveBeenCalled();
+  });
+
+  it("takes the state of a new check as the new starting point", async () => {
+    const { onRecheck, store, rerender } = watch({ paused: false, findings: check.findings });
+    await store(1);
+    rerender({ paused: false, findings: [...check.findings] });
+    expect(onRecheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when no finding is about a stored credential", async () => {
+    const { onRecheck, store } = watch({ paused: false, findings: check.findings.slice(1) });
+    await store(1);
+    expect(onRecheck).not.toHaveBeenCalled();
   });
 });
