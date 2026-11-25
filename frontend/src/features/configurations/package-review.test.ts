@@ -3,8 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   blockingNamesake,
   CONFIGURATION_NAME_IN_USE,
+  checkedCredential,
+  credentialRefusalTitle,
   nameInUseOf,
   otherNamesake,
+  refusedBlockLabel,
+  refusedCredentialResolved,
+  refusedCredentialText,
   sameNameHint,
   sameNameText,
 } from "./package-review";
@@ -141,5 +146,117 @@ describe("the words of a name in use", () => {
   it("never shows a configuration identifier", () => {
     expect(sameNameText(undefined)).not.toContain("cfg-");
     expect(sameNameHint(undefined)).not.toContain("cfg-");
+  });
+});
+
+describe("a registration refused for its stored credentials", () => {
+  const missing = {
+    block: "source",
+    name: "apic-account",
+    code: "credential-not-found",
+    fields: ["username", "password"],
+  };
+  const lacking = {
+    block: "destination",
+    name: "infrahub-token",
+    code: "credential-field-missing",
+    fields: ["token"],
+  };
+
+  it("counts the stored credentials in the title", () => {
+    expect(credentialRefusalTitle(1)).toBe(
+      "Not registered: a stored credential that the configuration names cannot be used"
+    );
+    expect(credentialRefusalTitle(2)).toBe(
+      "Not registered: 2 stored credentials that the configuration names cannot be used"
+    );
+  });
+
+  it.each([
+    ["source", "Source"],
+    ["destination", "Destination"],
+    ["other", "other"],
+  ])("labels the block %s as %s", (block, label) => {
+    expect(refusedBlockLabel(block)).toBe(label);
+  });
+
+  it("names every field the block needs when the credential does not exist", () => {
+    expect(refusedCredentialText(missing)).toBe(
+      "does not exist. The block needs a username and a password."
+    );
+  });
+
+  it("names the fields that the credential lacks", () => {
+    expect(refusedCredentialText(lacking)).toBe("lacks a token.");
+  });
+
+  it("does not leave the sentence open when the refusal names no field", () => {
+    expect(refusedCredentialText({ ...lacking, fields: [] })).toBe("lacks a value.");
+  });
+
+  it("is not resolved before the stored credentials are read", () => {
+    expect(refusedCredentialResolved(missing, undefined)).toBe(false);
+  });
+
+  it("is not resolved while the credential does not exist", () => {
+    expect(refusedCredentialResolved(missing, [{ name: "other", fields: ["token"] }])).toBe(false);
+  });
+
+  it("is not resolved while the credential lacks one of the fields", () => {
+    const stored = [{ name: "apic-account", fields: ["username", "token"] }];
+    expect(refusedCredentialResolved(missing, stored)).toBe(false);
+  });
+
+  it("is resolved once the credential exists with every field", () => {
+    const stored = [{ name: "apic-account", fields: ["password", "username"] }];
+    expect(refusedCredentialResolved(missing, stored)).toBe(true);
+  });
+});
+
+describe("checkedCredential", () => {
+  const content = {
+    configuration: {
+      name: "from-netbox",
+      source: { name: "netbox", credential: "netbox-token" },
+      destination: { name: "infrahub" },
+    },
+  } as unknown as Parameters<typeof checkedCredential>[1];
+
+  it("names the stored credential of the block that the finding is located at", () => {
+    const finding = { code: "credential-not-found", location: "/configuration/source/credential" };
+    expect(checkedCredential(finding, content)).toEqual({
+      block: "source",
+      name: "netbox-token",
+      code: "credential-not-found",
+      fields: [],
+    });
+  });
+
+  it.each([
+    ["another code", { code: "missing-adapter", location: "/configuration/source/credential" }],
+    ["another location", { code: "credential-not-found", location: "/configuration/source" }],
+    ["no location", { code: "credential-not-found", location: null }],
+    [
+      "a block that names no credential",
+      { code: "credential-field-missing", location: "/configuration/destination/credential" },
+    ],
+  ])("returns nothing for %s", (_, finding) => {
+    expect(checkedCredential(finding, content)).toBeUndefined();
+  });
+
+  it("returns nothing before the package is read", () => {
+    const finding = { code: "credential-not-found", location: "/configuration/source/credential" };
+    expect(checkedCredential(finding, undefined)).toBeUndefined();
+  });
+
+  it("is not resolved by the list when the check does not give the lacking fields", () => {
+    const finding = {
+      block: "source",
+      name: "netbox-token",
+      code: "credential-field-missing",
+      fields: [],
+    };
+    const stored = [{ name: "netbox-token", fields: ["username"] }];
+    expect(refusedCredentialResolved(finding, stored)).toBe(false);
   });
 });

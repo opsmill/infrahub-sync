@@ -104,6 +104,78 @@ export function blockCredentials(content: DeclaredContent): BlockCredential[] {
   return named;
 }
 
+/** One block of a registration that the Sync API refused for the stored credential it names. */
+export interface RefusedCredential {
+  block: string;
+  name: string;
+  code: string;
+  /** Every field the block needs (credential not found), or the fields the credential lacks. */
+  fields: readonly string[];
+}
+
+/** "Source" or "Destination"; any other block as the Sync API names it. */
+export function refusedBlockLabel(block: string): string {
+  if (block === "source") return "Source";
+  if (block === "destination") return "Destination";
+  return block;
+}
+
+const neededFields = (fields: readonly string[]) =>
+  fields.map((field) => `a ${field}`).join(" and ") || "a value";
+
+/** Whether the refusal says that the stored credential does not exist. */
+export const refusedForMissingCredential = (finding: RefusedCredential) =>
+  finding.code === "credential-not-found";
+
+/** What is wrong with the stored credential of one block; the sentence follows the name. */
+export function refusedCredentialText(finding: RefusedCredential): string {
+  return refusedForMissingCredential(finding)
+    ? `does not exist. The block needs ${neededFields(finding.fields)}.`
+    : `lacks ${neededFields(finding.fields)}.`;
+}
+
+/** The title of the notice of a registration refused for its stored credentials. */
+export function credentialRefusalTitle(count: number): string {
+  return count === 1
+    ? "Not registered: a stored credential that the configuration names cannot be used"
+    : `Not registered: ${count} stored credentials that the configuration names cannot be used`;
+}
+
+/**
+ * Whether the stored credentials, as the Credentials page lists them now, answer one finding: the
+ * credential exists and holds every field the finding names.
+ */
+export function refusedCredentialResolved(
+  finding: RefusedCredential,
+  stored: readonly { name: string; fields: readonly string[] }[] | undefined
+): boolean {
+  // A finding of the check does not list the fields: only a new check says that they are held.
+  if (!refusedForMissingCredential(finding) && finding.fields.length === 0) return false;
+  const credential = stored?.find((c) => c.name === finding.name);
+  return credential !== undefined && finding.fields.every((f) => credential.fields.includes(f));
+}
+
+const CHECK_CREDENTIAL_CODES = new Set(["credential-not-found", "credential-field-missing"]);
+const CHECK_CREDENTIAL_LOCATION = /^\/configuration\/(source|destination)\/credential$/;
+
+/**
+ * The stored credential that one finding of the check is about, or `undefined` for any other
+ * finding. The finding gives the block in its location; the package gives the name. The fields are
+ * in the message of the finding only, so `fields` is empty.
+ */
+export function checkedCredential(
+  finding: { code: string; location?: string | null },
+  content: DeclaredContent | undefined
+): RefusedCredential | undefined {
+  if (!content || !CHECK_CREDENTIAL_CODES.has(finding.code)) return undefined;
+  const block = CHECK_CREDENTIAL_LOCATION.exec(finding.location ?? "")?.[1] as
+    | "source"
+    | "destination"
+    | undefined;
+  const name = block && content.configuration[block].credential?.trim();
+  return block && name ? { block, name, code: finding.code, fields: [] } : undefined;
+}
+
 /** The rename a new version makes, or nothing when the name stays the same. */
 export function renameText(current: string | null | undefined, next: string | null | undefined) {
   if (!current || !next || current === next) return undefined;

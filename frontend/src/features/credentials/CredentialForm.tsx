@@ -52,9 +52,13 @@ const VALUE_LABEL: Record<ValueName, string> = {
  * refusal, the token, the password and the username are cleared; the name, the description and
  * the field choice stay, so a person can correct a refused request.
  */
-function useCredentialForm(credential: Credential | undefined, onDone: () => void) {
+function useCredentialForm(
+  credential: Credential | undefined,
+  onDone: () => void,
+  initialName = ""
+) {
   const invalidate = useInvalidateCredentials();
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName);
   const [description, setDescription] = useState("");
   const [setId, setSetId] = useState<FieldSetId>(
     credential ? fieldSetOf(credential.fields) : "token"
@@ -251,13 +255,16 @@ function ValueFields({ form, autoFocus }: { form: CredentialFormState; autoFocus
  */
 export function CredentialRowForm({
   credential,
+  initialName,
   onClose,
 }: {
   /** The credential whose value changes; none for a new credential. */
   credential?: Credential;
+  /** The name a new credential starts with, from the link of a refused registration. */
+  initialName?: string;
   onClose: () => void;
 }) {
-  const form = useCredentialForm(credential, onClose);
+  const form = useCredentialForm(credential, onClose, initialName);
   const ref = useRef<HTMLFormElement>(null);
   useEffect(() => {
     ref.current?.scrollIntoView({ block: "nearest" });

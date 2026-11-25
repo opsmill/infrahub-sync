@@ -22,6 +22,8 @@ export interface System {
   address?: string;
   /** `settings.branch`, declared on Infrahub adapters. */
   branch?: string;
+  /** The name of the stored credential the block names with `credential`; never a value. */
+  credential?: string;
 }
 
 function setting(adapter: DeclaredAdapter, key: string): string | undefined {
@@ -47,7 +49,13 @@ export function describeSystem(adapter: DeclaredAdapter): System {
     name === "genericrestapi" && host?.includes(".")
       ? host.replace(/^www\./, "")
       : (PRODUCT_NAMES[name] ?? adapter.name);
-  return { label, host, address, branch: setting(adapter, "branch") };
+  return {
+    label,
+    host,
+    address,
+    branch: setting(adapter, "branch"),
+    credential: adapter.credential?.trim() || undefined,
+  };
 }
 
 /** The destination kinds a mapping writes, once each, in declaration order. */
