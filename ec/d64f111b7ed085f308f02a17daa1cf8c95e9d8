@@ -1,0 +1,25 @@
+dev/specs/031-registered-adapters/tasks.md
+  s_110c8940c96ad0::t_1f21709ebbfe2a 226
+docs/docs/reference/sync-http-api.mdx
+  s_110c8940c96ad0::t_32b1e3c527181f 399-511,1109-1111,1361
+frontend/src/api/types.generated.ts
+  s_110c8940c96ad0::t_7e1a6c98ada0bb 1001-1050,1076-1216,7616-7826
+docs/docs/reference/cli.mdx
+  s_110c8940c96ad0::t_de16da71a944d6 57,1453,1467-1469,1472-1544
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ecd64f111b7ed085f308f02a17daa1cf8c95e9d8",
+  "prompts": {},
+  "sessions": {
+    "s_110c8940c96ad0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-05b-2ecea101b529c26d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
