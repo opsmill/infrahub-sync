@@ -1,0 +1,96 @@
+tests/product_store/test_configuration_adapters.py
+  s_a9719f961786d2::t_bbb72ea4cb61d7 1-566
+  s_a9719f961786d2::t_1c00a2041964d4 567-578
+infrahub_sync/product_store/models.py
+  s_a9719f961786d2::t_fffb9ff443caab 609-617,631-634,698-699,728-729
+infrahub_sync/product_store/store.py
+  s_a9719f961786d2::t_29fbb679be810a 334-338,340-351
+  s_a9719f961786d2::t_9f3a8492286ed5 331-333
+  s_55512ec0cdc566::t_27825b922b299f 25,27-31,37-38,51-56,76,131,318-330,671-675,1375,1387,1664-1679,4027,4033-4037,4040-4041,4056-4057,4067-4085,4104-4107,4109-4110,4113-4142,4145-4182,4263,4269-4280,4289-4339,4341,4351,4357-4359,4371-4375,4389-4392,4411-4412,4480,4483,4497-4498,5827-5913,6779-6787,6791-6792,6794-6799,6806-6849,6862,6868-6880,6883,6886-6902,6904,6912-6913,7646-7695,8154-8158,8808-8811,8815-8817,8819-8823,8825,8853-8856,8859
+tests/product_store/sample_adapters.py
+  s_a9719f961786d2::t_aeca9f9c19d4de 1-87
+tests/service/test_schedules_adapter_validation.py
+  s_a9719f961786d2::t_f73d4721961430 1-190
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_eea6e83dd513e1 239,245,257,269,273
+docs/docs/reference/durable-product-records.mdx
+  s_a9719f961786d2::t_52c3a352bc397e 58
+infrahub_sync/product_store/adapter_versions.py
+  s_a9719f961786d2::t_5aadde8a2cffb2 21-24,28-30,34,42-43,345-915
+infrahub_sync/service/models.py
+  s_a9719f961786d2::t_6400cc682636e4 31,87
+tests/configuration/test_adapter_override.py
+  s_a9719f961786d2::t_5007187826dfba 1-57
+tests/configuration/test_validation_core.py
+  s_a9719f961786d2::t_2d074dd3b41836 755,889-895,898-901
+tests/runtime_schema/test_worker_path.py
+  s_a9719f961786d2::t_09139ac03a993e 704-707
+tests/service/test_stage_stored_credentials.py
+  s_a9719f961786d2::t_bf70a9d502de92 103-106
+infrahub_sync/cli.py
+  s_55512ec0cdc566::t_2a6d19886ed114 43,843-853,858-859
+infrahub_sync/client/__init__.py
+  s_55512ec0cdc566::t_2bb0fedafdc1ba 45,131
+infrahub_sync/client/client.py
+  s_55512ec0cdc566::t_01200abd2e59df 62,395,397-401
+infrahub_sync/client/models.py
+  s_55512ec0cdc566::t_346b9a03d7d54e 304-335,1464-1470,1481-1483,1538-1539,1568-1569,1593-1594,1700-1704,1707,1857-1860
+infrahub_sync/configuration/validation.py
+  s_55512ec0cdc566::t_a7f308b768d88d 22,42,64,78-80,548-568,585,712-785
+infrahub_sync/product_store/configs.py
+  s_55512ec0cdc566::t_a35977b2a4bb44 67-72,74-79,179-243,842-847,850-852,860,863-865,888,897-906,909-910,912-914,916-920,928,931-933,1026-1036,1042-1048,1099,1126-1129,1162-1166,1211-1214,1219,1221,1224,1228,1234
+infrahub_sync/service/adapter_actions.py
+  s_55512ec0cdc566::t_46171af71d8fad 87,89,290-291,299-309,311
+infrahub_sync/service/adapter_models.py
+  s_55512ec0cdc566::t_4a3b0731462ec0 44-48,51
+infrahub_sync/service/config_routes.py
+  s_55512ec0cdc566::t_ca0cb08556c168 52,186-188,292-301,318,328-342,344-354,389,395-396,398-405,415,584,588-591,613,663,673-675,767,771-773,789-790,875,893
+infrahub_sync/service/credential_actions.py
+  s_55512ec0cdc566::t_56c854e359d255 81,524,576,579-581,595,599,603,607-609,616-618,620
+infrahub_sync/service/flow.py
+  s_55512ec0cdc566::t_d6ca1b994db6bd 111,1092-1096,1101,1109
+infrahub_sync/service/schedules.py
+  s_55512ec0cdc566::t_b267924df41eda 51,94-96,501,584-585,1211-1243
+infrahub_sync/service/service.py
+  s_55512ec0cdc566::t_52039054441eda 60,569,574-576,579-581,596-598,1241
+tests/configuration/test_declaration_parity.py
+  s_55512ec0cdc566::t_d2702fa072ef71 40,126-135
+tests/product_store/test_configs_service.py
+  s_55512ec0cdc566::t_be564329f8b981 528-530
+tests/product_store/test_contract.py
+  s_55512ec0cdc566::t_cdf2a3598d96d2 3776-3777,3792-3796,4325-4331,4361-4362
+tests/product_store/test_credential_admission.py
+  s_62e4e1d7fb71b0::t_ec0ad581533a67 384-397,400,407-409
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8cb335a1df697b9efe49ecb04bdd18613ddd63f1",
+  "prompts": {},
+  "sessions": {
+    "s_55512ec0cdc566": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-06a-5077ba0e3e65d53c",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_62e4e1d7fb71b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8226840d9a21177d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
