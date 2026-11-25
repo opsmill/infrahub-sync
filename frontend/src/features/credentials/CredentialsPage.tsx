@@ -15,6 +15,7 @@ import { CredentialRowDelete } from "./CredentialDelete";
 import { CredentialRowForm, DescribeCredentialDialog } from "./CredentialForm";
 import {
   type CredentialOrder,
+  changedSinceCreation,
   countBySet,
   FIELD_SETS,
   type FieldSetId,
@@ -88,6 +89,7 @@ function CredentialRow({
   now: number;
   actions: ReactNode;
 }) {
+  const changed = changedSinceCreation(credential);
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 px-4 py-3 text-sm">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -106,12 +108,12 @@ function CredentialRow({
         <p className="text-subtle text-xs">
           {fieldsLabel(credential.fields)} ·{" "}
           <span className="tabular-nums">revision {credential.revision}</span> ·{" "}
-          {credential.revision > 1 ? "changed" : "created"}{" "}
+          {changed ? "changed" : "created"}{" "}
           <time dateTime={credential.updated_at} title={credential.updated_at}>
             {formatRelative(credential.updated_at, now)}
           </time>{" "}
           by <span className="[overflow-wrap:anywhere]">{credential.updated_by}</span>
-          {credential.revision > 1 && (
+          {changed && (
             <>
               {" "}
               · created{" "}

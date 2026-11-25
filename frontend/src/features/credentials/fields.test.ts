@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { Credential } from "#/api/types";
 
-import { countBySet, FIELD_SETS, fieldSetOf, fieldsLabel, findCredentials } from "./fields";
+import {
+  changedSinceCreation,
+  countBySet,
+  FIELD_SETS,
+  fieldSetOf,
+  fieldsLabel,
+  findCredentials,
+} from "./fields";
 
 function credential(over: Partial<Credential> = {}): Credential {
   return {
@@ -101,5 +108,27 @@ describe("the search of the Credentials page", () => {
       "username-password": 1,
       "username-token": 0,
     });
+  });
+});
+
+describe("changedSinceCreation", () => {
+  const created = { created_at: "2026-11-01T10:00:00Z", created_by: "admin" };
+
+  it("is false while the last change is the creation", () => {
+    expect(
+      changedSinceCreation({ ...created, updated_at: created.created_at, updated_by: "admin" })
+    ).toBe(false);
+  });
+
+  it("is true after a change of the description, which leaves the revision at 1", () => {
+    expect(
+      changedSinceCreation({ ...created, updated_at: "2026-11-02T09:00:00Z", updated_by: "alice" })
+    ).toBe(true);
+  });
+
+  it("is true when another account changed it at the same time", () => {
+    expect(
+      changedSinceCreation({ ...created, updated_at: created.created_at, updated_by: "alice" })
+    ).toBe(true);
   });
 });
