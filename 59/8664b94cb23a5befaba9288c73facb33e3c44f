@@ -1,0 +1,27 @@
+tests/client/test_adapters.py
+  s_a9719f961786d2::t_7c4b946df5e4e7 9,18,326-471
+infrahub_sync/client/client.py
+  s_a9719f961786d2::t_f61694ffcb3e80 45-46,165-166,965-999,1001-1021
+  s_a9719f961786d2::t_7c4b946df5e4e7 1000
+  s_a9719f961786d2::t_1cff89a332d587 1022-1023
+infrahub_sync/client/__init__.py
+  s_a9719f961786d2::t_f61694ffcb3e80 21-27,118-124
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_9fb0dae3947ca7 352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "598664b94cb23a5befaba9288c73facb33e3c44f",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
