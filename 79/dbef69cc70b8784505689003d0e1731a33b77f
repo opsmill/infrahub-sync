@@ -1,0 +1,22 @@
+tests/adapters_parity/test_peeringmanager_project.py
+  s_a9719f961786d2::t_7138510ca41b49 433-446,487-499,501-502,508-510
+  s_a9719f961786d2::t_835517835de560 180
+  s_a9719f961786d2::t_5ff309ea2d4854 1-179,181-424,426-432,447-486,511-573
+  s_a9719f961786d2::t_df03f65cb6933d 425,500,503-507
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79dbef69cc70b8784505689003d0e1731a33b77f",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
