@@ -1,0 +1,19 @@
+tests/adapters_parity/test_ipfabricsync_project.py
+  s_1c8ebf85dd1ee6::t_47a8892f626885 28,222-223,296-300,307,309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99811d0329f9d49510985c26ae2dd77ff66507ff",
+  "prompts": {},
+  "sessions": {
+    "s_1c8ebf85dd1ee6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abaa5426cb5d168cc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
