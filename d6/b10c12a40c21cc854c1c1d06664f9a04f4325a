@@ -1,0 +1,45 @@
+Dockerfile
+  s_a9719f961786d2::t_9e6945ccfc8c9c 92-96,101-104,149-151,189-190
+development/docker-compose.yml
+  s_abb83ba5062cb4::t_c020f49aac4576 241-243,260-266
+infrahub_sync/service/adapter_bootstrap.py
+  s_7f2196ce2ab93f::t_dd4e73ba7af522 12-17,54,67,70,90-92,290-315,331-333,341,349-350
+infrahub_sync/service/settings.py
+  s_7f2196ce2ab93f::t_7ef0ec85371888 38-43,82,520-535
+tests/service/test_bootstrap_adapters.py
+  s_abb83ba5062cb4::t_fe9a954403ce49 18,34,43,45,52,62,442-555
+tests/service/test_settings_adapters.py
+  s_abb83ba5062cb4::t_96daf96d050585 18,25,59,180-203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6b10c12a40c21cc854c1c1d06664f9a04f4325a",
+  "prompts": {},
+  "sessions": {
+    "s_7f2196ce2ab93f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-07-97414f08b0b56e4e",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_abb83ba5062cb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a7fa49f4e3c8d6c63",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
