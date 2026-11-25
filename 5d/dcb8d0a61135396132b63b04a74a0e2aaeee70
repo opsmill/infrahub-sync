@@ -1,0 +1,47 @@
+adapters/nautobot/pyproject.toml
+  s_a9719f961786d2::t_0ba879686897b2 64,79
+  s_a9719f961786d2::t_e80ac60565f59a 61-63
+  s_a9719f961786d2::t_4593019f0b3a19 65-67,76-78
+  s_a9719f961786d2::t_16d7e258067152 80-82
+  s_d75b4661361cfc::t_6bfbb513706c19 1-60,68-75,83-84
+adapters/nautobot/infrahub-sync-adapter.json
+  s_d75b4661361cfc::t_f0edf77d634a0e 1-37
+adapters/nautobot/infrahub_sync_nautobot/__init__.py
+  s_d75b4661361cfc::t_8e76e72aa1ee19 1-7
+adapters/nautobot/infrahub_sync_nautobot/adapter.py
+  s_d75b4661361cfc::t_456b1055bd8271 1-228
+adapters/nautobot/uv.lock
+  s_c6b2d55227ef1a::t_b665aefab199db 1-1270
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ddcb8d0a61135396132b63b04a74a0e2aaeee70",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_c6b2d55227ef1a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a845fd85e560b360a",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d75b4661361cfc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a2a8d8f2f1f92e39a",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
