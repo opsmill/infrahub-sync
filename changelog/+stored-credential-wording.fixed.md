@@ -1,0 +1,1 @@
+The configuration reference and the migration guide no longer describe the removed `credentials` block of a configuration package, and the failure of a destination schema read now names the stored credential to check. The Python API reference describes the stored-credential methods of the client.

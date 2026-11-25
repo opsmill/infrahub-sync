@@ -24,7 +24,7 @@ for every task. Without either, a task follows the stack's containers (`running_
 an `infrahub-server` container means `infrahub`, read from the running containers, or from
 every container when none runs, so a bare `dev.start` after `dev.stop` starts the same
 services again. The containers never select `preview` or `demo`. While the
-local NetBox runs, the worker's NetBox credential defaults to its token whatever the preset.
+local NetBox runs, the stored `netbox-token` credential defaults to its token whatever the preset.
 With `--infrahub-network NAME`, or `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK`, the preset is
 `sync` and the worker joins that network.
 
@@ -345,7 +345,7 @@ class DevSettings:
 
     @property
     def netbox_credential(self) -> bool:
-        """Whether the worker's NetBox credential defaults to the local NetBox's token."""
+        """Whether the stored `netbox-token` credential defaults to the local NetBox's token."""
         return self.preset.netbox or self.local_netbox
 
     @property
@@ -588,11 +588,11 @@ def dev_settings(context: Context | None = None, *, infrahub_network: str = "", 
     if selected.netbox:
         return settings
     # The NetBox check only decides a credential default, so a failed check does not stop
-    # tasks that never use NetBox; the worker then gets no NetBox credential by default.
+    # tasks that never use NetBox; the tasks then store no NetBox credential by default.
     try:
         netbox_running = netbox_state(runner, load_netbox_env()) == "running"
     except NetboxError as exc:
-        print(f" - [{NAMESPACE}] {exc}; the worker gets no NetBox credential by default")
+        print(f" - [{NAMESPACE}] {exc}; no NetBox credential is stored by default")
         netbox_running = False
     return replace(settings, local_netbox=netbox_running)
 

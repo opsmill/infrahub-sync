@@ -118,6 +118,56 @@ exposes `get_run`, `get_results`, `list_artifacts`, `get_artifact`, `verify_run`
 reconstruct plan bytes locally. `get_artifact` verifies the response `Digest` header against the
 received bytes before returning `ArtifactContent`.
 
+## Manage stored credentials
+
+A configuration package names a [stored credential](../guides/credentials.mdx) with
+`credential: <name>` in each adapter block that uses authentication. The client manages stored credentials with the same operations
+as `infrahub-sync credentials` and the "Credentials" page of the web interface. Every signed-in
+account can list and view them. Creating, changing and deleting need an administrator token.
+
+```python
+import os
+
+from infrahub_sync.client import APIError, SyncClient
+
+with SyncClient.from_environment() as client:
+    created = client.create_credential(
+        "netbox-token",
+        token=os.environ["NETBOX_TOKEN"],
+        description="NetBox lab, read-only token",
+    )
+    changed = client.set_credential_value("netbox-token", token=os.environ["NETBOX_TOKEN"])
+    assert changed.revision == created.revision + 1
+
+    for credential in client.iter_credentials():
+        print(credential.name, credential.fields, credential.revision)
+
+    try:
+        client.delete_credential("netbox-token")
+    except APIError as error:
+        if error.code != "credential-in-use":
+            raise
+        print(error.configurations, error.schedules)
+```
+
+| Method | Command | What it does |
+| --- | --- | --- |
+| `list_credentials`, `iter_credentials` | `credentials list` | Returns one page, or every stored credential, sorted by name |
+| `get_credential` | `credentials show NAME` | Returns one stored credential |
+| `create_credential` | `credentials create NAME` | Creates a stored credential with its first value |
+| `set_credential_value` | `credentials set NAME` | Replaces every field of the value; the revision goes up by one |
+| `set_credential_description` | `credentials describe NAME TEXT` | Replaces the description; the revision stays |
+| `delete_credential` | `credentials delete NAME` | Deletes the stored credential; this cannot be reversed |
+
+A value is one of three sets of fields: `token`; `username` and `password`; `username` and
+`token`. The client sends each value as given, in the request body only. No method returns a
+value: a `CredentialResource` holds the names of the fields, the revision, and the accounts
+and times of the creation and of the last change.
+
+`delete_credential` raises `APIError` with the code `credential-in-use` while the latest version
+of a configuration, or a schedule that is not deleted, names the credential. `configurations`
+and `schedules` of the error list them.
+
 ## Wait behavior
 
 `wait_for_run` follows the final orchestration entry in the accepted mutation response by its
