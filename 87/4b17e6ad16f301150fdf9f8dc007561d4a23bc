@@ -1,0 +1,61 @@
+frontend/src/domain/systems.ts
+  s_369f6318eebd6b::t_4b99ab0b0090a1 25-26,52-58
+frontend/src/features/credentials/CredentialsPage.tsx
+  s_369f6318eebd6b::t_c8781a1797430a 108-109
+  s_0165a4a2fbe30b::t_f80a7253d7cc1d 3,114-123,248-257,263-265,283-286
+frontend/src/features/configurations/PackageReview.tsx
+  s_369f6318eebd6b::t_1edb283fdd3881 17
+  s_0165a4a2fbe30b::t_a9d4121b3b4ec2 23,37,44,220,421-422,592,690,700-701,750-752,758-764,766,777-783,786-799
+frontend/src/domain/systems.test.ts
+  s_369f6318eebd6b::t_298558cd220596 1-19
+dev/specs/027-stored-credentials/notes.md
+  s_369f6318eebd6b::t_08c50a7ff7f6b8 202-229
+  s_369f6318eebd6b::t_4a95fed0d238ff 199-201
+  s_0165a4a2fbe30b::t_6130be987df7cc 198
+docs/docs/guides/credentials.mdx
+  s_369f6318eebd6b::t_8f92def833d3b3 22-26
+  s_369f6318eebd6b::t_ef7f80160b5ca7 27-29
+  s_0165a4a2fbe30b::t_4287d2465e88a7 30-33
+frontend/src/features/configurations/detail-systems.tsx
+  s_369f6318eebd6b::t_4b99ab0b0090a1 114-129
+frontend/src/features/credentials/CredentialForm.tsx
+  s_369f6318eebd6b::t_12912a46bf62e8 55-59,61,258,263-264,267
+frontend/src/features/credentials/fields.test.ts
+  s_0165a4a2fbe30b::t_669aeb83d31f51 1-105
+frontend/src/routes/credentials.tsx
+  s_369f6318eebd6b::t_6895b478f4d601 6-15,17-20
+tests/cli/test_parity_and_closure.py
+  s_0165a4a2fbe30b::t_82fc89c94805af 449-508
+changelog/+credential-refusal-in-package-review.added.md
+  s_0165a4a2fbe30b::t_8d13d619d9d68f 1
+frontend/src/features/configurations/CredentialRefusal.tsx
+  s_0165a4a2fbe30b::t_b877e0a4096dc2 1-132
+frontend/src/features/configurations/package-review.test.ts
+  s_0165a4a2fbe30b::t_5bd7967587ef89 6-7,10-12,151-262
+frontend/src/features/configurations/package-review.ts
+  s_0165a4a2fbe30b::t_1add7571630eb3 107-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "874b17e6ad16f301150fdf9f8dc007561d4a23bc",
+  "prompts": {},
+  "sessions": {
+    "s_0165a4a2fbe30b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aresearch-registry-3570b3b32e469007",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_369f6318eebd6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f37f8221-0ffa-48f9-8bd2-594af436ab33",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
