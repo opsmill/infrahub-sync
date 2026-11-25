@@ -347,14 +347,15 @@ export function isNoAnswer(error: unknown): boolean {
 
 /**
  * The state of the stored credentials that the findings of a check are about, as one string:
- * each name with its revision, or "absent". `undefined` while the stored credentials are not
+ * each name with its revision and the time of its last change, or "absent". The time tells a
+ * credential that was deleted and created again, whose revision is 1 as before. `undefined` while the stored credentials are not
  * read, or when no finding is about a stored credential. A change of this string after a check
  * means that a credential was created, deleted or given a new value, so the check is out of date.
  */
 export function checkedCredentialState(
   findings: readonly { code: string; location?: string | null }[],
   content: DeclaredContent | undefined,
-  stored: readonly { name: string; revision: number }[] | undefined
+  stored: readonly { name: string; revision: number; updated_at: string }[] | undefined
 ): string | undefined {
   const names = new Set(
     findings.flatMap((f) => {
@@ -365,6 +366,9 @@ export function checkedCredentialState(
   if (names.size === 0 || stored === undefined) return undefined;
   return [...names]
     .sort()
-    .map((name) => `${name}:${stored.find((c) => c.name === name)?.revision ?? "absent"}`)
+    .map((name) => {
+      const credential = stored.find((c) => c.name === name);
+      return `${name}:${credential ? `${credential.revision}@${credential.updated_at}` : "absent"}`;
+    })
     .join(" ");
 }

@@ -324,31 +324,47 @@ describe("checkedCredentialState", () => {
     { code: "missing-mapping", location: "/configuration/schema_mapping" },
   ];
 
-  it("gives each named credential with its revision, or absent", () => {
-    const stored = [{ name: "infrahub-token", revision: 3 }];
+  const at = "2026-11-25T10:00:00Z";
+
+  it("gives each named credential with its revision and last change, or absent", () => {
+    const stored = [{ name: "infrahub-token", revision: 3, updated_at: at }];
     expect(checkedCredentialState(findings, content, stored)).toBe(
-      "infrahub-token:3 netbox-token:absent"
+      `infrahub-token:3@${at} netbox-token:absent`
     );
+  });
+
+  it("changes when a credential is deleted and created again with the same revision", () => {
+    const first = checkedCredentialState(findings, content, [
+      { name: "infrahub-token", revision: 1, updated_at: at },
+    ]);
+    const again = checkedCredentialState(findings, content, [
+      { name: "infrahub-token", revision: 1, updated_at: "2026-11-25T10:05:00Z" },
+    ]);
+    expect(again).not.toBe(first);
   });
 
   it("changes when a credential is created or gets a new value", () => {
     const before = checkedCredentialState(findings, content, [
-      { name: "infrahub-token", revision: 3 },
+      { name: "infrahub-token", revision: 3, updated_at: at },
     ]);
     const created = checkedCredentialState(findings, content, [
-      { name: "infrahub-token", revision: 3 },
-      { name: "netbox-token", revision: 1 },
+      { name: "infrahub-token", revision: 3, updated_at: at },
+      { name: "netbox-token", revision: 1, updated_at: at },
     ]);
     const changed = checkedCredentialState(findings, content, [
-      { name: "infrahub-token", revision: 4 },
+      { name: "infrahub-token", revision: 4, updated_at: at },
     ]);
     expect(created).not.toBe(before);
     expect(changed).not.toBe(before);
   });
 
   it("does not change for a credential that no finding is about", () => {
-    const one = checkedCredentialState(findings, content, [{ name: "other", revision: 1 }]);
-    const two = checkedCredentialState(findings, content, [{ name: "other", revision: 2 }]);
+    const one = checkedCredentialState(findings, content, [
+      { name: "other", revision: 1, updated_at: at },
+    ]);
+    const two = checkedCredentialState(findings, content, [
+      { name: "other", revision: 2, updated_at: at },
+    ]);
     expect(one).toBe(two);
   });
 

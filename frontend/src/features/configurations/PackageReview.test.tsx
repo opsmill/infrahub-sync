@@ -184,7 +184,16 @@ describe("CredentialRefusal", () => {
 
 describe("useRecheckOnCredentialChange", () => {
   const stored = (revision?: number) =>
-    revision === undefined ? [] : [{ name: "apic-account", revision, fields: ["username"] }];
+    revision === undefined
+      ? []
+      : [
+          {
+            name: "apic-account",
+            revision,
+            updated_at: "2026-11-25T10:00:00Z",
+            fields: ["username"],
+          },
+        ];
 
   function watch(initial: { paused: boolean; findings: PackageCheck["findings"] }) {
     const client = new QueryClient({
