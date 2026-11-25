@@ -1,0 +1,19 @@
+dev/specs/031-registered-adapters/quickstart-results.md
+  s_abb83ba5062cb4::t_feedfb40f33c85 3,301-566
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a61d82119a01172e9b045dabe0549f712a6b0301",
+  "prompts": {},
+  "sessions": {
+    "s_abb83ba5062cb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a7fa49f4e3c8d6c63",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
