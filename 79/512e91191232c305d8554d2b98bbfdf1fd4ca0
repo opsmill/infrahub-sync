@@ -1,0 +1,21 @@
+tests/adapters_parity/test_genericrestapi_project.py
+  s_a9719f961786d2::t_02feffa10d2c8d 469-471
+  s_a9719f961786d2::t_a7e7f1dcdf5ff2 1-468,475-476
+  s_a9719f961786d2::t_4cb28684007634 472-474
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79512e91191232c305d8554d2b98bbfdf1fd4ca0",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

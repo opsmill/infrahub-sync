@@ -1,0 +1,22 @@
+adapters/genericrestapi/tests/test_genericrestapi_peer_order.py
+  s_a9719f961786d2::t_5cfb46eeecf587 12-14
+  s_a9719f961786d2::t_8cc9c1541f4af9 1-11,15-62
+adapters/genericrestapi/tests/peer_order.py
+  s_a9719f961786d2::t_7774781bba2e87 1-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09b748e907d9cd62ed34856ce33f941325cb7e45",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

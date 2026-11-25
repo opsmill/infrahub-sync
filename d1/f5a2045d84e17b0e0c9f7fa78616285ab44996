@@ -1,0 +1,31 @@
+adapters/genericrestapi/infrahub_sync_genericrestapi/__init__.py
+  s_a9719f961786d2::t_c59aad018742aa 1-7
+adapters/genericrestapi/pyproject.toml
+  s_a9719f961786d2::t_e87c32042a6e6e 1-64,66-85
+  s_a9719f961786d2::t_11c5ce29e4732e 65
+changelog/+genericrestapi-adapter-project.housekeeping.md
+  s_a9719f961786d2::t_aac02cea96e294 1
+adapters/genericrestapi/infrahub_sync_genericrestapi/adapter.py
+  s_a9719f961786d2::t_6579a2dd97fb1b 15-17
+  s_a9719f961786d2::t_06fbb53e01fabb 1-14,18-209
+adapters/genericrestapi/infrahub-sync-adapter.json
+  s_a9719f961786d2::t_8701093f1f4c6b 1-66
+adapters/genericrestapi/uv.lock
+  s_a9719f961786d2::t_d895648f453809 1-1252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1f5a2045d84e17b0e0c9f7fa78616285ab44996",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
