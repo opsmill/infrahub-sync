@@ -1,0 +1,19 @@
+changelog/+ipfabricsync-adapter-project.housekeeping.md
+  s_a9719f961786d2::t_c7f03962364186 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28e7356538e8d8dca26f28bf3ecad20a0d0f7afc",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
