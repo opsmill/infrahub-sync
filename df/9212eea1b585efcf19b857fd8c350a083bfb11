@@ -1,0 +1,63 @@
+tests/product_store/test_receipt_kinds.py
+  s_a9719f961786d2::t_cebc08468a36bb 1-209,213-223
+  s_a9719f961786d2::t_2f208c5a39de6a 210-212
+infrahub_sync/product_store/adapter_versions.py
+  s_a9719f961786d2::t_38463341c50517 1-335
+tests/product_store/test_adapter_versions.py
+  s_a9719f961786d2::t_2f208c5a39de6a 624-629
+  s_a9719f961786d2::t_b795edff1a74a0 1-623,630-871,873
+  s_369f6318eebd6b::t_95c373ad2a12d6 872,874
+infrahub_sync/product_store/__init__.py
+  s_a9719f961786d2::t_2f208c5a39de6a 12-16,24-25,53,80-83,135-143,187
+infrahub_sync/product_store/store.py
+  s_a9719f961786d2::t_2f208c5a39de6a 9,36,51,58,62-63,89,112,119,290-303,305-309,439-442,444-445,450-451,455-456,470-474,477-478,1010-1034,1579-1610,5540-5616,5710-5724,5818-5855,5949-5965,7192-7338,8300-8335
+  s_a9719f961786d2::t_4c78afb901e4a2 8336-8337
+changelog/+adapter-version-store.housekeeping.md
+  s_369f6318eebd6b::t_fd755bb6be6aaa 1
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_369f6318eebd6b::t_8367c3a9bd9fca 204,206-214
+dev/specs/031-registered-adapters/data-model.md
+  s_369f6318eebd6b::t_c71cb9776248b8 38-43,134-135
+dev/specs/031-registered-adapters/tasks.md
+  s_369f6318eebd6b::t_e2d1cbcb227980 177,182,185,191,194,198,202
+docs/docs/reference/sync-http-api.mdx
+  s_369f6318eebd6b::t_be633c741bfeeb 1245
+frontend/src/api/types.generated.ts
+  s_369f6318eebd6b::t_c9b2dad228aff2 1758-1765
+infrahub_sync/client/models.py
+  s_369f6318eebd6b::t_b02ab74fe49b23 983-989
+infrahub_sync/product_store/models.py
+  s_369f6318eebd6b::t_7cde772d0e8af4 7,13-14,545-547,572,579-580,761-772,774,776-779,787,794-796,876-883,1181-1295
+infrahub_sync/service/events.py
+  s_369f6318eebd6b::t_6debc19c235963 27-28,34,246-313
+tests/client/test_models.py
+  s_369f6318eebd6b::t_b295fd81363bec 492-496
+tests/product_store/test_contract.py
+  s_369f6318eebd6b::t_ca3b0dca1d099d 87-95,139,381-392
+tests/service/test_adapter_events.py
+  s_369f6318eebd6b::t_ad00dc7534d135 1-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df9212eea1b585efcf19b857fd8c350a083bfb11",
+  "prompts": {},
+  "sessions": {
+    "s_369f6318eebd6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f37f8221-0ffa-48f9-8bd2-594af436ab33",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
