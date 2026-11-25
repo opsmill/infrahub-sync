@@ -1,0 +1,43 @@
+dev/specs/031-registered-adapters/tasks.md
+  s_44e15b14b3e37f::t_16b7c49bbece36 120
+infrahub_sync/adapter_files/declaration.py
+  s_44e15b14b3e37f::t_ff16765e6211a9 523-525,528
+infrahub_sync/configuration/__init__.py
+  s_44e15b14b3e37f::t_6a8389c65fa4c7 4,8-9,30,38-39
+infrahub_sync/configuration/capabilities.py
+  s_44e15b14b3e37f::t_0f19676a3c1a64 1
+tests/adapter_files/test_declaration.py
+  s_44e15b14b3e37f::t_1f1b56ff74bd9f 403,406-407
+tests/adapter_files/test_packaged_declarations.py
+  s_44e15b14b3e37f::t_3c99919ebd1c4e 1-9,20,29,33-34,51-184,206,218-222,228,231,233-244,246-248,252,254,260-263,268,274,276,280-296,300,303-305,312,314-317,319-320,328,332-347,407-411,414,416-420,422,424-428,432,434-439,441-443
+tests/configuration/test_adapter_setting_conformance.py
+  s_44e15b14b3e37f::t_4a222e21940468 10,15,130,132,159,164,171
+tests/configuration/test_block_credential.py
+  s_44e15b14b3e37f::t_3ef0065daf45c6 14,19,133,150
+tests/configuration/test_contracts.py
+  s_44e15b14b3e37f::t_0e5da10e4fcdad 49,1758-1760,1766,1769,1772
+tests/configuration/test_conversion.py
+  s_44e15b14b3e37f::t_0256e2f228cba1 36,99,108,116,392,1025
+tests/configuration/test_credential_field_map.py
+  s_44e15b14b3e37f::t_cc8085470b7176 9,17,60,62,69,72-75
+tests/configuration/test_validation_core.py
+  s_44e15b14b3e37f::t_d2d4faf6f2977a 184
+tests/declaration_sources.py
+  s_44e15b14b3e37f::t_734425206df9b2 17,28-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af2958eaea5dd3f5d19cdecba1942fe8db339be9",
+  "prompts": {},
+  "sessions": {
+    "s_44e15b14b3e37f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-03b-4959b7f828db71b0",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
