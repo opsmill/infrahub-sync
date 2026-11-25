@@ -1,0 +1,21 @@
+infrahub_sync/adapter_files/loading.py
+  s_abb83ba5062cb4::t_d91983d64d7d16 54,279,305,307,310,341-354,492-496,512-516
+tests/adapter_files/test_loading.py
+  s_abb83ba5062cb4::t_ab60be66a1e98c 23,50-52,543-566
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0c09ef960c0c3b97714bfc5d573e625fb7c180f5",
+  "prompts": {},
+  "sessions": {
+    "s_abb83ba5062cb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a7fa49f4e3c8d6c63",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
