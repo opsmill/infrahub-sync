@@ -1,0 +1,31 @@
+tasks/dev.py
+  s_a9719f961786d2::t_fa568c23d441a4 51-53,160-163,165-167,646-647,650,653,674-676,683
+.dockerignore
+  s_abb83ba5062cb4::t_5f04a48d6ae768 34-36
+tests/dev_stack/test_build_inputs.py
+  s_abb83ba5062cb4::t_972b8dd578762f 3-4,84-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37bd5106916af10a374196b58ebfce6acc0bcd83",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_abb83ba5062cb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a7fa49f4e3c8d6c63",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

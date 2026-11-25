@@ -1,0 +1,19 @@
+tests/image/conftest.py
+  s_abb83ba5062cb4::t_4cf0dfbc426db5 52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5253207e268569ab47153f1df9af9c9cc0f4cd6",
+  "prompts": {},
+  "sessions": {
+    "s_abb83ba5062cb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a7fa49f4e3c8d6c63",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
