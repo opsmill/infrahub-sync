@@ -1,0 +1,59 @@
+infrahub_sync/cli.py
+  s_7420da2d371710::t_eba50d753c09c0 100,686-691,699-701,728,745-746,1273-1277,2560-2562
+infrahub_sync/client/__init__.py
+  s_7420da2d371710::t_54d755a5ea8e7b 81,178
+infrahub_sync/client/models.py
+  s_7420da2d371710::t_1d22819938e84b 495-506,545-547,933-936,946
+changelog/+runs-load-registered-adapters.added.md
+  s_7420da2d371710::t_0a296293357e11 1
+dev/specs/031-registered-adapters/data-model.md
+  s_7420da2d371710::t_ca6bcb5978aea4 127-131,141-143
+dev/specs/031-registered-adapters/tasks.md
+  s_7420da2d371710::t_ae093798539b5e 294
+docs/docs/development/knowledge/repository-tour.md
+  s_7420da2d371710::t_08123d58ade663 274-285
+docs/docs/reference/cli.mdx
+  s_7420da2d371710::t_d0d7fc3c8c7ef2 653-655
+docs/docs/reference/sync-http-api.mdx
+  s_7420da2d371710::t_cb772345dd90cf 501-562,1567-1569,1591-1593
+frontend/src/api/types.generated.ts
+  s_7420da2d371710::t_2a1e74028b84b3 1358,2603,2707-2723,2837-2840,2867
+infrahub_sync/adapter_files/loading.py
+  s_7420da2d371710::t_e8174886a81b23 26-28,88,227-228,306-313
+infrahub_sync/product_store/__init__.py
+  s_7420da2d371710::t_e23dbec576c216 76
+infrahub_sync/product_store/adapter_versions.py
+  s_7420da2d371710::t_a0efd953e5b59e 44,351
+infrahub_sync/product_store/run_adapter_uses.py
+  s_7420da2d371710::t_08be97d1e532c0 1-125
+infrahub_sync/product_store/store.py
+  s_7420da2d371710::t_72833fc664ed4e 44,137,1698,1702-1703,5957-5958,5960,5973-5983,7776-7777,7781-7783,7785,7793-7796
+infrahub_sync/service/models.py
+  s_7420da2d371710::t_be13aac02158db 53,74,242-246,248-252,259-260,268-269,275-278,287,290,294-299
+infrahub_sync/service/service.py
+  s_7420da2d371710::t_a9f1077a3f236c 107,1761-1763,2405-2406,2408,2421
+tests/adapter_files/test_loading.py
+  s_7420da2d371710::t_da610d07c83994 189-210
+tests/cli/test_client_commands.py
+  s_7420da2d371710::t_67c04c16f7bb3f 59,76,3472-3540
+tests/product_store/test_configuration_adapters.py
+  s_7420da2d371710::t_a646092a53e17b 166,168,173-174
+tests/service/test_http_api.py
+  s_7420da2d371710::t_ac9071eb30429c 1179-1180,3037-3056
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62e23bd51abac4473d31eafc347c7e583052b30d",
+  "prompts": {},
+  "sessions": {
+    "s_7420da2d371710": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-06b-4e102bd3c73520bd",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
