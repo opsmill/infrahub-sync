@@ -1,0 +1,23 @@
+frontend/src/features/credentials/CredentialsPage.tsx
+  s_369f6318eebd6b::t_8eacd7faaf4de3 18,92,111,116
+frontend/src/features/credentials/fields.test.ts
+  s_369f6318eebd6b::t_2b5609a6e7d895 5-12,113-134
+frontend/src/features/credentials/fields.ts
+  s_369f6318eebd6b::t_3280b72d94e132 56-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f5ca1056c10dee7ce37bd5e8b2efba3562fd50d0",
+  "prompts": {},
+  "sessions": {
+    "s_369f6318eebd6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f37f8221-0ffa-48f9-8bd2-594af436ab33",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
