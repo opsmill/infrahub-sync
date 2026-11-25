@@ -1,0 +1,36 @@
+adapters/prometheus/infrahub_sync_prometheus/__init__.py
+  s_a9719f961786d2::t_60b692b71a3ef2 1-5
+adapters/prometheus/infrahub_sync_prometheus/adapter.py
+  s_a9719f961786d2::t_511ba7e635164e 1-535
+adapters/prometheus/pyproject.toml
+  s_a9719f961786d2::t_35f324f05479ca 1-62,64,71,73-91
+  s_a9719f961786d2::t_c198d48636d926 63,65-70,72
+adapters/prometheus/infrahub-sync-adapter.json
+  s_a9719f961786d2::t_efe0ad4051cae1 1-54
+adapters/prometheus/uv.lock
+  s_c6b2d55227ef1a::t_389f98f750246f 1-1265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "750a24152ee3dbd443a8f1e41f3c4910371f8bd9",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_c6b2d55227ef1a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a845fd85e560b360a",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
