@@ -1,0 +1,39 @@
+adapters/ipfabricsync/infrahub-sync-adapter.json
+  s_a9719f961786d2::t_640c3f2b5685ab 1-34
+adapters/ipfabricsync/pyproject.toml
+  s_a9719f961786d2::t_cdff251db7454f 72-82
+  s_a9719f961786d2::t_3b1405eefd45db 43-48
+  s_a9719f961786d2::t_68dc8dc820f929 1-21,25-42,49-71,83-97,101,104-122
+  s_a9719f961786d2::t_b4d73aa1871654 22-24
+  s_a9719f961786d2::t_d7d11ea1eb585f 98-100,102-103
+adapters/ipfabricsync/infrahub_sync_ipfabricsync/adapter.py
+  s_a9719f961786d2::t_fdc815f70dc820 1-145
+adapters/ipfabricsync/infrahub_sync_ipfabricsync/__init__.py
+  s_a9719f961786d2::t_b50ff00cf6d50c 1-7
+adapters/ipfabricsync/uv.lock
+  s_1c8ebf85dd1ee6::t_7d145d456ec419 1-1786
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b1568c51e6b1b2327778adfec447e089b2cf89ac",
+  "prompts": {},
+  "sessions": {
+    "s_1c8ebf85dd1ee6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abaa5426cb5d168cc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
