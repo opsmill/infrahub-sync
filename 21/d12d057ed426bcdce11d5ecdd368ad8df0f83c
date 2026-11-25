@@ -1,0 +1,47 @@
+infrahub_sync/adapter_files/image.py
+  s_a9719f961786d2::t_cd08c88fedf974 50,81,101-102,130-134
+  s_a9719f961786d2::t_8c140eda799c00 1-49,51-80,82-100,103-129,135-168
+infrahub_sync/adapter_files/names.py
+  s_a9719f961786d2::t_cd08c88fedf974 1,3-10,16-17,20-23,26,28-30,72-151
+tests/adapter_files/test_image.py
+  s_a9719f961786d2::t_36866cefcbb23e 1-116,118-169,171,173-174,176-294
+  s_a9719f961786d2::t_1a4cabc4c41053 117
+  s_a9719f961786d2::t_65b554b764f4c1 170
+  s_a9719f961786d2::t_03093dbe267aeb 172
+  s_a9719f961786d2::t_e573b46a08cca9 175
+dev/specs/031-registered-adapters/contracts/adapter-file.md
+  s_a9719f961786d2::t_10c0be486ddb46 252-281
+  s_a9719f961786d2::t_5dba5340e52900 282-284
+infrahub_sync/adapter_files/build.py
+  s_a9719f961786d2::t_0f283170586bb8 190,194,216-217,625,634-637,650
+adapters/release-lock.json
+  s_62e4e1d7fb71b0::t_5b3ef40f0c254c 1-3
+infrahub_sync/image_adapters.json
+  s_62e4e1d7fb71b0::t_071821d84235e5 1-3
+tasks/adapters.py
+  s_62e4e1d7fb71b0::t_ade9da9ba4361b 1,8-12,29-30,32,37-38,154-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "21d12d057ed426bcdce11d5ecdd368ad8df0f83c",
+  "prompts": {},
+  "sessions": {
+    "s_62e4e1d7fb71b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8226840d9a21177d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
