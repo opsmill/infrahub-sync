@@ -1,0 +1,23 @@
+adapters/nautobot/tests/peer_order.py
+  s_a9719f961786d2::t_5e11fb2675b689 1-115
+adapters/nautobot/tests/test_nautobot_incremental.py
+  s_a9719f961786d2::t_131222a6b048d7 1-440
+adapters/nautobot/tests/test_nautobot_peer_order.py
+  s_a9719f961786d2::t_5caa3013e09bae 1-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "259b9a7f6702238ec6bf5a1344ba780bbe0482c9",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
