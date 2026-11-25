@@ -1,0 +1,21 @@
+adapters/aci/tests/test_aci_reference_conversion.py
+  s_c8280637ad10b2::t_01c4c567de4304 1-136
+adapters/aci/tests/test_aci_verify_precedence.py
+  s_c8280637ad10b2::t_261a40334c7c28 1-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2d6cb0039a57cb5dbdfc427b421c888f42c4e30",
+  "prompts": {},
+  "sessions": {
+    "s_c8280637ad10b2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa049bb49dc2d3f39",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
