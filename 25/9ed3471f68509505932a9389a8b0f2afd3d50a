@@ -1,0 +1,54 @@
+tests/adapters_parity/__init__.py
+  s_a9719f961786d2::t_3aae9245aeb2f4 1
+docs/docs/development/guidelines/testing-tiers.md
+  s_a9719f961786d2::t_28639a13705b12 81
+  s_a9719f961786d2::t_95c3c3db489098 47,50
+tests/adapters_parity/test_netbox_project.py
+  s_a9719f961786d2::t_dd214649cfde4b 1-477
+  s_a9719f961786d2::t_61d8f41503ce05 478-480
+  s_55512ec0cdc566::t_af906d43e31e8f 481-486
+tests/adapters_parity/harness.py
+  s_a9719f961786d2::t_0416621e078f7b 1-304,306
+  s_a9719f961786d2::t_45571110418beb 305
+  s_a9719f961786d2::t_3eac9a85a71f83 307-308
+.yamllint.yml
+  s_bd54f87017226e::t_654416efffe364 6-7
+pyproject.toml
+  s_bd54f87017226e::t_47194bad0862f2 277,463-466
+tasks/tests.py
+  s_bd54f87017226e::t_0f4279b863e953 28,34
+tests/test_unit_tier.py
+  s_bd54f87017226e::t_d0e68b4b8a295e 100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "259ed3471f68509505932a9389a8b0f2afd3d50a",
+  "prompts": {},
+  "sessions": {
+    "s_55512ec0cdc566": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-06a-5077ba0e3e65d53c",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_bd54f87017226e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad173e3a93c1966e8",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

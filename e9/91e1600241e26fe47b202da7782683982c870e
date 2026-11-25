@@ -1,0 +1,27 @@
+adapters/netbox/uv.lock
+  s_a9719f961786d2::t_daac3dbb8e2072 1-1266
+adapters/netbox/infrahub-sync-adapter.json
+  s_a9719f961786d2::t_2a67956725a9b9 1-36
+adapters/netbox/infrahub_sync_netbox/__init__.py
+  s_a9719f961786d2::t_45d955f45a28b0 1-7
+adapters/netbox/infrahub_sync_netbox/adapter.py
+  s_a9719f961786d2::t_fa23b9b1b45d3f 1-184
+adapters/netbox/pyproject.toml
+  s_a9719f961786d2::t_ef2fda0b2f64c2 1-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e991e1600241e26fe47b202da7782683982c870e",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

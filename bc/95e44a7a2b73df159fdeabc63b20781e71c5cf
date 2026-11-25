@@ -1,0 +1,23 @@
+adapters/README.md
+  s_bd54f87017226e::t_badc6e25bed946 139-140,143-151,211-218
+tests/adapters_parity/harness.py
+  s_bd54f87017226e::t_758ddb124efad6 87-88,91-93,95-96,99-102,105-107,109,112-119
+tests/adapters_parity/test_netbox_project.py
+  s_bd54f87017226e::t_49e08f2b41843c 109,114-115,120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc95e44a7a2b73df159fdeabc63b20781e71c5cf",
+  "prompts": {},
+  "sessions": {
+    "s_bd54f87017226e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad173e3a93c1966e8",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
