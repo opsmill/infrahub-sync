@@ -1,0 +1,27 @@
+frontend/src/features/configurations/CredentialRefusal.tsx
+  s_369f6318eebd6b::t_c8a56ba6f37185 11,15,40-41,127
+frontend/src/features/configurations/PackageReview.test.tsx
+  s_369f6318eebd6b::t_9d63797bc75f2c 1-175
+frontend/src/features/configurations/PackageReview.tsx
+  s_369f6318eebd6b::t_554c2242e8aeae 688
+frontend/src/features/configurations/package-review.test.ts
+  s_369f6318eebd6b::t_0df3940e38c85f 7,12,265-310
+frontend/src/features/configurations/package-review.ts
+  s_369f6318eebd6b::t_33271a52eb6873 130-137,140-162,180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8fd8cd174ce7de284731be6b9526fc8de57f7629",
+  "prompts": {},
+  "sessions": {
+    "s_369f6318eebd6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f37f8221-0ffa-48f9-8bd2-594af436ab33",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
