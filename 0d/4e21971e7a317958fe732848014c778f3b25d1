@@ -1,0 +1,67 @@
+examples/msgraphsync_to_infrahub/schema.yml
+  s_a9719f961786d2::t_6123772c88ad31 1-66
+examples/msgraphsync_to_infrahub/config.yml
+  s_a9719f961786d2::t_6123772c88ad31 1,6,10-23,25-32,37-123
+  s_a9719f961786d2::t_d767a3f29a5375 2-5
+  s_a9719f961786d2::t_87199bafac8918 7-9
+  s_a9719f961786d2::t_ec206e40900bef 24
+  s_a9719f961786d2::t_42982504ae9f2b 33-36
+docs/docs/adapters/msgraphsync.mdx
+  s_a9719f961786d2::t_6123772c88ad31 1-37,39-40,42-43,45-59,61-76,78-83,86-132,134,136,138,141-148,150-154,159-166,168-289,291,293-305,308-388,390-394,396-397,400-409,411,413-427,429-532
+  s_a9719f961786d2::t_c0b9226aa99ae9 38
+  s_a9719f961786d2::t_954c6d77c74686 41
+  s_a9719f961786d2::t_fc8f20d5d2acaa 44
+  s_a9719f961786d2::t_ef25708cbd3240 60
+  s_a9719f961786d2::t_e8c9fa9410488a 77
+  s_a9719f961786d2::t_5d13428fab0ee4 84-85
+  s_a9719f961786d2::t_ee346430bc7792 133
+  s_a9719f961786d2::t_c99f735f64e716 135
+  s_a9719f961786d2::t_902e42e8389a78 137
+  s_a9719f961786d2::t_4c28d6e652a37f 139-140
+  s_a9719f961786d2::t_1c02f4b475c6ca 149
+  s_a9719f961786d2::t_2ee2b48c096d8c 155-158
+  s_a9719f961786d2::t_9e9356e4ded458 167
+  s_a9719f961786d2::t_d9a889f08ca5c7 290
+  s_a9719f961786d2::t_23d8455217e350 292
+  s_a9719f961786d2::t_ca73948eb01d45 306-307
+  s_a9719f961786d2::t_d1812611aa1616 389
+  s_a9719f961786d2::t_7fcf49c20abdbf 395
+  s_a9719f961786d2::t_1e04eae92a9a4d 398-399
+  s_a9719f961786d2::t_c3a111aecbbaea 410
+  s_a9719f961786d2::t_4101aee49fd7fa 412
+  s_a9719f961786d2::t_a7d6a520fa1cd3 428
+adapters/msgraphsync/README.md
+  s_e247445b62e3d1::t_f273c125e0b816 52-53,72,88-100
+changelog/+msgraphsync-adapter-project.housekeeping.md
+  s_e247445b62e3d1::t_3ffffa07b3430f 1
+docs/sidebars.ts
+  s_e247445b62e3d1::t_bb5b5a3d927fdc 63
+examples/msgraphsync_to_infrahub/README.md
+  s_e247445b62e3d1::t_56618d745d2522 1-38
+tests/adapters_parity/test_msgraphsync_project.py
+  s_a9719f961786d2::t_7d04030eb19388 35,54,57,89-93,336,356-362,430-495,634,936-940
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d4e21971e7a317958fe732848014c778f3b25d1",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e247445b62e3d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad1853ba750005913",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
