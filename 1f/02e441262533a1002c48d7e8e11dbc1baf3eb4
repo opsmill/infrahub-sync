@@ -1,0 +1,31 @@
+adapters/README.md
+  s_a9719f961786d2::t_b9659a68312232 1-257
+  s_a9719f961786d2::t_fd654b652bd23e 258-260
+  s_bd54f87017226e::t_ae1b674decb2f9 261-263
+changelog/+netbox-adapter-project.housekeeping.md
+  s_bd54f87017226e::t_0736dc11b83b78 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f02e441262533a1002c48d7e8e11dbc1baf3eb4",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_bd54f87017226e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad173e3a93c1966e8",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
