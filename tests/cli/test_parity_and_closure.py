@@ -446,3 +446,63 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
         "infrahub-token",
     )
     assert not [token for token in required if token not in text]
+
+
+# The web interface manages stored credentials through the same routes as the CLI and the shared
+# client. Each row is a credential operation of CLI_CLIENT_PARITY, the request in
+# `frontend/src/api` that sends it, without whitespace, and the export that the Credentials page
+# uses. The page views one credential in its row of the list, so `credentials show` has the row
+# of `GET /credentials`.
+WEB_CREDENTIAL_PARITY = (
+    ("credentials list", "GET /credentials", 'fetchClient.GET("/credentials",', "credentialsQuery"),
+    ("credentials show NAME", "GET /credentials", 'fetchClient.GET("/credentials",', "credentialsQuery"),
+    ("credentials create NAME", "POST /credentials", 'fetchClient.POST("/credentials",', "createCredential"),
+    (
+        "credentials set NAME",
+        "PUT /credentials/{name}/value",
+        'fetchClient.PUT("/credentials/{name}/value",',
+        "setCredentialValue",
+    ),
+    (
+        "credentials describe NAME TEXT",
+        "PATCH /credentials/{name}",
+        '$api.useMutation("patch","/credentials/{name}"',
+        "useDescribeCredential",
+    ),
+    (
+        "credentials delete NAME",
+        "DELETE /credentials/{name}",
+        '$api.useMutation("delete","/credentials/{name}"',
+        "useDeleteCredential",
+    ),
+)
+_FRONTEND_SOURCE = ROOT / "frontend" / "src"
+_GENERATED_FRONTEND_TYPES = "types.generated.ts"
+
+
+def _frontend_sources(*parts: str) -> str:
+    """Return the hand-written TypeScript under one directory of the web interface, without whitespace."""
+    files = sorted(path for pattern in ("*.ts", "*.tsx") for path in _FRONTEND_SOURCE.joinpath(*parts).rglob(pattern))
+    texts = (path.read_text(encoding="utf-8") for path in files if path.name != _GENERATED_FRONTEND_TYPES)
+    return "".join("".join(text.split()) for text in texts)
+
+
+def test_the_web_interface_matrix_holds_every_credential_command() -> None:
+    commands = [row[0] for row in CLI_CLIENT_PARITY if row[0].startswith("credentials ")]
+
+    assert [row[0] for row in WEB_CREDENTIAL_PARITY] == commands
+
+
+@pytest.mark.parametrize(("command", "operation", "sent", "export"), WEB_CREDENTIAL_PARITY)
+def test_the_web_interface_sends_each_credential_operation_and_the_page_uses_it(
+    command: str, operation: str, sent: str, export: str
+) -> None:
+    del command, operation  # They name the row in the test identifier.
+
+    assert sent in _frontend_sources("api")
+    assert f"{export}(" in _frontend_sources("features", "credentials")
+
+
+def test_the_web_interface_never_asks_for_a_credential_value() -> None:
+    """Only the `worker` account reads values, on the worker routes; no page calls them."""
+    assert '"/worker/' not in _frontend_sources()

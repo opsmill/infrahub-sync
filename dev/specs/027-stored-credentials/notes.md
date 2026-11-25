@@ -195,13 +195,39 @@ rejected version below names the cost that the tables above record for it.
 
 ## Follow-up of spec 025: the drop-area offer (T078)
 
-Spec 025 is not merged on the base of this branch: `dev/specs/` has no `025` directory and
-`frontend/src` has no drop area. The offer of contracts/web-interface.md is therefore a follow-up
-of spec 025. When the drop area exists, for each `credential-not-found` finding:
+When spec 027 was implemented, spec 025 was not merged on the base of its branch, so the offer
+of contracts/web-interface.md was recorded here as a follow-up. The drop area and the package
+review exist on `feature/v3-develop` now, and the offer is built as the next section describes.
 
-- an administrator views "Create credential `<name>`", which opens the create form of the
-  Credentials page with the name filled in;
-- another account views "Ask an administrator to create the credential `<name>`."
+### Built: the refused registration in the package review
 
-`credentialFindings` in `frontend/src/api/queries.ts` already reads the findings from a refused
-registration.
+Decided on 2026-11-25 by the maintainer, from a prototype with two versions at
+`/proto/credential-refusal.html`. The prototype is deleted.
+
+- Chosen: "In the refusal". The notice next to "Register" lists each refused block with the name
+  of the stored credential, the reason, and what the signed-in account can do.
+    - `credential-not-found`: "`<name>` does not exist. The block needs `<fields>`."
+    - `credential-field-missing`: "`<name>` lacks `<fields>`."
+    - An administrator views "Create credential `<name>`" or "Change the value of `<name>`". The
+      link opens the Credentials page in a new tab with the form open
+      (`/credentials?new=<name>` or `/credentials?value=<name>`), so the package stays open.
+    - Another account views "Ask an administrator to create the credential `<name>`." or
+      "Ask an administrator to change the value of the credential `<name>`."
+    - The notice reads the stored credentials again while it is open. A finding whose credential
+      exists with every field shows "Exists now" or "Holds the field now".
+- Rejected: "In the credentials list", where the "Stored credentials" section of the review
+  holds the reason and the link for each block, and the notice next to "Register" is one sentence
+  that points to that section. Reason not given by the maintainer. Its cost in the prototype: the
+  remedy is away from the "Register" button that the user pressed.
+- The check that runs before registration reports the same two codes as findings and disables
+  "Register", so the refusal above appears only when, between the check and the registration, a
+  credential is deleted or its value is replaced by one that lacks a field the block needs.
+  Each of these findings of the check therefore shows the same link or the same sentence under
+  its message.
+- While such a finding is shown, the review reads the stored credentials again, at the interval
+  of the Credentials page and when the tab gets the focus back. When the credential of a finding
+  is created, deleted or gets a new revision, the review runs the check again by itself. The
+  notice of the findings keeps a "Validate again" button for a change that this does not detect.
+  This part was not in the prototype, and the maintainer has not reviewed it.
+- Code: `frontend/src/features/configurations/CredentialRefusal.tsx`, with the text in
+  `frontend/src/features/configurations/package-review.ts`.

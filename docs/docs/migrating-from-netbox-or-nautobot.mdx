@@ -51,9 +51,10 @@ stored credential in its source block too.
 
 ## Phase 2 — Build the sync project
 
-Create a configuration package file (for example `package.yml`) with `format_version`,
-a `configuration` object, and a `credentials` block; see
-[Configuration package](./configuration-package.mdx). The `configuration` object defines
+Create a configuration package file (for example `package.yml`) with `format_version`
+and a `configuration` object; see
+[Configuration package](./configuration-package.mdx). The package holds no credential value:
+each block that uses authentication names a [stored credential](./guides/credentials.mdx) with `credential: <name>`. The `configuration` object defines
 the source (NetBox or Nautobot), the destination (Infrahub), and the per-model schema
 mapping.
 

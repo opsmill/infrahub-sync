@@ -661,7 +661,7 @@ def test_a_failed_netbox_probe_does_not_stop_the_settings(
 
     assert settings.preset.name == "infrahub"
     assert not settings.netbox_credential
-    assert "the worker gets no NetBox credential by default" in capsys.readouterr().out
+    assert "no NetBox credential is stored by default" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("task_object", [dev.dev_stop, dev.dev_destroy, dev.dev_logs])

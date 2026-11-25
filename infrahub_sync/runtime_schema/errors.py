@@ -33,7 +33,8 @@ _REASON_TEXT: MappingProxyType[str, tuple[str, str]] = MappingProxyType(
         ),
         "unauthorized": (
             "Infrahub refused the destination token while Sync read the schema for branch `{branch}`.",
-            "Check the credential that the destination `token` setting references, then start the run again.",
+            "Check the value of the stored credential that the destination names with `credential`, "
+            "then start the run again.",
         ),
         "forbidden": (
             "The account of the destination token cannot read the schema for branch `{branch}`.",
@@ -41,8 +42,8 @@ _REASON_TEXT: MappingProxyType[str, tuple[str, str]] = MappingProxyType(
         ),
         "credentials": (
             "Sync could not resolve the destination token credential to read the schema for branch `{branch}`.",
-            "Make the credential that the destination `token` setting references available to the Sync "
-            "worker, then start the run again.",
+            "Check that the stored credential that the destination names with `credential` exists and "
+            "holds a token, then start the run again.",
         ),
         "unconfigured": (
             "The destination settings cannot configure an Infrahub client to read the schema for branch `{branch}`.",

@@ -1,5 +1,6 @@
 import { Button, Card, Menu, MenuItem, MenuTrigger, Popover } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
@@ -14,6 +15,7 @@ import { CredentialRowDelete } from "./CredentialDelete";
 import { CredentialRowForm, DescribeCredentialDialog } from "./CredentialForm";
 import {
   type CredentialOrder,
+  changedSinceCreation,
   countBySet,
   FIELD_SETS,
   type FieldSetId,
@@ -87,6 +89,7 @@ function CredentialRow({
   now: number;
   actions: ReactNode;
 }) {
+  const changed = changedSinceCreation(credential);
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 px-4 py-3 text-sm">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -104,11 +107,22 @@ function CredentialRow({
         </p>
         <p className="text-subtle text-xs">
           {fieldsLabel(credential.fields)} ·{" "}
-          <span className="tabular-nums">revision {credential.revision}</span> · changed{" "}
+          <span className="tabular-nums">revision {credential.revision}</span> ·{" "}
+          {changed ? "changed" : "created"}{" "}
           <time dateTime={credential.updated_at} title={credential.updated_at}>
             {formatRelative(credential.updated_at, now)}
           </time>{" "}
           by <span className="[overflow-wrap:anywhere]">{credential.updated_by}</span>
+          {changed && (
+            <>
+              {" "}
+              · created{" "}
+              <time dateTime={credential.created_at} title={credential.created_at}>
+                {formatRelative(credential.created_at, now)}
+              </time>{" "}
+              by <span className="[overflow-wrap:anywhere]">{credential.created_by}</span>
+            </>
+          )}
         </p>
       </div>
       {actions}
@@ -233,12 +247,24 @@ export function CredentialsPage() {
   const administrator = me.data?.administrator === true;
   const headingRef = useRef<HTMLHeadingElement>(null);
   const createRef = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState<Open>();
+  // A link from a refused registration opens the form for the credential it names.
+  const search = useSearch({ from: "/credentials" });
+  const navigate = useNavigate();
+  const [open, setOpen] = useState<Open | undefined>(() =>
+    search.new
+      ? { action: "create" }
+      : search.value
+        ? { action: "value", name: search.value }
+        : undefined
+  );
   const [deleted, setDeleted] = useState<string>();
 
   /** Closes what is open and returns focus to the control that opened it. */
   function close(name?: string) {
     setOpen(undefined);
+    // The name from the link serves one form: the next "New credential" starts empty.
+    if (search.new || search.value)
+      void navigate({ to: "/credentials", search: {}, replace: true });
     requestAnimationFrame(() => {
       const trigger = name
         ? document.querySelector<HTMLElement>(`[data-credential-actions="${CSS.escape(name)}"]`)
@@ -256,7 +282,10 @@ export function CredentialsPage() {
   let slot: { at: string | null; node: ReactNode } | undefined;
   let dialog: ReactNode = null;
   if (canOpen && open?.action === "create") {
-    slot = { at: null, node: <CredentialRowForm onClose={() => close()} /> };
+    slot = {
+      at: null,
+      node: <CredentialRowForm initialName={search.new} onClose={() => close()} />,
+    };
   } else if (canOpen && target && open?.action === "value") {
     slot = {
       at: target.name,

@@ -14,11 +14,13 @@ import {
   configQuery,
   configsNamedQuery,
   configVersionQuery,
+  credentialFindings,
   meQuery,
   newestVersionQuery,
 } from "#/api/queries";
 import type {
   ConfigMutationRequest,
+  DeclaredContent,
   PackageCheck,
   RegisteredConfiguration,
   RegisteredVersion,
@@ -32,12 +34,18 @@ import { plural } from "#/domain/run-state";
 import { describeSystem } from "#/domain/systems";
 import { DialogFrame, Field, INPUT, MutationError, ReasonField } from "#/features/runs/form";
 
+import {
+  CheckedCredentialRemedy,
+  CredentialRefusal,
+  useRecheckOnCredentialChange,
+} from "./CredentialRefusal";
 import { MappingList } from "./detail-mapping";
 import { MappingDetail } from "./detail-mapping-panel";
 import { PackageDropArea } from "./PackageDropArea";
 import {
   blockCredentials,
   blockingNamesake,
+  checkedCredential,
   declaredContent,
   defaultBranch,
   isAbort,
@@ -213,6 +221,7 @@ export function PackageReview({
     enabled: !!packageName && (isNew || renames),
   });
   const refusedName = nameInUseOf(create.error);
+  const refusedCredentials = credentialFindings(create.error);
   const nameInUse: NameInUse | undefined = blockingNamesake({
     refused: refusedName,
     namesakes: namesake.data?.items,
@@ -237,6 +246,12 @@ export function PackageReview({
       check.isIdle ||
       kind === "unchecked" ||
       (checkedBranch !== null && effectiveBranch !== checkedBranch));
+  useRecheckOnCredentialChange({
+    findings: check.data?.findings,
+    content,
+    paused: validating || sent !== undefined,
+    onRecheck: () => runCheckRef.current(checkedBranch ?? effectiveBranch),
+  });
   const comparisonReady = compared === null || (compared !== undefined && base.data !== undefined);
   /** The configuration or its newest version could not be read, so nothing can be compared. */
   const comparisonFailed = (!isNew && config.isError) || base.isError;
@@ -413,6 +428,8 @@ export function PackageReview({
       </Notice>
     ) : isAdministratorRefusal(create.error) ? (
       <Notice tone="danger" role="alert" title={`${MESSAGES.administratorRequired}.`} />
+    ) : refusedCredentials.length > 0 ? (
+      <CredentialRefusal error={create.error} findings={refusedCredentials} />
     ) : (
       <MutationError error={create.error} />
     )
@@ -582,6 +599,7 @@ export function PackageReview({
 
           <ValidationResult
             check={check.data}
+            content={content}
             kind={kind}
             branch={effectiveBranch}
             validating={validating}
@@ -677,8 +695,9 @@ function CheckFailed({ onRetry, locked = false }: { onRetry: () => void; locked?
 }
 
 /** The result of the latest check, or that it is still running. */
-function ValidationResult({
+export function ValidationResult({
   check,
+  content,
   kind,
   branch,
   validating,
@@ -688,6 +707,8 @@ function ValidationResult({
   onRetry,
 }: {
   check?: PackageCheck;
+  /** The package of the check, which gives the name of the stored credential of a finding. */
+  content?: DeclaredContent;
   kind?: ReturnType<typeof resultKind>;
   branch: string;
   validating: boolean;
@@ -736,13 +757,23 @@ function ValidationResult({
   }
   if (kind !== "findings") return null;
   const more = moreFindingsText(check);
+  // A stored credential can be created or changed while the package stays open; the check then
+  // has to run again before Register is enabled.
+  const aboutCredentials = check.findings.some((f) => checkedCredential(f, content));
   return (
     <Notice
       tone="danger"
       role="status"
       title={`${plural(check.total_findings, "finding", "findings")} against branch ${branch}`}
+      action={
+        aboutCredentials && !locked ? (
+          <Button size="xs" variant="ghost" className="-my-1" onPress={onRetry}>
+            Validate again
+          </Button>
+        ) : undefined
+      }
     >
-      <FindingList findings={check.findings} />
+      <FindingList findings={check.findings} content={content} />
       {more && (
         <p>
           <InlineCode text={more} />
@@ -753,15 +784,29 @@ function ValidationResult({
 }
 
 /** One line per finding: its severity when it is a warning, its location and its message. */
-function FindingList({ findings }: { findings: readonly ValidationFinding[] }) {
+function FindingList({
+  findings,
+  content,
+}: {
+  findings: readonly ValidationFinding[];
+  content?: DeclaredContent;
+}) {
   return (
     <ul className="flex flex-col gap-1">
-      {findings.map((f) => (
-        <li key={`${f.code}:${f.location}:${f.message}`} className="[overflow-wrap:anywhere]">
-          {f.severity === "warning" && <span className="font-medium">Warning: </span>}
-          {f.location && <code className={CODE_CHIP}>{f.location}</code>} {f.message}
-        </li>
-      ))}
+      {findings.map((f) => {
+        const credential = checkedCredential(f, content);
+        return (
+          <li key={`${f.code}:${f.location}:${f.message}`} className="[overflow-wrap:anywhere]">
+            {f.severity === "warning" && <span className="font-medium">Warning: </span>}
+            {f.location && <code className={CODE_CHIP}>{f.location}</code>} {f.message}
+            {credential && (
+              <div>
+                <CheckedCredentialRemedy finding={credential} />
+              </div>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }

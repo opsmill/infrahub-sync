@@ -7,8 +7,10 @@ import TabItem from '@theme/TabItem';
 
 The `configuration` object of a [configuration package](../configuration-package.mdx)
 defines the source, the destination, and the mappings of one sync. A package also has an
-optional `format_version` (only `1`, the default) and an optional `credentials` block. For
-a complete package, see `examples/netbox_to_infrahub/package.yml`.
+optional `format_version` (only `1`, the default). A package holds no credential value: each
+block that uses authentication names a
+[stored credential](../guides/credentials.mdx) with `credential: <name>`. For a complete
+package, see `examples/netbox_to_infrahub/package.yml`.
 
 Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
 Run commands then select it by its configuration ID and registry version. The service

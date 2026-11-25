@@ -104,6 +104,107 @@ export function blockCredentials(content: DeclaredContent): BlockCredential[] {
   return named;
 }
 
+/** One block of a registration that the Sync API refused for the stored credential it names. */
+export interface RefusedCredential {
+  block: string;
+  name: string;
+  code: string;
+  /** Every field the block needs (credential not found), or the fields the credential lacks. */
+  fields: readonly string[];
+}
+
+/** "Source" or "Destination"; any other block as the Sync API names it. */
+export function refusedBlockLabel(block: string): string {
+  if (block === "source") return "Source";
+  if (block === "destination") return "Destination";
+  return block;
+}
+
+const neededFields = (fields: readonly string[]) =>
+  fields.map((field) => `a ${field}`).join(" and ") || "a value";
+
+/** Whether the refusal says that the stored credential does not exist. */
+export const refusedForMissingCredential = (finding: RefusedCredential) =>
+  finding.code === "credential-not-found";
+
+/**
+ * Whether creating the stored credential or changing its value answers the finding. It does not
+ * for `credential-method-unknown`, where the package sets an `auth_method` that the adapter of
+ * the block does not accept, nor for a code this page does not know.
+ */
+export const refusedCredentialHasRemedy = (finding: RefusedCredential) =>
+  finding.code === "credential-not-found" || finding.code === "credential-field-missing";
+
+/** What is wrong with the stored credential of one block; the sentence follows the name. */
+export function refusedCredentialText(finding: RefusedCredential): string {
+  if (refusedForMissingCredential(finding)) {
+    return `does not exist. The block needs ${neededFields(finding.fields)}.`;
+  }
+  if (finding.code === "credential-field-missing") {
+    return `lacks ${neededFields(finding.fields)}.`;
+  }
+  if (finding.code === "credential-method-unknown") {
+    return "cannot be used: the adapter of the block does not accept the auth_method that the package sets.";
+  }
+  return "cannot be used.";
+}
+
+/** What to do after the refusal, under the list of findings. */
+export function credentialRefusalNextStep(
+  findings: readonly RefusedCredential[],
+  stored: readonly { name: string; fields: readonly string[] }[] | undefined
+): string {
+  if (!findings.every(refusedCredentialHasRemedy)) {
+    return "Correct the package, then add it again. A change to a stored credential does not answer every line above.";
+  }
+  return findings.every((f) => refusedCredentialResolved(f, stored))
+    ? "Every credential can be used now. Press Register again."
+    : "The package stays open here. Press Register again when each credential can be used.";
+}
+
+/** The title of the notice of a registration refused for its stored credentials. */
+export function credentialRefusalTitle(count: number): string {
+  return count === 1
+    ? "Not registered: a stored credential that the configuration names cannot be used"
+    : `Not registered: ${count} stored credentials that the configuration names cannot be used`;
+}
+
+/**
+ * Whether the stored credentials, as the Credentials page lists them now, answer one finding: the
+ * credential exists and holds every field the finding names.
+ */
+export function refusedCredentialResolved(
+  finding: RefusedCredential,
+  stored: readonly { name: string; fields: readonly string[] }[] | undefined
+): boolean {
+  if (!refusedCredentialHasRemedy(finding)) return false;
+  // A finding of the check does not list the fields: only a new check says that they are held.
+  if (!refusedForMissingCredential(finding) && finding.fields.length === 0) return false;
+  const credential = stored?.find((c) => c.name === finding.name);
+  return credential !== undefined && finding.fields.every((f) => credential.fields.includes(f));
+}
+
+const CHECK_CREDENTIAL_CODES = new Set(["credential-not-found", "credential-field-missing"]);
+const CHECK_CREDENTIAL_LOCATION = /^\/configuration\/(source|destination)\/credential$/;
+
+/**
+ * The stored credential that one finding of the check is about, or `undefined` for any other
+ * finding. The finding gives the block in its location; the package gives the name. The fields are
+ * in the message of the finding only, so `fields` is empty.
+ */
+export function checkedCredential(
+  finding: { code: string; location?: string | null },
+  content: DeclaredContent | undefined
+): RefusedCredential | undefined {
+  if (!content || !CHECK_CREDENTIAL_CODES.has(finding.code)) return undefined;
+  const block = CHECK_CREDENTIAL_LOCATION.exec(finding.location ?? "")?.[1] as
+    | "source"
+    | "destination"
+    | undefined;
+  const name = block && content.configuration[block].credential?.trim();
+  return block && name ? { block, name, code: finding.code, fields: [] } : undefined;
+}
+
 /** The rename a new version makes, or nothing when the name stays the same. */
 export function renameText(current: string | null | undefined, next: string | null | undefined) {
   if (!current || !next || current === next) return undefined;
@@ -242,4 +343,32 @@ export function isNoAnswer(error: unknown): boolean {
   if (isTimeout(error) || error instanceof TypeError) return true;
   if (error instanceof SyncApiUnavailable) return error.status >= 500 || error.status === 408;
   return isEnvelope(error) && error.error.status >= 500;
+}
+
+/**
+ * The state of the stored credentials that the findings of a check are about, as one string:
+ * each name with its revision and the time of its last change, or "absent". The time tells a
+ * credential that was deleted and created again, whose revision is 1 as before. `undefined` while the stored credentials are not
+ * read, or when no finding is about a stored credential. A change of this string after a check
+ * means that a credential was created, deleted or given a new value, so the check is out of date.
+ */
+export function checkedCredentialState(
+  findings: readonly { code: string; location?: string | null }[],
+  content: DeclaredContent | undefined,
+  stored: readonly { name: string; revision: number; updated_at: string }[] | undefined
+): string | undefined {
+  const names = new Set(
+    findings.flatMap((f) => {
+      const credential = checkedCredential(f, content);
+      return credential ? [credential.name] : [];
+    })
+  );
+  if (names.size === 0 || stored === undefined) return undefined;
+  return [...names]
+    .sort()
+    .map((name) => {
+      const credential = stored.find((c) => c.name === name);
+      return `${name}:${credential ? `${credential.revision}@${credential.updated_at}` : "absent"}`;
+    })
+    .join(" ");
 }

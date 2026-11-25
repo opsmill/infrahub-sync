@@ -111,6 +111,22 @@ function SystemCard({
             <BranchBadge branch={system.branch} label={`${side} branch`} />
           </p>
         )}
+        {system.credential && (
+          <p className="mt-1.5 text-foreground-muted text-xs">
+            Credential{" "}
+            <Link
+              to="/credentials"
+              className={cn(
+                MONO,
+                "rounded-sm py-1 text-foreground-muted underline decoration-transparent underline-offset-4 transition-colors duration-150 ease-out hover:text-foreground hover:decoration-subtle motion-reduce:transition-none",
+                FOCUS
+              )}
+            >
+              {system.credential}
+              <span className="sr-only"> (opens the Credentials page)</span>
+            </Link>
+          </p>
+        )}
       </div>
       {source && (
         <span
