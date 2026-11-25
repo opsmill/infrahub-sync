@@ -685,7 +685,7 @@ function CheckFailed({ onRetry, locked = false }: { onRetry: () => void; locked?
 }
 
 /** The result of the latest check, or that it is still running. */
-function ValidationResult({
+export function ValidationResult({
   check,
   content,
   kind,

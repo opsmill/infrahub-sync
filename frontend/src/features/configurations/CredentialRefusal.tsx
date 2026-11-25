@@ -8,9 +8,11 @@ import { CheckIcon } from "#/components/icons";
 import { CODE_CHIP, Notice } from "#/components/page";
 
 import {
+  credentialRefusalNextStep,
   credentialRefusalTitle,
   type RefusedCredential,
   refusedBlockLabel,
+  refusedCredentialHasRemedy,
   refusedCredentialResolved,
   refusedCredentialText,
   refusedForMissingCredential,
@@ -35,6 +37,8 @@ function Remedy({
   resolved: boolean;
 }) {
   const missing = refusedForMissingCredential(finding);
+  // No stored credential answers an auth_method that the adapter does not accept.
+  if (!refusedCredentialHasRemedy(finding)) return null;
   if (resolved) {
     return (
       <span className="inline-flex min-h-8 items-center gap-1 text-foreground-muted">
@@ -99,7 +103,6 @@ export function CredentialRefusal({
 }) {
   const administrator = useQuery(meQuery()).data?.administrator === true;
   const stored = useQuery(credentialsQuery()).data;
-  const open = findings.filter((f) => !refusedCredentialResolved(f, stored)).length;
   const codeLine = describeError(error).codeLine;
   return (
     <Notice tone="danger" role="alert" title={credentialRefusalTitle(findings.length)}>
@@ -121,11 +124,7 @@ export function CredentialRefusal({
           </li>
         ))}
       </ul>
-      <p className="text-pretty">
-        {open === 0
-          ? "Every credential can be used now. Press Register again."
-          : "The package stays open here. Press Register again when each credential can be used."}
-      </p>
+      <p className="text-pretty">{credentialRefusalNextStep(findings, stored)}</p>
       {codeLine && <p className="font-mono text-subtle text-xs">{codeLine}</p>}
     </Notice>
   );

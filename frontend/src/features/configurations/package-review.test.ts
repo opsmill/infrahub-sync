@@ -4,10 +4,12 @@ import {
   blockingNamesake,
   CONFIGURATION_NAME_IN_USE,
   checkedCredential,
+  credentialRefusalNextStep,
   credentialRefusalTitle,
   nameInUseOf,
   otherNamesake,
   refusedBlockLabel,
+  refusedCredentialHasRemedy,
   refusedCredentialResolved,
   refusedCredentialText,
   sameNameHint,
@@ -258,5 +260,51 @@ describe("checkedCredential", () => {
     };
     const stored = [{ name: "netbox-token", fields: ["username"] }];
     expect(refusedCredentialResolved(finding, stored)).toBe(false);
+  });
+});
+
+describe("a refusal for an auth_method that the adapter does not accept", () => {
+  const unknownMethod = {
+    block: "source",
+    name: "apic-account",
+    code: "credential-method-unknown",
+    fields: [],
+  };
+  const missing = {
+    block: "destination",
+    name: "infrahub-token",
+    code: "credential-not-found",
+    fields: ["token"],
+  };
+
+  it("does not say that the credential lacks a value", () => {
+    expect(refusedCredentialText(unknownMethod)).toBe(
+      "cannot be used: the adapter of the block does not accept the auth_method that the package sets."
+    );
+  });
+
+  it("has no remedy on the Credentials page", () => {
+    expect(refusedCredentialHasRemedy(unknownMethod)).toBe(false);
+    expect(refusedCredentialHasRemedy(missing)).toBe(true);
+  });
+
+  it("is never resolved by a stored credential", () => {
+    const stored = [{ name: "apic-account", fields: ["username", "password"] }];
+    expect(refusedCredentialResolved(unknownMethod, stored)).toBe(false);
+  });
+
+  it("tells the user to correct the package", () => {
+    expect(credentialRefusalNextStep([unknownMethod, missing], [])).toContain(
+      "Correct the package, then add it again."
+    );
+  });
+
+  it("tells the user to press Register again when every finding has a remedy", () => {
+    expect(credentialRefusalNextStep([missing], [])).toBe(
+      "The package stays open here. Press Register again when each credential can be used."
+    );
+    expect(
+      credentialRefusalNextStep([missing], [{ name: "infrahub-token", fields: ["token"] }])
+    ).toBe("Every credential can be used now. Press Register again.");
   });
 });

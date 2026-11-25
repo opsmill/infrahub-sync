@@ -127,11 +127,39 @@ const neededFields = (fields: readonly string[]) =>
 export const refusedForMissingCredential = (finding: RefusedCredential) =>
   finding.code === "credential-not-found";
 
+/**
+ * Whether creating the stored credential or changing its value answers the finding. It does not
+ * for `credential-method-unknown`, where the package sets an `auth_method` that the adapter of
+ * the block does not accept, nor for a code this page does not know.
+ */
+export const refusedCredentialHasRemedy = (finding: RefusedCredential) =>
+  finding.code === "credential-not-found" || finding.code === "credential-field-missing";
+
 /** What is wrong with the stored credential of one block; the sentence follows the name. */
 export function refusedCredentialText(finding: RefusedCredential): string {
-  return refusedForMissingCredential(finding)
-    ? `does not exist. The block needs ${neededFields(finding.fields)}.`
-    : `lacks ${neededFields(finding.fields)}.`;
+  if (refusedForMissingCredential(finding)) {
+    return `does not exist. The block needs ${neededFields(finding.fields)}.`;
+  }
+  if (finding.code === "credential-field-missing") {
+    return `lacks ${neededFields(finding.fields)}.`;
+  }
+  if (finding.code === "credential-method-unknown") {
+    return "cannot be used: the adapter of the block does not accept the auth_method that the package sets.";
+  }
+  return "cannot be used.";
+}
+
+/** What to do after the refusal, under the list of findings. */
+export function credentialRefusalNextStep(
+  findings: readonly RefusedCredential[],
+  stored: readonly { name: string; fields: readonly string[] }[] | undefined
+): string {
+  if (!findings.every(refusedCredentialHasRemedy)) {
+    return "Correct the package, then add it again. A change to a stored credential does not answer every line above.";
+  }
+  return findings.every((f) => refusedCredentialResolved(f, stored))
+    ? "Every credential can be used now. Press Register again."
+    : "The package stays open here. Press Register again when each credential can be used.";
 }
 
 /** The title of the notice of a registration refused for its stored credentials. */
@@ -149,6 +177,7 @@ export function refusedCredentialResolved(
   finding: RefusedCredential,
   stored: readonly { name: string; fields: readonly string[] }[] | undefined
 ): boolean {
+  if (!refusedCredentialHasRemedy(finding)) return false;
   // A finding of the check does not list the fields: only a new check says that they are held.
   if (!refusedForMissingCredential(finding) && finding.fields.length === 0) return false;
   const credential = stored?.find((c) => c.name === finding.name);
