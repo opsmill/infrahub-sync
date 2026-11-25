@@ -1,0 +1,25 @@
+tests/adapter_files/test_packaged_declarations.py
+  s_1b0ef72bb8cbc8::t_c2cdf1152de5ed 5-7
+tests/configuration/test_declaration_parity.py
+  s_1b0ef72bb8cbc8::t_bbcc18902f079a 7-10,38,105,110-118,124,126-128,135-154,161,253-256,295-300,304,343,385-387,401,405-407
+tests/data/declaration_parity/findings.json
+  s_1b0ef72bb8cbc8::t_06c3870eacf587 2-472
+tests/service/test_declared_request_error_modules.py
+  s_1b0ef72bb8cbc8::t_3a57322080050e 1-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "94bf557edad90812d8fa7f2ab87bbbce1f93d9b1",
+  "prompts": {},
+  "sessions": {
+    "s_1b0ef72bb8cbc8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-03a-ae542a8beae5f5b3",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
