@@ -1,0 +1,57 @@
+tests/service/test_flow_adapter_loading.py
+  s_a9719f961786d2::t_58722f29ec41d2 1-602,604-610,613-614
+  s_a9719f961786d2::t_28e812f8fefee8 603
+  s_a9719f961786d2::t_764fc49f35a370 611-612
+  s_a9719f961786d2::t_04ec7173a9a513 615-617
+  s_a9719f961786d2::t_78db6eab99a814 618-633
+infrahub_sync/client/models.py
+  s_7420da2d371710::t_135b7d7b87c131 1329,1355-1357,1391-1404,1444-1448
+infrahub_sync/runtime_schema/__init__.py
+  s_7420da2d371710::t_e7b700ee3c01ab 30,50
+infrahub_sync/runtime_schema/worker.py
+  s_7420da2d371710::t_8d70136cdde5ab 17,19,65-87,190-208,215-216,225-232,285-287,291,294-307,311-312
+infrahub_sync/service/failure_cause.py
+  s_7420da2d371710::t_a6ed265f5a5d8b 30,66-72,289-292,403-404,414-417,667-795,803-805
+tests/plan/test_report_models.py
+  s_7420da2d371710::t_5a56dd5dd3c13d 122-126
+tests/runtime_schema/test_worker_path.py
+  s_7420da2d371710::t_074a9520ea9b9a 708-716
+tests/service/test_stage_stored_credentials.py
+  s_7420da2d371710::t_e2f48f6331b1d7 107-115
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_64bd9286420244 285,292,298
+infrahub_sync/service/credential_actions.py
+  s_a9719f961786d2::t_4ce1744cfcb664 576,579-580,595,599,603-608,612-617,626
+infrahub_sync/service/flow.py
+  s_a9719f961786d2::t_05542758ee1c7e 18,35-41,123,165,182-190,1044-1075,1086,1104-1115,1150-1163,1169-1171,1173,1187-1199,1426,1534,1593,1861-1863,2370-2372
+infrahub_sync/service/service.py
+  s_a9719f961786d2::t_1bf71ce297c416 575,580-582,599,1243
+tests/adapter_files/test_loading.py
+  s_a9719f961786d2::t_5b4503a421bed0 777-795
+tests/product_store/test_contract.py
+  s_a9719f961786d2::t_8abe7f6d5245dd 90,148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30173c7cbea81b618c8963e4cee1dab144f71fbb",
+  "prompts": {},
+  "sessions": {
+    "s_7420da2d371710": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-06b-4e102bd3c73520bd",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
