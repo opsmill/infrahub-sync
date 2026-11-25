@@ -1,0 +1,32 @@
+tests/service/test_config_adapter_version.py
+  s_a9719f961786d2::t_9fd01a41264598 1-322,324-335
+  s_a9719f961786d2::t_8a5026681137d0 323
+tests/cli/test_client_commands.py
+  s_a9719f961786d2::t_d7877c2f7c8abe 346-373
+tests/client/test_models.py
+  s_55512ec0cdc566::t_6178f0f0384d3e 20-21,212-255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be646ddc481f729c5adb4de6bcbc76c2410d5477",
+  "prompts": {},
+  "sessions": {
+    "s_55512ec0cdc566": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-06a-5077ba0e3e65d53c",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
