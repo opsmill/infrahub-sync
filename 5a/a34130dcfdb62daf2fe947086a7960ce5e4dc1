@@ -1,0 +1,22 @@
+docs/docs/reference/sync-http-api.mdx
+  s_a9719f961786d2::t_61fd50d62f293c 444,550-615,981-983,1026-1031,1055,1069-1070,1073-1110,1447-1448,1698
+  s_a9719f961786d2::t_3e4f9b25b8e850 1071-1072
+frontend/src/api/types.generated.ts
+  s_a9719f961786d2::t_36edb58181974f 1045-1055,1309-1329,1402-1424,2286-2288,2304,8094-8165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5aa34130dcfdb62daf2fe947086a7960ce5e4dc1",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
