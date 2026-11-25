@@ -1,0 +1,21 @@
+tests/cli/test_parity_and_closure.py
+  s_110c8940c96ad0::t_ceb75fbaafe595 119-121,191-193,207
+tests/service/test_adapter_registration.py
+  s_110c8940c96ad0::t_adbc0a2be2cae0 31,287-306,678-733
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9a7367604d4563a85b58ef2b68f1526280cb52dc",
+  "prompts": {},
+  "sessions": {
+    "s_110c8940c96ad0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-05b-2ecea101b529c26d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
