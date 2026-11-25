@@ -1,0 +1,24 @@
+tests/adapters_parity/test_aci_project.py
+  s_a9719f961786d2::t_95c8890eea3d40 1-29,31-33,36-500,511-517
+  s_a9719f961786d2::t_e662633b5f05f2 501-510
+  s_a9719f961786d2::t_e87d2abe1d0bd1 30
+  s_a9719f961786d2::t_055b6079ddec78 34-35
+changelog/+aci-adapter-project.housekeeping.md
+  s_a9719f961786d2::t_8e7798fa546471 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e562b3249bfcb721b5928ec8f13532947c10c1f0",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
