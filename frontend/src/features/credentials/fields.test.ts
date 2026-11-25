@@ -112,7 +112,7 @@ describe("the search of the Credentials page", () => {
 });
 
 describe("changedSinceCreation", () => {
-  const created = { created_at: "2026-11-01T10:00:00Z", created_by: "admin" };
+  const created = { revision: 1, created_at: "2026-11-01T10:00:00Z", created_by: "admin" };
 
   it("is false while the last change is the creation", () => {
     expect(
@@ -123,6 +123,17 @@ describe("changedSinceCreation", () => {
   it("is true after a change of the description, which leaves the revision at 1", () => {
     expect(
       changedSinceCreation({ ...created, updated_at: "2026-11-02T09:00:00Z", updated_by: "alice" })
+    ).toBe(true);
+  });
+
+  it("is true after a change of the value by the same account at the same time", () => {
+    expect(
+      changedSinceCreation({
+        ...created,
+        revision: 2,
+        updated_at: created.created_at,
+        updated_by: "admin",
+      })
     ).toBe(true);
   });
 

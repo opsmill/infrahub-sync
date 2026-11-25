@@ -59,12 +59,14 @@ export function countBySet(credentials: Credential[]): Record<"all" | FieldSetId
  * or its description, which does not. The Sync API records the account and the time of both.
  */
 export function changedSinceCreation(credential: {
+  revision: number;
   created_at: string;
   created_by: string;
   updated_at: string;
   updated_by: string;
 }): boolean {
   return (
+    credential.revision > 1 ||
     credential.updated_at !== credential.created_at ||
     credential.updated_by !== credential.created_by
   );
