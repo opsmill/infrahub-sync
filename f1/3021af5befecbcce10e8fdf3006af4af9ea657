@@ -1,0 +1,28 @@
+infrahub_sync/service/failure_cause.py
+  s_a9719f961786d2::t_4ad26f03872436 711
+infrahub_sync/service/adapter_move.py
+  s_a9719f961786d2::t_4ad26f03872436 280,289,291-294
+dev/specs/031-registered-adapters/quickstart.md
+  s_a9719f961786d2::t_4ad26f03872436 44,46,54-55
+docs/docs/reference/sync-http-api.mdx
+  s_a9719f961786d2::t_4ad26f03872436 1580
+tests/product_store/test_adapter_move.py
+  s_a9719f961786d2::t_4ad26f03872436 15-17,28-32,34,38,297-388
+  s_a9719f961786d2::t_c017cdbbcb24a6 389-390
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f13021af5befecbcce10e8fdf3006af4af9ea657",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
