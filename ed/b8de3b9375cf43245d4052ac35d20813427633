@@ -1,0 +1,36 @@
+infrahub_sync/product_store/store.py
+  s_a9719f961786d2::t_b826be5c6cf17a 13,5848,5852,7898-7912,7914-7918,7922-7923,7925,7932-7946
+tests/product_store/test_adapter_removal.py
+  s_a9719f961786d2::t_2b43255fb60f73 104
+  s_a9719f961786d2::t_eb338e55aae510 148,150-151,153-154,160-162,164
+  s_a9719f961786d2::t_a71cb5cd598c46 1-103,105-111,113-147,149,152,155-159,163,165-408
+  s_a9719f961786d2::t_968487755f1926 112
+tests/adapter_files/test_loading.py
+  s_a9719f961786d2::t_0630557d1ed02c 38-45,318
+tests/product_store/sample_adapters.py
+  s_a9719f961786d2::t_6f4c02cec250e5 16,22,30
+  s_a9719f961786d2::t_927fc50f45b902 129-140
+infrahub_sync/product_store/adapter_versions.py
+  s_a9719f961786d2::t_b826be5c6cf17a 144-146,259,261-262,264-272,276,289-291,528-540
+  s_a9719f961786d2::t_43df88a5781fff 541-542
+tests/service/test_flow_adapter_loading.py
+  s_a9719f961786d2::t_0630557d1ed02c 46-53,438
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_425cbcfc74cf2f 472
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "edb8de3b9375cf43245d4052ac35d20813427633",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
