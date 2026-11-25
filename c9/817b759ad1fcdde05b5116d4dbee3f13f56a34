@@ -1,0 +1,33 @@
+dev/specs/031-registered-adapters/contracts/adapter-file.md
+  s_110c8940c96ad0::t_2ef8b8114e9b6e 211-217
+dev/specs/031-registered-adapters/tasks.md
+  s_110c8940c96ad0::t_abec30b58ed315 220
+infrahub_sync/adapter_files/signature.py
+  s_110c8940c96ad0::t_5d5017e6880aa7 8-12,28,37-39,46-52,70-77,89-92,98,173-218
+infrahub_sync/client/__init__.py
+  s_110c8940c96ad0::t_b9fc36aa5b90f6 20-25,108-113
+infrahub_sync/client/client.py
+  s_110c8940c96ad0::t_d9a4ee8ce7ac5c 13,35-36,45-47,106-107,158-169,907-1011,1720,1735,1841-1847
+infrahub_sync/client/models.py
+  s_110c8940c96ad0::t_fa32bc1a5052ae 115-119,1627-1689
+tests/adapter_files/test_signature.py
+  s_110c8940c96ad0::t_d997d1a13ff7b1 19-20,24,26,202-265
+tests/client/test_adapters.py
+  s_110c8940c96ad0::t_9ff2e4376a766c 1-323
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9817b759ad1fcdde05b5116d4dbee3f13f56a34",
+  "prompts": {},
+  "sessions": {
+    "s_110c8940c96ad0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-05b-2ecea101b529c26d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
