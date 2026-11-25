@@ -1,0 +1,29 @@
+changelog/+nautobot-adapter-project.housekeeping.md
+  s_a9719f961786d2::t_8ccedfc94da9d1 1
+tests/adapters_parity/test_nautobot_project.py
+  s_d75b4661361cfc::t_13db550b97fe82 1-528
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50632f8a46c003a4c354460339874850d14b3032",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d75b4661361cfc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a2a8d8f2f1f92e39a",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
