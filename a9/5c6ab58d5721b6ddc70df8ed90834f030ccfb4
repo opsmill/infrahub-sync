@@ -1,0 +1,22 @@
+adapters/slurpitsync/tests/test_slurpit_model_loading.py
+  s_a9719f961786d2::t_74525800530872 1-26,28-172,174,177-193,195,197-455,457-500
+  s_a9719f961786d2::t_57edf67373ffc0 27,173,175-176,194,196,456
+adapters/slurpitsync/pyproject.toml
+  s_a9719f961786d2::t_610a2c3028a94b 61-62,64,67-68,70-71,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a95c6ab58d5721b6ddc70df8ed90834f030ccfb4",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
