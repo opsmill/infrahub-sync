@@ -1,0 +1,28 @@
+docs/docs/development/adr-index.mdx
+  s_a9719f961786d2::t_31c30a961c201b 53
+dev/adr/0058-a-maintained-adapter-is-a-registered-file.md
+  s_a9719f961786d2::t_31c30a961c201b 5,68-71
+  s_a9719f961786d2::t_b1c4f1762a62a1 1-4,6-67,72-99
+dev/adr/README.md
+  s_a9719f961786d2::t_31c30a961c201b 186-189
+docs/docs/development/constitution.md
+  s_a9719f961786d2::t_f7fa6ea18fc50d 75-80,90-92,242
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_31c30a961c201b 233,237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2a5b0f60fb70c6a7a339a954debe36405243fdb6",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
