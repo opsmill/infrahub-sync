@@ -1,0 +1,31 @@
+tests/service/adapter_sites.py
+  s_a9719f961786d2::t_29b4139a6eb0ed 1-12,14-45
+  s_a9719f961786d2::t_639976c30c0b07 13
+tests/service/test_stored_adapter_override.py
+  s_a9719f961786d2::t_c8c808c06bf3c7 1-169
+tests/service/test_adapter_upgrade_checks.py
+  s_a9719f961786d2::t_5a6f3691bda69c 1-144
+tests/service/test_earlier_configurations.py
+  s_a9719f961786d2::t_1ee2c9521ddfa8 1-159,167-198
+  s_a9719f961786d2::t_436340afe97042 160-166
+dev/specs/031-registered-adapters/research.md
+  s_a9719f961786d2::t_a516f236be3c06 432-450
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_baff5ddd27862f 498,501,504
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "759b98db1cce60e766fa9c000bddcfb582b511c7",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
