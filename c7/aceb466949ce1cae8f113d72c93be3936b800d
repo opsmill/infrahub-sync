@@ -1,0 +1,169 @@
+tests/service/test_declared_request_error_modules.py
+  s_a9719f961786d2::t_20411f084b2b77 1,3-4,9,11,13-16,18-19,22-26,28-68
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_2bbdec7cf2053f 113
+tests/declaration_sources.py
+  s_a9719f961786d2::t_cc35543f5b024d 1-90
+infrahub_sync/cli.py
+  s_44e15b14b3e37f::t_4a3c4c327a58af 78,1051,1192
+infrahub_sync/configuration/capabilities.py
+  s_44e15b14b3e37f::t_2fc5a91e81bfec 16,25,992-998,1002-1003,1005-1015,1071-1073,1076-1078,1081,1084
+infrahub_sync/configuration/conversion.py
+  s_44e15b14b3e37f::t_116751e4513fb4 36-37,54,334,336,389,397,403,454,470,472-473,478,507-508,514-515,546,656,667,670,692,737,741,959
+infrahub_sync/configuration/conversion_credentials.py
+  s_44e15b14b3e37f::t_ae9bae21c8e9dc 19,62,68-69,72,76
+infrahub_sync/configuration/conversion_live_schema.py
+  s_44e15b14b3e37f::t_00aa494da1a804 32,58-60,63-64,78-80,176-180,184,195,220,228
+infrahub_sync/configuration/credential_admission.py
+  s_44e15b14b3e37f::t_494cbaa9abd47b 21-23,31,117,133-134,139-140,143
+infrahub_sync/configuration/runtime.py
+  s_44e15b14b3e37f::t_db9571228a37b6 16,36-40,45-46,57,75,81-82,117-121
+infrahub_sync/configuration/schema_validation.py
+  s_44e15b14b3e37f::t_cd064f02a6b2ed 59,65,366-368,387-389,400-403,414-415,418,454
+infrahub_sync/configuration/validation.py
+  s_44e15b14b3e37f::t_194ef6b1d92dc4 21,43-50,404,409,450,489,514,526,543-549,554-556,558-559,583-584,591-595,601-605,630-632,635-638,653,672-677
+infrahub_sync/configuration/warnings.py
+  s_44e15b14b3e37f::t_57f7d74001b6c9 45,132-134,139-140,144-145
+infrahub_sync/execution.py
+  s_44e15b14b3e37f::t_4082407c82462b 52,79,1428,1436-1437,1444-1445,1540-1542
+infrahub_sync/product_store/configs.py
+  s_44e15b14b3e37f::t_010d0bb7b14519 46,724-726,732,755,767-768,778,781,803,812-813,825,828,922,930,934,937,979,988-993,998,1014,1020-1021,1054,1091,1099-1100,1106,1109,1113,1119
+infrahub_sync/product_store/store.py
+  s_44e15b14b3e37f::t_fdf731026922b9 26,1263,1274,3865,3887,3915-3917,3932,4014,4028,6237,6243-6244,6249-6251,6258,6270,6276-6278,6284-6286,6297
+infrahub_sync/runtime_schema/worker.py
+  s_44e15b14b3e37f::t_e2e9fd77a0e386 49,118-120,124-125,131,138,142,172,178-179,196,200,206
+infrahub_sync/service/config_routes.py
+  s_44e15b14b3e37f::t_2abbf90471c7d0 30,251,256-258,353,381,464,501-505
+infrahub_sync/service/credential_actions.py
+  s_44e15b14b3e37f::t_edece5247f78ad 62,170-172,543,553,610
+infrahub_sync/service/failure_cause.py
+  s_44e15b14b3e37f::t_2e717da4f7b7b1 71,162-164,172,174,220-234,239,245-247,252,254,328,333-335,337,340,354,360,705,728-729,732
+infrahub_sync/service/flow.py
+  s_44e15b14b3e37f::t_8e89338a124adc 41-45,226-228,902,908,958-961,1020,1095,1103,1764,1818,2504,2513,2532
+infrahub_sync/service/service.py
+  s_44e15b14b3e37f::t_b5818b79b5d2f0 30,135-137,587-590
+tests/adapter_files/test_packaged_declarations.py
+  s_44e15b14b3e37f::t_cec3677046129e 28-32,169
+tests/adapters/test_aci_verify_precedence.py
+  s_44e15b14b3e37f::t_452dcfe287e91c 14,129-131
+tests/compose/test_source_credentials.py
+  s_44e15b14b3e37f::t_6c6c9bc5237de1 41,209,274,427,445-447,677,685-687
+tests/configuration/test_block_credential.py
+  s_44e15b14b3e37f::t_3f27363f3712d8 14,42,162
+tests/configuration/test_contracts.py
+  s_44e15b14b3e37f::t_9cebc92f806baf 47,616,625,634,1250,1269,1288,1374,1394,1419,1439,1509,1528,1614,1629,1648,1678,1696,1714,1731,1742,1821,1825,1828,1841,1913,1922,2028,2042,2052,2090,2104
+tests/configuration/test_conversion.py
+  s_44e15b14b3e37f::t_4111a58747dae3 15-19,142,150,155,253-257,493,495-499,971-973,980,990
+tests/configuration/test_conversion_examples.py
+  s_44e15b14b3e37f::t_a2650e8ac4e846 27,73-75,97-99,161,171
+tests/configuration/test_conversion_live_schema.py
+  s_44e15b14b3e37f::t_34b6f57abd2dcc 11,19,153-155,157,165,171,185,187,205,208,214-216,219-221,223
+tests/configuration/test_conversion_secrets.py
+  s_44e15b14b3e37f::t_334d0040306b51 34,99-101,193-195
+tests/configuration/test_credential_field_map.py
+  s_44e15b14b3e37f::t_cea942b704193a 12,54,65,81,86,125,145,153
+tests/configuration/test_declaration_parity.py
+  s_44e15b14b3e37f::t_b253d6726957da 33,117,119
+tests/configuration/test_infrahub_lineage_validation.py
+  s_44e15b14b3e37f::t_96fbbbdcc82815 14,54-56,68-70,81-82,98-99,107-108,120-124
+tests/configuration/test_runtime.py
+  s_44e15b14b3e37f::t_9fd1963eec770a 6,40-42,71
+tests/configuration/test_runtime_released_values.py
+  s_44e15b14b3e37f::t_a0ff8c4f98fa4d 18,47-49,63-66,100-102,115-118,130,137-142,152-156
+tests/configuration/test_schema_validation.py
+  s_44e15b14b3e37f::t_f9173133632c67 29-30,36,47,121-124,127-129,151,153-154,180-182,197-199,229,273,324,335,348,375-377,396,414,431,447-448,464-466,480,499,510,521-522,527,544-545,559,578,580-581,672,677-679,683-685,693-695,698,701-703,714-719,748,809-811,832,907,912,916,1089-1091,1113
+tests/configuration/test_validate_permissions.py
+  s_44e15b14b3e37f::t_138124d1baf2a9 31,192-194
+tests/configuration/test_validation_compatibility.py
+  s_44e15b14b3e37f::t_53cb1ece1c01b7 22,194,217,232,241,253,266
+tests/configuration/test_validation_core.py
+  s_44e15b14b3e37f::t_dc7e16340e2ae4 21,27,32,47-50,54,81,96,98,175,177-179,187,202-203,291-293,325-326,360-361,370,395-396,419-420,443,445,483-484,486,525,529,585-586,590-592,638-639,643,676-678,698-700,706,726,732,742,841,892,900-912,970,1011,1052,1070,1091
+tests/configuration/test_warnings.py
+  s_44e15b14b3e37f::t_3b8a4a7dddc298 29,36-39,63,76,200-202,257,259,267,330
+tests/integration/test_infrahub_lineage_integration.py
+  s_44e15b14b3e37f::t_1a9b4cb18b5600 89,1613
+tests/product_store/test_configs_service.py
+  s_44e15b14b3e37f::t_cf4f7f7fa7372d 26,41,182,191,212,953,1107,1730,1820,1835-1837
+tests/product_store/test_contract.py
+  s_44e15b14b3e37f::t_71c7d39d7ac85e 28,1129-1131,3659,3801,3820,3851-3854,3885,3917-3918,3930,3933,3942-3945,3948-3950,3958,3960-3962,3964-3966,3969-3971,3981-3987,3989-3991,4003-4006,4019-4021,4023-4025,4038-4043,4095-4096,4098,4103-4105,4129-4131,4137,4139-4141,4152,4154,4169,4173-4175,4180-4182,4203,4213,4218,4226,4230-4232,4254,4258-4260,4279-4281,4285-4289,4310,4315-4317,5330-5332,5335-5340,5377-5379,5405-5407,5428-5430,5432-5434,5457
+tests/product_store/test_validate_destination_schema.py
+  s_44e15b14b3e37f::t_b1cea8b4ea7e2e 21,33,40,69,101,108,221,224,228-230,238,254,284-285,289
+tests/runtime_schema/test_destination_branch_missing.py
+  s_44e15b14b3e37f::t_5f476a7b614222 11,42,54-56,59
+tests/runtime_schema/test_dotted_provenance.py
+  s_44e15b14b3e37f::t_50c6bf11900fef 18,197-199,208-210,213-215
+tests/runtime_schema/test_entry_point_resolution.py
+  s_44e15b14b3e37f::t_9550b56eb9cc1b 19,253-255,264-266,268-270
+tests/runtime_schema/test_registered_execution.py
+  s_44e15b14b3e37f::t_efe436a26cae5a 26,209,235-237,240,313-315,329-331,334,343
+tests/runtime_schema/test_stored_credential_execution.py
+  s_44e15b14b3e37f::t_eee9938d7d4555 281,351
+tests/runtime_schema/test_worker_path.py
+  s_44e15b14b3e37f::t_19a3ccd50e2c91 17,101,156-158,169-173,547
+tests/service/test_apply_checkpoint_order.py
+  s_44e15b14b3e37f::t_d639cf971edb25 23-24,192-195
+tests/service/test_branch_review_operations.py
+  s_44e15b14b3e37f::t_3f7c5308aa361e 27,149,198,218,229,239,272,350,396,485,512,584,627,648
+tests/service/test_config_routes.py
+  s_44e15b14b3e37f::t_603095064c3072 16-18,24,1702,1789-1792,1882-1884,2091
+tests/service/test_credential_failure_cause.py
+  s_44e15b14b3e37f::t_d9f59fe2c6c0d9 13-14,61,73-75,89,99,105,113-115
+tests/service/test_failure_cause.py
+  s_44e15b14b3e37f::t_e6cc732b64124c 25,326,347,355-357,367,382,406-409,420,446-452,465,528-532,543-549,560-565,577-582,602
+tests/service/test_flow_and_prefect.py
+  s_44e15b14b3e37f::t_a739e77ee791f3 141,507
+tests/service/test_managed_write_guard.py
+  s_44e15b14b3e37f::t_472f387de478db 24-25,203-206
+tests/service/test_registered_plan_apply.py
+  s_44e15b14b3e37f::t_53e6f3cddfe6fb 13-14,85-88,310-313
+tests/service/test_registered_schema_guard.py
+  s_44e15b14b3e37f::t_3220331deb1313 24-25,138,204-206
+tests/service/test_resume_run.py
+  s_44e15b14b3e37f::t_38f776c93d5065 1370-1376
+tests/service/test_schedule_branch_review.py
+  s_44e15b14b3e37f::t_defe8abedcaa3f 22-23,115-117,526
+tests/service/test_schedule_missed_starts.py
+  s_44e15b14b3e37f::t_5616e107af544b 467
+tests/service/test_stage_stored_credentials.py
+  s_44e15b14b3e37f::t_3765da304a516b 133-135,427
+tests/service/test_stored_destination_token.py
+  s_44e15b14b3e37f::t_56764bb34055aa 24-26,34,96,117-118,340,352,355-357
+tests/service/test_sync_checkpoint_order.py
+  s_44e15b14b3e37f::t_3e8694c1325c21 21-22,169-172
+tests/service/test_sync_left_out_stop.py
+  s_44e15b14b3e37f::t_d974f4f66562b2 27-28,176-179
+tests/service/test_sync_store_policy.py
+  s_44e15b14b3e37f::t_99a575055c042b 45-47,113,161-163,190-192
+tests/service/test_validation_secret_containment.py
+  s_44e15b14b3e37f::t_6637d69d0d2de3 18,29,34,42-47,215-232,235,250-251,255-256,258-264,276-277,282-292,312,318,419,490-491,518,548,571
+tests/service/test_verify_destination.py
+  s_44e15b14b3e37f::t_f03838db852f27 22-23,196-199
+tests/test_stored_credential_marker.py
+  s_44e15b14b3e37f::t_18d6dfd839b456 427
+tests/test_writable_convergence_identity.py
+  s_44e15b14b3e37f::t_a9be76f48e3c85 10,19,289-291,304
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7aceb466949ce1cae8f113d72c93be3936b800d",
+  "prompts": {},
+  "sessions": {
+    "s_44e15b14b3e37f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-03b-4959b7f828db71b0",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
