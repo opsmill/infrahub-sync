@@ -1,0 +1,23 @@
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_1c8ebf85dd1ee6::t_990aab568bd47d 115-121
+infrahub_sync/adapter_files/build.py
+  s_1c8ebf85dd1ee6::t_61aea756b6e17d 268-276,755
+tests/adapter_files/test_build.py
+  s_1c8ebf85dd1ee6::t_77542740f75380 26,420-435
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b9797d9b750a1052aee66c5aa2d24ab3809261ea",
+  "prompts": {},
+  "sessions": {
+    "s_1c8ebf85dd1ee6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abaa5426cb5d168cc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
