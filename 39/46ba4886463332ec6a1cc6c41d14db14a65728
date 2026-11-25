@@ -1,0 +1,21 @@
+tests/product_store/test_contract.py
+  s_abb83ba5062cb4::t_4a2fbe61c1e14b 3780-3784,3804-3806
+dev/specs/031-registered-adapters/opsmill-implement-report.md
+  s_abb83ba5062cb4::t_9fced288b02027 51,71-72,79,83,149-157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3946ba4886463332ec6a1cc6c41d14db14a65728",
+  "prompts": {},
+  "sessions": {
+    "s_abb83ba5062cb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a7fa49f4e3c8d6c63",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
