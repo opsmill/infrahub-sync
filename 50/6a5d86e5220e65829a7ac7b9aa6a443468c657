@@ -1,0 +1,25 @@
+infrahub_sync/adapter_files/names.py
+  s_369f6318eebd6b::t_d01546bf5caf63 1-57
+infrahub_sync/maintained_adapters.json
+  s_369f6318eebd6b::t_c64071d10d7c02 1-14
+tests/adapter_files/test_names.py
+  s_369f6318eebd6b::t_c02c81501ae966 1-68
+tests/demo/test_wheel_assets.py
+  s_369f6318eebd6b::t_d39828f77353c1 54-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "506a5d86e5220e65829a7ac7b9aa6a443468c657",
+  "prompts": {},
+  "sessions": {
+    "s_369f6318eebd6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f37f8221-0ffa-48f9-8bd2-594af436ab33",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
