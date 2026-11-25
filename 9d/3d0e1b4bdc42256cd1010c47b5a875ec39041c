@@ -1,0 +1,21 @@
+dev/specs/027-stored-credentials/notes.md
+  s_369f6318eebd6b::t_90a82caeea1ca6 223-224
+docs/docs/guides/credentials.mdx
+  s_369f6318eebd6b::t_2460887e1b7884 31-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d3d0e1b4bdc42256cd1010c47b5a875ec39041c",
+  "prompts": {},
+  "sessions": {
+    "s_369f6318eebd6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f37f8221-0ffa-48f9-8bd2-594af436ab33",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
