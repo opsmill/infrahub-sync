@@ -1,0 +1,26 @@
+adapters/msgraphsync/tests/test_msgraphsync_registered_credentials.py
+  s_a9719f961786d2::t_f739692c8eab61 1-131,135,137-138,140-338
+  s_a9719f961786d2::t_11b546b46a5f22 132-134,136,139
+adapters/msgraphsync/README.md
+  s_a9719f961786d2::t_1b6567cea71f43 1-57,59-101
+  s_a9719f961786d2::t_6c691a1eb98350 58
+adapters/msgraphsync/infrahub_sync_msgraphsync/adapter.py
+  s_a9719f961786d2::t_f46d23be159272 224-227,234-235,253-303
+  s_a9719f961786d2::t_d60a200f0a7f3e 69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "95f51470ece41917e0cf1d3fc9b52b6a5139ff08",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

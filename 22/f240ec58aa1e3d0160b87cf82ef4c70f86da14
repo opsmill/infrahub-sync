@@ -1,0 +1,27 @@
+adapters/msgraphsync/README.md
+  s_e247445b62e3d1::t_9b8d6cfc7ef94d 51-52,62-69
+adapters/msgraphsync/infrahub_sync_msgraphsync/adapter.py
+  s_e247445b62e3d1::t_bf8ab30a181b5b 271-272
+adapters/msgraphsync/tests/test_msgraphsync_registered_credentials.py
+  s_e247445b62e3d1::t_92c47dfe0800a2 237
+docs/docs/adapters/msgraphsync.mdx
+  s_e247445b62e3d1::t_834645ab7a30a4 15-17,132
+tests/adapters_parity/test_msgraphsync_project.py
+  s_e247445b62e3d1::t_81f3f9987ea160 59,157-158,429-430
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "22f240ec58aa1e3d0160b87cf82ef4c70f86da14",
+  "prompts": {},
+  "sessions": {
+    "s_e247445b62e3d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad1853ba750005913",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

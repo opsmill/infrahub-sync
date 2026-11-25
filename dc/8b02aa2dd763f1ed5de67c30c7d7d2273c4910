@@ -1,0 +1,38 @@
+adapters/msgraphsync/pyproject.toml
+  s_a9719f961786d2::t_48ed257f905229 23-24
+  s_a9719f961786d2::t_73a72a21de8771 43
+adapters/msgraphsync/tests/msgraphsync_fakes.py
+  s_e247445b62e3d1::t_f57096719867f0 1-340
+adapters/msgraphsync/tests/test_msgraphsync_adapter.py
+  s_e247445b62e3d1::t_568716fd90ccc3 1-822
+adapters/msgraphsync/tests/test_msgraphsync_graph.py
+  s_e247445b62e3d1::t_62166bf98df14c 1-705
+adapters/msgraphsync/tests/test_msgraphsync_settings.py
+  s_e247445b62e3d1::t_637cedb9098e66 1-320
+adapters/msgraphsync/uv.lock
+  s_e247445b62e3d1::t_a31883b9cfdac4 223-231,870,885,1724-1737
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc8b02aa2dd763f1ed5de67c30c7d7d2273c4910",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e247445b62e3d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad1853ba750005913",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
