@@ -1,0 +1,57 @@
+dev/specs/027-stored-credentials/notes.md
+  s_369f6318eebd6b::t_ee65bba26bbfc9 224-231
+frontend/src/features/configurations/PackageReview.test.tsx
+  s_a9719f961786d2::t_e6e3e1c9f536e9 10-18,25,184-250
+changelog/+credential-refusal-in-package-review.added.md
+  s_20cd53cc9a0b2b::t_06e53d0522e53c 1
+docs/docs/guides/credentials.mdx
+  s_20cd53cc9a0b2b::t_8b363463fcc51f 30-31
+frontend/src/features/configurations/CredentialRefusal.tsx
+  s_20cd53cc9a0b2b::t_4695997f95cefd 3,7,13-14,136-173
+frontend/src/features/configurations/PackageReview.tsx
+  s_55512ec0cdc566::t_7326a75592ee14 37-41,249-254
+frontend/src/features/configurations/package-review.test.ts
+  s_20cd53cc9a0b2b::t_542b2206550c69 7,312-362
+frontend/src/features/configurations/package-review.ts
+  s_369f6318eebd6b::t_65232f05c4c61e 347-370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "074d72014fb14b27b7d8eaf111305c5fe57f3895",
+  "prompts": {},
+  "sessions": {
+    "s_20cd53cc9a0b2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abf985d3c459f9832",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_369f6318eebd6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f37f8221-0ffa-48f9-8bd2-594af436ab33",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_55512ec0cdc566": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-06a-5077ba0e3e65d53c",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
