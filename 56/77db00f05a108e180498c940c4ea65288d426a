@@ -1,0 +1,29 @@
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_a9719f961786d2::t_d77c86ce410adb 207,226-227
+docs/docs/reference/sync-http-api.mdx
+  s_a9719f961786d2::t_2aa5a22a4d83e5 518-521,561
+infrahub_sync/adapter_files/loading.py
+  s_a9719f961786d2::t_cce7bc95d88f86 9-10,279-282
+tests/adapter_files/test_loading.py
+  s_a9719f961786d2::t_08e4b74352ea0b 269-281
+tests/product_store/test_configuration_adapters.py
+  s_a9719f961786d2::t_89dd163ffd3785 28,630-689
+tests/service/test_flow_adapter_loading.py
+  s_a9719f961786d2::t_da593913a63ec8 542-543
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5677db00f05a108e180498c940c4ea65288d426a",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
