@@ -1,0 +1,40 @@
+changelog/+adapters-remove.added.md
+  s_a9719f961786d2::t_af6bad8d736a27 1
+infrahub_sync/cli_adapters.py
+  s_a9719f961786d2::t_865133d0fe0d0e 1,43-44,86-89,136-162,167-169,184,502-506,508-551
+  s_a9719f961786d2::t_7f2ab038991d79 507
+  s_a9719f961786d2::t_eba8c3e925a737 552-554
+tests/cli/test_adapters_command.py
+  s_a9719f961786d2::t_63e1260c83295a 622-625,627-738
+  s_a9719f961786d2::t_1612711286240e 626
+tests/cli/test_parity_and_closure.py
+  s_a9719f961786d2::t_63e1260c83295a 123
+  s_a9719f961786d2::t_8a682c0867a303 198
+docs/docs/reference/cli.mdx
+  s_a9719f961786d2::t_af6bad8d736a27 1487,1505,1617-1648
+  s_a9719f961786d2::t_87a5d952a0b1d9 1649-1650
+infrahub_sync/client/client.py
+  s_a9719f961786d2::t_865133d0fe0d0e 1024-1057
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_a9719f961786d2::t_3e91c6d93885b5 50,53-58
+tests/client/test_adapters.py
+  s_a9719f961786d2::t_63e1260c83295a 472-567
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_fe36cfae4eca5d 483
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca12d158c08fdf0095ec79693afa917e5f451daa",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
