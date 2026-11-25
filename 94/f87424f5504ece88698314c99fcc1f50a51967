@@ -1,0 +1,34 @@
+tests/service/test_adapter_removal_route.py
+  s_a9719f961786d2::t_944e3dcfd69101 20,254
+  s_a9719f961786d2::t_93f9286273c8ad 1-10,15-19,21-35,37,39-48,52,54-253,255-308,312-402,404-405,407-436,438-440,442-472,474,476-493
+  s_a9719f961786d2::t_5495ce0f242d00 11-14
+  s_a9719f961786d2::t_fc7e0d0c32c934 36,38,49-51,53,403,406,437,441,473,475
+  s_a9719f961786d2::t_5b7579fb02fb60 309-311
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_a9719f961786d2::t_4ea9c7fd0b5907 93,95-99,101-103,105-123
+infrahub_sync/service/adapter_removal.py
+  s_a9719f961786d2::t_08857f3d232362 1-262
+infrahub_sync/service/adapter_actions.py
+  s_a9719f961786d2::t_89013191ba7703 46-47,91-98,132-137,448-462,562,623
+infrahub_sync/service/adapter_routes.py
+  s_a9719f961786d2::t_89013191ba7703 10-13,29,32,35,39,55-56,68-70,86,180-198
+  s_a9719f961786d2::t_ab2370b2508c29 199-200
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_81798efb1a8cf7 477,485
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "94f87424f5504ece88698314c99fcc1f50a51967",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
