@@ -1,0 +1,31 @@
+changelog/+adapter-override-refused.changed.md
+  s_55512ec0cdc566::t_2d9b23319a273e 1
+changelog/+configuration-adapter-version.added.md
+  s_55512ec0cdc566::t_ad55941a135cbc 1
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_55512ec0cdc566::t_e5c0c2be814519 49-50,174-184,187-188,190-193,249-252
+dev/specs/031-registered-adapters/data-model.md
+  s_55512ec0cdc566::t_c033953de4e5be 59,71-76,99-101
+docs/docs/reference/cli.mdx
+  s_55512ec0cdc566::t_fc71538bc4118f 332
+docs/docs/reference/sync-http-api.mdx
+  s_55512ec0cdc566::t_0b02c66df5cb14 381-386,445-449,452-499,1089,2271-2273
+frontend/src/api/types.generated.ts
+  s_55512ec0cdc566::t_82ca5545291ca1 1079-1081,1087,1172-1183,1562-1588,1617,1660-1664,4445
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3fa2976e21f892de330ade983ba09c08694772d",
+  "prompts": {},
+  "sessions": {
+    "s_55512ec0cdc566": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-06a-5077ba0e3e65d53c",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
