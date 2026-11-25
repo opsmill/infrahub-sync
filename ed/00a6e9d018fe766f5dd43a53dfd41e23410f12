@@ -1,0 +1,28 @@
+adapters/slurpitsync/infrahub-sync-adapter.json
+  s_a9719f961786d2::t_9f6820278b8b29 1-33
+adapters/slurpitsync/infrahub_sync_slurpitsync/adapter.py
+  s_a9719f961786d2::t_74525800530872 1-315
+adapters/slurpitsync/pyproject.toml
+  s_a9719f961786d2::t_6afa5915600d43 2,4,6-8,12-14
+  s_a9719f961786d2::t_74525800530872 1,3,5,9-11,15-85
+adapters/slurpitsync/infrahub_sync_slurpitsync/__init__.py
+  s_a9719f961786d2::t_795c15379c78d0 1-7
+adapters/slurpitsync/uv.lock
+  s_a9719f961786d2::t_3e6c866b5c670d 1-1279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed00a6e9d018fe766f5dd43a53dfd41e23410f12",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
