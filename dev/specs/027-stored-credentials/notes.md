@@ -220,8 +220,8 @@ Decided on 2026-11-25 by the maintainer, from a prototype with two versions at
   that points to that section. Reason not given by the maintainer. Its cost in the prototype: the
   remedy is away from the "Register" button that the user pressed.
 - The check that runs before registration reports the same two codes as findings and disables
-  "Register", so the refusal above appears only when a credential is deleted or changed between
-  the check and the registration. Each of these findings of the check therefore shows the same
+  "Register", so the refusal above appears only when, between the check and the registration, a
+  credential is deleted or its value is replaced by one that lacks a field the block needs. Each of these findings of the check therefore shows the same
   link or the same sentence under its message, and the notice of the findings has a
   "Validate again" button. This part was not in the prototype and the maintainer has not
   reviewed it.
