@@ -1,0 +1,41 @@
+dev/specs/031-registered-adapters/tasks.md
+  s_a9719f961786d2::t_608f9d8eae1f02 308
+tests/configuration/test_contracts.py
+  s_a9719f961786d2::t_60f2964f6d9440 666-668
+tests/runtime_schema/test_dotted_provenance.py
+  s_a9719f961786d2::t_e384d1b0f1976b 180-186,189-191,193,201-202
+tests/runtime_schema/test_entry_point_resolution.py
+  s_a9719f961786d2::t_60739068ce1ea4 232,235-240,243-246,257-258
+tests/runtime_schema/test_registered_execution.py
+  s_a9719f961786d2::t_dd1dff1742a24c 13,19,27,33-35,38-44,470-475,478-479,481-500,502-530,532-548,551-567
+tests/runtime_schema/test_registered_source_declaration.py
+  s_a9719f961786d2::t_a23cbc9695c815 1-8,13,23-29,61,65,148-149,151-152,155
+tests/runtime_schema/override_refusals.py
+  s_7420da2d371710::t_b5f70e5333c6c9 1-74
+tests/runtime_schema/test_worker_path.py
+  s_7420da2d371710::t_b6b88ff44240be 10,34-37,479-488,490,492-497,499-502,505-506,508-509,512-524,526-527
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61c9693f880afcafec08ff888862e946b2ba7608",
+  "prompts": {},
+  "sessions": {
+    "s_7420da2d371710": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-06b-4e102bd3c73520bd",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
