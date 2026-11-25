@@ -1,0 +1,19 @@
+tests/adapter_files/test_packaged_declarations.py
+  s_44e15b14b3e37f::t_f4d481fd51e1fd 37,288-306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9e4d50ea00aaf191ede890ee43e11aff7a6e0daa",
+  "prompts": {},
+  "sessions": {
+    "s_44e15b14b3e37f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-03b-4959b7f828db71b0",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
