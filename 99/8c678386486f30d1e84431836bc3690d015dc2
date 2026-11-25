@@ -1,0 +1,24 @@
+tests/adapters_parity/test_ipfabricsync_project.py
+  s_a9719f961786d2::t_65bc2cc9527d25 455-457,459-463,465,468
+  s_a9719f961786d2::t_f8c2c0fae06dca 1-208,212,218-454,458,464,466-467,469-539,541,544-554,556-639
+  s_a9719f961786d2::t_198df64fe577c3 209-211,213-217
+  s_a9719f961786d2::t_83bdccf93d5ad4 540
+  s_a9719f961786d2::t_aa0b11a886ad5d 542-543
+  s_a9719f961786d2::t_b5db3cf85d4110 555
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "998c678386486f30d1e84431836bc3690d015dc2",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
