@@ -1,0 +1,42 @@
+tasks/adapters.py
+  s_a9719f961786d2::t_a8ee176260b71b 1-127,130
+  s_a9719f961786d2::t_23f3ca78c9e188 128-129
+  s_a9719f961786d2::t_5f2adb64b60707 131-133
+  s_9fc0199b2e97a5::t_3e35c44859f18a 134-143
+infrahub_sync/adapter_files/libraries.py
+  s_a9719f961786d2::t_960707547296f9 722-723
+  s_a9719f961786d2::t_81efedc54c2dda 1-628,630-721,724-794
+  s_a9719f961786d2::t_4c212077b519ac 629
+tests/test_provided_libraries.py
+  s_a9719f961786d2::t_c536a8f61ddc37 1-160
+dev/specs/031-registered-adapters/contracts/adapter-file.md
+  s_9fc0199b2e97a5::t_12d5c176f3fbdb 7-12,61,133,135-136,153-158,167-168,176-186
+infrahub_sync/provided_libraries.json
+  s_9fc0199b2e97a5::t_57b81235ccd548 1-1341
+tasks/__init__.py
+  s_9fc0199b2e97a5::t_ef8f07785aac11 5,23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8661204f8435f5bfc94a3e7de7904f47a49751ae",
+  "prompts": {},
+  "sessions": {
+    "s_9fc0199b2e97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-chunk-04a-12d2ebba5d3f4e3b",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
