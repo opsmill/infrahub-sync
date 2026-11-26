@@ -1,0 +1,23 @@
+changelog/+adapters-move.added.md
+  s_5c07df28acc2f7::t_c36ec7630a3c3a 1
+changelog/+runs-load-registered-adapters.added.md
+  s_5c07df28acc2f7::t_aa0a40ccdc8e77 1
+changelog/+configuration-adapter-version.added.md
+  s_5c07df28acc2f7::t_cd6064534e4ffb 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8898339f680ce9f1ffbba457339871b9d08e3762",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
