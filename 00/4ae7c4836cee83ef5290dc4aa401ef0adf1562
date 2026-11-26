@@ -1,0 +1,29 @@
+adapters/netbox/changelog/+carries-pynetbox.changed.md
+  s_5c07df28acc2f7::t_66c813fae579f9 1
+changelog/+netbox-adapter-file-only.removed.md
+  s_5c07df28acc2f7::t_7e77ed217d1f71 1-7
+docs/docs/adapters/netbox.mdx
+  s_5c07df28acc2f7::t_1c0cc33c812f44 21-29
+examples/netbox_to_infrahub/README.md
+  s_5c07df28acc2f7::t_1c0cc33c812f44 6-8,29-30
+tests/configuration/test_validation_compatibility.py
+  s_5c07df28acc2f7::t_691256aaab04bc 22,271-282
+docs/docs/tutorials/try-the-netbox-demo.mdx
+  s_5c07df28acc2f7::t_1c0cc33c812f44 118-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "004ae7c4836cee83ef5290dc4aa401ef0adf1562",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
