@@ -1,0 +1,23 @@
+adapters/genericrestapi/tests/test_genericrestapi_client_settings.py
+  s_5c07df28acc2f7::t_9e620d26a8f22b 1-143
+adapters/genericrestapi/tests/test_genericrestapi_reference_conversion.py
+  s_5c07df28acc2f7::t_c5f39194064823 1-452
+adapters/genericrestapi/tests/test_genericrestapi_filter_role.py
+  s_5c07df28acc2f7::t_86c7a213354ee3 1-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33ac28c2b709d17728020ed9bb58cf533756f2e7",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
