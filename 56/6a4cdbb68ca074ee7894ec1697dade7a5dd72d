@@ -1,0 +1,34 @@
+docs/docs/compose-deployment.mdx
+  s_5c07df28acc2f7::t_35d94e727cf50b 1034-1036
+infrahub_sync/cli.py
+  s_5c07df28acc2f7::t_13a602ffbe7f77 1350-1351
+docs/docs/development/guidelines/testing-tiers.md
+  s_5c07df28acc2f7::t_35d94e727cf50b 439-440
+docs/docs/reference/cli.mdx
+  s_5c07df28acc2f7::t_13a602ffbe7f77 533-534
+docs/docs/v2-to-v3.mdx
+  s_5c07df28acc2f7::t_13a602ffbe7f77 134-136,142-146
+  s_5c07df28acc2f7::t_38c6e3a2a6f109 147-148
+docs/docs/configuration-package.mdx
+  s_5c07df28acc2f7::t_35d94e727cf50b 347-349
+docs/docs/development/knowledge/repository-tour.md
+  s_5c07df28acc2f7::t_35d94e727cf50b 34-38,96
+tests/cli/test_convert_command.py
+  s_5c07df28acc2f7::t_5000670bab9adf 615
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "566a4cdbb68ca074ee7894ec1697dade7a5dd72d",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
