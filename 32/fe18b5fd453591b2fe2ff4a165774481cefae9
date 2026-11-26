@@ -1,0 +1,21 @@
+changelog/+peeringmanager-adapter-project.housekeeping.md
+  s_5c07df28acc2f7::t_818ae3361a7a0b 1
+changelog/+webex-adapter-project.housekeeping.md
+  s_5c07df28acc2f7::t_818ae3361a7a0b 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32fe18b5fd453591b2fe2ff4a165774481cefae9",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
