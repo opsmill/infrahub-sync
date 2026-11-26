@@ -1,0 +1,22 @@
+adapters/ipfabricsync/tests/test_ipfabricsync_client_settings.py
+  s_5c07df28acc2f7::t_1c7d71eb722034 1-185
+adapters/ipfabricsync/tests/test_ipfabricsync_filter_role.py
+  s_5c07df28acc2f7::t_bbdaea5ab5cc05 1-30,34-52
+  s_5c07df28acc2f7::t_6ebf32af5b24a9 31-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7848f18a854f50366674ce4af4950cf7eb2f036",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
