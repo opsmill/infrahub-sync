@@ -1,0 +1,23 @@
+docs/docs/kubernetes-deployment.mdx
+  s_5c07df28acc2f7::t_391819b3213710 421-464
+docs/docs/compose-deployment.mdx
+  s_5c07df28acc2f7::t_4e4a32e97caac1 1558-1565
+  s_5c07df28acc2f7::t_289e16b06c220c 603-640
+  s_5c07df28acc2f7::t_15c0b9db93006b 1566
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b27681e958ccf848abde7f7a4fb98ecfe690de9d",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
