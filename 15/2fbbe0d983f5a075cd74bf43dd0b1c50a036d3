@@ -1,0 +1,32 @@
+adapters/nautobot/tests/test_nautobot_static_values.py
+  s_5c07df28acc2f7::t_13f1234fddd0a4 1-280
+tests/adapters/test_reference_conversion.py
+  s_5c07df28acc2f7::t_7defdf6b66c68f 9
+  s_5c07df28acc2f7::t_59a7769e5f9838 1,3-5,38,40,42,83,100,102
+adapters/nautobot/tests/test_nautobot_reference_conversion.py
+  s_5c07df28acc2f7::t_59a7769e5f9838 1-7,9-486
+  s_5c07df28acc2f7::t_7defdf6b66c68f 8
+tests/adapters/test_peer_not_found_in_source.py
+  s_5c07df28acc2f7::t_6e44e221b152a5 3-6
+  s_5c07df28acc2f7::t_1ab1b29d9bef66 17-19,119
+tests/adapters/test_same_type_sync_filter_role.py
+  s_5c07df28acc2f7::t_e01b06f0a5d5dd 14-15
+adapters/nautobot/tests/test_nautobot_client_settings.py
+  s_5c07df28acc2f7::t_f71d3aa4506a8b 1-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "152fbbe0d983f5a075cd74bf43dd0b1c50a036d3",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
