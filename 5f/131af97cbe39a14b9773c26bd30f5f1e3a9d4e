@@ -1,0 +1,60 @@
+tests/adapters_parity/test_msgraphsync_project.py
+  s_5c07df28acc2f7::t_8f30fa3297a330 74
+  s_5c07df28acc2f7::t_0aef65c8e0016d 3-10,43,55,95-96,178-179,184,190,255,272-273,275-276,278,280-281,349,866-868,895,897,900,903,949,956,958
+adapters/msgraphsync/pyproject.toml
+  s_5c07df28acc2f7::t_4b018e7465b72f 66-68
+adapters/msgraphsync/tests/test_msgraphsync_settings.py
+  s_5c07df28acc2f7::t_3d0e6da850455a 12
+tests/test_logging.py
+  s_5c07df28acc2f7::t_6582323beaa8ba 107
+adapters/msgraphsync/README.md
+  s_5c07df28acc2f7::t_4b018e7465b72f 15-16,18-23
+adapters/msgraphsync/tests/msgraphsync_fakes.py
+  s_5c07df28acc2f7::t_3d0e6da850455a 20-21
+tests/configuration/test_conversion.py
+  s_5c07df28acc2f7::t_f2b8164beb52e6 103-108
+adapters/msgraphsync/infrahub_sync_msgraphsync/adapter.py
+  s_5c07df28acc2f7::t_e2023c47392d8b 7,28,32,40,43,46,49,52,56,59,62,73
+tests/configuration/validation_packages.py
+  s_5c07df28acc2f7::t_be40bed6a569d4 82-100
+tests/image/conftest.py
+  s_5c07df28acc2f7::t_8f30fa3297a330 64-67
+  s_5c07df28acc2f7::t_cab4ca8242a091 62-63,74,78-81
+tests/service/test_health_adapters.py
+  s_5c07df28acc2f7::t_be40bed6a569d4 40,159
+tests/service/test_flow_adapter_loading.py
+  s_5c07df28acc2f7::t_be40bed6a569d4 400
+  s_5c07df28acc2f7::t_51beb9b01ed462 49
+tests/adapter_files/test_names.py
+  s_5c07df28acc2f7::t_6582323beaa8ba 20-22
+tests/configuration/test_block_credential.py
+  s_5c07df28acc2f7::t_095c4429150167 19-29,143,164-166,171-197
+  s_5c07df28acc2f7::t_02ad66ac9fd6dc 198-199
+adapters/msgraphsync/tests/test_msgraphsync_graph.py
+  s_5c07df28acc2f7::t_3d0e6da850455a 16
+infrahub_sync/service/adapter_health.py
+  s_5c07df28acc2f7::t_cab4ca8242a091 21-22
+tests/adapter_files/test_loading.py
+  s_5c07df28acc2f7::t_be40bed6a569d4 40,337
+tests/cli/test_parity_and_closure.py
+  s_5c07df28acc2f7::t_cab4ca8242a091 287-288
+infrahub_sync/adapter_files/declaration.py
+  s_5c07df28acc2f7::t_cab4ca8242a091 41,44-45
+  s_5c07df28acc2f7::t_48c4e09b14d239 46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f131af97cbe39a14b9773c26bd30f5f1e3a9d4e",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
