@@ -345,17 +345,20 @@ def prepare(
     if option is not None:
         msg = f"{option} must not carry a user name or password (user:password@)"
         raise DemoAddressError(msg)
+    if branch is not None and not branch.strip():
+        msg = "the branch name must not be empty"
+        raise DemoBranchError(msg)
     files = assets.schema_files()
     text = local_package_text(assets.netbox_package_text(), netbox_url, infrahub_url)
     # Refuse an invalid reason here, so it never leaves a schema loaded and nothing registered.
     _mutation_request(text, reason)
     address = infrahub_address or infrahub_url
     manager = branches if branches is not None else InfrahubBranches()
-    branch_existed = bool(branch) and manager.check(address, token, branch) != "missing"
+    branch_existed = branch is not None and manager.check(address, token, branch) != "missing"
     loader = schema_loader if schema_loader is not None else load_schema
     schema = loader(address, token, files, schema_timeout)
     branch_state: BranchState | None = None
-    if branch:
+    if branch is not None:
         if branch_existed and branch != _DEFAULT_BRANCH:
             # Checked again after the load, which may have changed the schema of `main`.
             check = manager.check(address, token, branch)

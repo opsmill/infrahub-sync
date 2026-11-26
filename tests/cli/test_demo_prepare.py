@@ -168,6 +168,17 @@ def test_an_address_with_userinfo_exits_2_naming_the_option_and_not_the_value(
     assert (loader.calls, client.calls) == ([], [])
 
 
+@pytest.mark.parametrize("branch", ["", "   "], ids=["empty", "blank"])
+def test_an_empty_branch_exits_2_before_any_request(monkeypatch: pytest.MonkeyPatch, branch: str) -> None:
+    loader, branches = FakeSchemaLoader(), FakeBranches()
+
+    client, output = _invoke(loader, monkeypatch, "--branch", branch, branches=branches)
+
+    assert output.startswith("2\n")
+    assert "error: --branch must not be empty" in output
+    assert (loader.calls, branches.calls, client.calls) == ([], [], [])
+
+
 def test_branch_prints_whether_it_was_created(monkeypatch: pytest.MonkeyPatch) -> None:
     branches = FakeBranches()
 

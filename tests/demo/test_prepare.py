@@ -419,6 +419,15 @@ def test_a_branch_error_stops_before_the_schema_load_and_the_registration() -> N
     assert (loader.calls, client.calls) == ([], [])
 
 
+def test_an_empty_branch_name_is_refused_before_any_request() -> None:
+    client, loader, branches = FakeSyncClient(), FakeSchemaLoader(), FakeBranches()
+
+    with pytest.raises(DemoBranchError):
+        _prepare_branch(client, loader, branches, branch="")
+
+    assert (loader.calls, branches.calls, client.calls) == ([], [], [])
+
+
 class _FakeGraphQL:
     """Stands in for `InfrahubClientSync` for the branch requests: records them, answers in order."""
 

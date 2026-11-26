@@ -3337,6 +3337,10 @@ def demo_prepare_netbox_cmd(
         typer.echo(f"error: {refused} must not carry a user name or password (user:password@)", err=True)
         typer.echo(f"hint: give {refused} as scheme://host[:port], without user:password@", err=True)
         raise typer.Exit(2)
+    if branch is not None and not branch.strip():
+        typer.echo("error: --branch must not be empty", err=True)
+        typer.echo("hint: give --branch the name of the Infrahub branch to create, or leave the option out", err=True)
+        raise typer.Exit(2)
     with _client_errors():
         _positive_duration(schema_timeout, "schema_timeout")
         client = _client(ctx)
