@@ -1,0 +1,46 @@
+tests/adapter_files/test_loading.py
+  s_5c07df28acc2f7::t_d341853cc7a933 576-611,617-663,665-666,668-676,678-680,682-683,688,690-694
+  s_5c07df28acc2f7::t_0ba00d5c8e002f 664,667,677
+  s_5c07df28acc2f7::t_83f0cebcb8ce00 12,59,612-616,681,684-687,689,818-820
+dev/specs/031-registered-adapters/spec.md
+  s_5c07df28acc2f7::t_0407cb38fc949b 499-501
+infrahub_sync/adapter_files/loading.py
+  s_5c07df28acc2f7::t_6ec1f79939d6ee 40
+  s_5c07df28acc2f7::t_ec4cc460f5c274 359-404,406,411-412,414,426-427,437-438
+  s_5c07df28acc2f7::t_d678495bf27a5d 647-652
+  s_5c07df28acc2f7::t_e4c182d8ba06b4 41-42
+  s_5c07df28acc2f7::t_984f90bc85a0f1 258-287,289-305
+  s_5c07df28acc2f7::t_fb4c991d901b6a 353-354,357-358
+  s_5c07df28acc2f7::t_fb2f5164d2b919 573-580
+  s_5c07df28acc2f7::t_b4f40f90a7634e 609-610,617
+  s_5c07df28acc2f7::t_e0d3e8223815b5 43-47
+  s_5c07df28acc2f7::t_f86301d646805f 587
+  s_5c07df28acc2f7::t_779b101a4779d1 625
+  s_bca288e3ac042c::t_34319f2f7668d0 257,288
+changelog/+adapter-loading-times.added.md
+  s_5c07df28acc2f7::t_49cc37c7f956cb 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e07927a14aeb3c197618f2f2e231cf44757ddba",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_bca288e3ac042c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bebe4b72-2da8-43ba-9e35-7e5be699f507",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
