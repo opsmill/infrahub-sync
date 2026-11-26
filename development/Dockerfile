@@ -46,9 +46,10 @@ COPY pyproject.toml uv.lock README.md LICENSE.txt ./
 # Third-party dependencies come from the committed lock and change only when that
 # lock does, so they install from their own layer against the shared uv cache.
 #
-# The project depends on a bare `infrahub-sdk` and takes `infrahub-sdk[ctl]` only in
-# the `service` extra, so no test framework reaches this profile and nothing has to
-# be excluded from it. `tests/image/` holds that to the built image.
+# The project depends on a bare `infrahub-sdk`, and only the `dev` extra takes
+# `infrahub-sdk[ctl]`, so neither `infrahubctl` nor a test framework reaches this
+# profile and nothing has to be excluded from it. `tests/image/` holds that to the
+# built image.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project --extra service
 

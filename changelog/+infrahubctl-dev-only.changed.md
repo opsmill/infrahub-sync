@@ -1,0 +1,1 @@
+The `service` extra and the container image no longer install `infrahubctl` (`infrahub-sdk[ctl]`); the `dev` extra does. Infrahub Sync uses the Infrahub SDK only. The V3 install instructions now pin the version of the deployment, because a range such as `infrahub-sync>=3,<4` does not install a pre-release.

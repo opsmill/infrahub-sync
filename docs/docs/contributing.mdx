@@ -57,8 +57,8 @@ uv sync --extra dev --extra prefect --extra service
 
 The `prefect` and `service` extras are required for development. Without them the type
 checker cannot resolve the imports in `infrahub_sync/orchestration/` and
-`infrahub_sync/service/`, and the tests that cover them skip themselves. The `service`
-extra also installs `infrahubctl`, which the integration checks use to load schemas.
+`infrahub_sync/service/`, and the tests that cover them skip themselves. The `dev` extra
+also installs `infrahubctl`, which the integration checks use to load schemas.
 
 On Python 3.10 the Sync service is unavailable. Install the direct Prefect profile
 instead. `invoke lint` then excludes the service from type checking:
