@@ -1,0 +1,102 @@
+tests/service/test_config_adapter_version.py
+  s_5c07df28acc2f7::t_cc29a1d4fc521d 85-90,93,95-97
+tests/adapters_parity/test_prometheus_project.py
+  s_5c07df28acc2f7::t_3037de57d5881a 45
+infrahub_sync/product_store/store.py
+  s_5c07df28acc2f7::t_fd17bf7da7e19b 25,5956-5958,5968-5969
+infrahub_sync/runtime_schema/__init__.py
+  s_5c07df28acc2f7::t_387c652f4bb3ce 21,59
+tests/adapters_parity/test_nautobot_project.py
+  s_5c07df28acc2f7::t_3037de57d5881a 30
+tests/adapter_files/test_packaged_declarations.py
+  s_5c07df28acc2f7::t_891f7379933f79 60
+  s_5c07df28acc2f7::t_22d715e2620010 202-204,215,217,355,357
+  s_5c07df28acc2f7::t_20904f3d8f9724 50
+tests/conftest.py
+  s_5c07df28acc2f7::t_154d8b883e8ca2 30,136-137,140-154,156,159-160,165,167-175,207-210,212-215,218-219,224-226,234-235,237-252
+tests/adapters_parity/test_ipfabricsync_project.py
+  s_5c07df28acc2f7::t_3037de57d5881a 50
+tests/adapters_parity/test_aci_project.py
+  s_5c07df28acc2f7::t_3037de57d5881a 41
+tests/runtime_schema/test_worker_path.py
+  s_5c07df28acc2f7::t_38aac8832ff014 366,372-373,375-377,379-381,383-384,396,408
+  s_5c07df28acc2f7::t_beaa735654bfb5 684
+tests/configuration/test_block_credential.py
+  s_5c07df28acc2f7::t_891f7379933f79 19,28
+tests/declaration_sources.py
+  s_5c07df28acc2f7::t_891f7379933f79 18,43-44,48-51,57,59,65-67,70-72,75
+tests/configuration/test_validation_compatibility.py
+  s_5c07df28acc2f7::t_e7f3a25cd0c6d0 25
+  s_5c07df28acc2f7::t_20904f3d8f9724 274-292,298,303
+pyproject.toml
+  s_5c07df28acc2f7::t_422a58c1b2192d 242
+tests/runtime_schema/test_destination_branch_missing.py
+  s_5c07df28acc2f7::t_c5e7672e3cd3f3 22-25
+infrahub_sync/product_store/adapter_versions.py
+  s_5c07df28acc2f7::t_6f045c89a41123 803-806,843-844,846
+  s_5c07df28acc2f7::t_b526841b54d0aa 867,909,916,951
+infrahub_sync/service/flow.py
+  s_5c07df28acc2f7::t_46df66bfaff1c9 243-245
+  s_5c07df28acc2f7::t_cc411c985700be 1173-1174
+tests/service/test_failure_declarations.py
+  s_5c07df28acc2f7::t_891f7379933f79 28
+tests/configuration/validation_packages.py
+  s_5c07df28acc2f7::t_aa73eb7dda687c 6,67,76-77,80-81
+tests/adapters_parity/test_slurpitsync_project.py
+  s_5c07df28acc2f7::t_3037de57d5881a 40
+tests/configuration/test_conversion.py
+  s_5c07df28acc2f7::t_891f7379933f79 36,40
+tests/adapter_files/test_loading.py
+  s_5c07df28acc2f7::t_ef2d56bd4fe5a9 39-40
+  s_5c07df28acc2f7::t_086e2ba1b54c6c 237,310-312,314,316,321,326,331
+infrahub_sync/runtime_schema/worker.py
+  s_5c07df28acc2f7::t_387c652f4bb3ce 226
+  s_5c07df28acc2f7::t_ce40ed0ca107d6 10-12,39,66-69,191-196,198,207,211-225,227-229,249-252,267-268,271-278,318,320-322
+infrahub_sync/runtime_schema/errors.py
+  s_5c07df28acc2f7::t_ce40ed0ca107d6 16-19
+infrahub_sync/product_store/adapter_health.py
+  s_5c07df28acc2f7::t_fd17bf7da7e19b 41-43
+tests/cli/test_convert_command.py
+  s_5c07df28acc2f7::t_891f7379933f79 37
+infrahub_sync/service/adapter_health.py
+  s_5c07df28acc2f7::t_fd17bf7da7e19b 18-20
+tests/configuration/test_conversion_declarations.py
+  s_5c07df28acc2f7::t_891f7379933f79 28
+  s_5c07df28acc2f7::t_cc29a1d4fc521d 90-91,97-98
+infrahub_sync/adapter_files/loading.py
+  s_5c07df28acc2f7::t_ba6f73e1b27404 12-13,85,367-368,510-511
+tests/adapters_parity/test_netbox_project.py
+  s_5c07df28acc2f7::t_3037de57d5881a 30
+tests/adapters_parity/test_webex_project.py
+  s_5c07df28acc2f7::t_3037de57d5881a 181
+tests/adapters_parity/test_msgraphsync_project.py
+  s_5c07df28acc2f7::t_3037de57d5881a 275
+tests/product_store/test_configuration_adapters.py
+  s_5c07df28acc2f7::t_cc29a1d4fc521d 249-251,254-261,264,270-271
+  s_5c07df28acc2f7::t_6804b60139a955 262,265-268
+  s_5c07df28acc2f7::t_2f4dd73ef9ee27 263,269
+infrahub_sync/configuration/conversion_declarations.py
+  s_5c07df28acc2f7::t_92330a5fc2a184 12-14
+tests/service/test_flow_adapter_loading.py
+  s_5c07df28acc2f7::t_c423280683edea 31,44-45,251,352,360-362,364,366,369,374-379,386
+tests/service/test_health_adapters.py
+  s_5c07df28acc2f7::t_c5e7672e3cd3f3 269-271
+  s_5c07df28acc2f7::t_6a28b4110f7b67 483,489
+  s_5c07df28acc2f7::t_60d46d67ce428f 39-40,134-138,141-142,144,147-150,158-160,162-163,166,170,179-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6aa3a97e0389c35b1c5f2f4c24c2f12108c4021",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
