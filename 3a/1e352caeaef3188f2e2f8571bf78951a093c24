@@ -1,0 +1,31 @@
+docs/docs/development/knowledge/repository-tour.md
+  s_5c07df28acc2f7::t_9b16529cfdcdb3 413-416
+adapters/README.md
+  s_5c07df28acc2f7::t_5bdef1a25c8e22 266
+AGENTS.md
+  s_5c07df28acc2f7::t_9b16529cfdcdb3 100
+adapters/msgraphsync/changelog/+msgraphsync-module-left-sync.changed.md
+  s_5c07df28acc2f7::t_41300ff456ddae 1
+changelog/+msgraphsync-adapter-file-only.removed.md
+  s_5c07df28acc2f7::t_0161be95cac8c8 1-7
+docs/docs/adapters/msgraphsync.mdx
+  s_5c07df28acc2f7::t_5bdef1a25c8e22 13,279,412,414,480
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_5c07df28acc2f7::t_5bdef1a25c8e22 669
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a1e352caeaef3188f2e2f8571bf78951a093c24",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
