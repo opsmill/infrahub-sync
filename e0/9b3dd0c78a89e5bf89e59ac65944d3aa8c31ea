@@ -1,0 +1,19 @@
+tests/adapters_parity/test_msgraphsync_project.py
+  s_5c07df28acc2f7::t_d2ce5ec4014141 95-110,382,1002-1008,1116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e09b3dd0c78a89e5bf89e59ac65944d3aa8c31ea",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
