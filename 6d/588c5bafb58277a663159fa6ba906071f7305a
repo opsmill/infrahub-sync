@@ -1,0 +1,25 @@
+docker-compose.yml
+  s_76562c1487d5a7::t_f3475911c977ae 171,228,247,311,383
+pyproject.toml
+  s_76562c1487d5a7::t_f3475911c977ae 3
+infrahub_sync/testcontainers/docker-compose.yml
+  s_76562c1487d5a7::t_f3475911c977ae 171,228,247,311,383
+uv.lock
+  s_76562c1487d5a7::t_2343e76b843cfe 1326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d588c5bafb58277a663159fa6ba906071f7305a",
+  "prompts": {},
+  "sessions": {
+    "s_76562c1487d5a7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "28f8add3-ae92-4828-be31-954e2774d958",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
