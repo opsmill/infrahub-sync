@@ -2,6 +2,18 @@ infrahub_sync/configuration/capabilities.py
   s_5c07df28acc2f7::t_46c3a84c44140b 757-761,770-775
 tests/adapter_files/test_packaged_declarations.py
   s_5c07df28acc2f7::t_c0088bec43d308 122-124
+changelog/+source-adapter-fallback.removed.md
+  s_5c07df28acc2f7::t_a7057a53ef3037 1-6
+dev/specs/031-registered-adapters/handoff.md
+  s_5c07df28acc2f7::t_a7057a53ef3037 49,64-89,113-115,250
+dev/specs/031-registered-adapters/tasks.md
+  s_5c07df28acc2f7::t_a7057a53ef3037 553,558-573,575-577
+dev/specs/031-registered-adapters/data-model.md
+  s_5c07df28acc2f7::t_a7057a53ef3037 77-79
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_5c07df28acc2f7::t_a7057a53ef3037 253,313-316
+dev/specs/031-registered-adapters/contracts/adapter-file.md
+  s_5c07df28acc2f7::t_a7057a53ef3037 120,122-126
 ---
 {
   "schema_version": "authorship/3.0.0",
