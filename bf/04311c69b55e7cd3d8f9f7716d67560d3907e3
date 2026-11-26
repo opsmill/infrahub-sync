@@ -1,0 +1,59 @@
+tests/configuration/test_conversion.py
+  s_5c07df28acc2f7::t_113172931b6356 964-966
+  s_5c07df28acc2f7::t_9c7facfd3ea0bc 959,1031,1052,1083,1099,1141,1147,1165,1212
+tests/configuration/test_conversion_examples.py
+  s_5c07df28acc2f7::t_9c7facfd3ea0bc 3,58
+tests/configuration/test_conversion_declarations.py
+  s_5c07df28acc2f7::t_1fe35a684ba39f 10,85
+  s_5c07df28acc2f7::t_51fcb26452ba22 1-9,11-68,70-84,86-132
+  s_5c07df28acc2f7::t_113172931b6356 69
+changelog/+configs-convert-adapter-declaration.changed.md
+  s_5c07df28acc2f7::t_3b2f592c9ba360 1
+docs/docs/development/knowledge/v2-configuration-conversion.md
+  s_5c07df28acc2f7::t_7c10687df9ac7f 24-25,27-52
+  s_5c07df28acc2f7::t_01df6f95dcf406 56-57
+infrahub_sync/cli.py
+  s_5c07df28acc2f7::t_c00d7a91f60ad2 146,1204
+  s_5c07df28acc2f7::t_744078dd701bba 1168-1175,1354
+  s_5c07df28acc2f7::t_113172931b6356 32-33,1176
+  s_5c07df28acc2f7::t_b7247556ddda76 88,91-98,1056,1153-1155,1161,1177-1203,1205-1208,1258-1259,1262-1269,1287-1298,1301-1306,1322,1339-1342,1350-1351,1364,1371,1380
+infrahub_sync/configuration/conversion_declarations.py
+  s_5c07df28acc2f7::t_c00d7a91f60ad2 20,37-39,186
+  s_5c07df28acc2f7::t_2a3eb35e6111d2 25
+  s_5c07df28acc2f7::t_6848560f2ef122 1-19,21-24,26-36,40-110,114-185,187
+  s_5c07df28acc2f7::t_113172931b6356 111-113
+infrahub_sync/configuration/conversion.py
+  s_5c07df28acc2f7::t_3270cf33feb4b1 251,253,506,555,613
+  s_5c07df28acc2f7::t_8f9959b3843652 30,317,422-433,484,521,528-529,562
+  s_5c07df28acc2f7::t_113172931b6356 492-494
+tests/cli/test_convert_command.py
+  s_5c07df28acc2f7::t_830e839deefe10 504,506-510,514-516,592
+  s_5c07df28acc2f7::t_06f74d7f207613 6,9,19-20,29-32,35-89,99,101-107,388-473,476-488,490-494,498-503,505,513,517-545,547-571,575-591,593-594,596-615
+  s_5c07df28acc2f7::t_113172931b6356 100,572-574,595
+  s_5c07df28acc2f7::t_c00d7a91f60ad2 511-512
+tests/configuration/test_conversion_secrets.py
+  s_5c07df28acc2f7::t_621ff8be6e5170 42
+  s_5c07df28acc2f7::t_8b1a3f0e8790ef 171-176,180
+tests/cli/test_parity_and_closure.py
+  s_5c07df28acc2f7::t_7c10687df9ac7f 125-126,202-203
+docs/docs/reference/cli.mdx
+  s_5c07df28acc2f7::t_ea0923d328a7e3 470,473-489,505,522-525,533-534,548
+docs/docs/v2-to-v3.mdx
+  s_5c07df28acc2f7::t_14a327b7bfa5ec 69-99,199-200,322-323,330,334,346-347,352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf04311c69b55e7cd3d8f9f7716d67560d3907e3",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
