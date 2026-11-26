@@ -1,0 +1,21 @@
+adapters/aci/tests/test_aci_filter_role.py
+  s_5c07df28acc2f7::t_703cd60cfe18a9 1-72
+adapters/aci/tests/test_aci_client_settings.py
+  s_5c07df28acc2f7::t_bfe018ce8b88b5 1-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a197a7142cda0a981065daaf542da92ccff5a054",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

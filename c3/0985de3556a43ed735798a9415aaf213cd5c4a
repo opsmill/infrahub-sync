@@ -1,0 +1,37 @@
+adapters/aci/changelog/+aci-module-left-sync.changed.md
+  s_5c07df28acc2f7::t_a84f159ef78801 1
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_5c07df28acc2f7::t_743a4c2e2f565a 253
+docs/docs/adapters/aci.mdx
+  s_5c07df28acc2f7::t_80df747c7da203 21-32
+docs/docs/development/guides/adding-an-adapter.md
+  s_5c07df28acc2f7::t_743a4c2e2f565a 50-52
+AGENTS.md
+  s_5c07df28acc2f7::t_743a4c2e2f565a 100
+docs/docs/reference/sync-http-api.mdx
+  s_5c07df28acc2f7::t_743a4c2e2f565a 710,1093
+docs/docs/development/knowledge/repository-tour.md
+  s_5c07df28acc2f7::t_743a4c2e2f565a 415,418-420
+changelog/+aci-adapter-file-only.removed.md
+  s_5c07df28acc2f7::t_086ff6fee7c8a9 1-7
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_5c07df28acc2f7::t_743a4c2e2f565a 118
+adapters/README.md
+  s_5c07df28acc2f7::t_743a4c2e2f565a 264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c30985de3556a43ed735798a9415aaf213cd5c4a",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
