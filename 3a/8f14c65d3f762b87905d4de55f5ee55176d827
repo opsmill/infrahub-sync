@@ -1,0 +1,24 @@
+docs/docs/tutorials/try-the-netbox-demo.mdx
+  s_b7e124e0850544::t_41651aa6efd844 160-162
+docs/docs/reference/cli.mdx
+  s_b7e124e0850544::t_c83e9c80a315bc 997-1003
+infrahub_sync/cli.py
+  s_b7e124e0850544::t_00d6a0060406e9 3330-3332
+  s_b7e124e0850544::t_6914648e38dc73 3326-3329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a8f14c65d3f762b87905d4de55f5ee55176d827",
+  "prompts": {},
+  "sessions": {
+    "s_b7e124e0850544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a9e16b5-a567-44a0-b993-a44493a00002",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
