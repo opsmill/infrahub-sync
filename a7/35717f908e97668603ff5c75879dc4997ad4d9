@@ -1,0 +1,24 @@
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_5c07df28acc2f7::t_66f2d34ad0620c 202-204
+dev/specs/031-registered-adapters/spec.md
+  s_5c07df28acc2f7::t_66f2d34ad0620c 350-351,478-480,671,677-680
+  s_5c07df28acc2f7::t_75fdd5c524eef0 164-165
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_5c07df28acc2f7::t_66f2d34ad0620c 366-376
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a735717f908e97668603ff5c75879dc4997ad4d9",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
