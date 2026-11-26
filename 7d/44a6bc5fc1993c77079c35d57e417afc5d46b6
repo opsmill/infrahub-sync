@@ -1,0 +1,27 @@
+docs/docs/adapters/managing-adapters.mdx
+  s_5c07df28acc2f7::t_8be5bdf2a7180a 302-303
+  s_5c07df28acc2f7::t_007bfd305aafdc 315
+  s_5c07df28acc2f7::t_c9fb3066a6dd85 1-301,304-314,316-355
+docs/docs/adapters/local-adapters.mdx
+  s_5c07df28acc2f7::t_20a15d5507980b 7-12,14,16,18,24-27,31-61,63-65,67-68,70-76,78,80-82,105-107,109-111,115,117-118,139,143,150-151,163,167,185,187-191
+  s_5c07df28acc2f7::t_0f7b72a858ed54 19-22
+  s_5c07df28acc2f7::t_022026223aa27b 23
+docs/sidebars.ts
+  s_5c07df28acc2f7::t_175da091157fb6 56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d44a6bc5fc1993c77079c35d57e417afc5d46b6",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
