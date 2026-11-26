@@ -1,0 +1,19 @@
+docs/docs/adapters/choosing-an-adapter.mdx
+  s_5c07df28acc2f7::t_cc0f2f37dd2706 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "799d2a7f0e1ef5ae44d5e59e62573ab9d3e2a94d",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

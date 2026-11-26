@@ -1,0 +1,76 @@
+tests/compose/test_external_store.py
+  s_5c07df28acc2f7::t_15fe91df2421ee 171,206-207,813
+tests/configuration/test_declaration_source.py
+  s_5c07df28acc2f7::t_8947df8419b14a 20,23,44
+infrahub_sync/service/adapter_health.py
+  s_5c07df28acc2f7::t_87594719b3c9d9 22-23
+infrahub_sync/adapter_files/declaration.py
+  s_5c07df28acc2f7::t_87594719b3c9d9 45,63-65
+tests/adapter_files/test_names.py
+  s_5c07df28acc2f7::t_8947df8419b14a 19-23,35,48
+adapters/ipfabricsync/tests/test_ipfabricsync_reference_conversion.py
+  s_5c07df28acc2f7::t_c46665fd78fb23 3-6
+tests/cli/test_convert_command.py
+  s_5c07df28acc2f7::t_52ea1e90d4e017 23
+  s_5c07df28acc2f7::t_b8eeac5da4113c 480,482-485,490-491
+tests/configuration/test_contracts.py
+  s_5c07df28acc2f7::t_63b19b544441c0 1625-1627,1763
+adapters/ipfabricsync/infrahub_sync_ipfabricsync/adapter.py
+  s_5c07df28acc2f7::t_0de64658d0652f 5,49
+  s_5c07df28acc2f7::t_7c7e6c293580b8 23-24,48,68
+infrahub_sync/configuration/capabilities.py
+  s_5c07df28acc2f7::t_ff8e274b103059 770-772,777
+tests/configuration/test_adapter_setting_conformance.py
+  s_5c07df28acc2f7::t_3e07186c1ed653 42-44
+adapters/ipfabricsync/tests/test_ipfabricsync_client.py
+  s_5c07df28acc2f7::t_c46665fd78fb23 3-6,8
+  s_5c07df28acc2f7::t_f22ecbf07e38e5 7,58
+tests/configuration/validation_packages.py
+  s_5c07df28acc2f7::t_d260d0b171e489 137-138,140
+  s_5c07df28acc2f7::t_681066fdc43bf9 6-7,9,11-16,67-74,76-77,80-116,119-122,126
+tests/adapter_files/test_loading.py
+  s_5c07df28acc2f7::t_15b0e774695934 40-45,256,260,729,734
+  s_5c07df28acc2f7::t_01f440f3452b9e 258-259,732-733
+tests/test_potenda_plan_artifact.py
+  s_5c07df28acc2f7::t_8947df8419b14a 2012,2014-2016,2024
+tests/adapters_parity/test_ipfabricsync_project.py
+  s_5c07df28acc2f7::t_3caa5d4990eb00 1,3-7,11-14,50,59,76,110,144-145,147-148,150-169,178,187,248-251,725-726
+infrahub_sync/execution.py
+  s_5c07df28acc2f7::t_87594719b3c9d9 161
+tests/adapters/test_service_extra_sdk_imports.py
+  s_5c07df28acc2f7::t_fe92feff2e7d92 1,5-8,27-30
+tests/configuration/test_registered_adapter_authority.py
+  s_5c07df28acc2f7::t_6a56bc60a7ffdc 87-88,91-92,94-97,102-103
+  s_5c07df28acc2f7::t_f9f75c2499bfe5 7-10,170
+  s_5c07df28acc2f7::t_c2bb7077e94459 24
+adapters/ipfabricsync/pyproject.toml
+  s_5c07df28acc2f7::t_7c7e6c293580b8 81-82
+tests/service/test_flow_adapter_loading.py
+  s_5c07df28acc2f7::t_15b0e774695934 374
+  s_5c07df28acc2f7::t_01f440f3452b9e 372-373
+  s_5c07df28acc2f7::t_94deff8dd22a83 48
+tests/service/test_health_adapters.py
+  s_5c07df28acc2f7::t_15b0e774695934 40-45,139-144,149,154,487,493
+tests/image/conftest.py
+  s_5c07df28acc2f7::t_15fe91df2421ee 62-64,79,83
+tests/adapter_files/test_packaged_declarations.py
+  s_5c07df28acc2f7::t_d071a3cc513598 1,11-13,16-21,65,119,123-127,278
+uv.lock
+  s_5c07df28acc2f7::t_897df9d20f4cd8 1325
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc0812ca5fef8c265bfdd178b4aa408c06489a6b",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
