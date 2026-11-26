@@ -17,9 +17,12 @@ from infrahub_sync.product_store.bundle import (
     write_bundle,
 )
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.models import EMITTED_RESOURCES, EmittedArtifactListResource
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
+from tests.service.accounts import account_identifier, seed_accounts
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -46,7 +49,7 @@ _BUNDLE = write_bundle(
 )
 
 
-class _StubOrchestration:
+class _StubOrchestration(NoDeploymentSchedules):
     """Satisfies the orchestration boundary; the read routes under test never call it."""
 
     async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:
@@ -73,28 +76,29 @@ def _package() -> ConfigurationPackage:
                 "name": "registered-inventory",
                 "source": {
                     "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                    "credential": SOURCE_CREDENTIAL,
+                    "settings": {"url": "https://netbox.example"},
                 },
                 "destination": {
                     "name": "infrahub",
-                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
+                    "credential": DESTINATION_CREDENTIAL,
+                    "settings": {"url": "https://infrahub.example"},
                 },
                 "order": [],
                 "schema_mapping": [],
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
 
 @pytest.fixture
-def published(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient, ProductProjection, RunService]:
+def published(tmp_path: Path) -> tuple[TestClient, ProductProjection, RunService]:
     """One run carrying both a public review artifact and both internal checkpoints."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_package())
     projection.create_run(
         ProductRun(
@@ -104,7 +108,7 @@ def published(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClie
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime(2026, 9, 3, 12, tzinfo=timezone.utc),
             phase="accepted",
         )

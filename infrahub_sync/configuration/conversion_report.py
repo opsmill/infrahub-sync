@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .conversion import ConversionResult, CredentialEntry, RefusalEntry, SettingOriginEntry
+    from .conversion import ConversionResult, CredentialSettingEntry, RefusalEntry, SettingOriginEntry
 
 _LOCATION_COLUMN = 28
 _REFUSAL_LOCATION_COLUMN = 23
@@ -22,7 +22,7 @@ def _row(location: str, text: str) -> str:
     return f"  {location:<{_LOCATION_COLUMN}} {text}"
 
 
-def _credential_origin(entry: CredentialEntry) -> str:
+def _credential_origin(entry: CredentialSettingEntry) -> str:
     if entry.origin == "literal":
         return "a literal value in config.yml"
     if entry.origin == "placeholder":
@@ -44,10 +44,13 @@ def _setting_origin(entry: SettingOriginEntry, width: int) -> str:
 def _credential_section(result: ConversionResult) -> list[str]:
     if not result.credentials:
         return []
-    lines = ["", "Credentials (set these in the Sync deployment's .env file):"]
-    lines.extend(
-        _row(entry.location, f"{_credential_origin(entry)} -> {entry.identifier}") for entry in result.credentials
-    )
+    lines = ["", "Credentials (create each stored credential before you register the package):"]
+    for entry in result.credentials:
+        lines.append(_row(entry.location, f"{entry.name} ({', '.join(entry.fields)}): {entry.command}"))
+        lines.extend(
+            _row(setting.location, f"{_credential_origin(setting)} -> field {setting.field} of {entry.name}")
+            for setting in entry.settings
+        )
     lines.extend(f"  warning: {warning}" for entry in result.credentials for warning in entry.warnings)
     return lines
 
@@ -100,20 +103,9 @@ def refusal_lines(input_name: str, refusals: tuple[RefusalEntry, ...]) -> list[s
     return lines
 
 
-def _join_names(names: list[str]) -> str:
-    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
-
-
 def next_step_lines(output: str, result: ConversionResult) -> list[str]:
     """Return the numbered next steps printed after the package is written."""
-    identifiers = list(dict.fromkeys(entry.identifier for entry in result.credentials))
-    steps: list[str] = []
-    if identifiers:
-        steps.extend(
-            (
-                f"Set {_join_names(identifiers)} in .env",
-                "Restart the deployment so the Sync worker receives them",
-            )
-        )
+    # One command for each stored credential: the source and the destination can name the same one.
+    steps = list(dict.fromkeys(entry.command for entry in result.credentials))
     steps.append(f"infrahub-sync configs register {output}")
     return ["", "Next steps:", *(f"  {number}. {step}" for number, step in enumerate(steps, start=1))]

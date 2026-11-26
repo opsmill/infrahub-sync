@@ -6,17 +6,34 @@ OpsMill registry. These tasks drive `development/docker-compose.yml`, build what
 working tree holds, for the host's own architecture, start it, and remove it again.
 
 The `dev` namespace (`dev.build`, `dev.start`, `dev.restart`, `dev.stop`, `dev.destroy`,
-`dev.status`, `dev.logs`, `dev.seed`, `dev.smoke`) runs the core services, the Sync
-services (`sync` profile) and a local Infrahub (`infrahub` profile). With
-`--infrahub-network NAME`, or `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK`, the stack leaves the
-`infrahub` profile off and connects the worker to that network instead.
+`dev.status`, `dev.logs`, `dev.seed`, `dev.smoke`) runs one of four presets:
 
-`dev.deps` starts the core and Infrahub services only and returns; `dev.api` and
+- `sync`, the default: the core services and the Sync services (`sync` profile). The
+  worker syncs into an Infrahub that runs elsewhere, by default one on this host at
+  `http://host.docker.internal:8000` (`INFRAHUB_SYNC_DEV_INFRAHUB_URL` changes it).
+- `infrahub`: `sync` plus a local Infrahub (`infrahub` profile).
+- `preview`: `infrahub` plus the local NetBox from the `netbox` tasks, and the smoke
+  dataset seeded into the local Infrahub: one command from a fresh clone to a stack to try.
+- `demo`: `infrahub` plus the local NetBox, and nothing written into Infrahub. `dev.demo`
+  starts it, then loads the NetBox demo's schema and registers its configuration with
+  `infrahub-sync demo prepare`, run on the host.
+
+`dev.start --preset NAME` and `dev.deps --preset NAME` select one, `dev.infrahub` and
+`dev.preview` are `dev.start` with that preset, and `INFRAHUB_SYNC_DEV_PRESET` selects one
+for every task. Without either, a task follows the stack's containers (`running_preset()`):
+an `infrahub-server` container means `infrahub`, read from the running containers, or from
+every container when none runs, so a bare `dev.start` after `dev.stop` starts the same
+services again. The containers never select `preview` or `demo`. While the
+local NetBox runs, the stored `netbox-token` credential defaults to its token whatever the preset.
+With `--infrahub-network NAME`, or `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK`, the preset is
+`sync` and the worker joins that network.
+
+`dev.deps` starts the core services, and the preset's Infrahub and NetBox, and returns; `dev.api` and
 `dev.worker` then run the Sync API and the worker on the host, each in the foreground,
 against those containers' loopback publications. No task writes a PID file or keeps a
 process in the background. `dev.smoke` notices this mode from the running containers
 (the Prefect server runs, no `sync-api` container does) and first checks both host
-processes through the Sync API's `GET /status`.
+processes through the Sync API's `GET /api/health`.
 
 `dev.frontend` runs the web interface's development server on the host, in the
 foreground, against the Sync API of either mode.
@@ -29,8 +46,10 @@ variable that changes the stack changes the tasks too.
 
 `build_inputs_hash()` and `rebuild_decision()` tell whether `infrahub-sync:dev` still
 matches the checkout: the image carries the hash of the files that shape it as a label,
-and a code change alone never changes that hash, because the stack mounts the source
-over the installed copy.
+and a change to the Python source alone never changes that hash, because the stack mounts
+the source over the installed copy. A change to the web interface's build inputs under
+`frontend/` changes it, because the image carries the built web interface. After a change
+there, `dev.start` or `dev.build` rebuilds the image; `dev.restart` does not.
 
 To use an Infrahub started from Infrahub's own Compose file (`docker compose -p infrahub`),
 run `dev.start --infrahub-network infrahub_default`: the stack runs the Sync services only and
@@ -45,19 +64,34 @@ import json
 import os
 import shlex
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from invoke import Collection, Context, task
 
-from .netbox import DEV_STACK_PROJECT, WORKER_INFRAHUB_URL, attach_dev_worker, connect_dev_worker, load_netbox_env
+from .netbox import (
+    DEMO_DATASET,
+    DEV_STACK_PROJECT,
+    WORKER_INFRAHUB_URL,
+    WORKER_NETBOX_URL,
+    NetboxError,
+    attach_dev_worker,
+    connect_dev_worker,
+    ensure_netbox,
+    load_netbox_env,
+    netbox_state,
+    netbox_token,
+    recorded_dataset,
+)
 from .smoke_dataset import load_smoke_dataset
 from .utils import ESCAPED_REPO_PATH, REPO_BASE, escape_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
+
+    from infrahub_sync.client import SyncClient
 
 NAMESPACE = "INFRAHUB-SYNC-DEV"
 
@@ -74,18 +108,60 @@ START_PROFILES = ("sync",)
 ALL_PROFILES = ("sync", "infrahub")
 # The services `dev.restart` recreates so they import the mounted source again.
 SYNC_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
-# The dev stack's default principal, the value docker-compose.yml defaults to.
+# The API token of the dev stack's `admin` account, the value docker-compose.yml defaults to.
 API_TOKEN = "infrahub-sync-dev-token"  # noqa: S105 -- a local-only development credential
+ADMIN_PASSWORD = "infrahub-sync-dev-password"  # noqa: S105 -- the public default of development/docker-compose.yml
 WAIT_TIMEOUT_SECONDS = 420
 INFRAHUB_NETWORK_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK"
 INFRAHUB_URL_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_URL"
 DEFAULT_INFRAHUB_NETWORK = "infrahub_default"
-# The credential a registered package's `infrahub-token` reference resolves.
-INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
+# Where the worker reaches Infrahub with the `sync` preset and no network: an Infrahub that
+# publishes port 8000 on this host. The worker's `host.docker.internal` route is in the file.
+HOST_INFRAHUB_URL = "http://host.docker.internal:8000"
+PRESET_VARIABLE = "INFRAHUB_SYNC_DEV_PRESET"
+# The stored credentials the shipped examples name (`credential: <name>` in each block). The
+# tasks store them through the Sync API after the stack starts (`store_development_credentials`).
+INFRAHUB_CREDENTIAL = "infrahub-token"
+NETBOX_CREDENTIAL = "netbox-token"
+# The shell variable whose value, when set, is stored as `infrahub-token`. Only the tasks
+# read it: no Compose file passes a source or destination credential to a Sync service.
+INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN"
+# The same for `netbox-token`.
+NETBOX_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_DEV_NETBOX_TOKEN"
+# The variable that gives a `sync-worker` the address of the Sync API it reads credential values from.
+WORKER_API_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
+# The variable that gives the Sync API the key it encrypts stored credentials with.
+ENCRYPTION_KEY_VARIABLE = "INFRAHUB_SYNC_ENCRYPTION_KEY"
+# The Sync API's refusal of a credential change while it has no encryption key.
+KEY_NOT_CONFIGURED_CODE = "credential-key-not-configured"
+CREDENTIAL_EXISTS_CODE = "credential-exists"
+# The variable of the Sync API that holds the API token of its `admin` account.
+ADMIN_TOKEN_VARIABLE = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"  # noqa: S105 -- the name of a variable
 DEV_IMAGE = "infrahub-sync:dev"
 BUILD_INPUTS_LABEL = "org.opsmill.infrahub-sync.build-inputs"
 # The files whose bytes decide whether the image must be rebuilt, in hashing order.
-BUILD_INPUT_FILES = ("Dockerfile", "pyproject.toml", "uv.lock")
+BUILD_INPUT_FILES = ("development/Dockerfile", "pyproject.toml", "uv.lock")
+# The web interface's build inputs: the paths the Dockerfile's `web` stage copies, in
+# hashing order. A directory contributes every file under it, and a missing path, such
+# as the submodule in a checkout that did not fetch it, contributes nothing.
+BUILD_INPUT_FRONTEND_PATHS = (
+    "frontend/.npmrc",
+    "frontend/package.json",
+    "frontend/pnpm-lock.yaml",
+    "frontend/pnpm-workspace.yaml",
+    "frontend/index.html",
+    "frontend/vite.config.ts",
+    "frontend/tsconfig.json",
+    "frontend/tsr.config.json",
+    "frontend/src",
+    "frontend/vendor/infrahub/frontend/packages/ui",
+)
+# Directories that a local install or build creates and the image build never copies.
+BUILD_INPUT_SKIPPED_DIRECTORIES = frozenset({"node_modules", "dist", "__pycache__"})
+# Files `.dockerignore` keeps out of the build context: hashing them would ask for a rebuild
+# that changes nothing in the image, for example after Finder writes a `.DS_Store`.
+BUILD_INPUT_SKIPPED_FILES = frozenset({".DS_Store"})
+BUILD_INPUT_SKIPPED_SUFFIXES = (".pyc",)
 # The service whose build produces `infrahub-sync:dev`; every Sync-image service uses it.
 BUILD_SERVICE = "prefect-server"
 # What `docker image inspect` prints for a label the image does not carry.
@@ -112,7 +188,8 @@ DEPS_SMOKE_STACK = "dev-deps"
 DEPS_PROFILES = ("infrahub",)
 # Where `dev.api` listens: loopback only, like every publication of the stack.
 HOST_PROCESS_ADDRESS = "127.0.0.1"
-API_FACTORY = "infrahub_sync.service.serve:build_app"
+# The factory that refuses a start without the encryption key or the worker token, as `main` does.
+API_FACTORY = "infrahub_sync.service.serve:build_process_service"
 DATABASE_URL_VARIABLE = "INFRAHUB_SYNC_DATABASE_URL"
 S3_ENDPOINT_VARIABLE = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 # The bundled store's service, the host name its endpoint names inside the stack.
@@ -126,14 +203,79 @@ FRONTEND_DIRECTORY = "frontend"
 FRONTEND_SUBMODULE = "frontend/vendor/infrahub"
 FRONTEND_UI_PACKAGE = "frontend/vendor/infrahub/frontend/packages/ui"
 FRONTEND_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
-FRONTEND_TOKEN_VARIABLE = "INFRAHUB_SYNC_API_TOKEN"  # noqa: S105 -- a variable name
 FRONTEND_URL = "http://localhost:3000"
-# The `/status` worker states that mean a worker takes runs (see `service._service_status`).
-AVAILABLE_WORKER_STATES = frozenset({"ready", "busy"})
+# `dev.demo`: the command it runs on the host, the variables that command reads, and the
+# branch its printed next commands create.
+DEMO_PREPARE_COMMAND = "uv run infrahub-sync demo prepare"
+INFRAHUB_TOKEN_VARIABLE = "INFRAHUB_API_TOKEN"  # noqa: S105 -- a variable name
+SYNC_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
+SYNC_TOKEN_VARIABLE = "INFRAHUB_SYNC_API_TOKEN"  # noqa: S105 -- a variable name
+DEMO_BRANCH = "netbox-demo-1"
 
 
 class DevStackError(RuntimeError):
     """Raised when the development stack's settings cannot be read or do not allow a task."""
+
+
+@dataclass(frozen=True)
+class Preset:
+    """What one preset of the development stack runs besides the core and Sync services."""
+
+    name: str
+    summary: str
+    # The stack's own Infrahub, the `infrahub` profile.
+    local_infrahub: bool
+    # The local NetBox from the `netbox` tasks.
+    netbox: bool = False
+    # The smoke dataset, loaded into the local Infrahub once the stack runs.
+    smoke_dataset: bool = False
+
+    @property
+    def profiles(self) -> tuple[str, ...]:
+        """The profiles `dev.start` selects."""
+        return ALL_PROFILES if self.local_infrahub else START_PROFILES
+
+    @property
+    def deps_profiles(self) -> tuple[str, ...]:
+        """The profiles `dev.deps` selects: the core services, which have none, and the preset's Infrahub."""
+        return DEPS_PROFILES if self.local_infrahub else ()
+
+
+PRESETS: dict[str, Preset] = {
+    preset.name: preset
+    for preset in (
+        Preset("sync", "PostgreSQL, the object store, Prefect and the Sync services", local_infrahub=False),
+        Preset("infrahub", "the `sync` preset and a local Infrahub", local_infrahub=True),
+        Preset(
+            "preview",
+            "the `infrahub` preset, the local NetBox and the smoke dataset in Infrahub",
+            local_infrahub=True,
+            netbox=True,
+            smoke_dataset=True,
+        ),
+        Preset(
+            "demo",
+            "the `infrahub` preset and the local NetBox with the `demo` dataset, ready for the NetBox demo",
+            local_infrahub=True,
+            netbox=True,
+        ),
+    )
+}
+DEFAULT_PRESET = "sync"
+PRESET_HELP = "The preset: " + ", ".join(f"{name} ({preset.summary})" for name, preset in PRESETS.items())
+
+
+def preset_named(name: str) -> Preset:
+    """Return the preset of that name.
+
+    Raises:
+        DevStackError: when no preset has that name.
+    """
+    try:
+        return PRESETS[name]
+    except KeyError:
+        msg = f"unknown preset {name!r}; expected one of {', '.join(PRESETS)}"
+        raise DevStackError(msg) from None
 
 
 @dataclass(frozen=True)
@@ -172,13 +314,15 @@ class DevSettings:
     project: str
     sync_api: Publication
     prefect: Publication
-    # None when the stack uses an Infrahub on another network (`--infrahub-network`).
+    # None when the stack runs no Infrahub of its own: the `sync` preset, with or without
+    # an Infrahub network (`--infrahub-network`).
     infrahub: Publication | None
     infrahub_admin_token: str
     # The Infrahub URL the worker uses, the one a package names.
     worker_infrahub_url: str
     infrahub_network: str
-    bearer_tokens: str
+    # The API token of the `admin` account, as the Sync API receives it.
+    admin_token: str
     work_pool: str
     # The image every Sync-image service runs, `SYNC_IMAGE` or `infrahub-sync:dev`.
     image: str = DEV_IMAGE
@@ -194,6 +338,15 @@ class DevSettings:
     # The host directories bound into each container, by container path.
     api_binds: Mapping[str, str] = field(default_factory=dict)
     worker_binds: Mapping[str, str] = field(default_factory=dict)
+    # The preset the settings were resolved for; `infrahub` is None unless it runs a local Infrahub.
+    preset: Preset = PRESETS["infrahub"]
+    # Whether the local NetBox runs, read by `dev_settings()`; the `preview` and `demo` presets imply it.
+    local_netbox: bool = False
+
+    @property
+    def netbox_credential(self) -> bool:
+        """Whether the stored `netbox-token` credential defaults to the local NetBox's token."""
+        return self.preset.netbox or self.local_netbox
 
     @property
     def sync_api_url(self) -> str:
@@ -212,8 +365,8 @@ class DevSettings:
 
     @property
     def profiles(self) -> tuple[str, ...]:
-        """The profiles `dev.start` selects: `infrahub` only without an attached network."""
-        return ("sync",) if self.infrahub_network else ALL_PROFILES
+        """The profiles `dev.start` selects: `infrahub` only with a preset that runs a local Infrahub."""
+        return self.preset.profiles
 
 
 def selected_infrahub_network(option: str = "") -> str:
@@ -319,17 +472,27 @@ def require_private_infrahub(publication: Publication | None, token: str) -> Non
     raise DevStackError(msg)
 
 
-def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "") -> DevSettings:
-    """Build the settings from the output of `docker compose config --format json`."""
+def parse_dev_settings(
+    resolved: Mapping[str, Any], *, infrahub_network: str = "", preset: Preset | None = None
+) -> DevSettings:
+    """Build the settings from the output of `docker compose config --format json`.
+
+    Without a preset, the resolved file decides: `infrahub-server` in it, and no Infrahub
+    network, means the `infrahub` preset; anything else, `sync`.
+    """
     services = resolved.get("services") or {}
     sync_api_environment = (services.get("sync-api") or {}).get("environment") or {}
-    if infrahub_network:
-        infrahub = None
-        token = os.environ.get(INFRAHUB_CREDENTIAL_VARIABLE, "")
-        worker_url = os.environ.get(INFRAHUB_URL_VARIABLE) or WORKER_INFRAHUB_URL
-    else:
+    if preset is None:
+        local = not infrahub_network and "infrahub-server" in services
+        preset = PRESETS["infrahub"] if local else PRESETS[DEFAULT_PRESET]
+    if preset.local_infrahub:
         infrahub, token = infrahub_server(services)
         worker_url = WORKER_INFRAHUB_URL
+    else:
+        infrahub = None
+        token = os.environ.get(INFRAHUB_CREDENTIAL_VARIABLE, "")
+        default_url = WORKER_INFRAHUB_URL if infrahub_network else HOST_INFRAHUB_URL
+        worker_url = os.environ.get(INFRAHUB_URL_VARIABLE) or default_url
     return DevSettings(
         project=str(resolved.get("name") or DEV_STACK_PROJECT),
         sync_api=_publication(services, "sync-api", 8000),
@@ -338,7 +501,7 @@ def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "
         infrahub_admin_token=token,
         worker_infrahub_url=worker_url,
         infrahub_network=infrahub_network,
-        bearer_tokens=str(sync_api_environment.get("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS", "")),
+        admin_token=str(sync_api_environment.get(ADMIN_TOKEN_VARIABLE, "")),
         work_pool=str(sync_api_environment.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "")),
         image=str((services.get(BUILD_SERVICE) or {}).get("image") or DEV_IMAGE),
         postgres=_optional_publication(services, "postgres", 5432),
@@ -347,21 +510,108 @@ def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "
         worker_environment=_environment(services, "sync-worker"),
         api_binds=_binds(services, "sync-api"),
         worker_binds=_binds(services, "sync-worker"),
+        preset=preset,
     )
 
 
-def dev_settings(context: Context | None = None, *, infrahub_network: str = "") -> DevSettings:
+def _stack_services(context: Context, *, all_states: bool) -> set[str]:
+    """Return the stack's services with a running container, or with any container.
+
+    Raises:
+        DevStackError: when Compose does not answer, so an unreadable state never passes
+            for a stack without Infrahub.
+    """
+    states = "--all" if all_states else "--status running"
+    command = f"{_compose_command('', ALL_PROFILES)} ps --services {states}"
+    with context.cd(ESCAPED_REPO_PATH):
+        result = context.run(command, hide=True, warn=True, pty=False)
+    if result is None or not result.ok:
+        msg = (
+            f"`{command}` failed, so the preset the stack runs is not known; "
+            f"name one with --preset or {PRESET_VARIABLE}"
+        )
+        raise DevStackError(msg)
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def running_preset(context: Context) -> Preset:
+    """The preset the stack's containers show: `infrahub` or the default.
+
+    While a container of the stack runs, a running `infrahub-server` means `infrahub`.
+    When none runs, an `infrahub-server` container that still exists means `infrahub`, so
+    a bare `dev.start` after `dev.stop` starts the stopped Infrahub again with its data.
+    The containers never select `preview`: it writes to Infrahub, so only `--preset` or
+    INFRAHUB_SYNC_DEV_PRESET selects it.
+    """
+    services = _stack_services(context, all_states=False) or _stack_services(context, all_states=True)
+    return PRESETS["infrahub"] if "infrahub-server" in services else PRESETS[DEFAULT_PRESET]
+
+
+def select_preset(context: Context, option: str = "", *, infrahub_network: str = "") -> Preset:
+    """Return the preset a task runs: the option, `INFRAHUB_SYNC_DEV_PRESET`, the running containers.
+
+    An Infrahub network means the `sync` preset, whatever the containers show.
+
+    Raises:
+        DevStackError: when the name is not a preset, or names a preset with a local
+            Infrahub together with an Infrahub network.
+    """
+    name = option or os.environ.get(PRESET_VARIABLE, "")
+    if name:
+        preset = preset_named(name)
+        if infrahub_network and preset.local_infrahub:
+            msg = (
+                f"the {preset.name!r} preset runs a local Infrahub, and {INFRAHUB_NETWORK_VARIABLE} or "
+                f"--infrahub-network names {infrahub_network}; use one or the other"
+            )
+            raise DevStackError(msg)
+        return preset
+    if infrahub_network:
+        return PRESETS[DEFAULT_PRESET]
+    return running_preset(context)
+
+
+def dev_settings(context: Context | None = None, *, infrahub_network: str = "", preset: str = "") -> DevSettings:
     """Resolve the development file with Compose and return the settings the tasks use.
 
-    Without an Infrahub network, Compose resolves the `sync` and `infrahub` profiles. With
-    one (the argument, else `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK`), it resolves `sync`
-    only, and the Infrahub URL comes from `INFRAHUB_SYNC_DEV_INFRAHUB_URL`, default
-    `http://infrahub-server:8000`.
+    The preset comes from `select_preset()`. With a local Infrahub, Compose resolves the
+    `sync` and `infrahub` profiles; otherwise `sync` only, and the Infrahub URL comes from
+    `INFRAHUB_SYNC_DEV_INFRAHUB_URL`: by default `http://infrahub-server:8000` on an
+    Infrahub network (the argument, else `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK`), and
+    `http://host.docker.internal:8000` without one.
     """
+    runner = context or Context()
     network = selected_infrahub_network(infrahub_network)
-    profiles = ("sync",) if network else ALL_PROFILES
-    resolved = resolved_compose(context, ComposeTarget(profiles=profiles))
-    return parse_dev_settings(resolved, infrahub_network=network)
+    selected = select_preset(runner, preset, infrahub_network=network)
+    resolved = resolved_compose(runner, ComposeTarget(profiles=selected.profiles))
+    settings = parse_dev_settings(resolved, infrahub_network=network, preset=selected)
+    if selected.netbox:
+        return settings
+    # The NetBox check only decides a credential default, so a failed check does not stop
+    # tasks that never use NetBox; the tasks then store no NetBox credential by default.
+    try:
+        netbox_running = netbox_state(runner, load_netbox_env()) == "running"
+    except NetboxError as exc:
+        print(f" - [{NAMESPACE}] {exc}; no NetBox credential is stored by default")
+        netbox_running = False
+    return replace(settings, local_netbox=netbox_running)
+
+
+def stack_project(context: Context) -> str:
+    """The stack's Compose project name, read without asking which preset runs.
+
+    For the tasks that act on every container whatever the preset (`dev.stop`,
+    `dev.destroy`, `dev.logs`), so a Docker probe never stands in their way.
+    """
+    return _stack_identity(context)[0]
+
+
+def _stack_identity(context: Context) -> tuple[str, str]:
+    """The stack's Compose project name and image, from the file alone."""
+    resolved = resolved_compose(context, ComposeTarget(profiles=START_PROFILES))
+    services = resolved.get("services") or {}
+    image = str((services.get(BUILD_SERVICE) or {}).get("image") or DEV_IMAGE)
+    return str(resolved.get("name") or DEV_STACK_PROJECT), image
 
 
 def resolved_compose(context: Context | None = None, target: ComposeTarget | None = None) -> dict[str, Any]:
@@ -386,11 +636,49 @@ def resolved_compose(context: Context | None = None, target: ComposeTarget | Non
     return resolved
 
 
+def _frontend_build_inputs(root: Path) -> list[Path]:
+    """Return the files of `BUILD_INPUT_FRONTEND_PATHS` that exist, in hashing order.
+
+    A directory's files are sorted by relative path, without what `.dockerignore` excludes:
+    `node_modules`, `dist` and `__pycache__` directories, `.DS_Store` and `*.pyc` files.
+    """
+    files: list[Path] = []
+    for name in BUILD_INPUT_FRONTEND_PATHS:
+        path = root / name
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            found = (
+                candidate
+                for candidate in path.rglob("*")
+                if candidate.is_file()
+                and candidate.name not in BUILD_INPUT_SKIPPED_FILES
+                and not candidate.name.endswith(BUILD_INPUT_SKIPPED_SUFFIXES)
+                and not BUILD_INPUT_SKIPPED_DIRECTORIES.intersection(candidate.relative_to(path).parts)
+            )
+            files.extend(sorted(found, key=lambda candidate: candidate.relative_to(root).as_posix()))
+    return files
+
+
 def build_inputs_hash(root: Path = REPO_BASE) -> str:
-    """Return the SHA-256 over `Dockerfile`, `pyproject.toml` and `uv.lock`, in that order."""
+    """Return the SHA-256 of the image's build inputs.
+
+    The hash covers the bytes of `development/Dockerfile`, `pyproject.toml` and `uv.lock`, in that
+    order, then, for every file of the web interface's build inputs, its relative path
+    and its bytes. A checkout without the frontend submodule still yields a hash.
+    """
+    # The demo assets are not hashed on purpose: the dev stack mounts the source tree, and
+    # `dev.demo` runs `demo prepare` on the host.
     digest = hashlib.sha256()
     for name in BUILD_INPUT_FILES:
         digest.update((root / name).read_bytes())
+    for path in _frontend_build_inputs(root):
+        content = path.read_bytes()
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(str(len(content)).encode())
+        digest.update(b"\0")
+        digest.update(content)
     return digest.hexdigest()
 
 
@@ -489,16 +777,89 @@ def _destroy(context: Context, *, project: str = "") -> None:
     compose(context, "down --volumes --remove-orphans", ComposeTarget(project=project, profiles=ALL_PROFILES), pty=True)
 
 
-def _stack_env(settings: DevSettings) -> dict[str, str]:
-    """The shell values the Sync services read, beyond what the shell already sets.
+def development_credentials(settings: DevSettings) -> dict[str, str]:
+    """The token of each stored credential the shipped examples name, by credential name.
 
-    With the stack's own Infrahub, the worker's Infrahub credential defaults to that
-    Infrahub's initial admin token, so the smoke package can write to it. A value the
-    shell exports wins.
+    A value the shell exports in INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN or INFRAHUB_SYNC_DEV_NETBOX_TOKEN
+    wins. Without one, `infrahub-token` is the initial admin token of the stack's own
+    Infrahub, and `netbox-token` is the local NetBox's development token with the `preview`
+    and `demo` presets or while the local NetBox runs. A credential with no value is left out.
     """
-    if settings.infrahub_network or os.environ.get(INFRAHUB_CREDENTIAL_VARIABLE):
-        return {}
-    return {INFRAHUB_CREDENTIAL_VARIABLE: settings.infrahub_admin_token}
+    infrahub = os.environ.get(INFRAHUB_CREDENTIAL_VARIABLE) or settings.infrahub_admin_token
+    netbox = os.environ.get(NETBOX_CREDENTIAL_VARIABLE, "")
+    if not netbox and settings.netbox_credential:
+        netbox = netbox_token(load_netbox_env())
+    values = {INFRAHUB_CREDENTIAL: infrahub, NETBOX_CREDENTIAL: netbox}
+    return {name: value for name, value in values.items() if value}
+
+
+def _open_client(service_url: str, token: str) -> SyncClient:
+    """Open the shared Sync API client; imported here so the tasks package loads without it."""
+    from infrahub_sync.client import SyncClient  # noqa: PLC0415 -- lazy, as the other HTTP imports of this module
+
+    return SyncClient(service_url, token)
+
+
+def store_development_credentials(service_url: str, admin_token: str, values: Mapping[str, str]) -> None:
+    """Store each development credential in the Sync API, as the `admin` account.
+
+    A credential that does not exist is created; one that exists gets the value again, so the
+    step can run on every start. The values go to the Sync API in a request body only: no
+    value is printed, logged, written to a file or passed on a command line.
+
+    A Sync API without an encryption key stores no credential. That case is printed and does
+    not stop the task, because the stack still serves every request that needs no stored
+    credential.
+
+    Raises:
+        DevStackError: the Sync API has no API token for `admin`, cannot be reached, or
+            refuses a credential for another reason. The message names the credential and
+            the refusal code, never a value.
+    """
+    from infrahub_sync.client import APIError, SyncClientError  # noqa: PLC0415 -- lazy, see `_open_client`
+
+    if not values:
+        print(f" - [{NAMESPACE}] No development credential to store: the stack has no token for Infrahub or NetBox")
+        return
+    names = ", ".join(values)
+    if not admin_token:
+        msg = f"the Sync API has no {ADMIN_TOKEN_VARIABLE}, so the tasks cannot store the credentials {names}"
+        raise DevStackError(msg)
+    current = ""
+    try:
+        with _open_client(service_url, admin_token) as client:
+            for current, token in values.items():
+                _store_credential(client, current, token)
+    except APIError as exc:
+        if exc.code == KEY_NOT_CONFIGURED_CODE:
+            print(
+                f" - [{NAMESPACE}] The Sync API has no {ENCRYPTION_KEY_VARIABLE}, so it stores no credential; "
+                f"not stored: {names}. A package that names one of them cannot run"
+            )
+            return
+        msg = f"the Sync API refused the stored credential {current} ({exc.status} {exc.code})"
+        raise DevStackError(msg) from exc
+    except SyncClientError as exc:
+        msg = f"the stored credentials {names} could not be sent to the Sync API at {service_url}: {type(exc).__name__}"
+        raise DevStackError(msg) from exc
+    print(f" - [{NAMESPACE}] Stored the credentials the shipped examples name: {names}")
+
+
+def _store_credential(client: SyncClient, name: str, token: str) -> None:
+    """Create one stored credential, or replace its value when it exists."""
+    from infrahub_sync.client import APIError  # noqa: PLC0415 -- lazy, see `_open_client`
+
+    try:
+        client.create_credential(name, token=token, description="Development stack: stored by `invoke dev.start`")
+    except APIError as exc:
+        if exc.code != CREDENTIAL_EXISTS_CODE:
+            raise
+        client.set_credential_value(name, token=token)
+
+
+def _store_stack_credentials(settings: DevSettings) -> None:
+    """Store the development credentials in the stack's Sync API, once its containers run."""
+    store_development_credentials(settings.sync_api_url, settings.admin_token, development_credentials(settings))
 
 
 def _attach_worker(context: Context, settings: DevSettings) -> None:
@@ -518,36 +879,37 @@ def _attach_worker(context: Context, settings: DevSettings) -> None:
         )
 
 
-def bearer_label(bearer_tokens: str) -> str:
+def bearer_label(admin_token: str) -> str:
     """Return what the URLs print for the Sync API's bearer token.
 
-    The default principal's token is a public development value, so it is printed when a
-    principal's token equals it exactly. A token set through BEARER_TOKENS is the
-    developer's own, and so is anything that is not a JSON object of principals: they are
-    named by the variable, never printed.
+    The default token of `admin` is a public development value, so it is printed when the
+    token equals it exactly. A token set through ADMIN_ACCOUNT_TOKEN is the developer's own:
+    it is named by the variable, never printed.
     """
-    try:
-        principals = json.loads(bearer_tokens)
-    except ValueError:
-        principals = None
-    if isinstance(principals, dict) and any(
-        isinstance(principal, dict) and principal.get("token") == API_TOKEN for principal in principals.values()
-    ):
+    if admin_token == API_TOKEN:
         return API_TOKEN
-    return "from BEARER_TOKENS"
+    return "from ADMIN_ACCOUNT_TOKEN"
 
 
 def _print_urls(settings: DevSettings, *, host_worker: bool = False) -> None:
-    bearer = bearer_label(settings.bearer_tokens)
+    bearer = bearer_label(settings.admin_token)
     print(f" - [{NAMESPACE}] Project     {settings.project}")
+    print(f" - [{NAMESPACE}] Preset      {settings.preset.name}: {settings.preset.summary}")
     print(f" - [{NAMESPACE}] Sync API    {settings.sync_api_url}  (bearer {bearer})")
     print(f" - [{NAMESPACE}] Prefect UI  {settings.prefect_url}")
     if settings.infrahub is not None and host_worker:
         print(f" - [{NAMESPACE}] Infrahub    {settings.infrahub_url}  (also for a package the host worker runs)")
     elif settings.infrahub is not None:
         print(f" - [{NAMESPACE}] Infrahub    {settings.infrahub_url}  (worker: {settings.worker_infrahub_url})")
-    else:
+    elif settings.infrahub_network:
         print(f" - [{NAMESPACE}] Infrahub    {settings.worker_infrahub_url} on {settings.infrahub_network}")
+    elif host_worker:
+        print(f" - [{NAMESPACE}] Infrahub    not part of this stack; the host worker uses the URL a package names")
+    else:
+        print(
+            f" - [{NAMESPACE}] Infrahub    {settings.worker_infrahub_url}  "
+            f"(not part of this stack; {INFRAHUB_URL_VARIABLE} changes it)"
+        )
 
 
 def _infrahub_reachable(address: str) -> bool:
@@ -561,22 +923,54 @@ def _infrahub_reachable(address: str) -> bool:
     return True
 
 
-def _start_settings(context: Context, network: str = "") -> DevSettings:
-    """The settings of a task that brings the `infrahub` profile up, refused when it would expose Infrahub."""
-    settings = dev_settings(context, infrahub_network=network)
+def _start_settings(context: Context, network: str = "", preset: str = "") -> DevSettings:
+    """The settings of a task that starts a preset, refused when it would expose Infrahub."""
+    settings = dev_settings(context, infrahub_network=network, preset=preset)
     require_private_infrahub(settings.infrahub, settings.infrahub_admin_token)
     return settings
 
 
 def _seed_settings(context: Context) -> DevSettings:
     settings = dev_settings(context)
-    if settings.infrahub is None:
+    if settings.infrahub is None and settings.infrahub_network:
         msg = (
             f"dev.seed and dev.smoke write to the stack's own Infrahub; {INFRAHUB_NETWORK_VARIABLE} "
             f"names {settings.infrahub_network}, whose address on this host is not known"
         )
         raise DevStackError(msg)
+    if settings.infrahub is None:
+        msg = (
+            "dev.seed and dev.smoke write to the stack's own Infrahub, and no local Infrahub runs "
+            f"(preset {settings.preset.name!r}); start one with `uv run invoke dev.start --preset infrahub`"
+        )
+        raise DevStackError(msg)
     return settings
+
+
+def _start_netbox(context: Context, settings: DevSettings) -> None:
+    """Make the local NetBox run when the preset includes it, before the worker is created."""
+    if settings.preset.netbox:
+        ensure_netbox(context, load_netbox_env(), settings.project)
+
+
+def _seed_preview(context: Context, settings: DevSettings) -> None:
+    """Load the smoke dataset into the local Infrahub when the preset includes it: `preview`, never `demo`."""
+    if settings.preset.smoke_dataset and settings.infrahub is not None:
+        load_smoke_dataset(context, settings.infrahub_url, settings.infrahub_admin_token)
+
+
+def _report_left_running(context: Context, settings: DevSettings) -> None:
+    """Name the local Infrahub when it still runs from an earlier, larger preset.
+
+    `up` starts the preset's services and leaves every other container as it is, so a
+    move to a lighter preset does not stop Infrahub.
+    """
+    if settings.infrahub is not None or "infrahub-server" not in _running_services(context, settings.project):
+        return
+    print(
+        f" - [{NAMESPACE}] The local Infrahub from an earlier preset still runs; the {settings.preset.name!r} "
+        "preset does not use it. `uv run invoke dev.stop` stops every container of the stack"
+    )
 
 
 def _rebuild_when_stale(context: Context, settings: DevSettings) -> None:
@@ -654,7 +1048,10 @@ def host_environment(settings: DevSettings, service: Literal["sync-api", "sync-w
     environment["PREFECT_API_URL"] = f"{settings.prefect_url}/api"
     if service == "sync-api":
         environment["INFRAHUB_SYNC_SERVICE_HOST"] = HOST_PROCESS_ADDRESS
-    environment.update(_stack_env(settings))
+    else:
+        # The container reaches the Sync API by its service name; the host process reaches the
+        # loopback publication, where `dev.api` or the `sync-api` container listens.
+        environment[WORKER_API_URL_VARIABLE] = settings.sync_api_url
     return environment
 
 
@@ -671,9 +1068,9 @@ def worker_command(settings: DevSettings) -> str:
     return f"{shlex.quote(sys.executable)} -m infrahub_sync.service.worker --pool {shlex.quote(settings.work_pool)}"
 
 
-def _running_services(context: Context, settings: DevSettings) -> set[str]:
-    """Return the stack's services that have a running container."""
-    command = f"{_compose_command(settings.project, ALL_PROFILES)} ps --services --status running"
+def _running_services(context: Context, project: str = "") -> set[str]:
+    """Return the stack's services that have a running container; no project means the file's own."""
+    command = f"{_compose_command(project, ALL_PROFILES)} ps --services --status running"
     with context.cd(ESCAPED_REPO_PATH):
         result = context.run(command, hide=True, warn=True, pty=False)
     if result is None or not result.ok:
@@ -688,33 +1085,42 @@ def in_dependencies_mode(context: Context, settings: DevSettings) -> bool:
     was started. A stack that is not running at all is not in dependencies mode; the
     smoke suite then reports the stack's state itself.
     """
-    running = _running_services(context, settings)
+    running = _running_services(context, settings.project)
     return BUILD_SERVICE in running and "sync-api" not in running
 
 
 def check_host_processes(settings: DevSettings) -> None:
-    """Fail naming the missing host process, from the Sync API's `GET /status` alone.
+    """Fail naming the missing host process, from the Sync API's `GET /api/health` alone.
 
-    No answer names `dev.api`. An answer whose worker is not available names
-    `dev.worker`. The Sync API reads worker availability from Prefect itself, so this
-    check never calls the Prefect API.
+    The health report answers 200 when every component is up and 503 when one is down; both
+    carry the report, and only its `workers` section matters here. No answer, or an answer that
+    is not a report, names `dev.api`. A report whose work pool could not be read, or that counts
+    no live worker, names `dev.worker`. The Sync API reads the workers from Prefect itself, so
+    this check never calls the Prefect API.
     """
     import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
 
-    status_url = f"{settings.sync_api_url}/status"
+    health_url = f"{settings.sync_api_url}/api/health"
+    not_answering = f"The Sync API does not answer at {health_url}; start it with `uv run invoke dev.api`"
     try:
-        response = httpx.get(status_url, timeout=10)
-        response.raise_for_status()
+        response = httpx.get(health_url, timeout=10)
         body = response.json()
     except (httpx.HTTPError, ValueError):
-        msg = f"The Sync API does not answer at {status_url}; start it with `uv run invoke dev.api`"
-        raise DevStackError(msg) from None
-    worker = body.get("worker") if isinstance(body, dict) else None
-    state = str(worker.get("state", "")) if isinstance(worker, dict) else ""
-    if state not in AVAILABLE_WORKER_STATES:
+        raise DevStackError(not_answering) from None
+    if not isinstance(body, dict):
+        raise DevStackError(not_answering)
+    workers = body.get("workers")
+    if (
+        response.status_code not in {200, 503}
+        or body.get("status") not in {"healthy", "unhealthy"}
+        or not isinstance(workers, dict)
+        or workers.get("state") not in {"known", "unknown"}
+    ):
+        raise DevStackError(not_answering)
+    if workers["state"] == "unknown" or workers.get("live_workers") == 0:
         msg = (
-            f"The Sync API reports no available worker (state {state or 'missing'}); "
-            "start it with `uv run invoke dev.worker`"
+            f"The Sync API reports no live worker (workers {workers['state']}, "
+            f"live workers {workers.get('live_workers')}); start it with `uv run invoke dev.worker`"
         )
         raise DevStackError(msg)
 
@@ -730,26 +1136,68 @@ def dev_build(context: Context, no_cache: bool = False) -> None:  # noqa: FBT001
     print(f" - [{NAMESPACE}] Built {settings.image}; start it with `uv run invoke dev.start`")
 
 
-@task(name="start", help={"infrahub-network": "Use the Infrahub on this Docker network instead of the stack's own"})
-def dev_start(context: Context, infrahub_network: str = "") -> None:
-    """Start the core, Sync and Infrahub services, rebuilding the image when its inputs changed.
+_START_HELP = {
+    "preset": PRESET_HELP + f". Default: {PRESET_VARIABLE}, else what runs, else {DEFAULT_PRESET}",
+    "infrahub-network": "Use the Infrahub on this Docker network; the preset is then `sync`",
+}
 
-    With --infrahub-network NAME (or INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK), the stack's own
-    Infrahub stays off and the worker joins NAME. When the local NetBox runs, the worker
-    also joins NetBox's network. Refuses to start when INFRAHUB_BIND_ADDRESS publishes
-    Infrahub beyond loopback and INFRAHUB_INITIAL_ADMIN_TOKEN keeps the public default.
+
+def _start_stack(context: Context, *, preset: str = "", infrahub_network: str = "") -> None:
+    """Start one preset in containers: what `dev.start`, `dev.infrahub` and `dev.preview` run."""
+    _run_stack(context, _start_settings(context, infrahub_network, preset))
+
+
+def _run_stack(context: Context, settings: DevSettings) -> None:
+    """Start the containers of resolved settings, store the development credentials, seed, print the URLs.
+
+    The credentials are stored through the Sync API once `up --wait` reports it healthy. The
+    smoke dataset is loaded only when the preset has it.
     """
-    settings = _start_settings(context, infrahub_network)
     _rebuild_when_stale(context, settings)
+    _start_netbox(context, settings)
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
-        ComposeTarget(project=settings.project, profiles=settings.profiles, env=_stack_env(settings)),
+        ComposeTarget(project=settings.project, profiles=settings.profiles),
         pty=True,
     )
     _attach_worker(context, settings)
+    _store_stack_credentials(settings)
+    _report_left_running(context, settings)
+    _seed_preview(context, settings)
     _print_urls(settings)
-    print(f" - [{NAMESPACE}] After a code change: `uv run invoke dev.restart`")
+    print(f" - [{NAMESPACE}] After a Python change: `uv run invoke dev.restart`")
+    print(f" - [{NAMESPACE}] After a web interface change: `uv run invoke dev.start`")
+
+
+@task(name="start", help=_START_HELP)
+def dev_start(context: Context, preset: str = "", infrahub_network: str = "") -> None:
+    """Start the core and Sync services, and the preset's Infrahub and NetBox; rebuild the image when needed.
+
+    The preset is --preset, else INFRAHUB_SYNC_DEV_PRESET, else the one the running
+    containers show, else `sync`. With --infrahub-network NAME (or
+    INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK), the preset is `sync` and the worker joins NAME.
+    When the local NetBox runs, the worker also joins NetBox's network. Refuses to start
+    when INFRAHUB_BIND_ADDRESS publishes Infrahub beyond loopback and
+    INFRAHUB_INITIAL_ADMIN_TOKEN keeps the public default.
+    """
+    _start_stack(context, preset=preset, infrahub_network=infrahub_network)
+
+
+@task(name="infrahub")
+def dev_infrahub(context: Context) -> None:
+    """Start the `infrahub` preset: the Sync services and a local Infrahub (`dev.start --preset infrahub`)."""
+    _start_stack(context, preset="infrahub")
+
+
+@task(name="preview")
+def dev_preview(context: Context) -> None:
+    """Start the `preview` preset: a local Infrahub, the local NetBox and the smoke dataset (`dev.start --preset preview`).
+
+    A NetBox that does not exist yet gets the `demo` dataset; an existing NetBox keeps its
+    data. The smoke dataset is written to the local Infrahub, as `dev.seed` does.
+    """
+    _start_stack(context, preset="preview")
 
 
 @task(name="restart")
@@ -760,7 +1208,7 @@ def dev_restart(context: Context) -> None:
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --force-recreate --no-deps {services}",
-        ComposeTarget(project=settings.project, profiles=settings.profiles, env=_stack_env(settings)),
+        ComposeTarget(project=settings.project, profiles=settings.profiles),
         pty=True,
     )
     _attach_worker(context, settings)
@@ -770,7 +1218,7 @@ def dev_restart(context: Context) -> None:
 @task(name="stop")
 def dev_stop(context: Context) -> None:
     """Stop the containers and keep their volumes."""
-    compose(context, "stop", ComposeTarget(project=dev_settings(context).project, profiles=ALL_PROFILES), pty=True)
+    compose(context, "stop", ComposeTarget(project=stack_project(context), profiles=ALL_PROFILES), pty=True)
     print(f" - [{NAMESPACE}] Stopped; `uv run invoke dev.start` starts it again with its data")
 
 
@@ -781,9 +1229,9 @@ def dev_destroy(context: Context) -> None:
     Destructive by design: the Postgres databases, the object store's buckets and the
     Infrahub data go with it, which is what makes the next `dev.start` a first start again.
     """
-    settings = dev_settings(context)
-    _destroy(context, project=settings.project)
-    print(f" - [{NAMESPACE}] Removed the stack and its data; {settings.image} is kept")
+    project, image = _stack_identity(context)
+    _destroy(context, project=project)
+    print(f" - [{NAMESPACE}] Removed the stack and its data; {image} is kept")
 
 
 @task(name="status")
@@ -800,7 +1248,7 @@ def dev_logs(context: Context, name: str = "sync-api", lines: int = 50) -> None:
     compose(
         context,
         f"logs --no-color --tail {int(lines)} {shlex.quote(name)}",
-        ComposeTarget(project=dev_settings(context).project, profiles=ALL_PROFILES),
+        ComposeTarget(project=stack_project(context), profiles=ALL_PROFILES),
     )
 
 
@@ -818,7 +1266,7 @@ def dev_smoke(context: Context) -> None:
     stack = "dev"
     if in_dependencies_mode(context, settings):
         print(
-            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/status"
+            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/api/health"
         )
         check_host_processes(settings)
         stack = DEPS_SMOKE_STACK
@@ -834,24 +1282,25 @@ def dev_smoke(context: Context) -> None:
         context.run(SMOKE_COMMAND, env={SMOKE_STACK_VARIABLE: stack})
 
 
-@task(name="deps", help={"infrahub-network": "Use the Infrahub on this Docker network instead of the stack's own"})
-def dev_deps(context: Context, infrahub_network: str = "") -> None:
-    """Start the core and Infrahub services only, for a Sync API and worker run on the host.
+@task(name="deps", help=_START_HELP)
+def dev_deps(context: Context, preset: str = "", infrahub_network: str = "") -> None:
+    """Start the core services, and the preset's Infrahub and NetBox, for a Sync API and worker run on the host.
 
     Rebuilds the image when its inputs changed, starts the containers, converges the
     database, the bucket, the work pool and the deployment with a one-off `sync-bootstrap`
     container, prints the URLs and returns. Run `dev.api` and `dev.worker` next, each in
-    its own terminal. With --infrahub-network NAME (or INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK),
-    the stack's own Infrahub stays off; the host worker then reaches the Infrahub at
-    INFRAHUB_SYNC_DEV_INFRAHUB_URL, which must be an address the host can resolve.
-    Refuses to start when INFRAHUB_BIND_ADDRESS publishes Infrahub beyond loopback and
-    INFRAHUB_INITIAL_ADMIN_TOKEN keeps the public default.
+    its own terminal. The preset is chosen as `dev.start` chooses it. Without a local
+    Infrahub (the `sync` preset, or --infrahub-network NAME), the host worker reaches the
+    Infrahub at INFRAHUB_SYNC_DEV_INFRAHUB_URL, which must be an address the host can
+    resolve. Refuses to start when INFRAHUB_BIND_ADDRESS publishes Infrahub beyond
+    loopback and INFRAHUB_INITIAL_ADMIN_TOKEN keeps the public default.
     """
-    settings = _start_settings(context, infrahub_network)
+    settings = _start_settings(context, infrahub_network, preset)
     # Refuses the bundled store's endpoint without the bundled store before anything starts.
     object_store = host_object_store_url(settings, settings.worker_environment.get(S3_ENDPOINT_VARIABLE, ""))
     _rebuild_when_stale(context, settings)
-    profiles = DEPS_PROFILES if not settings.infrahub_network else ()
+    _start_netbox(context, settings)
+    profiles = settings.preset.deps_profiles
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
@@ -864,10 +1313,16 @@ def dev_deps(context: Context, infrahub_network: str = "") -> None:
         ComposeTarget(project=settings.project, profiles=profiles),
         pty=True,
     )
+    _report_left_running(context, settings)
+    _seed_preview(context, settings)
     _print_urls(settings, host_worker=True)
     print(f" - [{NAMESPACE}] PostgreSQL  {_publication_address(settings.postgres)}")
     print(f" - [{NAMESPACE}] Object store {object_store or 'not set'}")
     print(f" - [{NAMESPACE}] Next: `uv run invoke dev.api` and `uv run invoke dev.worker`, each in its own terminal")
+    print(
+        f" - [{NAMESPACE}] No Sync API runs yet, so no credential is stored; once `dev.api` runs, create the "
+        f"credentials a package names with `uv run infrahub-sync credentials create`, for example {INFRAHUB_CREDENTIAL}"
+    )
 
 
 @task(name="api")
@@ -890,39 +1345,15 @@ def dev_worker(context: Context) -> None:
         context.run(worker_command(settings), env=environment, pty=True)
 
 
-def frontend_token(bearer_tokens: str, shell_token: str = "") -> str:
-    """Return the bearer token the web interface's development server sends to the Sync API.
-
-    A token the shell exports as INFRAHUB_SYNC_API_TOKEN wins. Otherwise the stack's
-    principals decide: the public development token when a principal has it, or the token
-    of the only principal. With several principals and none of them the development one,
-    the task cannot choose, so it asks for the variable. The token is never printed.
-    """
-    if shell_token:
-        return shell_token
-    try:
-        principals = json.loads(bearer_tokens)
-    except ValueError:
-        principals = None
-    tokens = (
-        [
-            str(principal["token"])
-            for principal in principals.values()
-            if isinstance(principal, dict) and principal.get("token")
-        ]
-        if isinstance(principals, dict)
-        else []
-    )
-    if API_TOKEN in tokens:
-        return API_TOKEN
-    if len(tokens) == 1:
-        return tokens[0]
-    msg = f"Cannot choose a principal from BEARER_TOKENS; export {FRONTEND_TOKEN_VARIABLE} with the token to use"
-    raise DevStackError(msg)
-
-
 def _frontend_submodule_present() -> bool:
     return (REPO_BASE / FRONTEND_UI_PACKAGE / "package.json").is_file()
+
+
+def _fetch_frontend_submodule(context: Context) -> None:
+    """Fetch the `frontend/vendor/infrahub` submodule when it is missing; the image build needs it too."""
+    if not _frontend_submodule_present():
+        with context.cd(ESCAPED_REPO_PATH):
+            context.run(f"git submodule update --init {FRONTEND_SUBMODULE}", pty=True)
 
 
 @task(name="frontend")
@@ -931,21 +1362,156 @@ def dev_frontend(context: Context) -> None:
 
     Fetches the `frontend/vendor/infrahub` submodule when it is missing (a checkout it
     already holds is left as it is), installs the locked dependencies, then runs `pnpm dev`
-    in the foreground. The server forwards `/api` to the Sync API with the bearer token;
-    the token stays in the server process and never reaches the browser bundle.
+    in the foreground. The server forwards `/api` to the Sync API unchanged and adds no
+    token: the person signs in on the page with an account name and a password. The task prints
+    how to sign in as `admin`: the variable that holds the password and its public default, never
+    a password or a token the developer set.
     """
     settings = dev_settings(context)
-    environment = {
-        FRONTEND_URL_VARIABLE: settings.sync_api_url,
-        FRONTEND_TOKEN_VARIABLE: frontend_token(settings.bearer_tokens, os.environ.get(FRONTEND_TOKEN_VARIABLE, "")),
-    }
-    if not _frontend_submodule_present():
-        with context.cd(ESCAPED_REPO_PATH):
-            context.run(f"git submodule update --init {FRONTEND_SUBMODULE}", pty=True)
+    environment = {FRONTEND_URL_VARIABLE: settings.sync_api_url}
+    _fetch_frontend_submodule(context)
     with context.cd(escape_path(REPO_BASE / FRONTEND_DIRECTORY)):
         context.run("pnpm install --frozen-lockfile", pty=True)
         print(f" - [{NAMESPACE}] Web interface on {FRONTEND_URL}, Sync API {settings.sync_api_url}; Ctrl-C stops it")
+        print(
+            f" - [{NAMESPACE}] Sign in on the page as admin, with the password in ADMIN_ACCOUNT_PASSWORD"
+            f" (by default {ADMIN_PASSWORD})"
+        )
         context.run("pnpm dev", env=environment, pty=True)
+
+
+def _demo_environment(settings: DevSettings) -> dict[str, str]:
+    """The variables `infrahub-sync demo prepare` reads, for the stack's Infrahub and Sync API.
+
+    The Sync token is the development token when the `admin` account still has it. With a
+    token set through ADMIN_ACCOUNT_TOKEN, the command inherits INFRAHUB_SYNC_API_TOKEN from
+    the shell, so the token never passes through this task.
+
+    Raises:
+        DevStackError: when the Sync API does not accept the development token and the
+            shell does not set INFRAHUB_SYNC_API_TOKEN.
+    """
+    environment = {
+        INFRAHUB_TOKEN_VARIABLE: settings.infrahub_admin_token,
+        SYNC_URL_VARIABLE: settings.sync_api_url,
+    }
+    if bearer_label(settings.admin_token) == API_TOKEN:
+        environment[SYNC_TOKEN_VARIABLE] = API_TOKEN
+    elif not os.environ.get(SYNC_TOKEN_VARIABLE):
+        msg = (
+            f"the `admin` account's API token comes from ADMIN_ACCOUNT_TOKEN; set {SYNC_TOKEN_VARIABLE} "
+            "to that token, or to another API token, before `uv run invoke dev.demo`"
+        )
+        raise DevStackError(msg)
+    return environment
+
+
+def _admin_token_label(token: str) -> str:
+    """The Infrahub admin token as `dev.demo` prints it: the public development default, or the variable."""
+    return token if token == PUBLIC_INFRAHUB_ADMIN_TOKEN else f"<from {INFRAHUB_ADMIN_TOKEN_VARIABLE}>"
+
+
+def _report_demo_netbox(found: str) -> None:
+    """Say which data the local NetBox holds: the `demo` dataset when it was new, else what is known."""
+    if found == "absent":
+        print(f" - [{NAMESPACE}] NetBox was new: loaded the {DEMO_DATASET!r} dataset")
+        return
+    dataset = recorded_dataset()
+    held = f"it holds {dataset}, loaded from this checkout" if dataset else "the dataset it holds is not known"
+    print(f" - [{NAMESPACE}] The local NetBox already existed and keeps its data; {held}")
+    print(
+        f" - [{NAMESPACE}] To load the {DEMO_DATASET!r} dataset: `uv run invoke netbox.seed --dataset {DEMO_DATASET}`"
+    )
+
+
+# How many lines of `demo prepare` output a failure to read its result shows.
+DEMO_OUTPUT_LINES = 4
+
+
+def _prepare_demo(context: Context, settings: DevSettings, environment: Mapping[str, str]) -> dict[str, Any]:
+    """Run `infrahub-sync demo prepare --json` on the host and return the object it prints.
+
+    Raises:
+        DevStackError: when the command fails or prints no configuration ID and version.
+    """
+    command = " ".join(
+        [
+            DEMO_PREPARE_COMMAND,
+            f"--netbox-url {shlex.quote(WORKER_NETBOX_URL)}",
+            f"--infrahub-url {shlex.quote(WORKER_INFRAHUB_URL)}",
+            f"--infrahub-address {shlex.quote(settings.infrahub_url)}",
+            "--json",
+        ]
+    )
+    print(f" - [{NAMESPACE}] Loading the demo schema and registering the NetBox configuration")
+    with context.cd(ESCAPED_REPO_PATH):
+        result = context.run(command, env=dict(environment), hide="out", warn=True, pty=False)
+    if result is None or not result.ok:
+        msg = "`infrahub-sync demo prepare` failed; its error is printed above"
+        raise DevStackError(msg)
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    try:
+        prepared = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        prepared = None
+    if not isinstance(prepared, dict) or "config_id" not in prepared or "version" not in prepared:
+        msg = "`infrahub-sync demo prepare --json` printed no configuration ID and version"
+        if lines:
+            # Standard output holds the result and any notes, never a token: tokens reach the
+            # command through the environment, and its errors go to standard error.
+            last_lines = "\n".join(f"   {line}" for line in lines[-DEMO_OUTPUT_LINES:])
+            msg = f"{msg}; its last lines:\n{last_lines}"
+        raise DevStackError(msg)
+    return prepared
+
+
+def _print_demo_next_steps(settings: DevSettings, prepared: Mapping[str, Any]) -> None:
+    sync_token = bearer_label(settings.admin_token)
+    if sync_token != API_TOKEN:
+        sync_token = f"<{sync_token}>"
+    config_id = shlex.quote(str(prepared["config_id"]))
+    version = shlex.quote(str(prepared["version"]))
+    print(f" - [{NAMESPACE}] schema: {prepared.get('schema', 'unknown')}")
+    print(f" - [{NAMESPACE}] configuration: {prepared.get('configuration', 'unknown')}")
+    print(f" - [{NAMESPACE}] Configuration  {prepared['config_id']}, version {prepared['version']}")
+    print(
+        f" - [{NAMESPACE}] Web interface  {settings.sync_api_url}  (sign in as admin, with the password in "
+        f"ADMIN_ACCOUNT_PASSWORD, by default {ADMIN_PASSWORD})"
+    )
+    print(f" - [{NAMESPACE}] Sync API       {settings.sync_api_url}")
+    print(f" - [{NAMESPACE}] Next, a first plan on a new branch:")
+    print(
+        f"     export INFRAHUB_ADDRESS={settings.infrahub_url} "
+        f"{INFRAHUB_TOKEN_VARIABLE}={_admin_token_label(settings.infrahub_admin_token)}"
+    )
+    print(f"     export {SYNC_URL_VARIABLE}={settings.sync_api_url} {SYNC_TOKEN_VARIABLE}={sync_token}")
+    print(f"     uv run infrahubctl branch create {DEMO_BRANCH}")
+    print(
+        f"     uv run infrahub-sync plan --config-id {config_id} --version {version} "
+        f'--branch {DEMO_BRANCH} --reason "demo"'
+    )
+
+
+@task(name="demo")
+def dev_demo(context: Context) -> None:
+    """Start the `demo` preset and prepare it for the NetBox demo; then print the first plan's commands.
+
+    Starts the core and Sync services, a local Infrahub and the local NetBox. A NetBox that
+    does not exist yet gets the `demo` dataset; an existing NetBox keeps its data, and the
+    task prints the command that reloads the `demo` dataset. Then runs `infrahub-sync demo
+    prepare` on the host, from this checkout: it loads the demo schema into the local
+    Infrahub and registers the NetBox configuration with the addresses the worker uses. The
+    tokens pass in that command's environment, never as arguments. Running it again changes
+    nothing and says so. It never plans, applies or approves.
+    """
+    settings = _start_settings(context, "", "demo")
+    environment = _demo_environment(settings)
+    found = netbox_state(context, load_netbox_env())
+    _fetch_frontend_submodule(context)
+    _run_stack(context, settings)
+    _report_demo_netbox(found)
+    prepared = _prepare_demo(context, settings, environment)
+    _print_demo_next_steps(settings, prepared)
 
 
 def _publication_address(publication: Publication | None) -> str:
@@ -956,6 +1522,8 @@ ns = Collection(
     "dev",
     dev_build,
     dev_start,
+    dev_infrahub,
+    dev_preview,
     dev_restart,
     dev_stop,
     dev_destroy,
@@ -967,4 +1535,5 @@ ns = Collection(
     dev_api,
     dev_worker,
     dev_frontend,
+    dev_demo,
 )

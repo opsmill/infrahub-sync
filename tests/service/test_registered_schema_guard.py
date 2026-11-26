@@ -31,7 +31,7 @@ from infrahub_sync.configuration import ConfigurationPackage, parse_configuratio
 from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
-from infrahub_sync.execution import RunResult
+from infrahub_sync.execution import RunResult, redaction_scope
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.config_version import resolve_config_version
@@ -47,12 +47,14 @@ from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.scratch import stage_scratch
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
-from tests.configuration.validation_packages import package_data
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL, credential_package_data
+from tests.helpers.stored_credentials import create_stored_credential_names
 from tests.plan.artifact_fixtures import duplicated_key_manifest_bytes
 from tests.service.execution_fixtures import (
     append_execution,
     bind_granting_guard,
     publish_plan_directory,
+    serve_released_credentials,
     stage_root,
     write_applied_sidecar,
 )
@@ -67,6 +69,8 @@ RUN_ID = "registered-schema-guard"
 # Short, distinctive credential values, so a scan for them in a refusal is unambiguous.
 NETBOX_CANARY = "netbox-schema-guard-canary"
 INFRAHUB_CANARY = "infrahub-schema-guard-canary"
+# The fields that the Sync API releases for each block of the registered package.
+RELEASED = {"source": {"token": NETBOX_CANARY}, "destination": {"token": INFRAHUB_CANARY}}
 
 _SNAPSHOT: dict[str, Any] = {
     "BuiltinTag": {
@@ -101,7 +105,7 @@ _MAPPING = [
 
 
 def _package() -> ConfigurationPackage:
-    content = package_data()
+    content = credential_package_data()
     content["configuration"]["schema_mapping"] = copy.deepcopy(_MAPPING)
     return parse_configuration_package(content)
 
@@ -165,13 +169,13 @@ def _harness(
     destination_branch: str | None = None,
 ) -> _Harness:
     """Register one configuration, retain one plan against it, and disarm execution."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", NETBOX_CANARY)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
 
     package = _package()
     projection = local_product_projection(tmp_path / "product")
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    serve_released_credentials(monkeypatch, service_flow, RELEASED, projection=projection)
     registered = projection.create_configuration(package)
     binding = (registered.config_id, registered.registry_version, registered.package_checksum)
     projection.create_run(
@@ -195,7 +199,7 @@ def _harness(
         ),
     )
 
-    instance = resolve_runtime_instance(package, directory=str(tmp_path))
+    instance = resolve_runtime_instance(package, directory=str(tmp_path), released=RELEASED)
     instance._configuration_binding = binding
     recorded = (
         schema_fingerprint
@@ -286,7 +290,8 @@ def _apply_ends_failed(harness: _Harness) -> str:
 def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
     """Drive the production stage boundary before remote exception sanitization."""
     _publish_current_plan(harness)
-    with stage_scratch("apply") as scratch:
+    # The flow binds the redaction list of the run before its stage; the released values enter it.
+    with redaction_scope(), stage_scratch("apply") as scratch:
         return service_flow._execute_stage(
             RUN_ID,
             "apply",
@@ -601,6 +606,7 @@ def test_no_worker_parameter_offers_a_schema_override() -> None:
         "confirm_writes",
         "configuration_name",
         "confirm_left_out",
+        "schedule_id",
     )
 
 

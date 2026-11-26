@@ -51,7 +51,7 @@ Sync container blocks the runner, including stopped containers and stacks with o
 API or database. The benchmark checks the fixed development Compose project before
 restoring NetBox or rebuilding Infrahub. For v3, the runner builds the Sync image from
 this checkout and uses the existing start tasks for its API and worker. v3 requires
-`INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API principal.
+`INFRAHUB_SYNC_API_TOKEN` in your environment, set to an API token of the local stack, such as the `admin` token.
 v2 uses its isolated release environment and does not require the Sync API or its token.
 Sync lifecycle commands explicitly select `infrahub-sync-dev` and this checkout's
 `development/docker-compose.yml`. The runner refuses to start a cell, before any Docker command or database
@@ -71,7 +71,7 @@ The runner reads the destination's host address and initial admin token from the
 destination's own resolved Compose configuration, the development file's `infrahub`
 profile under the `infrahub-sync-benchmark` project. The address is the port that
 configuration publishes for `infrahub-server` (`INFRAHUB_PORT`, default `8000`).
-`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`
+`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` and `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN`
 do not change the destination. When the host reaches Docker at another address, pass
 `--infrahub-url` or set `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`; `--infrahub-url` takes
 precedence over the variable. Either one changes only the host name. A URL that names
@@ -112,9 +112,11 @@ credential settings are supplied for the local services. If a release cannot run
 mapping or flags, the cell fails; the runner never changes sync behavior to obtain a
 benchmark result.
 
-Credentials come from the existing local task environment settings and are passed to
-processes or containers through their environment. The registered package contains
-credential references. The runner suppresses provider output and legacy token banners;
+For v3, the registered package names the stored credentials `netbox-token` and
+`infrahub-token`. Once the Sync API runs, the runner stores both through it, with the tokens of
+the benchmark's NetBox and Infrahub; no Sync service receives either token in a variable. For
+v2, the runner removes the `credential` key from each block and passes `NETBOX_TOKEN` and
+`INFRAHUB_API_TOKEN` to the v2 process through its environment. The runner suppresses provider output and legacy token banners;
 result errors describe the failed operation without exposing credentials.
 The legacy v2 adapter generator needs the destination credential in configuration
 settings. The runner supplies it in a file readable only by your user during generation,
@@ -149,25 +151,46 @@ Each measured repetition appends one JSON object to the git-ignored
   virtual, and LAG interfaces split and both VRF projections counted.
 - `machine` records CPU model/count, physical memory, OS, and architecture.
   `actions`, `action_evidence`, `run_id`, and `error` explain validation evidence.
-  `skipped_deletes` records other plan deletions that v3 apply did not dispatch.
-  `builtin_deletes` separately records deletions of Infrahub's built-in default
-  `IpamNamespace` (`name=default`), which apply also did not dispatch.
+  `skipped_deletes` records, by kind, every plan deletion that v3 apply did not dispatch.
+- v3 records the plan step of the measured sync, read from the latest `plan` or `sync`
+  execution of the run response:
+    - `plan_parts` holds the seconds of each part: `waiting`, `preparing`, `source_read`,
+      `destination_read`, `comparing`, `checking` and `saving`. A part without both a start
+      and an end time is left out; the runner never records it as 0.
+    - `source_read_mode` and `destination_read_mode` hold the read mode of each side, `full`
+      or `incremental`.
+    - `plan_bytes` is the size of the `saved-plan-review` artifact. It measures the review
+      document, not the plan bundle that the worker saves.
+    - `operations_digest` is the SHA-256 of the plan's operations, without the destination
+      IDs. Two plans of the same source and destination data have the same digest.
+    - `left_out`, `kept` and `problems` are the counts of the plan report.
+
+  A v2 record, and a result that is not `ok`, holds `null` in these fields.
 
 NetBox totals must match the tier, including foundation and skipped rows. After source
 changes, its totals also account for every create and delete in the change file.
 Cold and warm Infrahub counts must match the mapped tier, including Infrahub's preserved default
-IP namespace. A warm cell must also show zero applied actions. Changed cells compare
+IP namespace. A warm cell must also show zero applied actions. A v3 warm cell passes only
+when its plan holds no operation: one create, update or delete fails the cell, even though
+the apply executes no delete. Records left out, kept records and problems are not
+operations. Changed cells compare
 per-kind actions against `.netbox/changes/<tier>.expected.json`, translating
 prefix VRF moves into deletes and creates. v2 must execute the expected deletes.
-v3 checks its saved plan against the apply summary. It records the built-in default
-`IpamNamespace` deletion in `builtin_deletes` and excludes only that deletion from the
-change comparison. Every other recorded delete must match the expected change file
-exactly and is recorded as not executed in `skipped_deletes`, following [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
+v3 checks its saved plan against the apply summary. Every recorded delete must match the
+expected change file exactly and is recorded as not executed in `skipped_deletes`, following [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
+A plan leaves out the deletes of nodes that Infrahub creates itself, such as the default
+`IpamNamespace`, so the runner excludes no delete by name ([ADR 0047](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)).
 It must apply the expected creates and updates, with zero executed deletes. Missing or
-extra non-builtin recorded deletes fail validation. Destination counts include the retained objects
+extra recorded deletes fail validation. Destination counts include the retained objects
 for v3; v2 counts subtract executed deletes. A valid v3 changed cell keeps its time and
-records the deletions under `skipped_deletes`. A warm v3 plan can contain the same built-in default IP namespace
-deletion; the runner records it in `builtin_deletes` and checks zero executed actions.
+records the deletions under `skipped_deletes`.
+A v3 sync whose plan leaves records out stops in phase `planned` and writes nothing. The
+runner then records the counts of the plan report, records no applied action and no
+`apply_seconds`, and does not compare an apply summary. It compares the apply summary only
+when the run reached phase `applied`. Only a `warm` cell can pass after such a stop: a
+`cold` cell fails the count check and a `changed` cell fails the action check, because
+nothing was written. Their failed records keep the counts of the plan report.
+A sync that stops before its apply for any other reason fails the cell.
 v2 parses complete per-kind summaries or successful per-object action
 status lines from a finished sync. For a parallel no-op, all mapped tier logs and the
 completed release footer establish zero writes. The runner otherwise records count

@@ -12,7 +12,6 @@ FR-011: no module under `infrahub_sync/` calls a Prefect flow run delete.
 from __future__ import annotations
 
 import ast
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,10 +38,11 @@ from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_
 from infrahub_sync.runtime_schema.errors import DestinationBranchNotFoundError
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.orchestration import PrefectOrchestration
 from infrahub_sync.service.service import RunService
+from infrahub_sync.service.web import create_site
+from tests.service.accounts import seed_accounts
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
@@ -198,13 +198,12 @@ def test_no_message_line_or_output_points_at_prefect(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prefect_api_address: str, mode: str
 ) -> None:
     projection, flow_run_id, records = _failed_run(monkeypatch, tmp_path)
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     log_client = _PrefectLogClient(flow_run_id, records)
     log_client.mode = mode
     orchestration = PrefectOrchestration(log_client)  # ty: ignore[invalid-argument-type] - the log reader's two calls only.
     test_client = TestClient(
-        create_app(RunService(projection, orchestration, secrets=resolver.secret_values), resolver)
+        create_site(create_app(RunService(projection, orchestration, secrets=resolver.secret_values), resolver), None)
     )
 
     def forward(request: httpx.Request) -> httpx.Response:
@@ -219,7 +218,7 @@ def test_no_message_line_or_output_points_at_prefect(
 
     responses = {
         path: test_client.get(path, headers=headers)
-        for path in (f"/runs/{RUN_ID}", f"/runs/{RUN_ID}/logs", f"/events?run_id={RUN_ID}")
+        for path in (f"/api/runs/{RUN_ID}", f"/api/runs/{RUN_ID}/logs", f"/api/events?run_id={RUN_ID}")
     }
     outputs = {
         command: RUNNER.invoke(cli_app, list(command), obj={"client": sync_client})
@@ -227,11 +226,11 @@ def test_no_message_line_or_output_points_at_prefect(
     }
 
     expected_logs = {"read": 200, "expired": 410, "unavailable": 503}[mode]
-    assert responses[f"/runs/{RUN_ID}/logs"].status_code == expected_logs
-    assert responses[f"/runs/{RUN_ID}"].status_code == 200
-    assert responses[f"/events?run_id={RUN_ID}"].status_code == 200
+    assert responses[f"/api/runs/{RUN_ID}/logs"].status_code == expected_logs
+    assert responses[f"/api/runs/{RUN_ID}"].status_code == 200
+    assert responses[f"/api/events?run_id={RUN_ID}"].status_code == 200
     if mode == "read":
-        served = [item["message"] for item in responses[f"/runs/{RUN_ID}/logs"].json()["items"]]
+        served = [item["message"] for item in responses[f"/api/runs/{RUN_ID}/logs"].json()["items"]]
         assert any("demo-test-017" in line for line in served)
         assert outputs["runs", "logs", RUN_ID].exit_code == 0
     findings = {

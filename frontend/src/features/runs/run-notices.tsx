@@ -1,8 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useId, useState } from "react";
+import { Fragment, type ReactNode, useId, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import type { Orchestration, Plan, Run } from "#/api/types";
+import type { AutomaticResume, Orchestration, Plan, Run } from "#/api/types";
 import { ArrowRightIcon } from "#/components/icons";
 import { CopyButton, FOCUS, InlineCode, Notice } from "#/components/page";
 import { BranchBadge, When } from "#/components/run-status";
@@ -11,6 +11,7 @@ import { executableCount, type FailureDetail, fmt, phaseLabel } from "#/domain/r
 import type { System } from "#/domain/systems";
 import { useNow } from "#/lib/time";
 
+import { automaticResumeBlock } from "./automatic-resume";
 import { identityParts } from "./plan-values";
 
 const LABEL = "block text-subtle text-xs";
@@ -79,6 +80,7 @@ export function FailureNotice({
   plan,
   source,
   destination,
+  resumable = false,
 }: {
   run: Run;
   f: FailureDetail;
@@ -86,6 +88,8 @@ export function FailureNotice({
   plan?: Plan;
   source?: System;
   destination?: System;
+  /** The interrupted write can continue from its saved position. */
+  resumable?: boolean;
 }) {
   const failedExec = [...orchestration]
     .reverse()
@@ -138,9 +142,27 @@ export function FailureNotice({
                 <span className={LABEL}>Command-line instruction recorded by the Sync service</span>
                 <InlineCode text={f.nextAction} />
               </p>
-              <p>To continue here, create a new plan, review it, then apply that plan.</p>
+              {/* The Sync service names `runs resume` only for a failure the saved plan survives;
+                  a record or transform failure keeps its new-plan advice on a resumable run. */}
+              {!(resumable && f.nextAction.includes("runs resume")) && (
+                <p>To continue here, create a new plan, review it, then apply that plan.</p>
+              )}
             </>
           )
+        )}
+        {f.activeRunId && (
+          // The recorded cause names the run that holds the write guard; this opens it.
+          <p className="[--notice-tone:var(--color-danger)]">
+            <Link
+              to="/runs/$runId"
+              params={{ runId: f.activeRunId }}
+              className={OPEN_RUN}
+              aria-label={`Open run ${f.activeRunId}`}
+            >
+              Open run
+              <ArrowRightIcon className="size-3.5 shrink-0 text-subtle" />
+            </Link>
+          </p>
         )}
         {cut && !cut.mayHaveWritten && (
           <p>
@@ -178,7 +200,20 @@ export function FailureNotice({
                   : "The Sync service did not record which of them failed."}
           </p>
         )}
-        {cut?.mayHaveWritten && (
+        {cut?.mayHaveWritten && resumable && (
+          <p>
+            The Sync service could not confirm everything that was written. You can resume the
+            write: the worker continues the saved plan after the last position it saved. Check the
+            plan first. You can also inspect{" "}
+            {run.destination_branch ? (
+              <>
+                <BranchBadge branch={run.destination_branch} /> in{" "}
+              </>
+            ) : null}
+            {destination?.label ?? "the destination"} and create a new plan instead.
+          </p>
+        )}
+        {cut?.mayHaveWritten && !resumable && (
           <p>
             The Sync service could not confirm what was written. Inspect{" "}
             {run.destination_branch ? (
@@ -582,6 +617,44 @@ export function InFlightNotice({ open }: { open: Orchestration }) {
           )}
           Check that a worker is running.
         </p>
+      </Body>
+    </Notice>
+  );
+}
+
+/* ---------- automatic resume: Sync's decision on resuming an interrupted write ---------- */
+
+/**
+ * One automatic resume record of the run, with the text of `infrahub-sync runs show`: why the
+ * write ended, what the check found, where the resume started, or why Sync did not resume.
+ */
+export function AutomaticResumeNotice({
+  row,
+  number,
+  next,
+}: {
+  row: AutomaticResume;
+  number: number;
+  /** What the operator can do after Sync did not resume the run (`automaticResumeNext`). */
+  next?: string;
+}) {
+  const block = automaticResumeBlock(row, number, next);
+  return (
+    <Notice
+      tone={block.notStarted ? "warning" : "neutral"}
+      role="note"
+      id={`automatic-resume-${number}`}
+      title={block.title}
+    >
+      <Body>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1 text-[13px]">
+          {block.lines.map((line) => (
+            <Fragment key={line.label}>
+              <dt className="text-subtle">{capitalise(line.label)}</dt>
+              <dd className="text-foreground [overflow-wrap:anywhere]">{line.text}</dd>
+            </Fragment>
+          ))}
+        </dl>
       </Body>
     </Notice>
   );

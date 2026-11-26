@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
@@ -14,11 +13,17 @@ from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUP
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, configs, local_product_projection
 from infrahub_sync.service import flow
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.config_routes import ConfigurationRoutes
 from infrahub_sync.service.models import ApplyRunRequest, CreateRunRequest, VerifyRunRequest
 from infrahub_sync.service.service import RunService
-from tests.configuration.validation_packages import package, package_data
+from tests.configuration.validation_packages import (
+    DESTINATION_CREDENTIAL,
+    SOURCE_CREDENTIAL,
+    credential_package,
+    credential_package_data,
+)
+from tests.helpers.stored_credentials import create_stored_credential_names
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
 from tests.service.test_config_routes import _Orchestration
 
@@ -32,12 +37,13 @@ def test_worker_refuses_a_previously_registered_store_before_external_reads(
 ) -> None:
     """Refuse stores before external reads and expose the fixed diagnostic."""
     projection = local_product_projection(tmp_path)
-    content = package_data()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    content = credential_package_data()
     content["configuration"]["store"] = {"type": "redis"}
     # Model a version admitted before the V3 storage policy changed.
     with monkeypatch.context() as before_policy:
         before_policy.setattr("infrahub_sync.product_store.store.validate_package_credentials", lambda _package: None)
-        version = projection.create_configuration(package(content))
+        version = projection.create_configuration(credential_package(content))
     binding = (version.config_id, version.registry_version, version.package_checksum)
     projection.create_run(
         ProductRun(
@@ -52,9 +58,7 @@ def test_worker_refuses_a_previously_registered_store_before_external_reads(
             phase="accepted",
         )
     )
-    monkeypatch.setattr(
-        "infrahub_sync.configuration.runtime.resolve_reference", lambda *_args: pytest.fail("credential read")
-    )
+    monkeypatch.setattr(flow, "release_run_credentials", lambda *_args: pytest.fail("credential read"))
     monkeypatch.setattr(flow, "build_runtime_model_plan", lambda **_kwargs: pytest.fail("schema read"))
 
     flow_run_id = "11111111-1111-1111-1111-111111111111"
@@ -84,12 +88,12 @@ def test_http_refusal_returns_the_store_message(
 ) -> None:
     """The HTTP route answers a previously registered store with the fixed refusal message."""
     projection = local_product_projection(tmp_path)
-    content = package_data()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    content = credential_package_data()
     content["configuration"]["store"] = {"type": "redis"}
-    monkeypatch.setenv(
-        PRINCIPALS_ENV, json.dumps({"test": {"token": "store-policy-test-canary", "administrator": True}})
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(
+        projection, {"test": {"token": "store-policy-test-canary", "administrator": True}}
+    ).resolver
     client = TestClient(
         create_app(
             RunService(projection, _Orchestration()),
@@ -106,7 +110,7 @@ def test_http_refusal_returns_the_store_message(
             before_policy.setattr(
                 "infrahub_sync.product_store.store.validate_package_credentials", lambda _package: None
             )
-            version = projection.create_configuration(package(content))
+            version = projection.create_configuration(credential_package(content))
         path = "/runs"
         body = {
             "operation": operation,
@@ -120,7 +124,7 @@ def test_http_refusal_returns_the_store_message(
             ProductRun(
                 run_id="legacy-store-run",
                 operation="plan",
-                actor="test",
+                actor=account_identifier(projection, "test"),
                 configuration_reference=f"{version.config_id}@{version.registry_version}",
                 config_id=version.config_id,
                 registry_version=version.registry_version,
@@ -148,11 +152,12 @@ def test_validation_reports_the_store_finding_for_a_previously_registered_versio
 ) -> None:
     """Validating a previously registered version reports the store finding."""
     projection = local_product_projection(tmp_path)
-    content = package_data()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    content = credential_package_data()
     content["configuration"]["store"] = {"type": "redis"}
     with monkeypatch.context() as before_policy:
         before_policy.setattr("infrahub_sync.product_store.store.validate_package_credentials", lambda _package: None)
-        version = projection.create_configuration(package(content))
+        version = projection.create_configuration(credential_package(content))
 
     report = configs.validate(
         config_id=version.config_id, registry_version=version.registry_version, projection=projection
@@ -174,21 +179,21 @@ def test_legacy_store_receipts_replay_only_completed_responses(
 ) -> None:
     """Replay accepted receipts and refuse unsubmitted receipts after upgrade."""
     projection = local_product_projection(tmp_path)
-    content = package_data()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
+    content = credential_package_data()
     content["configuration"]["store"] = {"type": "redis"}
     with monkeypatch.context() as before_policy:
         before_policy.setattr("infrahub_sync.product_store.store.validate_package_credentials", lambda _package: None)
-        version = projection.create_configuration(package(content))
-    monkeypatch.setenv(
-        PRINCIPALS_ENV, json.dumps({"test": {"token": "store-policy-test-canary", "administrator": True}})
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
+        version = projection.create_configuration(credential_package(content))
+    resolver = seed_accounts(
+        projection, {"test": {"token": "store-policy-test-canary", "administrator": True}}
+    ).resolver
     service = RunService(projection, _Orchestration())
     client = TestClient(create_app(service, resolver))
     run = ProductRun(
         run_id="legacy-store-run",
         operation="plan",
-        actor="test",
+        actor=account_identifier(projection, "test"),
         configuration_reference=f"{version.config_id}@{version.registry_version}",
         config_id=version.config_id,
         registry_version=version.registry_version,
@@ -217,7 +222,7 @@ def test_legacy_store_receipts_replay_only_completed_responses(
         target = run.run_id
     body = request.model_dump(mode="json")
     receipt = service._new_receipt(
-        actor="test",
+        actor=account_identifier(projection, "test"),
         idempotency_key="legacy-key",
         operation=operation,
         target_run_id=target,

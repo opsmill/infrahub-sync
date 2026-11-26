@@ -32,6 +32,7 @@ from collections.abc import Iterator, Sequence
 from threading import Lock
 from typing import Any, Literal, Protocol
 
+import structlog
 from prefect import flow
 from prefect.logging import get_run_logger
 
@@ -43,7 +44,7 @@ from infrahub_sync.execution import (
     run_remote_request,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 FLOW_NAME = "infrahub-sync"
 # Deployment named "run", NOT a repeat of the flow name: the lookup path reads

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 # pylint: disable=R0801
-import logging
 from typing import TYPE_CHECKING, Any
 
 import pynetbox  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
+import structlog
 from diffsync import Adapter, DiffSyncModel
 from requests import Session
 
@@ -22,7 +22,7 @@ from .endpoint_records import convert_records, mapped_element, resolve_endpoint,
 from .references import peer_unique_id, peer_unique_ids, reference_is_required
 from .utils import get_value, keep_certificate_checks_off
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

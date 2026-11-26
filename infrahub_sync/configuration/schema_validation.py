@@ -40,8 +40,10 @@ thing that may perform I/O.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING, Any, cast
 
 from infrahub_sync import requested_destination_write_operations
@@ -53,7 +55,14 @@ from infrahub_sync.runtime_schema import (
     normalize_destination_schema,
 )
 
-from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationAccessAccessor, DestinationSchemaReadError
+from .capabilities import (
+    BUILTIN_ADAPTER_CAPABILITIES,
+    DestinationAccessAccessor,
+    DestinationSchemaReadError,
+    UnknownCredentialMethodError,
+    credential_field_map,
+    destination_token,
+)
 from .models import ValidationFinding, sort_findings
 from .runtime import effective_destination_branch
 from .validation import _finding_message
@@ -89,9 +98,19 @@ class DestinationSchemaOptions:
     behavior byte-identical, with zero schema reads. ``branch`` is the Infrahub branch the
     team names (`configs validate --branch`, spec 007 FR-034); ``None`` reads the package's
     declared destination branch.
+
+    ``credential_values`` reads the fields of a stored credential by its name, for a
+    destination block that names one (spec 027, FR-004). The Sync API passes a function that
+    decrypts the current revision inside the request and adds each value to the request's
+    redaction registry. It raises :class:`DestinationSchemaReadError` with the reason
+    ``credentials`` when the credential cannot be read. Without it, the read of such a
+    destination becomes one ``destination-schema-read-failed`` finding and sends no request.
     """
 
     branch: str | None = None
+    credential_values: Callable[[str], Mapping[str, str]] | None = dataclass_field(
+        default=None, repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,10 +122,26 @@ class DestinationSchemaValidation:
     destination, an unknown adapter, or a failed read. Validation and registered worker
     construction compute it through the same projection; recording it on a plan, and
     comparing it before an apply writes, belong to the plan-guard unit that follows.
+
+    ``read_failure_reason`` is the ``reason`` of the first ``DestinationSchemaReadError``
+    a destination read raised (``timeout``, ``unreachable``, ``unauthorized``,
+    ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured`` or ``credentials``), or ``None`` when
+    every read that ran succeeded or no read ran. The same failure still becomes a
+    ``destination-schema-read-failed`` finding; this field lets a caller act on the reason
+    without parsing finding text.
+
+    ``schema_read`` is ``True`` when the destination schema of the branch was read and the
+    import account's access read that follows it succeeded or did not run. It is ``False``
+    when no read ran (an unknown adapter or a non-declaring destination), when the schema
+    read failed, or when the access read failed. In the last case the schema was read, so
+    ``schema_fingerprint`` can be set, and ``read_failure_reason`` holds the access read's
+    reason.
     """
 
     findings: tuple[ValidationFinding, ...]
     schema_fingerprint: str | None
+    read_failure_reason: str | None = None
+    schema_read: bool = False
 
 
 def resolve_declared_destination_branch(package: ConfigurationPackage) -> str:
@@ -268,15 +303,16 @@ def _dropdown_findings(package: ConfigurationPackage, normalized: DestinationSch
 
 def _access_findings(
     package: ConfigurationPackage, accessor: DestinationAccessAccessor | None, branch: str
-) -> list[ValidationFinding]:
+) -> tuple[list[ValidationFinding], str | None]:
     """Report the permissions the import account lacks on `branch` and the lineage names it cannot use.
 
     Spec 007 FR-036: one finding per mapped kind the account cannot view, create or update,
     and one per named `source` or `owner` that the account cannot look up, that matches no
-    node, or that matches more than one node.
+    node, or that matches more than one node. The second value is the read failure reason
+    when the access read raised, else ``None``.
     """
     if accessor is None:
-        return []
+        return [], None
     try:
         access = accessor(package, branch)
     except DestinationSchemaReadError as exc:
@@ -286,7 +322,7 @@ def _access_findings(
                 location=_DESTINATION_LOCATION,
                 message=f"destination access for branch {branch!r} could not be read: {exc.describe()}",
             )
-        ]
+        ], exc.reason
     findings = [
         _finding(
             code=_CODE_DESTINATION_PERMISSION_MISSING,
@@ -318,7 +354,41 @@ def _access_findings(
             code = _CODE_DESTINATION_LINEAGE_NODE_NOT_FOUND
             message = f"{named}, which branch {branch!r} does not hold"
         findings.append(_finding(code=code, location=location, message=message))
-    return findings
+    return findings, None
+
+
+def _given(token: str | None) -> AbstractContextManager[None]:
+    """Give the destination reads the token of the named stored credential; nothing when none is named."""
+    return nullcontext() if token is None else destination_token(token)
+
+
+def _stored_destination_token(package: ConfigurationPackage, options: DestinationSchemaOptions | None) -> str | None:
+    """Return the token of the stored credential that the destination names, or ``None`` when it names none.
+
+    The fields of the
+    credential are read through ``options.credential_values``, and the field that the
+    adapter's field map puts into the ``token`` setting is the token.
+
+    Raises:
+        DestinationSchemaReadError: reason ``credentials``. No function reads stored
+            credentials here, the credential cannot be read, or it holds no token field.
+    """
+    destination = package.configuration.destination
+    if destination.credential is None:
+        return None
+    reader = None if options is None else options.credential_values
+    if reader is None:
+        msg = "the stored credential of the destination cannot be read here"
+        raise DestinationSchemaReadError(msg, reason="credentials")
+    try:
+        stored_field = credential_field_map(destination.name, destination.settings or {}).settings.get("token")
+    except UnknownCredentialMethodError:
+        stored_field = None
+    token = reader(destination.credential).get(stored_field) if stored_field is not None else None
+    if not token:
+        msg = "the stored credential of the destination holds no token"
+        raise DestinationSchemaReadError(msg, reason="credentials")
+    return token
 
 
 def collect_destination_schema_findings(
@@ -354,6 +424,8 @@ def collect_destination_schema_findings(
             )
         )
     fingerprint: str | None = None
+    read_failure_reason: str | None = None
+    schema_read = False
     # The registration-time invariant on the seam makes the accessor and the declaration
     # one fact, so presence of the accessor is the declaration.
     accessor = capabilities.destination_schema_accessor
@@ -370,8 +442,11 @@ def collect_destination_schema_findings(
             options.branch if options is not None and options.branch else resolve_declared_destination_branch(package)
         )
         try:
-            snapshot = accessor(package, branch)
+            token = _stored_destination_token(package, options)
+            with _given(token):
+                snapshot = accessor(package, branch)
         except DestinationSchemaReadError as exc:
+            read_failure_reason = exc.reason
             findings.append(
                 _finding(
                     code=_CODE_DESTINATION_SCHEMA_READ_FAILED,
@@ -380,6 +455,7 @@ def collect_destination_schema_findings(
                 )
             )
         else:
+            schema_read = True
             try:
                 normalized = normalize_destination_schema(snapshot)
                 fingerprint = compute_consumed_schema_fingerprint(
@@ -401,5 +477,14 @@ def collect_destination_schema_findings(
                     )
                 )
             findings.extend(_schema_content_findings(package, snapshot))
-            findings.extend(_access_findings(package, capabilities.destination_access_accessor, branch))
-    return DestinationSchemaValidation(findings=sort_findings(findings), schema_fingerprint=fingerprint)
+            with _given(token):
+                access_findings, read_failure_reason = _access_findings(
+                    package, capabilities.destination_access_accessor, branch
+                )
+            findings.extend(access_findings)
+    return DestinationSchemaValidation(
+        findings=sort_findings(findings),
+        schema_fingerprint=fingerprint,
+        read_failure_reason=read_failure_reason,
+        schema_read=schema_read and read_failure_reason is None,
+    )

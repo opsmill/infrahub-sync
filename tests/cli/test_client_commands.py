@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -40,9 +41,13 @@ from infrahub_sync.client import (
     EventPrimaryResource,
     EventResource,
     OrchestrationSummary,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanLastChangeResource,
     PlanOperationResource,
     PlanResource,
+    PlanStepPart,
+    PlanStepTimings,
     PlanSummaryResource,
     PrincipalResource,
     ProtocolError,
@@ -281,6 +286,48 @@ def test_configs_register_reads_one_package_and_preserves_identity(client: Magic
     assert "idempotency_key: retry-register" in result.output
 
 
+_NAME_IN_USE_MESSAGE = (
+    "message: A configuration named 'from-netbox' already exists (20261120T1249-9d57f620). Did you mean to add "
+    "a new version of it? Register the package as a new version of that configuration."
+)
+
+
+def _name_in_use() -> APIError:
+    return APIError(
+        409,
+        "configuration-name-in-use",
+        details={"config_id": "20261120T1249-9d57f620", "name": "from-netbox"},
+    )
+
+
+def test_configs_register_refused_for_a_name_in_use_prints_the_version_command(
+    client: MagicMock, tmp_path: Path
+) -> None:
+    package = tmp_path / "from netbox.yaml"
+    package.write_text("name: from-netbox\n", encoding="utf-8")
+    client.register_config.side_effect = _name_in_use()
+
+    result = _invoke(client, "configs", "register", str(package))
+
+    assert result.exit_code == 1
+    assert "code: configuration-name-in-use" in result.stderr
+    assert _NAME_IN_USE_MESSAGE in result.stderr
+    assert f"hint: infrahub-sync configs version 20261120T1249-9d57f620 '{package}'" in result.stderr.splitlines()
+
+
+def test_configs_version_refused_for_a_name_in_use_prints_the_message(client: MagicMock, tmp_path: Path) -> None:
+    package = tmp_path / "package.yaml"
+    package.write_text("name: from-netbox\n", encoding="utf-8")
+    client.create_config_version.side_effect = _name_in_use()
+
+    result = _invoke(client, "configs", "version", "edge-sync", str(package))
+
+    assert result.exit_code == 1
+    assert "code: configuration-name-in-use" in result.stderr
+    assert _NAME_IN_USE_MESSAGE in result.stderr
+    assert "hint: infrahub-sync configs version" not in result.stderr
+
+
 def test_configs_version_generates_and_discloses_retry_key(client: MagicMock, tmp_path: Path) -> None:
     package = tmp_path / "package.json"
     package.write_text('{"name": "edge-sync"}', encoding="utf-8")
@@ -294,6 +341,23 @@ def test_configs_version_generates_and_discloses_retry_key(client: MagicMock, tm
     assert re.fullmatch(r"[0-9a-f]{32}", key)
     assert f"idempotency_key: {key}" in result.output
     assert "created: true" in result.output
+
+
+def test_configs_version_prints_the_unvalidated_mark_and_never_sets_it(client: MagicMock, tmp_path: Path) -> None:
+    """Only the web interface marks a version; the CLI shows the mark it reads back (spec 025, US4)."""
+    package = tmp_path / "package.json"
+    package.write_text('{"name": "edge-sync"}', encoding="utf-8")
+    client.get_config_version.return_value = _version().model_copy(update={"registered_without_validation": True})
+
+    registered = _invoke(client, "configs", "version", "edge-sync", str(package))
+    shown = _invoke(client, "configs", "show", "edge-sync", "--version", "1")
+
+    assert registered.exit_code == 0, registered.output
+    assert shown.exit_code == 0, shown.output
+    _config_id, request, _key = client.create_config_version.call_args.args
+    assert request.registered_without_validation is False
+    assert "registered_without_validation: false" in registered.output
+    assert "registered_without_validation: true" in shown.output
 
 
 def test_configuration_reads_and_validation_keep_machine_fields_and_finding_order(client: MagicMock) -> None:
@@ -359,6 +423,208 @@ def test_configs_validate_exits_1_on_an_error_finding_only_with_a_branch(
 
     assert result.exit_code == exit_code, result.output
     assert "code=finding" in result.output
+
+
+def _package_check(
+    severities: tuple[Literal["error", "warning"], ...] = (), destination_read: str = "not_requested"
+) -> PackageCheckResource:
+    return PackageCheckResource(
+        package_checksum=CHECKSUM,
+        name="edge-sync",
+        declared_content={"format_version": 1, "configuration": {"name": "edge-sync"}},
+        destination_read=destination_read,
+        destination_schema_fingerprint=None if destination_read != "read" else "f" * 64,
+        findings=tuple(
+            ValidationFindingResource(
+                code=f"finding-{index}", severity=severity, location="/a", message=f"finding {index}"
+            )
+            for index, severity in enumerate(severities)
+        ),
+        offset=2,
+        limit=3,
+        total_findings=len(severities),
+        next_offset=None,
+    )
+
+
+def test_configs_check_sends_the_file_as_package_and_prints_the_report(client: MagicMock, tmp_path: Path) -> None:
+    """contracts/sync-api.md (CLI, FR-006): the report of `configs validate`, plus `destination_read`."""
+    package = tmp_path / "package.yaml"
+    package.write_text("format_version: 1\nconfiguration:\n  name: edge-sync\n", encoding="utf-8")
+    client.check_package.return_value = _package_check(("warning", "error"), destination_read="read")
+
+    result = _invoke(client, "configs", "check", str(package), "--branch", "review", "--offset", "2", "--limit", "3")
+
+    (request,) = client.check_package.call_args.args
+    assert request == PackageCheckRequest(package={"format_version": 1, "configuration": {"name": "edge-sync"}})
+    assert client.check_package.call_args.kwargs == {"offset": 2, "limit": 3, "branch": "review"}
+    for line in (
+        f"package_checksum: {CHECKSUM}",
+        f"destination_schema_fingerprint: {'f' * 64}",
+        "destination_read: read",
+        "offset: 2",
+        "limit: 3",
+        "total_findings: 2",
+        "next_offset: <none>",
+    ):
+        assert line in result.output
+    assert result.output.index("code=finding-0") < result.output.index("code=finding-1")
+    client.register_config.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "severities", "exit_code"),
+    [
+        pytest.param((), (), 0, id="no-findings"),
+        pytest.param(("--branch", "review"), (), 0, id="branch-no-findings"),
+        pytest.param((), ("warning",), 0, id="a-warning"),
+        pytest.param(("--branch", "review"), ("warning",), 0, id="branch-with-a-warning"),
+        pytest.param((), ("error",), 1, id="an-error"),
+        pytest.param(("--branch", "review"), ("warning", "error"), 1, id="branch-with-findings"),
+    ],
+)
+def test_configs_check_exits_1_when_the_page_has_an_error_finding(
+    client: MagicMock,
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+    severities: tuple[Literal["error", "warning"], ...],
+    exit_code: int,
+) -> None:
+    """contracts/sync-api.md (CLI): the command exits 1 when the returned page has an error finding."""
+    package = tmp_path / "package.json"
+    package.write_text('{"format_version": 1}', encoding="utf-8")
+    client.check_package.return_value = _package_check(severities)
+
+    result = _invoke(client, "configs", "check", str(package), *arguments)
+
+    assert result.exit_code == exit_code, result.output
+    assert "destination_read: not_requested" in result.output
+    assert client.check_package.call_args.kwargs["branch"] == (arguments[1] if arguments else None)
+
+
+def _check_page(
+    severities: tuple[Literal["error", "warning"], ...], offset: int, next_offset: int | None
+) -> PackageCheckResource:
+    return _package_check(severities).model_copy(
+        update={"offset": offset, "limit": 1, "total_findings": 3, "next_offset": next_offset}
+    )
+
+
+@pytest.mark.parametrize(
+    ("pages", "exit_code", "calls"),
+    [
+        pytest.param(
+            [_check_page(("warning",), 0, 1), _check_page(("warning",), 1, 2), _check_page(("error",), 2, None)],
+            1,
+            3,
+            id="error-on-the-last-page",
+        ),
+        pytest.param(
+            [_check_page(("warning",), 0, 1), _check_page(("error",), 1, 2)],
+            1,
+            2,
+            id="stops-at-the-first-error",
+        ),
+        pytest.param(
+            [_check_page(("warning",), 0, 1), _check_page(("warning",), 1, 2), _check_page(("warning",), 2, None)],
+            0,
+            3,
+            id="warnings-only",
+        ),
+    ],
+)
+def test_configs_check_exits_1_when_a_later_page_has_an_error_finding(
+    client: MagicMock, tmp_path: Path, pages: list[PackageCheckResource], exit_code: int, calls: int
+) -> None:
+    """contracts/sync-api.md (CLI, D-10): an error finding on any page exits 1; only the requested page prints."""
+    package = tmp_path / "package.json"
+    package.write_text('{"format_version": 1}', encoding="utf-8")
+    client.check_package.side_effect = pages
+
+    result = _invoke(client, "configs", "check", str(package), "--limit", "1", "--branch", "review")
+
+    assert result.exit_code == exit_code, result.output
+    assert [call.kwargs["offset"] for call in client.check_package.call_args_list] == list(range(calls))
+    assert {call.kwargs["limit"] for call in client.check_package.call_args_list} == {1}
+    assert {call.kwargs["branch"] for call in client.check_package.call_args_list} == {"review"}
+    assert result.output.count("code=finding-0") == 1
+    assert ("run again with --offset" in result.output) is (exit_code == 1)
+
+
+@pytest.mark.parametrize(
+    "pages",
+    [
+        pytest.param([_check_page(("warning",), 0, 0)], id="same-offset"),
+        pytest.param([_check_page(("warning",), 0, 2), _check_page(("warning",), 2, 1)], id="backwards"),
+    ],
+)
+def test_configs_check_refuses_a_next_offset_that_does_not_move_forward(
+    client: MagicMock, tmp_path: Path, pages: list[PackageCheckResource]
+) -> None:
+    """A `next_offset` at or before the page just read is a protocol error, not an endless loop."""
+    package = tmp_path / "package.json"
+    package.write_text('{"format_version": 1}', encoding="utf-8")
+    client.check_package.side_effect = pages
+
+    result = _invoke(client, "configs", "check", str(package), "--limit", "1")
+
+    assert result.exit_code == 1, result.output
+    assert "error: protocol" in result.output
+    assert "operation: check_package" in result.output
+    assert client.check_package.call_count == len(pages)
+
+
+def _error_lines(output: str) -> list[str]:
+    """The error a command prints, without the lines that name the command and the retry key `configs register` prints first."""
+    # Rich colors the usage hint when the terminal allows it; compare the text only.
+    return [
+        line
+        for line in re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", output).splitlines()
+        if line.strip() and not line.startswith(("idempotency_key:", "Try '")) and "Usage:" not in line
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(None, id="missing-file"),
+        pytest.param("format_version: [1\n", id="invalid-yaml"),
+        pytest.param("- a list\n", id="not-a-mapping"),
+        pytest.param(b"\xff\xfe", id="not-utf-8"),
+        pytest.param("format_version: 1\ncreated: 2024-13-45\n", id="impossible-date"),
+        pytest.param("format_version: 1\na: &x [*x]\n", id="alias-that-holds-itself"),
+        pytest.param("format_version: 1\na: &x {b: [*x]}\n", id="alias-that-holds-itself-deeper"),
+    ],
+)
+def test_configs_check_refuses_an_unreadable_file_like_configs_register(
+    client: MagicMock, tmp_path: Path, content: str | bytes | None
+) -> None:
+    package = tmp_path / "package.yaml"
+    if isinstance(content, bytes):
+        package.write_bytes(content)
+    elif content is not None:
+        package.write_text(content, encoding="utf-8")
+
+    checked = _invoke(client, "configs", "check", str(package))
+    registered = _invoke(client, "configs", "register", str(package))
+
+    assert checked.exit_code == registered.exit_code != 0
+    assert _error_lines(checked.output) == _error_lines(registered.output) != []
+    client.check_package.assert_not_called()
+    client.register_config.assert_not_called()
+
+
+def test_configs_check_sends_an_alias_used_in_several_places(client: MagicMock, tmp_path: Path) -> None:
+    """An alias that does not hold itself is sent expanded, not refused as a package that holds itself."""
+    package = tmp_path / "package.yaml"
+    package.write_text("format_version: 1\na: &x [1]\nb: {c: *x, d: *x}\n", encoding="utf-8")
+    client.check_package.return_value = _package_check()
+
+    result = _invoke(client, "configs", "check", str(package))
+
+    assert result.exit_code == 0, result.output
+    (request,) = client.check_package.call_args.args
+    assert request == PackageCheckRequest(package={"format_version": 1, "a": [1], "b": {"c": [1], "d": [1]}})
 
 
 def test_plan_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:
@@ -927,7 +1193,88 @@ def test_runs_show_prints_no_read_fields_for_a_run_without_read_state(client: Ma
         "execution_state: pending",
         "flow_run_id: flow-service-1",
         "prefect_flow_run_url: <none>",
+        "trigger_type: manual",
+        "schedule_id: <none>",
+        "scheduled_start_at: <none>",
     ]
+
+
+def _with_plan_step(resource: RunResource, plan_step: PlanStepTimings | None) -> RunResource:
+    execution = resource.orchestration[0].model_copy(update={"plan_step": plan_step})
+    return resource.model_copy(update={"orchestration": (execution,)})
+
+
+def _plan_part(start: float, end: float | None = None, *, stopped: float | None = None) -> PlanStepPart:
+    return PlanStepPart(
+        started_at=READ_STARTED + timedelta(seconds=start),
+        ended_at=None if end is None else READ_STARTED + timedelta(seconds=end),
+        stopped_at=None if stopped is None else READ_STARTED + timedelta(seconds=stopped),
+    )
+
+
+def test_runs_show_prints_one_plan_step_line_per_part_after_the_read_lines(client: MagicMock) -> None:
+    """FR-018, contracts/cli.md: a part that ended prints its duration, the part that runs prints `running`."""
+    reads = StageReads(source=SideRead(state="succeeded"), destination=SideRead(state="succeeded"))
+    plan_step = PlanStepTimings(
+        running="saving",
+        parts={
+            "waiting": _plan_part(-9, -5),
+            "preparing": _plan_part(-5, 0.1),
+            "comparing": _plan_part(20, 51.7),
+            "checking": _plan_part(51.7, 54),
+            "saving": _plan_part(54),
+        },
+    )
+    client.get_run.return_value = _with_plan_step(_with_reads(_run(), reads), plan_step)
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    read_line = lines.index("destination_read: state=succeeded")
+    assert lines[read_line + 1 : read_line + 6] == [
+        "plan_waiting: 4.0s",
+        "plan_preparing: 5.1s",
+        "plan_comparing: 31.7s",
+        "plan_checking: 2.3s",
+        "plan_saving: running",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("part", "expected"),
+    [
+        pytest.param(_plan_part(20, stopped=33.3), "plan_comparing: stopped after 13.3s", id="stopped-at-verdict"),
+        pytest.param(_plan_part(20), "plan_comparing: stopped", id="stopped-without-verdict"),
+    ],
+)
+def test_runs_show_prints_how_a_part_that_did_not_end_stopped(
+    client: MagicMock, part: PlanStepPart, expected: str
+) -> None:
+    """FR-016: a part that was running when the step failed shows its time up to the verdict, if any."""
+    client.get_run.return_value = _with_plan_step(_run(), PlanStepTimings(parts={"comparing": part}))
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    plan_lines = [line for line in result.output.splitlines() if line.startswith("plan_")]
+    assert plan_lines == [expected]
+
+
+@pytest.mark.parametrize(
+    "plan_step",
+    [pytest.param(None, id="old-run"), pytest.param(PlanStepTimings(), id="no-part-started")],
+)
+def test_runs_show_prints_no_plan_step_line_for_a_run_without_plan_step_timings(
+    client: MagicMock, plan_step: PlanStepTimings | None
+) -> None:
+    """FR-019: a run recorded before the timings, or with no part started, prints no plan line and succeeds."""
+    client.get_run.return_value = _with_plan_step(_run(), plan_step)
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert not [line for line in result.output.splitlines() if line.startswith("plan_")]
 
 
 @pytest.mark.parametrize(
@@ -1153,6 +1500,8 @@ def test_runs_plan_unmatched_kind_is_typed_input_error(client: MagicMock) -> Non
 # Built from code points so this source file carries no bidirectional control itself.
 _RLO = chr(0x202E)
 _LRI = chr(0x2066)
+# Whitespace that is not U+0020: a terminal shows it as a space, so it is not escaped.
+_NBSP = chr(0x00A0)
 # Zero-width characters, direction marks, and the line and paragraph separators hide or
 # break up text without a visible glyph.
 _INVISIBLE_CODES = (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x200E, 0x200F, 0x061C, 0x2028, 0x2029)
@@ -1192,9 +1541,9 @@ def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: Mag
     # Split on "\n" only: `splitlines` would also break at an unescaped U+2028 or U+2029.
     lines = result.output.split("\n")
     assert (
-        "op-create create Dev\\x1bice name=edge\\x1b[1A\\x1b[2K\\rop-forged create Device name=fake"
+        'op-create create Dev\\x1bice name="edge\\x1b[1A\\x1b[2K\\rop-forged create Device name=fake'
         "\\t\\n\\x9b2K\\x7f\\u202eevil\\u2066x"
-        "\\u200b\\u200c\\u200d\\u2060\\ufeff\\u200e\\u200f\\u061c\\u2028\\u2029"
+        '\\u200b\\u200c\\u200d\\u2060\\ufeff\\u200e\\u200f\\u061c\\u2028\\u2029"'
     ) in lines
     assert "  destination id: dest\\r1" in lines
     assert "verification_note: note\\x1b[2Kforged" in lines
@@ -1202,15 +1551,83 @@ def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: Mag
     assert "by_kind: Dev\\x1bice=1, Site=1" in lines
 
 
-def test_runs_plan_detail_keeps_ordinary_non_ascii_values_unchanged(client: MagicMock) -> None:
+@pytest.mark.parametrize(
+    ("name", "printed"),
+    [
+        pytest.param("Zürich-東京", "name=Zürich-東京", id="no-delimiter"),
+        pytest.param("Zürich-東京 Łódź", 'name="Zürich-東京 Łódź"', id="with-a-space"),
+    ],
+)
+def test_runs_plan_detail_keeps_ordinary_non_ascii_letters_readable(client: MagicMock, name: str, printed: str) -> None:
     plan = _plan()
-    operation = plan.operations[0].model_copy(update={"identity": {"name": "Zürich-東京 Łódź"}})
+    operation = plan.operations[0].model_copy(update={"identity": {"name": name}})
     client.get_plan.return_value = plan.model_copy(update={"operations": (operation, plan.operations[1])})
 
     result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
 
     assert result.exit_code == 0, result.output
-    assert "op-create create Device name=Zürich-東京 Łódź" in result.output.splitlines()
+    assert f"op-create create Device {printed}" in result.output.splitlines()
+
+
+@pytest.mark.parametrize(
+    ("identity", "printed"),
+    [
+        pytest.param(
+            {"name": "x site=prod (not executed)"},
+            'name="x site=prod (not executed)"',
+            id="forged-field-and-delete-marker",
+        ),
+        pytest.param({"name": "edge 01"}, 'name="edge 01"', id="space"),
+        pytest.param({"name": "site=prod"}, 'name="site=prod"', id="equals-sign"),
+        pytest.param({"name": 'edge"01'}, 'name="edge\\"01"', id="double-quote"),
+        pytest.param({"name": "edge'01"}, 'name="edge\'01"', id="single-quote"),
+        pytest.param({"name": "edge(01"}, 'name="edge(01"', id="opening-parenthesis"),
+        pytest.param({"name": "edge)01"}, 'name="edge)01"', id="closing-parenthesis"),
+        pytest.param({"name": f"edge{_NBSP}01"}, f'name="edge{_NBSP}01"', id="no-break-space"),
+        pytest.param({"name": "edge\t01"}, 'name="edge\\t01"', id="tab"),
+        pytest.param({"name": ""}, 'name=""', id="empty-value"),
+        # A value that tries to close the quotes and add a field: every quote stays escaped.
+        pytest.param({"name": 'x" site="prod'}, 'name="x\\" site=\\"prod"', id="embedded-quotes"),
+        pytest.param({"name": "x\\"}, 'name="x\\\\"', id="trailing-backslash"),
+        pytest.param({"name": 'x\\" site=prod'}, 'name="x\\\\\\" site=prod"', id="backslash-before-a-quote"),
+        # The literal text `\x1b` is quoted, so it differs from an escaped U+001B, printed unquoted.
+        pytest.param({"name": "edge\\x1b"}, 'name="edge\\\\x1b"', id="literal-escape-text"),
+        pytest.param(
+            {"site": "par 1", "name": "edge-01", "role": "a=b"},
+            'name=edge-01 role="a=b" site="par 1"',
+            id="several-fields",
+        ),
+        pytest.param({"name": "edge-01"}, "name=edge-01", id="ordinary-value"),
+        pytest.param({"unit": 12}, "unit=12", id="number"),
+    ],
+)
+def test_runs_plan_detail_shows_where_each_identity_value_starts_and_ends(
+    client: MagicMock, identity: dict[str, object], printed: str
+) -> None:
+    """A source value must not be read as another identity field or as the delete marker."""
+    plan = _plan()
+    operation = plan.operations[0].model_copy(update={"identity": identity})
+    client.get_plan.return_value = plan.model_copy(update={"operations": (operation, plan.operations[1])})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    assert f"op-create create Device {printed}" in lines
+    # The marker of the real delete stays outside the identity, after an unquoted ordinary value.
+    assert "op-delete delete Site name=retired (not executed)" in lines
+    assert sum(line.endswith(" (not executed)") for line in lines) == 1
+
+
+def test_runs_plan_detail_keeps_the_delete_marker_outside_a_quoted_identity(client: MagicMock) -> None:
+    plan = _plan()
+    delete = plan.operations[1].model_copy(update={"identity": {"name": "old site (not executed)"}})
+    client.get_plan.return_value = plan.model_copy(update={"operations": (plan.operations[0], delete)})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert 'op-delete delete Site name="old site (not executed)" (not executed)' in result.output.splitlines()
 
 
 def test_runs_plan_detail_escapes_invisible_format_characters_in_source_values(client: MagicMock) -> None:
@@ -1509,6 +1926,30 @@ def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, clien
     assert result.exit_code == 1
     assert "Configured sync stores, including Redis, are not supported in V3." in result.output
     assert "Remove the store block to keep sync data in memory." in result.output
+
+
+@pytest.mark.parametrize("operation", ["register", "plan"])
+def test_removed_credential_format_refusal_names_what_replaces_it(
+    tmp_path: Path, client: MagicMock, operation: str
+) -> None:
+    """A 422 credential-format-removed response says to name stored credentials (spec 027, FR-021)."""
+    if operation == "register":
+        package_path = tmp_path / "package.json"
+        package_path.write_text("{}", encoding="utf-8")
+        client.register_config.side_effect = ConfigsAPIError(
+            422, "configs-validation", "validation", "credential-format-removed"
+        )
+        arguments = ("configs", "register", str(package_path), "--reason", "register inventory")
+    else:
+        client.plan.side_effect = APIError(422, "credential-format-removed")
+        arguments = ("plan", "--config", "edge-sync", "--version", "1", "--reason", "plan inventory")
+
+    result = _invoke(client, *arguments)
+
+    assert result.exit_code == 1
+    assert "`credentials` block" in result.output
+    assert "credential: <name>" in result.output
+    assert ("register a new version" in result.output) is (operation == "plan")
 
 
 @pytest.mark.parametrize(
@@ -1875,8 +2316,8 @@ def test_runs_list_without_filters_prints_one_row_per_run(client: MagicMock) -> 
     client.list_runs.assert_called_once_with(config_id=None, registry_version=None, limit=None)
     client.get_config.assert_not_called()
     assert result.stdout.splitlines() == [
-        f"run-2  edge-sync@1  review  planned  planned  operator  {NOW.isoformat()}",
-        f"run-1  -  -  planned  -  operator  {NOW.isoformat()}",
+        f"run-2  edge-sync@1  review  manual  planned  planned  operator  {NOW.isoformat()}",
+        f"run-1  -  -  manual  planned  -  operator  {NOW.isoformat()}",
     ]
     assert "more runs" not in result.output
 
@@ -2067,7 +2508,11 @@ def test_configs_versions_prints_latest_run_columns_and_pages(client: MagicMock)
     applied_at = NOW + timedelta(hours=1)
     applied = RunReference(run_id="run-1", phase="applied", outcome="succeeded", started_at=NOW, finished_at=applied_at)
     registered = _version_summary(2, latest_run=latest, latest_applied_run=applied).model_copy(
-        update={"registered_by": "admin@example.com", "registration_reason": "first import"}
+        update={
+            "registered_by": "admin@example.com",
+            "registration_reason": "first import",
+            "registered_without_validation": True,
+        }
     )
     client.list_config_versions.return_value = ConfigurationVersionPage(
         items=(registered, _version_summary(1)),
@@ -2082,6 +2527,8 @@ def test_configs_versions_prints_latest_run_columns_and_pages(client: MagicMock)
     assert "registered_by: admin@example.com" in lines
     assert "registration_reason: first import" in lines
     assert "registered_by: <none>" in lines
+    assert "registered_without_validation: true" in lines
+    assert "registered_without_validation: false" in lines
     assert f"latest_run: run-2 phase=planned outcome=- started_at={NOW.isoformat()}" in lines
     # The applied run shows when its apply finished, not when its plan was created.
     assert f"latest_applied_run: run-1 phase=applied outcome=succeeded finished_at={applied_at.isoformat()}" in lines
@@ -2375,8 +2822,32 @@ def test_runs_show_prints_no_approval_lines_for_an_unapproved_run(client: MagicM
 
 # `_client_errors` in `infrahub_sync/cli.py` exits with 2 for every `client-input` error.
 CLIENT_INPUT_EXIT = 2
-SERVICE_URL_HINT = "hint: set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API"
-BEARER_HINT = "hint: set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token"
+SERVICE_URL_HINT = (
+    "hint: set INFRAHUB_SYNC_API_URL or pass --api-url to the address of the Sync service, "
+    "for example http://127.0.0.1:8001. The client adds /api."
+)
+BEARER_HINT = "hint: run infrahub-sync login, or set INFRAHUB_SYNC_API_TOKEN to a Sync API token"
+
+
+def test_an_address_that_answers_a_web_page_prints_not_a_sync_api() -> None:
+    marker = "page-body-never-printed"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=f"<html><body>{marker}</body></html>", headers={"Content-Type": "text/html"})
+
+    sync_client = SyncClient("http://127.0.0.1:8001", "token-1", transport=httpx.MockTransport(handler))
+    result = RUNNER.invoke(app, ["configs", "list"], obj={"client": sync_client})
+
+    assert result.exit_code == 1
+    assert result.output.splitlines() == [
+        "error: not-a-sync-api",
+        "operation: get_version",
+        "address: http://127.0.0.1:8001/api/version",
+        "status: 200",
+        "hint: Check INFRAHUB_SYNC_API_URL. It holds the address of the Sync service, without /api. "
+        "The Sync service and the CLI must come from the same release.",
+    ]
+    assert marker not in result.output
 
 
 @pytest.mark.parametrize(
@@ -2649,3 +3120,322 @@ def test_events_follow_prints_each_new_event_once(client: MagicMock, monkeypatch
     ]
     assert polls == [2.0, 2.0]
     client.iter_events.assert_not_called()
+
+
+def _lag_update(peers: list[dict[str, Any]], *, cardinality: str = "one") -> PlanOperationResource:
+    """An interface update whose `lag` reference holds `peers`."""
+    return PlanOperationResource(
+        operation_id="op-update",
+        action="update",
+        kind="InterfacePhysical",
+        identity={"device": "edge-01", "name": "et-0/0/1"},
+        tier=0,
+        payload={},
+        relationships=({"field": "lag", "peer_kind": "InterfaceLag", "cardinality": cardinality, "peers": peers},),
+        destination_id="dest-1",
+    )
+
+
+def _plan_of(operation: PlanOperationResource) -> PlanResource:
+    plan = _plan()
+    summary = plan.summary.model_copy(
+        update={
+            "by_action": {"update": 1},
+            "by_kind": {"InterfacePhysical": 1},
+            "total": 1,
+            "deletes_not_executed": 0,
+        }
+    )
+    return plan.model_copy(update={"operations": (operation,), "summary": summary})
+
+
+def test_runs_plan_detail_states_that_an_emptied_one_peer_relationship_becomes_empty(client: MagicMock) -> None:
+    """FR-009: the detail names the relationship and states that it becomes empty."""
+    client.get_plan.return_value = _plan_of(_lag_update([]))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    assert "op-update update InterfacePhysical device=edge-01 name=et-0/0/1" in lines
+    assert "  lag: becomes empty" in lines
+    assert "by_action: update=1" in lines
+    assert "operations: 1" in lines
+
+
+@pytest.mark.parametrize(
+    ("peers", "cardinality"),
+    [([{"name": "ae0"}], "one"), ([], "many")],
+    ids=["a one-peer relationship that holds a peer", "an emptied many relationship"],
+)
+def test_runs_plan_detail_states_becomes_empty_only_for_an_emptied_one_peer_relationship(
+    client: MagicMock, peers: list[dict[str, Any]], cardinality: str
+) -> None:
+    client.get_plan.return_value = _plan_of(_lag_update(peers, cardinality=cardinality))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "becomes empty" not in result.output
+
+
+def test_runs_plan_detail_escapes_the_name_of_an_emptied_relationship(client: MagicMock) -> None:
+    operation = _lag_update([])
+    forged = operation.model_copy(
+        update={
+            "relationships": ({"field": "lag\x1b[2K", "peer_kind": "InterfaceLag", "cardinality": "one", "peers": []},)
+        }
+    )
+    client.get_plan.return_value = _plan_of(forged)
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "  lag\\x1b[2K: becomes empty" in result.output.split("\n")
+
+
+def _site_peer() -> dict[str, Any]:
+    return {"peer_kind": "LocationSite", "identity": {"name": "DM-Akron"}}
+
+
+def _device_identity() -> dict[str, Any]:
+    """A device whose identity crosses a rack, whose identity crosses a site."""
+    rack = {"peer_kind": "LocationRack", "identity": {"name": "Rack-1", "site": _site_peer()}}
+    return {"location": rack, "name": "rtr01"}
+
+
+def _interface_create() -> PlanOperationResource:
+    """An interface create whose identity and `device` reference both name the same nested peer."""
+    return PlanOperationResource(
+        operation_id="op-interface",
+        action="create",
+        kind="InterfacePhysical",
+        identity={"device": {"peer_kind": "DcimDevice", "identity": _device_identity()}, "name": "ge-0/0/0"},
+        tier=3,
+        payload={"mtu": 1500, "name": "ge-0/0/0"},
+        relationships=(
+            {"field": "device", "peer_kind": "DcimDevice", "cardinality": "one", "peers": [_device_identity()]},
+            {
+                "field": "tags",
+                "peer_kind": "BuiltinTag",
+                "cardinality": "many",
+                "peers": [{"name": "core"}, {"name": "prod"}],
+            },
+        ),
+    )
+
+
+def test_runs_plan_detail_prints_each_peer_by_its_identity_values(client: MagicMock) -> None:
+    """SYNC-259: a peer is printed by its identity values, and each relationship peer on one line."""
+    client.get_plan.return_value = _plan_of(_interface_create())
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    header = lines.index("op-interface create InterfacePhysical device=Rack-1,DM-Akron,rtr01 name=ge-0/0/0")
+    assert lines[header + 1 : header + 6] == [
+        '  payload: {"mtu":1500,"name":"ge-0/0/0"}',
+        "  device -> DcimDevice[Rack-1,DM-Akron,rtr01]",
+        "  tags -> BuiltinTag[core]",
+        "  tags -> BuiltinTag[prod]",
+        "",
+    ]
+    assert "peer_kind" not in result.output
+    assert "relationships:" not in result.output
+
+
+def test_runs_plan_detail_states_that_an_emptied_many_relationship_has_no_peers(client: MagicMock) -> None:
+    """An empty peer set of a many relationship is written by apply, so the detail states it."""
+    client.get_plan.return_value = _plan_of(_lag_update([], cardinality="many"))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "  lag -> no peers" in result.output.split("\n")
+
+
+def test_runs_plan_detail_escapes_the_identity_values_of_a_peer(client: MagicMock) -> None:
+    client.get_plan.return_value = _plan_of(_lag_update([{"name": "ae0\x1b[2K"}]))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "\x1b" not in result.output
+    # The value holds a square bracket, so it is quoted as well as escaped.
+    assert '  lag -> InterfaceLag["ae0\\x1b[2K"]' in result.output.split("\n")
+
+
+def test_runs_plan_detail_filters_the_operations_by_action(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail", "--action", "create")
+
+    assert result.exit_code == 0, result.output
+    assert "op-create" in result.output
+    assert "op-delete" not in result.output
+    # The summary still covers the whole plan.
+    assert "operations: 2" in result.output
+
+
+def test_runs_plan_detail_with_an_action_the_plan_does_not_hold_prints_no_operation(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail", "--action", "update")
+
+    assert result.exit_code == 0, result.output
+    assert "op-create" not in result.output
+    assert "op-delete" not in result.output
+
+
+def test_runs_plan_action_without_detail_is_typed_input_error(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--action", "create")
+
+    assert result.exit_code == 2
+    assert "error: client-input" in result.output
+    assert "argument: action" in result.output
+
+
+def test_runs_plan_json_prints_the_saved_plan_with_every_peer_in_full(client: MagicMock) -> None:
+    plan = _plan_of(_interface_create())
+    client.get_plan.return_value = plan
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == plan.model_dump(mode="json")
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [("--detail",), ("--problems",), ("--kind", "Device"), ("--action", "create"), ("--samples", "1")],
+    ids=["detail", "problems", "kind", "action", "samples"],
+)
+def test_runs_plan_json_with_another_view_is_typed_input_error(client: MagicMock, arguments: tuple[str, ...]) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--json", *arguments)
+
+    assert result.exit_code == 2
+    assert "error: client-input" in result.output
+    assert "argument: json" in result.output
+    client.get_plan.assert_not_called()
+
+
+def _interface(number: int, action: Literal["create", "update"] = "create") -> PlanOperationResource:
+    return PlanOperationResource(
+        operation_id=f"op-{action}-{number}",
+        action=action,
+        kind="InterfacePhysical",
+        identity={"device": "edge-01", "name": f"et-0/0/{number}"},
+        tier=1,
+        payload={"name": f"et-0/0/{number}"},
+        relationships=(
+            {"field": "device", "peer_kind": "Device", "cardinality": "one", "peers": [{"name": "edge-01"}]},
+        ),
+        destination_id="dest-1" if action == "update" else None,
+    )
+
+
+def _plan_for_samples() -> PlanResource:
+    """One device create, three interface creates and one interface update, in write order."""
+    plan = _plan()
+    operations = (plan.operations[0], _interface(1), _interface(2), _interface(9, "update"), _interface(3))
+    return plan.model_copy(update={"operations": operations})
+
+
+def test_runs_plan_samples_prints_each_kind_and_action_with_its_count_and_first_operations(
+    client: MagicMock,
+) -> None:
+    """SYNC-259: a large plan is reviewed by kind and action, with a few operations of each."""
+    client.get_plan.return_value = _plan_for_samples()
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--samples", "2")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    assert lines[lines.index("Device create: 1 of 1 operations shown") :] == [
+        "Device create: 1 of 1 operations shown",
+        "op-create create Device name=edge-01",
+        '  payload: {"name":"edge-01"}',
+        "InterfacePhysical create: 2 of 3 operations shown",
+        "op-create-1 create InterfacePhysical device=edge-01 name=et-0/0/1",
+        '  payload: {"name":"et-0/0/1"}',
+        "  device -> Device[edge-01]",
+        "op-create-2 create InterfacePhysical device=edge-01 name=et-0/0/2",
+        '  payload: {"name":"et-0/0/2"}',
+        "  device -> Device[edge-01]",
+        "InterfacePhysical update: 1 of 1 operations shown",
+        "op-update-9 update InterfacePhysical device=edge-01 name=et-0/0/9",
+        "  destination id: dest-1",
+        '  payload: {"name":"et-0/0/9"}',
+        "  device -> Device[edge-01]",
+        "",
+    ]
+    # The summary above the samples still covers the whole plan.
+    assert f"plan_checksum: {CHECKSUM}" in lines
+
+
+def test_runs_plan_samples_are_filtered_by_kind_and_action(client: MagicMock) -> None:
+    client.get_plan.return_value = _plan_for_samples()
+
+    result = _invoke(
+        client, "runs", "plan", "service-run-1", "--samples", "1", "--kind", "InterfacePhysical", "--action", "create"
+    )
+
+    assert result.exit_code == 0, result.output
+    headings = [line for line in result.output.split("\n") if line.endswith("operations shown")]
+    assert headings == ["InterfacePhysical create: 1 of 3 operations shown"]
+    assert "op-create-2" not in result.output
+
+
+def test_runs_plan_samples_escape_the_kind_in_the_heading(client: MagicMock) -> None:
+    forged = _plan().operations[0].model_copy(update={"kind": "Device\x1b[2K"})
+    client.get_plan.return_value = _plan().model_copy(update={"operations": (forged,)})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--samples", "1")
+
+    assert result.exit_code == 0, result.output
+    assert "\x1b" not in result.output
+    assert "Device\\x1b[2K create: 1 of 1 operations shown" in result.output.split("\n")
+
+
+@pytest.mark.parametrize("arguments", [("--detail",), ("--problems",)], ids=["detail", "problems"])
+def test_runs_plan_samples_with_another_view_is_typed_input_error(
+    client: MagicMock, arguments: tuple[str, ...]
+) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--samples", "2", *arguments)
+
+    assert result.exit_code == 2
+    assert "error: client-input" in result.output
+    assert "argument: samples" in result.output
+    client.get_plan.assert_not_called()
+
+
+def test_runs_plan_refuses_a_sample_count_below_one(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--samples", "0")
+
+    assert result.exit_code == 2
+    client.get_plan.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("name", "printed"),
+    [
+        pytest.param("ae0,ae1", '"ae0,ae1"', id="comma"),
+        pytest.param("ae0]", '"ae0]"', id="closing-bracket"),
+        pytest.param("ae0 -> Forged[x", '"ae0 -> Forged[x"', id="forged-peer"),
+        pytest.param("ae 0", '"ae 0"', id="space"),
+        pytest.param("", '""', id="empty-value"),
+        pytest.param("ae0", "ae0", id="ordinary-value"),
+    ],
+)
+def test_runs_plan_detail_shows_where_each_identity_value_of_a_peer_starts_and_ends(
+    client: MagicMock, name: str, printed: str
+) -> None:
+    """A source value of a peer must not be read as two values, as another peer or as another field."""
+    operation = _lag_update([{"name": name}]).model_copy(
+        update={"identity": {"device": {"peer_kind": "Device", "identity": {"name": name}}, "name": "et-0/0/1"}}
+    )
+    client.get_plan.return_value = _plan_of(operation)
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    assert f"op-update update InterfacePhysical device={printed} name=et-0/0/1" in lines
+    assert f"  lag -> InterfaceLag[{printed}]" in lines

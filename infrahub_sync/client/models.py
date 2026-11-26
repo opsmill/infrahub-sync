@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
 
 from pydantic import (
     BaseModel,
@@ -13,12 +13,16 @@ from pydantic import (
     Field,
     SerializerFunctionWrapHandler,
     StrictBool,
+    StrictInt,
     StringConstraints,
     ValidationError,
     field_validator,
     model_serializer,
     model_validator,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
@@ -33,6 +37,23 @@ MAX_FAILURE_CAUSE_TEXT = 1000
 # Sync API wrote without a `next_action`. Fixed text, so a record never quotes the manifest
 # values a damaged or hand-edited artifact may hold.
 SCHEMA_CHANGED_NEXT_ACTION = "create and review a new plan before applying again"
+
+# What started a run: a request to `POST /runs`, or a schedule.
+TriggerType = Literal["manual", "scheduled"]
+
+# Where the runs of a schedule write: a branch with a proposed change for review, or the default branch.
+ScheduleWriteTarget = Literal["branch-review", "default-branch"]
+
+# What a schedule does with a start while a run of its configuration is in progress.
+ScheduleOverlapPolicy = Literal["reject", "queue"]
+
+# The range of `start_late_by_at_most_seconds`: from one minute to seven days.
+MIN_START_LATE_SECONDS = 60
+MAX_START_LATE_SECONDS = 604800
+
+# The count of start times that `POST /schedules/next-starts` returns by default, and its largest count.
+DEFAULT_NEXT_STARTS = 5
+MAX_NEXT_STARTS = 20
 
 # The recovery signal a refused registered plan carries.
 RecoveryAction = Literal["rebuild", "compatible_version"]
@@ -84,18 +105,37 @@ _LEGAL_EXECUTION_VERDICTS = {
 }
 _REGISTRY_VERSION_MESSAGE = "registry_version must be an integer in the registry allocatable range"
 _REASON_MESSAGE = "reason must be printable and trimmed"
+# The longest reason a request can give for an action.
+REASON_MAX_LENGTH = 512
+# The rule of a local account name (spec 022, research R8), which the Sync API and the client both
+# apply: no space, so a name differs from every placeholder and is safe in a URL path.
+ACCOUNT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$"
+# The name of a stored credential, as a package names it in ``credential:`` (spec 027).
+CREDENTIAL_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,62}$"
 _JSON_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
+_PACKAGE_CHECK_FIELDS_MESSAGE = "exactly one of package and document is required"
 _ARTIFACT_TIME_MESSAGE = "artifact-reference timestamps must include a timezone"
 _EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"
 _ARTIFACT_KEY_MESSAGE = "artifact object and manifest keys must include the content digest"
 _BINDING_MESSAGE = "configuration binding must be all absent or all present"
 _FINISHED_RUN_MESSAGE = "a finished product record requires an outcome"
+_SCHEDULED_RUN_MESSAGE = "a scheduled run requires its schedule and its scheduled start time"
+_MANUAL_RUN_MESSAGE = "a manual run cannot name a schedule or a scheduled start time"
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
-_WORKER_STATUS_MESSAGE = "worker status is invalid"
+_HEALTH_ERROR_MESSAGE = "a component error must be none exactly when the component is up"
+_HEALTH_DEPENDENCIES_MESSAGE = "a health report must list at least one component, each once"
+_HEALTH_STATUS_MESSAGE = (
+    "a health report must be healthy exactly when every component is up and enough workers are live"
+)
+_HEALTH_TIME_MESSAGE = "health timestamps must include a timezone"
+_WORKERS_HEALTH_MESSAGE = "worker details must be present exactly when the worker state is known"
 _ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
 _ARTIFACT_OWNER_MESSAGE = "every artifact reference must belong to the product record's run ID"
 _EXECUTION_IDS_MESSAGE = "execution IDs must be unique within a product record"
+_SCHEDULE_TIME_MESSAGE = "schedule timestamps must include a timezone"
+_SCHEDULE_CHANGE_MESSAGE = "a schedule change must name at least one setting to change"
+_EVENT_TIME_MESSAGE = "event timestamps must include a timezone"
 
 
 def _timezone(value: datetime | None, message: str) -> datetime | None:
@@ -120,7 +160,7 @@ class CreateRunRequest(_RequestModel):
     registry_version: int
     branch: str | None = None
     confirm_writes: bool = False
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
     @field_validator("registry_version", mode="before")
     @classmethod
@@ -133,7 +173,7 @@ class CreateRunRequest(_RequestModel):
 class VerifyRunRequest(_RequestModel):
     """Request verification of a saved run plan."""
 
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class ApplyRunRequest(_RequestModel):
@@ -148,7 +188,7 @@ class ApplyRunRequest(_RequestModel):
     confirm_writes: bool = False
     confirm_left_out: StrictBool = False
     branch: str | None = None
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
     # No return annotation on purpose: with one, Pydantic replaces the model's serialization
     # JSON schema (and so the OpenAPI document) with a bare object.
@@ -164,13 +204,13 @@ class ApproveRunRequest(_RequestModel):
     """Request approval of a run's saved plan, bound to the reviewed checksum, without applying it."""
 
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class CancelRunRequest(_RequestModel):
     """Request cancellation of an accepted run."""
 
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
 
 
 class ResumeRunRequest(_RequestModel):
@@ -183,15 +223,53 @@ class ResumeRunRequest(_RequestModel):
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirm_writes: bool = False
     confirm_left_out: StrictBool = False
-    reason: str | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
+
+
+def _json_native_package(value: dict[str, Any]) -> dict[str, Any]:
+    """Refuse a package that is not recursively exact JSON-native: what the service hashes."""
+
+    def visit(item: object) -> None:
+        item_type = type(item)
+        if item_type is dict:
+            for key, child in cast("dict[object, object]", item).items():
+                if type(key) is not str:  # pylint: disable=unidiomatic-typecheck
+                    raise ValueError(_JSON_PACKAGE_MESSAGE)
+                visit(child)
+            return
+        if item_type is list:
+            for child in cast("list[object]", item):
+                visit(child)
+            return
+        if item_type is float and not isfinite(cast("float", item)):
+            raise ValueError(_JSON_PACKAGE_MESSAGE)
+        if item_type not in {str, int, float, bool, type(None)}:
+            raise ValueError(_JSON_PACKAGE_MESSAGE)
+
+    visit(value)
+    return value
 
 
 class ConfigMutationRequest(_RequestModel):
-    """Submit a configuration package with an optional audit reason."""
+    """Submit a configuration package with an optional audit reason.
+
+    The package is ``package``, as JSON, or ``document``, the text of a package file, YAML or
+    JSON, which the Sync API parses as `POST /configs/validate` does. The web interface sends
+    ``document``, because a browser that parses and serializes the file again can change its
+    numbers; the CLI sends ``package``. Exactly one is set. The Sync API checks that rule
+    itself, after the administrator check, so this model shared with it does not; the field
+    that is not set is omitted.
+
+    ``registered_without_validation`` marks the created version as registered without
+    validation. The web interface sets it; the CLI never does. A request without the mark
+    keeps today's body, so it is omitted when ``false``.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
-    package: dict[str, Any]
-    reason: str | None = Field(default=None, min_length=1, max_length=512)
+    package: dict[str, Any] | None = None
+    document: str | None = None
+    reason: str | None = Field(default=None, min_length=1, max_length=REASON_MAX_LENGTH)
+    registered_without_validation: StrictBool = False
 
     @field_validator("reason")
     @classmethod
@@ -202,26 +280,120 @@ class ConfigMutationRequest(_RequestModel):
 
     @field_validator("package")
     @classmethod
-    def _require_json_package(cls, value: dict[str, Any]) -> dict[str, Any]:
-        def visit(item: object) -> None:
-            item_type = type(item)
-            if item_type is dict:
-                for key, child in cast("dict[object, object]", item).items():
-                    if type(key) is not str:  # pylint: disable=unidiomatic-typecheck
-                        raise ValueError(_JSON_PACKAGE_MESSAGE)
-                    visit(child)
-                return
-            if item_type is list:
-                for child in cast("list[object]", item):
-                    visit(child)
-                return
-            if item_type is float and not isfinite(cast("float", item)):
-                raise ValueError(_JSON_PACKAGE_MESSAGE)
-            if item_type not in {str, int, float, bool, type(None)}:
-                raise ValueError(_JSON_PACKAGE_MESSAGE)
+    def _require_json_package(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return None if value is None else _json_native_package(value)
 
-        visit(value)
-        return value
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
+    @model_serializer(mode="wrap")
+    def _omit_unset_fields(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        for field in ("package", "document"):
+            if data.get(field) is None:
+                data.pop(field, None)
+        if not self.registered_without_validation:
+            data.pop("registered_without_validation", None)
+        return data
+
+
+class PackageCheckRequest(_RequestModel):
+    """Submit a package to check without registering it: as JSON, or as the text of a package file.
+
+    Exactly one of ``package`` and ``document`` is set, and only that field is sent.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
+    package: dict[str, Any] | None = None
+    document: str | None = None
+
+    @field_validator("package")
+    @classmethod
+    def _require_json_package(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return None if value is None else _json_native_package(value)
+
+    @model_validator(mode="after")
+    def _require_exactly_one(self) -> PackageCheckRequest:
+        if (self.package is None) == (self.document is None):
+            raise ValueError(_PACKAGE_CHECK_FIELDS_MESSAGE)
+        return self
+
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
+    @model_serializer(mode="wrap")
+    def _omit_the_unset_field(self, handler: SerializerFunctionWrapHandler):
+        return {key: value for key, value in handler(self).items() if value is not None}
+
+
+def _registry_version(value: object) -> int:
+    if type(value) is not int or not 1 <= value <= 2**63 - 1:  # pylint: disable=unidiomatic-typecheck
+        raise ValueError(_REGISTRY_VERSION_MESSAGE)
+    return value
+
+
+class CreateScheduleRequest(_RequestModel):
+    """Request a schedule that starts a `sync` run of one configuration version on a cron cadence.
+
+    `cron` and `timezone` are text that this model does not validate: the Sync API validates
+    both and answers `schedule-cron-invalid` or `schedule-timezone-invalid`. The Sync API also
+    decides which pairs of settings it accepts. `start_late_by_at_most_seconds` is `None` when
+    the request does not set it, and the Sync API then uses 3600.
+    """
+
+    name: str = Field(pattern=_IDENTIFIER_PATTERN)
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int
+    cron: str
+    timezone: str = "UTC"
+    write_target: ScheduleWriteTarget = "branch-review"
+    write_when_left_out: StrictBool = False
+    overlap_policy: ScheduleOverlapPolicy = "reject"
+    start_late_by_at_most_seconds: int | None = Field(
+        default=None, ge=MIN_START_LATE_SECONDS, le=MAX_START_LATE_SECONDS
+    )
+    reason: str | None = Field(default=None, min_length=1)
+
+    @field_validator("registry_version", mode="before")
+    @classmethod
+    def _require_registry_version(cls, value: object) -> int:
+        return _registry_version(value)
+
+
+class ChangeScheduleRequest(_RequestModel):
+    """Request a change of one or more settings of a schedule.
+
+    A setting that is `None` keeps its value. The request must name at least one setting. The
+    name, the configuration and the owner of a schedule cannot be changed, so the model refuses
+    them as unknown fields. `cron` and `timezone` are not validated here, as in
+    `CreateScheduleRequest`.
+    """
+
+    registry_version: int | None = None
+    cron: str | None = None
+    timezone: str | None = None
+    write_target: ScheduleWriteTarget | None = None
+    write_when_left_out: StrictBool | None = None
+    overlap_policy: ScheduleOverlapPolicy | None = None
+    start_late_by_at_most_seconds: int | None = Field(
+        default=None, ge=MIN_START_LATE_SECONDS, le=MAX_START_LATE_SECONDS
+    )
+    reason: str | None = Field(default=None, min_length=1)
+
+    @field_validator("registry_version", mode="before")
+    @classmethod
+    def _require_registry_version(cls, value: object) -> int | None:
+        return None if value is None else _registry_version(value)
+
+    @model_validator(mode="after")
+    def _require_a_change(self) -> ChangeScheduleRequest:
+        if all(getattr(self, name) is None for name in type(self).model_fields if name != "reason"):
+            raise ValueError(_SCHEDULE_CHANGE_MESSAGE)
+        return self
+
+
+class ScheduleActionRequest(_RequestModel):
+    """Request a pause, a resume, a deletion or a take-over of a schedule, with an optional reason."""
+
+    reason: str | None = Field(default=None, min_length=1)
 
 
 class ArtifactReferenceResource(_ResourceModel):
@@ -309,10 +481,20 @@ class PublicRunResource(_ResourceModel):
     # The run's one approval of its saved plan; ``None`` when the plan was never approved.
     # Approval is not a phase: an approved run stays in phase ``planned``.
     approval: RunApprovalResource | None = None
+    # What started the run. A Sync API that predates schedules returns none of the three
+    # fields, and the run then reads as a manual run.
+    trigger_type: TriggerType = "manual"
+    # The schedule that started the run, and the start time of its cadence, in UTC. Both are
+    # ``None`` for a manual run.
+    schedule_id: str | None = None
+    scheduled_start_at: datetime | None = None
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
+    # How many times Sync resumed the run's interrupted write without a person (spec 030).
+    # A Sync API that predates spec 030 returns no value, and the run reads as never resumed.
+    automatic_resume_count: int = Field(default=0, ge=0)
 
-    @field_validator("started_at", "finished_at")
+    @field_validator("started_at", "finished_at", "scheduled_start_at")
     @classmethod
     def _require_timezone(cls, value: datetime | None) -> datetime | None:
         return _timezone(value, "product-record timestamps must include a timezone")
@@ -322,6 +504,11 @@ class PublicRunResource(_ResourceModel):
         binding = (self.config_id, self.registry_version, self.package_checksum)
         if any(value is None for value in binding) and any(value is not None for value in binding):
             raise ValueError(_BINDING_MESSAGE)
+        start = (self.schedule_id, self.scheduled_start_at)
+        if self.trigger_type == "scheduled" and any(value is None for value in start):
+            raise ValueError(_SCHEDULED_RUN_MESSAGE)
+        if self.trigger_type == "manual" and any(value is not None for value in start):
+            raise ValueError(_MANUAL_RUN_MESSAGE)
         if self.finished_at is not None and self.outcome is None:
             raise ValueError(_FINISHED_RUN_MESSAGE)
         artifact_ids = [reference.artifact_id for reference in self.artifact_refs]
@@ -371,6 +558,38 @@ class StageReads(_ResourceModel):
     destination: SideRead | None = None
 
 
+class PlanStepPart(_ResourceModel):
+    """The times of one part of the plan step of a `plan` or `sync` execution.
+
+    `ended_at` is set once the part ended. `stopped_at` is set for the part that was running
+    when the plan step failed, was cancelled or was interrupted: the time of that verdict. A part
+    that runs has `started_at` only. No field holds an error message or a data value.
+    """
+
+    started_at: datetime
+    ended_at: datetime | None = None
+    stopped_at: datetime | None = None
+
+    @field_validator("started_at", "ended_at", "stopped_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _EXECUTION_TIME_MESSAGE)
+
+
+class PlanStepTimings(_ResourceModel):
+    """The timings of the plan step of one `plan` or `sync` execution; subject to change.
+
+    `parts` maps a part name to its times, in the order the plan step runs them: `waiting`,
+    `preparing`, `comparing`, `checking` and `saving` today. A part that did not start has no
+    entry. `running` names the part that runs, or is `None`. Part names are plain strings, so a
+    part a later Sync API adds does not fail the whole run response. The two reads keep their
+    times in `OrchestrationSummary.reads`.
+    """
+
+    running: str | None = None
+    parts: dict[str, PlanStepPart] = Field(default_factory=dict)
+
+
 class OrchestrationSummary(_ResourceModel):
     """Summarize one orchestration attempt and its terminal verdict."""
 
@@ -394,6 +613,9 @@ class OrchestrationSummary(_ResourceModel):
     # Each side's read for a `plan` or `sync` execution; `None` for a `verify` or `apply`
     # execution, one recorded before the read state, or a Sync API that predates it.
     reads: StageReads | None = None
+    # The timings of the plan step of a `plan` or `sync` execution; `None` for a `verify` or
+    # `apply` execution, one recorded before the timings, or a Sync API that predates them.
+    plan_step: PlanStepTimings | None = None
 
     @field_validator(
         "submitted_at",
@@ -425,44 +647,110 @@ class VersionResource(_ResourceModel):
     server_version: str
     api_versions: tuple[str, ...]
     stability: str
+    # The installed `infrahub-sdk` version; `None` from a server that predates the field, or
+    # when the service cannot read the SDK's package metadata.
+    sdk_version: str | None = None
 
 
-class WorkerStatusResource(_ResourceModel):
-    """Report bounded worker availability details."""
+class DependencyHealthResource(_ResourceModel):
+    """Report whether one component of the Sync API answered its health check."""
 
-    state: Literal["ready", "busy", "no-live-worker", "unavailable"]
-    detail_available: bool
-    live_workers: int | None = Field(default=None, ge=0, strict=True)
-    queue_depth: int | None = Field(default=None, ge=0, strict=True)
-    observed_at: datetime | None
+    name: Literal["database", "object_store", "task_manager", "task_manager_db"]
+    status: Literal["up", "down"]
+    error: Literal[
+        "none",
+        "timeout",
+        "connection_refused",
+        "connection_closed",
+        "name_resolution_failed",
+        "unavailable",
+        "unknown_error",
+    ]
 
     @model_validator(mode="after")
-    def _require_status(self) -> WorkerStatusResource:
-        details = (self.live_workers, self.queue_depth, self.observed_at)
-        if not self.detail_available:
-            if self.state != "unavailable" or any(value is not None for value in details):
-                raise ValueError(_WORKER_STATUS_MESSAGE)
-            return self
-        if self.state == "unavailable" or any(value is None for value in details):
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        assert self.live_workers is not None
-        assert self.queue_depth is not None
-        if self.state == "no-live-worker" and self.live_workers != 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state in {"ready", "busy"} and self.live_workers == 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state == "ready" and self.queue_depth != 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
-        if self.state == "busy" and self.queue_depth == 0:
-            raise ValueError(_WORKER_STATUS_MESSAGE)
+    def _require_error_for_down(self) -> DependencyHealthResource:
+        if (self.status == "up") != (self.error == "none"):
+            raise ValueError(_HEALTH_ERROR_MESSAGE)
         return self
 
 
-class ServiceStatusResource(_ResourceModel):
-    """Report service readiness and worker availability."""
+class WorkerHealthResource(_ResourceModel):
+    """Report one worker that sent a heartbeat within the last 24 hours."""
 
-    service: Literal["ready"]
-    worker: WorkerStatusResource
+    name: str
+    state: Literal["live", "stale"]
+    last_heartbeat: datetime
+
+    @field_validator("last_heartbeat")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _HEALTH_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+
+class WorkersHealthResource(_ResourceModel):
+    """Report the workers of the work pool, or that the work pool could not be read."""
+
+    state: Literal["known", "unknown"]
+    minimum: int = Field(ge=1, strict=True)
+    live_workers: int | None = Field(ge=0, strict=True)
+    queue_depth: int | None = Field(ge=0, strict=True)
+    items: list[WorkerHealthResource]
+
+    @model_validator(mode="after")
+    def _require_details_when_known(self) -> WorkersHealthResource:
+        if self.state == "unknown":
+            if self.live_workers is not None or self.queue_depth is not None or self.items:
+                raise ValueError(_WORKERS_HEALTH_MESSAGE)
+        elif self.live_workers is None or self.queue_depth is None:
+            raise ValueError(_WORKERS_HEALTH_MESSAGE)
+        return self
+
+
+def expected_health_status(
+    dependencies: Sequence[DependencyHealthResource], workers: WorkersHealthResource
+) -> Literal["healthy", "unhealthy"]:
+    """Return the status a health report must carry for these components and workers.
+
+    ``healthy`` exactly when every component is up, the work pool was read, and at least
+    ``minimum`` workers are live. The Sync API builds its report with this rule, and the client
+    refuses a report that breaks it.
+    """
+    if any(dependency.status != "up" for dependency in dependencies):
+        return "unhealthy"
+    if workers.state != "known" or workers.live_workers is None or workers.live_workers < workers.minimum:
+        return "unhealthy"
+    return "healthy"
+
+
+class HealthResource(_ResourceModel):
+    """Report the health of the Sync API's components and of its workers.
+
+    The model does not fix the number or the order of the components: it requires at least one,
+    each named once, and a ``status`` that matches the components and the workers.
+    """
+
+    status: Literal["healthy", "unhealthy"]
+    dependencies: list[DependencyHealthResource]
+    workers: WorkersHealthResource
+    timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _HEALTH_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+    @model_validator(mode="after")
+    def _require_consistent_report(self) -> HealthResource:
+        names = [dependency.name for dependency in self.dependencies]
+        if not names or len(set(names)) != len(names):
+            raise ValueError(_HEALTH_DEPENDENCIES_MESSAGE)
+        if self.status != expected_health_status(self.dependencies, self.workers):
+            raise ValueError(_HEALTH_STATUS_MESSAGE)
+        return self
 
 
 class PrincipalResource(_ResourceModel):
@@ -531,17 +819,75 @@ class ResumeResource(_ResourceModel):
         return checked
 
 
+class CredentialUsedResource(_ResourceModel):
+    """The stored credential that one stage of a run received for one block: its name and revision, never a value.
+
+    `stage` is `plan`, `verify`, `apply`, `sync` or `resume`, and `block` is `source` or
+    `destination`. Both are plain strings so the client still reads a value a newer server adds.
+    The name and the revision are the ones recorded when the stage received the values, so they
+    stay after the credential is changed or deleted.
+    """
+
+    stage: str
+    block: str
+    name: str
+    revision: int = Field(ge=1)
+
+
+class AutomaticResumeResource(_ResourceModel):
+    """Sync's decision on resuming one interrupted write without a person (spec 030 contracts/http-api.md).
+
+    `state` is `waiting-check`, `checking`, `waiting-resume`, `resuming` or `ended`. `decision` is
+    `resume` once Sync submitted the resume, and `no-resume` with a `reason` code when it did not.
+    `cause_text` and `reason_text` are fixed English sentences built from the codes. `actor` is
+    the name the Sync API shows for the reserved actor of the automatic check and resume,
+    `Sync (automatic resume)`. The fields are plain strings, so a client still reads a code that
+    a later Sync API adds.
+    """
+
+    interrupted_flow_run_id: str = Field(min_length=1)
+    actor: str
+    cause: str
+    cause_text: str
+    state: str
+    decision: str | None = None
+    reason: str | None = None
+    reason_text: str | None = None
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    start_after: int | None = Field(default=None, ge=0)
+    check_flow_run_id: str | None = Field(default=None, min_length=1)
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
+    decided_at: datetime
+    updated_at: datetime
+
+    @field_validator("decided_at", "updated_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _EXECUTION_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+
 class RunResource(_ResourceModel):
     """Combine a public run record with its orchestration history.
 
     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
-    predates spec 016; `resumes` is then empty.
+    predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
+    resuming the run's interrupted writes without a person, oldest first, and
+    `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). For a run
+    that no decision concerns, and for a Sync API that predates spec 030, `automatic_resumes` is
+    empty and `automatic_resume_count` is 0. `credentials_used` holds one entry for each block
+    whose stored credential values a stage execution received, oldest first; it is empty for a
+    run whose stages received none, and for a Sync API that predates spec 027.
     """
 
     run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
     apply_progress: ApplyProgressResource | None = None
     resumes: tuple[ResumeResource, ...] = ()
+    credentials_used: tuple[CredentialUsedResource, ...] = ()
+    automatic_resumes: tuple[AutomaticResumeResource, ...] = ()
+    automatic_resume_count: int = Field(default=0, ge=0)
 
 
 class ApprovedPlanSummaryResource(_ResourceModel):
@@ -588,6 +934,59 @@ class EventRelatedResource(_ResourceModel):
     id: str
 
 
+class ScheduleSettingChangeResource(_ResourceModel):
+    """One setting that a change of a schedule altered, with its stored value before and after.
+
+    ``field`` is the name of the setting as the change request names it, such as ``cron`` or
+    ``start_late_by_at_most_seconds``; the values are the stored values, such as a version
+    number, a cron expression or a number of seconds.
+    """
+
+    field: str
+    before: StrictBool | StrictInt | str
+    after: StrictBool | StrictInt | str
+
+
+class EventDetailsResource(_ResourceModel):
+    """The facts of one event, under a closed set of keys. A key the event does not use is ``None``.
+
+    ``cause`` is a refusal code or a failure class, never free text from Infrahub.
+    """
+
+    # The start time of the cadence, on every event of a scheduled start.
+    start_at: datetime | None = None
+    # The count, the first and the last of the missed starts that one event records together.
+    starts: int | None = Field(default=None, ge=0)
+    first_start_at: datetime | None = None
+    last_start_at: datetime | None = None
+    # The plan's count of records left out, on the result event of a scheduled run.
+    left_out: int | None = Field(default=None, ge=0)
+    # The branch and the proposed change of a run with branch review.
+    branch: str | None = None
+    proposed_change_id: str | None = None
+    # The earlier run whose branch or proposed change was replaced.
+    replaced_run_id: str | None = None
+    cause: str | None = None
+    # The revision of the stored credential an event names.
+    revision: int | None = Field(default=None, ge=1)
+    # The settings whose stored value a change of a schedule altered; empty when every setting
+    # the change sent already had its value. Only `infrahub_sync.schedule.changed` holds it.
+    changes: tuple[ScheduleSettingChangeResource, ...] | None = None
+    # The events of an automatic resume (spec 030), whose `cause` is `rule-6` or `rule-8`:
+    # the reason code of an automatic resume that did not start, with its codes and counts,
+    # and the marker, the operations the check left out and the flow run of one that started.
+    reason: str | None = None
+    reason_detail: dict[str, StrictInt | str] | None = None
+    start_after: int | None = Field(default=None, ge=0)
+    operations_not_checked: int | None = Field(default=None, ge=0)
+    resume_flow_run_id: str | None = Field(default=None, min_length=1)
+
+    @field_validator("start_at", "first_start_at", "last_start_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _EVENT_TIME_MESSAGE)
+
+
 class EventResource(_ResourceModel):
     """One typed event: a Sync API decision or a stage result, with the resources it names."""
 
@@ -600,11 +999,14 @@ class EventResource(_ResourceModel):
     reason: str | None = None
     primary_resource: EventPrimaryResource | None = None
     related: tuple[EventRelatedResource, ...] = ()
+    # The facts of the event; ``None`` for an event that records none, and for a Sync API
+    # that predates schedules.
+    details: EventDetailsResource | None = None
 
     @field_validator("occurred_at")
     @classmethod
     def _require_timezone(cls, value: datetime) -> datetime | None:
-        return _timezone(value, "event timestamps must include a timezone")
+        return _timezone(value, _EVENT_TIME_MESSAGE)
 
 
 class EventPage(_ResourceModel):
@@ -614,6 +1016,103 @@ class EventPage(_ResourceModel):
     limit: int = Field(ge=MIN_LIMIT, le=MAX_LIMIT)
     offset: int = Field(ge=0)
     has_more: bool
+
+
+class ScheduleOpenBranchResource(_ResourceModel):
+    """The most recent branch of a schedule that is open for review, with the run that wrote it."""
+
+    run_id: str = Field(min_length=1)
+    branch: str = Field(min_length=1)
+    # ``None`` when the run opened no proposed change.
+    proposed_change_id: str | None = None
+
+
+class ScheduleResource(_ResourceModel):
+    """Represent one schedule: its cadence, its settings, its state and its most recent run.
+
+    ``write_target``, ``overlap_policy``, ``state`` and ``state_reason`` are plain strings, so
+    the client still reads a value a newer Sync API adds. ``newer_version``,
+    ``start_late_by_at_most_seconds`` and ``waiting_start_at`` are ``None`` for a Sync API that
+    does not return them. All times are in UTC.
+    """
+
+    schedule_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    config_id: str = Field(min_length=1)
+    registry_version: int = Field(ge=1, le=2**63 - 1)
+    # The highest registered version of the configuration when it is higher than
+    # ``registry_version``.
+    newer_version: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    cron: str
+    timezone: str
+    write_target: str = Field(min_length=1)
+    write_when_left_out: bool
+    # The actor who last turned ``write_when_left_out`` on, and when.
+    left_out_set_by: str | None = None
+    left_out_set_at: datetime | None = None
+    overlap_policy: str = Field(min_length=1)
+    start_late_by_at_most_seconds: int | None = None
+    state: str = Field(min_length=1)
+    # Why a stopped schedule stopped; ``None`` in every other state.
+    state_reason: str | None = None
+    owner: str = Field(min_length=1)
+    # ``None`` when the schedule is not active.
+    next_start_at: datetime | None = None
+    # The start that waits for the run in progress to end.
+    waiting_start_at: datetime | None = None
+    # The schedule's most recent run; ``GET /runs/{run_id}`` holds its outcome.
+    last_run_id: str | None = None
+    # False while the task manager does not hold this schedule as it is stored.
+    prefect_synced: bool
+    # The count of failed runs in a row.
+    consecutive_failures: int = Field(ge=0)
+    open_branch: ScheduleOpenBranchResource | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("left_out_set_at", "next_start_at", "waiting_start_at", "created_at", "updated_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _SCHEDULE_TIME_MESSAGE)
+
+
+class SchedulePage(_ResourceModel):
+    """One page of the schedule list, newest first. ``next_cursor`` is ``None`` on the last page."""
+
+    items: tuple[ScheduleResource, ...]
+    next_cursor: str | None = None
+
+
+class ScheduleNextStartsRequest(_RequestModel):
+    """Request the next start times of a cron expression in a time zone, before a schedule is saved.
+
+    `cron` and `timezone` are not validated here, as in `CreateScheduleRequest`: the Sync API
+    answers `schedule-cron-invalid` or `schedule-timezone-invalid`.
+    """
+
+    cron: str
+    timezone: str = "UTC"
+    count: StrictInt = Field(default=DEFAULT_NEXT_STARTS, ge=1, le=MAX_NEXT_STARTS)
+
+
+class ScheduleNextStarts(_ResourceModel):
+    """The next start times of a cadence, in UTC and in increasing order.
+
+    ``starts`` holds fewer times than requested when the cadence has fewer starts before
+    ``searched_until``.
+    """
+
+    cron: str
+    timezone: str
+    starts: tuple[datetime, ...]
+    searched_until: datetime
+
+    @field_validator("starts", "searched_until")
+    @classmethod
+    def _require_timezone(cls, value: tuple[datetime, ...] | datetime) -> tuple[datetime, ...] | datetime:
+        for item in value if isinstance(value, tuple) else (value,):
+            _timezone(item, _SCHEDULE_TIME_MESSAGE)
+        return value
 
 
 class RunLogLine(_ResourceModel):
@@ -782,6 +1281,7 @@ FailureType = Literal[
     "record_load_failed",
     "transform_failed",
     "credential_missing",
+    "credential_unavailable",
     "verification_failed",
     "apply_refused",
     "left_out_review_required",
@@ -789,9 +1289,27 @@ FailureType = Literal[
     "destination_peer_ambiguous",
     "lineage_refused",
     "destination_schema_unavailable",
+    "destination_default_branch_not_main",
+    "branch_list_failed",
+    "branch_create_failed",
+    "branch_delete_failed",
+    "proposed_change_open_failed",
+    "proposed_change_read_failed",
+    "proposed_change_close_failed",
+    "write_guard_contended",
     "internal_error",
 ]
-"""The failure type names a stage failure record holds (spec 007 data-model.md, FR-014)."""
+"""The failure type names a stage failure record holds (spec 007 data-model.md, FR-014).
+
+The seven names from `destination_default_branch_not_main` to `proposed_change_close_failed` are
+the failures of the branch review operations of a scheduled run (spec 021, research R15).
+
+`credential_unavailable` is a stage that could not get the stored credential values of its run
+from the Sync API (spec 027, FR-019): the cause says which of the reasons applies.
+
+`write_guard_contended` is a write that did not start because another writer held the
+configuration's write guard for the whole wait (ADR 0010).
+"""
 
 FAILURE_TYPES: tuple[FailureType, ...] = get_args(FailureType)
 
@@ -857,6 +1375,10 @@ class StageFailureResource(_ResourceModel):
     # `None` in a record written before this field existed; `applied_operations` then counts.
     operations_written: int | None = Field(default=None, ge=0)
     failed_operation_detail: FailedOperationDetailResource | None = None
+    # The Sync run whose session held the configuration's write guard when this write's wait for
+    # it ended (`write_guard_contended`), confirmed in the run records. `None` when it is not known.
+    # Validated like every other run ID, so the CLI and the web interface never name a malformed one.
+    active_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
 
 
 class ResultsResource(_ResourceModel):
@@ -957,6 +1479,8 @@ class ConfigurationVersionSummaryResource(_ResourceModel):
     # ``None`` for versions registered before the server recorded who registered them and why.
     registered_by: str | None = None
     registration_reason: str | None = None
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
     latest_run: RunReference | None = None
     latest_applied_run: RunReference | None = None
 
@@ -983,6 +1507,8 @@ class ConfigurationVersionResource(_ResourceModel):
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     declared_content: dict[str, Any]
     created_at: datetime
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
 
     @field_validator("created_at")
     @classmethod
@@ -1004,6 +1530,8 @@ class ConfigurationVersionReferenceResource(_ResourceModel):
     registry_version: int = Field(ge=1)
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     created_at: datetime
+    # ``True`` when the registration request said the package was not validated (spec 025).
+    registered_without_validation: bool = False
 
     @field_validator("created_at")
     @classmethod
@@ -1042,6 +1570,116 @@ class ValidationReportResource(_ResourceModel):
     config_id: str
     registry_version: int
     package_checksum: str
+    destination_schema_fingerprint: str | None = None
+    findings: tuple[ValidationFindingResource, ...]
+    offset: int
+    limit: int
+    total_findings: int
+    next_offset: int | None
+
+
+class AccountResource(_ResourceModel):
+    """What the Sync API shows of a local account: its name, its level and its state."""
+
+    name: str
+    administrator: bool
+    disabled: bool
+    environment_managed: bool
+    created_at: datetime
+    sign_in_refused_until: datetime | None = None
+
+
+class CredentialResource(_ResourceModel):
+    """What the Sync API shows of a stored credential: the names of its fields, never their values.
+
+    ``created_by`` and ``updated_by`` are account names, including ``Deleted account <short identifier>``.
+    """
+
+    name: str
+    description: str
+    fields: tuple[str, ...]
+    revision: int = Field(ge=1)
+    created_by: str
+    created_at: datetime
+    updated_by: str
+    updated_at: datetime
+
+
+class CredentialPage(_ResourceModel):
+    """One page of stored credentials sorted by name; ``next_offset`` is ``None`` on the last page."""
+
+    items: tuple[CredentialResource, ...]
+    next_offset: int | None = Field(default=None, ge=0)
+
+
+class DeletedAccountResource(_ResourceModel):
+    """The answer of a deletion: what every record of the deleted account displays from now on."""
+
+    placeholder: str
+
+
+class SessionResource(_ResourceModel):
+    """The answer of a sign-in: the session token, the account and the idle period of a session.
+
+    The Sync API returns the token this once. Its printed form shows the account name only.
+    """
+
+    token: str = Field(repr=False)
+    account: AccountResource
+    idle_seconds: int
+
+    def __repr__(self) -> str:
+        """Show the account name only, so that no log line or traceback holds the session token."""
+        return f"SessionResource(account={self.account.name!r})"
+
+    __str__ = __repr__
+
+
+class TokenResource(_ResourceModel):
+    """What the Sync API shows of an API token: never its value."""
+
+    token_id: str
+    name: str
+    created_at: datetime
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+
+
+class CreatedTokenResource(TokenResource):
+    """The answer of the creation of an API token: the token and its value, returned this once.
+
+    Its printed form shows the token name only.
+    """
+
+    token: str = Field(repr=False)
+
+    def __repr__(self) -> str:
+        """Show the token name only, so that no log line or traceback holds the value."""
+        return f"CreatedTokenResource(name={self.name!r})"
+
+    __str__ = __repr__
+
+
+class PackageCheckResource(_ResourceModel):
+    """Return the check of a package that is not registered, with one page of its findings.
+
+    ``package_checksum`` and ``declared_content`` are what registering the package would store.
+    ``destination_read`` is ``not_requested`` without a branch, ``read`` when the destination
+    schema was read, ``not_read`` when the destination adapter is unknown or declares no schema
+    read, or the reason the read failed: ``timeout``, ``unreachable``,
+    ``unauthorized``, ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured`` or
+    ``credentials``.
+    """
+
+    # Keys and values of the declared content are returned exactly, so registering the
+    # returned content from Python gives the returned checksum. A browser that parses and
+    # serializes it again can change its numbers (`30.0` becomes `30`, integers above 2**53
+    # lose precision), so the web interface registers the file's text as `document` instead.
+    model_config = ConfigDict(extra="allow", frozen=True, str_strip_whitespace=False)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    name: str | None = None
+    declared_content: dict[str, Any]
+    destination_read: str = Field(pattern=r"^[a-z][a-z_]*$", max_length=64)
     destination_schema_fingerprint: str | None = None
     findings: tuple[ValidationFindingResource, ...]
     offset: int
@@ -1089,6 +1727,18 @@ class ConfigErrorDetail(_ResourceModel):
     status: int
     family: str
     reason: str | None = None
+    # Set when a registration is refused for the stored credentials it names: one entry for each
+    # block whose credential does not exist or does not hold a field the block needs. Absent
+    # from every other error body.
+    details: dict[str, Any] | None = None
+
+    # No return annotation on purpose, as on `ErrorDetail`.
+    @model_serializer(mode="wrap")
+    def _omit_absent_details(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if self.details is None:
+            data.pop("details", None)
+        return data
 
 
 class ConfigErrorEnvelope(_ResourceModel):

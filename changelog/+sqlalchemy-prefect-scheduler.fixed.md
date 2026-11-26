@@ -1,0 +1,1 @@
+The `prefect` and `service` extras now hold SQLAlchemy below 2.1. With SQLAlchemy 2.1, the scheduler of the Prefect 3.8.6 server failed to create the flow runs of a deployment schedule, so no schedule started a run.

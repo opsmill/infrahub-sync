@@ -11,6 +11,8 @@ async
 Authentik
 boolean
 callables
+booleans
+Booleans
 check_definitions
 class_name
 CloudFormation
@@ -103,6 +105,7 @@ Nornir
 npm
 nullable
 o'brian
+OAuth
 Observium
 openconfig
 opentelemetry
@@ -129,6 +132,7 @@ sandboxed
 schema_mapping
 sdk
 Slurp'it
+Styrmin
 subcommand
 subnet
 template_path
@@ -154,9 +158,11 @@ vendoring
 Version Control
 VRFs
 walkthrough
+Webex
 runbook
 runbooks
 Splunk
+SQLAlchemy
 Datadog
 Infoblox
 PeeringDB
@@ -232,3 +238,8 @@ unkeyed
 unredacted
 untyped
 writability
+Entra
+OData
+blackbox
+Kuma
+ciphertext

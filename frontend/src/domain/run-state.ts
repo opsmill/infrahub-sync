@@ -1,4 +1,4 @@
-import type { Run, RunReference, VersionSummary } from "#/api/types";
+import type { HealthReport, Run, RunReference, VersionSummary } from "#/api/types";
 
 import type { System } from "./systems";
 
@@ -223,6 +223,11 @@ export interface FailureDetail {
   known: boolean;
   /** The recorded class names: `${errorType}, caused by ${causeType}`, or `errorType` alone. */
   errorLabel?: string;
+  /**
+   * The run that was writing to the same configuration when this write could not take the
+   * configuration's write guard. Set only when the failure record names one.
+   */
+  activeRunId?: string;
 }
 
 export function failureDetail(run: Run): FailureDetail | undefined {
@@ -254,6 +259,8 @@ export function failureDetail(run: Run): FailureDetail | undefined {
     ambiguous: run.reconciliation_required,
     appliedCount: Array.isArray(s.applied_operations) ? s.applied_operations.length : undefined,
     failedOperation: typeof s.failed_operation === "string" ? s.failed_operation : undefined,
+    activeRunId:
+      typeof f?.active_run_id === "string" && f.active_run_id !== "" ? f.active_run_id : undefined,
   };
 }
 
@@ -296,8 +303,6 @@ export interface Explanation {
   short: string;
   note?: string;
   noteMono?: boolean;
-  /** The actor that started a running run. */
-  by?: string;
   at?: { iso: string; prefix: string };
   action?: { label: string; primary: boolean; target: "run" | "plan" };
 }
@@ -328,7 +333,6 @@ export function explain(run: Run | undefined, ctx: ExplainContext): Explanation 
   if (state === "running") {
     return {
       short: `${phaseLabel(run, ctx)}…`,
-      by: run.actor ?? undefined,
       at: { iso: run.started_at, prefix: "Started " },
       action: { label: "View run", primary: false, target: "run" },
     };
@@ -373,7 +377,6 @@ export function explain(run: Run | undefined, ctx: ExplainContext): Explanation 
   if (run.phase === "cancelled") {
     return {
       short: "Latest run cancelled",
-      note: run.actor ? `Started by ${run.actor}` : undefined,
       at: { iso: ended, prefix: "Cancelled " },
       action: { label: "Plan again", primary: false, target: "plan" },
     };
@@ -622,6 +625,20 @@ export function branchPrefill(
 export const NO_WORKER_SENTENCE =
   "No worker is online, so new runs do not start. The Sync service keeps them waiting, and a run that no worker picks up in time is abandoned.";
 
-/** `queue_depth` from `GET /status` counts scheduled executions, not runs. */
+/** The state of the workers that the page frame and the start dialog show. */
+export type WorkerState = "unavailable" | "no-live-worker" | "busy" | "ready";
+
+/**
+ * The workers' state from the `workers` section of `GET /health`. It never reads the report's
+ * overall status, so a component that is down does not change what the page shows.
+ */
+export function workerState(report: HealthReport): WorkerState {
+  const { state, live_workers, queue_depth } = report.workers;
+  if (state === "unknown" || live_workers == null) return "unavailable";
+  if (live_workers === 0) return "no-live-worker";
+  return (queue_depth ?? 0) > 0 ? "busy" : "ready";
+}
+
+/** `queue_depth` from `GET /health` counts scheduled executions, not runs. */
 export const queueSentence = (n: number) =>
   `${fmt(n)} ${n === 1 ? "execution is" : "executions are"} waiting for a worker.`;

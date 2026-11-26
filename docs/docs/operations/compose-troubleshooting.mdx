@@ -10,7 +10,7 @@ section.
 ## Start with the deployment state
 
 Run the [status procedure](../compose-deployment#status) first: `docker compose ps`,
-then the worker state from `/status`.
+then the health report from `/api/health`.
 
 Use the [log procedure](../compose-deployment#logs) to read service output. Credentials
 are removed from run failures before they are printed.
@@ -24,7 +24,7 @@ The message wording can change; the code stays the same.
 | Symptom | Cause and action |
 | --- | --- |
 | Compose fails to parse `configs.db-bootstrap-script.content` | Compose is older than 2.24. Upgrade it; check with `docker compose version --short`. |
-| `<NAME> is required` | `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, the one required credential, is missing from `.env`. Compose prints this before any container starts, from `docker compose config --quiet` or `up`. Add the named variable. |
+| `<NAME> is required` | One of the three required credentials, `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, `INFRAHUB_SYNC_ENCRYPTION_KEY` or `INFRAHUB_SYNC_WORKER_TOKEN`, is missing from `.env`. Compose prints this before any container starts, from `docker compose config --quiet` or `up`. Add the named variable. |
 | A pull error naming `registry.opsmill.io/opsmill/infrahub-sync:<version>` | The image cannot be pulled. Check `docker login registry.opsmill.io`, which is needed until 3.0.0, then `VERSION` and `INFRAHUB_SYNC_DOCKER_IMAGE`. See [Choose an image](../compose-deployment#choose-an-image). |
 | `up` fails on a port publication | Another process holds the port. Set `INFRAHUB_SYNC_API_PORT` or `INFRAHUB_SYNC_PREFECT_PORT` in `.env`. |
 | The services run an unexpected image | A `VERSION` or `INFRAHUB_SYNC_DOCKER_IMAGE` exported in your shell overrides `.env`. Unset it, then run `docker compose up -d --wait`. |
@@ -34,7 +34,8 @@ The message wording can change; the code stays the same.
 | Symptom | Action |
 | --- | --- |
 | No container is running | Run `docker compose up -d --wait`. |
-| `worker.state` is `no-live-worker` | Read the worker logs, then run `docker compose restart sync-api sync-worker`. It keeps the durable records. A paused or hung worker still looks `running` to Docker; only the worker state shows it, after three missed heartbeats or 30 seconds. |
+| `/api/health` shows `workers.live_workers` below `workers.minimum`, or `sync-worker` is `unhealthy` | Read the worker logs, then run `docker compose restart sync-api sync-worker`. It keeps the durable records. A hung worker still looks `running` to Docker, but its container health check turns `unhealthy`. Docker runs no health check in a paused container, so a paused worker shows as paused. In both cases `/api/health` lists the worker as `stale` once its last heartbeat is older than three heartbeat intervals or 30 seconds, whichever is longer. `workers.items` lists only workers with a heartbeat in the last 24 hours, so a worker that has sent none for longer drops out of the list. |
+| `/api/health` shows `database` and `task_manager_db` as `down` | The usual cause is a stopped, paused or unreachable `postgres` service, because it holds both databases: read its logs, then run `docker compose up -d --wait`. Otherwise, read the `error` of each dependency, run `docker compose ps`, and check the database credentials in `.env` and the result of `db-bootstrap`, which creates both databases. |
 | `sync-api` stops at start-up, and its log reads `INFRAHUB_SYNC_PREFECT_UI_URL must be an absolute http or https URL without credentials, query or fragment` | The Prefect UI address in `.env` is not valid. Set it to an absolute `http` or `https` URL without a user name, password, query or fragment, or leave it empty, then run `docker compose up -d --wait`. See [Valid values of `INFRAHUB_SYNC_PREFECT_UI_URL`](../compose-deployment#valid-values-of-infrahub_sync_prefect_ui_url). |
 | A changed `.env` value has no effect | A container reads its environment once, when it is created. Run `docker compose up -d --wait`, not `restart`. |
 | You want to delete all data and begin again | Follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment). `docker compose down --volumes` cannot be undone. |
@@ -45,17 +46,43 @@ deployment starts empty.
 
 ## Command-line client failures
 
-The `infrahub-sync` CLI calls the Sync API with `INFRAHUB_SYNC_API_TOKEN`. On your
-machine, the CLI reads it from your environment only, never from `.env`. The deployment's
+The `infrahub-sync` CLI calls the Sync API with `INFRAHUB_SYNC_API_TOKEN` when it is set,
+and otherwise with the session that `infrahub-sync login` saved for the address in
+`INFRAHUB_SYNC_API_URL`. On your machine, the CLI reads the variable from your environment
+only, never from `.env`. The deployment's
 `cli` service, run as `docker compose run --rm --no-deps -T cli ...`, reads it from `.env`,
 unless your shell exports `INFRAHUB_SYNC_API_TOKEN`: Compose then uses the exported value.
 
-- **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is empty, or differs
-  from the principal's token in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. An `operator.env`
-  carried over from an earlier alpha may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely.
-  Add it to `.env`, with the token already inside `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
+- **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is not an API token of an
+  account, or, for the `cli` service, which keeps no saved session, it is empty. On a new deployment, give it the value of
+  `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`. When `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is empty, the `admin`
+  account has no API token: set it to a token of at least 16 characters, restart `sync-api`, and set
+  `INFRAHUB_SYNC_API_TOKEN` to the same value, or create a token with `infrahub-sync tokens create`
+  and use that value. An `operator.env` carried over from an earlier alpha
+  may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely, and may still set
+  `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`: this release ignores that variable and refuses the
+  tokens it defines. Remove it, and follow
+  [Upgrade from a release that read `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`](../compose-deployment#upgrade-from-a-release-that-read-infrahub_sync_service_bearer_tokens).
   After you change the token in `.env`, export it again, or open a new shell, so that
   neither the CLI on your machine nor the `cli` service presents the old exported value.
+- **Compose refuses to start with `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required`.** The
+  `.env` file comes from a release that read `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. Set the
+  `admin` variables as the upgrade note in
+  [The `.env` file](../compose-deployment#configuration-prerequisites) describes.
+- **`sync-api` does not start after a change to `.env`.** Its log names the variable it
+  refused, in one of these cases:
+    - `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is shorter than 12 characters, longer than 1,024
+      characters, or not valid UTF-8 text;
+    - `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is shorter than 16 characters, holds a character that
+      is not printable ASCII, starts or ends with a space, or starts with `ifs_pat_` or `ifs_ses_`;
+    - `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number from 60 to 999999999999.
+
+  Correct the value, then run `docker compose up -d --wait --no-deps sync-api`.
+- **A person's sign-in is refused although the password is right.** After 5 failed sign-ins
+  for one name in 15 minutes, the Sync API refuses that name for 15 minutes, with the same
+  message as a wrong password. An administrator ends the refusal with
+  `infrahub-sync accounts unlock NAME`. For `admin`, recreating `sync-api` also ends it. See
+  [End a refusal after repeated failed sign-ins](../guides/accounts#end-a-refusal-after-repeated-failed-sign-ins).
 - **The `cli` service cannot read a mounted package.** The image runs as UID 10001, so the file
   must be readable by other users. Run `chmod 0644` on it, and mount it read-only as in
   [Registering a package](../compose-deployment#registering-a-package).

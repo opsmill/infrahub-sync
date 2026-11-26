@@ -6,7 +6,7 @@ Start Infrahub Sync from a release in three steps: fetch `docker-compose.yml`,
 write a `.env` beside it, and start it. The deployment includes the Sync API,
 worker, Prefect, PostgreSQL, and object storage. You can start it before you have
 supplied a source, destination, configuration, or source credentials. This page
-ends when a worker reports `ready` and you choose a source tutorial.
+ends when the Sync API reports `healthy` and you choose a source tutorial.
 
 ## Before you start
 
@@ -54,16 +54,17 @@ directory.
 
 ## Write the credentials
 
-The file requires one credential, the token that the Sync API accepts. The
+The file requires three credentials: the password of the `admin` account, the
+key that encrypts stored credentials, and the token of the `worker` account. The
 credentials that its services use between themselves have defaults, which suit a
 test deployment. For a deployment that holds real data, replace them as
 [The `.env` file](./compose-deployment.mdx#configuration-prerequisites)
-describes. This generates random values for each credential anyway, and gives
-the bundled CLI the same token as the one principal the API accepts:
+describes. This generates random values for all nine credentials anyway. It also
+gives `admin` an API token, and gives the bundled CLI the same token:
 
 ```sh
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
-principal=$(rand 24)
+admin_token=$(rand 24)
 # mktemp creates the file readable by you alone, whatever an existing .env allowed.
 env_file=$(mktemp .env.XXXXXX)
 cat > "$env_file" <<EOF
@@ -73,15 +74,19 @@ INFRAHUB_SYNC_PREFECT_PASSWORD=$(rand 24)
 INFRAHUB_SYNC_PREFECT_AUTH_STRING=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
-INFRAHUB_SYNC_API_TOKEN=$principal
+INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=$(rand 24)
+INFRAHUB_SYNC_ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)
+INFRAHUB_SYNC_WORKER_TOKEN=$(rand 24)
+INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=$admin_token
+INFRAHUB_SYNC_API_TOKEN=$admin_token
 EOF
 mv -f "$env_file" .env
 docker compose config --quiet
 ```
 
-`config --quiet` prints nothing when the token is set. Otherwise it prints
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS is required`. Keep
+`config --quiet` prints nothing when the three required credentials are set.
+Otherwise it names each missing one, for example
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required`. Keep
 `.env` out of version control and never `source` it. Every variable it can set,
 including the image version, is listed in
 [The `.env` file](./compose-deployment.mdx#configuration-prerequisites).
@@ -90,21 +95,44 @@ including the image version, is listed in
 
 ```sh
 docker compose up -d --wait --wait-timeout 420
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/health
 ```
 
 `up -d --wait` pulls the images and returns once every service is healthy. In the
-`/status` response, `worker.state` must be `ready`. If it reads `no-live-worker`,
-wait a few seconds and repeat the request. If `up` fails, see
-[Compose operator troubleshooting](./operations/compose-troubleshooting.mdx).
+`/api/health` response, `status` must be `healthy` and `workers.live_workers` at
+least `workers.minimum` (1 by default). Shortly after the start, `status` can read
+`unhealthy` until the worker has sent its first heartbeat; repeat the request after a few
+seconds. If it stays `unhealthy`, read `dependencies` and `workers` in the answer: an entry
+of `dependencies` with `status` `down` and its `error`, or `workers.live_workers` below
+`workers.minimum`, names the cause. [Compose operator
+troubleshooting](./operations/compose-troubleshooting.mdx) gives the action for each cause,
+and for a failed `up`.
 
-A `ready` worker confirms the deployment is running; it does not check a source or
+A `healthy` answer confirms the deployment is running; it does not check a source or
 destination.
+
+The same address serves the Sync web interface: open `http://127.0.0.1:8001` in a
+browser and sign in with the name and the password of an account, for example `admin`. The
+Sync API is under `/api` on that address.
+See [Open the web interface](./compose-deployment.mdx#open-the-web-interface).
+
+## Check who you are signed in as
+
+The bundled CLI presents the `admin` token from `.env`:
+
+```sh
+docker compose run --rm --no-deps -T cli whoami
+```
+
+The output shows `actor: admin` and `administrator: true`. The `admin` password is
+the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` in `.env`. To add an account
+for each person and an API token for each script, see
+[Manage accounts](./guides/accounts.mdx).
 
 ## Identify your installed version
 
 ```sh
-curl --fail --silent --show-error http://127.0.0.1:8001/version
+curl --fail --silent --show-error http://127.0.0.1:8001/api/version
 ```
 
 The response shows `server_version`. If you changed the API port, use that port
@@ -117,7 +145,8 @@ An earlier alpha deployed through the `infrahub-sync-compose` wrapper. Start the
 release in a new directory with a new `.env`, and empty state. If the old
 deployment uses the same ports, stop it first and keep its directory and volumes.
 Do not point the new deployment at the old data. Supply credentials in the new
-`.env`, register your configuration again, and review a fresh plan before
+`.env`, without `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, which this release no
+longer reads. Register your configuration again, and review a fresh plan before
 applying. The [wrapper equivalents](./compose-deployment.mdx#wrapper-equivalents)
 map each old command to its `docker compose` form.
 
@@ -135,6 +164,9 @@ Continue to the tutorial for your existing source and destination:
   to map sites and devices and review a saved preview from your NetBox.
 - [Preview Nautobot data in an existing Infrahub](tutorials/nautobot-to-existing-infrahub)
   to map locations and devices and review a saved preview from your Nautobot.
+- [Import NetBox demo data in one command](tutorials/try-the-netbox-demo#prepare-a-sync-service-you-already-run)
+  to load a destination schema into a dedicated Infrahub and register a NetBox configuration
+  for this deployment with one command, before you write a package of your own.
 
 Each tutorial includes destination schema preparation, credentials, package
 registration, validation, and preview with the bundled Sync CLI. For a fresh

@@ -10,13 +10,39 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccountRouteImport } from './routes/account'
+import { Route as AccountsRouteImport } from './routes/accounts'
+import { Route as CredentialsRouteImport } from './routes/credentials'
+import { Route as HealthRouteImport } from './routes/health'
 import { Route as ConfigsConfigIdRouteImport } from './routes/configs.$configId'
 import { Route as RunsIndexRouteImport } from './routes/runs.index'
 import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
+import { Route as SchedulesIndexRouteImport } from './routes/schedules.index'
+import { Route as SchedulesScheduleIdRouteImport } from './routes/schedules.$scheduleId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountsRoute = AccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CredentialsRoute = CredentialsRouteImport.update({
+  id: '/credentials',
+  path: '/credentials',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HealthRoute = HealthRouteImport.update({
+  id: '/health',
+  path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConfigsConfigIdRoute = ConfigsConfigIdRouteImport.update({
@@ -34,39 +60,104 @@ const RunsRunIdRoute = RunsRunIdRouteImport.update({
   path: '/runs/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SchedulesIndexRoute = SchedulesIndexRouteImport.update({
+  id: '/schedules/',
+  path: '/schedules/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SchedulesScheduleIdRoute = SchedulesScheduleIdRouteImport.update({
+  id: '/schedules/$scheduleId',
+  path: '/schedules/$scheduleId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/accounts': typeof AccountsRoute
+  '/credentials': typeof CredentialsRoute
+  '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
   '/runs/': typeof RunsIndexRoute
+  '/schedules/': typeof SchedulesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/accounts': typeof AccountsRoute
+  '/credentials': typeof CredentialsRoute
+  '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
   '/runs': typeof RunsIndexRoute
+  '/schedules': typeof SchedulesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/accounts': typeof AccountsRoute
+  '/credentials': typeof CredentialsRoute
+  '/health': typeof HealthRoute
   '/configs/$configId': typeof ConfigsConfigIdRoute
   '/runs/$runId': typeof RunsRunIdRoute
+  '/schedules/$scheduleId': typeof SchedulesScheduleIdRoute
   '/runs/': typeof RunsIndexRoute
+  '/schedules/': typeof SchedulesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/configs/$configId' | '/runs/$runId' | '/runs/'
+  fullPaths:
+    | '/'
+    | '/account'
+    | '/accounts'
+    | '/credentials'
+    | '/health'
+    | '/configs/$configId'
+    | '/runs/$runId'
+    | '/schedules/$scheduleId'
+    | '/runs/'
+    | '/schedules/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/configs/$configId' | '/runs/$runId' | '/runs'
-  id: '__root__' | '/' | '/configs/$configId' | '/runs/$runId' | '/runs/'
+  to:
+    | '/'
+    | '/account'
+    | '/accounts'
+    | '/credentials'
+    | '/health'
+    | '/configs/$configId'
+    | '/runs/$runId'
+    | '/schedules/$scheduleId'
+    | '/runs'
+    | '/schedules'
+  id:
+    | '__root__'
+    | '/'
+    | '/account'
+    | '/accounts'
+    | '/credentials'
+    | '/health'
+    | '/configs/$configId'
+    | '/runs/$runId'
+    | '/schedules/$scheduleId'
+    | '/runs/'
+    | '/schedules/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRoute
+  AccountsRoute: typeof AccountsRoute
+  CredentialsRoute: typeof CredentialsRoute
+  HealthRoute: typeof HealthRoute
   ConfigsConfigIdRoute: typeof ConfigsConfigIdRoute
   RunsRunIdRoute: typeof RunsRunIdRoute
+  SchedulesScheduleIdRoute: typeof SchedulesScheduleIdRoute
   RunsIndexRoute: typeof RunsIndexRoute
+  SchedulesIndexRoute: typeof SchedulesIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -76,6 +167,34 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accounts': {
+      id: '/accounts'
+      path: '/accounts'
+      fullPath: '/accounts'
+      preLoaderRoute: typeof AccountsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/credentials': {
+      id: '/credentials'
+      path: '/credentials'
+      fullPath: '/credentials'
+      preLoaderRoute: typeof CredentialsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/health': {
+      id: '/health'
+      path: '/health'
+      fullPath: '/health'
+      preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/configs/$configId': {
@@ -99,14 +218,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RunsRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/schedules/': {
+      id: '/schedules/'
+      path: '/schedules'
+      fullPath: '/schedules/'
+      preLoaderRoute: typeof SchedulesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schedules/$scheduleId': {
+      id: '/schedules/$scheduleId'
+      path: '/schedules/$scheduleId'
+      fullPath: '/schedules/$scheduleId'
+      preLoaderRoute: typeof SchedulesScheduleIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRoute,
+  AccountsRoute: AccountsRoute,
+  CredentialsRoute: CredentialsRoute,
+  HealthRoute: HealthRoute,
   ConfigsConfigIdRoute: ConfigsConfigIdRoute,
   RunsRunIdRoute: RunsRunIdRoute,
+  SchedulesScheduleIdRoute: SchedulesScheduleIdRoute,
   RunsIndexRoute: RunsIndexRoute,
+  SchedulesIndexRoute: SchedulesIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

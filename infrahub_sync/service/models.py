@@ -22,17 +22,24 @@ from infrahub_sync.client.models import (
     ApprovedRunResource,
     ApproveRunRequest,
     ArtifactListResource,
+    AutomaticResumeResource,
     CancelRunRequest,
+    ChangeScheduleRequest,
     ConfigErrorDetail,
     ConfigErrorEnvelope,
     ConfigMutationRequest,
     CreateRunRequest,
+    CreateScheduleRequest,
+    CredentialUsedResource,
+    DependencyHealthResource,
     ErrorDetail,
     ErrorEnvelope,
+    EventDetailsResource,
     EventPage,
     EventPrimaryResource,
     EventRelatedResource,
     EventResource,
+    HealthResource,
     OrchestrationSummary,
     PlanOperationResource,
     PlanResource,
@@ -47,14 +54,20 @@ from infrahub_sync.client.models import (
     RunLogPage,
     RunPage,
     RunResource,
-    ServiceStatusResource,
+    ScheduleActionRequest,
+    ScheduleNextStarts,
+    ScheduleNextStartsRequest,
+    ScheduleOpenBranchResource,
+    SchedulePage,
+    ScheduleResource,
     VerifyRunRequest,
     VersionResource,
-    WorkerStatusResource,
+    WorkerHealthResource,
+    WorkersHealthResource,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from infrahub_sync.product_store import AuditEvent, PrefectExecutionLink, ProductRun
 
@@ -64,17 +77,24 @@ __all__ = [
     "ApprovedPlanSummaryResource",
     "ApprovedRunResource",
     "ArtifactListResource",
+    "AutomaticResumeResource",
     "CancelRunRequest",
+    "ChangeScheduleRequest",
     "ConfigErrorDetail",
     "ConfigErrorEnvelope",
     "ConfigMutationRequest",
     "CreateRunRequest",
+    "CreateScheduleRequest",
+    "CredentialUsedResource",
+    "DependencyHealthResource",
     "ErrorDetail",
     "ErrorEnvelope",
+    "EventDetailsResource",
     "EventPage",
     "EventPrimaryResource",
     "EventRelatedResource",
     "EventResource",
+    "HealthResource",
     "OrchestrationSummary",
     "PlanOperationResource",
     "PlanResource",
@@ -89,10 +109,16 @@ __all__ = [
     "RunLogPage",
     "RunPage",
     "RunResource",
-    "ServiceStatusResource",
+    "ScheduleActionRequest",
+    "ScheduleNextStarts",
+    "ScheduleNextStartsRequest",
+    "ScheduleOpenBranchResource",
+    "SchedulePage",
+    "ScheduleResource",
     "VerifyRunRequest",
     "VersionResource",
-    "WorkerStatusResource",
+    "WorkerHealthResource",
+    "WorkersHealthResource",
     "bounded_emitted_model",
     "public_event_page",
     "public_execution_link",
@@ -162,6 +188,8 @@ EmittedArtifactListResource = cast("type[ArtifactListResource]", bounded_emitted
 EmittedRunPage = cast("type[RunPage]", bounded_emitted_model(RunPage))
 EmittedEventPage = cast("type[EventPage]", bounded_emitted_model(EventPage))
 EmittedRunLogPage = cast("type[RunLogPage]", bounded_emitted_model(RunLogPage))
+EmittedScheduleResource = cast("type[ScheduleResource]", bounded_emitted_model(ScheduleResource))
+EmittedSchedulePage = cast("type[SchedulePage]", bounded_emitted_model(SchedulePage))
 
 # What the server builds out of data it did not write literally, and therefore what the
 # boundedness check in the test suite walks.
@@ -172,6 +200,8 @@ EMITTED_RESOURCES: tuple[type[BaseModel], ...] = (
     EmittedRunPage,
     EmittedEventPage,
     EmittedRunLogPage,
+    EmittedScheduleResource,
+    EmittedSchedulePage,
 )
 # The run resource declares its executions as bounded, so the projection has to build them
 # that way; a parent-class instance is not one of these.
@@ -206,32 +236,46 @@ def public_execution_link(
     )
 
 
-def public_run_resource(run: ProductRun, model: type[PublicRunResource] = EmittedRunResource) -> PublicRunResource:
+def public_run_resource(
+    run: ProductRun, model: type[PublicRunResource] = EmittedRunResource, *, automatic_resume_count: int = 0
+) -> PublicRunResource:
     """Project a store run into the self-contained public wire resource.
 
     The projection copies the record's fields wholesale, so the strict variant is what
     keeps a future internal field from reaching an operator without anyone choosing to
-    publish it.
+    publish it. ``automatic_resume_count`` is read from the run's automatic resume records,
+    which the run record does not hold (spec 030).
     """
     link_model = _execution_link_class(model)
     return model.model_validate(
         {
             **run.model_dump(exclude={"prefect_executions"}),
             "prefect_executions": tuple(public_execution_link(link, link_model) for link in run.prefect_executions),
+            "automatic_resume_count": automatic_resume_count,
         }
     )
 
 
-def public_run_page(runs: Iterable[ProductRun], next_cursor: str | None) -> RunPage:
+def public_run_page(
+    runs: Iterable[ProductRun], next_cursor: str | None, automatic_resume_counts: Mapping[str, int] | None = None
+) -> RunPage:
     """Project one page of store runs into the bounded public run list.
 
     Each run goes through `public_run_resource` first, so a list item has the same fields as
     the resource `GET /runs/{run_id}` builds from the same record, with `artifact_refs` and
     `prefect_executions` empty. Each item is validated once, as the page's own bounded item
-    class, and the page then checks only its own fields.
+    class, and the page then checks only its own fields. ``automatic_resume_counts`` holds the
+    count of each run that received an automatic resume; a run it does not name received none.
     """
+    counts = automatic_resume_counts or {}
     return EmittedRunPage.model_validate(
-        {"items": tuple(public_run_resource(run, _EmittedRunPageItem) for run in runs), "next_cursor": next_cursor}
+        {
+            "items": tuple(
+                public_run_resource(run, _EmittedRunPageItem, automatic_resume_count=counts.get(run.run_id, 0))
+                for run in runs
+            ),
+            "next_cursor": next_cursor,
+        }
     )
 
 
@@ -240,7 +284,8 @@ def public_event_page(events: Iterable[AuditEvent], *, limit: int, offset: int, 
 
     Only the fields the event contract declares are copied: ``run_id``, ``config_id``,
     ``registry_version`` and ``branch`` reach the reader as the primary and related
-    resources, not as fields of their own.
+    resources, not as fields of their own. ``details`` holds the facts of an event of a
+    schedule, such as the start time (spec 021), and is ``None`` for an event that records none.
     """
     items = []
     for event in events:
@@ -256,6 +301,7 @@ def public_event_page(events: Iterable[AuditEvent], *, limit: int, offset: int, 
                 "reason": event.reason,
                 "primary_resource": None if primary is None else primary.model_dump(),
                 "related": tuple(resource.model_dump() for resource in event.related),
+                "details": None if event.details is None else event.details.model_dump(),
             }
         )
     return EmittedEventPage.model_validate({"items": items, "limit": limit, "offset": offset, "has_more": has_more})

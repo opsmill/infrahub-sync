@@ -31,11 +31,13 @@ PROFILE_SETS = ((), ("sync",), ("infrahub",), ("sync", "infrahub"))
 # The settings the file reads from the environment, all optional. Removed from the
 # caller's own environment rather than merely left alone, so a developer who exports one
 # cannot make the run pass for everybody else.
-OPTIONAL_SETTINGS = (
-    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
-    "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
-    "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
-)
+OPTIONAL_SETTINGS = ("ENCRYPTION_KEY", "WORKER_TOKEN")
+# The settings of stored credentials that take a fixed development value when the shell sets
+# none (spec 027, contracts/environment.md), with the services that are given each.
+DEVELOPMENT_DEFAULTS = {
+    "INFRAHUB_SYNC_ENCRYPTION_KEY": {"sync-api"},
+    "INFRAHUB_SYNC_WORKER_TOKEN": {"sync-api", "sync-worker"},
+}
 
 _NO_COMPOSE_PLUGIN = "is not a docker command"
 
@@ -80,19 +82,38 @@ def test_resolves_without_its_optional_settings(profiles: tuple[str, ...]) -> No
     assert resolved.returncode == 0, f"`docker compose config` failed:\n{resolved.stderr}"
 
 
-@pytest.mark.parametrize("setting", OPTIONAL_SETTINGS)
-def test_optional_settings_resolve_to_empty(setting: str) -> None:
-    """An unset source credential leaves an empty value rather than refusing to resolve.
+@pytest.mark.parametrize("setting", sorted(DEVELOPMENT_DEFAULTS))
+def test_the_settings_of_stored_credentials_resolve_to_a_development_value(setting: str) -> None:
+    """A clean checkout stores credentials: the key and the worker token have fixed development values.
 
-    The root `docker-compose.yml` guards its required settings with `${VAR:?}`. These
-    three stay optional there too, and they have to stay optional here: the stack starts before any
-    configuration package is registered, so there is no destination to hold a credential
-    for yet.
+    The root `docker-compose.yml` guards both with `${VAR:?}`, because an operator must choose
+    them. Here they are public development values, as the password and the token of `admin` are.
     """
     resolved = _resolved_or_skip()
     if resolved.returncode != 0:
         pytest.skip("the development stack could not be resolved; the validity case reports that")
-    assert f'{setting}: ""' in resolved.stdout
+    services = yaml.safe_load(resolved.stdout)["services"]
+
+    holders = {name for name, definition in services.items() if (definition.get("environment") or {}).get(setting)}
+
+    assert holders == DEVELOPMENT_DEFAULTS[setting]
+
+
+def test_no_development_service_is_given_a_credential_variable() -> None:
+    """Every `INFRAHUB_SYNC_CREDENTIAL_*` variable is removed: the Sync API stores the credentials."""
+    resolved = _resolved_or_skip()
+    if resolved.returncode != 0:
+        pytest.skip("the development stack could not be resolved; the validity case reports that")
+    services = yaml.safe_load(resolved.stdout)["services"]
+
+    held = sorted(
+        f"{name}: {setting}"
+        for name, definition in services.items()
+        for setting in (definition.get("environment") or {})
+        if setting.startswith("INFRAHUB_SYNC_CREDENTIAL_")
+    )
+
+    assert held == []
 
 
 def _sync_api_environment(path: Path) -> dict[str, object]:
@@ -113,3 +134,12 @@ def test_the_operator_sync_api_takes_its_prefect_ui_url_from_the_operator() -> N
     environment = _sync_api_environment(REPO_ROOT / "docker-compose.yml")
 
     assert environment["INFRAHUB_SYNC_PREFECT_UI_URL"] == "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"
+
+
+@pytest.mark.parametrize("path", [REPO_ROOT / "docker-compose.yml", COMPOSE_FILE], ids=["operator", "development"])
+def test_the_worker_reads_the_approval_setting_of_the_sync_api(path: Path) -> None:
+    """Research R6: the worker checks the approval setting before a scheduled run, so it needs the same value."""
+    services = yaml.safe_load(path.read_text(encoding="utf-8"))["services"]
+    api_value = services["sync-api"]["environment"]["INFRAHUB_SYNC_REQUIRE_APPROVAL"]
+
+    assert services["sync-worker"]["environment"].get("INFRAHUB_SYNC_REQUIRE_APPROVAL") == api_value

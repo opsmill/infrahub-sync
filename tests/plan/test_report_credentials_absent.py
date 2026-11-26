@@ -4,10 +4,10 @@ FR-029 and FR-030: a problem reason, a left-out or kept entry and a plan file ar
 connection settings or from the text of an error, so their protection does not depend on
 replacing values in text.
 
-The shared problem fixture is planned end to end with two referenced credentials: one of five
-characters, and one that holds `"`, `\\` and `,`. Both are declared as `$credential` references,
-resolved from the worker's environment into the source and destination settings of the run's
-configuration, as a run resolves them. Every peer error and every transform error the source
+The shared problem fixture is planned end to end with two credentials: one of five characters,
+and one that holds `"`, `\\` and `,`. Both are fields of stored credentials that the Sync API
+released to the run, written into the source and destination settings of the run's
+configuration, as a run fills them. Every peer error and every transform error the source
 raises while it reads carries both values and an address with a user name and password in its
 text. The checks read the raw bytes of every file under `plan/`, the decoded rows of
 `plan.parquet` and every report entry.
@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 import pyarrow.parquet as pq
 
 from infrahub_sync import DiffSyncModelMixin, PeerReferenceError, TransformError
-from infrahub_sync.configuration.credentials import EnvironmentCredentialProvider
 from infrahub_sync.plan.writer import PLAN_DIR_NAME
 from tests.plan.problem_plan import FixtureSource, plan_fixture
 
@@ -39,8 +38,6 @@ SHORT_CREDENTIAL = "k3yQz"
 SPECIAL_CREDENTIAL = 'Wq7Zm"ss\\wo,rd'
 # The start of the special credential, which no escaped form changes.
 SPECIAL_CREDENTIAL_RUN = "Wq7Zm"
-SHORT_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SHORT_TOKEN"
-SPECIAL_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SPECIAL_PASSWORD"
 
 # Text that only the errors raised during the read hold.
 ERROR_MARKER = "adapter-error-text"
@@ -70,16 +67,11 @@ FORBIDDEN = [
 ]
 
 
-def _with_credentials(fixture: PlanProblemFixture, monkeypatch: pytest.MonkeyPatch) -> PlanProblemFixture:
-    """The fixture whose configuration holds both credentials, resolved as a run resolves them."""
-    monkeypatch.setenv(SHORT_CREDENTIAL_NAME, SHORT_CREDENTIAL)
-    monkeypatch.setenv(SPECIAL_CREDENTIAL_NAME, SPECIAL_CREDENTIAL)
-    provider = EnvironmentCredentialProvider()
+def _with_credentials(fixture: PlanProblemFixture) -> PlanProblemFixture:
+    """The fixture whose configuration holds both credentials, as a run fills them from the released fields."""
     config_data = copy.deepcopy(fixture.config_data)
-    config_data["source"]["settings"].update(
-        token=provider.resolve(SHORT_CREDENTIAL_NAME), password=provider.resolve(SPECIAL_CREDENTIAL_NAME)
-    )
-    config_data["destination"]["settings"]["token"] = provider.resolve(SHORT_CREDENTIAL_NAME)
+    config_data["source"]["settings"].update(token=SHORT_CREDENTIAL, password=SPECIAL_CREDENTIAL)
+    config_data["destination"]["settings"]["token"] = SHORT_CREDENTIAL
     return dataclasses.replace(fixture, config_data=config_data)
 
 
@@ -114,7 +106,7 @@ def test_no_credential_and_no_error_text_reaches_the_plan_files_or_the_report(
     plan_problems: PlanProblemFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
-    fixture = _with_credentials(plan_problems, monkeypatch)
+    fixture = _with_credentials(plan_problems)
     raised = _leak_into_errors(monkeypatch)
 
     planned = plan_fixture(fixture)

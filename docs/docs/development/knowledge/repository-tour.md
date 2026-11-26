@@ -38,9 +38,23 @@ behavior.
 - [`infrahub_sync/client/`][src-infrahub-sync-client] — the only place that builds Sync API requests.
   `client.py` holds the synchronous client, `models.py` its typed request and response shapes,
   and `errors.py` its error taxonomy.
+- `infrahub_sync/cli_accounts.py` — the commands of the local accounts: `login`, `logout`,
+  `password`, and the `tokens` and `accounts` groups. `cli.py` calls its `register` once; the
+  module imports nothing from `cli.py`. It never takes a password as an argument: it reads it from
+  a prompt without echo, or from standard input with `--password-stdin`.
+- `infrahub_sync/cli_credentials.py` — the `credentials` group for stored credentials: `list`,
+  `show`, `create`, `set`, `describe` and `delete`. `cli.py` calls its `register` once, with the same helpers
+  as the account commands. It never takes a value as an argument: it reads it from a prompt without
+  echo, or from standard input with `--token-stdin` or `--password-stdin`, and it prints no value.
+- `infrahub_sync/cli_session.py` — the session file that `login` writes: `sessions.json` in the
+  directory that `typer.get_app_dir("infrahub-sync")` returns, mode `0600`, one session token and
+  account name for each normalized Sync API address. It needs no `service` extra, so it works on
+  Python 3.10. The lookup is
+  in the CLI, not in `SyncClient`, so a script that uses the client as a library reads no file.
 
 The command surface is `configs` (including the local `configs convert`), `runs`, `plan`,
-`verify`, `approve`, `sync`, `apply`, `events` and `whoami`. See the
+`verify`, `approve`, `sync`, `apply`, `events`, `whoami`, `login`, `logout`, `password`, `tokens`
+and `accounts`. See the
 [CLI reference](../../reference/cli.mdx) for every option.
 
 To trace a registered run from a CLI command to execution, follow these modules:
@@ -68,18 +82,23 @@ destination-schema checks, or to the schema read of `configs convert --live-sche
 | `capabilities.py` | `AdapterConfigurationCapabilities` and the closed `BUILTIN_ADAPTER_CAPABILITIES` registry |
 | `infrahub_lineage.py` | The parser and validator for an Infrahub destination's `source`, `owner` and `protect` settings |
 | `validation.py` | The finding-producing checks and their fixed execution order |
-| `credentials.py` | What a credential reference is, and how a provider resolves one |
-| `worker_credentials.py` | The names of the credential variables a worker holds, and the `$credential` variables a package references, for `configs validate --branch` |
+| `credentials.py` | How an adapter selects a credential setting at run time (`select_runtime_credential`, which reads no environment variable for a registered package), and how a declared setting name is rendered into a diagnostic |
+| `credential_admission.py` | The check that each stored credential a block names exists and holds the fields the block needs (`credential-not-found`, `credential-field-missing`, `credential-method-unknown`). It reads no store and no value |
+| `removed_credential_format.py` | The refusal of the removed `credentials` block and `$credential` references, and its fixed texts |
+| `stored_package.py` | `parse_stored_configuration_package`: reads the content of a stored version, ignores the empty `credentials` block that an earlier build wrote, and returns the checksum of the content as stored |
 | `schema_validation.py` | The opt-in destination-schema checks |
 | `warnings.py` | Intentional omissions and unqualified optional features |
 | `runtime.py` | Runtime resolution, including the effective destination branch |
-| `conversion.py` | `configs convert`: the pure conversion of a v1 or v2 `config.yml` into a package, the tables of what v2 read from the environment, and the worker's credential variables |
-| `conversion_authentication.py` | Which credential settings each v2 authentication method used, so a converted package references only those |
+| `conversion.py` | `configs convert`: the pure conversion of a v1 or v2 `config.yml` into a package, and the tables of what v2 read from the environment |
+| `conversion_authentication.py` | Which credential settings each v2 authentication method used, so the stored credential that a converted block names needs only those fields |
+| `conversion_credentials.py` | The name of the stored credential that a converted block names, and the report entry that says which credential to create, with which fields and which command |
 | `conversion_live_schema.py` | `configs convert --live-schema`: the destination-schema read without a token, and the fill of an unmapped IP namespace with `default` |
 | `conversion_report.py` | The text of the conversion report, the refusals and the next steps |
 
 [Configuration foundation](configuration-foundation.md) explains the declared identity,
-credential references and the connection-free capability declaration in full.
+the `credential` key of a block and the connection-free capability declaration in full.
+`capabilities.py` also holds `credential_field_map`, which says which stored field fills which
+setting of each adapter.
 
 ### The Sync service and its worker
 
@@ -105,6 +124,33 @@ Two facts about it are often missed:
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
 
+The local accounts live in these service modules
+([ADR 0049](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md),
+[ADR 0050](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md)):
+
+- `auth.py` resolves the caller of each request. `StoreAccountResolver` reads the SHA-256 digest
+  of the bearer value (an API token `ifs_pat_…`, a session token `ifs_ses_…` or the token of
+  `admin`) in the product store, with its account, for every request, and caches nothing.
+  `Principal.actor` holds the account identifier and `Principal.name` the account name.
+  `apply_admin_account` makes the `admin` account match the environment at start.
+- `credentials.py` hashes and verifies passwords with `hashlib.scrypt`, makes token and session
+  values, computes their digests, limits the password checks and hashes that run at the same
+  time (`VerificationGate`), and lets one password check for each account name run at a time in
+  the process (`one_check_per_name`).
+- `settings.py` also reads `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`,
+  `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` and `INFRAHUB_SYNC_SESSION_IDLE_SECONDS`. `serve.py`
+  applies the `admin` variables, then removes the password variable from the environment of the
+  process.
+- `account_routes.py` declares the routes `/auth/sign-in`, `/auth/sign-out`, `/accounts…`,
+  `/me/password` and `/me/tokens`; each calls one function of `account_actions.py`, which holds
+  the requests, the answers, the rights and the audit events of the account actions.
+- `presentation.py` holds `AccountNameMiddleware`, which replaces the account identifiers in
+  every JSON answer, replayed answers included, with the account name, or with
+  `Deleted account <short identifier>`.
+
+[Local accounts and sign-in](local-accounts.md) describes how these modules work together, with
+the CLI session file and the sign-in pages of the web interface.
+
 Six service modules carry what a run tells the operator:
 
 - `failure_cause.py` builds the stage failure record: it classifies the error into a
@@ -129,6 +175,31 @@ Six service modules carry what a run tells the operator:
   left_out_review_required`, and the store releases the run's write admission in the same
   commit (`release_write_admission` in `product_store/models.py`).
 
+Five service modules carry the schedules of spec 021. There is no scheduling loop: Prefect's
+scheduler creates the flow runs, and [A scheduled run](sync-architecture.md#a-scheduled-run)
+describes the path of one start.
+
+- `schedules.py` holds `ScheduleService`, the application service of the schedule routes, and
+  `match_prefect_schedules`, the step that makes the Prefect schedules of the deployment
+  `infrahub-sync-service/run` match the stored schedules. The API process runs that step after
+  each schedule request and at start-up, and `bootstrap.py` runs it too. `ScheduleService` takes
+  the set of write targets that the build can run; `serve.py` passes
+  `DELIVERED_SCHEDULE_WRITE_TARGETS`, which holds both write targets, `branch-review` and
+  `default-branch`, in this build. A write target outside that set is refused with
+  `schedule-setting-not-available`, before the configuration is read.
+- `schedule_routes.py` holds the FastAPI routes under `/schedules`.
+- `schedule_cadence.py` validates a cron expression and a time zone, and computes start times,
+  with the server-side `CronSchedule` of the installed Prefect, the class that Prefect's
+  scheduler uses.
+- `schedule_admission.py` decides whether one start of a schedule runs: missed and late starts,
+  a version that can no longer be run, the overlap policy, and the earlier proposed changes of
+  branch review. It derives the branch name of a run with branch review
+  (`branch_review_branch`). The worker calls it from `flow.py` for a flow run that carries
+  `schedule_id`.
+- `branch_review.py` creates and deletes the branch of a scheduled run, and opens, reads and
+  closes its proposed change, with the Infrahub SDK. Each failure is a `BranchReviewError`
+  subclass that `failure_cause.py` maps to a failure type.
+
 `paging.py` holds the cursor that the three lists share: `GET /runs`, `GET /configs` and
 `GET /configs/{config_id}/versions`. A cursor is URL-safe base64 of a JSON object with two keys:
 `k`, the sort key of the last row returned, and `f`, the first 16 hexadecimal characters of the
@@ -138,8 +209,67 @@ differs from the request's; the HTTP layer returns `422 invalid-cursor`. `valida
 the limits in `client/models.py` (`DEFAULT_LIMIT` 50, `MAX_LIMIT` 200). ADR 0032 records the
 paging rules.
 
-Each worker publishes the names of its set credential variables to the `worker_environments`
-table on each poll, through `service.storage.service_product_projection`.
+Two service modules report the health of a deployment (spec 029,
+[ADR 0055](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0055-the-health-endpoint-replaces-status.md)):
+
+- `health.py` builds the answer of `GET /api/health`. `HealthChecker` runs the four component
+  checks (`database_check`, `object_store_check`, `task_manager_check`,
+  `task_manager_db_check`) and the read of the work pool at the same time, each under
+  `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`, and reuses the report of a round for one second after it
+  ended. `classify_error` maps a failure to one of seven categories; it reads the error text only
+  to choose a category and never logs or returns it. `workers_health` lists the workers with a
+  heartbeat in the last 24 hours, decides `live` or `stale` with `worker_is_live` from
+  `orchestration.py`, and shows a name that is not `infrahub-sync-service-<uuid>` as `other`.
+  `overall_status` applies `INFRAHUB_SYNC_HEALTH_MIN_WORKERS`.
+- `worker_alive.py` holds the worker's alive file. `run_alive_writer` writes
+  `<epoch seconds> <interval seconds>` to `$TMPDIR/infrahub-sync-worker-alive` every heartbeat
+  interval, on a timer that calls no other service. `WORKER_HEALTHCHECK_COMMAND` is the
+  standard-library command that the `sync-worker` health check of both Compose files runs; a test
+  checks that both files carry exactly that text.
+
+`worker_is_live` in `orchestration.py` is the shared application-side worker liveness rule:
+Prefect reports the worker online and its last heartbeat is within
+`max(3 × heartbeat interval, 30)` seconds. The health report and `_owner_is_fresh` in
+`liveness.py` both call it. `WORKER_HEALTHCHECK_COMMAND` in `worker_alive.py` applies the same
+`max(3 × interval, 30)` threshold to the alive file, so a change to the threshold changes both.
+
+Four service modules carry the stored credentials
+([ADR 0057](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)):
+
+- `credential_routes.py` declares the routes for accounts (`GET /credentials`,
+  `GET /credentials/{name}`, `POST /credentials`, `PUT /credentials/{name}/value`,
+  `PATCH /credentials/{name}` and `DELETE /credentials/{name}`) and the two routes for the `worker` account
+  (`POST /worker/runs/{run_id}/credentials` and
+  `POST /worker/schedules/{schedule_id}/proposed-change-states`). Each route calls one method of
+  `CredentialActions`.
+- `credential_models.py` holds the request and answer models of these routes.
+- `credential_actions.py` holds the permission check (`manage-credentials`), the changes with
+  their mutation receipts and audit events, and the two worker actions. `delete` answers
+  `409 credential-in-use` while the latest version of a configuration, or a schedule that is not
+  deleted, names the credential; the store makes that check and the deletion in one transaction
+  that locks the credential row first, as a registration does. `release` checks that a
+  worker claimed the execution and that it has not ended, then decrypts and writes the
+  `run_credential_uses` rows. `RunService` in `service.py` reads those rows into
+  `credentials_used` of each run resource it builds. `proposed_change_states` reads Infrahub with the destination
+  credential of a schedule's stored version and returns the states only.
+- `credential_crypto.py` holds `CredentialCipher`: AES-256-GCM with the key of
+  `INFRAHUB_SYNC_ENCRYPTION_KEY`, the key identifier stored with each revision, and the keyed
+  fingerprint of a credential request. The product store never imports it.
+- `credential_client.py` holds the worker's calls to the two worker routes, their timeout and
+  retries, and `CredentialUnavailableError`, which `failure_cause.py` maps to the failure type
+  `credential_unavailable`.
+
+`auth.py` also applies the `worker` account at start (`apply_worker_account`) and marks its
+principal, which passes the routes under `/worker/` and no other route. `settings.py` reads
+`INFRAHUB_SYNC_ENCRYPTION_KEY` and `INFRAHUB_SYNC_WORKER_TOKEN` for `sync-api`, and
+`INFRAHUB_SYNC_WORKER_TOKEN` and `INFRAHUB_SYNC_API_URL` for each worker. `service/credentials.py`
+is not part of this: it holds the password hashes and the token values of the local accounts.
+
+`product_store/stored_credentials.py` holds the statements of the tables `stored_credentials`,
+`stored_credential_revisions`, `configuration_version_credentials` and `run_credential_uses`. The
+store holds the key identifier, the nonce and the ciphertext of a revision, never a value. No
+code reads or writes the `worker_environments` table of an earlier build; an existing table
+stays in the database.
 
 How the Compose deployment reaches its object store and trusts a private CA:
 
@@ -212,6 +342,12 @@ are the deep documents.
 bundle. [Durable product records](../../reference/durable-product-records.mdx) documents what
 is kept.
 
+`accounts.py` holds the statements of the four account tables (`accounts`, `account_tokens`,
+`account_sessions`, `sign_in_attempts`): creating and reading accounts, tokens and sessions by
+digest, the deletion that empties an account row, the `admin` row that the environment manages,
+and the count of failed sign-ins. Each function takes the caller's cursor, so `store.py` owns
+the transaction, and it receives digests, never token values.
+
 The store serves the lists from its own tables only. `list_runs`, `list_configuration_page` and
 `list_configuration_version_page` each read one page in a fixed order, newest first, and one row
 more to tell whether another page follows:
@@ -236,8 +372,26 @@ Start-up creates the list indexes, each with `CREATE INDEX IF NOT EXISTS`
 | `product_runs_config_started (config_id, started_at, run_id)` | The run list of one configuration |
 | `product_runs_binding_started (config_id, registry_version, started_at, run_id)` | The run list of one version, and each version's newest run |
 | `product_runs_binding_applied (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'` | Each version's most recently applied run |
-| `configurations_name (name)` | The `name` filter of the configuration list |
 | `configurations_created (created_at, config_id)` | The order of the configuration list |
+| `product_runs_schedule_started (schedule_id, started_at, run_id)` | The run list of one schedule |
+
+A configuration name is unique among configurations: the unique index
+`configurations_name_unique (name)` (`_CONFIGURATION_UNIQUE_INDEXES`) holds the rule and serves the
+`name` filter of the configuration list. A configuration without a name holds `NULL`, which the
+index does not constrain. It replaces the plain index `configurations_name` of an earlier build,
+which start-up drops. `_insert_configuration_version_row` checks the name in the transaction that
+registers a version and raises `ConfigurationNameInUseError`; when two registrations both pass the
+check, the index refuses the second and the same check, run again, names the configuration. Before
+it creates the index, start-up refuses a database where several configurations have one name with
+`DuplicateConfigurationNamesError`, which names them.
+
+The schedule records live in the tables `schedules` and `schedule_branches`. Three unique
+indexes hold their rules: `product_runs_schedule_start (schedule_id, scheduled_start_at)` allows
+one run for each start of a schedule, and `schedules_name_not_deleted` and
+`schedules_config_not_deleted` allow one schedule that is not deleted for each name and each
+configuration. `admit_scheduled_start` in `store.py` saves the decision on one start, with the run
+when the start runs, in one transaction. [Durable product records](../../reference/durable-product-records.mdx#schedule-records)
+documents the records.
 
 ### Adapters
 
@@ -303,6 +457,9 @@ These three are development and internal machinery, not the registered route:
 planning, then applies verified saved-plan operations. It also owns the destination SDK exception
 boundary. [`infrahub_sync/utils.py`][src-infrahub-sync-utils-py] assembles the pieces — configuration, plugin loading,
 runtime models, cache paths and the engine — into a runnable instance.
+`infrahub_sync/log.py` holds the logging configuration every module shares: it delivers each
+`structlog` event through the standard `logging` module, and sets the package's level and
+fallback handler in the service processes.
 For the service components and registered-run lifecycle, see
 [Sync architecture](sync-architecture.md).
 
@@ -338,7 +495,7 @@ records the upstream commit and the local additions.
 | `__init__.py` | The `format` and `lint` aggregates, the only top-level tasks |
 | `linter.py`, `docs.py` | The individual lint and documentation legs |
 | `tests.py` | `tests.tests-unit`, `tests.tests-integration`, `tests.all` and `tests.check-310` |
-| `dev.py` | The local development stack: the `dev` namespace (`dev.start`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest) |
+| `dev.py` | The local development stack: the `dev` namespace (`dev.start` and its presets `dev.infrahub`, `dev.preview` and `dev.demo`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest) |
 | `smoke_dataset.py` | The smoke dataset that `dev.seed` and `dev.smoke` load; no task of its own |
 | `netbox.py` | The local NetBox for adapter work: the `netbox` namespace (`netbox.start`, `netbox.seed`, `netbox.destroy`, and dataset dump, restore and change tasks) |
 | `bench.py` | The NetBox benchmark runner: the `bench` namespace. It reads the Infrahub port and admin token of its destination through `resolved_compose()` in `dev.py` |
@@ -355,9 +512,11 @@ records the upstream commit and the local additions.
   as the override file of that include, which changes only their host ports.
   PostgreSQL, the object store and `prefect-server` have no profile; `sync-bootstrap`,
   `sync-api` and `sync-worker` have the `sync` profile; every included Infrahub service has the
-  `infrahub` profile. `dev.start` turns on both profiles and `dev.deps` only `infrahub`.
-  With an Infrahub network attached (`--infrahub-network`), `dev.start` turns on only `sync` and
-  `dev.deps` turns on no profile. The
+  `infrahub` profile. A preset decides the profiles: `sync`, the default, turns on only `sync`
+  for `dev.start` and no profile for `dev.deps`; `infrahub` and `preview` add `infrahub`, and
+  `preview` also starts the local NetBox from `tasks/netbox.py`. An Infrahub network
+  (`--infrahub-network`) selects `sync`. Without `--preset` or `INFRAHUB_SYNC_DEV_PRESET`,
+  `select_preset()` follows the stack's containers, which never select `preview`. The
   tasks read ports, the project name and the Infrahub admin token from
   `docker compose config --format json` (`dev_settings()` in `tasks/dev.py`), so a setting has
   one default, in the Compose file. ADR 0029 records why. Runtime state the

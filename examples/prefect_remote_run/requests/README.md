@@ -44,4 +44,5 @@ curl -H "Authorization: Bearer <your-api-token>" "$PREFECT_API_URL/deployments/n
 
 Infrahub credentials never travel through these requests. They are read from the
 runner process's environment (`INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN`) and never
-appear in a flow parameter, a request body, a result, or a log line.
+appear in a flow parameter, a request body, a result, or a log line. This flow uses no
+stored credential of the Sync API; only a registered package names one.

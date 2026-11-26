@@ -74,43 +74,53 @@ To run from source, continue below.
 
 You need Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. The
 development stack, `development/docker-compose.yml`, builds the image from your checkout, for your host's own architecture, and
-runs the Sync API, the worker, PostgreSQL, object storage, Prefect and a local Infrahub:
+runs the Sync API, the worker, PostgreSQL, object storage and Prefect. A preset adds a local
+Infrahub, or a local Infrahub and NetBox:
 
 ```bash
 uv sync --extra dev --extra prefect --extra service   # once
-uv run invoke dev.start
+uv run invoke dev.start      # `sync` preset, or `infrahub` when a local Infrahub container exists
+uv run invoke dev.infrahub   # the `infrahub` preset: adds a local Infrahub
+uv run invoke dev.preview    # the `preview` preset: adds a local Infrahub, NetBox and sample data
+uv run invoke dev.demo       # the `demo` preset: a local Infrahub and NetBox, ready for the NetBox demo
 ```
 
 `dev.start` builds `infrahub-sync:dev` when the image is missing or its build inputs
-(`Dockerfile`, `pyproject.toml`, `uv.lock`) changed. The stack mounts your checkout's code into
+(`development/Dockerfile`, `pyproject.toml`, `uv.lock`) changed. The stack mounts your checkout's code into
 its containers, so after a code change run `uv run invoke dev.restart`.
 
 | | |
 |---|---|
 | **Sync API** | `http://127.0.0.1:8001` — bearer token `infrahub-sync-dev-token` |
 | **Prefect UI** | `http://127.0.0.1:4230` |
-| **Infrahub** | `http://127.0.0.1:8000` |
+| **Infrahub** (`infrahub` and `preview` presets) | `http://127.0.0.1:8000` |
 | **PostgreSQL** | `127.0.0.1:5440` |
 
 ```bash
-curl -sf http://127.0.0.1:8001/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/status
+curl -sf http://127.0.0.1:8001/api/version
+curl -sf http://127.0.0.1:8001/api/health
 ```
 
-The stack starts with no source and no destination. To continue to a first sync from a
+The `sync` preset starts with no source and no destination, and `infrahub` adds an empty local
+Infrahub as a destination. `preview` starts the local NetBox as a source and loads the smoke
+dataset into the local Infrahub. To continue to a first sync from a
 local NetBox into the stack's Infrahub, follow
 [Run from source](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-from-source)
 in the documentation. In short:
 
-- The worker reaches the stack's Infrahub at `http://infrahub-server:8000`. To use an Infrahub
-  started from Infrahub's own Compose file instead, run
+- With a local Infrahub, the worker reaches it at `http://infrahub-server:8000`. With the `sync`
+  preset, it reaches an Infrahub on your machine at `http://host.docker.internal:8000`. To use an
+  Infrahub started from Infrahub's own Compose file instead, run
   `export INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK=infrahub_default` before `uv run invoke dev.start`.
   The later `dev.start` and `dev.restart` commands then keep the worker on that network.
 - `uv run invoke netbox.seed --dataset demo` starts a local NetBox with the official demo
   data. The worker joins NetBox's network and reaches it at `http://netbox:8080`.
-- Set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` (and, with your own Infrahub,
-  `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`), then run `uv run invoke dev.start` again, so
-  the worker has the tokens.
+- `uv run invoke dev.start` stores the two credentials that the shipped examples name,
+  `infrahub-token` and `netbox-token`, in the stack's Sync API. By default it uses the admin
+  token of the stack's own Infrahub and, while the local NetBox runs, its development token. To
+  store another value, for example the token of your own Infrahub, export
+  `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN` or `INFRAHUB_SYNC_DEV_NETBOX_TOKEN`, then run
+  `uv run invoke dev.start` again.
 
 When you are finished, run `uv run invoke dev.destroy` to stop the stack and delete its data.
 
@@ -132,6 +142,11 @@ service:
 export INFRAHUB_SYNC_API_URL=https://sync.example.com
 export INFRAHUB_SYNC_API_TOKEN=<token>
 
+# An administrator creates the two stored credentials that the package names.
+# Each command asks for the token and does not echo it.
+uv run infrahub-sync credentials create netbox-token
+uv run infrahub-sync credentials create infrahub-token
+
 uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
   --reason "register NetBox import"
 uv run infrahub-sync plan --config-id <config-id> --version <version> \
@@ -142,8 +157,9 @@ uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \
 ```
 
 The worker uses the source and destination URLs in the registered package. Environment
-variables such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not change them; only the tokens
-come from the worker's environment. Read the
+variables such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not change them. The tokens are stored
+credentials: the Sync API stores each value encrypted, and the worker gets the values of a run
+from the Sync API, not from its environment. Read the
 [example prerequisites](examples/netbox_to_infrahub/README.md) before you register it.
 
 For a complete walkthrough, see the
@@ -187,6 +203,7 @@ Apply never executes those deletes.
 | Peering Manager | Peering Manager → Infrahub |
 | Prometheus | Prometheus → Infrahub |
 | Slurp'it | Slurp'it → Infrahub |
+| Webex | Webex → Infrahub |
 | Generic REST API | external system → Infrahub |
 
 The IP Fabric and Slurp'it adapters need a worker image that installs their SDKs. The

@@ -52,6 +52,17 @@ from infrahub_sync.plan.errors import (
 )
 from infrahub_sync.potenda import SideLoadError
 from infrahub_sync.runtime_schema.errors import DestinationSchemaUnavailableError
+from infrahub_sync.service.branch_review import (
+    BranchCreateFailedError,
+    BranchDeleteFailedError,
+    BranchListFailedError,
+    DestinationDefaultBranchNotMainError,
+    ProposedChangeCloseFailedError,
+    ProposedChangeOpenFailedError,
+    ProposedChangeReadFailedError,
+)
+from infrahub_sync.service.credential_client import CredentialUnavailableError
+from infrahub_sync.service.settings import WORKER_API_URL_ENV, WORKER_TOKEN_ENV, CredentialSettingsError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -73,6 +84,7 @@ FAILURE_RECORD_KEYS = (
     "infrahub_message",
     "record",
     "field",
+    "active_run_id",
 )
 
 
@@ -249,6 +261,9 @@ class _Classified:
 _TYPED_ERRORS: tuple[tuple[tuple[type[BaseException], ...], FailureType], ...] = (
     (LINEAGE_REFUSALS, "lineage_refused"),
     ((DestinationSchemaUnavailableError,), "destination_schema_unavailable"),
+    # A stage that could not get the stored credential values of its run (spec 027, FR-019). A
+    # worker whose variables for the Sync API are unset or not accepted cannot ask at all.
+    ((CredentialUnavailableError, CredentialSettingsError), "credential_unavailable"),
     ((CredentialConfigurationError,), "credential_missing"),
     ((LeftOutConfirmationRequiredError, PlanFormatApplyUnsupportedError), "apply_refused"),
     ((PlanVerificationError, PlanSchemaChangedError), "verification_failed"),
@@ -256,16 +271,61 @@ _TYPED_ERRORS: tuple[tuple[tuple[type[BaseException], ...], FailureType], ...] =
     ((PeerAmbiguousError,), "destination_peer_ambiguous"),
     ((RecordLoadError,), "record_load_failed"),
     ((TransformError,), "transform_failed"),
+    # The branch review operations of a scheduled run (spec 021, research R15). The close comes
+    # before the read, because a close that fails at its read is raised from the read's error.
+    ((DestinationDefaultBranchNotMainError,), "destination_default_branch_not_main"),
+    ((BranchListFailedError,), "branch_list_failed"),
+    ((ProposedChangeCloseFailedError,), "proposed_change_close_failed"),
+    ((ProposedChangeOpenFailedError,), "proposed_change_open_failed"),
+    ((ProposedChangeReadFailedError,), "proposed_change_read_failed"),
+    ((BranchCreateFailedError,), "branch_create_failed"),
+    ((BranchDeleteFailedError,), "branch_delete_failed"),
 )
+
+# The failure types whose typed error wraps any failure of a request: when the cause is a
+# transport, token or permission failure, that classification wins, so a destination that cannot
+# be reached is recorded as such and not as a failed operation. The record is still named.
+_TRANSPORT_FIRST_TYPES: frozenset[str] = frozenset(
+    {
+        "record_load_failed",
+        "proposed_change_close_failed",
+        "proposed_change_open_failed",
+        "proposed_change_read_failed",
+        "branch_create_failed",
+        "branch_delete_failed",
+    }
+)
+
+
+# The guard's contention error, matched by its module and class name: `apply_guard` imports the
+# PostgreSQL driver, which an install without the service runtimes does not have.
+_GUARD_CONTENTION = ("infrahub_sync.service.apply_guard", "ApplyGuardContentionError")
+
+
+def _is_guard_contention(link: BaseException) -> bool:
+    """Whether `link` is the write guard's refusal after its wait for another writer's hold ended."""
+    return (type(link).__module__, type(link).__name__) == _GUARD_CONTENTION
+
+
+def failure_class(exc: BaseException) -> FailureType:
+    """The failure type of an error, from the fixed table, else `internal_error`.
+
+    A scheduled run with branch review records it as `branch_review.failure` and as
+    `details.cause` of its events (spec 021 data-model.md): a name from a fixed list, never text.
+    """
+    return _classify(exc).failure_type
 
 
 def _classify(exc: BaseException) -> _Classified:
     """Map the cause chain to one failure type through the fixed table, else `internal_error`."""
     explicit = tuple(cause_chain(exc, follow_context=False))
+    contended = next((link for link in explicit if _is_guard_contention(link)), None)
+    if contended is not None:
+        return _Classified("write_guard_contended", contended)
     for errors, failure_type in _TYPED_ERRORS:
         link = next((link for link in explicit if isinstance(link, errors)), None)
         if link is not None:
-            if failure_type == "record_load_failed":
+            if failure_type in _TRANSPORT_FIRST_TYPES:
                 # The read loop raises every unrecorded failure of a record as `RecordLoadError`,
                 # including a source that stopped answering while the record was converted (a
                 # peer kind read, for example). That failure names the system, not the record
@@ -294,6 +354,13 @@ _DESTINATION_TYPES: frozenset[str] = frozenset(
         "destination_peer_ambiguous",
         "destination_schema_unavailable",
         "lineage_refused",
+        "destination_default_branch_not_main",
+        "branch_list_failed",
+        "branch_create_failed",
+        "branch_delete_failed",
+        "proposed_change_open_failed",
+        "proposed_change_read_failed",
+        "proposed_change_close_failed",
     }
 )
 
@@ -342,6 +409,37 @@ def _rejected_write_template(fields: dict[str, Any], _where: str, _adapter: str)
     return cause, None
 
 
+def _guard_contended_template(fields: dict[str, Any], _where: str, _adapter: str) -> _Template:
+    """A write that did not start: the run that holds the guard, or that it is not known (ADR 0010).
+
+    A named run whose write had ended before this write started waiting (`active_run_ended`)
+    still holds the guard through its worker's session, so the next action names stopping that
+    worker, never waiting for the run. Each cause says who held the guard when this write's wait
+    ended, not for the whole wait: the holder can change during the wait.
+    """
+    active = fields["active_run_id"]
+    if active and fields.get("active_run_ended"):
+        return (
+            f"Sync run {active} held this configuration's write guard when this write's wait for the guard "
+            "ended, although its write had ended before that wait began, so this write did not start and "
+            "changed nothing",
+            f"The guard is released only when the worker of run {active} stops. Ask the administrator of the "
+            f"Sync service to stop or restart that worker, {_PLAN_AGAIN}",
+        )
+    if active:
+        return (
+            f"Sync run {active} was writing to this configuration and held its write guard when this write's "
+            "wait for the guard ended, so this write did not start and changed nothing",
+            f"Check that run with `infrahub-sync runs show {active}` and wait for it to finish, {_PLAN_AGAIN}",
+        )
+    return (
+        "Another writer held this configuration's write guard when this write's wait for the guard ended, "
+        "so this write did not start and changed nothing. Which Sync run holds the guard is not known",
+        f"List the runs of this configuration with `infrahub-sync runs list` and wait for its write to finish, "
+        f"{_PLAN_AGAIN}",
+    )
+
+
 def _record_load_template(fields: dict[str, Any], _where: str, _adapter: str) -> _Template:
     record = fields["record"] or {}
     cause = f"A {record.get('kind')} record (source ID {record.get('source_id')}) could not be loaded"
@@ -377,12 +475,16 @@ _RESUMABLE_TYPES = frozenset(
         "permission_missing",
         "tls_certificate_rejected",
         "credential_missing",
+        "credential_unavailable",
+        "write_guard_contended",
     }
 )
 # The failure types whose fix is in a source record or a transform: a new plan is needed even on
 # a run that keeps its saved plan, because the saved plan holds the values that failed.
 _SOURCE_FIX_TYPES = frozenset({"record_load_failed", "transform_failed"})
 _REACH = "Check that {adapter} answers at the address the configuration names, " + _PLAN_AGAIN
+# The closing step of a scheduled run's failure: the schedule starts again at its next start time.
+_NEXT_START = "then wait for the next start of the schedule."
 
 # One fixed template per failure type: the cause and the next action, filled with the recorded
 # fields, the system ("The source (netbox)") and the adapter name. `internal_error` has none: an
@@ -390,6 +492,7 @@ _REACH = "Check that {adapter} answers at the address the configuration names, "
 # next action (`PlanArtifactError`) leaves the next action to `operator_cause`.
 _TEMPLATES: dict[str, Callable[[dict[str, Any], str, str], _Template]] = {
     "destination_rejected_write": _rejected_write_template,
+    "write_guard_contended": _guard_contended_template,
     "system_unreachable": lambda _f, where, adapter: (
         f"{where} could not be reached",
         _REACH.format(adapter=adapter),
@@ -425,15 +528,119 @@ _TEMPLATES: dict[str, Callable[[dict[str, Any], str, str], _Template]] = {
         f"More than one {fields['node_kind']} node at the destination matches a peer that the operation refers to",
         None,
     ),
+    "destination_default_branch_not_main": lambda _f, _where, _adapter: (
+        "The default branch of the destination is not main, and Infrahub accepts a proposed change only to main",
+        "Change the schedule's write target to default-branch, or use a destination whose default branch is main.",
+    ),
+    "branch_list_failed": lambda _f, _where, _adapter: (
+        "Infrahub answered the branch list of the destination in a form that cannot be read",
+        f"Check the Infrahub version and the account's permissions, {_NEXT_START}",
+    ),
+    "branch_create_failed": lambda _f, _where, _adapter: (
+        "Infrahub did not create the branch of the scheduled run",
+        f"Check the Infrahub task log and the account's permissions, {_NEXT_START}",
+    ),
+    "branch_delete_failed": lambda _f, _where, _adapter: (
+        "Infrahub did not delete a branch of the schedule",
+        "Check the account's permission delete_branch; the next successful run of the schedule deletes it again.",
+    ),
+    "proposed_change_open_failed": lambda _f, _where, _adapter: (
+        "Infrahub did not open the proposed change of the scheduled run; the branch holds the written records",
+        "Open a proposed change from the run's branch in Infrahub, or wait for the next run of the schedule.",
+    ),
+    "proposed_change_read_failed": lambda _f, _where, _adapter: (
+        "The state of a proposed change of the schedule could not be read from Infrahub",
+        f"Check that the proposed change still exists and that the account can read it, {_NEXT_START}",
+    ),
+    "proposed_change_close_failed": lambda _f, _where, _adapter: (
+        "Infrahub did not close a proposed change of the schedule",
+        "Check the account's permissions on proposed changes; the next successful run of the schedule closes it again.",
+    ),
 }
 
 
-def _templates(fields: dict[str, Any], *, resumable: bool = False) -> _Template:
+_ENCRYPTION_KEY_ENV = "INFRAHUB_SYNC_ENCRYPTION_KEY"
+_WORKER_VARIABLES_CAUSE = (
+    f"The worker cannot ask the Sync API for the stored credentials of the run: its variables "
+    f"{WORKER_API_URL_ENV} and {WORKER_TOKEN_ENV} are not set or not accepted"
+)
+_WORKER_VARIABLES_NEXT_ACTION = (
+    f"Set {WORKER_API_URL_ENV} to the address of the Sync API and {WORKER_TOKEN_ENV} to the worker token "
+    f"on every worker, {_PLAN_AGAIN}"
+)
+
+
+def _credential_unavailable_template(link: BaseException | None) -> _Template:
+    """The cause and the next action of a stage that could not get its stored credential values.
+
+    One text for each reason of `CredentialUnavailableError` (spec 027, FR-019). The block,
+    the credential name, the field names and the refusal code come from the typed attributes
+    of the error, which keeps them only when they have the form of one; no text of the error
+    or of an answer is used. A missing credential names the command that creates it and says
+    that an administrator runs it (critique P5).
+    """
+    if not isinstance(link, CredentialUnavailableError):
+        # `CredentialSettingsError`: the worker's own variables, checked before any request.
+        return _WORKER_VARIABLES_CAUSE, _WORKER_VARIABLES_NEXT_ACTION
+    name = link.name or "that the configuration names"
+    block = f"the {link.block} block" if link.block else "the configuration"
+    create = f"`infrahub-sync credentials create {link.name}`" if link.name else "`infrahub-sync credentials create`"
+    change = f"`infrahub-sync credentials set {link.name}`" if link.name else "`infrahub-sync credentials set`"
+    fields = f"the fields {', '.join(link.fields)}" if link.fields else "a field"
+    code = f" ({link.code})" if link.code else ""
+    templates: dict[str, _Template] = {
+        "api-unreachable": (
+            "The worker could not reach the Sync API to get the stored credentials of the run",
+            f"Check that the Sync API answers at the address in {WORKER_API_URL_ENV} of the worker, {_PLAN_AGAIN}",
+        ),
+        "worker-token-refused": (
+            "The Sync API refused the worker token, so the worker did not get the stored credentials of the run",
+            f"Set {WORKER_TOKEN_ENV} to the same value on the Sync API and on every worker, {_PLAN_AGAIN}",
+        ),
+        "credential-missing": (
+            f"The stored credential {name} that {block} names does not exist",
+            f"Ask an administrator to create it with {create}, {_PLAN_AGAIN}",
+        ),
+        "credential-field-missing": (
+            f"The stored credential {name} does not hold {fields} that {block} needs",
+            f"Ask an administrator to set its value with {change}, {_PLAN_AGAIN}",
+        ),
+        "credential-undecryptable": (
+            f"The Sync API cannot decrypt the stored credential {name} with its current key",
+            f"Check {_ENCRYPTION_KEY_ENV} of the Sync API, or ask an administrator to set the value again "
+            f"with {change}, {_PLAN_AGAIN}",
+        ),
+        # No run of this version can start again, so the next action does not end with a new
+        # plan of the same version, and a resumable run is not told to resume (spec 027, FR-021).
+        "credential-format-removed": (
+            "The configuration version of the run uses the removed `credentials` block or `$credential` "
+            "references, so the Sync API released no stored credential",
+            "Register a new version of the configuration whose adapter blocks name stored credentials with "
+            "`credential: <name>`, then plan with the new version.",
+        ),
+    }
+    # `release-refused`, and any reason a later client adds: the refusal names its own code.
+    refused: _Template = (
+        f"The Sync API refused to release the stored credentials of the run{code}",
+        f"Check the log of the Sync API for the refusal, {_PLAN_AGAIN}",
+    )
+    return templates.get(link.reason, refused)
+
+
+def _templates(fields: dict[str, Any], *, resumable: bool = False, link: BaseException | None = None) -> _Template:
     """The cause and the next action of one failure type, from fixed templates over recorded fields.
 
     On a resumable run, the next action of a system or credential failure ends with `verify`
-    and `runs resume` instead of a new plan.
+    and `runs resume` instead of a new plan. `link` is the error that decided the failure
+    type: `credential_unavailable` writes its texts from the reason that error holds.
     """
+    if fields["failure_type"] == "credential_unavailable":
+        cause, next_action = _credential_unavailable_template(link)
+        # Only a next action that ends with a new plan becomes a resume: a version in the
+        # removed credential format needs a new version, which a resume cannot use.
+        if resumable and next_action is not None and next_action.endswith(_PLAN_AGAIN):
+            next_action = next_action.removesuffix(_PLAN_AGAIN) + _VERIFY_AND_RESUME
+        return cause, next_action
     template = _TEMPLATES.get(fields["failure_type"])
     if template is None:
         return None, None
@@ -472,11 +679,20 @@ def failure_record(
     secrets: Sequence[str] = (),
     destination_adapter: str = APPLY_DESTINATION_ADAPTER,
     resumable: bool = False,
+    active_run_id: str | None = None,
+    active_run_ended: bool = False,
 ) -> dict[str, Any]:
     """The spec 007 fields of a `<stage>_failure` record, and a template cause and next action.
 
     `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
     (spec 016): the next action then names `verify` and `runs resume`, not a new plan.
+
+    `active_run_id` is the Sync run that held the configuration's write guard when the wait
+    ended: the caller takes the candidate from the label of the session that held the lock and
+    confirms it in the run records. It is recorded only for `write_guard_contended`.
+    `active_run_ended` is true when that run's write had ended before this write started
+    waiting, although its session still held the guard; it selects the template variant and is
+    not recorded.
 
     Returns every key of `FAILURE_RECORD_KEYS`, `None` where the failure does not name it, and
     `cause` and `next_action` when a template exists for the failure type. The caller keeps the
@@ -513,8 +729,9 @@ def failure_record(
         else None,
         "record": _record_reference(link),
         "field": field_name,
+        "active_run_id": _name(active_run_id) if failure_type == "write_guard_contended" else None,
     }
-    cause, next_action = _templates(fields, resumable=resumable)
+    cause, next_action = _templates({**fields, "active_run_ended": active_run_ended}, resumable=resumable, link=link)
     recorded = dict(fields)
     if cause:
         recorded["cause"] = _recordable(cause, secrets)

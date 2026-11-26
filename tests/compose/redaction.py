@@ -93,7 +93,7 @@ JSON_STRING = r"\"(?:\\.|[^\"\\])*\""
 # a redacted JSON document is still JSON.
 FORMS: tuple[tuple[re.Pattern[str], str], ...] = (
     # `"NAME": "value"` -- a JSON member, including one whose value is itself a
-    # JSON document, as the API's principals are.
+    # JSON document.
     (re.compile(rf"(?i)(?P<lead>\"{SECRET_NAME}\"\s*:\s*){JSON_STRING}"), rf'\g<lead>"{REDACTED}"'),
     # `"NAME=value"` -- one entry of a `docker inspect` environment array, whose
     # value is a whole JSON string however much punctuation it contains.

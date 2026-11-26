@@ -6,9 +6,10 @@
 #
 #   1. Fetch this file for the release you want:
 #        curl -fsSLO https://raw.githubusercontent.com/opsmill/infrahub-sync/<version>/docker-compose.yml
-#   2. Write a `.env` beside it that sets INFRAHUB_SYNC_SERVICE_BEARER_TOKENS, the
-#      one required credential. Compose stops before any container starts when it
-#      is missing.
+#   2. Write a `.env` beside it that sets the three required credentials:
+#      INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD, INFRAHUB_SYNC_ENCRYPTION_KEY and
+#      INFRAHUB_SYNC_WORKER_TOKEN. Compose stops before any container starts,
+#      naming each one that is missing.
 #   3. docker compose up -d
 #
 # Every Sync service runs `${INFRAHUB_SYNC_DOCKER_IMAGE}:${VERSION}`. `VERSION`
@@ -26,12 +27,14 @@
 #     other writable path is tmpfs and disappears with its container.
 #
 # The credentials that only the services of this file use between themselves
-# have fixed defaults, so a test deployment needs only an API token: the
-# PostgreSQL passwords, the object store keys and the Prefect API credential.
+# have fixed defaults, so a test deployment needs only the three credentials
+# above: the PostgreSQL passwords, the object store keys and the Prefect API
+# credential.
 # None of these services publishes a port. The defaults are public, because they
 # are written in this file, so set your own values in `.env` for any deployment
-# that holds real data. The API bearer tokens guard the published port and have
-# no default.
+# that holds real data. The `admin` password and the worker token are accepted
+# on the published port, and the encryption key protects stored credentials, so
+# none of the three has a default.
 #
 # The connection strings are built from the role, database and password
 # settings, and stay overridable as a whole; a password used in them must be
@@ -177,7 +180,7 @@ services:
   # deployment's own network. The Prefect UI is off; the documented override
   # snippet turns it on and publishes it on loopback.
   prefect-server:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     restart: unless-stopped
     command:
       - "uvicorn"
@@ -234,7 +237,7 @@ services:
   # registry until an operator registers a package through the API, so this job
   # takes no configuration input and reaches no destination.
   sync-bootstrap:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     restart: "no"
     command: ["python", "-m", "infrahub_sync.service.bootstrap"]
     depends_on:
@@ -253,7 +256,7 @@ services:
     tmpfs: *sync-scratch
 
   sync-api:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     restart: unless-stopped
     depends_on:
       sync-bootstrap:
@@ -263,24 +266,43 @@ services:
       # Loopback belongs to the host publication below. A container listening on
       # loopback alone would be unreachable from its own published port.
       INFRAHUB_SYNC_SERVICE_HOST: "0.0.0.0"
-      # A JSON object of API principals, for example
-      # {"operator": {"token": "<random>", "administrator": true}}.
-      INFRAHUB_SYNC_SERVICE_BEARER_TOKENS: >-
-        ${INFRAHUB_SYNC_SERVICE_BEARER_TOKENS:?INFRAHUB_SYNC_SERVICE_BEARER_TOKENS is required}
+      # The password of the `admin` account, at least 12 characters. The API applies
+      # it at each start: change it here and recreate the container to change it.
+      INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD: >-
+        ${INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD:?INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required}
+      # Optional: one API token of the `admin` account, at least 16 printable ASCII
+      # characters with no space at either end, not starting with `ifs_pat_` or
+      # `ifs_ses_`. Empty or unset: `admin` has no token.
+      INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN: "${INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN:-}"
+      # Optional: the seconds without activity after which a session ends, at least
+      # 60. Empty or unset: 28800.
+      INFRAHUB_SYNC_SESSION_IDLE_SECONDS: "${INFRAHUB_SYNC_SESSION_IDLE_SECONDS:-}"
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
       # true: apply refuses a plan without a matching approval, and sync is refused.
       INFRAHUB_SYNC_REQUIRE_APPROVAL: "${INFRAHUB_SYNC_REQUIRE_APPROVAL-false}"
+      # true: after the worker of a write disappears, the Sync API runs verify and resumes the
+      # run by itself. Read by sync-api only.
+      INFRAHUB_SYNC_AUTOMATIC_RESUME: "${INFRAHUB_SYNC_AUTOMATIC_RESUME-false}"
       PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
-      # Optional, and empty when unset: a deployment starts before any package is
-      # registered, so there is no destination to hold a credential for yet. A
-      # run that selects an absent value fails that run, not this start.
-      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
+      # The key that encrypts stored credentials: 32 bytes, base64-encoded. Only the API
+      # is given it. Generate one with
+      #   python -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"
+      # Changing it is not supported, and losing it means entering every credential again.
+      INFRAHUB_SYNC_ENCRYPTION_KEY: "${INFRAHUB_SYNC_ENCRYPTION_KEY:?INFRAHUB_SYNC_ENCRYPTION_KEY is required}"
+      # The token of the `worker` account, which reads the values of stored credentials for
+      # a run. The same rules as INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN, and another value. The
+      # API applies it at each start; the worker below sends the same value.
+      INFRAHUB_SYNC_WORKER_TOKEN: "${INFRAHUB_SYNC_WORKER_TOKEN:?INFRAHUB_SYNC_WORKER_TOKEN is required}"
       # Optional: the Prefect UI address that run responses and `runs show` link
       # each flow run to. The UI is off unless the operator applies the override
       # in "Turn the Prefect UI on" (docs/docs/compose-deployment.mdx); then use
       # http://127.0.0.1:${INFRAHUB_SYNC_PREFECT_PORT:-4200}. An empty value turns
       # the link off.
       INFRAHUB_SYNC_PREFECT_UI_URL: "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"
+      # Each health check's time limit, in seconds (1 to 60), and the live workers below which
+      # GET /api/health answers 503. The healthcheck below stays on /api/version.
+      INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT: "${INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT:-3}"
+      INFRAHUB_SYNC_HEALTH_MIN_WORKERS: "${INFRAHUB_SYNC_HEALTH_MIN_WORKERS:-1}"
     read_only: true
     volumes: *sync-ca
     tmpfs: *sync-scratch
@@ -291,14 +313,14 @@ services:
         - "CMD"
         - "python"
         - "-c"
-        - "import httpx; httpx.get('http://127.0.0.1:8000/version', timeout=5).raise_for_status()"
+        - "import httpx; httpx.get('http://127.0.0.1:8000/api/version', timeout=5).raise_for_status()"
       interval: 5s
       timeout: 10s
       retries: 30
       start_period: 20s
 
   sync-worker:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     restart: unless-stopped
     # A registered run reads its declared configuration from PostgreSQL and
     # resolves both adapters from installed code, so this container is given no
@@ -316,55 +338,48 @@ services:
     environment:
       <<: *sync-storage
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
+      # The same value as on sync-api: before a scheduled run, the worker refuses a run that
+      # writes to the default branch while approval is required, and stops its schedule.
+      INFRAHUB_SYNC_REQUIRE_APPROVAL: "${INFRAHUB_SYNC_REQUIRE_APPROVAL-false}"
       PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
       # The API ages a worker out of the live set after three missed heartbeats
       # or thirty seconds, whichever is longer. Ten seconds puts a stopped or
       # paused worker at that thirty-second floor instead of Prefect's ninety.
       PREFECT_WORKER_HEARTBEAT_SECONDS: "${PREFECT_WORKER_HEARTBEAT_SECONDS:-10}"
-      # Optional for the same reason as on the API above.
-      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
-      # The source credentials of every bundled adapter, and only the worker is given
-      # them: a run is what consumes one, and the worker is what runs one. A package for
-      # this deployment references these names; the operator documentation lists them
-      # by adapter. Optional rather than required, because a deployment that syncs
-      # none of these sources must still start. When a registered package does select
-      # one, the resolver refuses an absent or empty value by name, so an unset
-      # credential fails that run rather than this container.
-      # aci
-      INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME:-}"
-      INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD:-}"
-      # genericrestapi (and the Device42, LibreNMS, Observium and PeeringDB pages)
-      INFRAHUB_SYNC_CREDENTIAL_REST_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_REST_API_TOKEN:-}"
-      INFRAHUB_SYNC_CREDENTIAL_REST_API_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_REST_API_USERNAME:-}"
-      INFRAHUB_SYNC_CREDENTIAL_REST_API_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_REST_API_PASSWORD:-}"
-      INFRAHUB_SYNC_CREDENTIAL_DEVICE42_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_DEVICE42_USERNAME:-}"
-      INFRAHUB_SYNC_CREDENTIAL_DEVICE42_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_DEVICE42_PASSWORD:-}"
-      INFRAHUB_SYNC_CREDENTIAL_LIBRENMS_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_LIBRENMS_TOKEN:-}"
-      INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_USERNAME:-}"
-      INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_PASSWORD:-}"
-      INFRAHUB_SYNC_CREDENTIAL_PEERINGDB_API_KEY: "${INFRAHUB_SYNC_CREDENTIAL_PEERINGDB_API_KEY:-}"
-      # infrahub as a source
-      INFRAHUB_SYNC_CREDENTIAL_SOURCE_INFRAHUB_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_SOURCE_INFRAHUB_TOKEN:-}"
-      # ipfabricsync
-      INFRAHUB_SYNC_CREDENTIAL_IPF_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_IPF_TOKEN:-}"
-      # nautobot
-      INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
-      # netbox
-      INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
-      # peeringmanager
-      INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_TOKEN:-}"
-      INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_USERNAME:-}"
-      INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_PASSWORD:-}"
-      # prometheus
-      INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN:-}"
-      INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME:-}"
-      INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD:-}"
-      # slurpitsync
-      INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY:-}"
-      INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN:-}"
+      # The worker holds no source or destination credential. For each run it reads the
+      # values of the stored credentials that the run names from the Sync API, at this
+      # address, with the token of the `worker` account: the same value as on sync-api.
+      INFRAHUB_SYNC_API_URL: "http://sync-api:8000"
+      INFRAHUB_SYNC_WORKER_TOKEN: "${INFRAHUB_SYNC_WORKER_TOKEN:?INFRAHUB_SYNC_WORKER_TOKEN is required}"
     read_only: true
     volumes: *sync-ca
     tmpfs: *sync-scratch
+    # Looks only at this worker's own process: its event loop writes the alive file on a
+    # timer that calls no other service, so an outage of PostgreSQL or Prefect leaves this
+    # container healthy, and a hung process makes it unhealthy (spec 029, R-7). Docker runs no
+    # health check in a paused container, so a paused container shows as paused, not unhealthy.
+    # The command is WORKER_HEALTHCHECK_COMMAND in infrahub_sync/service/worker_alive.py.
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-I"
+        - "-c"
+        - |-
+          import os, sys, time
+          path = os.path.join(os.environ.get("TMPDIR") or "/tmp", "infrahub-sync-worker-alive")
+          try:
+              fields = open(path, encoding="ascii").read().split()
+          except (OSError, ValueError):
+              sys.exit("worker alive file is missing or unreadable")
+          if len(fields) != 2 or not all(field.isdigit() for field in fields):
+              sys.exit("worker alive file is malformed")
+          if time.time() - int(fields[0]) > max(3 * int(fields[1]), 30):
+              sys.exit("worker alive file is older than its limit")
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   # The operator's client, in the same image, behind a profile so no ordinary
   # start creates it. Call it as `docker compose run --rm --no-deps -T cli ...`:
@@ -373,16 +388,20 @@ services:
   # destination credential -- and no Docker socket, so no command run through it
   # can change the deployment it belongs to.
   #
-  # The image's own non-root user runs it; nothing here overrides that.
+  # The image's own non-root user runs it; nothing here overrides that. Its
+  # entrypoint replaces the image's tini, so `init` puts Docker's own init
+  # process in front of the command; that works with images built before tini.
   cli:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     profiles: ["cli"]
     restart: "no"
     entrypoint: ["infrahub-sync"]
+    init: true
     environment:
-      # The API on the deployment's own network, and the token of a principal in
-      # INFRAHUB_SYNC_SERVICE_BEARER_TOKENS. Empty when unset, so a call against
-      # an authenticated deployment refuses at the API rather than failing here.
+      # The API on the deployment's own network, and an API token of an account: the
+      # value of INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN, or a token that an account
+      # created. Empty when unset, so a call against an authenticated deployment
+      # refuses at the API rather than failing here.
       INFRAHUB_SYNC_API_URL: "http://sync-api:8000"
       INFRAHUB_SYNC_API_TOKEN: "${INFRAHUB_SYNC_API_TOKEN:-}"
     read_only: true

@@ -14,7 +14,6 @@ the shared branch would take concurrent writes.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -81,8 +80,6 @@ def smoke_settings() -> dict[str, Any]:
         settings = dev.dev_settings()
     except dev.DevStackError as exc:
         pytest.skip(f"development stack settings unavailable ({exc}); start with `invoke dev.start`")
-    principals = json.loads(settings.bearer_tokens)
-    first_actor = min(principals)
     return {
         "work_pool": settings.work_pool,
         "urls": {
@@ -92,8 +89,9 @@ def smoke_settings() -> dict[str, Any]:
             "sync_api": settings.sync_api_url,
         },
         "infrahub_token": settings.infrahub_admin_token,
-        "bearer_token": principals[first_actor]["token"],
-        "actor": first_actor,
+        "bearer_token": settings.admin_token,
+        # The API token of the development stack belongs to the `admin` account.
+        "actor": "admin",
         "examples_dir": str(REPO_ROOT / "examples"),
     }
 
@@ -109,7 +107,7 @@ def smoke_env(smoke_settings: dict[str, Any]) -> dict[str, Any]:
     probes = {
         "Infrahub": f"{infrahub_host_url(smoke_settings)}/api/config",
         "Prefect": f"{smoke_settings['urls']['prefect']}/api/health",
-        "Sync API": f"{smoke_settings['urls']['sync_api']}/openapi.json",
+        "Sync API": f"{smoke_settings['urls']['sync_api']}/api/openapi.json",
     }
     for description, url in probes.items():
         try:

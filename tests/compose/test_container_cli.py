@@ -38,12 +38,14 @@ IMAGE_UID = 10001
 # ---------------------------------------------------------------------------
 
 
-# The value the CLI container is meant to receive, and the two source tokens it
-# must not. Distinct per name, so a private comparison can say which one crossed.
+# The value the CLI container is meant to receive, and the two settings of stored
+# credentials it must not: the token of the `worker` account, which reads every credential
+# value a run names, and the key that encrypts them. Distinct per name, so a private
+# comparison can say which one crossed.
 CLIENT_CREDENTIAL = "cli-container-client-token-8ad3f1"
-SOURCE_TOKENS = {
-    "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": "cli-container-netbox-token-2b71ce",
-    "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN": "cli-container-nautobot-token-6f0a94",
+STORED_CREDENTIAL_SETTINGS = {
+    "INFRAHUB_SYNC_WORKER_TOKEN": "cli-container-worker-token-2b71ce",
+    "INFRAHUB_SYNC_ENCRYPTION_KEY": CONTRACT_ENVIRONMENT["INFRAHUB_SYNC_ENCRYPTION_KEY"],
 }
 
 
@@ -52,16 +54,16 @@ def _container_environment() -> dict[str, str]:
 
     The client token is non-empty on purpose: a probe run with an empty one
     proves the name is present and nothing about the value reaching the child.
-    The two source tokens are planted for the same reason — a comparison against
+    The worker token and the key are planted for the same reason — a comparison against
     values nobody supplied would pass on a file that leaked both.
     """
     image = image_settings()
     if not all(image.values()):
         pytest.skip(f"{IMAGE_REPOSITORY_ENV} and {IMAGE_VERSION_ENV} name no built image to run")
-    SECRETS.register(CLIENT_CREDENTIAL, *SOURCE_TOKENS.values())
+    SECRETS.register(CLIENT_CREDENTIAL, *STORED_CREDENTIAL_SETTINGS.values())
     return {
         **CONTRACT_ENVIRONMENT,
-        **SOURCE_TOKENS,
+        **STORED_CREDENTIAL_SETTINGS,
         **image,
         "INFRAHUB_SYNC_API_TOKEN": CLIENT_CREDENTIAL,
     }
@@ -148,8 +150,11 @@ def test_the_cli_container_holds_no_credential_beyond_its_own_api_token(docker_d
     # names what the file supplies rather than matching credential-shaped
     # words -- an over-broad match here would report the base image's own keys.
     supplied = {name for name in digests if name.startswith(("INFRAHUB_", "AWS_", "POSTGRES_", "PREFECT_API"))}
+    # The image itself sets INFRAHUB_SYNC_WEB_DIRECTORY (an `ENV` of the Dockerfile since the web
+    # interface is built into the image). It is a path, not a credential, and no operator supplies it.
+    image_defaults = {"INFRAHUB_SYNC_WEB_DIRECTORY"}
 
-    assert supplied == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN"}, sorted(supplied)
+    assert supplied == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN", *image_defaults}, sorted(supplied)
 
     # The intended value arrived, and no other operator input did. Both compared
     # as digests before the assertions, so what reaches a failure report is a
@@ -181,8 +186,8 @@ def _deployment_cli(deployment: Deployment, *arguments: str) -> Captured:
 def test_the_cli_service_reaches_the_deployment_with_the_token_its_env_file_carries(deployment: Deployment) -> None:
     """The replacement for `./infrahub-sync-compose cli configs list`.
 
-    The `.env` carries the principal's token twice: once in the API's
-    `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, once as the `INFRAHUB_SYNC_API_TOKEN`
+    The `.env` carries the API token of the `admin` account twice: once as the API's
+    `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, once as the `INFRAHUB_SYNC_API_TOKEN`
     the `cli` service presents. A call that authenticated proves both reached
     the right container.
     """

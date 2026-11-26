@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,10 +26,17 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
+from infrahub_sync.service.schedule_admission import admit_scheduled_start
+from infrahub_sync.service.schedule_cadence import next_start
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.stored_credentials import create_stored_credential_names
+from tests.service.accounts import seed_accounts
+from tests.service.schedule_fixtures import OWNER_TOKEN as SCHEDULE_OWNER_TOKEN
+from tests.service.schedule_fixtures import WORKER_ID as SCHEDULE_WORKER_ID
+from tests.service.schedule_fixtures import NoDeploymentSchedules, schedule_api
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -43,7 +49,7 @@ T0 = datetime(2026, 11, 6, 10, tzinfo=timezone.utc)
 _WORKER_ID = "0f4b8a8e-5d0c-4f0e-9b6a-3c1d2e4f5a6b"
 
 
-class _FakeOrchestration:
+class _FakeOrchestration(NoDeploymentSchedules):
     """Accept every submission and report each flow run as running."""
 
     def __init__(self) -> None:
@@ -80,27 +86,27 @@ def _package() -> ConfigurationPackage:
                 "name": "events-inventory",
                 "source": {
                     "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                    "credential": SOURCE_CREDENTIAL,
+                    "settings": {"url": "https://netbox.example"},
                 },
                 "destination": {
                     "name": "infrahub",
-                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
+                    "credential": DESTINATION_CREDENTIAL,
+                    "settings": {"url": "https://infrahub.example"},
                 },
                 "order": [],
                 "schema_mapping": [],
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
 
 @pytest.fixture
-def events_api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient, ProductProjection]:
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+def events_api(tmp_path: Path) -> tuple[TestClient, ProductProjection]:
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     service = RunService(projection, _FakeOrchestration(), secrets=resolver.secret_values)
     return TestClient(create_app(service, resolver)), projection
 
@@ -177,6 +183,7 @@ def test_the_event_list_returns_the_contract_shape(events_api: tuple[TestClient,
                     {"kind": "config_version", "id": "cfg-a@1"},
                     {"kind": "branch", "id": "main"},
                 ],
+                "details": None,
             }
         ],
         "limit": 50,
@@ -239,6 +246,79 @@ def test_events_at_the_same_time_are_ordered_by_event_id(events_api: tuple[TestC
 @pytest.mark.parametrize(
     "params",
     [
+        {},
+        {"run_id": "run-a"},
+        {"related": "account:bob"},
+        {"since": "2026-11-06T10:01:00Z", "until": "2026-11-06T10:04:00Z"},
+    ],
+)
+def test_order_desc_returns_the_reverse_of_order_asc_for_the_same_filters(
+    events_api: tuple[TestClient, ProductProjection], params: dict[str, object]
+) -> None:
+    """Spec 026 FR-032: ``desc`` lists the same events, newest first."""
+    client, projection = events_api
+    _seed(projection)
+
+    ascending = client.get("/events", headers=READ, params=params | {"order": "asc"})
+    descending = client.get("/events", headers=READ, params=params | {"order": "desc"})
+    default = client.get("/events", headers=READ, params=params)
+
+    assert descending.status_code == 200, descending.text
+    assert _ids(descending) == list(reversed(_ids(ascending)))
+    assert default.json() == ascending.json()
+
+
+def test_order_desc_orders_events_at_the_same_time_by_event_id_descending(
+    events_api: tuple[TestClient, ProductProjection],
+) -> None:
+    client, projection = events_api
+    for event_id in ("e-c", "e-a", "e-b"):
+        projection.record_audit(_event(event_id, 0))
+    projection.record_audit(_event("e-0", 1))
+
+    assert _ids(client.get("/events", headers=READ, params={"order": "desc"})) == ["e-0", "e-c", "e-b", "e-a"]
+
+
+def test_order_desc_with_a_schedule_and_until_pages_without_overlap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Spec 026 FR-034: the history of a schedule, newest first, read in pages up to a fixed time."""
+    api = schedule_api(monkeypatch, tmp_path)
+    schedule_id = api.create(write_target="default-branch")["schedule_id"]
+    for reason in ("first", "second", "third", "fourth"):
+        action = "pause" if reason in {"first", "third"} else "resume"
+        assert api.post(schedule_id, action, reason=reason).status_code == 200
+    read = {"Authorization": f"Bearer {SCHEDULE_OWNER_TOKEN}"}
+    newest = api.client.get("/events", headers=read, params={"related": f"schedule:{schedule_id}", "order": "desc"})
+    every = [item["event_id"] for item in newest.json()["items"]]
+    assert [item["reason"] for item in newest.json()["items"]] == ["fourth", "third", "second", "first", None]
+    # ``until`` is exclusive: the time of the first read keeps every event recorded after it out.
+    until = datetime.now(timezone.utc).isoformat()
+    assert api.post(schedule_id, "pause", reason="after the first read").status_code == 200
+
+    pages = [
+        api.client.get(
+            "/events",
+            headers=read,
+            params={
+                "related": f"schedule:{schedule_id}",
+                "order": "desc",
+                "until": until,
+                "limit": 2,
+                "offset": offset,
+            },
+        ).json()
+        for offset in (0, 2, 4)
+    ]
+
+    paged = [item["event_id"] for page in pages for item in page["items"]]
+    assert paged == every
+    assert [page["has_more"] for page in pages] == [True, True, False]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
         {"limit": 0},
         {"limit": 201},
         {"limit": "1.0"},
@@ -252,6 +332,8 @@ def test_events_at_the_same_time_are_ordered_by_event_id(events_api: tuple[TestC
         {"related": "account:"},
         {"since": "2026-11-06T10:00:00"},
         {"until": "yesterday"},
+        {"order": "up"},
+        {"order": "DESC"},
     ],
 )
 def test_an_invalid_value_is_refused_with_the_existing_error_body(
@@ -352,6 +434,7 @@ def _finish_open_execution(projection: ProductProjection, run_id: str, stage: st
 def test_a_planned_and_applied_run_reads_back_its_timeline(events_api: tuple[TestClient, ProductProjection]) -> None:
     """US1 independent test: plan accepted, planned, apply accepted, applied, each with its resources."""
     client, projection = events_api
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_package())
     created = client.post(
         "/runs",
@@ -400,3 +483,64 @@ def test_a_planned_and_applied_run_reads_back_its_timeline(events_api: tuple[Tes
             {"kind": "config", "id": version.config_id},
             {"kind": "config_version", "id": reference},
         ]
+
+
+def test_related_schedule_returns_the_schedule_events_and_the_events_of_its_runs_with_details(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Scenario 18: the history of a schedule, from its creation to the run of a start."""
+    api = schedule_api(monkeypatch, tmp_path)
+    schedule = api.create(write_target="default-branch")
+    schedule_id = schedule["schedule_id"]
+    other = api.client.post(
+        "/runs",
+        json={"operation": "plan", "config_id": api.config_id, "registry_version": 1, "reason": "by hand"},
+        headers={"Authorization": f"Bearer {SCHEDULE_OWNER_TOKEN}", "Idempotency-Key": "events-manual"},
+    )
+    assert other.status_code == 202, other.text
+    stored = api.stored(schedule_id)
+    late_start = next_start(stored.cron, stored.timezone, stored.updated_at)
+    on_time_start = next_start(stored.cron, stored.timezone, late_start)
+    late = admit_scheduled_start(
+        api.projection,
+        schedule_id=schedule_id,
+        scheduled_start_at=late_start,
+        flow_run_id=str(uuid5(NAMESPACE_URL, "late")),
+        worker_id=SCHEDULE_WORKER_ID,
+        now=late_start + timedelta(hours=1, seconds=1),
+        receipt_age_limit=timedelta(seconds=300),
+    )
+    _finish_open_execution(api.projection, other.json()["run"]["run_id"], "plan")
+    started = admit_scheduled_start(
+        api.projection,
+        schedule_id=schedule_id,
+        scheduled_start_at=on_time_start,
+        flow_run_id=str(uuid5(NAMESPACE_URL, "on-time")),
+        worker_id=SCHEDULE_WORKER_ID,
+        now=on_time_start + timedelta(seconds=5),
+        receipt_age_limit=timedelta(seconds=0),
+    )
+    assert late.run is None
+    assert started.run is not None
+
+    response = api.client.get(
+        "/events",
+        headers={"Authorization": f"Bearer {SCHEDULE_OWNER_TOKEN}"},
+        params={"related": f"schedule:{schedule_id}"},
+    )
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert [(item["event_type"], item["outcome"]) for item in items] == [
+        ("infrahub_sync.schedule.created", "accepted"),
+        ("infrahub_sync.schedule.start_missed", "missed-skipped"),
+        ("infrahub_sync.run.accepted", "accepted"),
+    ]
+    created, missed, accepted = items
+    assert created["primary_resource"] == {"kind": "schedule", "id": schedule_id}
+    assert missed["primary_resource"] == {"kind": "schedule", "id": schedule_id}
+    assert missed["details"]["start_at"] == late_start.isoformat().replace("+00:00", "Z")
+    assert accepted["primary_resource"] == {"kind": "run", "id": started.run.run_id}
+    assert {"kind": "schedule", "id": schedule_id} in accepted["related"]
+    assert accepted["details"] is None
+    assert all(item["primary_resource"]["id"] != other.json()["run"]["run_id"] for item in items)

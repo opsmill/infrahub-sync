@@ -20,7 +20,6 @@ Compose takes literally: a `$` in an exported password or token is not interpola
 from __future__ import annotations
 
 import importlib.metadata
-import json
 import os
 import re
 import shutil
@@ -50,14 +49,23 @@ SYNC_WORKER_SERVICE = "sync-worker"
 # The services whose logs a failed class reports.
 LOGGED_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker", "prefect-server")
 
-# The API principal of the test deployment. `INFRAHUB_SYNC_API_TOKEN` is what the root
-# file's `cli` service presents, so the two defaults name the same principal.
+# The API token of the `admin` account of the test deployment. `INFRAHUB_SYNC_API_TOKEN` is
+# what the root file's `cli` service presents, so the two defaults hold the same token.
 TEST_API_TOKEN = "infrahub-sync-test-token-0123456789"
+# The password of the `admin` account of a test deployment. Not a real credential.
+TEST_ADMIN_PASSWORD = "infrahub-sync-test-password-0123456789"
+
+# The token of the `worker` account of a test deployment, which `sync-api` and `sync-worker`
+# share. Another value than `TEST_API_TOKEN`, as the Sync API requires. Not a real credential.
+TEST_WORKER_TOKEN = "infrahub-sync-test-worker-token-0123456789"
+# The key of stored credentials of a test deployment: the base64 text of the 32 bytes
+# `infrahub-sync-test-encryption-ke`. Public, so never use it outside a test deployment.
+TEST_ENCRYPTION_KEY = "aW5mcmFodWItc3luYy10ZXN0LWVuY3J5cHRpb24ta2U="
 
 # The variable `InfrahubDockerCompose.create_env_file` reads the Infrahub administrator token
-# from, and the Sync variable that carries the same token to the worker.
+# from. No Sync service is given that token: a test stores it as a credential through the
+# Sync API (`infrahub_admin_token` returns the value).
 INFRAHUB_ADMIN_TOKEN_VARIABLE = "INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"
-INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
 
 # Test-only values for the variables the root file requires, and the ports and tokens a
 # test deployment needs. None of them is a real credential. The passwords are URL-safe
@@ -70,12 +78,14 @@ TEST_DEFAULTS: dict[str, str] = {
     "INFRAHUB_SYNC_PREFECT_AUTH_STRING": "test-prefect-auth-string",
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "test-access-key",
     "INFRAHUB_SYNC_S3_SECRET_KEY": "test-secret-key",
-    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": json.dumps(
-        {"test": {"token": TEST_API_TOKEN, "administrator": True}}, separators=(",", ":")
-    ),
+    # The `admin` account of the test deployment: its password, and `TEST_API_TOKEN` as its API token.
+    "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": TEST_ADMIN_PASSWORD,
+    "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": TEST_API_TOKEN,
     "INFRAHUB_SYNC_API_TOKEN": TEST_API_TOKEN,
-    # The Infrahub test deployment's administrator token, so a run can write to it.
-    INFRAHUB_CREDENTIAL_VARIABLE: PROJECT_ENV_VARIABLES[INFRAHUB_ADMIN_TOKEN_VARIABLE],
+    # Stored credentials: the key that `sync-api` encrypts them with, and the token of the
+    # `worker` account that `sync-worker` reads their values with.
+    "INFRAHUB_SYNC_ENCRYPTION_KEY": TEST_ENCRYPTION_KEY,
+    "INFRAHUB_SYNC_WORKER_TOKEN": TEST_WORKER_TOKEN,
     "INFRAHUB_SYNC_API_PORT": "0",
 }
 
@@ -87,6 +97,18 @@ def compose_variables(compose_file: Path = PACKAGED_COMPOSE_FILE) -> list[str]:
     """Return the names of the variables `compose_file` reads, in first-use order."""
     names = (match["name"] for match in _VARIABLE_REFERENCE.finditer(compose_file.read_text(encoding="utf-8")))
     return list(dict.fromkeys(names))
+
+
+def infrahub_admin_token(environ: Mapping[str, str] | None = None) -> str:
+    """Return the administrator token of the Infrahub test deployment.
+
+    It is the exported `INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN`, else the default of
+    `infrahub-testcontainers`. No Sync service is given it: a test that writes to Infrahub
+    stores it as a credential through the Sync API (`POST /api/credentials`) and names that
+    credential in its package.
+    """
+    environ = os.environ if environ is None else environ
+    return environ.get(INFRAHUB_ADMIN_TOKEN_VARIABLE) or PROJECT_ENV_VARIABLES[INFRAHUB_ADMIN_TOKEN_VARIABLE]
 
 
 def default_image() -> str:
@@ -133,12 +155,8 @@ def environment_values(
     """
     environ = os.environ if environ is None else environ
     repository, tag = split_image(image)
-    # The Infrahub project takes its administrator token from the same environment, so the
-    # worker's credential follows an exported token instead of keeping the package default.
-    infrahub_token = environ.get(INFRAHUB_ADMIN_TOKEN_VARIABLE) or TEST_DEFAULTS[INFRAHUB_CREDENTIAL_VARIABLE]
     defaults = {
         **TEST_DEFAULTS,
-        INFRAHUB_CREDENTIAL_VARIABLE: infrahub_token,
         IMAGE_REPOSITORY_VARIABLE: repository,
         IMAGE_TAG_VARIABLE: tag,
     }

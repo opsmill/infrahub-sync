@@ -104,12 +104,18 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - `infrahub-sync configs` — register and inspect configuration packages (safe).
 - `infrahub-sync runs list` — list runs, newest first, optionally for one configuration or version (safe).
 - `infrahub-sync runs show` / `runs plan` / `runs results` / `runs artifacts` — inspect one run, its saved plan, its results and its artifacts (safe).
-- `infrahub-sync whoami` — check which actor the API token belongs to and whether the Sync API requires an approved plan (`approval_required`) (safe).
+- `infrahub-sync whoami` — check which account the API token or the saved session belongs to, whether it is an administrator, and whether the Sync API requires an approved plan (`approval_required`) (safe).
+- `infrahub-sync login` / `logout` — sign in with an account name and a password read from a prompt or `--password-stdin`, and save the session for the Sync API address; sign out and remove the saved session. For every other command, `INFRAHUB_SYNC_API_TOKEN`, when set and not empty, takes precedence over the saved session (safe).
+- `infrahub-sync password` — change the password of your own account; your other sessions end and your API tokens stay.
+- `infrahub-sync tokens list` / `create` / `delete` — manage the API tokens of your own account; `create` prints the value once, and a deleted token is refused afterwards.
+- `infrahub-sync accounts` — manage local accounts (`list`, `create`, `set-password`, `unlock`, `disable`, `enable`, `set-level`, `delete`, `tokens`, `delete-token`); every command needs an administrator, and the `admin` account defined by the environment cannot be changed, except by `accounts unlock`. `accounts delete` cannot be reversed (human approval required).
+- `infrahub-sync credentials` — list and view stored credentials (`list`, `show`; safe), create or change one (`create`, `set`, `describe`), and delete one (`delete`); creating, changing and deleting need an administrator, the value is read from a prompt or from `--token-stdin` / `--password-stdin`, and no command prints a value. `credentials delete` is refused while the latest version of a configuration or a schedule that is not deleted names the credential, and it cannot be reversed (human approval required).
 - `infrahub-sync plan` — create a plan run and review its summary (Sync API required). `diff` is a hidden, deprecated alias.
 - `infrahub-sync verify` — run every pre-write check of `apply` against the destination without writing; needs to reach the destination and does not approve the plan (Sync API required).
 - `infrahub-sync approve` — record approval of a run's saved plan by checksum without writing, for a planned run or an interrupted run that can be resumed; required before `apply` or `runs resume` only when the Sync API sets `INFRAHUB_SYNC_REQUIRE_APPROVAL` (Sync API and human approval required).
 - `infrahub-sync sync` — perform synchronization; refused when the Sync API requires approval (Sync API and human approval required).
 - `infrahub-sync apply` — apply a reviewed plan by checksum (Sync API and human approval required).
+- `infrahub-sync runs resume` — apply the rest of an interrupted run's saved plan by checksum, after a `verify` that passed; when the Sync API sets `INFRAHUB_SYNC_AUTOMATIC_RESUME`, it runs that `verify` and resume by itself after a worker disappeared, and `runs show` reports each automatic resume (Sync API and human approval required).
 - `infrahub-sync runs cancel` — cancel a run's running stage, or withdraw a finished, unapplied plan; cancelling a write can leave an ambiguous outcome (human approval required).
 
 ## Configuration and Examples
@@ -119,7 +125,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - `order` overrides the sync sequence of object types; when omitted, infrahub-sync computes
   a write order from schema references instead.
 - Defaults often target `localhost`; adjust for real deployments.
-- Credentials must come from environment variables or a secret manager. Never commit, print, or log secrets. Keep example configs authentic but sanitized.
+- Credentials must come from environment variables, a secret manager, or the stored credentials of the Sync API. A configuration package names a stored credential in each adapter block with `credential: <name>` and never holds a value; the Sync API stores the value encrypted and releases it only to the `worker` account, for a run in progress. Never commit, print, or log secrets. Keep example configs authentic but sanitized.
 
 ## Code Standards
 
@@ -141,10 +147,11 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 ### Logging
 
 - Use `structlog` for structured logging (not `print`). Include context (request IDs, endpoints, object counts) but never secrets.
+- Create a module's logger with `structlog.get_logger(__name__)`, not `logging.getLogger`. `infrahub_sync/log.py` delivers every event through standard `logging`, so levels, handlers, the Prefect run log and `caplog` apply to it. In a test, read records through `caplog`; `structlog.testing.capture_logs` does not exercise that delivery.
 
 ### Sync frontend
 
-- Never name a user in the interface (`frontend/`): no "by <actor>", "registered by" or "started by". There is one user, defined by the API token in use, so naming it tells the reader nothing.
+- Name the account where it explains who acted: the signed-in account, the account that started a run, approved a plan or registered a version. Show the name the Sync API returns, including `Deleted account <short identifier>`; never show an account identifier.
 
 ## Testing
 
@@ -206,7 +213,7 @@ The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` 
 - `linter.format-ruff`, `linter.lint-ruff`, `linter.lint-pylint`, `linter.lint-yaml`, `linter.lint-ty`.
 - `docs.generate`, `docs.docusaurus`, `docs.rumdl`, `docs.format-rumdl`, `docs.format`, `docs.lint`.
 - `tests.tests-unit`, `tests.tests-integration`, `tests.all`, `tests.check-310` (the Python 3.10 legs).
-- `dev.start`, `dev.restart`, `dev.smoke`, `dev.destroy` and the rest of the `dev` namespace — the local development stack (`development/docker-compose.yml`).
+- `dev.start` (presets `sync`, `infrahub`, `preview`, `demo`; shortcuts `dev.infrahub`, `dev.preview` and `dev.demo`, which also prepares the NetBox demo), `dev.restart`, `dev.smoke`, `dev.destroy` and the rest of the `dev` namespace — the local development stack (`development/docker-compose.yml`).
 - `netbox.start`, `netbox.seed`, `netbox.destroy` — the disposable local NetBox.
 
 ## Known Issues and Limitations

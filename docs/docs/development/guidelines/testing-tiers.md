@@ -44,10 +44,16 @@ uv run invoke tests.tests-unit
 This is the single offline default, and it is what a change has to keep green. It runs:
 
 ```text
-pytest -m "not integration and not smoke and not docker and not compose"
+pytest -m "not integration and not smoke and not docker and not compose" -n auto
 ```
 
 So it excludes four marker families: `integration`, `smoke`, `docker` and `compose`. It needs no network, no credentials and no running stack.
+
+The tests run in parallel through pytest-xdist, with one worker process per processor core. On a CI runner with 2 processor cores, the run takes about 3.5 minutes instead of about 14, which keeps the unit test jobs inside their 15-minute limit. To run the tests in one process, for example to find a test that depends on the order of other tests, pass `--workers 0`:
+
+```bash
+uv run invoke tests.tests-unit --workers 0
+```
 
 **It does need the `docker compose` CLI on your PATH.** Unmarked modules under
 `tests/compose/` and `tests/dev_stack/` run `docker compose … config --format json` to resolve
@@ -69,7 +75,7 @@ smoke and integration suites against whatever environment your shell happens to 
 |---|---|---|---|
 | Unit | `uv run invoke tests.tests-unit` | The installed extras, plus the `docker compose` CLI on your PATH | Nothing outside `tmp_path` |
 | Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
-| Smoke | `uv run invoke dev.smoke` | The development stack, started with `dev.start` | Seeds and writes to the disposable stack |
+| Smoke | `uv run invoke dev.smoke` | The development stack with a local Infrahub, started with `dev.infrahub` | Seeds and writes to the disposable stack |
 | Image smoke | `uv run pytest -m docker tests/image/test_image_artifact.py` | A locally built image named by `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and a Docker daemon | Throwaway containers it starts and removes |
 | Compose (opt-in) | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose` | A Docker daemon and a locally built `infrahub-sync:compose-test` image | A real container stack it brings up and tears down |
 
@@ -111,9 +117,12 @@ needs, the second names each setting and where to get it.
 | `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_PREFIX`, `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_REGION` | Optional; the key prefix and region | Defaults: `integration` for the storage test, `us-east-1` for the region |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Credentials for that bucket | The development defaults `devaccesskey` and `devsecretkey` from `development/docker-compose.yml` |
 
-Use a separate, empty database for each of the three PostgreSQL settings. Do not reuse the
-development stack's own `infrahub_sync` database: these tests lock, terminate, create, and drop
-objects in the database they receive.
+Use a separate, empty database for each of the three PostgreSQL settings when you run the
+families one by one. `invoke tests.tests-product-store-postgresql` is the exception: it runs the
+product store and the apply guard families together, and both settings may name the same
+disposable database, as in the pull-request job. Do not reuse the development stack's own
+`infrahub_sync` database: these tests lock, terminate, create, and drop objects in the database
+they receive.
 
 Three families need more detail than the tables give:
 
@@ -137,7 +146,7 @@ Three families need more detail than the tables give:
   `INFRAHUB_ADDRESS` and
   `INFRAHUB_API_TOKEN` at a disposable Infrahub with the schema library loaded (see step 4 of
   [Run the complete tier](#run-the-complete-tier)) — the test writes to it and does not clean up, so reset it
-  (`invoke dev.destroy`, `dev.start`, reload the schema) between runs. Then:
+  (`invoke dev.destroy`, `dev.infrahub`, reload the schema) between runs. Then:
 
   ```bash
   uv run pytest -m integration tests/integration/test_saved_plan_apply_integration.py
@@ -174,13 +183,17 @@ Three families need more detail than the tables give:
     uv run --with 'psycopg[binary]' pytest -m integration tests/product_store tests/service
   ```
 
-  Pull-request CI runs the `product-store-postgresql` job in `workflow-tests.yml`, which
-  starts the same pinned `postgres:16-alpine` image the Compose bundle ships and runs only
-  `tests/product_store` and `tests/service/test_apply_versus_verify_race.py`.
-  The job uses `invoke tests.tests-product-store-postgresql`, which fails when the DSN is
-  unset, when any test skips (a missing `psycopg` or an unreachable server skips rather
-  than fails under plain `pytest -m integration`), or when no test is selected. To run the
-  same check locally:
+  On a pull request that changes files matched by the `sync_all` filter in
+  `.github/file-filters.yml`, CI runs the `product-store-postgresql` job ("Product store on
+  PostgreSQL") in `workflow-tests.yml`, which starts the same pinned `postgres:16-alpine` image the Compose
+  bundle ships and runs `tests/product_store`, `tests/service/test_apply_versus_verify_race.py`
+  and the write-lock integration tests in `tests/integration/test_apply_guard_integration.py`.
+  The job sets both `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and `APPLY_GUARD_TEST_POSTGRESQL_DSN`
+  to that server and uses `invoke tests.tests-product-store-postgresql`, which fails when
+  either setting is unset, when any test skips (a missing `psycopg` or an unreachable server
+  skips rather than fails under plain `pytest -m integration`), or when no test is selected.
+  The write-lock tests terminate backends, so point both settings at a disposable database
+  only. To run the same check locally:
 
   ```bash
   docker run -d --name product-store-pg -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=probe \
@@ -190,10 +203,11 @@ Three families need more detail than the tables give:
     sleep 2
   done
   export PRODUCT_STORE_TEST_POSTGRESQL_DSN="host=127.0.0.1 port=55439 user=postgres password=probe dbname=probe"
+  export APPLY_GUARD_TEST_POSTGRESQL_DSN="$PRODUCT_STORE_TEST_POSTGRESQL_DSN"
   uv run invoke tests.tests-product-store-postgresql
   ```
 
-  To confirm the check refuses to pass without a server, unset the variable or point it at
+  To confirm the check refuses to pass without a server, unset either variable or point it at
   a closed port (`port=1`); the task exits non-zero in both cases. Clean up with
   `docker rm -f -v product-store-pg`.
 
@@ -228,7 +242,7 @@ not commit them. The other values are the development defaults of `development/d
 1. Start the services and create the three test databases:
 
    ```bash
-   uv run invoke dev.start
+   uv run invoke dev.infrahub
    for database in apply_guard_test product_store_test storage_test; do
      docker exec infrahub-sync-dev-postgres-1 createdb -U postgres "$database"
    done
@@ -269,7 +283,7 @@ not commit them. The other values are the development defaults of `development/d
    ```bash
    uv run invoke dev.destroy
    uv run invoke netbox.seed
-   uv run invoke dev.start
+   uv run invoke dev.infrahub
    uv run infrahubctl schema load tests/data/nightly_schema --wait 120
    export NETBOX_URL="<URL printed by netbox.seed>"
    export NETBOX_TOKEN="<token printed by netbox.seed>"
@@ -325,15 +339,17 @@ Run these commands from the repository root:
    uv run invoke netbox.seed --dataset demo
    ```
 
-2. Start a fresh development stack. The worker resolves the package's `netbox-token` credential
-   from its own environment, so set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` to the token that step 1
-   printed before `dev.start` creates the worker container. `dev.start` sets
-   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` to the stack's Infrahub admin token, and connects
-   the worker to NetBox's network.
+2. Start a fresh development stack. The package names the stored credentials `netbox-token`
+   and `infrahub-token`. Once the Sync API runs, `dev.infrahub` stores both through it:
+   `infrahub-token` with the stack's Infrahub admin token, and `netbox-token` with the local
+   NetBox's development token, because the local NetBox runs. To store another value, export
+   `INFRAHUB_SYNC_DEV_NETBOX_TOKEN` or `INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN` before the task; only
+   the tasks read these two variables, and no Sync service receives them. `dev.infrahub` also
+   connects the worker to NetBox's network.
 
    ```bash
    uv run invoke dev.destroy
-   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke dev.start
+   uv run invoke dev.infrahub
    ```
 
 3. Load the schema library into the development stack's Infrahub. The example maps onto the 16 schemas
@@ -366,7 +382,7 @@ Run these commands from the repository root:
    demo and an Infrahub on port 8000. `netbox.demo-package --dev-stack` writes
    `.netbox/from-netbox.local.yml`, a copy that points at the addresses the worker container
    reaches: NetBox at `http://netbox:8080` and Infrahub at `http://infrahub-server:8000`. The
-   mapping and the credential references stay the same. Pass `--infrahub-url` to use another
+   mapping and the stored credential names stay the same. Pass `--infrahub-url` to use another
    Infrahub address.
 
    ```bash
@@ -385,11 +401,14 @@ Run these commands from the repository root:
    uv run infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import --reason "import the local NetBox demo data"
    ```
 
-On the pinned dataset and the current example mapping, the plan has 1,688 operations: 1,687
-creates and one delete, which apply does not execute. After the sync, the object count of
-each kind on the `netbox-import` branch equals that kind's planned operations. A different
-count means that the mapping, the adapter, or the pinned data changed. Explain that change
-in the pull request.
+On the pinned dataset and the current example mapping, the plan has 1,687 operations, all
+creates. It holds no delete for the nodes that Infrahub creates itself, such as the built-in
+`default` IP namespace. A second plan on the same data holds 0 operations. After the sync,
+the object count of each kind on the `netbox-import` branch equals that kind's planned
+operations, except `IpamNamespace`: the branch also holds the `default` namespace, so its count
+is one more than the planned creates. `INFRAHUB_CREATED_NODES` in
+`.github/scripts/nightly_e2e.py` records that difference. A different count means that the mapping, the adapter, or the pinned data
+changed. Explain that change in the pull request.
 
 When you finish, remove both stacks and their data volumes:
 
@@ -559,7 +578,7 @@ required pull-request check and does not publish a release candidate.
 #### Smoke
 
 ```bash
-uv run invoke dev.start
+uv run invoke dev.infrahub
 uv run invoke dev.smoke
 ```
 
@@ -593,13 +612,13 @@ itself.
 #### Image smoke
 
 ```bash
-docker build -t infrahub-sync:smoke .
+docker build -f development/Dockerfile -t infrahub-sync:smoke .
 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=smoke uv run pytest -m docker tests/image/test_image_artifact.py
 ```
 
 This is what the image check runs on a pull request, once per platform, on a native
 `linux/amd64` and a native `linux/arm64` runner. It checks that the CLI answers `--help`, that
-the API answers `GET /version`, and that the image carries its OCI labels. The revision label
+the API answers `GET /api/version`, that the image holds the built web interface, and that the image carries its OCI labels. The revision label
 case compares the label to the commit checked out, so a local build without labels fails that
 case. Pass the same `--label` values CI passes to reproduce it in full.
 
@@ -609,7 +628,7 @@ green result as evidence.
 #### Compose (opt-in)
 
 ```bash
-docker build -t infrahub-sync:compose-test .
+docker build -f development/Dockerfile -t infrahub-sync:compose-test .
 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose
 ```
 
@@ -617,6 +636,13 @@ The Compose suite brings up the root `docker-compose.yml` through a Docker daemo
 image you built, and tears it down. The nightly workflow runs the same command; no pull request
 job runs it. Run it by hand when a change touches the Compose deployment. It keeps the
 ordinary Docker and platform skips, so confirm what ran before claiming it passed.
+
+The suite gives `sync-api` a test value of `INFRAHUB_SYNC_ENCRYPTION_KEY`, and gives `sync-api`
+and `sync-worker` a test value of `INFRAHUB_SYNC_WORKER_TOKEN`. The root file sets
+`INFRAHUB_SYNC_API_URL` of the worker itself. No service receives an
+`INFRAHUB_SYNC_CREDENTIAL_*` variable. A test that runs a package creates the stored credentials
+that the package names through the Sync API, with `create_credentials_through_api` in
+`tests/helpers/stored_credentials.py` and the token of `admin`.
 
 The nightly workflow runs the Compose suite once on `linux/amd64` (`ubuntu-22.04`) and once on
 `linux/arm64` (`ubuntu-24.04-arm`) by default, each in its own job. To find out how often the
@@ -686,7 +712,8 @@ The class adds these fixtures to the ones `TestInfrahubDocker` provides, such as
 - `infrahub_sync_compose`: the Sync deployment, written to disk and not started.
 - `infrahub_sync_app`: the started Sync deployment.
 - `sync_api_url`: the Sync API address on `127.0.0.1`, at the port Docker published.
-- `sync_api_token`: the token of the test deployment's administrator principal.
+- `sync_api_token`: the API token that the test deployment's `cli` service presents
+  (`INFRAHUB_SYNC_API_TOKEN`); by default, the token of the `admin` account.
 
 Two variables select the Sync image, the same two the root file reads:
 
@@ -697,7 +724,7 @@ Two variables select the Sync image, the same two the root file reads:
 To test the image built from your checkout, build it and name it with both variables:
 
 ```bash
-docker build -t infrahub-sync:my-test .
+docker build -f development/Dockerfile -t infrahub-sync:my-test .
 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=my-test uv run pytest -m compose tests/compose/test_testcontainers_fixture.py
 ```
 
@@ -705,7 +732,10 @@ Each other variable the root file reads takes its value from the environment of 
 process when it is set there, and a test value otherwise. Export a variable before the class
 starts to change it. For example, `INFRAHUB_SYNC_API_PORT` defaults to `0`, so Docker
 publishes the Sync API on a free loopback port; export a port number to choose the port
-yourself. The test values are not real credentials.
+yourself. The test values are not real credentials. They include a fixed
+`INFRAHUB_SYNC_ENCRYPTION_KEY` and a fixed `INFRAHUB_SYNC_WORKER_TOKEN`
+(`infrahub_sync/testcontainers/helpers.py`). A test creates the stored credentials that its
+package names through the Sync API before it registers the package.
 
 The Infrahub version comes from `infrahub-testcontainers`: by default it is the version of
 the installed `infrahub-testcontainers` package. The `testcontainers` extra requires

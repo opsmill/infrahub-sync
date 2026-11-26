@@ -148,6 +148,8 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+          # The web stage builds from the frontend/vendor/infrahub submodule.
+          submodules: true
 
       - name: Set up Docker Buildx
         if: steps.check.outputs.skip == 'false'
@@ -158,7 +160,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: .
-          file: Dockerfile
+          file: development/Dockerfile
           platforms: ${{ matrix.platform }}
           load: true
           push: false
@@ -196,7 +198,7 @@ jobs:
         id: push
         with:
           context: .
-          file: Dockerfile
+          file: development/Dockerfile
           provenance: false  # avoids cross-platform "unknown" entries
           platforms: ${{ matrix.platform }}
           labels: ${{ inputs.labels }}

@@ -1,17 +1,18 @@
 """FastAPI routing for the stable Sync HTTP contract."""
 
-import logging
-import os
 from asyncio import CancelledError, create_task, sleep
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol
 
+import structlog
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from infrahub_sync.client.models import (
     DEFAULT_LOG_LIMIT,
@@ -19,23 +20,37 @@ from infrahub_sync.client.models import (
     MAX_LOG_LIMIT,
     MAX_REPORT_LIMIT,
     MIN_LIMIT,
+    HealthResource,
     PlanReportPageResource,
 )
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.execution import redaction_scope
 from infrahub_sync.plan.models import PROBLEM_TYPES
+from infrahub_sync.product_store import Account, EventOrder
 
+from .account_routes import account_router
 from .auth import Principal, PrincipalResolver
-from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
+from .compatibility import API_STABILITY, API_VERSIONS, installed_sdk_version, installed_server_version
 from .config_routes import (
     CONFIG_ID_PATTERN,
     MAX_REGISTRY_VERSION,
+    V2_CONFIGURATION_MESSAGE,
+    V2_CONFIGURATION_REASON,
     ConfigurationAPIError,
     ConfigurationRoutes,
     configuration_router,
     parse_bounded_integer,
     parse_page_limit,
 )
-from .liveness import RunLivenessReconciler
+from .credential_actions import CredentialActions, destination_credential_values
+from .credential_crypto import CredentialCipher
+from .credential_routes import credential_router
+from .events import ACCOUNT_REFUSED
+from .liveness import AUTOMATIC_RESUME_ACTOR, RunLivenessReconciler
 from .models import (
     ApplyRunRequest,
     ApprovedRunResource,
@@ -55,15 +70,17 @@ from .models import (
     RunLogPage,
     RunPage,
     RunResource,
-    ServiceStatusResource,
     VerifyRunRequest,
     VersionResource,
 )
 from .paging import InvalidCursorError
+from .presentation import AccountNameMiddleware, AccountReader
+from .schedule_routes import schedule_router
+from .schedules import ScheduleService
 from .service import MAX_EVENT_OFFSET, RunService, ServiceAPIError, parse_event_time
 from .settings import approval_required, validate_settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorEnvelope} for status in (401, 403, 404, 409, 410, 422, 503)
@@ -85,6 +102,31 @@ async def _service_error(_request: Request, exc: ServiceAPIError) -> JSONRespons
     )
     headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
     return JSONResponse(status_code=exc.status, content=_error_content(envelope), headers=headers)
+
+
+_HTTP_ERROR_CODES = {404: "not-found", 405: "method-not-allowed"}
+# The fixed message of each configuration refusal reason that has its own; any other refusal
+# gets one general message, so no caller-supplied text reaches the response.
+_CONFIGURATION_REFUSAL_MESSAGES: dict[str | None, str] = {
+    UNSUPPORTED_STORE_REASON: UNSUPPORTED_STORE_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON: CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    V2_CONFIGURATION_REASON: V2_CONFIGURATION_MESSAGE,
+}
+
+
+async def _http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:  # noqa: RUF029
+    """Return the error envelope for a routing refusal such as an unknown path or a wrong method.
+
+    The exception's headers are kept, so a 405 still names the accepted methods in ``Allow``.
+    """
+    envelope = ErrorEnvelope(
+        error=ErrorDetail(
+            code=_HTTP_ERROR_CODES.get(exc.status_code, "http-error"),
+            message=str(exc.detail),
+            status=exc.status_code,
+        )
+    )
+    return JSONResponse(status_code=exc.status_code, content=_error_content(envelope), headers=exc.headers)
 
 
 def _error_content(envelope: ErrorEnvelope) -> dict[str, Any]:
@@ -266,8 +308,9 @@ def events_router(service: RunService, authenticate: Callable[..., Principal]) -
         until: Annotated[str | None, Query()] = None,
         limit: Annotated[str | None, Query()] = None,
         offset: Annotated[str | None, Query()] = None,
+        order: Annotated[EventOrder, Query()] = "asc",
     ) -> EventPage:
-        """Return one page of typed events, oldest first, that match every given filter."""
+        """Return one page of typed events that match every given filter, oldest first or, for ``desc``, newest first."""
         return service.list_events(
             run_id=run_id,
             config_id=config_id,
@@ -277,6 +320,7 @@ def events_router(service: RunService, authenticate: Callable[..., Principal]) -
             until=_optional_time(until),
             limit=parse_page_limit(limit),
             offset=_page_offset(offset),
+            order=order,
         )
 
     return router
@@ -288,33 +332,168 @@ def _include_routers(
     authenticate: Callable[..., Principal],
     idempotency_key: Callable[..., str],
     configuration_routes: ConfigurationRoutes | None,
+    *,
+    schedules: ScheduleService | None,
+    credential_cipher: CredentialCipher | None,
+    authenticate_worker: Callable[..., Principal],
 ) -> None:
-    """Add the routes built outside ``create_app``: configurations, approval, events, run logs and the saved plan."""
+    """Add the routes built outside ``create_app``.
+
+    They are the configurations, the schedules, the approval, the events, the run logs, the saved
+    plan, the accounts and the stored credentials.
+    """
     if configuration_routes is not None:
+        if isinstance(configuration_routes, ConfigurationRoutes):
+            # `validate` reads the destination schema with the token of a stored credential,
+            # decrypted in this process and returned nowhere (spec 027, FR-004).
+            configuration_routes.read_stored_credentials_with(destination_credential_values(service, credential_cipher))
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
+    if schedules is not None:
+        application.include_router(schedule_router(schedules, authenticate, idempotency_key))
     application.include_router(approve_router(service, authenticate, idempotency_key))
     application.include_router(events_router(service, authenticate))
     application.include_router(run_logs_router(service, authenticate))
     application.include_router(plan_router(service, authenticate))
+    application.include_router(account_router(service, authenticate))
+    application.include_router(
+        credential_router(
+            CredentialActions(service, credential_cipher), authenticate, idempotency_key, authenticate_worker
+        )
+    )
 
 
-def create_app(
-    service: RunService,
-    resolver: PrincipalResolver,
-    configuration_routes: ConfigurationRoutes | None = None,
-    reconciler: RunLivenessReconciler | None = None,
-) -> FastAPI:
-    """Create the service application from explicit providers.
+_BEARER_AUTH = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+WORKER_ONLY_MESSAGE = "the worker account is accepted on the worker routes only"
+WORKER_REQUIRED_MESSAGE = "this route accepts the worker account only"
 
-    Raises:
-        ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
-            is not accepted, so the service does not start.
+
+def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable[..., Principal]:
+    """Return the dependency that resolves the bearer value of a request to its principal.
+
+    A missing or unknown value answers ``401 unauthenticated``. An API token after its expiry date
+    answers ``401 token-expired``. The ``worker`` account answers ``403 forbidden``: every route
+    that uses this dependency is outside the worker routes, which use ``require_worker`` instead
+    (spec 027, research R4). Every refusal is recorded, without the value.
     """
-    validate_settings()
+    resolve = _principal_resolver(service, resolver)
+
+    def authenticate(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER_AUTH)],
+    ) -> Principal:
+        principal = resolve(request, credentials)
+        if principal.worker:
+            _record_refused_authorization(service, principal, request)
+            raise ServiceAPIError(403, "forbidden", WORKER_ONLY_MESSAGE)
+        return principal
+
+    return authenticate
+
+
+def require_worker(service: RunService, resolver: PrincipalResolver) -> Callable[..., Principal]:
+    """Return the dependency of the worker routes: it accepts the ``worker`` account and no other.
+
+    An unknown, missing or expired value is refused as by ``authenticate``. Every other account,
+    an administrator included, answers ``403 forbidden`` (spec 027, FR-005). Every refusal is
+    recorded, without the value.
+    """
+    resolve = _principal_resolver(service, resolver)
+
+    def authenticate_worker(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER_AUTH)],
+    ) -> Principal:
+        principal = resolve(request, credentials)
+        if not principal.worker:
+            _record_refused_authorization(service, principal, request)
+            raise ServiceAPIError(403, "forbidden", WORKER_REQUIRED_MESSAGE)
+        return principal
+
+    return authenticate_worker
+
+
+def _record_refused_authorization(service: RunService, principal: Principal, request: Request) -> None:
+    """Record a known account refused on a route, as ``require_administrator`` does; no token value."""
+    service.record_account_event(
+        ACCOUNT_REFUSED,
+        actor=principal.actor,
+        account_id=principal.actor,
+        operation=request.url.path,
+        outcome="refused-authorization",
+    )
+
+
+def _principal_resolver(
+    service: RunService, resolver: PrincipalResolver
+) -> Callable[[Request, HTTPAuthorizationCredentials | None], Principal]:
+    """Return the step that both dependencies share: the bearer value to its principal, or a ``401``."""
+
+    def resolve(request: Request, credentials: HTTPAuthorizationCredentials | None) -> Principal:
+        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
+        if not token:
+            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
+            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+        resolution = resolver.resolve(token)
+        if resolution.principal is not None and resolution.principal.actor == AUTOMATIC_RESUME_ACTOR:
+            # The reserved actor of the automatic check and resume is never a request's actor,
+            # whatever resolver is configured: only the liveness reconciler acts as it (research R5).
+            service.record_authentication_refusal(request.url.path, "reserved-actor")
+            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+        if resolution.principal is not None:
+            return resolution.principal
+        if resolution.refusal == "token-expired":
+            service.record_authentication_refusal(request.url.path, "expired-bearer-token")
+            raise ServiceAPIError(401, "token-expired", "the API token has expired")
+        service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
+        raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+
+    return resolve
+
+
+class RedactionScopeMiddleware:  # pylint: disable=too-few-public-methods
+    """Bind one redaction registry for each request (spec 027, research R6).
+
+    A stored value that the Sync API decrypts while it answers a request is added to this
+    registry by `CredentialCipher.decrypt` before it is returned, so each message, answer and
+    log line of the request is redacted with it. The registry ends with the request, so the
+    value is in no list while another request is answered. The work that the application does
+    outside a request (its start, the liveness loop) has no registry: a decryption there must
+    bind its own `redaction_scope`.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pass an HTTP request on inside a new redaction scope.
+
+        Every other scope is passed on with no registry: the `lifespan` scope lasts until the
+        process stops, so a registry bound for it would keep its values for that long.
+        """
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        with redaction_scope():
+            await self._app(scope, receive, send)
+
+
+def _account_reader(service: RunService) -> AccountReader:
+    """Return the account read of the presentation; the service is asked only when an answer names an account."""
+
+    def read_accounts(account_ids: Sequence[str]) -> Mapping[str, Account]:
+        return service.read_accounts(account_ids)
+
+    return read_accounts
+
+
+def _lifespan(reconciler: RunLivenessReconciler | None, schedules: ScheduleService | None) -> Any:
+    """Return the lifespan of the application: the step of its start, then the liveness loop until it stops."""
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
         task = None
+        if schedules is not None:
+            await schedules.start()
         if reconciler is not None:
 
             async def reconcile_loop() -> None:
@@ -336,22 +515,52 @@ def create_app(
                 with suppress(CancelledError):
                     await task
 
-    application = FastAPI(title="Infrahub Sync API", version=installed_server_version(), lifespan=lifespan)
-    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
+    return lifespan
 
-    def authenticate(
-        request: Request,
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
-    ) -> Principal:
-        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
-        if not token:
-            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        principal = resolver.resolve(token)
-        if principal is None:
-            service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        return principal
+
+class HealthReporter(Protocol):
+    """What the health route reads: `HealthChecker` in a served process, a fake in a test."""
+
+    async def report(self) -> HealthResource:
+        """Return the latest health report."""
+        ...
+
+
+def create_app(
+    service: RunService,
+    resolver: PrincipalResolver,
+    configuration_routes: ConfigurationRoutes | None = None,
+    reconciler: RunLivenessReconciler | None = None,
+    *,
+    schedules: ScheduleService | None = None,
+    credential_cipher: CredentialCipher | None = None,
+    health_checker: HealthReporter | None = None,
+) -> FastAPI:
+    """Create the service application from explicit providers.
+
+    ``GET /health`` answers the report of ``health_checker``. Without one, as in a test that does
+    not exercise the route, it answers the 503 ``service-unavailable`` envelope; it never builds a
+    client of a real component.
+
+    With ``schedules``, the application serves the schedule routes. When the API process starts,
+    it stops the schedules that can no longer run and makes the Prefect schedules match the stored
+    schedules, once (spec 021, research R6, R8 and R13).
+
+    The stored credential routes are always served. Without ``credential_cipher``, which holds the
+    key of ``INFRAHUB_SYNC_ENCRYPTION_KEY``, they list and show credentials and answer every change
+    with ``503 credential-key-not-configured`` (spec 027). A Sync API process always has the key
+    (``serve.build_process_service``); only an application built in a test has none.
+
+    Raises:
+        ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
+            is not accepted, so the service does not start.
+    """
+    validate_settings()
+
+    application = FastAPI(
+        title="Infrahub Sync API", version=installed_server_version(), lifespan=_lifespan(reconciler, schedules)
+    )
+    authenticate = _authenticator(service, resolver)
 
     def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
         if value is None or not value.strip():
@@ -366,14 +575,13 @@ def create_app(
         envelope = ConfigErrorEnvelope(
             error=ConfigErrorDetail(
                 code=f"configs-{exc.family}",
-                message=(
-                    UNSUPPORTED_STORE_MESSAGE
-                    if exc.reason == UNSUPPORTED_STORE_REASON
-                    else "the configuration service refused the request"
+                message=_CONFIGURATION_REFUSAL_MESSAGES.get(
+                    exc.reason, "the configuration service refused the request"
                 ),
                 status=exc.status,
                 family=exc.family,
                 reason=exc.reason,
+                details=exc.details,
             )
         )
         return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"))
@@ -391,17 +599,50 @@ def create_app(
         )
         return JSONResponse(status_code=422, content=_error_content(envelope))
 
+    # TODO: Starlette types a handler's exception as `Exception`; drop the ignore once ty accepts a narrower one.
+    application.add_exception_handler(StarletteHTTPException, _http_error)  # ty: ignore[invalid-argument-type]
+
     @application.get("/version")
     def get_version() -> VersionResource:
-        """Return the installed server and supported unstable API versions."""
+        """Return the installed server and Infrahub SDK versions and the supported unstable API versions."""
         return VersionResource(
-            server_version=installed_server_version(), api_versions=API_VERSIONS, stability=API_STABILITY
+            server_version=installed_server_version(),
+            api_versions=API_VERSIONS,
+            stability=API_STABILITY,
+            sdk_version=installed_sdk_version(),
         )
 
-    @application.get("/status")
-    async def get_status() -> ServiceStatusResource:
-        """Return unauthenticated lifecycle state without provider identifiers."""
-        return await service.status(os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"))
+    # A 503 carries the unhealthy report, or the error envelope when there is no report: no
+    # health checker is configured, or the route fails before the report is built.
+    @application.get(
+        "/health",
+        response_model=HealthResource,
+        responses={503: {"model": HealthResource | ErrorEnvelope}},
+    )
+    async def get_health() -> JSONResponse:
+        """Return the health of the components and workers, without authentication (spec 029)."""
+        return await health_answer()
+
+    # A monitoring tool can ask with HEAD: the same status and headers, and the server sends no body.
+    # Left out of the OpenAPI document, which keeps one operation for the report.
+    @application.head("/health", include_in_schema=False)
+    async def head_health() -> JSONResponse:
+        """Answer `GET /health`'s status and headers for a HEAD request."""
+        return await health_answer()
+
+    async def health_answer() -> JSONResponse:
+        if health_checker is None:
+            raise ServiceAPIError(503, "service-unavailable", "the Sync service is temporarily unavailable")
+        report = await health_checker.report()
+        return JSONResponse(
+            status_code=200 if report.status == "healthy" else 503,
+            content=report.model_dump(mode="json"),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    # Added before `contain_unhandled_error`, so it runs inside it: every JSON answer of a route or
+    # of an exception handler passes through it, and a failed account read answers that 503.
+    application.add_middleware(AccountNameMiddleware, read_accounts=_account_reader(service))
 
     @application.middleware("http")
     async def contain_unhandled_error(
@@ -427,7 +668,9 @@ def create_app(
     def get_me(principal: Annotated[Principal, Depends(authenticate)]) -> PrincipalResource:
         """Return the caller's actor name, administrator flag and the approval setting; performs no other action."""
         return PrincipalResource(
-            actor=principal.actor,
+            # A principal of the product store carries its account name; the identifier in
+            # `actor` is never shown.
+            actor=principal.actor if principal.name is None else principal.name,
             administrator=principal.administrator,
             approval_required=approval_required(),
         )
@@ -442,21 +685,28 @@ def create_app(
         return JSONResponse(status_code=status, content=content)
 
     @application.get("/runs", responses=ERROR_RESPONSES)
-    def list_runs(
+    def list_runs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         _principal: Annotated[Principal, Depends(authenticate)],
         config_id: Annotated[str | None, Query(pattern=CONFIG_ID_PATTERN)] = None,
         registry_version: Annotated[str | None, Query()] = None,
+        trigger_type: Annotated[str | None, Query()] = None,
+        schedule_id: Annotated[str | None, Query()] = None,
         limit: Annotated[str | None, Query()] = None,
         cursor: Annotated[str | None, Query()] = None,
     ) -> RunPage:
-        """Return one page of runs, newest first, optionally for one configuration or version."""
+        """Return one page of runs, newest first, optionally for one configuration, version, trigger or schedule."""
         version = (
             None
             if registry_version is None
             else parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION)
         )
         return service.list_runs(
-            config_id=config_id, registry_version=version, cursor=cursor, limit=parse_page_limit(limit)
+            config_id=config_id,
+            registry_version=version,
+            trigger_type=trigger_type,
+            schedule_id=schedule_id,
+            cursor=cursor,
+            limit=parse_page_limit(limit),
         )
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
@@ -532,6 +782,18 @@ def create_app(
         status, content = await service.cancel_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    _include_routers(application, service, authenticate, idempotency_key, configuration_routes)
+    _include_routers(
+        application,
+        service,
+        authenticate,
+        idempotency_key,
+        configuration_routes,
+        schedules=schedules,
+        credential_cipher=credential_cipher,
+        authenticate_worker=require_worker(service, resolver),
+    )
+    # Added last, so it is the outermost middleware: the registry is bound before any route,
+    # exception handler or other middleware of the request runs, and all of them share it.
+    application.add_middleware(RedactionScopeMiddleware)
 
     return application

@@ -395,11 +395,21 @@ def test_current_values_writes_a_value_that_is_not_json_as_text(runner: ModuleTy
     assert runner.current_values(plan, client) == {("IpamIPAddress", "address=10.0.0.1/24"): {"address": "10.0.0.1/24"}}
 
 
-def test_expected_delete_list_holds_only_the_default_namespace(runner: ModuleType) -> None:
-    """The shipped list holds the one delete that `--live-schema` causes, with its reason."""
-    entries = runner.expected_deletes()
-    assert [(entry["kind"], entry["identity"]) for entry in entries] == [("IpamNamespace", "name=default")]
-    assert "--live-schema" in entries[0]["reason"]
+def test_expected_delete_list_is_empty(runner: ModuleType) -> None:
+    """The shipped list accepts no delete: a plan leaves out the default namespace itself."""
+    assert runner.expected_deletes() == []
+
+
+def test_shipped_list_fails_the_gate_on_the_default_namespace_delete(runner: ModuleType) -> None:
+    """A plan that still deletes the default namespace is an unexpected delete under the shipped list."""
+    plan = [{"action": "delete", "kind": "IpamNamespace", "identity": "name=default"}]
+    result = runner.compare_plan(
+        plan, runner.expected_deletes(), total=1, deletes_computed=True, left_out=[], problems=[]
+    )
+    assert result["unexpected"] == [{"finding": "delete", "kind": "IpamNamespace", "identity": "name=default"}]
+    assert result["expected_deletes_matched"] == []
+    assert result["passed"] is False
+    assert runner.gate_failure(result)
 
 
 def test_expected_delete_entry_needs_a_reason(
@@ -488,7 +498,7 @@ def test_v2_gate_runs_v2_from_pypi_on_the_gate_branch(runner: ModuleType, monkey
     """v2 2.0.1 from PyPI generates and syncs the example once, isolated from the repository's settings."""
     cli = FakeCli(SAMPLE.read_text(encoding="utf-8"))
     monkeypatch.setattr(runner, "run", cli)
-    with pytest.raises(RuntimeError, match="create=1, update=1, delete=1"):
+    with pytest.raises(RuntimeError, match="create=1, update=1, delete=2"):
         runner.v2_gate(GATE_ENV, CONTEXT)
     commands = cli.commands
     assert commands[0] == ("uv", "run", "--no-sync", "infrahubctl", "branch", "create", "v2-gate")
@@ -514,7 +524,7 @@ def test_v2_gate_plans_the_converted_package_and_keeps_the_result(
     """The conversion reads the addresses from the v2 variables, and the result names what was compared."""
     cli = FakeCli(SAMPLE.read_text(encoding="utf-8"))
     monkeypatch.setattr(runner, "run", cli)
-    with pytest.raises(RuntimeError, match="create=1, update=1, delete=1"):
+    with pytest.raises(RuntimeError, match="create=1, update=1, delete=2"):
         runner.v2_gate(GATE_ENV, CONTEXT)
     convert, convert_env = cli.calls[3]
     assert convert[4:6] == ("configs", "convert")

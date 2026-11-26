@@ -80,6 +80,11 @@ jobs:
             exit 1
           fi
 
+      # The image's web stage builds from the frontend/vendor/infrahub submodule. Fetched here at
+      # depth 1: `submodules: true` with `fetch-depth: 0` would clone the submodule's whole history.
+      - name: "Fetch the design system submodule"
+        run: git submodule update --init --depth 1 frontend/vendor/infrahub
+
       - name: "Install uv"
         uses: astral-sh/setup-uv@v7
         with:
@@ -304,6 +309,10 @@ jobs:
             exit 1
           fi
 
+      # The same depth-1 submodule fetch as the job above.
+      - name: "Fetch the design system submodule"
+        run: git submodule update --init --depth 1 frontend/vendor/infrahub
+
       - name: "Install uv"
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
@@ -321,7 +330,7 @@ jobs:
       # and VERSION. It is never pulled: the engine already holds it. The
       # `TestInfrahubSyncDocker` classes read the same two variables.
       - name: "Build the image under test"
-        run: docker build -t infrahub-sync:compose-test .
+        run: docker build -f development/Dockerfile -t infrahub-sync:compose-test .
 
       - name: "Run the Compose deployment suite"
         env:

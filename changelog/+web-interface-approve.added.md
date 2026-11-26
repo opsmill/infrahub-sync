@@ -1,0 +1,1 @@
+The web interface can approve a run's saved plan without applying it. "Approve the plan" records the approval, bound to the plan checksum, through `POST /api/runs/{run_id}/approve`. When the Sync API sets `INFRAHUB_SYNC_REQUIRE_APPROVAL`, the run page offers Apply only after the plan is approved.

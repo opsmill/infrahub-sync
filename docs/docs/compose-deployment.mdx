@@ -19,7 +19,7 @@ flow, and for the configuration and reviewed-run procedure that follows it.
 
 ## Related operator pages
 
-[Operate a Compose deployment](operations/day-2-operations) · [Compose operator troubleshooting](operations/compose-troubleshooting) · [Supported platforms and limits](operations/supported-platforms-and-limits)
+[Operate a Compose deployment](operations/day-2-operations) · [Compose operator troubleshooting](operations/compose-troubleshooting) · [Supported platforms and limits](operations/supported-platforms-and-limits) · [Kubernetes deployment](kubernetes-deployment)
 
 ## Prerequisites
 
@@ -87,25 +87,41 @@ Run every `docker compose` command on this page from the directory that holds
 
 ## The `.env` file {#configuration-prerequisites}
 
-Compose reads `.env` from the directory of `docker-compose.yml`. One credential
-is required: `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, the tokens that the published
-Sync API port accepts. When it is missing, Compose stops before any container
-starts, with a message naming it:
+Compose reads `.env` from the directory of `docker-compose.yml`. Three
+credentials are required, and they have no default value. When one is missing,
+Compose stops before any container starts, with a message naming each missing
+variable, for example:
 
 ```text
-required variable INFRAHUB_SYNC_SERVICE_BEARER_TOKENS is missing a value: INFRAHUB_SYNC_SERVICE_BEARER_TOKENS is required
+required variable INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is missing a value: INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required
 ```
 
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` maps each principal name to its token, for
-example `{"operator": {"token": "<random>", "administrator": true}}`. The API
-refuses a token shorter than 16 characters.
+### Required credentials
+
+| Variable | Used by |
+| --- | --- |
+| `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | `sync-api`: the password of the `admin` account |
+| `INFRAHUB_SYNC_ENCRYPTION_KEY` | `sync-api`: the key that encrypts stored credentials. 32 bytes, base64-encoded. Changing it is not supported, and without it every stored credential must be entered again. |
+| `INFRAHUB_SYNC_WORKER_TOKEN` | `sync-api` and `sync-worker`: the token of the `worker` account, which reads the values of stored credentials for a run. It follows the rules of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` and must be another value. |
+
+The Sync API port accepts the `admin` password and the worker token, and the
+encryption key protects the stored credentials of your sources and destination,
+so the file gives none of the three a default.
+
+The tokens and passwords of your sources and of your destination Infrahub are not in `.env`.
+An administrator stores them in the Sync API; see [Credentials in a package](#credentials-in-a-package).
+
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is the password of `admin`, the
+administrator account that always exists. It has 12 to 1,024 characters of
+valid UTF-8 text and no default value. `sync-api` applies it at each start, then removes it from its own
+process environment. To change it, see [Recover or rotate the `admin` account](#recover-or-rotate-the-admin-account).
 
 ### Internal credentials and their defaults
 
 The services of the file use the credentials below between themselves, on the
 deployment's own network. None of these services publishes a port. Each
-credential has a fixed default, so a test deployment starts with only
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` set.
+credential has a fixed default, so a test deployment starts with only the three
+required credentials set.
 
 The defaults are written in a public file, so anyone who reads it knows them.
 For any deployment that holds real data, set a random value for each one in
@@ -134,9 +150,9 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `INFRAHUB_SYNC_API_TOKEN` | empty | The token the `cli` service presents. It must equal a principal's `token` in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. Empty, every `cli` call is refused. |
-| `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | empty | The destination Infrahub token, for a package that references it. |
-| `INFRAHUB_SYNC_CREDENTIAL_*` | empty | Source credentials, for a package that references them. Only the worker receives them. The full list is in [Credential variables the worker receives](#credential-variables-the-worker-receives). |
+| `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` | empty | Set on `sync-api`. One API token of the `admin` account: at least 16 printable ASCII characters with no space at either end, and it must not start with `ifs_pat_` or `ifs_ses_`. Empty, `admin` has no API token. `sync-api` applies it at each start. |
+| `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` | `28800` (8 hours) | Set on `sync-api`. The number of seconds without a request after which a sign-in session ends. A whole number from 60 to 999999999999. Empty means the default. |
+| `INFRAHUB_SYNC_API_TOKEN` | empty | The API token the `cli` service presents: the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, or a token that an account created with `infrahub-sync tokens create`. Empty, every `cli` call is refused. |
 | `VERSION` | the release the file was taken from | The tag of the Sync image. See [Choose an image](#choose-an-image). |
 | `INFRAHUB_SYNC_DOCKER_IMAGE` | `registry.opsmill.io/opsmill/infrahub-sync` | The repository of the Sync image. |
 | `INFRAHUB_SYNC_DATABASE_URL` | composed | The product database connection string, as a whole. |
@@ -155,9 +171,13 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` | `1` | `0` leaves the bundled store out: Compose creates no `object-store-init` or `object-store` container. |
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
-| `INFRAHUB_SYNC_REQUIRE_APPROVAL` | `false` | Set on `sync-api`. When `true`, `apply` refuses a plan that has no approval matching the checksum it names, and `sync` is refused; operators run `plan`, `approve` and `apply` instead. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any case. Any other value, including an empty one, stops `sync-api` at startup. The service reads it for each `apply` or `sync` request, so restart `sync-api` to change it; stored runs and approvals are not changed. `infrahub-sync whoami` prints the value as `approval_required`. See [Require an approved plan](./running-a-sync.mdx#require-an-approved-plan). |
+| `INFRAHUB_SYNC_REQUIRE_APPROVAL` | `false` | Set on `sync-api` and `sync-worker`, from the same value. When `true`, `apply` refuses a plan that has no approval matching the checksum it names, and `sync` is refused; operators run `plan`, `approve` and `apply` instead. Before each scheduled run, the worker refuses a run of a schedule that writes to the default branch, and stops that schedule. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any case. Any other value, including an empty one, stops `sync-api` at startup, and makes `sync-worker` create no run for a scheduled start. The service reads it for each `apply` or `sync` request, and the worker for each scheduled start, so after you change it in `.env`, run `docker compose up -d --wait`, which recreates `sync-api` and `sync-worker` with the new value (`docker compose restart` keeps the old one); stored runs and approvals are not changed. `infrahub-sync whoami` prints the value as `approval_required`. See [Require an approved plan](./running-a-sync.mdx#require-an-approved-plan). |
+| `INFRAHUB_SYNC_AUTOMATIC_RESUME` | `false` | Set on `sync-api` only. When `true`, and the Sync API ends a write as interrupted because Prefect reported its flow run as crashed or because its worker stopped sending heartbeats, the Sync API runs `verify` on the run and then resumes it, without a person. It does not resume a run when the check reports a node as `differs`, after 3 automatic resumes of the run, and in the other cases listed in [Automatic resume of an interrupted write](./operations/day-2-operations.mdx#automatic-resume-of-an-interrupted-write). Accepted values are those of `INFRAHUB_SYNC_REQUIRE_APPROVAL`; any other value, including an empty one, stops `sync-api` at startup. The Sync API reads it each time it ends a write as interrupted, so after you change it in `.env`, run `docker compose up -d --wait`. While it is off, nothing is recorded about automatic resume. |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |
+| `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` | `3` | Set on `sync-api`. The number of seconds that `GET /api/health` waits for each component and for the read of the work pool. A component that does not answer in time is reported `down` with the error `timeout`. A whole number from 1 to 60. |
+| `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` | `1` | Set on `sync-api`. `GET /api/health` answers `503` when fewer workers than this number are live. A whole number from 1 to 999999999. |
 | `INFRAHUB_SYNC_PREFECT_UI_URL` | empty | The address you open the Prefect UI at, for example `http://127.0.0.1:4200`. Run responses and `infrahub-sync runs show` then link each flow run to its Prefect UI page. Empty turns the link off. The Sync API refuses to start when the value is not an absolute `http` or `https` URL, or when it carries credentials, a query or a fragment; see [Valid values of `INFRAHUB_SYNC_PREFECT_UI_URL`](#valid-values-of-infrahub_sync_prefect_ui_url). |
+| `INFRAHUB_SYNC_WEB_DIRECTORY` | `/opt/infrahub-sync/web`, set in the image | The directory of the built web interface that `sync-api` serves at the root of its address. The Compose file does not read it from `.env`, so the image value applies. When the variable is empty, or names a directory without `index.html`, the Sync API still starts under `/api`, and a browser that opens the root address receives the text "The web interface is not included in this install." See [Open the web interface](#open-the-web-interface). |
 
 ### An example `.env`
 
@@ -165,8 +185,10 @@ Every value below is a placeholder. Replace each one with a random value of
 your own:
 
 ```dotenv
-# Required credential
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "<principal token>", "administrator": true}}
+# Required credentials
+INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=<admin password, at least 12 characters>
+INFRAHUB_SYNC_ENCRYPTION_KEY=<32 random bytes, base64-encoded>
+INFRAHUB_SYNC_WORKER_TOKEN=<worker token, at least 16 characters, not the admin token>
 
 # Internal credentials: replace the defaults for any deployment that holds real data
 INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD=<random hex>
@@ -176,13 +198,9 @@ INFRAHUB_SYNC_PREFECT_AUTH_STRING=<random hex>
 INFRAHUB_SYNC_S3_ACCESS_KEY=<random hex>
 INFRAHUB_SYNC_S3_SECRET_KEY=<random hex>
 
-# The token the cli service presents: the same value as the principal's token
-INFRAHUB_SYNC_API_TOKEN=<principal token>
-
-# Only for a registered package that references them
-# INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
-# INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=<your NetBox token>
-# INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN=<your Nautobot token>
+# An API token of admin, and the same value for the cli service to present
+INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=<admin token, at least 16 characters>
+INFRAHUB_SYNC_API_TOKEN=<admin token, at least 16 characters>
 
 # Optional: another release, or a mirror of the image
 # VERSION=<version>
@@ -194,7 +212,7 @@ To generate the credentials instead, run this once, in the directory of
 
 ```bash
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
-principal=$(rand 24)
+admin_token=$(rand 24)
 # mktemp creates the file readable by you alone, whatever an existing .env allowed.
 env_file=$(mktemp .env.XXXXXX)
 cat > "$env_file" <<EOF
@@ -204,14 +222,25 @@ INFRAHUB_SYNC_PREFECT_PASSWORD=$(rand 24)
 INFRAHUB_SYNC_PREFECT_AUTH_STRING=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
-INFRAHUB_SYNC_API_TOKEN=$principal
+INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=$(rand 24)
+INFRAHUB_SYNC_ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)
+INFRAHUB_SYNC_WORKER_TOKEN=$(rand 24)
+INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=$admin_token
+INFRAHUB_SYNC_API_TOKEN=$admin_token
 EOF
 mv -f "$env_file" .env
 ```
 
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` and `INFRAHUB_SYNC_API_TOKEN` hold one
-credential. If you change the principal's token, change both to the same value.
+The `cli` service keeps no file between calls, so it cannot keep a sign-in
+session. It presents `INFRAHUB_SYNC_API_TOKEN` instead. On a new deployment the
+only API token that exists is the `admin` token, so the script gives
+`INFRAHUB_SYNC_API_TOKEN` the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`. If you
+change the `admin` token, change both lines to the same value. To give the `cli`
+service a token of another account, see
+[Give a script an API token](./guides/accounts.mdx#give-a-script-an-api-token).
+
+The `admin` password is the value of `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` in
+`.env`. You need it to sign in as `admin` with `infrahub-sync login`.
 
 Handle `.env` as the secret it is:
 
@@ -226,67 +255,185 @@ A variable exported in your shell overrides the same name in `.env`. An exported
 start, or unset it.
 :::
 
+### Upgrade from a release that read `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`
+
+Earlier releases defined the Sync API callers in
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. `sync-api` no longer reads that variable.
+A deployment that still sets it starts, ignores it, and refuses the tokens it
+defines. Until `.env` sets `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD`, Compose refuses
+to start with `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required`. To upgrade:
+
+1. In `.env`, add `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and
+   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, each with a new random value.
+2. Remove the `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` line.
+3. Set `INFRAHUB_SYNC_API_TOKEN` to the value of
+   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`.
+4. Run `docker compose up -d --wait`, which recreates `sync-api` and gives it the
+   new environment.
+5. Create an account for each person and each script that had a token of its
+   own, as [Manage accounts](./guides/accounts.mdx) describes. The tokens of the
+   old variable stay refused.
+
+Records of earlier runs keep the caller names that the old variable defined. No account matches
+those names, so only an administrator can approve, verify, apply, resume or cancel a run started
+before the upgrade.
+
+### Recover or rotate the `admin` account
+
+Only `.env` changes the password and the token of the `admin` account. The CLI
+and the Sync API refuse to change its password or its token, and the refusal
+names the variable to edit instead. They also refuse to disable or delete
+`admin`, or to change its level: `admin` is always an active administrator, and
+no variable changes that. To set a new password after a lost one, or to replace
+the `admin` token:
+
+1. Edit `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` or
+   `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` in `.env`. When you change the token and
+   `INFRAHUB_SYNC_API_TOKEN` holds the `admin` token, change it to the same value; leave
+   a token of another account as it is.
+2. Recreate `sync-api` alone, so it reads the new environment:
+
+   ```bash
+   docker compose up -d --wait --no-deps sync-api
+   ```
+
+   `docker compose restart` keeps the environment the container already had, so
+   it does not apply the change.
+
+At this start, `sync-api` stores the new password and ends every session of
+`admin` when the password changed. It replaces the `admin` token, or removes it
+when the variable is empty. The start also ends a refusal after repeated failed
+sign-ins for `admin`. No other service needs a restart, and no other account
+changes.
+
+`sync-api` does not start in each of these cases:
+
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` is shorter than 12 characters, longer
+  than 1,024 characters, or not valid UTF-8 text.
+- `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` is shorter than 16 characters, holds a
+  character that is not printable ASCII, starts or ends with a space, or starts
+  with `ifs_pat_` or `ifs_ses_`.
+- `INFRAHUB_SYNC_SESSION_IDLE_SECONDS` is not a whole number from 60 to 999999999999.
+- `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` is not a whole number from 1 to 60, or
+  `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` is not a whole number from 1 to 999999999.
+
+Its log names the variable and never shows the value:
+
+```bash
+docker compose logs sync-api --tail 20
+```
+
 ### Credentials in a package
 
-A configuration package holds credential references, never values. The value
-goes in `.env`:
-
-```yaml
-token:
-  $credential: infrahub-token
-credentials:
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
-```
-
-An `env` identifier must start with `INFRAHUB_SYNC_CREDENTIAL_`; validation refuses any
-other identifier, so a package cannot name the deployment's own storage, database, or
-Prefect settings.
-
-If you upgrade from an earlier alpha, move to the prefixed names:
-
-1. In `.env`, rename `INFRAHUB_API_TOKEN`, `NETBOX_TOKEN`, and `NAUTOBOT_TOKEN` to
-   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`,
-   and `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
-2. Change the `identifier` of each `env` credential in your packages to the new name.
-3. Register a new version of each package with `configs version`. A version registered
-   before the upgrade keeps its old identifiers, and its runs fail in the worker.
-4. Run `docker compose up -d --wait`, so the services receive the renamed variables.
-
-:::note
-A container reads its environment once, when it is created. After changing a
-value in `.env`, run `docker compose up -d --wait` again, which recreates the
-services whose environment changed. `docker compose restart` keeps the
-environment the containers were created with.
-:::
-
-### Reading from NetBox or Nautobot
-
-The image installs the bundled NetBox and Nautobot source adapters, so a package
-may declare either as its source. Set only the token your package names:
-
-```dotenv
-INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=<your NetBox token>
-# INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN=<your Nautobot token>
-```
+A configuration package holds no token and no password. Each adapter block names a stored
+credential:
 
 ```yaml
 configuration:
   source:
     name: netbox
+    credential: netbox-token
     settings:
       url: "http://netbox.example.net:8080"
-      token:
-        $credential: netbox-token
-credentials:
-  netbox-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
+  destination:
+    name: infrahub
+    credential: infrahub-token
+    settings:
+      url: "https://infrahub.example.net"
 ```
 
-Nautobot uses the same shape with `nautobot`, `nautobot-token` and
-`INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
+An administrator creates each credential through the Sync API before the package is registered.
+The command asks for the token and does not echo it:
+
+```bash
+infrahub-sync credentials create netbox-token
+infrahub-sync credentials create infrahub-token
+```
+
+The value does not go in `.env`, and no service is recreated when a credential is created or
+changed. [Manage stored credentials](./guides/credentials.mdx) describes every command, the
+fields each adapter needs, and the refusals.
+
+Which service holds what:
+
+- `sync-api` holds `INFRAHUB_SYNC_ENCRYPTION_KEY` and stores each value encrypted in the product
+  database. It reads the destination schema with the destination credential when you validate a
+  version with a branch.
+- `sync-worker` holds no credential of a source or a destination. For each stage of a run, it
+  asks `sync-api` for the values that the run's version names, with `INFRAHUB_SYNC_WORKER_TOKEN`,
+  at `http://sync-api:8000`. The file sets that address in `INFRAHUB_SYNC_API_URL`.
+- `sync-bootstrap`, `prefect-server` and `cli` receive no credential of a source or a
+  destination.
+
+The file passes no `INFRAHUB_SYNC_CREDENTIAL_*` variable. A value set under such a name in
+`.env` is not used.
+
+### The encryption key and the worker token
+
+- **Changing `INFRAHUB_SYNC_ENCRYPTION_KEY` is not supported in this version.** Keep a copy of
+  the key outside the deployment.
+- **Losing the key means entering every credential again.** `sync-api` starts with a new key,
+  but it cannot decrypt the values stored under the earlier one, and each run that needs one
+  fails before it reads its source. An administrator then runs `infrahub-sync credentials set
+  <name>` for every credential. See
+  [When the key is lost or replaced](./guides/credentials.mdx#when-the-key-is-lost-or-replaced).
+- **The worker's request is plain HTTP inside the Compose network.** The worker token travels in
+  the request and the values travel in the answer, between `sync-worker` and `sync-api`, on the
+  network that Compose creates for the deployment, without TLS. The worker routes are routes of
+  the Sync API, so they also answer on the published Sync API port, to a caller that holds the
+  worker token; keep `INFRAHUB_SYNC_BIND_ADDRESS` on `127.0.0.1` or put TLS in front of the
+  port. A worker that runs outside this file can use an `https://` address in
+  `INFRAHUB_SYNC_API_URL`; it trusts the certificates of
+  [a private certificate authority](#trust-a-private-certificate-authority).
+- **To change the worker token**, edit `INFRAHUB_SYNC_WORKER_TOKEN` in `.env` and run
+  `docker compose up -d --wait`, which recreates `sync-api` and `sync-worker` with the new
+  value. A worker that holds another value than `sync-api` fails every run it takes before the
+  run reads its source, and the failure cause names the worker token.
+- Compose stops before any container starts when either variable is missing from `.env`.
+  `sync-api` refuses to start when the key is not base64 or does not decode to 32 bytes, and
+  when the worker token breaks the rules of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` or equals that
+  token. Its log names the variable and never shows the value.
+
+### Upgrade from a release that read `INFRAHUB_SYNC_CREDENTIAL_*`
+
+An earlier build read each token from an `INFRAHUB_SYNC_CREDENTIAL_*` variable of the worker,
+which a package named in a `credentials` block. This build removes that format. To upgrade:
+
+1. Add `INFRAHUB_SYNC_ENCRYPTION_KEY` and `INFRAHUB_SYNC_WORKER_TOKEN` to `.env`. Without them
+   Compose stops before any container starts, and `sync-api` itself refuses to start without
+   either and names the missing variable.
+2. Run `docker compose up -d --wait`.
+3. Create a stored credential for each token, with `infrahub-sync credentials create <name>`.
+4. In each package that used a secret, replace the `credentials` block and the `$credential`
+   references with `credential: <name>` in each block. Add the package as a new version with
+   `infrahub-sync configs version <config-id> package.yml`.
+5. Point each schedule to the new version with
+   `infrahub-sync schedules change <schedule> --version <version>`.
+6. Plan again from the new version, then remove the `INFRAHUB_SYNC_CREDENTIAL_*` lines from
+   `.env`.
+
+A version that was registered with a `$credential` reference is refused with
+`credential-format-removed` when a run, an approval or a schedule change names it. Its saved
+plans cannot be approved or applied. You can still view the version and its runs. A version that
+was registered with no secret keeps its checksum and runs as before. See
+[Versions registered with the earlier format](./guides/credentials.mdx#versions-registered-with-the-earlier-format).
+
+### Reading from NetBox or Nautobot
+
+The image installs the bundled NetBox and Nautobot source adapters, so a package
+may declare either as its source:
+
+```yaml
+configuration:
+  source:
+    name: netbox
+    credential: netbox-token
+    settings:
+      url: "http://netbox.example.net:8080"
+```
+
+Nautobot uses the same shape with `nautobot` and a credential such as `nautobot-token`. Each
+credential holds the field `token`.
 
 - **Name a URL a container can reach.** The worker resolves it from inside the
   Compose network, where `localhost` is the worker itself. If NetBox, Nautobot, or
@@ -296,56 +443,33 @@ Nautobot uses the same shape with `nautobot`, `nautobot-token` and
 - **The declared `url` is the one used.** `NETBOX_ADDRESS`, `NETBOX_URL`,
   `NAUTOBOT_ADDRESS` and `NAUTOBOT_URL` exported in your shell are ignored: a
   registered run reads what its package declares.
-- **Both tokens are optional.** A deployment that reads from neither source
-  starts normally, and a package naming one source does not need the other's
-  token. When a package does select a source, a missing or empty token fails
-  that run and the message names the environment variable, never its value.
-- **Start again after changing either value.** `docker compose up -d --wait`
-  recreates the worker with the new value; `restart` keeps the old one.
-
-Only `sync-worker` receives these tokens. Registration and the default
-validation judge declared content without resolving a source secret, so the API
-and the bootstrap job never hold one.
-
-### Credential variables the worker receives
-
-Compose can pass only variables the file names, so `sync-worker` receives a fixed list of
-credential variables: a name for each credential setting of each bundled adapter, and every
-name the shipped examples and adapter pages use. A package for this deployment uses these names
-as its `env` identifiers. A name that is not on the list does not reach the worker, and a run
-that selects it fails naming the variable. Each one is optional: set only the ones your packages
-reference.
-
-| Adapter | Variables |
-| --- | --- |
-| `aci` | `INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD` |
-| `genericrestapi` | `INFRAHUB_SYNC_CREDENTIAL_REST_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_REST_API_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_REST_API_PASSWORD`, and for the [Device42](./adapters/device42.mdx), [LibreNMS](./adapters/librenms.mdx), [Observium](./adapters/observium.mdx) and [PeeringDB](./adapters/peeringdb.mdx) pages `INFRAHUB_SYNC_CREDENTIAL_DEVICE42_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_DEVICE42_PASSWORD`, `INFRAHUB_SYNC_CREDENTIAL_LIBRENMS_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_PASSWORD`, `INFRAHUB_SYNC_CREDENTIAL_PEERINGDB_API_KEY` |
-| `infrahub` | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` (the destination; `sync-api` receives it too), `INFRAHUB_SYNC_CREDENTIAL_SOURCE_INFRAHUB_TOKEN` (Infrahub as a source) |
-| `ipfabricsync` | `INFRAHUB_SYNC_CREDENTIAL_IPF_TOKEN` |
-| `nautobot` | `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` |
-| `netbox` | `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` |
-| `peeringmanager` | `INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_PASSWORD` |
-| `prometheus` | `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD` |
-| `slurpitsync` | `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY`, `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN` |
-
-Which service receives which credential:
-
-- `sync-worker` receives every variable above.
-- `sync-api` receives only `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, for the destination
-  schema reads it serves.
-- `sync-bootstrap`, `prefect-server` and `cli` receive no adapter credential.
-
-`configs validate` reports, as an error, each `INFRAHUB_SYNC_CREDENTIAL_*` variable that a
-package's `$credential` references name and that no live worker holds. It names the variable and
-never prints a value. Each live worker publishes the names of the credential variables it holds.
-When no live worker has published them, the check cannot run and `configs validate` reports a
-warning instead.
+- **A missing credential refuses the registration.** Registration, and each request that
+  starts a run, refuse a version that names a credential that does not exist. The message
+  names the credential and the command that creates it, never a value.
+- **A changed value needs no restart.** The next stage that starts uses it.
 
 :::note
 That both adapters install and import is a packaging property of this release.
 It is not a statement that any particular NetBox or Nautobot server version has
 been qualified against it.
 :::
+
+### Permissions of the destination Infrahub token for scheduled runs
+
+A schedule with branch review makes its runs create a branch, open a proposed change, add a
+comment to an earlier proposed change, close it, and delete its branch, with the account of the
+token of the stored credential that the destination block names. In Infrahub, that account
+needs:
+
+- the object permission `create` on `CoreProposedChange` and on `CoreChangeComment`, and `update`
+  on `CoreProposedChange`, for branches other than the default branch;
+- the global permission `delete_branch`, only when another account created the branch.
+
+Creating a branch needs no permission. The default group "Infrahub Users" holds all of these.
+These permissions come from the Infrahub source code. Scheduled runs were observed against
+Infrahub 1.11.9 with an administrator account only; an account limited to these permissions has
+not been tried. A schedule that writes to the default branch needs the same permissions as a
+`sync` that a person starts. See [Schedule sync runs](./orchestration.mdx#branch-review).
 
 ## Use your own S3-compatible store
 
@@ -463,8 +587,8 @@ docker compose config --quiet
 docker compose up -d --wait --wait-timeout 420
 ```
 
-`config --quiet` prints nothing when `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` is
-set, and names it otherwise. `up -d --wait` pulls the images, runs the
+`config --quiet` prints nothing when the three required credentials are set,
+and names each missing one otherwise. `up -d --wait` pulls the images, runs the
 bootstrap jobs, and returns once every service is running and every health check
 passes. `--wait` has no time limit of its own, so `--wait-timeout 420` makes the
 command fail after 420 seconds when a service does not become healthy. Then
@@ -485,6 +609,12 @@ the product schema, the artifact bucket, the Prefect work pool, and the installe
 deployment, and a second run creates none of them twice. It registers nothing,
 so a repeat leaves every configuration you registered exactly as it was.
 
+`sync-api` and `sync-worker` start only after `sync-bootstrap` has completed. The last step of
+`sync-bootstrap` records the Sync version and the work pool name it set up. When `sync-api` or
+`sync-worker` starts, it reads that record, and it stops with a line that starts with
+`refusing to start:` when the record is missing or names another version or work pool. Because
+Compose runs `sync-bootstrap` first, the check passes on the first start.
+
 A running deployment says nothing about a configuration. It starts with an empty
 registry, no credentials set, and no reachable destination. Whether a registered
 package is valid is answered by `configs validate`, and whether its destination
@@ -492,7 +622,9 @@ answers is answered by the first run against it.
 
 The deployment publishes one port, the Sync API, and binds it to loopback by
 default: `http://127.0.0.1:8001`. It serves no Prefect UI, and the Prefect API,
-PostgreSQL and the object store publish no port. To view the Prefect UI during a
+PostgreSQL and the object store publish no port. The same port serves the Sync
+web interface at its root and the Sync API under `/api`; see
+[Open the web interface](#open-the-web-interface). To view the Prefect UI during a
 support session, see [Open the Prefect UI](#open-the-prefect-ui).
 
 External exposure and TLS termination are not part of this topology.
@@ -549,6 +681,62 @@ check and the start.
 The default deployment serves no Prefect UI and does not publish the Prefect
 port. Only the Sync services reach the Prefect API, on the deployment's own
 network.
+
+## Open the web interface
+
+The Sync API port also serves the Sync web interface, in which a person views
+configurations and runs and acts on them. Open the address of the Sync API port in
+a browser, by default `http://127.0.0.1:8001`. The web interface needs no other
+port, service or setting.
+
+Each person signs in to the web interface with the name and the password of their account:
+
+1. The web interface asks for an account name and a password. Enter them and select
+   **Sign in**.
+2. When the Sync API refuses the sign-in, the page shows one message, the same for a wrong
+   name, a wrong password, a disabled account and a name refused after repeated failures:
+   "The account name or the password is not accepted." When the Sync service is checking too
+   many sign-ins at once, the page asks you to try again in a moment.
+3. When the Sync API accepts the sign-in, it returns a session token. Every request the web
+   interface sends to the Sync API carries that session token, so the person acts with the
+   permissions of their account, as with the CLI.
+
+The header of every page shows the signed-in account. Its menu opens **My account** and offers
+**Sign out**. Sign out
+ends the session in the Sync service and removes the session token from the browser tab. The
+web interface also removes the session token and shows the sign-in form again when the Sync
+API refuses a request with it, for example after the session was unused for the idle period
+(`INFRAHUB_SYNC_SESSION_IDLE_SECONDS`), after an administrator set a new password for the
+account, or after an administrator disabled or deleted the account. When a person changes their
+own password, the session that made the change stays signed in and their other sessions end.
+
+The web interface keeps the session token for the browser tab only, in the tab's session
+storage. Closing the tab removes it, and the Sync service sets no cookie. The web interface
+never keeps the password.
+
+To give a person access, an administrator creates an account for the person with
+`infrahub-sync accounts create`. This step does not change `.env` or restart a service.
+
+The pages name the account that started a run, the account that approved a plan and the
+account that registered a configuration version. A deleted account is shown as
+`Deleted account` followed by a short identifier.
+See [Manage accounts](./guides/accounts.mdx).
+
+Any account can create and inspect a run. Only the account that created a run, or
+an administrator, can verify, approve, apply or cancel it. See
+[Accounts and API tokens](./reference/sync-http-api.mdx#accounts-and-api-tokens).
+
+With an administrator token, you can register a configuration or add a version by
+dropping a package file on the Configurations page or on a configuration's page. The
+web interface validates the package and shows the result before it registers it. See
+[Register a package from the web interface](./configuration-package.mdx#register-a-package-from-the-web-interface).
+
+The Sync API is served under `/api` on the same port, for example
+`http://127.0.0.1:8001/api/health`. Keep `INFRAHUB_SYNC_API_URL` set to the address
+without `/api`: the CLI adds it. A script that calls the Sync API directly adds
+`/api` to the address. A request outside `/api` from a client that does not accept
+HTML, such as an earlier route address called by a script, receives a "not found"
+error that states that the Sync API is served under `/api`.
 
 ## Open the Prefect UI
 
@@ -666,7 +854,7 @@ of its commands has a plain `docker compose` equivalent.
 | `init` | Write `.env` by hand, or generate it as shown in [An example `.env`](#an-example-env). There is no instance identity: the Compose project name, which defaults to the directory name, plays that role. |
 | `preflight` | `docker compose version --short`, expecting 2.24 or later, then `docker compose config --quiet`, which names the first missing credential. `up` reports a pull failure or a port in use. |
 | `start` | `docker compose up -d --wait`, then check the worker as in [Status](#status). |
-| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8001/status` and read `worker.state`. |
+| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8001/api/health` and read `status` and `workers.live_workers`. |
 | `logs` | `docker compose logs --no-color --tail 200 [service]` |
 | `stop` | `docker compose stop` |
 | `restart` | `docker compose restart sync-api sync-worker`, then check the worker. It does not pick up a changed `.env`. |
@@ -725,12 +913,14 @@ python3 -m venv .schema-tools
 ```
 
 Set the destination address and token for one command only. Replace the address
-with the URL in `destination.settings.url`; do not source `.env`.
+with the URL in `destination.settings.url`; do not source `.env`. The Infrahub token is not in
+`.env`, so the commands below ask for it and do not echo it.
 
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' .env)"
+  stty -echo; printf 'Infrahub API token: '; read -r INFRAHUB_API_TOKEN; stty echo; echo
+  export INFRAHUB_API_TOKEN
   .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
 )
 ```
@@ -741,7 +931,8 @@ same scoped environment:
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' .env)"
+  stty -echo; printf 'Infrahub API token: '; read -r INFRAHUB_API_TOKEN; stty echo; echo
+  export INFRAHUB_API_TOKEN
   .schema-tools/bin/infrahubctl branch list
   # Only if you want to create a new branch:
   .schema-tools/bin/infrahubctl branch create BRANCH_NAME
@@ -779,6 +970,20 @@ The exported `INFRAHUB_SYNC_API_TOKEN` also overrides the value in `.env` for ev
 `docker compose` command you run from this shell, including the `cli` service. After
 you change the token in `.env`, export it again, or open a new shell.
 
+A CLI installed on a workstation can sign in with an account name and password
+instead of a token. `INFRAHUB_SYNC_API_TOKEN`, when set and not empty, takes precedence over
+the saved session, so unset it first if you exported it in the steps above:
+
+```bash
+unset INFRAHUB_SYNC_API_TOKEN
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
+infrahub-sync login --name admin
+infrahub-sync whoami
+```
+
+`login` asks for the password without showing it and saves a session for that
+Sync API address. See [Sign in from a workstation](./guides/accounts.mdx#sign-in-from-a-workstation).
+
 See [Connect the CLI to the Sync API](running-a-sync#connect-the-cli-to-the-sync-api).
 The commands on this page use the CLI this way.
 
@@ -791,11 +996,10 @@ docker compose run --rm --no-deps -T cli configs list
 ```
 
 The `cli` service sits in the `cli` profile, so `up` never starts it, and
-`docker compose run` uses it all the same. It presents `INFRAHUB_SYNC_API_TOKEN`,
-which must equal the principal's token inside
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. They are one credential: if you change one,
-change the other to the same value. With `INFRAHUB_SYNC_API_TOKEN` empty, the API
-refuses every `cli` call.
+`docker compose run` uses it all the same. It presents `INFRAHUB_SYNC_API_TOKEN`
+from `.env`: the `admin` token, or a token that an account created. The service
+keeps no file, so `infrahub-sync login` does not keep a session there. With
+`INFRAHUB_SYNC_API_TOKEN` empty, the API refuses every `cli` call.
 
 Each call is one container: nothing is published, no service is started as a
 side effect, no volume is kept, and the container is removed when the command
@@ -844,11 +1048,10 @@ Two things a package declares are resolved elsewhere:
 
 - **Its URLs are resolved inside a container.** `localhost` there is the
   container itself. Name an address the Compose network can reach.
-- **Its credentials are references.** The value lives in `.env` and is resolved
-  by the service that needs it, so no secret is registered, stored or echoed.
-  Add the credential before the run that needs it and run
-  `docker compose up -d --wait` to recreate the services whose environment
-  changed.
+- **Its credentials are names.** Each block names a stored credential, and the Sync API holds
+  the value, so no secret is in the registered package. An administrator creates each
+  credential before the package is registered; see
+  [Credentials in a package](#credentials-in-a-package).
 
 When drafting a package, use destination identifiers, not source fields that
 merely look unique. Derive the write order from references, unless the adapter
@@ -858,9 +1061,10 @@ requires a manual `order`.
 
 ```bash
 infrahub-sync configs list
-# Add destination and source credentials to .env before planning, then recreate
-# the affected services. restart alone keeps the old container environment.
-docker compose up -d --wait
+# Create each stored credential that the package names, before you register it.
+# Each command asks for the token and does not echo it.
+infrahub-sync credentials create netbox-token
+infrahub-sync credentials create infrahub-token
 infrahub-sync configs register package.yml --reason 'register my configuration'
 infrahub-sync configs show CONFIG_ID
 infrahub-sync configs versions CONFIG_ID
@@ -901,12 +1105,19 @@ On a new deployment, `configs list` prints no command output and exits zero;
 any `Container … Creating/Created` lines are Compose progress. `plan` creates a
 run and persists product records, even though it does not write to the
 destination. The plan output does not repeat its branch: apply must use the same
-`--branch` supplied to `plan`. This release writes saved-plan format 3; it can
-review format 2 but refuses to apply it, and does not support older formats.
+`--branch` supplied to `plan`. This release writes saved-plan format 5. It
+applies format 4 too, reviews formats 2 and 3 but refuses to apply them, and
+does not support older formats. A release earlier than this one refuses a
+format 5 plan, so upgrade the Sync API and the worker together.
 
-A null optional cardinality-one relationship in an update does not clear the
-destination field. The plan format cannot distinguish an absent relationship
-from an intended clear, so it is omitted and the worker logs a warning.
+When the source holds no peer for an optional one-peer relationship and the
+destination node holds one, for example an interface that leaves its LAG, the
+plan records that the relationship becomes empty and apply removes the peer.
+`runs plan --detail` prints `<field>: becomes empty` for it. When a configured
+filter removed the peer of a source record that has a source ID, the plan leaves
+that relationship as it is in the destination. When the
+relationship is required, the plan reports the problem
+`required_relationship_empty_in_source` and leaves the record out.
 
 `runs show` keeps `operation: plan`; `phase: applied` and
 `execution_state: completed` confirm completion. Result counts come from the
@@ -941,11 +1152,13 @@ authorize a command, or prove what a write reached.
 
 ### Over HTTP or from Python
 
-The same deployment answers directly. `/status` needs no credential:
+The same deployment answers directly. Every Sync API route is under `/api`, so a
+script adds `/api` to `INFRAHUB_SYNC_API_URL`; the CLI and `SyncClient` add it
+themselves. `/api/health` needs no credential:
 
 ```bash
 export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
-curl -sS "$INFRAHUB_SYNC_API_URL/status"
+curl -sS "$INFRAHUB_SYNC_API_URL/api/health"
 ```
 
 An authenticated call is what the CLI is for: `configs list` reads the same
@@ -962,7 +1175,7 @@ printf 'header = "Authorization: Bearer %s"\n' \
   "$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)" \
   > "$CURL_CONFIG"
 
-curl -sS --config "$CURL_CONFIG" "$INFRAHUB_SYNC_API_URL/configs"
+curl -sS --config "$CURL_CONFIG" "$INFRAHUB_SYNC_API_URL/api/configs"
 
 rm -f "$CURL_CONFIG"
 ```
@@ -972,8 +1185,8 @@ From Python:
 ```python
 from infrahub_sync.client import SyncClient
 
-with SyncClient("http://127.0.0.1:8001", "<the principal token>") as client:
-    print(client.get_status().worker.state)
+with SyncClient("http://127.0.0.1:8001", "<an API token>") as client:
+    print(client.get_health().workers.live_workers)
 ```
 
 ### Plan verification details
@@ -1002,7 +1215,7 @@ printf 'header = "Authorization: Bearer %s"\n' \
 curl -sS -X POST --config "$CURL_CONFIG" \
   -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' \
   -d '{"reason": "second opinion before applying"}' \
-  "$INFRAHUB_SYNC_API_URL/runs/RUN_ID/verify"
+  "$INFRAHUB_SYNC_API_URL/api/runs/RUN_ID/verify"
 
 rm -f "$CURL_CONFIG"
 ```
@@ -1011,38 +1224,98 @@ rm -f "$CURL_CONFIG"
 
 ```bash
 docker compose ps
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/health
 ```
 
 `docker compose ps` shows each container and the health of `postgres`,
-`object-store`, and `prefect-server`. The `/status` response needs no
-authentication; its `worker.state` says whether a worker is live:
+`object-store`, `prefect-server`, `sync-api` and `sync-worker`. The `/api/health`
+response needs no authentication. It answers `200` with `status` `healthy` when every
+component is up and at least `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` workers (default 1) are
+live, and `503` with `status` `unhealthy`
+otherwise. The [Sync HTTP API reference](./reference/sync-http-api.mdx#get-health)
+describes every field.
 
-| `worker.state` | What it means |
+Each entry of `dependencies` names one component and, when it is `down`, an error
+category:
+
+| `dependencies[].name` | Component |
 | --- | --- |
-| `ready` | A registered worker is sending heartbeats and can take a run. |
-| `busy` | A registered worker is sending heartbeats and is running work. |
-| `no-live-worker` | No worker has sent a heartbeat recently. Submissions are accepted and wait unclaimed. |
+| `database` | The product database in the `postgres` service. |
+| `object_store` | The bucket in the `object-store` service. |
+| `task_manager` | The `prefect-server` service. |
+| `task_manager_db` | The Prefect database in the `postgres` service, as `prefect-server` reports it. |
 
-To read the worker state without the published port, ask from inside the
+| `dependencies[].error` | What it means |
+| --- | --- |
+| `none` | The component is up. |
+| `timeout` | No answer within `INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT` seconds. A paused container gives this. |
+| `connection_refused` | The address was reached, but nothing listens on the port. |
+| `connection_closed` | The connection was opened and then closed by the other side. |
+| `name_resolution_failed` | The host name does not resolve. A stopped container gives this. |
+| `unavailable` | The component answered but cannot serve requests, for example a missing bucket or a refused login. |
+| `unknown_error` | Any other failure. |
+
+In this deployment one PostgreSQL holds both the product database and the Prefect
+database. When `postgres` stops or is paused, `database` and `task_manager_db` are
+both `down`, and `workers.state` is `unknown`, because Prefect cannot read the work
+pool from its database.
+
+`workers.items` lists each worker that sent a heartbeat in the last 24 hours:
+
+| `workers.items[].state` | What it means |
+| --- | --- |
+| `live` | The worker sends heartbeats and can take a run. |
+| `stale` | The worker has not sent a heartbeat within three heartbeat intervals or 30 seconds, whichever is longer. Submissions are accepted and wait unclaimed until a worker is live. |
+
+Each worker start registers under a new name, so after a restart the record of the
+previous worker stays in the list as `stale`. A stale record does not make the answer
+`503`; only `workers.live_workers` below `INFRAHUB_SYNC_HEALTH_MIN_WORKERS` does.
+
+To read the health without the published port, ask from inside the
 deployment's network:
 
 ```bash
-docker compose run --rm --no-deps -T sync-bootstrap python -c "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])"
+docker compose run --rm --no-deps -T sync-bootstrap python -c "import httpx; print(httpx.get('http://sync-api:8000/api/health', timeout=10).json()['status'])"
 ```
 
-Container state establishes absence and nothing else. A paused or hung worker
-keeps looking `running` to Docker. Only the worker state the API reports shows that it aged
-out, as `no-live-worker`, after three missed heartbeats or 30 seconds, because
-readiness comes from what the Sync API reports about the Prefect registry rather
-than from a process being up.
+Use `/api/health` for monitoring and alerting, not as a check that restarts
+containers: every Sync API process depends on the same components, so an outage of
+one of them would restart all of them. Give a monitoring check a timeout longer than
+`INFRAHUB_SYNC_HEALTH_CHECK_TIMEOUT`. For this reason the `sync-api` container
+health check stays on `/api/version`.
 
-A worker that has been stopped outright reaches `no-live-worker` the same way:
-the API still answers, submissions are still accepted, and they sit unclaimed
-until a worker comes back. Start it again with
-`docker compose restart sync-api sync-worker`, then check `worker.state`. The
-replacement worker registers under a new Prefect identity, and no durable record
-changes.
+The `sync-worker` container has its own health check. The worker writes a file on a
+timer, every heartbeat interval (`PREFECT_WORKER_HEARTBEAT_SECONDS`, 10 seconds in
+this deployment), and the health check fails when the file is older than three
+intervals or 30 seconds, whichever is longer. The timer calls no other service, so a
+hung worker process turns the container `unhealthy` in `docker compose ps`, and an
+outage of PostgreSQL or Prefect leaves it `healthy`. The health check runs every
+10 seconds and reports `unhealthy` after three failures in a row. Docker does not run
+health checks in a paused container, so `docker compose pause sync-worker` shows the
+container as paused, not `unhealthy`; `/api/health` still reports the worker `stale`.
+
+A worker that has been stopped outright turns `stale` the same way: the API still
+answers, submissions are still accepted, and they wait unclaimed until a worker
+comes back. Start it again with `docker compose restart sync-api sync-worker`,
+then check `/api/health`. The replacement worker registers under a new Prefect
+name, and no durable record changes.
+
+These are the times measured on this deployment, with one worker, the default heartbeat
+interval of 10 seconds and the default check timeout of 3 seconds:
+
+| Event | `/api/health` answer |
+| --- | --- |
+| The worker container is paused | `503` after 22 seconds, the worker `stale` |
+| The paused worker container is resumed | `200` after 1 second |
+| The worker process hangs | The `sync-worker` container `unhealthy` after 50 seconds |
+| The object store or the Prefect server stops | `503` within 2 seconds |
+| PostgreSQL stops | `503` at the next request |
+| PostgreSQL is paused | `503` within 4 seconds, with the error `timeout` |
+| The object store or the Prefect server starts again | `200` within 3 seconds |
+| PostgreSQL starts again | `200` within 9 seconds |
+| The worker container restarts | `200` once the new worker has sent its first heartbeat; the previous worker stays listed as `stale` |
+
+A longer heartbeat interval lengthens the worker times in proportion.
 
 ## Logs
 
@@ -1116,8 +1389,8 @@ infrahub-sync runs show RUN_ID
 
 Wait until its `execution_state` is `completed`, `failed`, `cancelled`,
 `abandoned`, or `interrupted`. These are terminal execution states; a missing
-or other value does not confirm a terminal execution. A `ready` or `busy` worker
-says nothing about idleness. These checks cover only known runs; if you cannot
+or other value does not confirm a terminal execution. A live worker in
+`/api/health` says nothing about idleness. These checks cover only known runs; if you cannot
 account for all submitted work, postpone maintenance.
 
 ### Stop and resume the deployment
@@ -1136,7 +1409,7 @@ Expect no running container. To resume the deployment:
 docker compose up -d --wait
 ```
 
-Then check `worker.state` as in [Status](#status) before submitting work. `up`
+Then check the health of the deployment as in [Status](#status) before submitting work. `up`
 starts the PostgreSQL, object storage, and Prefect dependencies as well as the
 API and worker.
 
@@ -1148,7 +1421,7 @@ When the dependencies are running, restart only the API and worker processes:
 docker compose restart sync-api sync-worker
 ```
 
-Then check `worker.state`. A restart preserves durable records. It does not
+Then check the health of the deployment as in [Status](#status). A restart preserves durable records. It does not
 start stopped dependencies, and it does not pick up a changed `.env`; use
 `docker compose up -d --wait` for both.
 
@@ -1161,7 +1434,7 @@ infrahub-sync configs show CONFIG_ID --version VERSION
 ```
 
 Replace `CONFIG_ID` and `VERSION` with the identifier and version you registered.
-Save the output, then repeat the command after the worker reports `ready`.
+Save the output, then repeat the command after `/api/health` answers `healthy`.
 Confirm that `config_id`, `registry_version`, `package_checksum`, and
 `declared_content` match the earlier output. This checks that the configuration
 version remains available; a live worker alone only checks deployment health.
@@ -1266,7 +1539,8 @@ writing is an ordinary failed run, and needs only a new plan.
 
 ## What this topology does not do
 
-- It runs on one host. There is no multi-host deployment and no clustering.
+- It runs on one host, with no clustering. To run Infrahub Sync on the nodes of a Kubernetes
+  cluster, use the [Kubernetes deployment](./kubernetes-deployment.mdx).
 - It has no public ingress and no TLS. Both published surfaces bind to
   `127.0.0.1` by default.
 - It has no in-place state migration, and no backup or restore.
@@ -1278,7 +1552,7 @@ daemon and tears it down. It runs against an image you build locally, selected
 through the same two settings an operator uses:
 
 ```bash
-docker build -t infrahub-sync:compose-test .
+docker build -f development/Dockerfile -t infrahub-sync:compose-test .
 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose
 ```
 

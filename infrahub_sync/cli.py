@@ -8,10 +8,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shlex
 import sys
 import tempfile
 import unicodedata
 from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import datetime
 from enum import Enum
 from functools import wraps
 from math import isfinite
@@ -24,16 +28,23 @@ import typer
 import yaml
 from pydantic import ValidationError
 
+from infrahub_sync import cli_accounts, cli_credentials, cli_session
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
     ApproveRunRequest,
+    AutomaticResumeResource,
     CancelRunRequest,
+    ChangeScheduleRequest,
     ClientInputError,
     CompatibilityError,
     ConfigMutationRequest,
     ConfigsAPIError,
     CreateRunRequest,
+    CreateScheduleRequest,
+    NotSyncAPIError,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanResource,
     ProtocolError,
     RegisteredConfigurationResource,
@@ -42,17 +53,22 @@ from infrahub_sync.client import (
     RunResource,
     RunTerminalError,
     RunWaitTimeoutError,
+    ScheduleActionRequest,
+    ScheduleResource,
     SyncClient,
     SyncClientError,
     TransportError,
     ValidationReportResource,
     VerifyRunRequest,
 )
+from infrahub_sync.client.errors import CONFIGURATION_NAME_IN_USE, configuration_name_in_use_message
 from infrahub_sync.client.models import (
     LOG_STAGES,
     MAX_FAILURE_CAUSE_TEXT,
     MAX_LIMIT,
     MAX_REPORT_LIMIT,
+    MAX_START_LATE_SECONDS,
+    MIN_START_LATE_SECONDS,
     RECOVERY_NEXT_ACTIONS,
     SCHEMA_CHANGED_NEXT_ACTION,
     ListPage,
@@ -66,7 +82,14 @@ from infrahub_sync.configuration.conversion import (
     visible_v2_variables,
 )
 from infrahub_sync.configuration.conversion_report import next_step_lines, refusal_lines, report_lines
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+    STORED_VERSION_FORMAT_REMOVED_MESSAGE,
+)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.demo import prepare as demo_prepare
+from infrahub_sync.demo.errors import DemoError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -81,6 +104,7 @@ if TYPE_CHECKING:
         PlanLastChangeResource,
         PlanOperationResource,
         PlanReportPageResource,
+        PlanStepPart,
         PublicRunResource,
         RecoveryAction,
         RunLogLine,
@@ -101,13 +125,34 @@ OWNER_SCOPE_NOTICE = "The owner setting applies only to values this run creates.
 NOT_RECORDED = "not recorded"
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
+# The client operation that `configs check` reports when the Sync API breaks the paging contract.
+_CHECK_PACKAGE = "check_package"
 _KIND_ARG = "kind"
+_ACTION_ARG = "action"
+_JSON_ARG = "json"
+_SAMPLES_ARG = "samples"
 _TYPE_ARG = "type"
 _VERSION_ARG = "version"
 _DIFF_DEPRECATION = "warning: 'diff' is deprecated, use 'plan'"
 _LIMIT_HELP = f"Items per page, 1-{MAX_LIMIT}. The server default applies when omitted."
 _ALL_HELP = "Read every page instead of only the first."
 _CONFIG_HELP = "Configuration ID or name. The ID is tried first, then the name."
+_SCHEDULE_HELP = "Schedule ID or name. The ID is tried first, then the name."
+_WRITE_WHEN_LEFT_OUT_HELP = (
+    "Turn on or off the left-out setting: when on, a run whose plan leaves out records writes the other records "
+    "instead of stopping after the plan. Applies only to a schedule that writes to the default branch; the Sync "
+    "API refuses it for branch review."
+)
+_WRITE_TO_DEFAULT_BRANCH_HELP = (
+    "Write each run to the branch that a sync run of the configuration writes to, with no proposed change. "
+    "Without this option each run writes to a new branch and opens a proposed change for review. A Sync API "
+    "that requires an approved plan refuses it."
+)
+_WRITE_TARGET_CHANGE_HELP = (
+    "Change where each run writes: to the branch that a sync run of the configuration writes to, or to a new "
+    "branch with a proposed change for review. A Sync API that requires an approved plan refuses the default "
+    "branch."
+)
 # Characters a terminal acts on or a reader cannot see: every code point in the Unicode
 # categories Cc (C0 and C1 controls, DEL), Cf (bidirectional overrides and isolates,
 # zero-width characters, direction marks, soft hyphen, tag characters), Zl and Zp (line
@@ -115,12 +160,27 @@ _CONFIG_HELP = "Configuration ID or name. The ID is tried first, then the name."
 # or the server cannot move the cursor, erase a line, hide text, or show a forged one.
 _ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 _READABLE_ESCAPES = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
+# Characters that make an identity value ambiguous on a `key=value` line: `=` reads as another
+# field, a parenthesis as a marker such as `(not executed)`, a quote as a value boundary, and a
+# backslash as the escape character used inside the quotes.
+_IDENTITY_DELIMITERS = frozenset("=\"'()\\")
+# A peer is printed as its identity values separated by commas, between square brackets on a
+# relationship line, so these characters are ambiguous in an identity value of a peer as well.
+_PEER_DELIMITERS = _IDENTITY_DELIMITERS | frozenset(",[]")
 
-app = typer.Typer(help="Synchronize registered configurations through the Sync API.")
+app = typer.Typer(
+    help="Synchronize registered configurations through the Sync API.",
+    # A local variable of a command can hold a typed password or a token; a traceback shows none.
+    pretty_exceptions_show_locals=False,
+)
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
 runs_app = typer.Typer(help="Inspect service-owned runs.")
+schedules_app = typer.Typer(help="Start `sync` runs of a configuration version on a cron cadence.")
+demo_app = typer.Typer(help="Prepare a Sync deployment for the NetBox demo.")
 app.add_typer(configs_app, name="configs")
 app.add_typer(runs_app, name="runs")
+app.add_typer(schedules_app, name="schedules")
+app.add_typer(demo_app, name="demo")
 
 
 class Verbosity(str, Enum):
@@ -148,7 +208,10 @@ def main(
         None,
         "--api-url",
         envvar="INFRAHUB_SYNC_API_URL",
-        help="Absolute URL of the Sync API. Defaults to INFRAHUB_SYNC_API_URL.",
+        help=(
+            "Address of the Sync service, for example http://127.0.0.1:8001. The client adds /api. "
+            "Defaults to INFRAHUB_SYNC_API_URL."
+        ),
     ),
     verbosity: Verbosity = typer.Option(Verbosity.default, "--verbosity", help="Log verbosity level."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Shorthand for --verbosity verbose."),  # noqa: FBT003
@@ -164,23 +227,63 @@ def main(
     _setup_logging(level=level)
     ctx.ensure_object(dict)
     ctx.obj["api_url"] = api_url or ""
+    _SAVED_SESSION.set(None)
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 
 
+# The Sync API address and the token of the saved session that this command presents, or nothing
+# when the command presents INFRAHUB_SYNC_API_TOKEN or an injected client. `_client_errors` reads
+# it to remove a saved session that the Sync API refuses.
+_SAVED_SESSION: ContextVar[tuple[str, str] | None] = ContextVar("_SAVED_SESSION", default=None)
+
+
+def _api_url(ctx: typer.Context) -> str:
+    ctx.ensure_object(dict)
+    return cast("str", ctx.obj.get("api_url", ""))
+
+
+def _keep_client(ctx: typer.Context, client: SyncClient) -> SyncClient:
+    ctx.obj["client"] = client
+    ctx.call_on_close(client.close)
+    return client
+
+
 def _client(ctx: typer.Context) -> SyncClient:
-    """Return the injected client or construct the command's one shared HTTP boundary."""
+    """Return the injected client or construct the command's one shared HTTP boundary.
+
+    The client presents INFRAHUB_SYNC_API_TOKEN when it is set and not empty, and the session
+    file is then not read. Otherwise it presents the session that `login` saved for the address.
+    """
     ctx.ensure_object(dict)
     injected = ctx.obj.get("client")
     if injected is not None:
         return cast("SyncClient", injected)
-    client = SyncClient(
-        cast("str", ctx.obj.get("api_url", "")),
-        os.environ.get("INFRAHUB_SYNC_API_TOKEN", ""),
-    )
-    ctx.obj["client"] = client
-    ctx.call_on_close(client.close)
-    return client
+    api_url = _api_url(ctx)
+    token = os.environ.get(cli_accounts.API_TOKEN_VARIABLE, "")
+    saved = None if token else cli_session.read_session(api_url)
+    client = SyncClient(api_url, token if saved is None else saved.token)
+    if saved is not None:
+        _SAVED_SESSION.set((api_url, saved.token))
+    return _keep_client(ctx, client)
+
+
+def _sign_in_client(ctx: typer.Context) -> SyncClient:
+    """Return the injected client, or a client that holds no token, for `login`."""
+    ctx.ensure_object(dict)
+    injected = ctx.obj.get("client")
+    if injected is not None:
+        return cast("SyncClient", injected)
+    return _keep_client(ctx, SyncClient.without_token(_api_url(ctx)))
+
+
+def _session_client(ctx: typer.Context, token: str) -> SyncClient:
+    """Return the injected client, or a client that presents a saved session token, for `logout`."""
+    ctx.ensure_object(dict)
+    injected = ctx.obj.get("client")
+    if injected is not None:
+        return cast("SyncClient", injected)
+    return _keep_client(ctx, SyncClient(_api_url(ctx), token))
 
 
 def _escape_character(character: str) -> str:
@@ -221,9 +324,18 @@ def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -
 
 
 _CLIENT_INPUT_HINTS = {
-    "service_url": "set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API",
-    "token": "set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token",
+    "service_url": (
+        "set INFRAHUB_SYNC_API_URL or pass --api-url to the address of the Sync service, "
+        "for example http://127.0.0.1:8001. The client adds /api."
+    ),
+    "token": "run infrahub-sync login, or set INFRAHUB_SYNC_API_TOKEN to a Sync API token",
 }
+_SESSION_REFUSED_HINT = "the Sync API no longer accepts the saved session, so it was removed; run infrahub-sync login"
+_UNAUTHENTICATED = "unauthenticated"
+_NOT_SYNC_API_HINT = (
+    "Check INFRAHUB_SYNC_API_URL. It holds the address of the Sync service, without /api. "
+    "The Sync service and the CLI must come from the same release."
+)
 
 
 def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object], ...]]:
@@ -283,6 +395,16 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
                 ("outcome", error.outcome),
             ),
         )
+    elif isinstance(error, NotSyncAPIError):
+        result = (
+            "not-a-sync-api",
+            (
+                ("operation", error.operation),
+                ("address", error.url),
+                ("status", error.status),
+                ("hint", _NOT_SYNC_API_HINT),
+            ),
+        )
     elif isinstance(error, ProtocolError):
         result = "protocol", (("operation", error.operation), ("status", error.status))
     elif isinstance(error, TransportError):
@@ -293,19 +415,102 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         isinstance(error, APIError) and error.code == UNSUPPORTED_STORE_REASON
     ):
         result = (result[0], (*result[1], ("message", UNSUPPORTED_STORE_MESSAGE)))
-    return result
+    return result[0], (
+        *result[1],
+        *_removed_format_message(error),
+        *_name_in_use_message(error),
+        *_account_message(error),
+        *cli_credentials.in_use_fields(error),
+        *cli_credentials.refused_credential_fields(error),
+    )
+
+
+def _removed_format_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return the fixed message of a refusal for the removed credential format, as one more error field.
+
+    A refused registration says what replaces the format, and a refused run says to register a
+    new version (spec 027, FR-021).
+    """
+    if isinstance(error, ConfigsAPIError) and error.reason == CREDENTIAL_FORMAT_REMOVED_REASON:
+        return (("message", CREDENTIAL_FORMAT_REMOVED_MESSAGE),)
+    if isinstance(error, APIError) and error.code == CREDENTIAL_FORMAT_REMOVED_REASON:
+        return (("message", STORED_VERSION_FORMAT_REMOVED_MESSAGE),)
+    return ()
+
+
+def _configuration_with_the_name(error: SyncClientError) -> tuple[str, str] | None:
+    """Return the ID and name of the configuration a ``configuration-name-in-use`` refusal names."""
+    if not isinstance(error, APIError) or isinstance(error, ConfigsAPIError):
+        return None
+    if error.code != CONFIGURATION_NAME_IN_USE or error.details is None:
+        return None
+    config_id, name = error.details.get("config_id"), error.details.get("name")
+    if not isinstance(config_id, str) or not isinstance(name, str):
+        return None
+    return config_id, name
+
+
+def _name_in_use_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return the message of a refusal of a name that another configuration has, as one more field."""
+    named = _configuration_with_the_name(error)
+    return () if named is None else (("message", configuration_name_in_use_message(named[1], named[0])),)
+
+
+def _account_message(error: SyncClientError) -> tuple[tuple[str, object], ...]:
+    """Return the fixed message of a refusal of an account or credential route, as one more error field."""
+    if not isinstance(error, APIError) or isinstance(error, ConfigsAPIError):
+        return ()
+    message = cli_accounts.ACCOUNT_ERROR_MESSAGES.get(error.code) or cli_credentials.error_message(
+        error.status, error.code
+    )
+    return () if message is None else (("message", message),)
+
+
+def _forget_refused_session(error: SyncClientError) -> None:
+    """Remove the saved session that the Sync API refused, and print the `login` hint.
+
+    Nothing is removed when the command presented INFRAHUB_SYNC_API_TOKEN, or when the file no
+    longer holds the refused token, for example after a `login` that ran meanwhile.
+    """
+    saved = _SAVED_SESSION.get()
+    if saved is None or not isinstance(error, APIError):
+        return
+    if error.status != 401 or error.code != _UNAUTHENTICATED:
+        return
+    address, token = saved
+    try:
+        removed = cli_session.remove_session(address, token=token)
+    except OSError:
+        removed = False
+    if not removed:
+        typer.echo("hint: the Sync API no longer accepts the saved session; run infrahub-sync login", err=True)
+        return
+    typer.echo(f"hint: {_SESSION_REFUSED_HINT}", err=True)
 
 
 @contextmanager
-def _client_errors() -> Iterator[None]:
-    """Map the closed client error taxonomy to stable CLI exit behavior."""
+def _client_errors(hint: Callable[[SyncClientError], str | None] | None = None) -> Iterator[None]:
+    """Map the closed client error taxonomy to stable CLI exit behavior.
+
+    ``hint`` returns a line that says what to do next about the error, or nothing.
+    """
     try:
         yield
     except SyncClientError as error:
-        label, fields = _error_fields(error)
-        typer.echo(f"error: {label}", err=True)
-        _echo_fields(fields, err=True)
-        raise typer.Exit(2 if isinstance(error, ClientInputError) else 1) from None
+        code = _echo_client_error(error)
+        next_step = None if hint is None else hint(error)
+        if next_step is not None:
+            typer.echo(_display(f"hint: {next_step}"), err=True)
+        _forget_refused_session(error)
+        raise typer.Exit(code) from None
+
+
+def _echo_client_error(error: SyncClientError) -> int:
+    """Print a client error's label and bounded fields; return the exit code for it."""
+    label, fields = _error_fields(error)
+    typer.echo(f"error: {label}", err=True)
+    _echo_fields(fields, err=True)
+    return 2 if isinstance(error, ClientInputError) else 1
 
 
 def _request(model: type[Any], **values: object) -> Any:
@@ -318,11 +523,52 @@ def _request(model: type[Any], **values: object) -> Any:
 def _package(path: Path) -> dict[str, Any]:
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError):
+    # `ValueError` covers a decode error and a date the YAML parser cannot build, such as
+    # `2024-13-45`; the Sync API refuses the same document as `invalid_package`.
+    except (OSError, ValueError, RecursionError, yaml.YAMLError):
         raise ClientInputError(_PACKAGE_ARG) from None
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value) or _contains_itself(value):
         raise ClientInputError(_PACKAGE_ARG)
     return cast("dict[str, Any]", value)
+
+
+def _contains_itself(value: object) -> bool:
+    """Return whether a parsed YAML value holds itself, through an alias to an enclosing node.
+
+    Such a value, for example `a: &x [*x]`, has no JSON form. The walk does not recurse, and it
+    visits each mapping or list once, so a value that uses one alias in many places stays cheap.
+    """
+    on_path: set[int] = set()
+    finished: set[int] = set()
+    stack: list[tuple[object, Iterator[object]]] = []
+    end = object()
+
+    def enter(item: object) -> bool:
+        """Start the walk of one mapping or list; return whether it encloses the current position."""
+        if type(item) is dict:  # pylint: disable=unidiomatic-typecheck
+            children: Iterator[object] = iter(cast("dict[object, object]", item).values())
+        elif type(item) is list:  # pylint: disable=unidiomatic-typecheck
+            children = iter(cast("list[object]", item))
+        else:
+            return False
+        if id(item) in on_path:
+            return True
+        if id(item) not in finished:
+            on_path.add(id(item))
+            stack.append((item, children))
+        return False
+
+    enter(value)
+    while stack:
+        item, children = stack[-1]
+        child = next(children, end)
+        if child is end:
+            stack.pop()
+            on_path.discard(id(item))
+            finished.add(id(item))
+        elif enter(child):
+            return True
+    return False
 
 
 def _idempotency_key(explicit: str | None) -> str:
@@ -342,6 +588,21 @@ def _echo_idempotency_key(key: str) -> None:
 def _stdin_is_interactive() -> bool:
     """Report whether a person can answer a confirmation prompt on standard input."""
     return sys.stdin.isatty()
+
+
+_COMMAND_SUPPORT = cli_accounts.CommandSupport(
+    client=_client,
+    sign_in_client=_sign_in_client,
+    session_client=_session_client,
+    api_url=_api_url,
+    client_errors=_client_errors,
+    echo_fields=_echo_fields,
+    display=_display,
+    # Looked up at each call, so a test that replaces the function is honored.
+    stdin_is_interactive=lambda: _stdin_is_interactive(),  # noqa: PLW0108  # pylint: disable=unnecessary-lambda
+)
+cli_accounts.register(app, _COMMAND_SUPPORT)
+cli_credentials.register(app, _COMMAND_SUPPORT)
 
 
 def _is_not_found(error: SyncClientError) -> bool:
@@ -449,6 +710,7 @@ def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) 
             ("created_at", resource.created_at.isoformat()),
             ("registered_by", resource.registered_by),
             ("registration_reason", resource.registration_reason),
+            ("registered_without_validation", resource.registered_without_validation),
             ("latest_run", _run_reference(resource.latest_run)),
             ("latest_applied_run", _run_reference(resource.latest_applied_run, applied=True)),
         )
@@ -464,6 +726,7 @@ def _echo_config_version_reference(
             ("registry_version", resource.registry_version),
             ("package_checksum", resource.package_checksum),
             ("created_at", resource.created_at.isoformat()),
+            ("registered_without_validation", resource.registered_without_validation),
         )
     )
 
@@ -497,6 +760,26 @@ def _echo_validation(resource: ValidationReportResource) -> None:
             ("next_offset", resource.next_offset),
         )
     )
+    _echo_findings(resource)
+
+
+def _echo_package_check(resource: PackageCheckResource) -> None:
+    """Print the check of an unregistered package as `configs validate` prints a version, with the read outcome."""
+    _echo_fields(
+        (
+            ("package_checksum", resource.package_checksum),
+            ("destination_read", resource.destination_read),
+            ("destination_schema_fingerprint", resource.destination_schema_fingerprint),
+            ("offset", resource.offset),
+            ("limit", resource.limit),
+            ("total_findings", resource.total_findings),
+            ("next_offset", resource.next_offset),
+        )
+    )
+    _echo_findings(resource)
+
+
+def _echo_findings(resource: ValidationReportResource | PackageCheckResource) -> None:
     for finding in resource.findings:
         typer.echo(
             _display(
@@ -517,8 +800,19 @@ def configs_register(
         help="Retry key. A new key is generated and printed when omitted.",
     ),
 ) -> None:
-    """Register a JSON or YAML configuration package."""
-    with _client_errors():
+    """Register a JSON or YAML configuration package.
+
+    The name of the package must not be the name of another configuration. A refusal prints the
+    command that adds the package as a new version of that configuration instead.
+    """
+
+    def add_as_a_version(error: SyncClientError) -> str | None:
+        named = _configuration_with_the_name(error)
+        if named is None:
+            return None
+        return f"infrahub-sync configs version {shlex.quote(named[0])} {shlex.quote(str(package))}"
+
+    with _client_errors(hint=add_as_a_version):
         key = _idempotency_key(idempotency_key)
         _echo_idempotency_key(key)
         request = cast(
@@ -631,8 +925,8 @@ def configs_validate(
         None,
         "--branch",
         help=(
-            "Also check the mapping, the import account's permissions and the workers' credential "
-            "variables against this Infrahub branch. Exits 1 when a finding on the returned page is "
+            "Also check the mapping and the import account's permissions against this Infrahub "
+            "branch, read with the destination's stored credential. Exits 1 when a finding on the returned page is "
             "an error; read every page with --offset to check them all."
         ),
     ),
@@ -760,6 +1054,54 @@ def _with_live_schema(path: Path, result: ConversionResult) -> tuple[ConversionR
     return filled, filled.package
 
 
+@configs_app.command("check")
+def configs_check(
+    ctx: typer.Context,
+    package: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
+    *,
+    offset: int = typer.Option(0, "--offset", help="Finding offset."),
+    limit: int = typer.Option(256, "--limit", help="Maximum findings to return."),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help=(
+            "Also check the mapping and the import account's permissions against this Infrahub "
+            "branch, read with the destination's stored credential. `destination_read` says whether the service read "
+            "the branch's schema."
+        ),
+    ),
+) -> None:
+    """Validate a JSON or YAML configuration package without registering it.
+
+    Prints the requested page of findings. Exits 1 when any page has an error finding: when the
+    printed page has none, the command reads the following pages until it finds one or reaches
+    the end. A warning does not change the exit code.
+    """
+    with _client_errors():
+        request = cast("PackageCheckRequest", _request(PackageCheckRequest, package=_package(package)))
+        client = _client(ctx)
+        report = client.check_package(request, offset=offset, limit=limit, branch=branch)
+        _echo_package_check(report)
+        # contracts/sync-api.md (spec 025, decision D-10): an error finding exits 1, on whichever
+        # page it is, so `configs check pkg && configs register pkg` never registers one.
+        page, page_offset = report, offset
+        while not _has_error_finding(page) and page.next_offset is not None:
+            # A `next_offset` that does not move forward would read the same page forever.
+            if page.next_offset <= page_offset:
+                raise ProtocolError(_CHECK_PACKAGE)
+            page_offset = page.next_offset
+            page = client.check_package(request, offset=page_offset, limit=limit, branch=branch)
+    if _has_error_finding(page):
+        if page is not report:
+            typer.echo(f"error findings start on a later page: run again with --offset {page.offset}", err=True)
+        raise typer.Exit(code=1)
+
+
+def _has_error_finding(report: PackageCheckResource) -> bool:
+    """Return whether one page of a package check holds an `error` finding."""
+    return any(finding.severity == "error" for finding in report.findings)
+
+
 @configs_app.command("convert")
 def configs_convert(
     path: Path = typer.Argument(..., help="The v1 or v2 config.yml to read."),
@@ -792,13 +1134,16 @@ def configs_convert(
     without a terminal unless --yes is given.
 
     \b
-    The report names each credential setting that v2 used with the
-    environment variable the Sync worker reads in V3, each address with its origin (a flag, a v2
-    variable, or config.yml), each dropped key with its reason, and notes.
-    It warns when config.yml still holds a literal credential, when the
-    shipped Compose file does not pass a credential variable to the Sync
-    worker, when an address is localhost or 127.0.0.1, and when an address
-    came from a generic variable name.
+    The package names one stored credential in each block that uses
+    authentication, with `credential: <name>`, and holds no credential setting.
+    The report lists each stored credential to create, with the fields it needs
+    (a token, or a username and a password) and its command, for example
+    `infrahub-sync credentials create netbox-token`. An administrator runs each
+    command before the package is registered; the command asks for the value.
+    The report also lists each address with its origin (a flag, a v2 variable,
+    or config.yml), each dropped key with its reason, and notes. It warns when
+    config.yml still holds a literal credential, when an address is localhost
+    or 127.0.0.1, and when an address came from a generic variable name.
 
     \b
     Exit status 1, nothing written, when the configuration has any of:
@@ -921,6 +1266,23 @@ def _echo_reads(resource: RunResource) -> None:
                 ("destination_read", _side_read_text(reading.reads.destination)),
             )
         )
+    if reading is not None and reading.plan_step is not None:
+        running = reading.plan_step.running
+        _echo_fields(
+            tuple(
+                (f"plan_{_display(name)}", _plan_part_text(part, running=name == running))
+                for name, part in reading.plan_step.parts.items()
+            )
+        )
+
+
+def _plan_part_text(part: PlanStepPart, *, running: bool) -> str:
+    """Render one part of the plan step: its duration, `running`, or how it stopped (spec 019)."""
+    if part.ended_at is not None:
+        return f"{(part.ended_at - part.started_at).total_seconds():.1f}s"
+    if part.stopped_at is not None:
+        return f"stopped after {(part.stopped_at - part.started_at).total_seconds():.1f}s"
+    return "running" if running else "stopped"
 
 
 def _echo_apply_progress(resource: RunResource) -> None:
@@ -962,6 +1324,94 @@ def _echo_apply_progress(resource: RunResource) -> None:
         typer.echo(
             _display(f"resume {number}: {resume.actor} {resume.requested_at.isoformat()} {start} {outcome}{wrote}")
         )
+
+
+def _echo_credentials_used(resource: RunResource) -> None:
+    """Print the stored credential and the revision that each stage of a run received for each block.
+
+    Nothing is printed for a run whose stages received no stored credential. The lines hold a
+    stage, a block, a name and a revision only: the Sync API answers no value on this route.
+    """
+    if not resource.credentials_used:
+        return
+    typer.echo("Credentials used:")
+    for used in resource.credentials_used:
+        typer.echo(_display(f"  {used.stage} {used.block}: {used.name} revision {used.revision}"))
+
+
+# What `runs show` prints for an automatic resume record that has not ended.
+_AUTOMATIC_RESUME_STATES = {
+    "waiting-check": "waiting for a live worker to run the check",
+    "checking": "checking",
+    "waiting-resume": "waiting for a live worker to resume",
+    "resuming": "resuming",
+}
+# What `runs show` prints for an ended record whose resume Sync submitted and no worker started.
+_AUTOMATIC_RESUME_SUBMITTED_ONLY = "submitted, no worker started it"
+# The reasons whose record ended because the check did not pass.
+_AUTOMATIC_CHECK_NOT_PASSED = frozenset({"check-failed", "check-found-differs"})
+
+
+def _automatic_check_passed(row: AutomaticResumeResource) -> bool:
+    """Return whether the automatic check of the record passed.
+
+    The record holds `operations_not_checked` once its check returned a report with a comparison.
+    The check passed unless the record ended because of the check, so a record that ended later,
+    for example when the resume was refused or no worker picked it up, still shows the check.
+    """
+    return row.operations_not_checked is not None and row.reason not in _AUTOMATIC_CHECK_NOT_PASSED
+
+
+def _echo_automatic_resumes(resource: RunResource) -> None:
+    """Print one block per automatic resume record of the run, oldest first (spec 030 contracts/cli-and-web.md).
+
+    The lines hold codes, counts and the fixed sentences the Sync API builds from them, never a
+    value from the plan.
+    """
+    for number, row in enumerate(resource.automatic_resumes, start=1):
+        # A resume that Sync submitted and no worker picked up ends `no-resume` with its flow run.
+        submitted_only = row.decision != "resume" and row.resume_flow_run_id is not None
+        if row.state != "ended":
+            heading = _AUTOMATIC_RESUME_STATES.get(row.state, row.state)
+        elif row.decision == "resume":
+            heading = "started"
+        elif submitted_only:
+            heading = _AUTOMATIC_RESUME_SUBMITTED_ONLY
+        else:
+            heading = "not started"
+        typer.echo("")
+        typer.echo(_display(f"Automatic resume {number}: {heading}"))
+        typer.echo(_display(f"  cause: {row.cause_text}"))
+        if _automatic_check_passed(row):
+            not_checked = row.operations_not_checked or 0
+            typer.echo(f"  check: passed, 0 differs, {not_checked} not checked")
+        if row.decision == "resume" or submitted_only:
+            start = "from the first operation" if row.start_after is None else f"after operation {row.start_after}"
+            verb = "submitted" if submitted_only else "resumed"
+            typer.echo(_display(f"  {verb} {start} by {row.actor}"))
+        if row.reason_text is not None:
+            typer.echo(_display(f"  reason: {row.reason_text}"))
+        if number == len(resource.automatic_resumes):
+            advice = _automatic_resume_next(row, resource)
+            if advice is not None:
+                typer.echo(_display(f"  next: {advice}"))
+
+
+def _automatic_resume_next(row: AutomaticResumeResource, resource: RunResource) -> str | None:
+    """What the operator can do after Sync did not resume the run, or `None` (spec 030 contracts/cli-and-web.md).
+
+    Only the latest record gets the line, only when it ended without a resume and the run still
+    has an interrupted write to resolve. A run that `runs resume` refuses (`not-resumable`) needs a
+    new plan, so the line does not name `runs resume`.
+    """
+    if row.state != "ended" or row.decision != "no-resume" or not resource.run.reconciliation_required:
+        return None
+    if row.reason == "not-resumable":
+        return "create a new plan; `infrahub-sync runs resume` cannot resume this run"
+    verify = f"run `infrahub-sync verify {resource.run.run_id}`"
+    return (
+        f"{verify}, then a new plan or `infrahub-sync runs resume {resource.run.run_id} --expected-checksum CHECKSUM`"
+    )
 
 
 def _side_read_text(side: SideRead | None) -> str | None:
@@ -1053,8 +1503,48 @@ def _delete_disclosure(plan: PlanResource) -> None:
         typer.echo("0 delete operations are recorded; apply has no deletes to skip.")
 
 
+def _identity_value(value: object, delimiters: frozenset[str] = _IDENTITY_DELIMITERS) -> str:
+    """Render one identity value so that its start and its end are visible on the line.
+
+    A value that is empty, or that contains whitespace or one of `delimiters`, is
+    printed between double quotes, with each backslash and double quote inside it preceded by a
+    backslash. The value then cannot be read as another `key=value` field or as a marker that
+    follows the identity, and it cannot close its own quotes. Any other value is printed as it is.
+    """
+    text = str(value)
+    if text and not any(character.isspace() or character in delimiters for character in text):
+        return text
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _identity_text(identity: Mapping[str, Any]) -> str:
-    return " ".join(f"{key}={identity[key]}" for key in sorted(identity))
+    # Quoting is decided on the real value; `_display` escapes the finished line afterwards.
+    return " ".join(f"{key}={_identity_value(identity[key])}" for key in sorted(identity))
+
+
+def _peer_values(value: object) -> str:
+    """The identity values of one peer, separated by commas, in the order of the field names.
+
+    A value that refers to another peer is replaced by the identity values of that peer. Each
+    value is quoted like an identity value, and also when it contains a comma or a square
+    bracket, so a value cannot be read as two values or as the end of the peer.
+    """
+    if isinstance(value, dict):
+        mapping = cast("dict[str, object]", value)
+        identity = mapping.get("identity")
+        inner = cast("dict[str, object]", identity) if isinstance(identity, dict) else mapping
+        return ",".join(_peer_values(inner[key]) for key in sorted(inner))
+    if isinstance(value, list | tuple):
+        return ",".join(_peer_values(item) for item in value)
+    return _identity_value(value, _PEER_DELIMITERS)
+
+
+def _operation_identity_text(identity: Mapping[str, Any]) -> str:
+    """The identity of a plan operation: `key=value` fields, with a peer printed by its identity values."""
+    return " ".join(
+        f"{key}={_peer_values(value) if isinstance(value, dict | list | tuple) else _identity_value(value)}"
+        for key, value in sorted(identity.items())
+    )
 
 
 def _last_change_line(record: PlanLastChangeResource) -> str:
@@ -1071,14 +1561,27 @@ def _last_change_line(record: PlanLastChangeResource) -> str:
     )
 
 
+def _relationship_lines(reference: Mapping[str, Any]) -> Iterator[str]:
+    """One relationship of an operation: one line per peer, or one line that states it holds no peer.
+
+    A peer is printed by its kind and its identity values, with the values of the peers its
+    identity crosses. `runs plan --json` prints the same reference in full.
+    """
+    field = reference.get("field")
+    peers = reference.get("peers") or ()
+    for peer in peers:
+        yield f"  {field} -> {reference.get('peer_kind')}[{_peer_values(peer)}]"
+    if not peers:
+        # Plan format 5: a one-peer reference with no peer empties that relationship (FR-009).
+        # An empty peer set of a many relationship replaces the peers the destination holds.
+        yield f"  {field}: becomes empty" if reference.get("cardinality") == "one" else f"  {field} -> no peers"
+
+
 def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[PlanLastChangeResource] = ()) -> None:
     marker = " (not executed)" if operation.action == "delete" else ""
     # Identity values come from the source, so they are escaped before a reviewer reads them.
-    typer.echo(
-        _display(
-            f"{operation.operation_id} {operation.action} {operation.kind} {_identity_text(operation.identity)}{marker}"
-        )
-    )
+    identity = _operation_identity_text(operation.identity)
+    typer.echo(_display(f"{operation.operation_id} {operation.action} {operation.kind} {identity}{marker}"))
     # Only an update carries one, and it is what the apply will key that write by, so a
     # reviewer sees which destination object the operation names before approving it.
     if operation.destination_id is not None:
@@ -1086,9 +1589,9 @@ def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[P
     payload = operation.payload
     if payload is not None:
         typer.echo(f"  payload: {json.dumps(payload, sort_keys=True, separators=(',', ':'))}")
-    relationships = operation.relationships
-    if relationships:
-        typer.echo(f"  relationships: {json.dumps(relationships, sort_keys=True, separators=(',', ':'))}")
+    for reference in operation.relationships or ():
+        for line in _relationship_lines(reference):
+            typer.echo(_display(line))
     for record in last_changes:
         typer.echo(_last_change_line(record))
 
@@ -1191,14 +1694,48 @@ def _echo_first_problems(client: SyncClient, plan: PlanResource) -> None:
         typer.echo(f"List every problem with `infrahub-sync runs plan {_display(plan.run_id)} --problems`.")
 
 
-def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = None) -> None:
+def _echo_samples(
+    operations: Sequence[PlanOperationResource],
+    last_changes: Mapping[str, Sequence[PlanLastChangeResource]],
+    samples: int,
+) -> None:
+    """Print, for each destination kind and action, its operation count and its first operations.
+
+    The groups and the operations in a group keep the order of the saved plan, which is the
+    order apply writes them in. The heading states how many operations are shown, so a reviewer
+    reads that the rest of the group is not printed.
+    """
+    groups: dict[tuple[str, str], list[PlanOperationResource]] = {}
+    for operation in operations:
+        groups.setdefault((operation.kind, operation.action), []).append(operation)
+    for (kind, action), group in groups.items():
+        shown = group[:samples]
+        typer.echo(_display(f"{kind} {action}: {len(shown)} of {len(group)} operations shown"))
+        for operation in shown:
+            _operation_detail(operation, last_changes.get(operation.operation_id, ()))
+
+
+def _echo_plan(
+    plan: PlanResource,
+    *,
+    detail: bool = False,
+    kind: str | None = None,
+    action: str | None = None,
+    samples: int | None = None,
+) -> None:
     operations = list(plan.operations)
+    listed = detail or samples is not None
     if kind is not None:
-        if not detail:
+        if not listed:
             raise ClientInputError(_KIND_ARG)
         operations = [operation for operation in operations if operation.kind == kind]
         if not operations:
             raise ClientInputError(_KIND_ARG)
+    if action is not None:
+        if not listed:
+            raise ClientInputError(_ACTION_ARG)
+        # A plan without one action is usual, so an action that matches no operation prints none.
+        operations = [operation for operation in operations if operation.action == action]
     fields: list[tuple[str, object]] = [
         ("run_id", plan.run_id),
         ("plan_checksum", plan.checksum),
@@ -1218,13 +1755,17 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
     _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
     _owner_scope_disclosure(plan)
-    if detail:
-        # Records are grouped by operation; a plan made without them shows no last-change lines.
-        last_changes: dict[str, list[PlanLastChangeResource]] = {}
-        for record in plan.last_changes or ():
-            last_changes.setdefault(record.operation_id, []).append(record)
-        for operation in operations:
-            _operation_detail(operation, last_changes.get(operation.operation_id, ()))
+    if not listed:
+        return
+    # Records are grouped by operation; a plan made without them shows no last-change lines.
+    last_changes: dict[str, list[PlanLastChangeResource]] = {}
+    for record in plan.last_changes or ():
+        last_changes.setdefault(record.operation_id, []).append(record)
+    if samples is not None:
+        _echo_samples(operations, last_changes, samples)
+        return
+    for operation in operations:
+        _operation_detail(operation, last_changes.get(operation.operation_id, ()))
 
 
 def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
@@ -1259,6 +1800,10 @@ def _failure_lines(failure: Mapping[str, Any], record: StageFailureResource | No
     """The spec 007 lines of a failure record that follow `cause:` (contracts/cli.md), unescaped."""
     if record is None:
         return
+    if record.active_run_id:
+        # The run that was writing to the same configuration when this write could not take the
+        # configuration's write guard (`write_guard_contended`).
+        yield f"active run: {record.active_run_id}"
     if record.infrahub_message:
         yield f"Infrahub message: {record.infrahub_message}"
     if record.record is not None:
@@ -1737,7 +2282,7 @@ def _echo_verification_operations(verification: dict[str, Any]) -> None:
 
 @app.command("whoami")
 def whoami_cmd(ctx: typer.Context) -> None:
-    """Show the actor the API token authenticates as and whether it is an administrator."""
+    """Show the account that the API token or the saved session belongs to, whether it is an administrator, and whether approval is required."""
     with _client_errors():
         principal = _client(ctx).me()
         _echo_fields(
@@ -1755,35 +2300,63 @@ def _run_row(run: PublicRunResource) -> str:
         run.run_id,
         configuration,
         run.destination_branch or "-",
+        run.trigger_type,
         run.phase,
         run.outcome or "-",
         run.actor or "-",
         run.started_at.isoformat(),
     )
+    # Only a run that Sync resumed without a person has the column (spec 030).
+    if run.automatic_resume_count:
+        columns = (*columns, f"auto resumes: {run.automatic_resume_count}")
     return _display("  ".join(columns))
 
 
+class TriggerTypeOption(str, Enum):
+    """The trigger types `runs list --trigger-type` filters on."""
+
+    MANUAL = "manual"
+    SCHEDULED = "scheduled"
+
+
 @runs_app.command("list")
-def runs_list(
+def runs_list(  # pylint: disable=too-many-arguments
     ctx: typer.Context,
+    *,
     config: str | None = typer.Option(None, "--config", "--config-id", help=_CONFIG_HELP),
     version: int | None = typer.Option(
         None, "--version", min=1, help="Only runs of this version; requires a configuration ID or name."
     ),
+    trigger_type: TriggerTypeOption | None = typer.Option(
+        None, "--trigger-type", help="Only runs that a person started (manual) or that a schedule started (scheduled)."
+    ),
+    schedule: str | None = typer.Option(None, "--schedule", help=f"Only runs this schedule started. {_SCHEDULE_HELP}"),
     limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
     all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
 ) -> None:
-    """List runs, newest first: run, configuration@version, branch, phase, outcome, actor, start time."""
+    """List runs, newest first: run, configuration@version, branch, trigger type, phase, outcome, actor, start time.
+
+    A run that Sync resumed without a person adds `auto resumes: N`, the number of automatic resumes.
+    """
     with _client_errors():
         if version is not None and config is None:
             raise ClientInputError(_VERSION_ARG)
         client = _client(ctx)
-        config_id = _config_id(ctx, config) if config is not None else None
+        filters: dict[str, Any] = {
+            "config_id": _config_id(ctx, config) if config is not None else None,
+            "registry_version": version,
+            "limit": limit,
+        }
+        # The schedule filters are sent only when given.
+        if trigger_type is not None:
+            filters["trigger_type"] = trigger_type.value
+        if schedule is not None:
+            filters["schedule_id"] = _resolve_schedule(client, schedule).schedule_id
         _echo_list(
             "runs",
             all_pages=all_pages,
-            every_item=lambda: client.iter_runs(config_id=config_id, registry_version=version, limit=limit),
-            first_page=lambda: client.list_runs(config_id=config_id, registry_version=version, limit=limit),
+            every_item=lambda: client.iter_runs(**filters),
+            first_page=lambda: client.list_runs(**filters),
             write=lambda runs: _echo_rows(runs, _run_row),
         )
 
@@ -1931,6 +2504,11 @@ def runs_show(
     keys that have no value. A side with no read state to return reads <none>. Neither line is printed when that
     execution has no read state: a run recorded before the read state, a stage the worker has not started, or a
     stage whose read state the worker could not store.
+    After them, one `plan_<part>` line per part of that execution's plan step that started: `plan_waiting`,
+    `plan_preparing`, `plan_comparing`, `plan_checking` and `plan_saving`. A part that ended shows its duration in
+    seconds, the part that runs shows `running`, and a part that was running when the stage failed, was cancelled or
+    was interrupted shows `stopped after <seconds>s`, or `stopped` when no stop time exists. No plan line is printed
+    for a run recorded before these timings. The plan step lines are subject to change in a later release.
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
     A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
     A run with a write adds a `progress:` line, a `resumable:` line, one `kind` line per kind with its committed,
@@ -1941,12 +2519,30 @@ def runs_show(
     and the recorded deletes between them; while a first apply or `sync` runs, none are uncertain. A `resume`
     line counts the creates and updates that resume wrote; the `written:` line of a failed write counts those of
     every execution of the run.
+    Then one `Automatic resume N:` block per decision of Sync on resuming the run's interrupted write without a
+    person: whether it started, its cause, the result of its check, where it resumed, and why it did not start.
+    Then `trigger_type` is `manual` for a run a person started and `scheduled` for a run a schedule started; a
+    scheduled run also shows its `schedule_id` and `scheduled_start_at`, the start time of the cadence.
+    A run with a stage that received the values of a stored credential adds a `Credentials used:` section, with one
+    line per stage and block: `<stage> <block>: <name> revision <number>`. The name and the revision are the ones
+    recorded when the stage received the values, so a plan and its apply can show two revisions of one credential,
+    and a credential that was deleted since still shows. No line holds a value.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
     _echo_run(resource)
     _echo_reads(resource)
     _echo_apply_progress(resource)
+    _echo_automatic_resumes(resource)
+    scheduled_start = resource.run.scheduled_start_at
+    _echo_fields(
+        (
+            ("trigger_type", resource.run.trigger_type),
+            ("schedule_id", resource.run.schedule_id),
+            ("scheduled_start_at", scheduled_start.isoformat() if scheduled_start is not None else None),
+        )
+    )
+    _echo_credentials_used(resource)
     # The latest execution of each stage; the orchestration list is in run order.
     latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
     # A failed stage's cause and next action, as the run's results recorded them (FR-002).
@@ -1982,16 +2578,45 @@ def runs_results(
         typer.echo(json.dumps(resource.model_dump(mode="json"), sort_keys=True, indent=2))
 
 
+class PlanActionOption(str, Enum):
+    """The action of a saved plan operation, for `runs plan --detail --action`."""
+
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+
+
 @runs_app.command("plan")
 def runs_plan(
     ctx: typer.Context,
     run_id: str = typer.Argument(..., help="Service-issued run ID."),
     *,
-    detail: bool = typer.Option(False, "--detail", help="Render every saved operation."),  # noqa: FBT003
+    detail: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--detail",
+        help="Render every saved operation, with each peer printed by its kind and identity values.",
+    ),
     kind: str | None = typer.Option(
         None,
         "--kind",
-        help="Filter the detailed operation list, or the problem, left-out or kept list, by destination kind.",
+        help="Filter the operations of --detail or --samples, or the problem, left-out or kept list, by destination kind.",
+    ),
+    action: PlanActionOption | None = typer.Option(
+        None, "--action", help="Filter the operations by action; requires --detail or --samples."
+    ),
+    samples: int | None = typer.Option(
+        None,
+        "--samples",
+        min=1,
+        help=(
+            "For each destination kind and action, print the operation count and this number of its "
+            "first operations; cannot be combined with --detail, --problems, --left-out, --kept or --json."
+        ),
+    ),
+    as_json: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--json",
+        help="Print the saved plan as one JSON object, with every peer in full; cannot be combined with another option.",
     ),
     problems: bool = typer.Option(False, "--problems", help="List every problem the plan found."),  # noqa: FBT003
     left_out: bool = typer.Option(False, "--left-out", help="List every record the plan leaves out."),  # noqa: FBT003
@@ -2004,15 +2629,32 @@ def runs_plan(
         None, "--type", help="List only the problems of this problem type; requires --problems."
     ),
 ) -> None:
-    """Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records."""
+    """Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records.
+
+    The operations count holds only creates, updates and deletes.
+    A plan with 0 operations can still leave out records: problems, left-out and kept records are not operations.
+    """
     with _client_errors():
         lists = [name for name, chosen in (("problems", problems), ("left_out", left_out), ("kept", kept)) if chosen]
         if len(lists) > 1 or (lists and detail):
             raise ClientInputError(lists[1] if len(lists) > 1 else "detail")
-        if problem_type is not None and not problems:
-            raise ClientInputError(_TYPE_ARG)
+        # Each option that cannot be combined with the others given; the first one is reported.
+        refused = (
+            (_TYPE_ARG, problem_type is not None and not problems),
+            (_SAMPLES_ARG, samples is not None and (detail or bool(lists))),
+            (_JSON_ARG, as_json and (detail or bool(lists) or (kind, action, samples) != (None, None, None))),
+            (_ACTION_ARG, action is not None and bool(lists)),
+        )
+        for argument, is_refused in refused:
+            if is_refused:
+                raise ClientInputError(argument)
         client = _client(ctx)
-        if problems:
+        if as_json:
+            # `json.dumps` escapes every control character, so a source value cannot reach the
+            # terminal as an escape sequence, and the output keeps the real values.
+            plan = client.get_plan(run_id)
+            typer.echo(json.dumps(plan.model_dump(mode="json"), sort_keys=True, indent=2))
+        elif problems:
             for entry in _report_pages(
                 client.get_plan_problems, run_id, "get_plan_problems", problem_type=problem_type, kind=kind
             ):
@@ -2024,7 +2666,13 @@ def runs_plan(
             for entry in _report_pages(client.get_plan_kept, run_id, "get_plan_kept", kind=kind):
                 typer.echo(_kept_line(entry))
         else:
-            _echo_plan(client.get_plan(run_id), detail=detail, kind=kind)
+            _echo_plan(
+                client.get_plan(run_id),
+                detail=detail,
+                kind=kind,
+                action=action.value if action is not None else None,
+                samples=samples,
+            )
 
 
 # A run's phase while its first execution is submitted and has not ended.
@@ -2102,24 +2750,56 @@ def runs_logs(
             raise typer.Exit(130) from None
 
 
+def _event_details(event: EventResource) -> str | None:
+    """Render the facts of an event as `key=value` pairs, or `None` when it records none.
+
+    Each changed setting of a change event is one `<setting>=<before>-><after>` pair, with the
+    values written as JSON, so a cadence with spaces stays one value; `changes=none` when the
+    change altered no stored value.
+    """
+    if event.details is None:
+        return None
+    pairs = []
+    for key, value in event.details.model_dump().items():
+        if value is None:
+            continue
+        if key == "changes":
+            pairs.extend(
+                f"{change['field']}={json.dumps(change['before'])}->{json.dumps(change['after'])}" for change in value
+            )
+            if not value:
+                pairs.append("changes=none")
+        else:
+            pairs.append(f"{key}={value.isoformat() if isinstance(value, datetime) else value}")
+    return " ".join(pairs) or None
+
+
 def _event_row(event: EventResource) -> str:
     primary = event.primary_resource
-    return _row(
+    columns = [
         event.occurred_at.isoformat(),
         event.event_type,
         f"{primary.kind}:{primary.id}" if primary is not None else "-",
         event.actor,
         event.outcome,
-    )
+    ]
+    details = _event_details(event)
+    if details is not None:
+        columns.append(details)
+    return _row(*columns)
 
 
 @app.command("events")
 def events_cmd(
     ctx: typer.Context,
+    *,
     run_id: str | None = typer.Option(None, "--run-id", help="Only events about this run."),
     config: str | None = typer.Option(None, "--config-id", "--config", help=_CONFIG_HELP),
     event_types: list[str] | None = typer.Option(
         None, "--type", help="Only events of this type, such as infrahub_sync.run.planned. Repeat for several."
+    ),
+    schedule: str | None = typer.Option(
+        None, "--schedule", help=f"Only events that name this schedule. {_SCHEDULE_HELP}"
     ),
     follow: bool = typer.Option(
         False,  # noqa: FBT003
@@ -2127,13 +2807,19 @@ def events_cmd(
         help=f"Read new events every {DEFAULT_POLL_INTERVAL:g} seconds until interrupted.",
     ),
 ) -> None:
-    """List typed events, oldest first: time, type, resource, actor, outcome."""
+    """List typed events, oldest first: time, type, resource, actor, outcome, and the facts the event records."""
     with _client_errors():
         client = _client(ctx)
-        config_id = _config_id(ctx, config) if config is not None else None
-        types = tuple(event_types or ())
+        filters: dict[str, Any] = {
+            "run_id": run_id,
+            "config_id": _config_id(ctx, config) if config is not None else None,
+            "event_types": tuple(event_types or ()),
+        }
+        # The related-schedule filter is sent only when given.
+        if schedule is not None:
+            filters["related"] = (("schedule", _resolve_schedule(client, schedule).schedule_id),)
         if not follow:
-            _echo_rows(client.iter_events(run_id=run_id, config_id=config_id, event_types=types), _event_row)
+            _echo_rows(client.iter_events(**filters), _event_row)
             return
         # Events are listed oldest first and never removed, so the count printed so far is the
         # offset of the first event not yet printed. An event saved late with an earlier time
@@ -2141,7 +2827,7 @@ def events_cmd(
         offset = 0
         try:
             while True:
-                page = client.list_events(run_id=run_id, config_id=config_id, event_types=types, offset=offset)
+                page = client.list_events(**filters, offset=offset)
                 _echo_rows(page.items, _event_row)
                 offset += len(page.items)
                 if page.has_more:
@@ -2151,3 +2837,511 @@ def events_cmd(
                 sleep(DEFAULT_POLL_INTERVAL)
         except KeyboardInterrupt:
             raise typer.Exit(130) from None
+
+
+# The action each reason of a stopped schedule needs (data-model.md, state transitions).
+_STOPPED_ACTIONS = {
+    "owner-not-found": (
+        "an administrator takes the schedule over with `schedules take-over`, or enables the owner's account "
+        "and the schedule is resumed"
+    ),
+    "approval-required": (
+        "change the write target to branch review with `schedules change SCHEDULE --write-to-branch-review`; "
+        "the schedule is then active again"
+    ),
+    "repeated-failures": "check the last runs of the schedule, then resume it",
+}
+_REASON_HELP = "Optional audit reason."
+_IDEMPOTENCY_KEY_HELP = "Retry key."
+_OVERLAP_POLICY_HELP = (
+    "What a start does while a run of the configuration is in progress: reject skips the start, queue makes "
+    "one start wait and run when the run in progress ends."
+)
+_START_LATE_HELP_BASE = (
+    "How late the most recent start may begin after a time when the Sync service was not running, such as "
+    "30m or 2h (from 1m to 7d)."
+)
+_START_LATE_HELP = f"{_START_LATE_HELP_BASE} The Sync API uses 1h when the option is not given."
+_CHANGE_START_LATE_HELP = f"{_START_LATE_HELP_BASE} When the option is not given, the duration does not change."
+_DURATION = re.compile(r"(\d+)([smhd])")
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+class OverlapPolicyOption(str, Enum):
+    """The overlap policies of a schedule."""
+
+    REJECT = "reject"
+    QUEUE = "queue"
+
+
+def _start_late_seconds(value: str | None) -> int | None:
+    """Parse a duration such as `30m` or `2h` into seconds; the client sends seconds.
+
+    Raises:
+        typer.BadParameter: The value is not a whole number with one unit of `s`, `m`, `h` or `d`,
+            or it is outside one minute to seven days.
+    """
+    if value is None:
+        return None
+    match = _DURATION.fullmatch(value.strip())
+    if match is None:
+        msg = "give a whole number with one unit: s, m, h or d, such as 30m or 2h"
+        raise typer.BadParameter(msg)
+    seconds = int(match.group(1)) * _DURATION_UNITS[match.group(2)]
+    if not MIN_START_LATE_SECONDS <= seconds <= MAX_START_LATE_SECONDS:
+        msg = "the duration must be from 1m to 7d"
+        raise typer.BadParameter(msg)
+    return seconds
+
+
+def _resolve_schedule(client: SyncClient, value: str) -> ScheduleResource:
+    """Resolve a schedule identifier or name, trying the identifier first.
+
+    The name is matched among the schedules that are not deleted, where names are unique.
+    """
+    try:
+        return client.get_schedule(value)
+    except ClientInputError:
+        # The value cannot be an identifier, so it can only be a name.
+        pass
+    except APIError as error:
+        if not _is_not_found(error):
+            raise
+    matches = [schedule for schedule in client.iter_schedules() if schedule.name == value]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        typer.echo(_display(f"error: name '{value}' matches several schedules:"), err=True)
+        for match in matches:
+            typer.echo(_display(match.schedule_id), err=True)
+    else:
+        typer.echo(_display(f"error: no schedule has the id or name '{value}'"), err=True)
+    raise typer.Exit(2)
+
+
+def _time(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _echo_schedule(schedule: ScheduleResource) -> None:
+    """Print every field of a schedule, one `name: value` line each."""
+    open_branch = schedule.open_branch
+    fields: tuple[tuple[str, object], ...] = (
+        ("schedule_id", schedule.schedule_id),
+        ("name", schedule.name),
+        ("config_id", schedule.config_id),
+        ("registry_version", schedule.registry_version),
+        ("cron", schedule.cron),
+        ("timezone", schedule.timezone),
+        ("write_target", schedule.write_target),
+        ("write_when_left_out", schedule.write_when_left_out),
+        ("left_out_set_by", schedule.left_out_set_by),
+        ("left_out_set_at", _time(schedule.left_out_set_at)),
+        ("overlap_policy", schedule.overlap_policy),
+        ("state", schedule.state),
+        ("state_reason", schedule.state_reason),
+        ("owner", schedule.owner),
+        ("next_start_at", _time(schedule.next_start_at)),
+        ("last_run_id", schedule.last_run_id),
+        ("consecutive_failures", schedule.consecutive_failures),
+        ("prefect_synced", schedule.prefect_synced),
+        ("open_branch", open_branch.branch if open_branch is not None else None),
+        ("open_branch_run_id", open_branch.run_id if open_branch is not None else None),
+        ("open_proposed_change_id", open_branch.proposed_change_id if open_branch is not None else None),
+        ("created_at", schedule.created_at.isoformat()),
+        ("updated_at", schedule.updated_at.isoformat()),
+    )
+    # Fields that a Sync API without them does not return are printed only when it returns them.
+    optional: tuple[tuple[str, object], ...] = (
+        ("newer_version", schedule.newer_version),
+        ("start_late_by_at_most_seconds", schedule.start_late_by_at_most_seconds),
+        ("waiting_start_at", _time(schedule.waiting_start_at)),
+    )
+    _echo_fields((*fields, *((name, value) for name, value in optional if value is not None)))
+
+
+def _echo_schedule_warnings(schedule: ScheduleResource, *, name_it: bool = False) -> None:
+    """Write the warnings that apply to a schedule to standard error; they do not change the exit code."""
+    warnings: list[str] = []
+    if schedule.newer_version is not None:
+        warnings.append(
+            f"warning: a newer version of this configuration exists: {schedule.config_id} version "
+            f"{schedule.newer_version}"
+        )
+    if schedule.state == "stopped":
+        warnings.append(f"warning: this schedule is stopped: {schedule.state_reason or 'unknown'}")
+        action = _STOPPED_ACTIONS.get(schedule.state_reason or "")
+        if action is not None:
+            warnings.append(f"hint: {action}")
+    if not schedule.prefect_synced:
+        warnings.append("warning: this schedule is not yet handed to the task manager")
+    if warnings and name_it:
+        # In a list, the line before the warnings names the schedule they apply to.
+        warnings.insert(0, f"schedule: {schedule.schedule_id} {schedule.name}")
+    for line in warnings:
+        typer.echo(_display(line), err=True)
+
+
+def _schedule_row(schedule: ScheduleResource) -> str:
+    return _row(
+        schedule.schedule_id,
+        schedule.name,
+        f"{schedule.config_id}@{schedule.registry_version}",
+        schedule.state,
+        schedule.cron,
+        schedule.timezone,
+        _time(schedule.next_start_at) or "-",
+    )
+
+
+def _echo_schedule_rows(schedules: Iterable[ScheduleResource]) -> None:
+    for schedule in schedules:
+        typer.echo(_schedule_row(schedule))
+        _echo_schedule_warnings(schedule, name_it=True)
+
+
+@schedules_app.command("create")
+def schedules_create(  # pylint: disable=too-many-arguments
+    ctx: typer.Context,
+    *,
+    name: str = typer.Option(..., "--name", help="Schedule name, unique among the schedules that are not deleted."),
+    config: str = typer.Option(..., "--config", help=_CONFIG_HELP),
+    version: int = typer.Option(..., "--version", min=1, help="The configuration version each run synchronizes."),
+    cron: str = typer.Option(..., "--cron", help='Cron expression with five fields, such as "0 2 * * *".'),
+    timezone: str = typer.Option("UTC", "--timezone", help="Time zone of the cron expression, such as Europe/Paris."),
+    write_to_default_branch: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--write-to-default-branch",
+        help=_WRITE_TO_DEFAULT_BRANCH_HELP,
+    ),
+    write_when_left_out: bool | None = typer.Option(
+        None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
+    ),
+    overlap_policy: OverlapPolicyOption | None = typer.Option(None, "--overlap-policy", help=_OVERLAP_POLICY_HELP),
+    start_late_by_at_most: str | None = typer.Option(
+        None, "--start-late-by-at-most", callback=_start_late_seconds, help=_START_LATE_HELP
+    ),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Create a schedule that starts a `sync` run of one configuration version on a cron cadence.
+
+    By default each run writes to a new branch and opens a proposed change for review in Infrahub.
+    With `--write-to-default-branch`, each run writes to the branch that a `sync` run of the
+    configuration writes to; a Sync API that requires an approved plan refuses it. The Sync API
+    validates the cron expression and the time zone. The output shows the schedule with `next_start_at`.
+    """
+    with _client_errors():
+        client = _client(ctx)
+        config_id = _config_id(ctx, config)
+        # Sent only when given, so a request without the option keeps its body.
+        given: dict[str, object] = {
+            name: value
+            for name, value in (
+                ("write_target", "default-branch" if write_to_default_branch else None),
+                ("write_when_left_out", write_when_left_out),
+                ("overlap_policy", None if overlap_policy is None else overlap_policy.value),
+                # The callback has already turned the duration into seconds.
+                ("start_late_by_at_most_seconds", start_late_by_at_most),
+            )
+            if value is not None
+        }
+        request = cast(
+            "CreateScheduleRequest",
+            _request(
+                CreateScheduleRequest,
+                name=name,
+                config_id=config_id,
+                registry_version=version,
+                cron=cron,
+                timezone=timezone,
+                reason=reason,
+                **given,
+            ),
+        )
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        _echo_schedule(client.create_schedule(request, key))
+
+
+@schedules_app.command("list")
+def schedules_list(
+    ctx: typer.Context,
+    config: str | None = typer.Option(None, "--config", help=f"Only schedules of this configuration. {_CONFIG_HELP}"),
+    state: str | None = typer.Option(
+        None, "--state", help="Only schedules in this state: active, paused, stopped or deleted."
+    ),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
+    all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
+) -> None:
+    """List schedules, newest first: schedule, name, configuration@version, state, cron, time zone, next start.
+
+    Deleted schedules are left out unless `--state deleted` is given. A schedule that is stopped, or not yet
+    handed to the task manager, adds warning lines on standard error.
+    """
+    with _client_errors():
+        client = _client(ctx)
+        config_id = _config_id(ctx, config) if config is not None else None
+        _echo_list(
+            "schedules",
+            all_pages=all_pages,
+            every_item=lambda: client.iter_schedules(config_id=config_id, state=state, limit=limit),
+            first_page=lambda: client.list_schedules(config_id=config_id, state=state, limit=limit),
+            write=_echo_schedule_rows,
+        )
+
+
+@schedules_app.command("show")
+def schedules_show(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+) -> None:
+    """Show every field of a schedule: its state, the reason of a stopped schedule, its last run and the count of
+    consecutive failed runs. A stopped schedule adds a warning with the action its reason needs.
+    """
+    with _client_errors():
+        resource = _resolve_schedule(_client(ctx), schedule)
+    _echo_schedule(resource)
+    _echo_schedule_warnings(resource)
+
+
+@schedules_app.command("change")
+def schedules_change(  # pylint: disable=too-many-arguments
+    ctx: typer.Context,
+    *,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    version: int | None = typer.Option(None, "--version", min=1, help="The configuration version each run uses."),
+    cron: str | None = typer.Option(None, "--cron", help="New cron expression with five fields."),
+    timezone: str | None = typer.Option(None, "--timezone", help="New time zone of the cron expression."),
+    write_to_default_branch: bool | None = typer.Option(
+        None, "--write-to-default-branch/--write-to-branch-review", help=_WRITE_TARGET_CHANGE_HELP
+    ),
+    write_when_left_out: bool | None = typer.Option(
+        None, "--write-when-left-out/--no-write-when-left-out", help=_WRITE_WHEN_LEFT_OUT_HELP
+    ),
+    overlap_policy: OverlapPolicyOption | None = typer.Option(None, "--overlap-policy", help=_OVERLAP_POLICY_HELP),
+    start_late_by_at_most: str | None = typer.Option(
+        None, "--start-late-by-at-most", callback=_start_late_seconds, help=_CHANGE_START_LATE_HELP
+    ),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Change one or more settings of a schedule. The output shows the schedule with its new `next_start_at`."""
+    changes = {
+        "registry_version": version,
+        "cron": cron,
+        "timezone": timezone,
+        "write_target": None
+        if write_to_default_branch is None
+        else ("default-branch" if write_to_default_branch else "branch-review"),
+        "write_when_left_out": write_when_left_out,
+        "overlap_policy": None if overlap_policy is None else overlap_policy.value,
+        # The callback has already turned the duration into seconds.
+        "start_late_by_at_most_seconds": start_late_by_at_most,
+    }
+    if all(value is None for value in changes.values()):
+        typer.echo(
+            "error: schedules change needs at least one of --version, --cron, --timezone, "
+            "--write-to-default-branch or --write-to-branch-review, "
+            "--write-when-left-out or --no-write-when-left-out, --overlap-policy and --start-late-by-at-most",
+            err=True,
+        )
+        raise typer.Exit(2)
+    with _client_errors():
+        client = _client(ctx)
+        schedule_id = _resolve_schedule(client, schedule).schedule_id
+        request = cast(
+            "ChangeScheduleRequest",
+            _request(
+                ChangeScheduleRequest,
+                **{name: value for name, value in changes.items() if value is not None},
+                reason=reason,
+            ),
+        )
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        _echo_schedule(client.change_schedule(schedule_id, request, key))
+
+
+def _schedule_action(
+    ctx: typer.Context,
+    schedule: str,
+    method: str,
+    *,
+    reason: str | None,
+    idempotency_key: str | None,
+) -> ScheduleResource:
+    """Resolve the schedule, print the idempotency key, and send one pause, resume, delete or take-over."""
+    client = _client(ctx)
+    schedule_id = _resolve_schedule(client, schedule).schedule_id
+    request = cast("ScheduleActionRequest", _request(ScheduleActionRequest, reason=reason))
+    key = _idempotency_key(idempotency_key)
+    _echo_idempotency_key(key)
+    act = cast("Callable[[str, ScheduleActionRequest, str], ScheduleResource]", getattr(client, method))
+    resource = act(schedule_id, request, key)
+    _echo_schedule(resource)
+    return resource
+
+
+@schedules_app.command("pause")
+def schedules_pause(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Pause a schedule: it starts no run until it is resumed."""
+    with _client_errors():
+        _schedule_action(ctx, schedule, "pause_schedule", reason=reason, idempotency_key=idempotency_key)
+
+
+@schedules_app.command("resume")
+def schedules_resume(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Make a paused schedule active, or a stopped schedule whose reason no longer holds."""
+    with _client_errors():
+        _schedule_action(ctx, schedule, "resume_schedule", reason=reason, idempotency_key=idempotency_key)
+
+
+@schedules_app.command("delete")
+def schedules_delete(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+    yes: bool = typer.Option(False, "--yes", help="Delete without asking for confirmation."),  # noqa: FBT003
+) -> None:
+    """Delete a schedule. Its record and its runs are kept, and a run in progress is not cancelled.
+
+    The open branch and proposed change of the schedule stay in Infrahub; the output names them.
+    """
+    with _client_errors():
+        if not yes:
+            if not _stdin_is_interactive():
+                typer.echo("error: schedules delete needs --yes when standard input is not interactive", err=True)
+                raise typer.Exit(2)
+            if not typer.confirm(f"Delete schedule {_display(schedule)}? It starts no further run.", default=False):
+                typer.echo("not deleted", err=True)
+                raise typer.Exit(1)
+        resource = _schedule_action(ctx, schedule, "delete_schedule", reason=reason, idempotency_key=idempotency_key)
+    open_branch = resource.open_branch
+    if open_branch is not None:
+        kept = (
+            f"the branch {open_branch.branch} stays in Infrahub"
+            if open_branch.proposed_change_id is None
+            else f"the branch {open_branch.branch} and the proposed change {open_branch.proposed_change_id} "
+            "stay in Infrahub"
+        )
+        typer.echo(_display(kept))
+
+
+@schedules_app.command("take-over")
+def schedules_take_over(
+    ctx: typer.Context,
+    schedule: str = typer.Argument(..., metavar="SCHEDULE", help=_SCHEDULE_HELP),
+    reason: str | None = typer.Option(None, "--reason", help=_REASON_HELP),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help=_IDEMPOTENCY_KEY_HELP),
+) -> None:
+    """Become the owner of a schedule; only an administrator may. Its runs then record you as their actor.
+
+    A schedule that stopped because its owner's account is disabled or deleted becomes active again.
+    """
+    with _client_errors():
+        _schedule_action(ctx, schedule, "take_over_schedule", reason=reason, idempotency_key=idempotency_key)
+
+
+INFRAHUB_TOKEN_VARIABLE = "INFRAHUB_API_TOKEN"
+_DEMO_RERUN_NOTE = "note: the demo schema is already loaded; run the command again to complete the registration"
+
+
+def _echo_preparation(result: demo_prepare.PreparationResult) -> None:
+    typer.echo(_display(f"schema: {result.schema} ({result.schema_files} files)"))
+    typer.echo(
+        _display(
+            f"configuration: {result.configuration} {result.name}, "
+            f"config_id {result.config_id}, version {result.version}"
+        )
+    )
+    if result.same_name > 1:
+        typer.echo(
+            _display(
+                f"note: {result.same_name} configurations are named {result.name}; "
+                f"the newest, {result.config_id}, was used"
+            )
+        )
+    typer.echo(_display(f"netbox: {result.netbox_url}"))
+    typer.echo(_display(f"infrahub: {result.infrahub_url}"))
+
+
+@demo_app.command("prepare")
+def demo_prepare_cmd(
+    ctx: typer.Context,
+    *,
+    netbox_url: str = typer.Option(
+        ..., "--netbox-url", help="NetBox address written into the package: the address the worker uses."
+    ),
+    infrahub_url: str = typer.Option(
+        ..., "--infrahub-url", help="Infrahub address written into the package: the address the worker uses."
+    ),
+    infrahub_address: str | None = typer.Option(
+        None,
+        "--infrahub-address",
+        help="Infrahub address this command uses to load the schema. Defaults to --infrahub-url.",
+    ),
+    schema_timeout: float = typer.Option(
+        demo_prepare.DEFAULT_SCHEMA_TIMEOUT,
+        "--schema-timeout",
+        help="Seconds to wait for Infrahub to apply the schema.",
+    ),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the registration."),
+    as_json: bool = typer.Option(False, "--json", help="Print the result as one JSON object."),  # noqa: FBT003
+) -> None:
+    """Load the demo schema into Infrahub and register the NetBox configuration.
+
+    Reads the Infrahub token from INFRAHUB_API_TOKEN. A second run with the same addresses changes nothing.
+
+    It never plans, applies or approves.
+    """
+    token = os.environ.get(INFRAHUB_TOKEN_VARIABLE, "")
+    if not token:
+        typer.echo(f"error: {INFRAHUB_TOKEN_VARIABLE} is not set", err=True)
+        typer.echo(f"hint: set {INFRAHUB_TOKEN_VARIABLE} to an Infrahub API token that can load a schema", err=True)
+        raise typer.Exit(2)
+    refused = demo_prepare.refused_address_option(netbox_url, infrahub_url, infrahub_address)
+    if refused is not None:
+        typer.echo(f"error: {refused} must not carry a user name or password (user:password@)", err=True)
+        typer.echo(f"hint: give {refused} as scheme://host[:port], without user:password@", err=True)
+        raise typer.Exit(2)
+    with _client_errors():
+        _positive_duration(schema_timeout, "schema_timeout")
+        client = _client(ctx)
+        try:
+            result = demo_prepare.prepare(
+                client,
+                netbox_url=netbox_url,
+                infrahub_url=infrahub_url,
+                infrahub_address=infrahub_address,
+                token=token,
+                schema_timeout=schema_timeout,
+                reason=reason,
+            )
+        except DemoError as error:
+            typer.echo("error: demo preparation stopped", err=True)
+            typer.echo(_display(f"cause: {error}"), err=True)
+            raise typer.Exit(1) from None
+        except SyncClientError as error:
+            # The schema load runs first and raises `DemoError`, so a Sync client error here
+            # comes from the registration, after the schema was loaded.
+            exit_code = _echo_client_error(error)
+            _forget_refused_session(error)
+            if not isinstance(error, ClientInputError):
+                typer.echo(_DEMO_RERUN_NOTE, err=True)
+            raise typer.Exit(exit_code) from None
+    if as_json:
+        typer.echo(json.dumps(result.as_dict(), sort_keys=True))
+    else:
+        _echo_preparation(result)

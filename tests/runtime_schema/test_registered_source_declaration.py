@@ -13,7 +13,7 @@ from infrahub_sync.configuration import (
     parse_configuration_package,
 )
 from infrahub_sync.plugin_loader import PluginLoader
-from tests.configuration.validation_packages import package_data
+from tests.configuration.validation_packages import credential_package_data
 
 INSTALLED_SOURCE_SPECS = (
     pytest.param("infrahub_sync.adapters.infrahub", id="dotted-module"),
@@ -36,7 +36,7 @@ FILESYSTEM_SOURCE_SPECS = (
 
 
 def _content(*, source_adapter: str | None = None, destination_adapter: str | None = None) -> dict[str, Any]:
-    content = copy.deepcopy(package_data())
+    content = copy.deepcopy(credential_package_data())
     if source_adapter is not None:
         content["configuration"]["source"]["adapter"] = source_adapter
     if destination_adapter is not None:

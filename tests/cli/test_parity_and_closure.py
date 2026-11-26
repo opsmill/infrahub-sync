@@ -23,21 +23,26 @@ _CLI_INVOCATION = (
     r"(?<![\w.-])(?:uv\s+run\s+)?infrahub-sync\s+"
     r"(?=(?:configs|runs|plan|verify|whoami|diff|sync|apply|generate|list)\b)"
 )
-# `configs list --name` filters configurations by name and is a current option. Every other
-# command lost `--name` when configurations moved to the registry, so only that one
-# invocation is exempt from the removed-option rule.
+# `configs list --name` filters configurations by name and is a current option, and
+# `schedules create --name` names a new schedule (spec 021). Every other command lost `--name`
+# when configurations moved to the registry, so only these two invocations and `login --name`
+# below are exempt from the removed-option rule.
 _CONFIGS_LIST = r"configs\s+list(?![\w-])"
+_SCHEDULES_CREATE = r"schedules\s+create(?![\w-])"
 # `diff` is a hidden, deprecated alias of `plan`; live docs teach `plan`.
 REMOVED_COMMAND = re.compile(
     rf"{_CLI_INVOCATION}(?:generate|list|diff)(?![\w-])"
     rf"|(?<![\w-]){_RETIRED_OPTION}(?![\w-])"
     rf"|{_CLI_INVOCATION}(?!{_CONFIGS_LIST})(?:(?!infrahub-sync|```|\n\s*\n)[\s\S])*?(?<![\w-])--(?:name|diff)(?![\w-])"
 )
+# `login --name` names the account to sign in as (spec 022) and is a current option too.
+_LOGIN = r"(?<![\w.-])infrahub-sync\s+login(?![\w-])"
 _VALID_NAME_OPTION = re.compile(
-    # A `configs list ... --name` invocation on one line, or the `configs list` section of the
-    # generated CLI reference, which lists `--name` as an option bullet.
-    rf"{_CONFIGS_LIST}[^\n]*?(?<![\w-])--name(?![\w-])"
-    r"|^#+ `infrahub-sync configs list`\n(?:(?!#)[^\n]*\n)*",
+    # A `configs list ... --name`, `schedules create ... --name` or `login ... --name` invocation
+    # on one line, or the section of one of these commands in the generated CLI reference, which
+    # lists `--name` as an option bullet.
+    rf"(?:{_CONFIGS_LIST}|{_SCHEDULES_CREATE}|{_LOGIN})[^\n]*?(?<![\w-])--name(?![\w-])"
+    r"|^#+ `infrahub-sync (?:configs list|schedules create|login)`\n(?:(?!#)[^\n]*\n)*",
     re.MULTILINE,
 )
 # `events --run-id` filters events by run (spec 012) and is a current option. The retired
@@ -49,7 +54,7 @@ _VALID_RUN_ID_OPTION = re.compile(
 
 
 def _without_current_options(text: str) -> str:
-    """Remove the current `configs list --name` and `events --run-id` usages before the removed-option check."""
+    """Remove the current `configs list --name`, `login --name` and `events --run-id` usages before the check."""
     return _VALID_RUN_ID_OPTION.sub("", _VALID_NAME_OPTION.sub("", text))
 
 
@@ -63,6 +68,7 @@ CLI_CLIENT_PARITY = (
     ("configs show CONFIG_ID --version VERSION", "get_config_version", "GET /configs/{config_id}/versions/{version}"),
     ("configs versions CONFIG_ID", "list_config_versions", "GET /configs/{config_id}/versions"),
     ("configs validate CONFIG_ID VERSION", "validate_config", "POST /configs/{config_id}/versions/{version}/validate"),
+    ("configs check PACKAGE", "check_package", "POST /configs/validate"),
     ("plan", "plan", "POST /runs"),
     ("sync", "sync", "POST /runs"),
     ("verify RUN_ID", "verify", "POST /runs/{run_id}/verify"),
@@ -76,6 +82,38 @@ CLI_CLIENT_PARITY = (
     ("whoami", "me", "GET /me"),
     ("apply RUN_ID", "apply", "POST /runs/{run_id}/apply"),
     ("apply RUN_ID failure evidence", "get_results", "GET /runs/{run_id}/results"),
+    ("schedules create", "create_schedule", "POST /schedules"),
+    ("schedules list", "list_schedules", "GET /schedules"),
+    ("schedules list --all", "iter_schedules", "GET /schedules"),
+    ("schedules show SCHEDULE", "get_schedule", "GET /schedules/{schedule_id}"),
+    ("schedules change SCHEDULE", "change_schedule", "POST /schedules/{schedule_id}/change"),
+    ("schedules pause SCHEDULE", "pause_schedule", "POST /schedules/{schedule_id}/pause"),
+    ("schedules resume SCHEDULE", "resume_schedule", "POST /schedules/{schedule_id}/resume"),
+    ("schedules delete SCHEDULE", "delete_schedule", "POST /schedules/{schedule_id}/delete"),
+    ("schedules take-over SCHEDULE", "take_over_schedule", "POST /schedules/{schedule_id}/take-over"),
+    ("events --schedule SCHEDULE", "iter_events", "GET /events"),
+    ("login", "sign_in", "POST /auth/sign-in"),
+    ("logout", "sign_out", "POST /auth/sign-out"),
+    ("password", "change_password", "PUT /me/password"),
+    ("tokens list", "list_tokens", "GET /me/tokens"),
+    ("tokens create NAME", "create_token", "POST /me/tokens"),
+    ("tokens delete TOKEN_ID", "delete_token", "DELETE /me/tokens/{token_id}"),
+    ("accounts list", "list_accounts", "GET /accounts"),
+    ("accounts create NAME", "create_account", "POST /accounts"),
+    ("accounts set-password NAME", "set_account_password", "PUT /accounts/{name}/password"),
+    ("accounts unlock NAME", "unlock_account", "POST /accounts/{name}/unlock"),
+    ("accounts disable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
+    ("accounts enable NAME", "set_account_disabled", "PATCH /accounts/{name}"),
+    ("accounts set-level NAME", "set_account_level", "PATCH /accounts/{name}"),
+    ("accounts delete NAME", "delete_account", "DELETE /accounts/{name}"),
+    ("accounts tokens NAME", "list_account_tokens", "GET /accounts/{name}/tokens"),
+    ("accounts delete-token NAME TOKEN_ID", "delete_account_token", "DELETE /accounts/{name}/tokens/{token_id}"),
+    ("credentials list", "iter_credentials", "GET /credentials"),
+    ("credentials show NAME", "get_credential", "GET /credentials/{name}"),
+    ("credentials create NAME", "create_credential", "POST /credentials"),
+    ("credentials set NAME", "set_credential_value", "PUT /credentials/{name}/value"),
+    ("credentials describe NAME TEXT", "set_credential_description", "PATCH /credentials/{name}"),
+    ("credentials delete NAME", "delete_credential", "DELETE /credentials/{name}"),
 )
 
 
@@ -99,6 +137,7 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "get_config_version",
         "list_config_versions",
         "validate_config",
+        "check_package",
         "plan",
         "sync",
         "verify",
@@ -112,6 +151,38 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "me",
         "apply",
         "get_results",
+        "create_schedule",
+        "list_schedules",
+        "iter_schedules",
+        "get_schedule",
+        "change_schedule",
+        "pause_schedule",
+        "resume_schedule",
+        "delete_schedule",
+        "take_over_schedule",
+        "iter_events",
+        "sign_in",
+        "sign_out",
+        "change_password",
+        "list_tokens",
+        "create_token",
+        "delete_token",
+        "list_accounts",
+        "create_account",
+        "set_account_password",
+        "unlock_account",
+        "set_account_disabled",
+        "set_account_disabled",
+        "set_account_level",
+        "delete_account",
+        "list_account_tokens",
+        "delete_account_token",
+        "iter_credentials",
+        "get_credential",
+        "create_credential",
+        "set_credential_value",
+        "set_credential_description",
+        "delete_credential",
     ]
     assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 
@@ -121,9 +192,12 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
 
     assert "configs" in help_text
     assert "runs" in help_text
+    assert "schedules" in help_text
     assert "plan" in help_text
     assert "verify" in help_text
     assert "whoami" in help_text
+    for command in ("login", "logout", "password", "tokens", "accounts", "credentials"):
+        assert command in help_text
     # `diff` is a hidden, deprecated alias of `plan`.
     assert "diff" not in help_text
     assert "sync" in help_text
@@ -165,6 +239,8 @@ def test_all_retired_local_execution_options_are_absent_from_live_command_help()
     assert "--kind" in _help("runs", "plan")
     for command in ("show", "results", "list", "artifacts", "cancel"):
         assert command in _help("runs"), f"`runs {command}` is absent from the group's help"
+    for command in ("create", "list", "show", "change", "pause", "resume", "delete", "take-over"):
+        assert command in _help("schedules"), f"`schedules {command}` is absent from the group's help"
 
 
 def test_cli_imports_only_the_shared_client_boundary() -> None:
@@ -190,7 +266,17 @@ def test_only_shared_client_constructs_sync_api_http_requests() -> None:
         if "httpx.Client(" in source or "httpx.AsyncClient(" in source:
             constructors.append(path.relative_to(ROOT))
 
-    assert constructors == [Path("infrahub_sync/client/client.py")]
+    # The Microsoft Graph adapter reads its own source API, not the Sync API. The health checks
+    # call the Prefect server's `/health` and `/ready`, not the Sync API. The shared client serves
+    # every route for accounts. The worker's credential client calls the one worker route, with
+    # the worker token and its own retry and redaction rules (spec 027, research R6); its answer
+    # holds values, so it does not pass through the shared client.
+    assert sorted(constructors) == [
+        Path("infrahub_sync/adapters/msgraphsync.py"),
+        Path("infrahub_sync/client/client.py"),
+        Path("infrahub_sync/service/credential_client.py"),
+        Path("infrahub_sync/service/health.py"),
+    ]
 
 
 def test_live_docs_and_examples_close_removed_cli_paths() -> None:
@@ -199,7 +285,7 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         path for path in (ROOT / "docs/docs").rglob("*.mdx") if "release-notes" not in path.relative_to(ROOT).parts
     )
     files.extend((ROOT / "examples").rglob("*.md"))
-    # Remove the valid `configs list --name` and `events --run-id` usages before the token check.
+    # Remove the valid `configs list --name`, `login --name` and `events --run-id` usages before the token check.
     text = _without_current_options("\n".join(path.read_text(encoding="utf-8") for path in files))
     removed_options = (
         "--name",
@@ -240,9 +326,17 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         ("infrahub-sync configs show --name from-netbox", True, True),
         ("### `infrahub-sync configs show`\n\n* `--name <str>`: Removed.\n", False, True),
         ("infrahub-sync diff --config from-netbox --version 1", True, False),
+        ("infrahub-sync schedules create --name nightly --config from-netbox --version 3", False, False),
+        ("### `infrahub-sync schedules create`\n\n* `--name <str>`: Schedule name.\n", False, False),
+        ("### `infrahub-sync schedules show`\n\n* `--name <str>`: Removed.\n", False, True),
+        ("infrahub-sync login --name admin", False, False),
+        ("uv run infrahub-sync login --name admin", False, False),
+        ("docker login registry.example.net --name builder", False, True),
+        ("### `infrahub-sync login`\n\n* `--name <str>`: Account name.\n", False, False),
+        ("### `infrahub-sync logout`\n\n* `--name <str>`: Not an option.\n", False, True),
     ],
 )
-def test_removed_command_rule_exempts_only_configs_list_name(
+def test_removed_command_rule_exempts_only_configs_list_and_login_name(
     snippet: str, *, command_rejected: bool, name_token_remains: bool
 ) -> None:
     assert (REMOVED_COMMAND.search(snippet) is not None) is command_rejected
@@ -342,10 +436,73 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
     required = (
         "uv sync --extra dev --extra prefect --extra service",
         "uv run invoke dev.start --infrahub-network infrahub_default",
-        "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
-        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
+        "INFRAHUB_SYNC_DEV_NETBOX_TOKEN",
+        "INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN",
+        "uv run infrahub-sync credentials list",
         "INFRAHUB_SYNC_API_URL",
         "INFRAHUB_SYNC_API_TOKEN",
-        "The worker reads both credentials from its environment",
+        "The worker gets both values from the Sync API",
+        "netbox-token",
+        "infrahub-token",
     )
     assert not [token for token in required if token not in text]
+
+
+# The web interface manages stored credentials through the same routes as the CLI and the shared
+# client. Each row is a credential operation of CLI_CLIENT_PARITY, the request in
+# `frontend/src/api` that sends it, without whitespace, and the export that the Credentials page
+# uses. The page views one credential in its row of the list, so `credentials show` has the row
+# of `GET /credentials`.
+WEB_CREDENTIAL_PARITY = (
+    ("credentials list", "GET /credentials", 'fetchClient.GET("/credentials",', "credentialsQuery"),
+    ("credentials show NAME", "GET /credentials", 'fetchClient.GET("/credentials",', "credentialsQuery"),
+    ("credentials create NAME", "POST /credentials", 'fetchClient.POST("/credentials",', "createCredential"),
+    (
+        "credentials set NAME",
+        "PUT /credentials/{name}/value",
+        'fetchClient.PUT("/credentials/{name}/value",',
+        "setCredentialValue",
+    ),
+    (
+        "credentials describe NAME TEXT",
+        "PATCH /credentials/{name}",
+        '$api.useMutation("patch","/credentials/{name}"',
+        "useDescribeCredential",
+    ),
+    (
+        "credentials delete NAME",
+        "DELETE /credentials/{name}",
+        '$api.useMutation("delete","/credentials/{name}"',
+        "useDeleteCredential",
+    ),
+)
+_FRONTEND_SOURCE = ROOT / "frontend" / "src"
+_GENERATED_FRONTEND_TYPES = "types.generated.ts"
+
+
+def _frontend_sources(*parts: str) -> str:
+    """Return the hand-written TypeScript under one directory of the web interface, without whitespace."""
+    files = sorted(path for pattern in ("*.ts", "*.tsx") for path in _FRONTEND_SOURCE.joinpath(*parts).rglob(pattern))
+    texts = (path.read_text(encoding="utf-8") for path in files if path.name != _GENERATED_FRONTEND_TYPES)
+    return "".join("".join(text.split()) for text in texts)
+
+
+def test_the_web_interface_matrix_holds_every_credential_command() -> None:
+    commands = [row[0] for row in CLI_CLIENT_PARITY if row[0].startswith("credentials ")]
+
+    assert [row[0] for row in WEB_CREDENTIAL_PARITY] == commands
+
+
+@pytest.mark.parametrize(("command", "operation", "sent", "export"), WEB_CREDENTIAL_PARITY)
+def test_the_web_interface_sends_each_credential_operation_and_the_page_uses_it(
+    command: str, operation: str, sent: str, export: str
+) -> None:
+    del command, operation  # They name the row in the test identifier.
+
+    assert sent in _frontend_sources("api")
+    assert f"{export}(" in _frontend_sources("features", "credentials")
+
+
+def test_the_web_interface_never_asks_for_a_credential_value() -> None:
+    """Only the `worker` account reads values, on the worker routes; no page calls them."""
+    assert '"/worker/' not in _frontend_sources()

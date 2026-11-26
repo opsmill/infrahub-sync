@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
 import xml.etree.ElementTree as ET  # noqa: S405 -- generated local reports only
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+from typing import cast
 
 import pytest
+
+from tasks import dev
 
 SCRIPT = Path(__file__).resolve().parents[1] / ".github" / "scripts" / "nightly_e2e.py"
 
@@ -42,6 +46,54 @@ def test_suite_writes_failure_report_from_clean_checkout(runner: ModuleType, mon
     assert failure is not None
     assert failure.get("message") == "setup failed"
     assert json.loads((runner.REPORTS / "integration.json").read_text())["failure"] == "setup failed"
+
+
+def test_environment_reads_the_preset_the_stack_starts(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suites' Infrahub address and token come from the preset `start_stack` starts, not the default."""
+    presets: list[str] = []
+
+    def record_preset(*_args: object, preset: str = "", **_kwargs: object) -> None:
+        presets.append(preset)
+        msg = "stop after the preset is read"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(dev, "dev_settings", record_preset)
+    with pytest.raises(RuntimeError, match="stop after the preset is read"):
+        runner.environment()
+
+    assert presets == [runner.STACK_PRESET] == ["infrahub"]
+
+
+def test_environment_gives_dev_start_the_tokens_it_stores_as_credentials(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`dev.start` runs with this environment and stores `infrahub-token` and `netbox-token` from it."""
+    from tasks import netbox
+
+    settings = SimpleNamespace(
+        infrahub_url="http://127.0.0.1:8091",
+        infrahub_admin_token="nightly-infrahub-token",  # noqa: S106 -- a test value
+        sync_api_url="http://127.0.0.1:8001",
+        admin_token="nightly-admin-token",  # noqa: S106 -- a test value
+        netbox_credential=False,
+    )
+    host = {dev.DATABASE_URL_VARIABLE: "postgresql://store", "INFRAHUB_SYNC_S3_BUCKET": "bucket"}
+    host[dev.S3_ENDPOINT_VARIABLE] = "http://127.0.0.1:9010"
+    monkeypatch.setattr(dev, "dev_settings", lambda **_kwargs: settings)
+    monkeypatch.setattr(dev, "host_environment", lambda *_args: host)
+    monkeypatch.setattr(netbox, "load_netbox_env", dict)
+    monkeypatch.setattr(netbox, "netbox_token", lambda _env: "nightly-netbox-token")
+    monkeypatch.setattr(netbox, "netbox_url", lambda _env: "http://127.0.0.1:8080")
+
+    env = runner.environment()
+
+    for name in (dev.INFRAHUB_CREDENTIAL_VARIABLE, dev.NETBOX_CREDENTIAL_VARIABLE):
+        monkeypatch.setenv(name, env[name])
+    stored = dev.development_credentials(cast("dev.DevSettings", settings))
+    assert {name: hashlib.sha256(value.encode()).hexdigest() for name, value in stored.items()} == {
+        "infrahub-token": hashlib.sha256(b"nightly-infrahub-token").hexdigest(),
+        "netbox-token": hashlib.sha256(b"nightly-netbox-token").hexdigest(),
+    }
 
 
 def test_logs_writes_timeout_report_without_a_report_directory(
@@ -113,7 +165,7 @@ def test_integration_seeds_the_live_branch(runner: ModuleType, monkeypatch: pyte
 
 
 def test_planned_counts_include_unexecuted_deletes(runner: ModuleType) -> None:
-    """The branch count includes a built-in object whose delete is not executed."""
+    """The per-kind counts include the creates and the deletes of the plan."""
     output = (
         "operations: 3\nby_action: create=2, delete=1\nby_kind: IpamNamespace=2, DcimDevice=1\n"
         "1 delete operation(s) are recorded and NONE will be executed by apply.\n"
@@ -131,7 +183,7 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
         if "register" in command:
             return "config_id: config-1\nregistry_version: 1\n"
         if "plan" in command:
-            return "run_id: plan-1\noperations: 1688\n"
+            return "run_id: plan-1\noperations: 1687\n"
         if "sync" in command:
             return "run_id: sync-1\n"
         if "show" in command:
@@ -145,10 +197,10 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
 
 
 def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The existing default namespace accounts for the unexecuted delete."""
+    """The branch's 7 IpamNamespace match 6 planned creates plus the default namespace (ADR 0047)."""
     plan = (
-        "operations: 1688\nby_action: create=1687, delete=1\nby_kind: DcimDevice=1681, IpamNamespace=7\n"
-        "1 delete operation(s) are recorded and NONE will be executed by apply.\n"
+        "operations: 1687\nby_action: create=1687\nby_kind: DcimDevice=1681, IpamNamespace=6\n"
+        "0 delete operations are recorded.\n"
     )
     monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: plan)
     sdk = ModuleType("infrahub_sdk")
@@ -168,6 +220,40 @@ def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch:
     monkeypatch.setattr(sdk, "InfrahubClientSync", Client, raising=False)
     monkeypatch.setitem(sys.modules, "infrahub_sdk", sdk)
     runner.check_import_counts("plan-1", {"INFRAHUB_ADDRESS": "unused", "INFRAHUB_API_TOKEN": "unused"})
+
+
+@pytest.mark.parametrize(("namespaces", "matches"), [(1, True), (0, False)], ids=["default-held", "default-missing"])
+def test_import_counts_check_a_listed_kind_the_plan_does_not_name(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch, namespaces: int, *, matches: bool
+) -> None:
+    """`INFRAHUB_CREATED_NODES` is compared even when the plan holds no `IpamNamespace` operation."""
+    plan = "operations: 1687\nby_action: create=1687\nby_kind: DcimDevice=1687\n0 delete operations are recorded.\n"
+    monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: plan)
+    sdk = ModuleType("infrahub_sdk")
+    monkeypatch.setattr(sdk, "Config", lambda **_kwargs: object(), raising=False)
+    counted: list[str] = []
+
+    class Client:
+        """Return the branch counts of one import, with or without the default namespace."""
+
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        @staticmethod
+        def count(*, kind: str, branch: str) -> int:
+            assert branch == "netbox-import"
+            counted.append(kind)
+            return {"DcimDevice": 1687, "IpamNamespace": namespaces}[kind]
+
+    monkeypatch.setattr(sdk, "InfrahubClientSync", Client, raising=False)
+    monkeypatch.setitem(sys.modules, "infrahub_sdk", sdk)
+    env = {"INFRAHUB_ADDRESS": "unused", "INFRAHUB_API_TOKEN": "unused"}
+    if matches:
+        runner.check_import_counts("plan-1", env)
+    else:
+        with pytest.raises(RuntimeError, match="IpamNamespace"):
+            runner.check_import_counts("plan-1", env)
+    assert sorted(counted) == ["DcimDevice", "IpamNamespace"]
 
 
 def test_schema_loads_the_pinned_bundle(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:

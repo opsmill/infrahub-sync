@@ -7,6 +7,7 @@ every command the tasks run and every URL they call (FR-020, FR-021, FR-022, D-2
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 from contextlib import nullcontext
@@ -33,8 +34,10 @@ SYNC_ENV = {
     "AWS_ACCESS_KEY_ID": "devaccesskey",
     "INFRAHUB_SYNC_SERVICE_WORK_POOL": "infrahub-sync",
     "PREFECT_API_URL": "http://prefect-server:4200/api",
-    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "",
 }
+# The development values of the settings of stored credentials, as the Compose file resolves them.
+ENCRYPTION_KEY = "aW5mcmFodWItc3luYy1kZXYtZW5jcnlwdGlvbi1rZXk="
+WORKER_TOKEN = "infrahub-sync-dev-worker-token"  # noqa: S105 -- the public development value
 CORE_RUNNING = "postgres\nobject-store\nprefect-server\ninfrahub-server\n"
 CA_TARGET = "/etc/infrahub-sync/ca"
 # A CA mount that is a named volume: no host directory to trust.
@@ -57,12 +60,20 @@ def _resolved(*, infrahub: bool) -> dict[str, Any]:
             "environment": {
                 **SYNC_ENV,
                 "INFRAHUB_SYNC_SERVICE_HOST": "0.0.0.0",  # noqa: S104 -- the container's value
-                "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"dev": {"token": "infrahub-sync-dev-token"}}',
+                "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": "infrahub-sync-dev-password",
+                "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": "infrahub-sync-dev-token",
+                "INFRAHUB_SYNC_ENCRYPTION_KEY": ENCRYPTION_KEY,
+                "INFRAHUB_SYNC_WORKER_TOKEN": WORKER_TOKEN,
             },
             "volumes": [SOURCE_MOUNT, CA_VOLUME],
         },
         "sync-worker": {
-            "environment": {**SYNC_ENV, "PREFECT_WORKER_HEARTBEAT_SECONDS": "10"},
+            "environment": {
+                **SYNC_ENV,
+                "PREFECT_WORKER_HEARTBEAT_SECONDS": "10",
+                "INFRAHUB_SYNC_API_URL": "http://sync-api:8000",
+                "INFRAHUB_SYNC_WORKER_TOKEN": WORKER_TOKEN,
+            },
             "volumes": [SOURCE_MOUNT, CA_VOLUME],
         },
     }
@@ -113,19 +124,38 @@ class FakeDocker:
         ]
 
 
+def _health_report(
+    *, status: str = "healthy", state: str = "known", live_workers: int | None = 1, database: str = "up"
+) -> dict[str, Any]:
+    """A `GET /api/health` report; `live_workers` and the queue are absent when `state` is `unknown`."""
+    return {
+        "status": status,
+        "dependencies": [{"name": "database", "status": database, "error": "none" if database == "up" else "timeout"}],
+        "workers": {
+            "state": state,
+            "minimum": 1,
+            "live_workers": live_workers if state == "known" else None,
+            "queue_depth": 0 if state == "known" else None,
+            "items": [],
+        },
+        "timestamp": "2026-11-23T12:00:00+00:00",
+    }
+
+
 class FakeHttp:
-    """Stands in for `httpx.get`: records every URL and answers `/status` as told."""
+    """Stands in for `httpx.get`: records every URL and answers `/health` as told."""
 
     def __init__(self) -> None:
         self.urls: list[str] = []
-        self.status: dict[str, Any] | None = {"service": "ready", "worker": {"state": "ready"}}
+        self.status: dict[str, Any] | None = _health_report()
+        self.code = 200
 
     def get(self, url: str, **_kwargs: Any) -> httpx.Response:  # noqa: ANN401 -- httpx's keyword arguments
         self.urls.append(url)
         if self.status is None:
             msg = "connection refused"
             raise httpx.ConnectError(msg, request=httpx.Request("GET", url))
-        return httpx.Response(200, json=self.status, request=httpx.Request("GET", url))
+        return httpx.Response(self.code, json=self.status, request=httpx.Request("GET", url))
 
 
 @pytest.fixture
@@ -133,6 +163,11 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeDocker:
     monkeypatch.delenv(dev.INFRAHUB_NETWORK_VARIABLE, raising=False)
     monkeypatch.delenv(dev.INFRAHUB_URL_VARIABLE, raising=False)
     monkeypatch.delenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, raising=False)
+    monkeypatch.delenv(dev.PRESET_VARIABLE, raising=False)
+    # These tests cover the host processes against the stack's own Infrahub: the
+    # `infrahub` preset, which a running `infrahub-server` selects. The presets
+    # themselves are covered in test_dev_tasks.py.
+    monkeypatch.setattr(dev, "running_preset", lambda _context: dev.PRESETS["infrahub"])
     return FakeDocker()
 
 
@@ -213,7 +248,7 @@ def test_dev_api_runs_in_the_foreground_against_the_loopback_publications(
 
     command, kwargs = fake.calls[-1]
     assert command == (
-        f"{sys.executable} -m uvicorn --factory infrahub_sync.service.serve:build_app --host 127.0.0.1 --port 8001"
+        f"{sys.executable} -m uvicorn --factory infrahub_sync.service.serve:build_process_service --host 127.0.0.1 --port 8001"
     )
     assert kwargs["pty"] is True
     assert not kwargs.get("asynchronous")
@@ -223,8 +258,16 @@ def test_dev_api_runs_in_the_foreground_against_the_loopback_publications(
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
     assert environment["PREFECT_API_URL"] == "http://127.0.0.1:4230/api"
     assert environment["INFRAHUB_SYNC_SERVICE_HOST"] == "127.0.0.1"
-    assert environment["INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"]
-    assert environment[dev.INFRAHUB_CREDENTIAL_VARIABLE] == ADMIN_TOKEN
+    # The Sync API refuses to start without these two; the development stack gives both a value.
+    assert len(base64.b64decode(environment["INFRAHUB_SYNC_ENCRYPTION_KEY"], validate=True)) == 32
+    assert len(environment["INFRAHUB_SYNC_WORKER_TOKEN"]) >= 16
+    assert environment["INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"]
+    assert environment["INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"] == dev.API_TOKEN
+    # The key and the token of the `worker` account are the container's own.
+    assert environment["INFRAHUB_SYNC_ENCRYPTION_KEY"] == ENCRYPTION_KEY
+    assert environment["INFRAHUB_SYNC_WORKER_TOKEN"] == WORKER_TOKEN
+    # No Sync process is given a source or destination credential.
+    assert not [name for name in environment if name.startswith("INFRAHUB_SYNC_CREDENTIAL_")]
     # No PID file, no other file either.
     assert list(tmp_path.iterdir()) == []
 
@@ -247,18 +290,24 @@ def test_dev_worker_runs_in_the_foreground_against_the_loopback_publications(
     assert environment["PREFECT_API_URL"] == "http://127.0.0.1:4230/api"
     assert environment["PREFECT_WORKER_HEARTBEAT_SECONDS"] == "10"
     assert "INFRAHUB_SYNC_SERVICE_HOST" not in environment
+    # The host worker reaches the Sync API on its loopback publication, not by its service
+    # name, with the container's own token of the `worker` account. It holds no key.
+    assert environment[dev.WORKER_API_URL_VARIABLE] == "http://127.0.0.1:8001"
+    assert environment["INFRAHUB_SYNC_WORKER_TOKEN"] == WORKER_TOKEN
+    assert "INFRAHUB_SYNC_ENCRYPTION_KEY" not in environment
     assert list(tmp_path.iterdir()) == []
 
 
-def test_a_credential_the_shell_exports_reaches_the_host_worker(
+def test_the_host_worker_is_given_no_credential_the_shell_exports(
     context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The exported token is stored through the Sync API by `dev.start`; the worker reads it from there."""
     monkeypatch.setenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, "exported")
 
     _body(dev.dev_worker)(context)
 
-    # Left out of `env`, so the exported value the process inherits applies.
     assert dev.INFRAHUB_CREDENTIAL_VARIABLE not in fake.calls[-1][1]["env"]
+    assert "exported" not in fake.calls[-1][1]["env"].values()
 
 
 def test_host_processes_need_the_loopback_publications() -> None:
@@ -417,7 +466,7 @@ def smoke(monkeypatch: pytest.MonkeyPatch, fake: FakeDocker) -> list[str]:
     return seeded
 
 
-def test_dev_smoke_names_dev_api_when_status_does_not_answer(
+def test_dev_smoke_names_dev_api_when_health_does_not_answer(
     context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str]
 ) -> None:
     http.status = None
@@ -425,23 +474,62 @@ def test_dev_smoke_names_dev_api_when_status_does_not_answer(
     with pytest.raises(dev.DevStackError, match=r"dev\.api"):
         _body(dev.dev_smoke)(context)
 
-    assert http.urls == ["http://127.0.0.1:8001/status"]
+    assert http.urls == ["http://127.0.0.1:8001/api/health"]
     assert dev.SMOKE_COMMAND not in fake.commands
     assert smoke == []
 
 
-@pytest.mark.parametrize("state", ["no-live-worker", "unavailable"])
-def test_dev_smoke_names_dev_worker_when_status_reports_no_available_worker(
-    context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str], state: str
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param((200, {"service": "ready"}), id="200-not-a-report"),
+        pytest.param((404, {"error": {"code": "not-found", "status": 404}}), id="404"),
+        pytest.param((503, {"error": {"code": "service-unavailable", "status": 503}}), id="503-error-envelope"),
+    ],
+)
+def test_dev_smoke_names_dev_api_when_the_answer_is_not_a_health_report(
+    context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str], answer: tuple[int, dict[str, Any]]
 ) -> None:
-    http.status = {"service": "ready", "worker": {"state": state, "detail_available": state != "unavailable"}}
+    http.code, http.status = answer
+
+    with pytest.raises(dev.DevStackError, match=r"dev\.api"):
+        _body(dev.dev_smoke)(context)
+
+    assert dev.SMOKE_COMMAND not in fake.commands
+    assert smoke == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param((200, _health_report(live_workers=0)), id="no-live-worker"),
+        pytest.param((503, _health_report(status="unhealthy", state="unknown")), id="workers-unknown"),
+    ],
+)
+def test_dev_smoke_names_dev_worker_when_health_reports_no_live_worker(
+    context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str], answer: tuple[int, dict[str, Any]]
+) -> None:
+    http.code, http.status = answer
 
     with pytest.raises(dev.DevStackError, match=r"dev\.worker"):
         _body(dev.dev_smoke)(context)
 
-    assert http.urls == ["http://127.0.0.1:8001/status"]
+    assert http.urls == ["http://127.0.0.1:8001/api/health"]
     assert dev.SMOKE_COMMAND not in fake.commands
     assert smoke == []
+
+
+def test_dev_smoke_accepts_an_unhealthy_report_with_a_live_worker(
+    context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str]
+) -> None:
+    # A 503 report names a component that is down; the host processes themselves are running.
+    http.code, http.status = 503, _health_report(status="unhealthy", database="down")
+
+    _body(dev.dev_smoke)(context)
+
+    assert http.urls == ["http://127.0.0.1:8001/api/health"]
+    assert fake.calls[-1][0] == dev.SMOKE_COMMAND
+    assert smoke == ["http://127.0.0.1:8000"]
 
 
 def test_dev_smoke_with_both_host_processes_runs_the_suite_for_a_host_worker(
@@ -449,8 +537,8 @@ def test_dev_smoke_with_both_host_processes_runs_the_suite_for_a_host_worker(
 ) -> None:
     _body(dev.dev_smoke)(context)
 
-    # Only the Sync API's /status; never the Prefect API on 4230.
-    assert http.urls == ["http://127.0.0.1:8001/status"]
+    # Only the Sync API's /health; never the Prefect API on 4230.
+    assert http.urls == ["http://127.0.0.1:8001/api/health"]
     assert not any(":4230" in command for command in fake.commands)
     assert smoke == ["http://127.0.0.1:8000"]
     command, kwargs = fake.calls[-1]
@@ -472,3 +560,38 @@ def test_dev_smoke_with_the_sync_containers_skips_the_host_process_check(
 
 def test_the_dev_namespace_holds_the_dependencies_mode_tasks() -> None:
     assert {"deps", "api", "worker"} <= set(dev.ns.task_names)
+
+
+def test_dev_deps_with_the_sync_preset_starts_the_core_services_only(context: Context, fake: FakeDocker) -> None:
+    _body(dev.dev_deps)(context, preset="sync")
+
+    up, bootstrap = fake.compose_commands()
+    assert up.startswith("docker compose --project-name infrahub-sync-dev ")
+    assert "--profile" not in up
+    assert bootstrap.endswith(" run --rm --no-deps sync-bootstrap")
+
+
+def test_dev_deps_with_the_preview_preset_starts_netbox_and_seeds_infrahub(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: events.append("netbox"))
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda *_args: events.append("seed"))
+
+    _body(dev.dev_deps)(context, preset="preview")
+
+    assert events == ["netbox", "seed"]
+    assert fake.compose_commands()[0].startswith("docker compose --profile infrahub ")
+
+
+def test_dev_deps_with_the_demo_preset_starts_netbox_and_seeds_nothing(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    monkeypatch.setattr(dev, "ensure_netbox", lambda *_args: events.append("netbox"))
+    monkeypatch.setattr(dev, "load_smoke_dataset", lambda *_args: events.append("seed"))
+
+    _body(dev.dev_deps)(context, preset="demo")
+
+    assert events == ["netbox"]
+    assert fake.compose_commands()[0].startswith("docker compose --profile infrahub ")

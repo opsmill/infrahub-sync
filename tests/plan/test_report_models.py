@@ -19,7 +19,7 @@ from infrahub_sync.plan.models import (
 _SITE = SourceRecordReference(kind="LocationSite", identity={"name": "paris"}, source_id="1")
 
 
-def test_the_nine_problem_type_names_are_stable() -> None:
+def test_the_ten_problem_type_names_are_stable() -> None:
     assert PROBLEM_TYPES == (
         "dropdown_value_not_in_choices",
         "duplicate_source_identity",
@@ -30,6 +30,7 @@ def test_the_nine_problem_type_names_are_stable() -> None:
         "peer_not_found_in_source",
         "destination_identity_ambiguous",
         "transform_failed",
+        "required_relationship_empty_in_source",
     )
 
 
@@ -117,8 +118,13 @@ def test_a_load_report_lists_entries_per_kind_and_filtered_records() -> None:
 
 
 def test_the_failure_type_names() -> None:
-    assert len(FAILURE_TYPES) == 17
+    # 17 from spec 007 and later, seven for the branch review of a scheduled run (spec 021), one
+    # for a stage that could not get its stored credential values (spec 027), and one for a write
+    # whose configuration write guard another run held (INFP-647).
+    assert len(FAILURE_TYPES) == 26
+    assert "credential_unavailable" in FAILURE_TYPES
     assert "left_out_review_required" in FAILURE_TYPES
+    assert "write_guard_contended" in FAILURE_TYPES
     assert "internal_error" in FAILURE_TYPES
 
 
@@ -163,3 +169,14 @@ def test_a_stage_failure_record_refuses_an_unknown_role_and_a_long_name() -> Non
         StageFailureResource.model_validate({"system": {"role": "middle", "adapter": "netbox"}})
     with pytest.raises(ValidationError):
         StageFailureResource.model_validate({"node_kind": "K" * 129})
+
+
+@pytest.mark.parametrize("value", ["20261123T1012-aaaaaaaa", None])
+def test_a_stage_failure_record_accepts_a_run_id_or_no_active_run(value: str | None) -> None:
+    assert StageFailureResource.model_validate({"active_run_id": value}).active_run_id == value
+
+
+@pytest.mark.parametrize("value", ["", "run 1", "run=1", "-run", "x site=prod (not executed)", "r" * 129])
+def test_a_stage_failure_record_refuses_an_active_run_id_that_is_not_a_run_id(value: str) -> None:
+    with pytest.raises(ValidationError):
+        StageFailureResource.model_validate({"active_run_id": value})

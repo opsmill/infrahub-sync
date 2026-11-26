@@ -1,4 +1,13 @@
-import { Button, Popover, PopoverDialog, PopoverTrigger } from "@infrahub/ui";
+import {
+  Button,
+  Menu,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+  Popover,
+  PopoverDialog,
+  PopoverTrigger,
+} from "@infrahub/ui";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { type QueryClient, useQuery } from "@tanstack/react-query";
 import { ReactQueryDevtoolsPanel } from "@tanstack/react-query-devtools";
@@ -7,20 +16,28 @@ import {
   createRootRouteWithContext,
   Link,
   Outlet,
+  useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { type ComponentPropsWithRef, type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
-
-import { describeError, meQuery, statusQuery, versionQuery } from "#/api/queries";
+import { signOut } from "#/api/client";
+import { describeError, healthQuery, meQuery, versionQuery } from "#/api/queries";
 import { announce, LiveRegion } from "#/components/announcer";
 import { FOCUS, FOCUS_RAC } from "#/components/classes";
-import { StateIcon } from "#/components/icons";
+import { ArrowRightIcon, StateIcon } from "#/components/icons";
+import { Mark } from "#/components/mark";
 import { Notice } from "#/components/page";
 import { When } from "#/components/run-status";
 import { ThemeMenu } from "#/components/theme-menu";
-import { fmt, NO_WORKER_SENTENCE, queueSentence, type RunState } from "#/domain/run-state";
+import {
+  fmt,
+  NO_WORKER_SENTENCE,
+  queueSentence,
+  type RunState,
+  workerState,
+} from "#/domain/run-state";
 
 import "../styles.css";
 
@@ -35,26 +52,11 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 const NAV = cn(
   "relative inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-md px-2 text-foreground-muted text-sm transition-colors duration-150 ease-out hover:bg-highlight hover:text-foreground motion-reduce:transition-none before:absolute before:inset-x-0 before:-inset-y-2",
   FOCUS,
-  "data-current:text-foreground data-current:after:absolute data-current:after:inset-x-2 data-current:after:bottom-[-9px] data-current:after:h-0.5 data-current:after:rounded-full data-current:after:bg-foreground"
+  "data-current:text-foreground data-current:after:absolute data-current:after:inset-x-2 data-current:after:bottom-[-9px] data-current:after:h-0.5 data-current:after:rounded-full data-current:after:bg-foreground",
+  // On a phone each link is a 48px line of its own row, so the underline stays at the bottom of
+  // that row whether the navigation takes one line or wraps.
+  "max-sm:h-12 max-sm:px-1.5 max-sm:data-current:after:inset-x-1.5 max-sm:data-current:after:bottom-[-1px]"
 );
-
-function Mark() {
-  return (
-    <svg viewBox="0 0 20 20" className="size-5 shrink-0" aria-hidden="true">
-      <rect
-        x="1"
-        y="1"
-        width="18"
-        height="18"
-        rx="5"
-        className="fill-cyan-900 dark:fill-cyan-700"
-      />
-      <circle cx="6" cy="10" r="1.75" className="fill-white" />
-      <circle cx="14" cy="10" r="1.75" className="fill-white" />
-      <path d="M7.75 10h4.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
 
 interface ServiceState {
   icon: RunState;
@@ -84,7 +86,7 @@ function useLastFailure(query: QueryResult): { failed: boolean; error: unknown }
 }
 
 function useServiceState(): ServiceState & { showDetail: boolean } {
-  const status = useQuery(statusQuery());
+  const status = useQuery(healthQuery());
   const me = useQuery(meQuery());
   const statusFailure = useLastFailure(status);
   const meFailure = useLastFailure(me);
@@ -107,9 +109,7 @@ function useServiceState(): ServiceState & { showDetail: boolean } {
         showDetail: false,
       };
     }
-    const last = status.data
-      ? (status.data.worker.observed_at ?? new Date(status.dataUpdatedAt).toISOString())
-      : undefined;
+    const last = status.data?.timestamp;
     return {
       icon: "failed",
       color: "text-danger",
@@ -128,14 +128,14 @@ function useServiceState(): ServiceState & { showDetail: boolean } {
       showDetail: false,
     };
   }
-  // `GET /status` needs no token, so only `GET /me` shows that the Sync API refuses the token.
+  // `GET /health` needs no session, so only `GET /me` shows that the Sync API refuses the session.
   if (meFailure.failed && describeError(meFailure.error).status === 401) {
     return {
       icon: "failed",
       color: "text-danger",
-      label: "Sync API refused the token",
+      label: "Sync API refused the session",
       sentence:
-        "The Sync API answered, but it did not accept the token sent with requests from this page.",
+        "The Sync API answered, but it did not accept the session sent with requests from this page.",
       showDetail: false,
     };
   }
@@ -147,9 +147,9 @@ function useServiceState(): ServiceState & { showDetail: boolean } {
       showDetail: false,
     };
   }
-  const w = status.data.worker;
-  const showDetail = w.detail_available;
-  switch (w.state) {
+  const w = status.data.workers;
+  const showDetail = w.state === "known";
+  switch (workerState(status.data)) {
     case "ready":
       return { icon: "insync", color: "text-success", label: "Worker ready", showDetail };
     case "busy":
@@ -196,18 +196,19 @@ function Row({
 
 const DL = "col-span-2 grid grid-cols-subgrid gap-y-1.5";
 
-/** The Sync service's state in the header; opens the details and the actor of the API token. */
+/** The Sync service's state in the header; opens the details. */
 function StatusMenu() {
   const s = useServiceState();
-  const status = useQuery(statusQuery());
+  const status = useQuery(healthQuery());
   const version = useQuery(versionQuery());
   const me = useQuery(meQuery());
-  const actor = me.data?.actor;
-  const w = status.data?.worker;
+  const w = status.data?.workers;
+  const checkedAt = status.data?.timestamp;
   const workerRows = s.showDetail && w;
+  const [open, setOpen] = useState(false);
 
   return (
-    <PopoverTrigger>
+    <PopoverTrigger isOpen={open} onOpenChange={setOpen}>
       <Button
         variant="ghost"
         size="sm"
@@ -215,23 +216,12 @@ function StatusMenu() {
           "min-w-0 max-w-full shrink gap-2 px-2 max-sm:size-8 max-sm:px-0 max-sm:before:absolute max-sm:before:-inset-2",
           FOCUS_RAC
         )}
-        aria-label={`${s.label}${actor ? `, ${actor}` : ""}. Open Sync service details`}
+        aria-label={`${s.label}. Open Sync service details`}
       >
         <StateIcon state={s.icon} className={cn("size-3.5 shrink-0", s.color)} />
         <span className="min-w-0 truncate font-normal text-foreground-muted text-xs max-sm:sr-only">
           {s.label}
         </span>
-        {actor && (
-          <>
-            <span
-              aria-hidden="true"
-              className="hidden h-4 w-px shrink-0 bg-border-strong lg:block"
-            />
-            <span className="hidden max-w-40 truncate font-normal text-foreground-muted text-xs lg:block">
-              {actor}
-            </span>
-          </>
-        )}
       </Button>
       <Popover placement="bottom end" className="bg-content">
         <PopoverDialog
@@ -253,9 +243,9 @@ function StatusMenu() {
                   {workerRows && w.queue_depth != null && (
                     <Row term="Executions waiting for a worker">{fmt(w.queue_depth)}</Row>
                   )}
-                  {workerRows && w.observed_at && (
+                  {workerRows && checkedAt && (
                     <Row term="Checked">
-                      <When iso={w.observed_at} />
+                      <When iso={checkedAt} />
                     </Row>
                   )}
                   {version.data && (
@@ -279,21 +269,98 @@ function StatusMenu() {
                     <hr className="col-span-2 my-3 border-0 border-border border-t" />
                   )}
                   <dl className={DL}>
-                    <Row term="Requests sent as">
-                      <span className="font-medium [overflow-wrap:anywhere]">{me.data.actor}</span>
-                    </Row>
                     <Row term="Administrator rights">{me.data.administrator ? "Yes" : "No"}</Row>
                   </dl>
-                  <p className="col-span-2 mt-2 text-pretty text-subtle text-xs">
-                    The Sync service records this actor on the runs you start from this page.
-                  </p>
                 </>
               )}
             </div>
           )}
+          {/* The Health page lists every component and worker; the link closes the details. */}
+          <Link
+            to="/health"
+            onClick={() => setOpen(false)}
+            className={cn(
+              "-mx-1.5 mt-3 inline-flex h-8 items-center gap-1 rounded-md px-1.5 font-medium text-[13px] text-accent transition-colors duration-150 ease-out hover:bg-accent-surface pointer-coarse:h-11 motion-reduce:transition-none",
+              FOCUS
+            )}
+          >
+            Open the Health page
+            <ArrowRightIcon className="size-3.5 shrink-0" />
+          </Link>
         </PopoverDialog>
       </Popover>
     </PopoverTrigger>
+  );
+}
+
+/** As in the theme menu: readable text, and a 44px target on a touch screen. */
+const ACCOUNT_ITEM = "text-foreground pointer-coarse:min-h-11";
+
+/**
+ * The signed-in account, from `GET /me`, as a menu that opens the "My account" page or signs out.
+ * Signing out removes the session token, which also empties the query cache and the downloaded
+ * plans.
+ */
+function AccountMenu({ current }: { current: boolean }) {
+  const me = useQuery(meQuery());
+  const navigate = useNavigate();
+  const [pending, setPending] = useState(false);
+  const name = me.data?.actor;
+
+  async function act(key: unknown) {
+    if (key === "account") {
+      await navigate({ to: "/account" });
+      return;
+    }
+    if (key === "sign-out") {
+      setPending(true);
+      await signOut();
+    }
+  }
+
+  return (
+    <MenuTrigger>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "min-w-0 shrink gap-1.5 px-2 font-normal text-foreground-muted text-xs data-hovered:text-foreground",
+          current && "text-foreground",
+          FOCUS_RAC
+        )}
+        aria-current={current ? "true" : undefined}
+        aria-label={name ? `Signed in as ${name}. Open account menu` : "Open account menu"}
+        isDisabled={pending}
+      >
+        <span
+          className="min-w-0 max-w-24 truncate sm:max-w-48"
+          title={name ? `Signed in as ${name}` : undefined}
+        >
+          {name ?? "Account"}
+        </span>
+        <svg viewBox="0 0 16 16" className="size-3 shrink-0" aria-hidden="true">
+          <path
+            d="M4 6l4 4 4-4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </Button>
+      <Popover placement="bottom end" className="bg-content">
+        <Menu aria-label="Account" variant="picker" onAction={act} className="min-w-44">
+          <MenuItem id="account" className={ACCOUNT_ITEM}>
+            My account
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem id="sign-out" className={ACCOUNT_ITEM}>
+            Sign out
+          </MenuItem>
+        </Menu>
+      </Popover>
+    </MenuTrigger>
   );
 }
 
@@ -303,15 +370,15 @@ function StatusMenu() {
  * not move when it appears.
  */
 function WorkerNotice() {
-  const status = useQuery(statusQuery());
+  const status = useQuery(healthQuery());
   const shown = Boolean(
-    status.data && !status.isError && status.data.worker.state === "no-live-worker"
+    status.data && !status.isError && workerState(status.data) === "no-live-worker"
   );
   useEffect(() => {
     if (shown) announce(NO_WORKER_SENTENCE);
   }, [shown]);
   if (!shown || !status.data) return null;
-  const queued = status.data.worker.queue_depth;
+  const queued = status.data.workers.queue_depth;
   return (
     <div className="sticky bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 mt-8 rounded-xl bg-content shadow-lg">
       <Notice tone="danger" role="note">
@@ -335,10 +402,38 @@ function PlainAnchor({
 
 const PlainLink = createLink(PlainAnchor);
 
-function sectionOf(pathname: string): "configs" | "runs" | undefined {
+function sectionOf(
+  pathname: string
+): "configs" | "runs" | "schedules" | "credentials" | "accounts" | "account" | undefined {
   if (pathname === "/" || pathname.startsWith("/configs/")) return "configs";
   if (pathname === "/runs" || pathname.startsWith("/runs/")) return "runs";
+  if (pathname === "/schedules" || pathname.startsWith("/schedules/")) return "schedules";
+  if (pathname === "/credentials") return "credentials";
+  if (pathname === "/accounts") return "accounts";
+  if (pathname === "/account") return "account";
   return undefined;
+}
+
+/**
+ * Keeps `--header-height` on the document at the height of the sticky header, so the scroll padding
+ * keeps a heading clear of it however many lines the navigation takes.
+ */
+function useHeaderHeight() {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const header = ref.current;
+    if (!header || typeof ResizeObserver === "undefined") return;
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() => {
+      root.style.setProperty("--header-height", `${header.offsetHeight}px`);
+    });
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--header-height");
+    };
+  }, []);
+  return ref;
 }
 
 /** The title is read once it has not changed for this long. */
@@ -349,7 +444,10 @@ const TITLE_WATCH_MS = 3_000;
 function RootComponent() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const section = sectionOf(pathname);
+  // Only an administrator is offered the Accounts page; the Sync API refuses it to the others.
+  const administrator = useQuery(meQuery()).data?.administrator === true;
 
+  const headerRef = useHeaderHeight();
   const mainRef = useRef<HTMLElement>(null);
   const lastPath = useRef(pathname);
   useEffect(() => {
@@ -393,8 +491,9 @@ function RootComponent() {
       >
         Skip to content
       </a>
-      <header className="sticky top-0 z-40 border-b bg-background">
-        <div className="mx-auto flex h-12 max-w-[1200px] items-center gap-3 px-4 sm:gap-6">
+      <header ref={headerRef} className="sticky top-0 z-40 border-b bg-background">
+        {/* On a phone the navigation takes a second line, so every link stays in view. */}
+        <div className="mx-auto flex h-12 max-w-[1200px] items-center gap-3 px-4 max-sm:h-auto max-sm:flex-wrap max-sm:gap-y-0 max-sm:pt-2 sm:gap-6">
           <PlainLink
             to="/"
             aria-label="Infrahub Sync, configurations"
@@ -406,7 +505,10 @@ function RootComponent() {
             <Mark />
             <span className="max-sm:hidden">Infrahub Sync</span>
           </PlainLink>
-          <nav aria-label="Main" className="flex shrink-0 items-center gap-1">
+          <nav
+            aria-label="Main"
+            className="flex shrink-0 items-center gap-1 max-sm:order-last max-sm:-ml-1.5 max-sm:w-[calc(100%+0.375rem)] max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-0"
+          >
             {/* TanStack sets aria-current="page" on an exact match; a page inside the section gets "true". */}
             <Link
               to="/"
@@ -426,9 +528,40 @@ function RootComponent() {
             >
               Runs
             </Link>
+            <Link
+              to="/schedules"
+              activeOptions={{ exact: true, includeSearch: false }}
+              className={NAV}
+              data-current={section === "schedules" ? "" : undefined}
+              aria-current={section === "schedules" ? "true" : undefined}
+            >
+              Schedules
+            </Link>
+            {/* Every signed-in account views the credentials; only an administrator changes them. */}
+            <Link
+              to="/credentials"
+              activeOptions={{ exact: true, includeSearch: false }}
+              className={NAV}
+              data-current={section === "credentials" ? "" : undefined}
+              aria-current={section === "credentials" ? "true" : undefined}
+            >
+              Credentials
+            </Link>
+            {administrator && (
+              <Link
+                to="/accounts"
+                activeOptions={{ exact: true, includeSearch: false }}
+                className={NAV}
+                data-current={section === "accounts" ? "" : undefined}
+                aria-current={section === "accounts" ? "true" : undefined}
+              >
+                Accounts
+              </Link>
+            )}
           </nav>
-          <div className="ml-auto flex min-w-0 items-center gap-2">
+          <div className="ml-auto flex min-w-0 items-center gap-2 max-sm:shrink-0">
             <StatusMenu />
+            <AccountMenu current={section === "account"} />
             <ThemeMenu />
           </div>
         </div>

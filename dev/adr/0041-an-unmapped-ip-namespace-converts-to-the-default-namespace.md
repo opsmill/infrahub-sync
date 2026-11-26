@@ -54,7 +54,9 @@ and identified by the one attribute that is its human-friendly ID.
   `default` namespace, where v2 wrote them.
 - The plan records one delete of `IpamNamespace name=default`, because the namespace mapping
   loads nothing from the source. Apply never executes a delete
-  ([ADR 0004](0004-deletes-are-recorded-but-never-executed.md)).
+  ([ADR 0004](0004-deletes-are-recorded-but-never-executed.md)). Since
+  [ADR 0047](0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md), a plan
+  leaves out this delete.
 - `--live-schema` needs the destination Infrahub to allow a schema read without a token. Without
   the flag, or when the read fails, the team makes the same edit by hand.
 - The rule is limited to IP namespaces. Another peer that exists only in the destination and

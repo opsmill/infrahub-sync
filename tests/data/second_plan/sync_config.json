@@ -1,0 +1,171 @@
+{
+  "name": "second-plan-fixture",
+  "source": {
+    "name": "problem_fixture",
+    "settings": {
+      "url": "https://source.invalid"
+    }
+  },
+  "destination": {
+    "name": "infrahub",
+    "settings": {
+      "url": "https://destination.invalid"
+    }
+  },
+  "order": [
+    "IpamNamespace",
+    "DcimDevice",
+    "IpamVLAN",
+    "InterfaceLag",
+    "InterfacePhysical",
+    "IpamPrefix",
+    "IpamIPAddress"
+  ],
+  "schema_mapping": [
+    {
+      "name": "IpamNamespace",
+      "mapping": "ipam.namespaces",
+      "identifiers": [
+        "name"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "mapping": "name"
+        }
+      ]
+    },
+    {
+      "name": "DcimDevice",
+      "mapping": "dcim.devices",
+      "identifiers": [
+        "name"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "mapping": "name"
+        },
+        {
+          "name": "description",
+          "mapping": "description"
+        }
+      ]
+    },
+    {
+      "name": "IpamVLAN",
+      "mapping": "ipam.vlans",
+      "identifiers": [
+        "vlan_id"
+      ],
+      "fields": [
+        {
+          "name": "vlan_id",
+          "mapping": "vid"
+        },
+        {
+          "name": "name",
+          "mapping": "name"
+        }
+      ]
+    },
+    {
+      "name": "InterfaceLag",
+      "mapping": "dcim.lag_interfaces",
+      "identifiers": [
+        "name",
+        "device"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "mapping": "name"
+        },
+        {
+          "name": "device",
+          "mapping": "device",
+          "reference": "DcimDevice"
+        }
+      ]
+    },
+    {
+      "name": "InterfacePhysical",
+      "mapping": "dcim.interfaces",
+      "identifiers": [
+        "name",
+        "device"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "mapping": "name"
+        },
+        {
+          "name": "description",
+          "mapping": "description"
+        },
+        {
+          "name": "device",
+          "mapping": "device",
+          "reference": "DcimDevice"
+        },
+        {
+          "name": "bundle",
+          "mapping": "lag",
+          "reference": "InterfaceLag"
+        },
+        {
+          "name": "tagged_vlan",
+          "mapping": "tagged_vlans",
+          "reference": "IpamVLAN"
+        }
+      ]
+    },
+    {
+      "name": "IpamPrefix",
+      "mapping": "ipam.prefixes",
+      "identifiers": [
+        "prefix",
+        "ip_namespace"
+      ],
+      "fields": [
+        {
+          "name": "prefix",
+          "mapping": "prefix"
+        },
+        {
+          "name": "description",
+          "mapping": "description"
+        },
+        {
+          "name": "ip_namespace",
+          "mapping": "namespace_name",
+          "reference": "IpamNamespace"
+        }
+      ]
+    },
+    {
+      "name": "IpamIPAddress",
+      "mapping": "ipam.ip_addresses",
+      "identifiers": [
+        "address",
+        "ip_namespace"
+      ],
+      "fields": [
+        {
+          "name": "address",
+          "mapping": "address"
+        },
+        {
+          "name": "description",
+          "mapping": "description"
+        },
+        {
+          "name": "ip_namespace",
+          "mapping": "namespace_name",
+          "reference": "IpamNamespace"
+        }
+      ]
+    }
+  ]
+}

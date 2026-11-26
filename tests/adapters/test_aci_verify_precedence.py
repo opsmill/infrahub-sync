@@ -105,8 +105,6 @@ def test_registered_verify_reaches_http_request(
         monkeypatch.delenv("CISCO_APIC_VERIFY", raising=False)
     else:
         monkeypatch.setenv("CISCO_APIC_VERIFY", env_value)
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_ACI_TEST_USERNAME", "registered-user")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_ACI_TEST_PASSWORD", "registered-password")
     monkeypatch.setenv("CISCO_APIC_URL", "https://ambient.example.test")
     monkeypatch.setenv("CISCO_APIC_USERNAME", "ambient-user")
     monkeypatch.setenv("CISCO_APIC_PASSWORD", "ambient-password")
@@ -117,23 +115,17 @@ def test_registered_verify_reaches_http_request(
                 "name": "registered-aci",
                 "source": {
                     "name": "aci",
-                    "settings": {
-                        "url": BASE_SETTINGS["url"],
-                        "username": {"$credential": "username"},
-                        "password": {"$credential": "password"},
-                        **verification_settings,
-                    },
+                    "credential": "aci-lab",
+                    "settings": {"url": BASE_SETTINGS["url"], **verification_settings},
                 },
                 "destination": {"name": "infrahub", "settings": {}},
                 "schema_mapping": [],
             },
-            "credentials": {
-                "username": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_ACI_TEST_USERNAME"},
-                "password": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_ACI_TEST_PASSWORD"},
-            },
         }
     )
-    instance = resolve_runtime_instance(package, directory="/registered")
+    # The fields that the Sync API released to the run for the source block.
+    released = {"source": {"username": "registered-user", "password": "registered-password"}}
+    instance = resolve_runtime_instance(package, directory="/registered", released=released)
     with warnings.catch_warnings():
         client = object.__new__(AciAdapter)._create_aci_client(instance.source)
     try:

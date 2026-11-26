@@ -2,8 +2,15 @@
 
 This is the one-off job a Compose deployment runs before its API and its worker
 start: the product schema, the artifact bucket, the Prefect process work pool,
-and the installed deployment. Everything here is safe to repeat — a second run
-observes what the first created and writes nothing.
+the installed deployment, and the Prefect schedule of each stored schedule, which the
+match step makes equal to the store. Everything here is safe to repeat — a second run
+observes what the first created and, apart from Prefect schedules that differ from the
+store, writes nothing.
+
+The bootstrap record is the last step: the Sync version and the work pool this run
+set up. The API and the worker read it when they start and refuse to start when it
+is missing or names another version or pool (`start_check`). A repeated run for the
+same version and pool leaves the record as it is.
 
 The configuration registry is not one of those objects. A deployment converges
 infrastructure and starts empty; which package it runs is a decision an operator
@@ -28,16 +35,25 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import boto3
+import structlog
 from botocore.exceptions import BotoCoreError, ClientError, InvalidRegionError
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.actions import WorkPoolCreate
 from prefect.exceptions import ObjectNotFound
 from prefect.workers.process import ProcessWorker
 
-from infrahub_sync.product_store import DuplicateArtifactError
+from infrahub_sync.log import configure_service_logging
+from infrahub_sync.product_store import (
+    DuplicateArtifactError,
+    DuplicateConfigurationNamesError,
+    EarlierProductDatabaseError,
+)
 
+from .compatibility import installed_server_version
 from .deploy import WORK_POOL_ENV
 from .deploy import main as apply_deployment
+from .orchestration import PrefectOrchestration
+from .schedules import match_prefect_schedules
 from .storage import (
     S3_BUCKET_ENV,
     S3_ENDPOINT_ENV,
@@ -53,7 +69,9 @@ from .trust_store import TrustStoreError, install_custom_ca_bundle
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-logger = logging.getLogger(__name__)
+    from infrahub_sync.product_store import ProductProjection
+
+logger = structlog.get_logger(__name__)
 
 # The pool type this deployment's worker joins. Prefect's own process worker
 # supplies the template, so a pool created here is the one `prefect work-pool
@@ -91,6 +109,11 @@ OBJECT_STORE_ENDPOINT_NOT_SET = "object-store-endpoint-not-set"
 OBJECT_STORE_ACCESS_REFUSED = "object-store-access-refused"
 OBJECT_STORE_UNSUPPORTED = "object-store-unsupported"
 OBJECT_STORE_SETTING_INVALID = "object-store-setting-invalid"
+BOOTSTRAP_RECORD_FAILED = "bootstrap-record-failed"
+# The product database was created by an earlier build. Infrahub Sync does not upgrade a product
+# database in place, so the database must be replaced with a new, empty one.
+PRODUCT_DATABASE_FROM_EARLIER_BUILD = "product-database-from-earlier-build"
+SCHEDULES_NOT_MATCHED = "schedules-not-matched"
 
 
 class BootstrapError(RuntimeError):
@@ -278,6 +301,12 @@ async def _converge_pool(name: str) -> bool:
         return await converge_work_pool(client, name)
 
 
+async def _match_schedules(projection: ProductProjection) -> None:
+    """Own one Prefect client for the step that gives the deployment its schedules again."""
+    async with get_client() as client:
+        await match_prefect_schedules(projection, PrefectOrchestration(client))
+
+
 def _s3_client(arguments: dict[str, Any]) -> Any:
     """Build the S3 client from checked arguments, naming only the setting botocore refuses.
 
@@ -299,6 +328,25 @@ def _s3_client(arguments: dict[str, Any]) -> Any:
         raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+
+
+def _restore_schedules(projection: ProductProjection) -> None:
+    """Create the Prefect schedule of every stored schedule again, or fail the bootstrap.
+
+    Applying the deployment sends an empty list of schedules. Prefect keeps the schedules when each
+    of them has a slug, and removes them all when one has none, for example a schedule added in the
+    Prefect interface. This step creates again what is missing, so a schedule keeps starting runs
+    after a bootstrap (spec 021, research R13).
+
+    Raises:
+        BootstrapError: ``schedules-not-matched`` when the store or the task manager fails.
+    """
+    try:
+        asyncio.run(_match_schedules(projection))
+    except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        # Only the class name: the text of a provider error can hold an address or a credential.
+        logger.error("%s: %s", SCHEDULES_NOT_MATCHED, type(error).__name__)  # noqa: TRY400 - the class only.
+        raise BootstrapError(SCHEDULES_NOT_MATCHED) from None
 
 
 def _converge() -> None:
@@ -325,8 +373,9 @@ def _converge() -> None:
     created_bucket = converge_bucket(client, bucket, arguments["region_name"])
     check_create_only(Boto3S3Client(client), bucket, prefix)
 
+    work_pool = _required(WORK_POOL_ENV)
     try:
-        created_pool = asyncio.run(_converge_pool(_required(WORK_POOL_ENV)))
+        created_pool = asyncio.run(_converge_pool(work_pool))
     except BootstrapError:
         raise
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
@@ -340,17 +389,34 @@ def _converge() -> None:
         raise BootstrapError(DEPLOYMENT_FAILED)
 
     # Building the projection is what converges the product schema, so this call
-    # is the schema step even though nothing here reads a record afterwards.
+    # is the schema step; the projection then writes the bootstrap record.
     try:
-        service_product_projection()
+        projection = service_product_projection()
+    except (EarlierProductDatabaseError, DuplicateConfigurationNamesError) as error:
+        # The message names the tables and their missing columns, or the configuration names
+        # and IDs that an earlier build let several configurations share, never another value
+        # of the database, and says what to do.
+        logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
+        raise BootstrapError(PRODUCT_DATABASE_FROM_EARLIER_BUILD) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(PRODUCT_STORE_UNAVAILABLE) from None
+
+    _restore_schedules(projection)
+
+    # Last, so a record exists only once every step above has completed. The Sync API and the
+    # worker refuse to start until it names their own version and work pool (spec 018 FR-007b).
+    try:
+        record = projection.write_bootstrap_record(installed_server_version(), work_pool)
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        raise BootstrapError(BOOTSTRAP_RECORD_FAILED) from None
 
     logger.info("bucket %s", "created" if created_bucket else "present")
     logger.info("object store refuses a second create-only write")
     logger.info("work pool %s", "created" if created_pool else "present")
     logger.info("deployment applied")
     logger.info("product schema converged; the configuration registry is the operator's to fill")
+    logger.info("schedules handed to the task manager")
+    logger.info("bootstrap recorded for Sync version %s and work pool %s", record.sync_version, record.work_pool)
 
 
 def _configure_logging() -> None:
@@ -358,10 +424,11 @@ def _configure_logging() -> None:
 
     Importing Prefect configures the root logger before `main` runs, so `basicConfig` does
     nothing, and this logger inherits a level that drops every INFO line: the job would
-    report only its refusals. Its own level is set instead; the root handlers print it.
+    report only its refusals. The package logger's level is set instead; the root handlers
+    print it.
     """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | infrahub-sync bootstrap | %(message)s")
-    logger.setLevel(logging.INFO)
+    configure_service_logging()
 
 
 def main() -> int:

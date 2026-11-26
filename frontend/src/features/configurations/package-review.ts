@@ -1,0 +1,374 @@
+import { isEnvelope, isTimeout, SyncApiUnavailable } from "#/api/errors";
+import type { DeclaredContent, PackageCheck } from "#/api/types";
+import { plural } from "#/domain/run-state";
+
+/** The largest findings page the Sync API serves; the review step asks for all of it. */
+export const REVIEW_FINDINGS_LIMIT = 256;
+
+/** The longest reason the Sync API keeps. */
+export const REASON_MAX_LENGTH = 512;
+
+/** The finding that comes with every failed read of the destination schema. */
+const READ_FAILED_CODE = "destination-schema-read-failed";
+
+/** `destination_read` values that mean the destination did not answer at all. */
+const UNREACHABLE_READS = new Set(["timeout", "unreachable"]);
+
+export const MESSAGES = {
+  moreThanOneFile: "Drop one package file.",
+  unreadableFile: "The file could not be read. Choose it again.",
+  invalidPackage: "This file is not a YAML or JSON configuration package.",
+  v2Configuration:
+    "This is a v2 configuration. Convert it with `infrahub-sync configs convert`, then drop the package here. Converting a v2 configuration in the web interface is planned for a later release.",
+  tooLarge: "The file is larger than the Sync API accepts.",
+  administratorRequired: "Registering needs an administrator token",
+  checkFailed: "Validation did not complete.",
+  unreachable: "Could not validate: the destination cannot be reached",
+  requestFailed: "The request did not complete. Retry.",
+} as const;
+
+/** The package as the store would keep it. The OpenAPI document types it as an open object. */
+export const declaredContent = (check: PackageCheck): DeclaredContent =>
+  check.declared_content as unknown as DeclaredContent;
+
+/** The branch the review step validates against first: the one the package declares, else `main`. */
+export function defaultBranch(content: DeclaredContent): string {
+  const branch = content.configuration.destination.settings?.branch;
+  return typeof branch === "string" && branch.trim() ? branch.trim() : "main";
+}
+
+/**
+ * What a check allows. Only an `error` finding blocks registration; a `warning` finding is listed
+ * and does not block (FR-011).
+ * - `valid`: the destination was read and there is no error finding; Register is enabled.
+ * - `unreachable`: the destination did not answer and no other error finding was reported;
+ *   Register without validation is enabled (FR-020).
+ * - `findings`: at least one error finding, or more findings than the page holds; Register is
+ *   disabled (FR-011).
+ * - `unchecked`: the check ran without a branch, so the destination was not read.
+ */
+export type ResultKind = "valid" | "findings" | "unreachable" | "unchecked";
+
+/** True when the page does not hold every finding, so an error finding may be on a later page. */
+const pageIncomplete = (check: PackageCheck) => check.total_findings > check.findings.length;
+
+export function resultKind(check: PackageCheck): ResultKind {
+  if (UNREACHABLE_READS.has(check.destination_read)) {
+    const onlyReadFailed =
+      !pageIncomplete(check) &&
+      check.findings.every((f) => f.code === READ_FAILED_CODE || f.severity !== "error");
+    return onlyReadFailed ? "unreachable" : "findings";
+  }
+  if (pageIncomplete(check) || check.findings.some((f) => f.severity === "error")) {
+    return "findings";
+  }
+  return check.destination_read === "read" ? "valid" : "unchecked";
+}
+
+/**
+ * What to do when Register is disabled because the destination schema could not be read for a
+ * reason the package does not cause; `undefined` when the package is the thing to fix.
+ */
+export function readFailureHint(destinationRead: string): string | undefined {
+  switch (destinationRead) {
+    case "nobranch":
+      return "The validation branch does not exist in Infrahub. Change the validation branch to validate again.";
+    case "credentials":
+      return "The Sync API cannot read a token from the stored credential the destination names. Check on the Credentials page that it exists and holds a token, then validate again.";
+    case "rejected":
+      return "Infrahub refused the destination token. Check the value of the stored credential the destination names, then validate again.";
+    default:
+      return undefined;
+  }
+}
+
+/** The warning findings a check returned, which the review step lists without blocking. */
+export const warningFindings = (check: PackageCheck) =>
+  check.findings.filter((f) => f.severity === "warning");
+
+/** One block of a package and the stored credential it names. */
+export interface BlockCredential {
+  block: "Source" | "Destination";
+  name: string;
+}
+
+/**
+ * The stored credential that each block of the configuration names, source first, without a
+ * value: a package names a stored credential with `credential: <name>` and never holds a value.
+ */
+export function blockCredentials(content: DeclaredContent): BlockCredential[] {
+  const { source, destination } = content.configuration;
+  const named: BlockCredential[] = [];
+  if (source.credential) named.push({ block: "Source", name: source.credential });
+  if (destination.credential) named.push({ block: "Destination", name: destination.credential });
+  return named;
+}
+
+/** One block of a registration that the Sync API refused for the stored credential it names. */
+export interface RefusedCredential {
+  block: string;
+  name: string;
+  code: string;
+  /** Every field the block needs (credential not found), or the fields the credential lacks. */
+  fields: readonly string[];
+}
+
+/** "Source" or "Destination"; any other block as the Sync API names it. */
+export function refusedBlockLabel(block: string): string {
+  if (block === "source") return "Source";
+  if (block === "destination") return "Destination";
+  return block;
+}
+
+const neededFields = (fields: readonly string[]) =>
+  fields.map((field) => `a ${field}`).join(" and ") || "a value";
+
+/** Whether the refusal says that the stored credential does not exist. */
+export const refusedForMissingCredential = (finding: RefusedCredential) =>
+  finding.code === "credential-not-found";
+
+/**
+ * Whether creating the stored credential or changing its value answers the finding. It does not
+ * for `credential-method-unknown`, where the package sets an `auth_method` that the adapter of
+ * the block does not accept, nor for a code this page does not know.
+ */
+export const refusedCredentialHasRemedy = (finding: RefusedCredential) =>
+  finding.code === "credential-not-found" || finding.code === "credential-field-missing";
+
+/** What is wrong with the stored credential of one block; the sentence follows the name. */
+export function refusedCredentialText(finding: RefusedCredential): string {
+  if (refusedForMissingCredential(finding)) {
+    return `does not exist. The block needs ${neededFields(finding.fields)}.`;
+  }
+  if (finding.code === "credential-field-missing") {
+    return `lacks ${neededFields(finding.fields)}.`;
+  }
+  if (finding.code === "credential-method-unknown") {
+    return "cannot be used: the adapter of the block does not accept the auth_method that the package sets.";
+  }
+  return "cannot be used.";
+}
+
+/** What to do after the refusal, under the list of findings. */
+export function credentialRefusalNextStep(
+  findings: readonly RefusedCredential[],
+  stored: readonly { name: string; fields: readonly string[] }[] | undefined
+): string {
+  if (!findings.every(refusedCredentialHasRemedy)) {
+    return "Correct the package, then add it again. A change to a stored credential does not answer every line above.";
+  }
+  return findings.every((f) => refusedCredentialResolved(f, stored))
+    ? "Every credential can be used now. Press Register again."
+    : "The package stays open here. Press Register again when each credential can be used.";
+}
+
+/** The title of the notice of a registration refused for its stored credentials. */
+export function credentialRefusalTitle(count: number): string {
+  return count === 1
+    ? "Not registered: a stored credential that the configuration names cannot be used"
+    : `Not registered: ${count} stored credentials that the configuration names cannot be used`;
+}
+
+/**
+ * Whether the stored credentials, as the Credentials page lists them now, answer one finding: the
+ * credential exists and holds every field the finding names.
+ */
+export function refusedCredentialResolved(
+  finding: RefusedCredential,
+  stored: readonly { name: string; fields: readonly string[] }[] | undefined
+): boolean {
+  if (!refusedCredentialHasRemedy(finding)) return false;
+  // A finding of the check does not list the fields: only a new check says that they are held.
+  if (!refusedForMissingCredential(finding) && finding.fields.length === 0) return false;
+  const credential = stored?.find((c) => c.name === finding.name);
+  return credential !== undefined && finding.fields.every((f) => credential.fields.includes(f));
+}
+
+const CHECK_CREDENTIAL_CODES = new Set(["credential-not-found", "credential-field-missing"]);
+const CHECK_CREDENTIAL_LOCATION = /^\/configuration\/(source|destination)\/credential$/;
+
+/**
+ * The stored credential that one finding of the check is about, or `undefined` for any other
+ * finding. The finding gives the block in its location; the package gives the name. The fields are
+ * in the message of the finding only, so `fields` is empty.
+ */
+export function checkedCredential(
+  finding: { code: string; location?: string | null },
+  content: DeclaredContent | undefined
+): RefusedCredential | undefined {
+  if (!content || !CHECK_CREDENTIAL_CODES.has(finding.code)) return undefined;
+  const block = CHECK_CREDENTIAL_LOCATION.exec(finding.location ?? "")?.[1] as
+    | "source"
+    | "destination"
+    | undefined;
+  const name = block && content.configuration[block].credential?.trim();
+  return block && name ? { block, name, code: finding.code, fields: [] } : undefined;
+}
+
+/** The rename a new version makes, or nothing when the name stays the same. */
+export function renameText(current: string | null | undefined, next: string | null | undefined) {
+  if (!current || !next || current === next) return undefined;
+  return `This version renames the configuration from ${current} to ${next}.`;
+}
+
+/** The sentence under a findings page that does not hold every finding. */
+export function moreFindingsText(check: PackageCheck): string | undefined {
+  const more = check.total_findings - check.findings.length;
+  if (more <= 0) return undefined;
+  return `${plural(more, "more finding", "more findings")}. Run \`infrahub-sync configs check\` to list them all.`;
+}
+
+export const reviewTitle = (name: string, nextVersion: number) =>
+  `Add version ${nextVersion} to ${name}`;
+
+export const NEW_CONFIGURATION_TITLE = "Register a new configuration";
+
+/** The refusal of a package whose name another configuration has: names are unique. */
+export const sameNameText = (name: string | undefined) =>
+  name
+    ? `A configuration named ${name} already exists.`
+    : "Another configuration already has the name of this package.";
+
+/** Why Register stays disabled while another configuration has the name of the package. */
+export const sameNameHint = (name: string | undefined) =>
+  name
+    ? `Add the package as a new version of ${name} instead.`
+    : "Add the package as a new version of the configuration that has its name instead.";
+
+/** The Sync API error code of a registration refused because another configuration has the name. */
+export const CONFIGURATION_NAME_IN_USE = "configuration-name-in-use";
+
+/**
+ * The configuration that already has the name of the package. `configId` is used only as the
+ * target of "add a new version"; the review step never shows it.
+ */
+export interface NameInUse {
+  configId?: string;
+  name?: string;
+}
+
+/**
+ * The configuration named by a `configuration-name-in-use` refusal, from `details`; nothing for
+ * any other error, including the other 409 refusals (`idempotency-conflict`).
+ */
+export function nameInUseOf(error: unknown): NameInUse | undefined {
+  if (!isEnvelope(error) || error.error.code !== CONFIGURATION_NAME_IN_USE) return undefined;
+  const details = error.error.details;
+  const configId = details?.config_id;
+  const name = details?.name;
+  return {
+    ...(typeof configId === "string" && configId ? { configId } : {}),
+    ...(typeof name === "string" && name ? { name } : {}),
+  };
+}
+
+/**
+ * The configuration, other than `ownConfigId`, that has the name of the package, among the
+ * configurations listed for that name. For a new configuration `ownConfigId` is undefined, so
+ * any listed configuration has the name.
+ */
+export function otherNamesake(
+  items: readonly { config_id: string; name?: string | null }[] | undefined,
+  ownConfigId: string | undefined
+): NameInUse | undefined {
+  const other = items?.find((item) => item.config_id !== ownConfigId);
+  if (!other) return undefined;
+  return { configId: other.config_id, ...(other.name ? { name: other.name } : {}) };
+}
+
+/**
+ * The configuration whose name blocks Register. A `configuration-name-in-use` refusal always
+ * blocks it. The configurations listed for the name block it only before the request is sent:
+ * once it is sent, a configuration listed with that name can be the one the request itself
+ * registered before its answer was lost, and Retry with the same Idempotency-Key returns it.
+ */
+export function blockingNamesake(options: {
+  refused: NameInUse | undefined;
+  namesakes: readonly { config_id: string; name?: string | null }[] | undefined;
+  ownConfigId: string | undefined;
+  checksName: boolean;
+  sent: boolean;
+}): NameInUse | undefined {
+  if (options.refused) return options.refused;
+  if (!options.checksName || options.sent) return undefined;
+  return otherNamesake(options.namesakes, options.ownConfigId);
+}
+
+export const validatingText = (branch: string) => `Validating against branch ${branch}…`;
+
+export const validText = (branch: string) => `Valid against branch ${branch}`;
+
+export const unchangedText = (version: number) =>
+  `This package is the same as version ${version}. No new version was registered.`;
+
+/** Before Register: the package has the checksum of the newest version, so Register adds nothing. */
+export const sameAsNewestText = (version: number) =>
+  `This package is the same as version ${version}. Registering it would add no version.`;
+
+/** Names the account that registered the version when the Sync API returns it (AGENTS.md, "Sync frontend"). */
+export const registeredMeanwhileText = (version: number, registeredBy?: string | null) =>
+  registeredBy
+    ? `Version ${version} was registered meanwhile by ${registeredBy}.`
+    : `Version ${version} was registered meanwhile.`;
+
+/** True for a request the review step aborted itself, such as a check replaced by a newer one. */
+export const isAbort = (error: unknown): boolean =>
+  error instanceof DOMException && error.name === "AbortError";
+
+/**
+ * The message for a check the Sync API refused, keyed by reason, or by HTTP status for an answer
+ * without the Sync API's envelope. Nothing when the check did not complete: no answer, a server
+ * error or a time limit, which the review step reports as "Validation did not complete."
+ */
+export function refusalMessage(error: unknown): string | undefined {
+  if (error instanceof SyncApiUnavailable) {
+    return error.status === 413 ? MESSAGES.tooLarge : undefined;
+  }
+  if (!isEnvelope(error)) return undefined;
+  const { status, reason, message } = error.error;
+  if (status >= 500 || status === 408 || status === 429) return undefined;
+  if (reason === "invalid_package") return MESSAGES.invalidPackage;
+  if (reason === "v2_configuration") return MESSAGES.v2Configuration;
+  if (status === 413) return MESSAGES.tooLarge;
+  if (isAdministratorRefusal(error)) return `${MESSAGES.administratorRequired}.`;
+  return message.charAt(0).toUpperCase() + message.slice(1);
+}
+
+/** True when the Sync API refused the request because the token is not an administrator's. */
+export const isAdministratorRefusal = (error: unknown): boolean =>
+  isEnvelope(error) && error.error.status === 403;
+
+/** True when a write got no answer, so the same request with the same key can be sent again. */
+export function isNoAnswer(error: unknown): boolean {
+  if (isTimeout(error) || error instanceof TypeError) return true;
+  if (error instanceof SyncApiUnavailable) return error.status >= 500 || error.status === 408;
+  return isEnvelope(error) && error.error.status >= 500;
+}
+
+/**
+ * The state of the stored credentials that the findings of a check are about, as one string:
+ * each name with its revision and the time of its last change, or "absent". The time tells a
+ * credential that was deleted and created again, whose revision is 1 as before. `undefined` while the stored credentials are not
+ * read, or when no finding is about a stored credential. A change of this string after a check
+ * means that a credential was created, deleted or given a new value, so the check is out of date.
+ */
+export function checkedCredentialState(
+  findings: readonly { code: string; location?: string | null }[],
+  content: DeclaredContent | undefined,
+  stored: readonly { name: string; revision: number; updated_at: string }[] | undefined
+): string | undefined {
+  const names = new Set(
+    findings.flatMap((f) => {
+      const credential = checkedCredential(f, content);
+      return credential ? [credential.name] : [];
+    })
+  );
+  if (names.size === 0 || stored === undefined) return undefined;
+  return [...names]
+    .sort()
+    .map((name) => {
+      const credential = stored.find((c) => c.name === name);
+      return `${name}:${credential ? `${credential.revision}@${credential.updated_at}` : "absent"}`;
+    })
+    .join(" ");
+}

@@ -3,29 +3,42 @@ title: Operate a Compose deployment
 ---
 
 Check the health of a running Compose deployment, stop or restart it, change its
-credentials, and recover from a write with an unknown outcome. Run every command from
+credentials, recover from a write with an unknown outcome, and let the Sync API resume an
+interrupted write by itself. Run every command from
 the directory that holds `docker-compose.yml` and `.env`. Each section links the full
 procedure in the [Compose deployment guide](../compose-deployment).
 
 ## Check health and status
 
-Run `docker compose ps` to see each container and the health of PostgreSQL, the object
-store, and Prefect. Then ask the Sync API whether a worker is live:
+Run `docker compose ps` to see each container and its health. The `sync-worker`
+container turns `unhealthy` when the worker process hangs. Docker runs no health check in
+a paused container, so a paused `sync-worker` shows as paused, not `unhealthy`. Then ask
+the Sync API whether its components are up and enough workers are live:
 
 ```sh
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/health
 ```
 
-The response's `worker.state` is one of three values:
+The answer is `200` with `status` `healthy`, or `503` with `status` `unhealthy`:
 
-| `worker.state` | Meaning | Next action |
+| What the response shows | Meaning | Next action |
 | --- | --- | --- |
-| `ready` | A registered worker sends heartbeats and can take a run. | None. A live worker does not check a registered source or destination. |
-| `busy` | A registered worker sends heartbeats and is running work. | None. |
-| `no-live-worker` | No worker has sent a heartbeat recently. A stopped, paused, or hung worker causes this state. | Read the worker logs, then run `docker compose restart sync-api sync-worker`. |
+| `status` is `healthy` | Every component is up and at least `workers.minimum` workers are live. | None. A live worker does not check a registered source or destination. |
+| An entry of `dependencies` is `down` | That component cannot be reached or cannot serve requests; its `error` names the reason. In Compose, `database` and `task_manager_db` are both in the `postgres` service, so they go down together. | Read the logs of that service, then start it again with `docker compose up -d --wait`. |
+| `workers.live_workers` is below `workers.minimum` | No worker, or too few, has sent a heartbeat recently. A stopped, paused or hung worker causes this. | Read the worker logs, then run `docker compose restart sync-api sync-worker`. |
+| `workers.state` is `unknown` | The Sync API could not read the work pool from Prefect. | Check `task_manager` and `task_manager_db` first. |
 
-If no container is running at all, run `docker compose up -d --wait`. See the
-[status procedure](../compose-deployment#status) for the details of each state.
+A worker listed as `stale` after a restart is the record of the previous worker and does
+not make the answer `503`. If no container is running at all, run
+`docker compose up -d --wait`. See the [status procedure](../compose-deployment#status)
+for every field and error category.
+
+To view the same report in a browser, open the
+[web interface](../compose-deployment#open-the-web-interface), select the state of the Sync
+service in the header, for example **Worker ready**, then select **Open the Health page**.
+The page shows each component, the number of workers online and required, the executions
+waiting for a worker, and the live and stale workers of the last 24 hours. It reads the
+report again every 15 seconds.
 
 `docker compose logs --no-color --tail 200` prints the last 200 lines of each service.
 Credentials are removed from run failures before they are printed. See the
@@ -48,7 +61,7 @@ Before planned maintenance, ask everyone who submits runs to this deployment to 
 submitting new runs. Then check each run you know of with
 `infrahub-sync runs show RUN_ID`, and wait until its
 `execution_state` is `completed`, `failed`, `cancelled`, `abandoned`, or `interrupted`.
-A `ready` worker says nothing about runs still executing. If you cannot account for
+A live worker says nothing about runs still executing. If you cannot account for
 every submitted run, postpone the maintenance.
 
 After you resume the deployment,
@@ -84,10 +97,15 @@ changes these steps of an image change:
 - The CLI: upgrade the CLI together with the Sync API. An earlier CLI cannot read the new
   response of `configs register` and `configs version`: the command stores the version and then
   fails. The registration is kept; read it with `configs show CONFIG_ID --version VERSION`.
-- The `worker_environments` table: each worker writes the names of its credential variables
-  to this new table, never their values. Each worker restart adds a row under a new worker name,
-  and the rows of earlier worker processes stay in the table. If you return to an earlier
-  image, the table stays in the database and the earlier release does not read it.
+- Stored credentials: `sync-api` needs `INFRAHUB_SYNC_ENCRYPTION_KEY` and
+  `INFRAHUB_SYNC_WORKER_TOKEN`, and each worker needs `INFRAHUB_SYNC_WORKER_TOKEN`. The
+  `INFRAHUB_SYNC_CREDENTIAL_*` variables are no longer read. A registered version that used a
+  `$credential` reference is refused with `422 credential-format-removed`; see
+  [Versions registered with the earlier format](../guides/credentials.mdx#versions-registered-with-the-earlier-format).
+  A `worker_environments` table of an earlier release stays in the database, and nothing reads
+  or writes it. If you return to an earlier image, that release needs the
+  `INFRAHUB_SYNC_CREDENTIAL_*` variables again and cannot run a version that names a stored
+  credential.
 - Warm incremental reads: no adapter bundled with Sync reads only the records changed since
   the last run, and the Sync API and the Prefect flow always read every record. A custom
   source adapter that defines `safe_cursor_before_load` reads this way only when it also
@@ -114,16 +132,38 @@ Moving or renaming the directory starts a different, empty deployment. Set
 
 ## Change credentials
 
-Source and destination tokens belong in `.env`. Packages contain references to them,
-not their values. To add or change a token, edit its line in `.env` as
-[The `.env` file](../compose-deployment#configuration-prerequisites) describes, then
-run `docker compose up -d --wait`, which recreates the services whose environment
-changed. `docker compose restart` keeps the environment the containers already had.
+Source and destination tokens are stored credentials of the Sync API, not lines of `.env`. A
+package names a stored credential and never holds its value. To add a token, an administrator
+runs `infrahub-sync credentials create <name>`; to change one, `infrahub-sync credentials set
+<name>`. No service is recreated, and the next stage that starts uses the new value. See
+[Manage stored credentials](../guides/credentials.mdx).
 
-This release has no tested procedure for rotating credentials. The Sync API token that
-the CLI presents, `INFRAHUB_SYNC_API_TOKEN`, must equal the principal's token in
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`; change both together. The `cli` service reads
-`INFRAHUB_SYNC_API_TOKEN` from `.env`. See [Use it](../compose-deployment#use-it).
+`INFRAHUB_SYNC_ENCRYPTION_KEY` and `INFRAHUB_SYNC_WORKER_TOKEN` are lines of `.env`. Changing
+the encryption key is not supported; if it is lost, an administrator sets the value of every
+stored credential again. To change the worker token, edit it and run
+`docker compose up -d --wait`, which recreates `sync-api` and `sync-worker`;
+`docker compose restart` keeps the environment the containers already had.
+
+This release has no tested procedure for rotating the database and object store credentials.
+
+The `admin` account of the Sync API takes its password and its API token from
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` and `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` in `.env`.
+To replace a lost `admin` password, or to rotate the `admin` token, edit the variable and
+recreate `sync-api` alone with `docker compose up -d --wait --no-deps sync-api`. When you change the
+token, give `INFRAHUB_SYNC_API_TOKEN` the same value, because the `cli` service presents
+`INFRAHUB_SYNC_API_TOKEN` from `.env`. See
+[Recover or rotate the `admin` account](../compose-deployment#recover-or-rotate-the-admin-account).
+
+Every other account changes through the CLI or the Sync API, with no change to `.env` and
+no restart. This covers:
+
+- a new account;
+- a new password;
+- a new API token;
+- the end of a refusal after repeated failed sign-ins;
+- a disabled account.
+
+See [Manage accounts](../guides/accounts).
 
 Never `source` `.env` or put a credential on a command line. Keep values out of logs,
 shell history, and configuration packages.
@@ -144,3 +184,122 @@ follow the
 [reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):
 read the run record, inspect the destination, and then create a fresh plan. The fresh plan
 reads the destination as it is now, so it holds only the changes that are still outstanding.
+
+When `INFRAHUB_SYNC_AUTOMATIC_RESUME` is on, read `infrahub-sync runs show RUN_ID` before you run
+`verify`: the Sync API may already be resuming an interrupted run; see
+[Automatic resume of an interrupted write](#automatic-resume-of-an-interrupted-write).
+
+## Automatic resume of an interrupted write
+
+When the worker of an `apply`, a `sync` or a resume disappears during the write, the Sync API
+ends the write as interrupted. With automatic resume on, the Sync API then checks the
+destination with `verify` and resumes the run by itself, as in
+[Resume an interrupted apply](../running-a-sync.mdx#resume-an-interrupted-apply), without a
+person running `verify` and `runs resume`.
+
+### Turn automatic resume on
+
+Set `INFRAHUB_SYNC_AUTOMATIC_RESUME=true` in `.env`, then run `docker compose up -d --wait`,
+which recreates `sync-api` with the new value. The setting is read by `sync-api` only. It is off
+by default. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any
+case; any other value, including an empty one, stops `sync-api` at startup.
+
+The Sync API reads the setting each time it ends a write as interrupted. While the setting is
+off, it records nothing about automatic resume, and every interrupted run waits for a person. A
+run that the Sync API started to resume before you turned the setting off continues.
+
+### When the Sync API resumes a run
+
+The Sync API resumes a write that it ended for one of two causes:
+
+- Prefect reported the flow run of the write as crashed. A flow run that Prefect reports as failed,
+  cancelled or completed is not resumed.
+- The worker that claimed the write stopped sending heartbeats.
+
+A write that the worker ended with its own failure record is not resumed, and neither is a write
+that a person cancelled.
+
+For each such write, the Sync API takes these steps, one at a time:
+
+1. It waits until the work pool has a live worker: online, with a heartbeat within the last
+   `max(3 * PREFECT_WORKER_HEARTBEAT_SECONDS, 30)` seconds. The time it waits does not count
+   against `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS`.
+2. It runs `verify` on the run. The check reads up to 2,000 uncertain operations, like any
+   `verify`, and records how many it left out.
+3. When the check passes and reports no operation as `differs`, it waits again for a live worker
+   and resumes the run from its saved position.
+
+The check and the resume run as `Sync (automatic resume)`, which `runs show`, the run page of
+the web interface and the event list show as their actor. Each step is submitted once, also when
+the Sync API restarts between two steps.
+
+`infrahub-sync runs show RUN_ID` prints one block for each interrupted write that the Sync API
+recorded for automatic resume, oldest first. A block shows the state while the Sync API waits or runs a step, for
+example `waiting for a live worker to run the check`, and the result once it ends:
+
+```text
+Automatic resume 1: started
+  cause: the worker infrahub-sync-service-3b2f… stopped sending heartbeats
+  check: passed, 0 differs, 0 not checked
+  resumed after operation 5999 by Sync (automatic resume)
+```
+
+`infrahub-sync runs list` adds `auto resumes: N` to a run for which the Sync API submitted an
+automatic resume. The count includes a resume that no worker started.
+
+### Reasons the Sync API does not resume a run
+
+When the Sync API does not resume a run, the block says `not started`, with the reason, and the
+run stays interrupted. The next step is printed under `next:`: run `verify`, then create a new
+plan or run `runs resume` yourself. The reason codes are in `GET /runs/{run_id}` under
+`automatic_resumes`, and in the event `infrahub_sync.run.automatic_resume_not_started`.
+
+| Code | Reason |
+| --- | --- |
+| `not-resumable` | `runs resume` would refuse the run: it has no saved plan, it was cancelled, or it is a scheduled run with branch review. Create a new plan. |
+| `approval-missing` | The Sync API requires an approved plan and the run has no approval. Approve the run, then run `verify` and `runs resume`. |
+| `no-progress` | The previous automatic resume of the run did not move the progress marker forward. |
+| `limit-reached` | The run already received 3 automatic resumes. |
+| `check-failed` | The check failed, for example because the destination was unreachable, or it did not compare the operations of the interrupted write with the destination. The reason names the cause. |
+| `check-found-differs` | The check reported one or more nodes as `differs`. A resume would write the plan's values over them, so a person reviews them. |
+| `not-picked-up` | No worker picked up the check or the resume in time. |
+| `refused` | The Sync API refused the check or the resume, for example because a condition of `runs resume` was not met. The reason names the code. When the Sync API could not serve the request at that time, for example because the task manager or the saved plan was not available, it tries again in its next loop instead. |
+| `person-took-over` | A person ran `verify` or `runs resume` while the Sync API waited for a live worker. |
+
+### Limits of automatic resume
+
+- A run receives at most 3 automatic resumes. A resume that the Sync API submitted counts, also
+  when no worker picked it up. A resume that a person starts does not count, and a person can
+  still resume the run after the limit.
+- When an automatic resume is interrupted without moving the progress marker forward, the Sync
+  API does not resume the run again.
+- The check reads at most 2,000 uncertain operations. A node that differs among the operations
+  it left out is not found, and the resume writes the plan's values over it. The block of
+  `runs show` prints the count as `not checked`.
+- Every condition of `runs resume` applies: the checksum, the checks before the first write, the
+  approval when the Sync API requires one, and the confirmation of left-out records. The
+  confirmation is taken from the interrupted write: an `apply` or a resume confirmed it, a
+  scheduled `sync` follows the schedule's `write_when_left_out`, and a manual `sync` did not
+  confirm it.
+
+### Automatic resume of a scheduled run
+
+While the Sync API waits for or runs an automatic resume of a scheduled run, the run counts as
+in progress for the schedule's overlap policy. The schedule counts the run once, when the last
+automatic resume ends: as succeeded when the plan is applied, and as one failed run when the
+Sync API does not resume it or the resume fails.
+
+### Take over an automatic resume
+
+While the Sync API waits for a live worker, run `infrahub-sync verify RUN_ID` or
+`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM` yourself. The Sync API stops its
+automatic resume with the reason `person-took-over`, and your request runs as usual. The Sync API
+stops it only once it accepts your request: a `runs resume` that is refused, for example with
+`verify-required` because no `verify` passed, leaves the automatic resume waiting. When the Sync
+API is already submitting its check or resume, or while its check or resume runs, your request is
+refused with `run-execution-conflict`. Wait for that step to end, then view the run with
+`runs show`.
+
+Setting `INFRAHUB_SYNC_AUTOMATIC_RESUME=false` stops the Sync API from recording new
+interrupted writes for automatic resume. It does not stop a run that it already recorded: take
+that run over as described above.

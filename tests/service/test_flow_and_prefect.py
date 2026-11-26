@@ -267,6 +267,8 @@ def test_service_and_direct_prefect_flow_schemas_are_separate_and_exact() -> Non
         "confirm_writes",
         "configuration_name",
         "confirm_left_out",
+        # A flow run of a Prefect schedule carries this parameter instead of run_id (spec 021).
+        "schedule_id",
     )
     assert tuple(inspect.signature(infrahub_sync_run.fn).parameters) == (
         "sync_name",
@@ -293,7 +295,7 @@ def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeyp
     with service_flow._remote_log_bridge(run_logger, prefect_context=prefect_context):
         run_logger.info("local service execution")
 
-    assert isinstance(run_logger, logging.Logger)
+    assert run_logger is service_flow.logger
     assert prefect_context is False
 
 
@@ -619,6 +621,7 @@ def test_service_apply_failure_retains_partial_write_evidence(
         "infrahub_message": None,
         "record": None,
         "field": None,
+        "active_run_id": None,
         # The execution that wrote the record (spec 016, research R11).
         "flow_run_id": stored.prefect_executions[0].flow_run_id,
     }
@@ -846,6 +849,8 @@ def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
         "verification_notes": [],
         "checks": ["checkpoint", "lineage"],
         "destination_checked": True,
+        # The `verify` execution that wrote the result, as `_claimed_worker_execution` names it (spec 030).
+        "flow_run_id": str(uuid5(NAMESPACE_URL, run_id)),
     }
     after = projection.lookup_run(run_id).value
     assert after is not None
@@ -983,7 +988,7 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
     assert submission.flow_run_id == str(client.flow_run.id)
     assert client.keys == ["opaque-prefect-key"]
     # The deployment fills the defaults of the parameters the request leaves out.
-    assert client.parameters == [{**parameters, "confirm_left_out": False}]
+    assert client.parameters == [{**parameters, "confirm_left_out": False, "schedule_id": None}]
     assert client.names == ["Plan sync of netbox-to-infrahub"]
     assert client.flow_run.tags == sorted(
         {

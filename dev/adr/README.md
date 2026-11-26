@@ -72,11 +72,11 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   marker, and why a kind with a problem is read in full, so a warm read reports the problems
   of a full read.
 - [0026 — The Compose deployment takes an external object store, adapter credentials and CA certificates from `.env`](0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md)
-  — why the bundled store is scaled to zero to leave it out, why the worker receives a fixed
+  — **partly superseded by 0057** — why the bundled store is scaled to zero to leave it out, why the worker receives a fixed
   list of credential variables, and why the CA directory is the one read-only shared mount.
 - [0027 — An interrupted apply resumes from its saved position](0027-an-interrupted-apply-resumes-from-its-saved-position.md)
-  — why an apply saves a progress marker, why `verify` is admitted on an interrupted run and
-  reports each uncertain operation, and why a resume on the same run clears
+  — **amended by 0056** — why an apply saves a progress marker, why `verify` is admitted on an
+  interrupted run and reports each uncertain operation, and why a resume on the same run clears
   `reconciliation_required`. Partly supersedes 0010.
 - [0028 — The bundled object store runs from the Silo image](0028-the-bundled-object-store-runs-from-the-silo-image.md)
   — why every Sync Compose stack runs the object store from a pinned `pgsty/silo` release, the
@@ -110,16 +110,16 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why `verify` contacts the destination, why `apply` and `verify` call `Potenda.check_plan`,
   and which named checks a `verify` reports.
 - [0037 — An approval is a record on the run that the Sync API stores, and one service setting makes it required](0037-an-approval-is-a-record-on-the-run.md)
-  — why an approval is four columns of the run and not a phase, why the Sync API answers
-  `approve` without a flow run, and what `INFRAHUB_SYNC_REQUIRE_APPROVAL` refuses.
+  — **amended by 0052** — why an approval is four columns of the run and not a phase, why the
+  Sync API answers `approve` without a flow run, and what `INFRAHUB_SYNC_REQUIRE_APPROVAL` refuses.
 - [0038 — Cancelling a finished plan withdraws it, and a cancelled run is never applied](0038-cancelling-a-finished-plan-withdraws-it.md)
   — why `runs cancel` withdraws a plan that has nothing running, and why `apply`, `approve` and
   `resume` refuse a run in phase `cancelled`.
 - [0039 — Workers publish the names of their credential variables so validation can check them](0039-workers-publish-the-names-of-their-credential-variables.md)
-  — why each worker writes the names of its credential variables to the product store, which
+  — **superseded by 0057** — why each worker writes the names of its credential variables to the product store, which
   workers count as live, and what grows in the `worker_environments` table.
 - [0040 — A v2 configuration converts to a package locally, by v2's own rules](0040-a-v2-configuration-converts-locally-by-v2-rules.md)
-  — why `configs convert` is a local command, why fixed tables reproduce v2's environment
+  — **partly superseded by 0057** — why `configs convert` is a local command, why fixed tables reproduce v2's environment
   variables and authentication methods, and why it never reads a credential value.
 - [0041 — An IP namespace that a uniqueness constraint needs and the file does not map converts to the `default` namespace](0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md)
   — why `--live-schema` reads the destination schema and maps an unmapped IP namespace to
@@ -127,12 +127,66 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0042 — The v2 gate passes on no creates and no updates, and on reviewed lists for everything else](0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md)
   — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
   out and deletes are kept.
+- [0043 — The Sync service serves the web interface at the root of its address and the Sync API under `/api`](0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md)
+  — **partly superseded by 0049, amended by 0055** — why every Sync API route moved under `/api`, why the web
+  interface keeps a person's token for the browser tab, and why the CLI adds `/api` to
+  `INFRAHUB_SYNC_API_URL`.
 - [0044 — The base install declares no Redis client, and no code imports the Redis store](0044-the-base-install-declares-no-redis-client.md)
   — why the `redis` dependency and the `RedisStore` import were removed, and the refusal a
   configured store gets. Supersedes 0008.
-- [0045 — The Compose file defaults its internal credentials](0045-the-compose-file-defaults-its-internal-credentials.md)
+- [0045 — The Kubernetes deployment orders its start with a hashed Job and a bootstrap record](0045-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md)
+  — why the Helm chart runs the bootstrap as a plain Job named after a hash of its inputs, why the
+  Sync API and the worker check a bootstrap record when they start instead of waiting in an init
+  container, and why an upgrade can start them before the new Job completes.
+- [0046 — Saved plan format 5 records an emptied one-peer relationship](0046-saved-plan-format-5-records-an-emptied-one-peer-relationship.md)
+  — why an update records an emptied one-peer relationship as a reference with no peer, why every
+  plan is saved in format 5, and why apply writes it as `null` in the one Upsert.
+- [0047 — A plan leaves out the deletes of nodes that Infrahub creates itself](0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
+  — why a plan reads the creator `__system__` from node metadata, for the kinds listed in
+  `INFRAHUB_BUILTIN_NODE_KINDS`, to leave out these deletes, and why no file accepts the delete of
+  the `default` namespace by name.
+- [0048 — The NetBox demo's schema and package ship in the wheel](0048-demo-assets-ship-in-the-wheel.md)
+  — why the wheel carries the demo schema and the `from-netbox` package through `force-include`
+  instead of a second copy in git or an image-only path, and why `demo prepare` falls back to the
+  repository paths in an editable install.
+- [0051 — A schedule's cadence is a Prefect schedule, and the worker admits each scheduled start](0051-a-schedule-is-a-prefect-schedule-and-the-worker-admits-each-start.md)
+  — why each Sync schedule is a Prefect schedule matched by slug, why the worker writes the run of
+  a scheduled start, how one run for each start is guaranteed, and which starts get no flow run.
+- [0052 — A scheduled write to a branch that Infrahub Sync creates for the run needs no Sync approval](0052-a-scheduled-write-to-a-branch-that-sync-creates-needs-no-approval.md)
+  — why branch review replaces the Sync approval with the merge of a proposed change, why a
+  schedule that writes to the default branch is refused while approval is required, and why the
+  worker checks the setting too. Amends 0037.
+- [0053 — A scheduled start that waits stores its Prefect state and ends its flow run with the `Pause` signal](0053-a-waiting-scheduled-start-ends-its-flow-run-with-the-pause-signal.md)
+  — why a start that waits for a running run or for its destination sets `AwaitingRetry` itself
+  and raises `Pause`, and why returning the state fails under a process worker.
+- [0049 — Sign-in uses local accounts in the product store, and the environment defines the `admin` account](0049-sign-in-uses-local-accounts-and-the-environment-defines-admin.md)
+  — why accounts with passwords, API tokens and sessions replace the tokens of the environment,
+  why `admin` follows its variables at each start, and why the old variable is removed at once.
+- [0050 — A record holds an account identifier, and a deletion empties the account row](0050-a-record-holds-an-account-identifier-and-a-deletion-empties-the-account-row.md)
+  — why records hold `acct_` identifiers that one middleware shows as names, and why a deletion
+  changes no past record.
+- [0054 — A package can be validated before it is registered](0054-a-package-can-be-validated-before-it-is-registered.md)
+  — why `POST /configs/validate` and `configs check` run the checks of a registered version on a
+  package that is not registered, why the route requires an administrator, and why the service
+  parses the file.
+- [0055 — `GET /api/health` replaces `GET /api/status`](0055-the-health-endpoint-replaces-status.md)
+  — why the health answer follows Infrahub's shape, why workers count through a minimum and a
+  stale record never fails it, why the database check reads only, and why the worker container
+  healthcheck reads a file that the worker's own timer writes.
+- [0056 — A write whose worker disappeared resumes automatically when the site allows it](0056-a-lost-worker-resumes-automatically-when-the-site-allows-it.md)
+  — why the liveness reconciler resumes a write after rule 6 (`crashed`) or rule 8 only when
+  `INFRAHUB_SYNC_AUTOMATIC_RESUME` is on, why a `verify` runs first, why a run is not resumed
+  after 3 automatic resumes or after one that saved no progress, and how fixed idempotency keys
+  submit each step once. Amends 0027.
+- [0057 — The Sync API stores credentials and releases them to the worker account](0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)
+  — why a package names a stored credential in each block, how values are encrypted with a key
+  that only the Sync API holds, what the two routes of the `worker` account return, which stored
+  versions are refused, and the limits of the execution check and of the receipt check.
+  Supersedes 0039; partly supersedes 0026 and 0040.
+- [0059 — The Compose file defaults its internal credentials](0059-the-compose-file-defaults-its-internal-credentials.md)
   — why the six credentials used only between the Compose services have fixed defaults, and why
-  the API bearer tokens stay required. Partly supersedes 0016.
+  the `admin` password, the worker token and the encryption key stay required. Partly
+  supersedes 0016.
 
 ## Related
 

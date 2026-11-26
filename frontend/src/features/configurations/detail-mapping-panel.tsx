@@ -261,7 +261,7 @@ function FieldTable({ entry }: { entry: MappingEntry }) {
  * One mapping: what it reads from the source system, then what it fills in the destination, with
  * what differs when the version is compared with an earlier one.
  */
-function MappingDetail({
+export function MappingDetail({
   entry,
   sourceLabel,
   destinationLabel,

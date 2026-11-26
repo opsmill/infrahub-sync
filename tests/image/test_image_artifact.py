@@ -69,6 +69,36 @@ print(format_generated_python(source="x = {  'a' :1 }\\n", filename="generated.p
 """
 
 
+WEB_DIRECTORY = "/opt/infrahub-sync/web"
+
+# Reads the built web interface as the user the probe runs as, so a file only root
+# can read fails here. Prints the readable entry point and asset names.
+WEB_FILES_PROBE = """
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+def read(path):
+    path.read_bytes()
+    return path.name
+print(json.dumps({
+    "index": read(root / "index.html"),
+    "assets": sorted(read(path) for path in (root / "assets").iterdir() if path.is_file()),
+}))
+"""
+
+# The web interface is built in its own stage; nothing of the Node toolchain may
+# follow it into the runtime image.
+NODE_TOOLS = ("node", "npm", "pnpm", "corepack")
+NODE_MODULES_PROBE = """
+import json, os, sys
+found = []
+for root in sys.argv[1:]:
+    for current, directories, _ in os.walk(root):
+        if "node_modules" in directories:
+            found.append(os.path.join(current, "node_modules"))
+print(json.dumps(found))
+"""
+
+
 def git(*argv: str) -> str:
     """Return the trimmed output of one fixed-argv Git command in this repository."""
     result = subprocess.run(  # noqa: S603 -- fixed argv
@@ -116,6 +146,23 @@ def test_only_the_declared_roots_are_writable_under_a_read_only_root(image_ref: 
     writable = json.loads(result.stdout.strip().splitlines()[-1])
     assert {path: writable[path] for path in WRITABLE_ROOTS} == dict.fromkeys(WRITABLE_ROOTS, True)
     assert {path: writable[path] for path in READ_ONLY_ROOTS} == dict.fromkeys(READ_ONLY_ROOTS, False)
+
+
+def test_tini_is_the_entrypoint_of_every_command(image_ref: str) -> None:
+    """A Compose `command:` keeps the entrypoint; the Helm chart repeats it in its `command:`."""
+    assert image_config(image_ref)["Entrypoint"] == ["/usr/bin/tini", "-g", "--"]
+
+
+def test_the_command_does_not_run_as_pid_1(image_ref: str) -> None:
+    """tini is PID 1, so the command gets SIGTERM and orphaned processes are collected."""
+    result = run_in_image(
+        image_ref, ["python", "-c", "import os; print(os.getpid(), open('/proc/1/comm').read().strip())"]
+    )
+
+    assert result.returncode == 0, result.stderr
+    pid, first = result.stdout.split()
+    assert pid != "1"
+    assert first == "tini"
 
 
 def test_the_default_command_serves_the_sync_api(started_container: str) -> None:
@@ -238,6 +285,40 @@ def test_the_image_ships_no_installer(image_ref: str) -> None:
     result = run_in_image(image_ref, ["python", "-c", "import shutil,sys; sys.exit(0 if shutil.which('uv') else 1)"])
 
     assert result.returncode != 0, "uv is on PATH in the runtime image"
+
+
+def test_the_image_ships_the_built_web_interface_readable_by_the_runtime_user(image_ref: str) -> None:
+    """The Sync API serves these files at the root, as the runtime user."""
+    result = run_in_image(image_ref, ["python", "-c", WEB_FILES_PROBE, WEB_DIRECTORY])
+
+    assert result.returncode == 0, result.stderr
+    shipped = json.loads(result.stdout.strip().splitlines()[-1])
+    assert shipped["index"] == "index.html"
+    assert any(name.endswith(".js") for name in shipped["assets"]), shipped["assets"]
+    assert any(name.endswith(".css") for name in shipped["assets"]), shipped["assets"]
+
+
+def test_the_image_points_the_api_at_the_built_web_interface(image_ref: str) -> None:
+    environment = dict(entry.split("=", 1) for entry in image_config(image_ref)["Env"])
+
+    assert environment.get("INFRAHUB_SYNC_WEB_DIRECTORY") == WEB_DIRECTORY
+
+
+@pytest.mark.parametrize("tool", NODE_TOOLS)
+def test_the_image_ships_no_node_toolchain(image_ref: str, tool: str) -> None:
+    """Node builds the web interface in its own stage and stays there."""
+    result = run_in_image(
+        image_ref, ["python", "-c", f"import shutil,sys; sys.exit(0 if shutil.which({tool!r}) else 1)"]
+    )
+
+    assert result.returncode != 0, f"{tool} is on PATH in the runtime image"
+
+
+def test_the_image_ships_no_node_modules_directory(image_ref: str) -> None:
+    result = run_in_image(image_ref, ["python", "-c", NODE_MODULES_PROBE, "/opt", "/usr/local/lib"])
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == []
 
 
 def test_the_image_records_the_committed_lock_it_was_built_from(image_ref: str) -> None:

@@ -13,11 +13,24 @@ body,
   min-height: 100%;
 }
 
-/* The padding keeps an anchored or focused element clear of the 49px sticky header. */
+/*
+ * The padding keeps an anchored or focused element clear of the sticky header. The root layout sets
+ * --header-height to the rendered height of the header, which grows when the navigation wraps on a
+ * phone; the values below apply until it does.
+ */
 html {
   background-color: var(--background);
-  scroll-padding-top: 3.5rem;
+  /* Keeps the width of the page when its scrollbar appears, for example when a list is opened. */
+  scrollbar-gutter: stable;
+  scroll-padding-top: calc(var(--header-height, 49px) + 0.5rem);
   scroll-padding-bottom: 1.5rem;
+}
+
+/* On a phone the main navigation takes a second line, and the header is about 89px tall. */
+@media (width < 40rem) {
+  html {
+    scroll-padding-top: calc(var(--header-height, 89px) + 0.5rem);
+  }
 }
 
 body {

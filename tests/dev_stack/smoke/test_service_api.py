@@ -56,30 +56,42 @@ POLL_TIMEOUT_SECONDS = 240
 SMOKE_FIELDS = ("name", "type")
 
 
-def smoke_package(infrahub_url: str) -> dict[str, Any]:
+def unique_config_name(prefix: str = "smoke-registered") -> str:
+    """A configuration name no other registration uses, on this run or on an earlier one.
+
+    A name belongs to one configuration: `POST /configs` refuses a package whose name another
+    configuration has, with 409 `configuration-name-in-use`. The stack keeps every configuration
+    the suite registered on earlier runs, so a fixed name would be refused from the second run on.
+    """
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def smoke_package(infrahub_url: str, name: str | None = None) -> dict[str, Any]:
     """The declared package the smoke registers, as `POST /configs` accepts it.
 
     Both adapters are the bundled `infrahub` one, so the registered worker resolves them
-    through the installed loader with nothing generated and nothing on the filesystem. The
-    token is a credential *reference* — the worker resolves
-    `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` from its own environment, so no secret
-    value is ever posted or recorded.
+    through the installed loader with nothing generated and nothing on the filesystem. Each
+    block names the stored credential `infrahub-token`, which `dev.start` stores through the
+    Sync API. The Sync API releases its value to the worker for a run, so no secret value is
+    ever posted or recorded here.
+
+    Without `name`, every call returns a package with a new unique name, so two calls give
+    two packages for two configurations. Pass the same `name` to build a package that is a
+    new version of a configuration already registered under it.
     """
     return {
         "format_version": 1,
         "configuration": {
-            "name": "smoke-registered",
+            "name": name if name is not None else unique_config_name(),
             "source": {
                 "name": "infrahub",
-                "settings": {"url": infrahub_url, "branch": "main", "token": {"$credential": "infrahub-token"}},
+                "credential": "infrahub-token",
+                "settings": {"url": infrahub_url, "branch": "main"},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": infrahub_url,
-                    "branch": SMOKE_BRANCH,
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": "infrahub-token",
+                "settings": {"url": infrahub_url, "branch": SMOKE_BRANCH},
             },
             "schema_mapping": [
                 {
@@ -92,15 +104,15 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
                 }
             ],
         },
-        "credentials": {
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
-        },
     }
 
 
-def register_request(infrahub_url: str) -> dict[str, Any]:
-    """The `POST /configs` body: a declared package plus its audit reason."""
-    return {"package": smoke_package(infrahub_url), "reason": "smoke: register the smoke configuration"}
+def register_request(infrahub_url: str, name: str | None = None) -> dict[str, Any]:
+    """The `POST /configs` body: a declared package plus its audit reason.
+
+    The package has a new unique name unless `name` is given; see `smoke_package`.
+    """
+    return {"package": smoke_package(infrahub_url, name), "reason": "smoke: register the smoke configuration"}
 
 
 def create_run_request(config_id: str, registry_version: int) -> dict[str, Any]:
@@ -146,7 +158,7 @@ def _client(smoke_env: dict[str, Any], token: str | None) -> httpx.Client:
     headers = {}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
-    return httpx.Client(base_url=smoke_env["urls"]["sync_api"], headers=headers, timeout=30)
+    return httpx.Client(base_url=f"{smoke_env['urls']['sync_api']}/api", headers=headers, timeout=30)
 
 
 def authenticated_client(smoke_env: dict[str, Any], *, transcript: Path) -> httpx.Client:
@@ -333,12 +345,12 @@ def test_service_plan_and_apply_lifecycle(smoke_env: dict[str, Any], evidence_di
     captured = transcript.read_text(encoding="utf-8")
     exchanges = {(entry["method"], entry["path"], entry["status"]) for entry in map(json.loads, captured.splitlines())}
     assert exchanges >= {
-        ("POST", "/configs", 201),
-        ("POST", f"/configs/{config_id}/versions/{registry_version}/validate", 200),
-        ("POST", "/runs", 202),
-        ("GET", f"/runs/{run_id}/plan", 200),
-        ("POST", f"/runs/{run_id}/apply", 202),
-        ("GET", f"/runs/{run_id}/results", 200),
+        ("POST", "/api/configs", 201),
+        ("POST", f"/api/configs/{config_id}/versions/{registry_version}/validate", 200),
+        ("POST", "/api/runs", 202),
+        ("GET", f"/api/runs/{run_id}/plan", 200),
+        ("POST", f"/api/runs/{run_id}/apply", 202),
+        ("GET", f"/api/runs/{run_id}/results", 200),
     }
     assert (
         canary_leaks(

@@ -32,10 +32,11 @@ from infrahub_sync.product_store import (
     local_product_projection,
 )
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import Principal
+from infrahub_sync.service.auth import Principal, Resolution
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import RunService
+from tests.service.schedule_fixtures import NoDeploymentSchedules
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -77,7 +78,7 @@ class _CountingProjection(ProductProjection):
         super().observe_prefect_execution(run_id, flow_run_id, state=state, secrets=secrets)
 
 
-class _CountingOrchestration:
+class _CountingOrchestration(NoDeploymentSchedules):
     """A scripted Prefect double that records every remote observation it is asked for."""
 
     def __init__(self, observations: dict[str, Observation] | None = None) -> None:
@@ -116,10 +117,15 @@ class _Resolver:
     secret_values: tuple[str, ...] = ()
 
     @staticmethod
-    def resolve(token: str) -> Principal:
+    def resolve(token: str) -> Resolution:
         """Accept any bearer token as the same operator."""
         del token
-        return Principal(actor="operator")
+        return Resolution.accepted(Principal(actor="operator"))
+
+    @staticmethod
+    def principal_of(actor: str) -> Principal:
+        """Treat every actor name as a configured operator."""
+        return Principal(actor=actor)
 
 
 def _pending(flow_run_id: str, attempt: int) -> PrefectExecutionLink:

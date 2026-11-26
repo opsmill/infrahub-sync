@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from typing import Any, ClassVar
 
+import structlog
 from diffsync import Adapter, DiffSyncModel
 
 from infrahub_sync import (
@@ -17,7 +17,7 @@ from infrahub_sync import (
 from infrahub_sync.adapters.utils import build_mapping
 from infrahub_sync.configuration.credentials import declared_settings, is_registered_context
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 try:
     # declared in the `ipfabric` extra, not the base install or the default `service` image
@@ -132,6 +132,9 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                     matching_nodes = [item for item in nodes if str(item) == node_id]
                     if len(matching_nodes) == 0:
                         data[field.name] = None
+                        # The source names a peer that its read did not store, so the plan
+                        # does not record the relationship as emptied (spec 019 research R7).
+                        self.record_filtered_reference(mapping.name, data["local_id"], field.name)
                     else:
                         node = matching_nodes[0]
                         data[field.name] = node.get_unique_id()

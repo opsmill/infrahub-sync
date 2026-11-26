@@ -11,16 +11,18 @@ pytest.importorskip("prefect")
 
 from infrahub_sync.service import bootstrap, serve, worker
 from infrahub_sync.service.trust_store import TrustStoreError
+from tests.helpers.stored_credentials import set_process_start_settings
 
 if TYPE_CHECKING:
     from types import ModuleType
 
 # Each entry point, and the first step that would build a client after the bundle is in place.
 # For the Sync API, `build_app` installs the bundle itself, so the first step after it is the
-# Prefect UI address check that precedes the first provider.
+# Prefect UI address check that precedes the first provider. For the worker, it is the
+# bootstrap record check, which opens the first database connection.
 _ENTRY_POINTS = [
     (serve, "prefect_ui_url_from_environment"),
-    (worker, "ServiceProcessWorker"),
+    (worker, "check_bootstrap_record"),
     (bootstrap, "_converge"),
 ]
 _IDS = ["serve", "worker", "bootstrap"]
@@ -52,6 +54,8 @@ def test_the_ca_bundle_is_installed_before_any_client_is_built(
         calls.append("client")
         raise _StopError
 
+    # The Sync API checks its two required variables before it builds anything.
+    set_process_start_settings(monkeypatch)
     monkeypatch.setattr(module, "install_custom_ca_bundle", install)
     monkeypatch.setattr(module, first_client_step, build)
     monkeypatch.setattr(worker, "_pool_argument", lambda _argv: "default")
@@ -74,6 +78,8 @@ def test_a_refused_ca_directory_stops_the_entry_point_with_a_non_zero_status(
         message = "a client was built after the CA directory was refused"
         raise AssertionError(message)
 
+    # With its two required variables, the Sync API stops for the CA directory and no other reason.
+    set_process_start_settings(monkeypatch)
     monkeypatch.setattr(module, "install_custom_ca_bundle", refuse)
     monkeypatch.setattr(module, first_client_step, never)
 

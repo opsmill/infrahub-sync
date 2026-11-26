@@ -155,14 +155,16 @@ it writes, and why a skipped test does not count as a pass. See
 
 ### Run the Sync service locally
 
-The development stack runs the Sync API, the worker, PostgreSQL, object storage, Prefect and a
-disposable Infrahub in containers. The Sync API, the worker and Prefect run an image built from
-your working tree; PostgreSQL, object storage and Infrahub run published images. It uses
+The development stack runs the Sync API, the worker, PostgreSQL, object storage and Prefect in
+containers. The `infrahub` preset adds a disposable Infrahub, and the `preview` preset adds a
+disposable Infrahub and a local NetBox. The Sync API, the worker and
+Prefect run an image built from your working tree; PostgreSQL, object storage, Infrahub and
+NetBox run published images. It uses
 development credentials.
 [Local development stack](./development-stack.mdx) describes it in detail.
 
 ```bash
-uv run invoke dev.start     # build when needed, then start the stack
+uv run invoke dev.infrahub  # build when needed, then start the stack with a local Infrahub
 uv run invoke dev.smoke     # seed Infrahub, then run the smoke suite
 uv run invoke dev.destroy   # remove the containers and their data
 ```
@@ -179,9 +181,9 @@ Every pull request runs lint, the uv check and the unit tests.
 
 When a pull request changes an image input, CI also builds the container image for
 `linux/amd64` and `linux/arm64` on native runners and runs the image smoke test on each. The
-image inputs are the `Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock`, the package
-source, the root `docker-compose.yml`, `tests/image/`, and the workflow and filter files that
-declare this check. The build pushes nothing and uses no registry credentials, so a pull request
+image inputs are `development/Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock`, the package
+source, the NetBox demo's schema and package that the wheel carries, the root
+`docker-compose.yml`, `tests/image/`, and the workflow and filter files that declare this check. The build pushes nothing and uses no registry credentials, so a pull request
 from a fork runs the same check as one from an internal branch.
 
 The `Full qualification` check always runs and is the one branch protection requires. It passes

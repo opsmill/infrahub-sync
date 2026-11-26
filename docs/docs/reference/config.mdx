@@ -7,8 +7,10 @@ import TabItem from '@theme/TabItem';
 
 The `configuration` object of a [configuration package](../configuration-package.mdx)
 defines the source, the destination, and the mappings of one sync. A package also has an
-optional `format_version` (only `1`, the default) and an optional `credentials` block. For
-a complete package, see `examples/netbox_to_infrahub/package.yml`.
+optional `format_version` (only `1`, the default). A package holds no credential value: each
+block that uses authentication names a
+[stored credential](../guides/credentials.mdx) with `credential: <name>`. For a complete
+package, see `examples/netbox_to_infrahub/package.yml`.
 
 Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
 Run commands then select it by its configuration ID and registry version. The service
@@ -94,7 +96,8 @@ Configuration for source and destination adapters.
 | Property | Type | Description | Mandatory |
 | -------- | ---- | ----------- | --------- |
 | name | string | Name of a bundled adapter. See [Choose an adapter](../adapters/choosing-an-adapter.mdx). | Yes |
-| settings | Dictionary | Adapter-specific settings such as `url` and `token`. A credential-bearing setting holds a `$credential` reference to the package's `credentials` block, never a literal value; see [Credentials](../configuration-package.mdx#credentials). | No |
+| credential | string | Name of the stored credential that holds the token, or the username and the password, of this block. Omit it when the adapter's authentication method needs none. See [Credentials](../configuration-package.mdx#credentials). | No |
+| settings | Dictionary | Adapter-specific settings such as `url`. A credential setting, such as `token`, `username` or `password`, is not written here; the block names a stored credential instead. | No |
 
 #### Settings in a registered package
 
@@ -103,8 +106,9 @@ A registered run uses the settings declared in the package:
 - The worker connects to the declared `url` of each adapter. Environment URL variables such
   as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not replace it. The destination schema read uses
   the same declared URL.
-- Each `$credential` reference resolves when a run starts, from the environment variable that
-  its `credentials` entry names in the worker environment.
+- The worker fills the credential settings of each block from the stored credential that the
+  block names. It gets the values from the Sync API when a stage of a run starts, and reads no
+  token or password from its environment.
 - To change a URL or another setting, edit the package and register a new version with
   `configs version`. Then run the new version.
 

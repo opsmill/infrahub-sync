@@ -15,13 +15,20 @@ import pytest
 
 from infrahub_sync import product_store
 from infrahub_sync.product_store import (
+    SCHEDULE_START_OPERATION,
+    SCHEDULE_STOPPED_EVENT_TYPE,
     AuditEvent,
+    EventDetails,
     EventFilters,
     PrefectExecutionLink,
     ProductProjection,
+    ProductRun,
     RelatedResource,
+    ScheduleSettingChange,
 )
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
+from infrahub_sync.service import events as service_events
+from infrahub_sync.service.events import run_event, schedule_decision_type, schedule_event
 from tests.product_store.test_contract import _append_execution, _connect, _receipt, _run
 
 if TYPE_CHECKING:
@@ -369,3 +376,312 @@ def test_failed_refusal_event_insert_leaves_the_late_cancellation_unsaved(projec
     run = projection.lookup_run("run-001").value
     assert run is not None
     assert run.prefect_executions[0].terminal_at is None
+
+
+# --- several events with one decision, and schedule events (spec 021, research R9) -----------
+
+_SCHEDULE_ID = f"s-{'a' * 32}"
+_CONFIG_ID = "20260101T0000-aaaaaaaa"
+
+
+def _missed_start(event_id: str, day: int) -> AuditEvent:
+    return schedule_event(
+        event_type=service_events.SCHEDULE_START_MISSED,
+        actor="operator@example.com",
+        operation=service_events.SCHEDULE_START,
+        reason=None,
+        outcome="missed-skipped",
+        schedule_id=_SCHEDULE_ID,
+        config_id=_CONFIG_ID,
+        registry_version=3,
+        details=EventDetails(start_at=_NOW + timedelta(days=day)),
+        created_at=_NOW + timedelta(seconds=day),
+    ).model_copy(update={"event_id": event_id})
+
+
+def test_mutation_receipt_and_a_sequence_of_events_are_saved_together(projection: ProductProjection) -> None:
+    receipt_id = _reserved_plan(projection)
+
+    projection.complete_mutation(
+        receipt_id,
+        response_status=202,
+        response_body={"run": {"run_id": "run-001"}},
+        flow_run_id="flow-001",
+        event=_event("a-accepted", "infrahub_sync.run.accepted"),
+        events=(_missed_start("a-missed-1", 1), _missed_start("a-missed-2", 2)),
+    )
+
+    assert _typed_ids(projection) == ["a-accepted", "a-missed-1", "a-missed-2"]
+
+
+def test_one_failed_event_of_a_sequence_leaves_the_mutation_receipt_unanswered(projection: ProductProjection) -> None:
+    receipt_id = _reserved_plan(projection)
+    taken = _taken_event_id(projection)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        projection.complete_mutation(
+            receipt_id,
+            response_status=202,
+            response_body={"run": {"run_id": "run-001"}},
+            flow_run_id="flow-001",
+            events=(_missed_start("a-missed-1", 1), _missed_start(taken, 2)),
+        )
+
+    receipt = projection.lookup_mutation(_receipt().actor, _receipt().key_digest).value
+    assert receipt is not None
+    assert receipt.state == "reserved"
+    assert _typed_ids(projection) == [taken]
+
+
+def _commit_plan_with_events(projection: ProductProjection, *events: AuditEvent, secrets: tuple[str, ...] = ()) -> bool:
+    return projection.commit_claimed_execution(
+        "run-001",
+        "flow-001",
+        worker_id=_WORKER_ID,
+        terminal_at=_NOW + timedelta(seconds=5),
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=product_store.ExecutionFinishWriteback(
+            phase="planned", outcome="planned", finished_at=_NOW + timedelta(seconds=5), summary={}, results={}
+        ),
+        events=events,
+        secrets=secrets,
+    )
+
+
+def test_stage_result_and_a_sequence_of_events_are_saved_together(projection: ProductProjection) -> None:
+    _claimed_execution(projection)
+
+    assert _commit_plan_with_events(
+        projection,
+        _event("a-planned", "infrahub_sync.run.planned"),
+        _missed_start("a-missed-1", 1),
+        _missed_start("a-missed-2", 2),
+    )
+
+    assert _typed_ids(projection) == ["a-planned", "a-missed-1", "a-missed-2"]
+    schedule = (RelatedResource(kind="schedule", id=_SCHEDULE_ID),)
+    of_schedule = projection.list_events(EventFilters(related=schedule), limit=50, offset=0).items
+    assert [event.event_id for event in of_schedule] == ["a-missed-1", "a-missed-2"]
+    assert of_schedule[0].details == EventDetails(start_at=_NOW + timedelta(days=1))
+
+
+def test_one_failed_event_of_a_sequence_leaves_the_stage_result_unsaved(projection: ProductProjection) -> None:
+    _claimed_execution(projection)
+    taken = _taken_event_id(projection)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        _commit_plan_with_events(projection, _missed_start("a-missed-1", 1), _missed_start(taken, 2))
+
+    run = projection.lookup_run("run-001").value
+    assert run is not None
+    assert (run.phase, run.outcome) == ("planning", None)
+    assert run.prefect_executions[0].terminal_at is None
+    assert _typed_ids(projection) == [taken]
+
+
+def test_events_of_a_sequence_are_redacted(projection: ProductProjection) -> None:
+    _claimed_execution(projection)
+    event = _missed_start("a-missed-1", 1).model_copy(update={"reason": f"token {_SECRET}"})
+
+    assert _commit_plan_with_events(projection, event, secrets=(_SECRET,))
+
+    (stored,) = projection.list_events(EventFilters(), limit=50, offset=0).items
+    assert stored.reason is not None
+    assert _SECRET not in stored.reason
+
+
+def test_the_changes_of_a_change_event_read_back_with_their_text_values_redacted(projection: ProductProjection) -> None:
+    _claimed_execution(projection)
+    changes = (
+        ScheduleSettingChange(field="registry_version", before=1, after=2),
+        ScheduleSettingChange(field="cron", before="0 2 * * *", after=f"0 3 * * * {_SECRET}"),
+        ScheduleSettingChange(field="write_when_left_out", before=True, after=False),
+    )
+    event = _missed_start("a-changed", 1).model_copy(
+        update={"event_type": service_events.SCHEDULE_CHANGED, "details": EventDetails(changes=changes)}
+    )
+
+    assert _commit_plan_with_events(projection, event, secrets=(_SECRET,))
+
+    (stored,) = projection.list_events(EventFilters(), limit=50, offset=0).items
+    assert stored.details is not None
+    assert stored.details.changes is not None
+    version, cron, left_out = stored.details.changes
+    assert (version, left_out) == changes[0::2]
+    assert type(left_out.before) is bool
+    assert (cron.field, cron.before) == ("cron", "0 2 * * *")
+    assert isinstance(cron.after, str)
+    assert _SECRET not in cron.after
+
+
+def test_a_change_event_that_altered_nothing_reads_back_an_empty_list(projection: ProductProjection) -> None:
+    _claimed_execution(projection)
+    event = _missed_start("a-changed", 1).model_copy(
+        update={"event_type": service_events.SCHEDULE_CHANGED, "details": EventDetails(changes=())}
+    )
+
+    assert _commit_plan_with_events(projection, event)
+
+    (stored,) = projection.list_events(EventFilters(), limit=50, offset=0).items
+    assert stored.details == EventDetails(changes=())
+
+
+def test_a_schedule_event_names_the_schedule_the_configuration_and_the_version() -> None:
+    event = _missed_start("a-missed-1", 1)
+
+    assert event.related == (
+        RelatedResource(kind="account", id="operator@example.com"),
+        RelatedResource(kind="config", id=_CONFIG_ID),
+        RelatedResource(kind="config_version", id=f"{_CONFIG_ID}@3"),
+        RelatedResource(kind="schedule", id=_SCHEDULE_ID),
+    )
+    assert (event.event_type, event.operation) == ("infrahub_sync.schedule.start_missed", "schedule-start")
+    assert (event.config_id, event.registry_version, event.run_id, event.reason) == (_CONFIG_ID, 3, None, None)
+    primary = event.primary_resource
+    assert primary is not None
+    assert (primary.kind, primary.id) == ("schedule", _SCHEDULE_ID)
+
+
+def test_a_schedule_event_of_a_run_has_the_run_as_its_primary_resource() -> None:
+    event = schedule_event(
+        event_type=service_events.SCHEDULE_START_SKIPPED,
+        actor="operator@example.com",
+        operation=service_events.SCHEDULE_START,
+        reason=None,
+        outcome="skipped-run-in-progress",
+        schedule_id=_SCHEDULE_ID,
+        config_id=_CONFIG_ID,
+        registry_version=3,
+        run_id="run-in-progress",
+    )
+
+    primary = event.primary_resource
+    assert primary is not None
+    assert (primary.kind, primary.id) == ("run", "run-in-progress")
+    assert RelatedResource(kind="schedule", id=_SCHEDULE_ID) in event.related
+    assert event.created_at.utcoffset() == timedelta(0)
+
+
+def test_a_schedule_event_of_a_request_refused_before_a_schedule_exists_names_no_schedule() -> None:
+    event = schedule_event(
+        event_type=service_events.SCHEDULE_REFUSED,
+        actor="operator@example.com",
+        operation="schedule-create",
+        reason="nightly sync",
+        outcome="refused-schedule-name-in-use",
+        schedule_id=None,
+        config_id=_CONFIG_ID,
+        registry_version=3,
+    )
+
+    assert all(resource.kind != "schedule" for resource in event.related)
+    primary = event.primary_resource
+    assert primary is not None
+    assert (primary.kind, primary.id) == ("config", _CONFIG_ID)
+
+
+@pytest.mark.parametrize(
+    ("operation", "outcome", "expected"),
+    [
+        ("schedule-create", "accepted", "infrahub_sync.schedule.created"),
+        ("schedule-change", "accepted", "infrahub_sync.schedule.changed"),
+        ("schedule-pause", "accepted", "infrahub_sync.schedule.paused"),
+        ("schedule-resume", "accepted", "infrahub_sync.schedule.resumed"),
+        ("schedule-delete", "accepted", "infrahub_sync.schedule.deleted"),
+        ("schedule-take-over", "accepted", "infrahub_sync.schedule.taken_over"),
+        ("schedule-create", "refused-schedule-name-in-use", "infrahub_sync.schedule.refused"),
+        ("schedule-pause", "replayed", "infrahub_sync.schedule.replayed"),
+        ("schedule-pause", "refused-authentication", None),
+    ],
+)
+def test_the_event_type_of_a_schedule_request(operation: str, outcome: str, expected: str | None) -> None:
+    assert schedule_decision_type(operation, outcome) == expected
+
+
+@pytest.mark.parametrize(("operation", "outcome"), [("sync", "accepted"), ("schedule-create", "unavailable")])
+def test_a_schedule_request_with_no_event_type_is_refused(operation: str, outcome: str) -> None:
+    with pytest.raises(ValueError, match="no schedule event type"):
+        schedule_decision_type(operation, outcome)
+
+
+def test_the_schedule_event_types_are_those_of_the_contract() -> None:
+    names = {name: value for name, value in vars(service_events).items() if name.startswith("SCHEDULE_")}
+    types = {value for value in names.values() if value.startswith("infrahub_sync.")}
+
+    assert types == {
+        f"infrahub_sync.schedule.{action}"
+        for action in (
+            "created",
+            "changed",
+            "paused",
+            "resumed",
+            "deleted",
+            "taken_over",
+            "refused",
+            "replayed",
+            "start_skipped",
+            "start_queued",
+            "start_missed",
+            "start_failed",
+            "stopped",
+            "proposed_change_opened",
+            "proposed_change_replaced",
+            "proposed_change_kept",
+            "proposed_change_failed",
+        )
+    }
+    assert service_events.SCHEDULE_STOPPED == SCHEDULE_STOPPED_EVENT_TYPE
+    assert service_events.SCHEDULE_START == SCHEDULE_START_OPERATION == "schedule-start"
+
+
+def _scheduled(run: ProductRun) -> ProductRun:
+    return ProductRun.model_validate(
+        {
+            **run.model_dump(),
+            "trigger_type": "scheduled",
+            "schedule_id": _SCHEDULE_ID,
+            "scheduled_start_at": _NOW,
+            "config_id": _CONFIG_ID,
+            "registry_version": 3,
+            "package_checksum": "a" * 64,
+            "destination_branch": "main",
+        }
+    )
+
+
+def test_an_event_of_a_scheduled_run_names_its_schedule() -> None:
+    event = run_event(
+        "run-001",
+        _scheduled(_run()),
+        event_type="infrahub_sync.run.synced",
+        actor="operator@example.com",
+        operation="sync",
+        reason=None,
+        outcome="succeeded",
+    )
+
+    assert event.related == (
+        RelatedResource(kind="account", id="operator@example.com"),
+        RelatedResource(kind="config", id=_CONFIG_ID),
+        RelatedResource(kind="config_version", id=f"{_CONFIG_ID}@3"),
+        RelatedResource(kind="schedule", id=_SCHEDULE_ID),
+        RelatedResource(kind="branch", id="main"),
+    )
+    primary = event.primary_resource
+    assert primary is not None
+    assert primary.kind == "run"
+
+
+def test_an_event_of_a_run_that_a_person_started_names_no_schedule() -> None:
+    event = run_event(
+        "run-001",
+        _run(),
+        event_type="infrahub_sync.run.planned",
+        actor="operator@example.com",
+        operation="plan",
+        reason=None,
+        outcome="succeeded",
+    )
+
+    assert all(resource.kind != "schedule" for resource in event.related)

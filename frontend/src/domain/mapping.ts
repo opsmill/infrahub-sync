@@ -83,7 +83,24 @@ function keyed(mappings: DeclaredMapping[]): Map<string, DeclaredMapping> {
   return out;
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+/** The value with the keys of every object sorted, so two equal values serialize the same. */
+function sortedKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedKeys);
+  if (value === null || typeof value !== "object") return value;
+  const mapping = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(mapping)
+      .sort()
+      .map((key) => [key, sortedKeys(mapping[key])])
+  );
+}
+
+/**
+ * True when two declared values are equal. Key order is ignored: the store keeps a version with
+ * its keys sorted, while a package check returns them in the order the package model declares.
+ */
+const same = (a: unknown, b: unknown) =>
+  JSON.stringify(sortedKeys(a ?? null)) === JSON.stringify(sortedKeys(b ?? null));
 
 /** What `next` changed from `base`, the mappings of version `against`. */
 export function diffMappings(

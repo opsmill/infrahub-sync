@@ -100,11 +100,11 @@ def test_the_checksum_changes_when_the_lineage_changes(tmp_path: Path) -> None:
 
 
 def test_the_lineage_record_is_written_in_the_current_format(tmp_path: Path) -> None:
-    """Plan format 4 (spec 007) keeps the `lineage` record of format 3."""
+    """Plan format 5 keeps the `lineage` record of format 3, as format 4 (spec 007) did."""
     written = _written_manifest(tmp_path, LINEAGE)
 
-    assert PLAN_FORMAT_VERSION == 4
-    assert written["format_version"] == 4
+    assert PLAN_FORMAT_VERSION == 5
+    assert written["format_version"] == 5
 
 
 def test_the_manifest_records_the_named_owner_by_kind_and_name(tmp_path: Path) -> None:

@@ -141,11 +141,21 @@ def test_ipfabric_peer_found_resolves_to_unique_id(ipfabricsync_module) -> None:
     assert data["peer"] == "zulu"
 
 
-def test_ipfabric_peer_missing_resolves_to_none(ipfabricsync_module) -> None:
-    """IP Fabric's policy for an unresolved scalar reference is `None`, not an error."""
+def test_ipfabric_peer_missing_resolves_to_none_and_is_not_emptied(ipfabricsync_module) -> None:
+    """An unresolved scalar reference is `None`, not an error, and it is recorded so the plan does not empty it.
+
+    The source names a peer that its read did not store. The adapter records the reference in
+    `filtered_peer_fields` (spec 019 research R7), so derivation leaves the relationship as it is.
+    """
+    from infrahub_sync import DiffSyncMixin
+
+    class _ReadingHolder(DiffSyncMixin):
+        """The read state of a real adapter, without a client: only `store` and `config` are set."""
+
     peer_model = _ipf_peer_model(ipfabricsync_module)
     record_model = _ipf_record_model(ipfabricsync_module)
-    holder = _holder(peer_model=peer_model, peers={}, identifier_mapping="peer_id")
+    holder = object.__new__(_ReadingHolder)
+    vars(holder).update(vars(_holder(peer_model=peer_model, peers={}, identifier_mapping="peer_id")))
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[IPF_SCALAR_FIELD])
 
     data = ipfabricsync_module.IpfabricsyncAdapter.record_to_data(
@@ -153,6 +163,7 @@ def test_ipfabric_peer_missing_resolves_to_none(ipfabricsync_module) -> None:
     )
 
     assert data["peer"] is None
+    assert holder.filtered_peer_fields == frozenset({("IpfRecord", "record-1", "peer")})
 
 
 def test_ipfabric_list_valued_reference_field_is_left_unset(ipfabricsync_module) -> None:

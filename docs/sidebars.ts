@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Tutorials',
       items: [
+        'tutorials/try-the-netbox-demo',
         'tutorials/netbox-to-existing-infrahub',
         'tutorials/nautobot-to-existing-infrahub',
         'tutorials/netbox-demo-to-infrahub',
@@ -34,6 +35,8 @@ const sidebars: SidebarsConfig = {
         'v2-to-v3',
         'orchestration',
         'custom-certificates',
+        'guides/accounts',
+        'guides/credentials',
       ],
     },
     {
@@ -101,6 +104,7 @@ const sidebars: SidebarsConfig = {
             'development/knowledge/plan-artifact',
             'development/knowledge/planned-write-and-apply',
             'development/knowledge/apply-guard',
+            'development/knowledge/local-accounts',
             'development/knowledge/configuration-foundation',
             'development/knowledge/v2-configuration-conversion',
             'development/knowledge/execution-surface',
@@ -136,6 +140,7 @@ const sidebars: SidebarsConfig = {
             'development/guidelines/testing',
             'development/guidelines/testing-tiers',
             'development/guidelines/secret-redaction',
+            'development/guidelines/accounts',
             'development/guidelines/ci-workflows',
             'development/guidelines/invoke-tasks',
           ],
@@ -162,6 +167,7 @@ const sidebars: SidebarsConfig = {
             slug: 'release-notes/infrahub-sync',
           },
           items: [
+            'release-notes/infrahub-sync/release-2_1_0',
             'release-notes/infrahub-sync/release-2_0_1',
             'release-notes/infrahub-sync/release-2_0_0',
             'release-notes/infrahub-sync/release-1_6_0',
@@ -172,6 +178,7 @@ const sidebars: SidebarsConfig = {
     },
     'container-image',
     'compose-deployment',
+    'kubernetes-deployment',
     'contributing',
   ]
 };

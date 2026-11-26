@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
 
-from infrahub_sync.service import auth, deploy, serve
+from infrahub_sync.product_store import local_product_projection
+from infrahub_sync.service import deploy, serve, settings
+from tests.helpers.stored_credentials import set_process_start_settings
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 RETIRED_NAMES = (
     "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS",
+    # Spec 022 replaced the principals of the environment with the accounts of the product store.
+    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
     "INFRAHUB_SYNC_MANAGED_WORK_POOL",
     "INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY",
     "INFRAHUB_SYNC_MANAGED_HOST",
@@ -29,7 +36,9 @@ PRINCIPALS = json.dumps({"admin": {"token": "service-token-canary-0001", "admini
 def _clear_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         *RETIRED_NAMES,
-        auth.PRINCIPALS_ENV,
+        settings.ADMIN_ACCOUNT_PASSWORD_ENV,
+        settings.ADMIN_ACCOUNT_TOKEN_ENV,
+        settings.SESSION_IDLE_SECONDS_ENV,
         deploy.WORK_POOL_ENV,
         "INFRAHUB_SYNC_SERVICE_HOST",
     ):
@@ -37,40 +46,51 @@ def _clear_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_service_environment_names_are_the_declared_ones() -> None:
-    assert auth.PRINCIPALS_ENV == "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"
+    assert settings.ADMIN_ACCOUNT_PASSWORD_ENV == "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD"  # noqa: S105 - the name of a variable.
+    assert settings.ADMIN_ACCOUNT_TOKEN_ENV == "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"  # noqa: S105 - the name of a variable.
+    assert settings.SESSION_IDLE_SECONDS_ENV == "INFRAHUB_SYNC_SESSION_IDLE_SECONDS"
     assert deploy.WORK_POOL_ENV == "INFRAHUB_SYNC_SERVICE_WORK_POOL"
+    assert settings.WEB_DIRECTORY_ENV == "INFRAHUB_SYNC_WEB_DIRECTORY"
 
 
-def test_a_retired_bearer_token_name_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_BEARER_TOKENS", PRINCIPALS)
+@pytest.mark.parametrize("name", ["INFRAHUB_SYNC_MANAGED_BEARER_TOKENS", "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"])
+def test_a_retired_bearer_token_name_is_ignored(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """A retired name defines no account: the password of ``admin`` is still required."""
+    monkeypatch.setenv(name, PRINCIPALS)
 
-    with pytest.raises(ValueError, match=auth.PRINCIPALS_ENV):
-        auth.EnvironmentPrincipalResolver.from_environment()
+    with pytest.raises(settings.AccountSettingsError, match=settings.ADMIN_ACCOUNT_PASSWORD_ENV):
+        settings.admin_account_settings()
 
 
-def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_WORK_POOL", "retired-pool")
-    monkeypatch.setenv(auth.PRINCIPALS_ENV, PRINCIPALS)
+    monkeypatch.setenv(settings.ADMIN_ACCOUNT_PASSWORD_ENV, "service-password-canary-0001")
+    monkeypatch.delenv(settings.ADMIN_ACCOUNT_TOKEN_ENV, raising=False)
+    projection = local_product_projection(tmp_path)
     captured: dict[str, Any] = {}
 
     class _Reconciler:
-        def __init__(self, _projection: object, _orchestration: object, _policy: object, work_pool: str) -> None:
+        def __init__(
+            self, _projection: object, _orchestration: object, _policy: object, work_pool: str, **_options: object
+        ) -> None:
             captured["work_pool"] = work_pool
 
     monkeypatch.setattr(serve, "RunLivenessReconciler", _Reconciler)
     serve.build_app(
-        projection_factory=object,
+        projection_factory=lambda: projection,
         run_service_factory=lambda *_args, **_kwargs: object(),
         configuration_routes_factory=lambda **_kwargs: object(),
-        app_factory=lambda *args: args,
+        app_factory=lambda *args, **_kwargs: args,
+        start_check=lambda _pool: None,
     )
 
     assert captured["work_pool"] == "default"
 
 
 def test_a_retired_host_name_is_ignored_by_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_process_start_settings(monkeypatch)
     monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_HOST", "10.0.0.1")
-    monkeypatch.setattr(serve, "build_app", object)
+    monkeypatch.setattr(serve, "build_app", lambda **_factories: object())
     captured: dict[str, Any] = {}
     monkeypatch.setattr(serve.uvicorn, "run", lambda app, **kwargs: captured.update(app=app, **kwargs))
 

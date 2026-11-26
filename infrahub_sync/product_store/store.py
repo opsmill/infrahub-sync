@@ -5,25 +5,40 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import sqlite3
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from math import isfinite
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import structlog
 from pydantic import TypeAdapter, ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
+from infrahub_sync.configuration.credential_admission import (
+    StoredCredentialCheckError,
+    named_credentials,
+    stored_credential_findings,
+)
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redact_ordered, redaction_order
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.product_store import accounts as account_statements
+from infrahub_sync.product_store import stored_credentials as credential_statements
+from infrahub_sync.product_store.accounts import (
+    SIGN_IN_ATTEMPTS_BOUND,
+    AccountIdentifierAllocationError,
+    AccountNameTakenError,
+    AccountTokenNameTakenError,
+    DuplicateCredentialError,
+)
 from infrahub_sync.product_store.bundle import (
     FINAL_CHECKPOINT_ARTIFACT_ID,
     MAX_BUNDLE_BYTES,
@@ -31,20 +46,33 @@ from infrahub_sync.product_store.bundle import (
 )
 from infrahub_sync.product_store.models import (
     DEFAULT_LIMIT,
+    MAX_CONSECUTIVE_FAILURES,
     RUN_ALREADY_CANCELLED_MESSAGE,
     RUN_CANCELLED_MESSAGE,
+    SCHEDULE_START_OPERATION,
+    SCHEDULE_STOPPED_EVENT_TYPE,
+    Account,
+    AccountSession,
+    AccountToken,
     ApplyProgress,
     ApplyProgressSave,
     ArtifactReference,
     AuditEvent,
+    AutomaticResume,
+    AutomaticResumeState,
     BaselineWriteback,
+    BootstrapRecord,
+    BranchReviewOutcome,
     ConfigurationBaseline,
     ConfigurationPage,
     ConfigurationSummary,
     ConfigurationVersion,
     ConfigurationVersionPage,
     ConfigurationVersionSummary,
+    CredentialBlock,
+    CredentialUse,
     EventFilters,
+    EventOrder,
     EventPage,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
@@ -53,11 +81,24 @@ from infrahub_sync.product_store.models import (
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
+    RelatedResource,
+    ResolvedCredential,
     RunApproval,
     RunFilters,
     RunPage,
     RunReference,
-    WorkerEnvironment,
+    ScheduleBranch,
+    ScheduleBranchState,
+    ScheduledStartDecision,
+    ScheduledStartResult,
+    ScheduledStartRun,
+    ScheduleFilters,
+    SchedulePage,
+    ScheduleRecord,
+    SignInAttempt,
+    StoredCredential,
+    StoredCredentialPage,
+    StoredCredentialRevision,
     already_approved_body,
     approval_error_body,
     not_approvable_message,
@@ -66,8 +107,9 @@ from infrahub_sync.product_store.models import (
 if TYPE_CHECKING:
     # Typing only: importing the engine package at runtime would load the whole engine into the store.
     from infrahub_sync.potenda.read_progress import Side
+    from infrahub_sync.product_store.stored_credentials import Encrypt
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_runs (
@@ -76,7 +118,8 @@ CREATE TABLE IF NOT EXISTS product_runs (
     phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL,
     reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
     config_id TEXT, registry_version INTEGER, package_checksum TEXT, destination_branch TEXT,
-    approved_by TEXT, approved_at TEXT, approved_checksum TEXT, approval_reason TEXT
+    approved_by TEXT, approved_at TEXT, approved_checksum TEXT, approval_reason TEXT,
+    trigger_type TEXT NOT NULL DEFAULT 'manual', schedule_id TEXT, scheduled_start_at TEXT
 );
 CREATE TABLE IF NOT EXISTS artifact_refs (
     run_id TEXT NOT NULL, artifact_id TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL,
@@ -104,6 +147,7 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
     cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
     terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
     mutation_receipt_id TEXT UNIQUE, source_read TEXT, destination_read TEXT, apply_progress TEXT,
+    plan_step TEXT,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id)
 );
@@ -124,7 +168,7 @@ CREATE TABLE IF NOT EXISTS resume_admissions (
 CREATE TABLE IF NOT EXISTS audit_events (
     event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL,
     reason TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL,
-    event_type TEXT, config_id TEXT, registry_version INTEGER, branch TEXT
+    event_type TEXT, config_id TEXT, registry_version INTEGER, branch TEXT, details TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_events_run_created
     ON audit_events (run_id, created_at);
@@ -148,10 +192,114 @@ CREATE TABLE IF NOT EXISTS configuration_versions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
-CREATE TABLE IF NOT EXISTS worker_environments (
-    worker_id TEXT PRIMARY KEY, credential_names TEXT NOT NULL, observed_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS configuration_versions_unvalidated (
+    config_id TEXT NOT NULL, registry_version INTEGER NOT NULL,
+    PRIMARY KEY (config_id, registry_version),
+    FOREIGN KEY (config_id, registry_version) REFERENCES configuration_versions(config_id, registry_version)
+);
+CREATE TABLE IF NOT EXISTS accounts (
+    account_id TEXT PRIMARY KEY, short_id TEXT NOT NULL UNIQUE, name TEXT, name_key TEXT, password_hash TEXT,
+    administrator BOOLEAN NOT NULL DEFAULT FALSE, disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    environment_managed BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    password_changed_at TEXT NOT NULL, deleted_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_name_key
+    ON accounts (name_key);
+CREATE TABLE IF NOT EXISTS account_tokens (
+    token_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, name TEXT NOT NULL, digest TEXT NOT NULL,
+    created_at TEXT NOT NULL, expires_at TEXT, last_used_at TEXT,
+    environment_managed BOOLEAN NOT NULL DEFAULT FALSE,
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS account_tokens_digest
+    ON account_tokens (digest);
+CREATE UNIQUE INDEX IF NOT EXISTS account_tokens_account_name
+    ON account_tokens (account_id, name);
+CREATE TABLE IF NOT EXISTS account_sessions (
+    session_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, digest TEXT NOT NULL,
+    created_at TEXT NOT NULL, last_used_at TEXT NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS account_sessions_digest
+    ON account_sessions (digest);
+CREATE INDEX IF NOT EXISTS account_sessions_account
+    ON account_sessions (account_id);
+CREATE TABLE IF NOT EXISTS sign_in_attempts (
+    name_key TEXT PRIMARY KEY, failed_count INTEGER NOT NULL, window_started_at TEXT NOT NULL,
+    refused_until TEXT
+);
+CREATE TABLE IF NOT EXISTS bootstrap_record (
+    record_id INTEGER PRIMARY KEY CHECK (record_id = 1), sync_version TEXT NOT NULL,
+    work_pool TEXT NOT NULL, completed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS schedules (
+    schedule_id TEXT PRIMARY KEY, name TEXT NOT NULL, config_id TEXT NOT NULL,
+    registry_version INTEGER NOT NULL, cron TEXT NOT NULL, timezone TEXT NOT NULL DEFAULT 'UTC',
+    write_target TEXT NOT NULL DEFAULT 'branch-review', write_when_left_out BOOLEAN NOT NULL DEFAULT FALSE,
+    left_out_set_by TEXT, left_out_set_at TEXT, overlap_policy TEXT NOT NULL DEFAULT 'reject',
+    start_late_by_at_most_seconds INTEGER NOT NULL DEFAULT 3600, state TEXT NOT NULL, state_reason TEXT,
+    owner TEXT NOT NULL, consecutive_failures INTEGER NOT NULL DEFAULT 0, last_start_at TEXT,
+    prefect_schedule_id TEXT, prefect_synced BOOLEAN NOT NULL DEFAULT FALSE, waiting_start_at TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS schedule_branches (
+    run_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, branch TEXT NOT NULL, proposed_change_id TEXT,
+    state TEXT NOT NULL, replaced_by_run_id TEXT, created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
+    FOREIGN KEY (schedule_id) REFERENCES schedules(schedule_id)
+);
+CREATE TABLE IF NOT EXISTS stored_credentials (
+    credential_id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '',
+    current_revision INTEGER NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stored_credential_revisions (
+    credential_id TEXT NOT NULL, revision INTEGER NOT NULL, fields TEXT NOT NULL, key_id TEXT NOT NULL,
+    nonce TEXT NOT NULL, ciphertext TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY (credential_id, revision),
+    FOREIGN KEY (credential_id) REFERENCES stored_credentials(credential_id)
+);
+CREATE TABLE IF NOT EXISTS configuration_version_credentials (
+    config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, block TEXT NOT NULL, credential_name TEXT NOT NULL,
+    PRIMARY KEY (config_id, registry_version, block),
+    FOREIGN KEY (config_id, registry_version) REFERENCES configuration_versions(config_id, registry_version)
+);
+CREATE TABLE IF NOT EXISTS run_credential_uses (
+    run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, stage TEXT NOT NULL, block TEXT NOT NULL,
+    credential_id TEXT NOT NULL, credential_name TEXT NOT NULL, revision INTEGER NOT NULL, released_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, flow_run_id, block), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
+);
+CREATE TABLE IF NOT EXISTS automatic_resumes (
+    run_id TEXT NOT NULL, interrupted_flow_run_id TEXT NOT NULL, cause TEXT NOT NULL, worker_name TEXT,
+    state TEXT NOT NULL, decision TEXT, reason TEXT, reason_detail TEXT, operations_not_checked INTEGER,
+    start_after INTEGER, check_flow_run_id TEXT, resume_flow_run_id TEXT, decided_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, interrupted_flow_run_id),
+    FOREIGN KEY (run_id, interrupted_flow_run_id) REFERENCES prefect_executions(run_id, flow_run_id)
 );
 """
+# The stored credential tables (spec 027) are new tables, created whole on an earlier database;
+# none adds a column to an existing table, so ``_COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD`` is unchanged.
+# The nonce and the ciphertext of a revision are base64 text: the store has no binary column, and
+# one schema text serves SQLite and PostgreSQL.
+# The columns that a build with schedules added to tables that already existed. The store
+# has no migration: a new column is part of its ``CREATE TABLE`` statement and reaches only a
+# new database. A database whose table lacks one of them was created by an earlier build, and
+# start-up refuses it before it creates anything (spec 021, research R12). The same refusal
+# covers the receipt ``CHECK`` constraint and triggers of a build before schedules, which do not
+# accept the resource kind ``schedule``. A later kind replaces the check by its name instead
+# (see ``_MUTATION_RECEIPT_RESOURCE_CONSTRAINT``).
+_COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD: dict[str, tuple[str, ...]] = {
+    "product_runs": ("trigger_type", "schedule_id", "scheduled_start_at"),
+    "audit_events": ("details",),
+}
+_SELECT_SQLITE_TABLE_COLUMNS = "SELECT name FROM pragma_table_info(?)"
+_SELECT_POSTGRESQL_TABLE_COLUMNS = (
+    "SELECT column_name FROM information_schema.columns WHERE table_name = ? AND table_schema = current_schema()"
+)
+# ``accounts_name_key`` is a plain unique index. SQLite and PostgreSQL both treat two empty
+# (NULL) values as different, so every deleted account can have an empty key while two accounts
+# cannot share a name.
 _SQLITE_EXECUTION_TIMESTAMP_FUNCTION = "infrahub_sync_execution_timestamp_microseconds"
 _UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _CANCELLATION_DEADLINE_ERROR = "execution cancellation recovery deadline is invalid"
@@ -187,7 +335,8 @@ _UPDATE_LATEST_EXECUTION_CANCELLED = (
 # Indexes for listing runs newest first: unfiltered, filtered by configuration, and filtered
 # by configuration and version; for each version's most recently applied run, a partial index
 # over applied runs only, in the order ``_SELECT_LATEST_VERSION_RUNS`` ranks them; and for the
-# configuration list, its name filter and its ``(created_at, config_id)`` order.
+# configuration list, its ``(created_at, config_id)`` order (the unique index of
+# ``_CONFIGURATION_UNIQUE_INDEXES`` serves its name filter).
 # ``IF NOT EXISTS`` makes each re-run a no-op. SQLite and PostgreSQL both scan an
 # ascending index backwards for a descending order, and both support partial indexes.
 _RUN_LISTING_INDEXES: tuple[str, ...] = (
@@ -197,8 +346,41 @@ _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "ON product_runs (config_id, registry_version, started_at, run_id)",
     "CREATE INDEX IF NOT EXISTS product_runs_binding_applied "
     "ON product_runs (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'",
-    "CREATE INDEX IF NOT EXISTS configurations_name ON configurations (name)",
     "CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at, config_id)",
+    # The runs of one schedule, newest first (the ``schedule_id`` filter of the run list).
+    "CREATE INDEX IF NOT EXISTS product_runs_schedule_started ON product_runs (schedule_id, started_at, run_id)",
+    # The automatic resume rows that the liveness reconciler still moves (spec 030, research R14).
+    "CREATE INDEX IF NOT EXISTS automatic_resumes_open ON automatic_resumes (state) WHERE state <> 'ended'",
+)
+# One run for each start of a schedule: two flow runs of the same start cannot both create a
+# run (spec 021, research R2). A manual run holds NULL in both columns, and SQLite and
+# PostgreSQL both treat NULLs as distinct, so the index does not constrain manual runs. The two
+# partial indexes hold the rules of the schedule itself: a name is unique among schedules that
+# are not deleted, and a configuration has at most one schedule that is not deleted.
+# A name is unique among configurations. A configuration without a name holds NULL, and SQLite
+# and PostgreSQL both treat NULLs as distinct, so the index does not constrain those. The
+# unique index replaces the plain index ``configurations_name`` of an earlier build.
+_CONFIGURATION_UNIQUE_INDEXES: tuple[str, ...] = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS configurations_name_unique ON configurations (name)",
+    "DROP INDEX IF EXISTS configurations_name",
+)
+# Every configuration whose name another configuration also has, which an earlier build allowed.
+_SELECT_DUPLICATE_CONFIGURATION_NAMES = (
+    "SELECT name, config_id FROM configurations WHERE name IN "
+    "(SELECT name FROM configurations WHERE name IS NOT NULL GROUP BY name HAVING COUNT(*) > 1) "
+    "ORDER BY name, config_id"
+)
+_SELECT_CONFIGURATION_WITH_NAME = "SELECT config_id FROM configurations WHERE name = ? AND config_id <> ?"
+_SCHEDULE_UNIQUE_INDEXES: tuple[str, ...] = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS product_runs_schedule_start ON product_runs (schedule_id, scheduled_start_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS schedules_name_not_deleted ON schedules (name) WHERE state <> 'deleted'",
+    "CREATE UNIQUE INDEX IF NOT EXISTS schedules_config_not_deleted ON schedules (config_id) WHERE state <> 'deleted'",
+)
+# The versions that name a credential, for the check that refuses to delete one in use (spec 027,
+# research R8): the link holds the name, so a credential deleted and created again is found.
+_STORED_CREDENTIAL_INDEXES: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS configuration_version_credentials_name "
+    "ON configuration_version_credentials (credential_name)",
 )
 # The read state of each side of a plan or sync execution: one JSON document per side, so the
 # two read threads never write the same column (spec 013, research R3).
@@ -210,18 +392,34 @@ _SIDE_READ_FIELDS = frozenset({"state", "started_at", "ended_at", "read_mode", "
 _SIDE_READ_STATES = frozenset({"waiting", "reading", "succeeded", "failed"})
 _SIDE_READ_MODES = frozenset({"full", "incremental"})
 _SIDE_READ_ERROR_CLASS_MAX_LENGTH = 200
+# The parts of the plan step of a `plan` or `sync` execution, one JSON document (spec 019,
+# research R11). The two reads keep their own columns and waiting is derived from the
+# execution's times, so neither is a stored part (FR-015). `preparing` is derived today and
+# accepted so that a later release can store it. The store checks the keys and values before it
+# writes, so the document cannot carry an exception message or a data value (FR-021).
+_PLAN_STEP_FIELDS = frozenset({"running", "parts"})
+_PLAN_STEP_PARTS = frozenset({"preparing", "comparing", "checking", "saving"})
+_PLAN_STEP_PART_FIELDS = frozenset({"started_at", "ended_at"})
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
     "OR (config_id IS NOT NULL AND registry_version IS NOT NULL AND package_checksum IS NOT NULL)"
 )
+# The receipt check is named after the resource kinds it accepts. A build that adds a kind
+# gives the check a new name, and start-up drops the check of an earlier build by its name
+# before it creates the new one (spec 027 adds ``credential``). Without the new name, the
+# check of an earlier build would be found and kept, and would refuse the new kind.
 _SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES = (
+    "mutation_receipts_resource_kinds_insert",
+    "mutation_receipts_resource_kinds_update",
+)
+_EARLIER_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES = (
     "mutation_receipts_resource_consistent_insert",
     "mutation_receipts_resource_consistent_update",
 )
 _SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK = """NOT (
     (NEW.resource_kind = 'run' AND NEW.run_id IS NOT NULL AND NEW.prefect_key IS NOT NULL)
-    OR (NEW.resource_kind IN ('configuration', 'configuration-registry') AND NEW.run_id IS NULL
+    OR (NEW.resource_kind IN ('configuration', 'configuration-registry', 'schedule', 'credential') AND NEW.run_id IS NULL
         AND NEW.prefect_key IS NULL AND NEW.target_run_id IS NULL AND NEW.flow_run_id IS NULL)
 )"""
 _SQLITE_MUTATION_RECEIPT_RESOURCE_INSERT_TRIGGER = f"""
@@ -236,10 +434,11 @@ BEFORE UPDATE ON mutation_receipts
 FOR EACH ROW WHEN {_SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK}
 BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent'); END;
 """
-_MUTATION_RECEIPT_RESOURCE_CONSTRAINT = "mutation_receipts_resource_consistent"
+_MUTATION_RECEIPT_RESOURCE_CONSTRAINT = "mutation_receipts_resource_kinds"
+_EARLIER_MUTATION_RECEIPT_RESOURCE_CONSTRAINTS = ("mutation_receipts_resource_consistent",)
 _MUTATION_RECEIPT_RESOURCE_CHECK = (
     "(resource_kind = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL) OR "
-    "(resource_kind IN ('configuration', 'configuration-registry') AND run_id IS NULL "
+    "(resource_kind IN ('configuration', 'configuration-registry', 'schedule', 'credential') AND run_id IS NULL "
     "AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)"
 )
 _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME = "product_runs_configuration_binding_insert"
@@ -360,11 +559,24 @@ _SCHEMA_INITIALIZATION_ATTEMPTS = 2
 _POSTGRESQL_SCHEMA_INITIALIZATION_LOCK = (
     "SELECT pg_advisory_xact_lock(hashtextextended('infrahub_sync.product_store.schema.' || current_schema(), 0))"
 )
+# Two failed sign-ins recorded at the same moment read and then write the same table. This
+# transaction-level lock makes them run one after the other in one schema.
+_POSTGRESQL_SIGN_IN_ATTEMPTS_LOCK = (
+    "SELECT pg_advisory_xact_lock(hashtextextended('infrahub_sync.product_store.sign_in_attempts.' "
+    "|| current_schema(), 0))"
+)
 # Measured, not guessed: across roughly 4,800 trials of 8 concurrent distinct-checksum
 # add_configuration_version() callers against SQLite (the tightest case, single-writer
 # locking), the worst observed attempt count for any one caller was 5-7. This budget
 # supports up to 8 concurrent writers with margin above that observed worst case.
 _CONFIGURATION_VERSION_ATTEMPTS = 8
+# Takes SQLite's write lock before the first read of a transaction, so two threads that read and
+# then write the same rows run one after the other instead of refusing each other.
+_SQLITE_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
+# An account identifier has 128 random bits and a short identifier 32. A second attempt is
+# needed about once in four billion creations for each account that exists.
+_ACCOUNT_IDENTIFIER_ATTEMPTS = 4
+_CREDENTIAL_IDENTIFIER_ATTEMPTS = 4
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
 _JSON_LIST_ADAPTER = TypeAdapter(list[str])
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
@@ -391,9 +603,23 @@ _CONFIGURATION_LIST_ORDER = " ORDER BY configurations.created_at DESC, configura
 _UPDATE_CONFIGURATION_NAME = "UPDATE configurations SET name = ? WHERE config_id = ?"
 _INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, registry_version, package_checksum,
 declared_content, created_at, registered_by, registration_reason) VALUES (?, ?, ?, ?, ?, ?, ?)"""
+# A version registered without validation (spec 025) has a row in its own table, so a database
+# created by an earlier build gains it at start-up; no row reads as ``false``. The column is a
+# correlated ``EXISTS`` rather than a join, so the unqualified fragments below stay unambiguous.
+_INSERT_CONFIGURATION_VERSION_UNVALIDATED = (
+    "INSERT INTO configuration_versions_unvalidated (config_id, registry_version) VALUES (?, ?)"
+)
+_UNVALIDATED_COLUMN = """EXISTS (SELECT 1 FROM configuration_versions_unvalidated AS unvalidated
+WHERE unvalidated.config_id = configuration_versions.config_id
+AND unvalidated.registry_version = configuration_versions.registry_version)"""
 # The paged version list: summaries without the package, newest version first.
-_SELECT_CONFIGURATION_VERSION_LIST = """SELECT config_id, registry_version, package_checksum, created_at,
-registered_by, registration_reason FROM configuration_versions WHERE config_id = ?"""
+_CONFIGURATION_VERSION_SUMMARY_COLUMNS = (
+    "config_id, registry_version, package_checksum, created_at, registered_by, registration_reason, "
+    + _UNVALIDATED_COLUMN
+)
+_SELECT_CONFIGURATION_VERSION_LIST = (
+    "SELECT " + _CONFIGURATION_VERSION_SUMMARY_COLUMNS + " FROM configuration_versions WHERE config_id = ?"  # noqa: S608 - module constants only.
+)
 _CONFIGURATION_VERSION_LIST_AFTER = " AND registry_version < ?"
 _CONFIGURATION_VERSION_LIST_ORDER = " ORDER BY registry_version DESC LIMIT ?"
 # For every version on one page, the newest run and the most recently applied run, in one query.
@@ -411,24 +637,29 @@ SELECT registry_version, 'applied' AS kind, run_id, phase, outcome, started_at, 
 ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY finished_at DESC, run_id DESC) AS position
 FROM product_runs WHERE config_id = ? AND registry_version IN ({0}) AND phase = 'applied'
 ) ranked WHERE position = 1"""
-_SELECT_CONFIGURATION_VERSION = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
-FROM configuration_versions WHERE config_id = ? AND registry_version = ?"""
+_CONFIGURATION_VERSION_COLUMNS = (
+    "config_id, registry_version, package_checksum, declared_content, created_at, " + _UNVALIDATED_COLUMN
+)
+_SELECT_FROM_CONFIGURATION_VERSIONS = "SELECT " + _CONFIGURATION_VERSION_COLUMNS + " FROM configuration_versions"  # noqa: S608 - module constants only.
+_SELECT_CONFIGURATION_VERSION = _SELECT_FROM_CONFIGURATION_VERSIONS + " WHERE config_id = ? AND registry_version = ?"
 _CONFIGURATION_VERSION_EXISTS = "SELECT 1 FROM configuration_versions WHERE config_id = ? AND registry_version = ?"
-_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = """SELECT config_id, registry_version, package_checksum, declared_content,
-created_at FROM configuration_versions WHERE config_id = ? AND package_checksum = ?"""
-_SELECT_CONFIGURATION_VERSIONS = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
-FROM configuration_versions WHERE config_id = ? ORDER BY registry_version"""
+_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = (
+    _SELECT_FROM_CONFIGURATION_VERSIONS + " WHERE config_id = ? AND package_checksum = ?"
+)
+_SELECT_CONFIGURATION_VERSIONS = _SELECT_FROM_CONFIGURATION_VERSIONS + " WHERE config_id = ? ORDER BY registry_version"
 _SELECT_NEXT_CONFIGURATION_VERSION = (
     "SELECT COALESCE(MAX(registry_version) + 1, 1) FROM configuration_versions WHERE config_id = ?"
 )
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
 registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results,
-reconciliation_required, destination_branch, approved_by, approved_at, approved_checksum, approval_reason)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+reconciliation_required, destination_branch, approved_by, approved_at, approved_checksum, approval_reason,
+trigger_type, schedule_id, scheduled_start_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _PRODUCT_RUN_COLUMNS = """run_id, operation, configuration_reference, actor, audit_links, started_at,
 finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required,
-destination_branch, approved_by, approved_at, approved_checksum, approval_reason"""
+destination_branch, approved_by, approved_at, approved_checksum, approval_reason, trigger_type, schedule_id,
+scheduled_start_at"""
 _SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHERE run_id = ?"  # noqa: S608 - module constants only.
 # The run list is assembled from these fixed fragments only; every value is a bound parameter.
 # The keyset predicate is the row comparison ``(started_at, run_id) < (?, ?)`` written out as an
@@ -436,6 +667,9 @@ _SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHE
 _SELECT_PRODUCT_RUN_LIST = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs"  # noqa: S608 - module constants only.
 _RUN_LIST_CONFIGURATION = "config_id = ?"
 _RUN_LIST_VERSION = "registry_version = ?"
+_RUN_LIST_TRIGGER_TYPE = "trigger_type = ?"
+_RUN_LIST_SCHEDULE = "schedule_id = ?"
+_RUN_LIST_SCHEDULED_START = "scheduled_start_at = ?"
 _RUN_LIST_AFTER = "(started_at < ? OR (started_at = ? AND run_id < ?))"
 _RUN_LIST_ORDER = " ORDER BY started_at DESC, run_id DESC LIMIT ?"
 _SELECT_AUDIT_LINKS_FOR_RUNS = (
@@ -451,12 +685,17 @@ manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
 WHERE run_id = ? AND artifact_id = ? AND visibility = ?"""
 _SELECT_CONFIGURATION_BASELINE = """SELECT config_id, source_row_counts, runs_since_full_extract, updated_at
 FROM configuration_baselines WHERE config_id = ?"""
-_UPSERT_WORKER_ENVIRONMENT = """INSERT INTO worker_environments (worker_id, credential_names, observed_at)
-VALUES (?, ?, ?)
-ON CONFLICT (worker_id) DO UPDATE SET credential_names = EXCLUDED.credential_names,
-observed_at = EXCLUDED.observed_at"""
-_SELECT_WORKER_ENVIRONMENTS = """SELECT worker_id, credential_names, observed_at FROM worker_environments
-ORDER BY worker_id"""
+# The table holds one row at most: `record_id` is always 1, so a write for another version or
+# work pool replaces the first. A write for the same version and work pool changes nothing, so
+# a repeated bootstrap on a converged deployment leaves the database as it was (spec 018 FR-010).
+_UPSERT_BOOTSTRAP_RECORD = """INSERT INTO bootstrap_record (record_id, sync_version, work_pool, completed_at)
+VALUES (1, ?, ?, ?)
+ON CONFLICT (record_id) DO UPDATE SET sync_version = EXCLUDED.sync_version,
+work_pool = EXCLUDED.work_pool, completed_at = EXCLUDED.completed_at
+WHERE bootstrap_record.sync_version <> EXCLUDED.sync_version OR bootstrap_record.work_pool <> EXCLUDED.work_pool"""
+_SELECT_BOOTSTRAP_RECORD = "SELECT sync_version, work_pool, completed_at FROM bootstrap_record WHERE record_id = 1"
+# PostgreSQL's `undefined_table`: the bootstrap has never created the product schema here.
+_POSTGRESQL_UNDEFINED_TABLE_CODE = "42P01"
 _UPSERT_CONFIGURATION_BASELINE = """INSERT INTO configuration_baselines (config_id, source_row_counts,
 runs_since_full_extract, updated_at) VALUES (?, ?, ?, ?)
 ON CONFLICT (config_id) DO UPDATE SET source_row_counts = EXCLUDED.source_row_counts,
@@ -467,13 +706,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
 last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
 cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
-terminal_outcome, position, source_read, destination_read, apply_progress FROM prefect_executions WHERE run_id = ?
-ORDER BY position"""
+terminal_outcome, position, source_read, destination_read, apply_progress, plan_step FROM prefect_executions
+WHERE run_id = ? ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
 cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
 terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id, source_read, destination_read,
-apply_progress) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+apply_progress, plan_step) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -486,10 +725,11 @@ request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, st
 created_at, updated_at FROM mutation_receipts WHERE run_id = ? AND flow_run_id = ? AND operation = ?
 ORDER BY created_at, receipt_id"""
 _INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at,
-event_type, config_id, registry_version, branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+event_type, config_id, registry_version, branch, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_AUDIT_EVENT_RESOURCE = "INSERT INTO audit_event_resources (event_id, kind, resource_id) VALUES (?, ?, ?)"
 _AUDIT_EVENT_COLUMNS = (
-    "event_id, run_id, actor, operation, reason, outcome, created_at, event_type, config_id, registry_version, branch"
+    "event_id, run_id, actor, operation, reason, outcome, created_at, event_type, config_id, registry_version, "
+    "branch, details"
 )
 _SELECT_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"  # noqa: S608
 _SELECT_ALL_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events ORDER BY created_at, event_id"  # noqa: S608
@@ -499,13 +739,212 @@ _EVENT_HAS_RESOURCE = (
     "EXISTS (SELECT 1 FROM audit_event_resources AS resource WHERE resource.event_id = audit_events.event_id "
     "AND resource.kind = ? AND resource.resource_id = ?)"
 )
+# The fixed ORDER BY clause of an event list, by its order; no caller text reaches the statement.
+_EVENT_ORDER_CLAUSES: dict[str, str] = {
+    "asc": "ORDER BY created_at, event_id",
+    "desc": "ORDER BY created_at DESC, event_id DESC",
+}
 # Event IDs read per related-resource query, well under SQLite's bound-parameter limit.
 _EVENT_RESOURCE_BATCH = 500
 _SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"
 
+_SCHEDULE_COLUMNS = """schedule_id, name, config_id, registry_version, cron, timezone, write_target,
+write_when_left_out, left_out_set_by, left_out_set_at, overlap_policy, start_late_by_at_most_seconds, state,
+state_reason, owner, consecutive_failures, last_start_at, prefect_schedule_id, prefect_synced, waiting_start_at,
+created_at, updated_at"""
+_INSERT_SCHEDULE = (
+    "INSERT INTO schedules (" + _SCHEDULE_COLUMNS + ") VALUES (" + ", ".join("?" for _ in range(22)) + ")"  # noqa: S608 - module constants only.
+)
+_SELECT_SCHEDULE = "SELECT " + _SCHEDULE_COLUMNS + " FROM schedules WHERE schedule_id = ?"  # noqa: S608 - module constants only.
+# Takes the write lock of one schedule row before anything is read from it, the same
+# write-first pattern as the lock of a run row. Bound to the schedule ID.
+_LOCK_SCHEDULE = "UPDATE schedules SET schedule_id = schedule_id WHERE schedule_id = ?"
+# The schedule list is assembled from these fixed fragments; every value is bound. Newest
+# first, with ``schedule_id`` breaking equal creation times, keyset paged like the run list.
+_SELECT_SCHEDULE_LIST = "SELECT " + _SCHEDULE_COLUMNS + " FROM schedules"  # noqa: S608 - module constants only.
+_SCHEDULE_LIST_CONFIGURATION = "config_id = ?"
+_SCHEDULE_LIST_STATE = "state = ?"
+_SCHEDULE_LIST_NOT_DELETED = "state <> 'deleted'"
+_SCHEDULE_LIST_AFTER = "(created_at < ? OR (created_at = ? AND schedule_id < ?))"
+_SCHEDULE_LIST_ORDER = " ORDER BY created_at DESC, schedule_id DESC LIMIT ?"
+# What a change of a schedule writes. The admission of a start and the end of a scheduled run
+# own ``last_start_at``, ``waiting_start_at`` and ``consecutive_failures``; the count is
+# written here only to set it to zero.
+_UPDATE_SCHEDULE = """UPDATE schedules SET registry_version = ?, cron = ?, timezone = ?, write_target = ?,
+write_when_left_out = ?, left_out_set_by = ?, left_out_set_at = ?, overlap_policy = ?,
+start_late_by_at_most_seconds = ?, state = ?, state_reason = ?, owner = ?, consecutive_failures = ?,
+prefect_schedule_id = ?, prefect_synced = ?, updated_at = ? WHERE schedule_id = ?"""
+# The state a schedule may move to, by its stored state (spec 021 data-model.md). A deleted
+# schedule accepts no action. A paused schedule moves to `stopped` only when a resume finds a
+# reason that stops it, in one write with the event of the stop.
+_SCHEDULE_TRANSITIONS: dict[str, frozenset[str]] = {
+    "active": frozenset({"active", "paused", "stopped", "deleted"}),
+    "paused": frozenset({"paused", "active", "stopped", "deleted"}),
+    "stopped": frozenset({"stopped", "active", "deleted"}),
+}
+_SCHEDULE_FIXED_FIELDS = ("name", "config_id", "created_at")
+# The settings whose change ends the start that waits under the `queue` policy.
+_SCHEDULE_WAIT_FIELDS = ("cron", "timezone", "overlap_policy")
+
+
+def _ends_waiting_start(stored: ScheduleRecord, changed: ScheduleRecord) -> bool:
+    """Whether a change of a schedule ends its waiting start: it is no longer active, or its cadence or policy changed."""
+    if stored.waiting_start_at is None:
+        return False
+    return changed.state != "active" or any(
+        getattr(changed, field) != getattr(stored, field) for field in _SCHEDULE_WAIT_FIELDS
+    )
+
+
+_SCHEDULE_BRANCH_COLUMNS = "run_id, schedule_id, branch, proposed_change_id, state, replaced_by_run_id, created_at"
+_INSERT_SCHEDULE_BRANCH = (
+    "INSERT INTO schedule_branches (" + _SCHEDULE_BRANCH_COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?)"  # noqa: S608 - module constants only.
+)
+_SELECT_SCHEDULE_BRANCH = "SELECT " + _SCHEDULE_BRANCH_COLUMNS + " FROM schedule_branches WHERE run_id = ?"  # noqa: S608 - module constants only.
+_SELECT_SCHEDULE_BRANCHES = "SELECT " + _SCHEDULE_BRANCH_COLUMNS + " FROM schedule_branches WHERE schedule_id = ?"  # noqa: S608 - module constants only.
+_SCHEDULE_BRANCH_ORDER = " ORDER BY created_at, run_id"
+# The state a branch row may move to, by its stored state. ``removed``, ``replaced`` and
+# ``kept`` are final.
+_SCHEDULE_BRANCH_TRANSITIONS: dict[str, frozenset[str]] = {
+    "pending": frozenset({"pending", "open", "removed", "replaced", "kept"}),
+    "open": frozenset({"open", "replaced", "kept"}),
+}
+_SCHEDULE_BRANCH_FIXED_FIELDS = ("schedule_id", "branch", "created_at")
+_EARLIER_BRANCH_STATES: tuple[ScheduleBranchState, ...] = ("pending", "open")
+# The decision rows of automatic resume (spec 030, data-model.md).
+_AUTOMATIC_RESUME_COLUMNS = (
+    "run_id, interrupted_flow_run_id, cause, worker_name, state, decision, reason, reason_detail, "
+    "operations_not_checked, start_after, check_flow_run_id, resume_flow_run_id, decided_at, updated_at"
+)
+_AUTOMATIC_RESUME_FIELDS = tuple(column.strip() for column in _AUTOMATIC_RESUME_COLUMNS.split(","))
+_INSERT_AUTOMATIC_RESUME = (
+    "INSERT INTO automatic_resumes (" + _AUTOMATIC_RESUME_COLUMNS + ") "
+    "VALUES (" + ", ".join("?" for _ in _AUTOMATIC_RESUME_FIELDS) + ")"
+)
+_SELECT_AUTOMATIC_RESUMES = "SELECT " + _AUTOMATIC_RESUME_COLUMNS + " FROM automatic_resumes"  # noqa: S608 - module constants only.
+_AUTOMATIC_RESUME_ORDER = " ORDER BY decided_at, run_id, interrupted_flow_run_id"
+# The fields a move may change. The key, the cause, the worker and the insert time are fixed;
+# the state changes through the move's own arguments.
+_AUTOMATIC_RESUME_MOVABLE_FIELDS = frozenset(
+    {
+        "decision",
+        "reason",
+        "reason_detail",
+        "operations_not_checked",
+        "start_after",
+        "check_flow_run_id",
+        "resume_flow_run_id",
+        "updated_at",
+    }
+)
+# The states a row may move to, by its stored state (data-model.md, "State transitions").
+# ``ended`` is final.
+_AUTOMATIC_RESUME_TRANSITIONS: dict[AutomaticResumeState, frozenset[AutomaticResumeState]] = {
+    "waiting-check": frozenset({"checking", "ended"}),
+    "checking": frozenset({"waiting-resume", "ended"}),
+    "waiting-resume": frozenset({"resuming", "ended"}),
+    "resuming": frozenset({"ended"}),
+}
+# The run of one start of a schedule. Bound to the schedule ID and the start time in UTC.
+_SELECT_RUN_OF_START = "SELECT run_id FROM product_runs WHERE schedule_id = ? AND scheduled_start_at = ?"
+# The schedule of a scheduled run whose ``sync`` execution ended. A stage that a person
+# starts on the run afterwards, such as an ``apply``, is not the end of the scheduled run.
+# Bound to the run ID twice and the flow run ID.
+_SELECT_SCHEDULE_OF_ENDED_SYNC = (
+    "SELECT schedule_id FROM product_runs WHERE run_id = ? AND trigger_type = 'scheduled' AND EXISTS "
+    "(SELECT 1 FROM prefect_executions WHERE prefect_executions.run_id = ? "
+    "AND prefect_executions.flow_run_id = ? AND prefect_executions.purpose = 'sync')"
+)
+# The execution that an automatic resume row interrupted, for the automatic resume that the
+# row started. Bound to the run ID and the flow run ID of the automatic resume.
+_SELECT_EXECUTION_AN_AUTOMATIC_RESUME_RESUMED = (
+    "SELECT interrupted_flow_run_id FROM automatic_resumes WHERE run_id = ? AND resume_flow_run_id = ?"
+)
+# The newest run of a configuration that has an execution with no terminal verdict, or an
+# automatic resume row that is not ``ended`` (spec 030, research R11).
+_SELECT_RUN_WITH_OPEN_EXECUTION = (
+    "SELECT run_id FROM product_runs WHERE config_id = ? AND (EXISTS (SELECT 1 FROM prefect_executions "
+    "WHERE prefect_executions.run_id = product_runs.run_id AND prefect_executions.terminal_at IS NULL) "
+    "OR EXISTS (SELECT 1 FROM automatic_resumes WHERE automatic_resumes.run_id = product_runs.run_id "
+    "AND automatic_resumes.state <> 'ended')) "
+    "ORDER BY started_at DESC, run_id DESC LIMIT 1"
+)
+# One run of a configuration and its write executions that a worker claimed: one row per such
+# execution with its flow run ID and terminal time, or one row with both empty when it has none.
+# No row when the run does not exist or belongs to another configuration. Bound with
+# ``WRITE_PURPOSES``, then the run ID, then the configuration ID. A worker claims its execution
+# before any other work, so an execution that no worker claimed cannot hold the configuration's
+# write guard. The terminal times are compared in Python, not as text: they are written with
+# ``isoformat()``, so their offsets are not guaranteed to be the same.
+_SELECT_RUN_WRITE_STATE = (
+    "SELECT prefect_executions.flow_run_id, prefect_executions.terminal_at "  # noqa: S608 - placeholders only.
+    "FROM product_runs LEFT JOIN prefect_executions "
+    "ON prefect_executions.run_id = product_runs.run_id AND prefect_executions.claimed_at IS NOT NULL "
+    f"AND prefect_executions.purpose IN ({', '.join('?' for _ in WRITE_PURPOSES)}) "
+    "WHERE product_runs.run_id = ? AND product_runs.config_id = ?"
+)
+# The unresolved receipts of a stage operation on the runs of a configuration, newest run
+# first. Built from ``_ARBITRATED_OPERATIONS``, bound after the configuration ID.
+_SELECT_UNRESOLVED_STAGE_RECEIPTS = (
+    "SELECT product_runs.run_id, mutation_receipts.created_at FROM mutation_receipts "  # noqa: S608 - placeholders only.
+    "JOIN product_runs ON product_runs.run_id = mutation_receipts.run_id "
+    "WHERE product_runs.config_id = ? AND mutation_receipts.state <> 'accepted' "
+    f"AND mutation_receipts.operation IN ({', '.join('?' for _ in _ARBITRATED_OPERATIONS)}) "
+    "ORDER BY product_runs.started_at DESC, product_runs.run_id DESC"
+)
+# The status of the receipt that the admission of a scheduled start writes already accepted.
+_SCHEDULED_START_STATUS = 202
+
+
+@dataclass(frozen=True)
+class HolderState:
+    """What the run records say about the run named as a write guard's holder.
+
+    ``writing`` is true while that run has a write execution that a worker claimed and that
+    has no terminal verdict. ``write_ended_at`` is the latest terminal time of the run's claimed
+    write executions, in UTC, or ``None`` when none of them has ended.
+    """
+
+    writing: bool
+    write_ended_at: datetime | None = None
+
 
 class DuplicateRunError(ValueError):
     """The requested stable Sync run ID already exists."""
+
+
+class EarlierProductDatabaseError(RuntimeError):
+    """The product database was created by an earlier build and lacks a column this build stores.
+
+    The message names the tables and their missing columns, and no value of the database.
+    """
+
+    def __init__(self, missing: Mapping[str, Sequence[str]]) -> None:
+        columns = "; ".join(f"table {table!r} lacks {', '.join(names)}" for table, names in missing.items())
+        super().__init__(
+            "The product database was created by an earlier build of Infrahub Sync and cannot be used: "
+            f"{columns}. Infrahub Sync does not upgrade a product database in place. Replace it with a new, "
+            "empty database, then start Infrahub Sync again."
+        )
+        self.missing = {table: tuple(names) for table, names in missing.items()}
+
+
+class DuplicateConfigurationNamesError(RuntimeError):
+    """The product database holds several configurations with the same name.
+
+    An earlier build allowed it; this build requires a name to be unique among configurations.
+    ``duplicates`` maps each such name to the IDs of the configurations that have it.
+    """
+
+    def __init__(self, duplicates: Mapping[str, Sequence[str]]) -> None:
+        names = "; ".join(f"{name!r} ({', '.join(ids)})" for name, ids in duplicates.items())
+        super().__init__(
+            "The product database holds several configurations with the same name, which this build of "
+            f"Infrahub Sync does not allow: {names}. Infrahub Sync does not change the configurations itself. "
+            "With the earlier build, register a new version with another name for all but one configuration "
+            "of each name, or replace the database with a new, empty one. Then start Infrahub Sync again."
+        )
+        self.duplicates = {name: tuple(ids) for name, ids in duplicates.items()}
 
 
 class ProductStoreProviderError(RuntimeError):
@@ -546,6 +985,64 @@ class ConfigurationVersionAllocationError(ValueError):
 
 class DuplicateConfigurationError(ValueError):
     """The generated configuration ID already exists."""
+
+
+class ConfigurationNameInUseError(ValueError):
+    """Raised when another configuration already has the name of the package.
+
+    ``config_id`` and ``name`` identify that configuration.
+    """
+
+    def __init__(self, *, config_id: str, name: str) -> None:
+        self.config_id = config_id
+        self.name = name
+        super().__init__(f"a configuration named {name!r} already exists ({config_id})")
+
+
+class ScheduleNotFoundError(ValueError):
+    """Raised when no schedule, or no schedule branch, is stored under the given identifier."""
+
+
+class ScheduleNameInUseError(ValueError):
+    """Raised when a schedule that is not deleted already has the requested name."""
+
+
+class ScheduleExistsForConfigurationError(ValueError):
+    """Raised when the configuration already has a schedule that is not deleted.
+
+    ``schedule_id`` and ``name`` identify that schedule.
+    """
+
+    def __init__(self, *, config_id: str, schedule_id: str, name: str) -> None:
+        self.config_id = config_id
+        self.schedule_id = schedule_id
+        self.name = name
+        super().__init__(f"configuration {config_id!r} already has the schedule {name!r} ({schedule_id})")
+
+
+class ScheduleDeletedError(ValueError):
+    """Raised when a change is requested on a deleted schedule, which accepts no action."""
+
+
+class ScheduleTransitionError(ValueError):
+    """Raised when a schedule or a schedule branch is asked to move to a state it cannot reach."""
+
+
+class ScheduleChangedError(ValueError):
+    """Raised when a write was decided from a schedule that no longer matches the stored one.
+
+    Nothing is written. The caller reads the schedule again and decides again.
+    """
+
+
+class ScheduledStartAlreadyRecordedError(ValueError):
+    """Raised when a start that created no run is admitted again, or a start earlier than the last one.
+
+    The start was already recorded, as skipped or as missed, so nothing is written a second time.
+    """
+
+
+_DUPLICATE_CREDENTIAL_MESSAGE = "The store already holds this token or session"
 
 
 class _Cursor(Protocol):
@@ -591,9 +1088,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]: ...
 
-    def publish_worker_environment(self, environment: WorkerEnvironment) -> None: ...
-
-    def worker_environments(self) -> tuple[WorkerEnvironment, ...]: ...
+    def write_bootstrap_record(self, record: BootstrapRecord) -> None: ...
 
     def add_prefect_execution(
         self, run_id: str, link: PrefectExecutionLink, *, receipt_id: str, allocate_attempt: bool = False
@@ -606,6 +1101,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool: ...
 
     def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave: ...
+
+    def record_plan_step(self, run_id: str, flow_run_id: str, document: Mapping[str, Any]) -> bool: ...
 
     def claim_execution(
         self,
@@ -622,7 +1119,31 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
 
     def interrupt_execution(
-        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime,
+        event: AuditEvent | None = None,
+        automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
+    ) -> bool: ...
+
+    def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]: ...
+
+    def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]: ...
+
+    def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]: ...
+
+    def move_automatic_resume(
+        self,
+        run_id: str,
+        interrupted_flow_run_id: str,
+        *,
+        from_state: AutomaticResumeState,
+        to_state: AutomaticResumeState,
+        event: AuditEvent | None = None,
+        **fields: object,
     ) -> bool: ...
 
     def commit_claimed_execution(
@@ -636,6 +1157,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
     ) -> bool: ...
 
     def request_execution_cancellation(
@@ -713,6 +1235,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         flow_run_id: str | None,
         updated_at: datetime,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
     ) -> MutationReceipt: ...
 
     def claim_mutation(self, receipt_id: str, *, updated_at: datetime) -> bool: ...
@@ -723,7 +1246,9 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
 
-    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage: ...
+    def list_events(
+        self, filters: EventFilters, *, limit: int, offset: int, order: EventOrder = "asc"
+    ) -> EventPage: ...
 
     def configuration_exists(self, config_id: str) -> bool: ...
 
@@ -733,6 +1258,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> ConfigurationVersion: ...
 
     def add_configuration_version(
@@ -742,6 +1268,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> tuple[ConfigurationVersion, bool]: ...
 
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]: ...
@@ -767,6 +1294,224 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def list_runs(
         self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
     ) -> RunPage: ...
+
+    def create_schedule(self, schedule: ScheduleRecord, *, events: Sequence[AuditEvent] = ()) -> None: ...
+
+    def lookup_schedule(self, schedule_id: str) -> LookupResult[ScheduleRecord]: ...
+
+    def list_schedules(
+        self, filters: ScheduleFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> SchedulePage: ...
+
+    def update_schedule(
+        self,
+        schedule: ScheduleRecord,
+        *,
+        expected_updated_at: datetime | None = None,
+        events: Sequence[AuditEvent] = (),
+    ) -> ScheduleRecord: ...
+
+    def record_schedule_prefect_sync(
+        self,
+        schedule_id: str,
+        *,
+        prefect_schedule_id: str | None,
+        synced: bool,
+        expected_updated_at: datetime | None = None,
+    ) -> bool: ...
+
+    def schedule_branches(
+        self, schedule_id: str, *, states: Sequence[ScheduleBranchState] = ()
+    ) -> tuple[ScheduleBranch, ...]: ...
+
+    def lookup_schedule_branch(self, run_id: str) -> LookupResult[ScheduleBranch]: ...
+
+    def update_schedule_branch(
+        self, branch: ScheduleBranch, *, events: Sequence[AuditEvent] = ()
+    ) -> ScheduleBranch: ...
+
+    def record_branch_review_outcome(
+        self,
+        outcome: BranchReviewOutcome,
+        *,
+        events: Sequence[AuditEvent] = (),
+        earlier_events: Mapping[str, Sequence[AuditEvent]] | None = None,
+    ) -> BranchReviewOutcome: ...
+
+    def admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        schedule_id: str,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
+    ) -> ScheduledStartResult: ...
+
+    def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None: ...
+
+    def write_holder_state(self, run_id: str, config_id: str) -> HolderState | None: ...
+
+    def create_account(
+        self,
+        *,
+        name: str,
+        password_hash: str | None,
+        administrator: bool = False,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+        event_for: Callable[[str], AuditEvent] | None = None,
+    ) -> Account: ...
+
+    def lookup_account(self, account_id: str) -> Account | None: ...
+
+    def lookup_account_by_name(self, name: str) -> Account | None: ...
+
+    def lookup_accounts(self, account_ids: Sequence[str]) -> dict[str, Account]: ...
+
+    def list_accounts(self, *, disabled: bool | None = None) -> tuple[Account, ...]: ...
+
+    def set_account_level(
+        self, account_id: str, *, administrator: bool, now: datetime | None = None, event: AuditEvent | None = None
+    ) -> bool: ...
+
+    def set_account_password_hash(
+        self, account_id: str, *, password_hash: str, now: datetime | None = None
+    ) -> bool: ...
+
+    def replace_account_password(
+        self,
+        account_id: str,
+        *,
+        password_hash: str,
+        event: AuditEvent,
+        keep_session_id: str | None = None,
+        clear_sign_in_name: str | None = None,
+        now: datetime | None = None,
+    ) -> bool: ...
+
+    def disable_account(
+        self, account_id: str, *, now: datetime | None = None, event: AuditEvent | None = None
+    ) -> bool: ...
+
+    def enable_account(
+        self, account_id: str, *, now: datetime | None = None, event: AuditEvent | None = None
+    ) -> bool: ...
+
+    def delete_account(self, account_id: str, *, event: AuditEvent, now: datetime | None = None) -> Account | None: ...
+
+    def create_account_token(
+        self,
+        account_id: str,
+        *,
+        name: str,
+        digest: str,
+        expires_at: datetime | None = None,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+        event: AuditEvent | None = None,
+    ) -> AccountToken: ...
+
+    def list_account_tokens(self, account_id: str) -> tuple[AccountToken, ...]: ...
+
+    def delete_account_token(self, account_id: str, token_id: str, *, event: AuditEvent | None = None) -> bool: ...
+
+    def delete_account_tokens(self, account_id: str) -> int: ...
+
+    def create_account_session(
+        self,
+        account_id: str,
+        *,
+        digest: str,
+        now: datetime | None = None,
+        signed_in: Account | None = None,
+        event: AuditEvent | None = None,
+    ) -> AccountSession: ...
+
+    def list_account_sessions(self, account_id: str) -> tuple[AccountSession, ...]: ...
+
+    def delete_account_session(self, session_id: str, *, event: AuditEvent | None = None) -> bool: ...
+
+    def delete_account_sessions(self, account_id: str) -> int: ...
+
+    def resolve_digest(self, digest: str, *, now: datetime | None = None) -> ResolvedCredential | None: ...
+
+    def apply_environment_account(
+        self,
+        *,
+        name: str,
+        password_hash_for: Callable[[str | None], str | None],
+        token_name: str,
+        token_digest: str | None,
+        now: datetime | None = None,
+        administrator: bool = True,
+        claim_existing: bool = True,
+    ) -> Account: ...
+
+    def read_sign_in_attempt(self, name: str) -> SignInAttempt | None: ...
+
+    def record_sign_in_failure(
+        self, name: str, *, now: datetime | None = None, bound: int = SIGN_IN_ATTEMPTS_BOUND
+    ) -> SignInAttempt: ...
+
+    def clear_sign_in_attempts(self, name: str, *, event: AuditEvent | None = None) -> bool: ...
+
+    def create_stored_credential(
+        self,
+        *,
+        name: str,
+        description: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential: ...
+
+    def lookup_stored_credential(self, name: str) -> StoredCredential | None: ...
+
+    def list_stored_credentials(self, *, offset: int = 0, limit: int = DEFAULT_LIMIT) -> StoredCredentialPage: ...
+
+    def change_stored_credential_value(
+        self,
+        *,
+        name: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential: ...
+
+    def set_stored_credential_description(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential: ...
+
+    def delete_stored_credential(
+        self, *, name: str, event_for: Callable[[StoredCredential], AuditEvent] | None = None
+    ) -> StoredCredential: ...
+
+    def lookup_stored_credential_revision(
+        self, credential_id: str, revision: int
+    ) -> StoredCredentialRevision | None: ...
+
+    def record_version_credentials(
+        self, config_id: str, registry_version: int, credentials: Mapping[CredentialBlock, str]
+    ) -> None: ...
+
+    def version_credentials(self, config_id: str, registry_version: int) -> dict[CredentialBlock, str]: ...
+
+    def record_credential_uses(self, uses: Sequence[CredentialUse], *, event: AuditEvent | None = None) -> None: ...
+
+    def credential_uses(self, run_id: str) -> tuple[CredentialUse, ...]: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
@@ -845,6 +1590,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 try:
                     if self._dialect == "postgresql":
                         cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
+                    # Before any statement: SQLite commits each DDL statement on its own, so
+                    # a later refusal would leave the new tables on the earlier database. The
+                    # duplicate names would also make the unique index on the configuration
+                    # name fail with a message that names no configuration.
+                    self._refuse_earlier_database(cursor)
+                    self._refuse_duplicate_configuration_names(cursor)
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
@@ -868,10 +1619,50 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             finally:
                 connection.close()
 
+    def _refuse_earlier_database(self, cursor: _Cursor) -> None:
+        """Raise when a table of an earlier build lacks a column this build stores.
+
+        A table that does not exist yet has no column, and is created whole afterwards. The
+        column names are read from the catalog, so the check changes nothing and aborts no
+        transaction.
+        """
+        statement = _SELECT_SQLITE_TABLE_COLUMNS if self._dialect == "sqlite" else _SELECT_POSTGRESQL_TABLE_COLUMNS
+        missing: dict[str, tuple[str, ...]] = {}
+        for table, required in _COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD.items():
+            cursor.execute(self._sql(statement), (table,))
+            present = {str(row[0]) for row in cursor.fetchall()}
+            absent = tuple(column for column in required if column not in present)
+            if present and absent:
+                missing[table] = absent
+        if missing:
+            raise EarlierProductDatabaseError(missing)
+
+    def _refuse_duplicate_configuration_names(self, cursor: _Cursor) -> None:
+        """Raise when several configurations have the same name; the check changes nothing.
+
+        A database without a ``configurations`` table, or whose table has no ``name`` column,
+        has no configuration name and passes.
+        """
+        statement = _SELECT_SQLITE_TABLE_COLUMNS if self._dialect == "sqlite" else _SELECT_POSTGRESQL_TABLE_COLUMNS
+        cursor.execute(self._sql(statement), ("configurations",))
+        if "name" not in {str(row[0]) for row in cursor.fetchall()}:
+            return
+        cursor.execute(_SELECT_DUPLICATE_CONFIGURATION_NAMES)
+        duplicates: dict[str, list[str]] = {}
+        for name, config_id in cursor.fetchall():
+            duplicates.setdefault(str(name), []).append(str(config_id))
+        if duplicates:
+            raise DuplicateConfigurationNamesError(duplicates)
+
     @staticmethod
     def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
-        """Create the indexes for listing runs and configurations."""
-        for statement in _RUN_LISTING_INDEXES:
+        """Create the listing indexes, the unique indexes of names and the index of version credentials."""
+        for statement in (
+            *_RUN_LISTING_INDEXES,
+            *_CONFIGURATION_UNIQUE_INDEXES,
+            *_SCHEDULE_UNIQUE_INDEXES,
+            *_STORED_CREDENTIAL_INDEXES,
+        ):
             cursor.execute(statement)
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
@@ -881,14 +1672,32 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 _SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES,
             )
             return {str(row[0]) for row in cursor.fetchall()} >= set(_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES)
+        return self._postgresql_receipt_constraint_exists(cursor, _MUTATION_RECEIPT_RESOURCE_CONSTRAINT)
+
+    def _postgresql_receipt_constraint_exists(self, cursor: _Cursor, name: str) -> bool:
         cursor.execute(
             self._sql(
                 "SELECT 1 FROM information_schema.table_constraints "
                 "WHERE table_name = ? AND constraint_name = ? AND table_schema = current_schema()"
             ),
-            ("mutation_receipts", _MUTATION_RECEIPT_RESOURCE_CONSTRAINT),
+            ("mutation_receipts", name),
         )
         return cursor.fetchone() is not None
+
+    def _drop_earlier_mutation_receipt_resource_constraint(self, cursor: _Cursor) -> None:
+        """Drop the receipt check of an earlier build, which refuses a resource kind this build adds.
+
+        On SQLite, ``DROP TRIGGER IF EXISTS`` changes nothing when the trigger is absent. On
+        PostgreSQL, the constraint is dropped only when the catalog names it, so a database that
+        never had it receives no ``ALTER TABLE``.
+        """
+        if self._dialect == "sqlite":
+            for name in _EARLIER_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES:
+                cursor.execute(f"DROP TRIGGER IF EXISTS {name}")
+            return
+        for name in _EARLIER_MUTATION_RECEIPT_RESOURCE_CONSTRAINTS:
+            if self._postgresql_receipt_constraint_exists(cursor, name):
+                cursor.execute(f"ALTER TABLE mutation_receipts DROP CONSTRAINT IF EXISTS {name}")
 
     def _ensure_mutation_receipt_resource_constraint(self, cursor: _Cursor) -> None:
         """Give mutation receipts their database-enforced resource shape.
@@ -897,6 +1706,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         two, and two processes can both find the pair incomplete. ``IF NOT EXISTS`` on each
         trigger makes both cases complete the pair instead of failing on the trigger that exists.
         """
+        self._drop_earlier_mutation_receipt_resource_constraint(cursor)
         if self._mutation_receipt_resource_constraint_exists(cursor):
             return
         if self._dialect == "sqlite":
@@ -1007,6 +1817,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 run.reconciliation_required,
                 run.destination_branch,
                 *_approval_columns(run.approval),
+                run.trigger_type,
+                run.schedule_id,
+                # Stored as UTC: the unique index compares text, so one instant written
+                # with two offsets must be one value.
+                None if run.scheduled_start_at is None else _utc_iso(run.scheduled_start_at),
             ),
         )
 
@@ -1234,6 +2049,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         mutation_receipt_id: str | None,
     ) -> None:
+        if link.plan_step is not None:
+            # The same check as `record_plan_step`, before any SQL runs (FR-021).
+            _check_plan_step_document(link.plan_step)
         cursor.execute(
             self._sql(_INSERT_PREFECT_EXECUTION),
             (
@@ -1260,6 +2078,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 None if link.source_read is None else _json(link.source_read),
                 None if link.destination_read is None else _json(link.destination_read),
                 None if link.apply_progress is None else _json(link.apply_progress.model_dump(mode="json")),
+                None if link.plan_step is None else _json(link.plan_step),
             ),
         )
 
@@ -1329,6 +2148,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             f"UPDATE prefect_executions SET {assignments} "  # noqa: S608 - columns from a fixed two-name map
             "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
             (*(_json(dict(document)) for document in documents.values()), run_id, flow_run_id),
+        )
+
+    def record_plan_step(self, run_id: str, flow_run_id: str, document: Mapping[str, Any]) -> bool:
+        """Replace the plan step document of an execution while the execution is not terminal.
+
+        Returns whether a row changed. A write that arrives after the execution's verdict, or
+        for an execution the run does not have, changes nothing. The document is checked
+        before any SQL runs (`_check_plan_step_document`).
+        """
+        _check_plan_step_document(document)
+        return self._execution_update(
+            "UPDATE prefect_executions SET plan_step = ? WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
+            (_json(dict(document)), run_id, flow_run_id),
         )
 
     def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave:
@@ -1401,10 +2233,33 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             outcome="abandoned",
         )
 
-    def interrupt_execution(
-        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    def interrupt_execution(  # pylint: disable=too-many-arguments
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime,
+        event: AuditEvent | None = None,
+        automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool:
-        """Atomically terminalize an orphaned claimed execution and its product run, with its event."""
+        """Atomically terminalize an orphaned claimed execution and its product run, with its event.
+
+        ``automatic_resume``, when given, is inserted in the same transaction, and only when the
+        execution moves to its interrupted verdict (spec 030, FR-013): a second interruption of
+        the same execution changes nothing and inserts nothing. While the inserted row is not
+        ``ended``, the end of a scheduled run is not counted yet (research R11).
+        ``automatic_resume_event`` is the event of that decision, written with the row (FR-017).
+
+        Raises:
+            ValueError: ``automatic_resume`` names another run or another execution.
+        """
+        if automatic_resume is not None and (automatic_resume.run_id, automatic_resume.interrupted_flow_run_id) != (
+            run_id,
+            flow_run_id,
+        ):
+            msg = "an automatic resume record must name the run and the execution that are interrupted"
+            raise ValueError(msg)
         return self._terminalize_execution(
             run_id,
             flow_run_id,
@@ -1415,7 +2270,159 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             phase="interrupted",
             outcome="ambiguous",
             event=event,
+            automatic_resume=automatic_resume,
+            automatic_resume_event=automatic_resume_event,
         )
+
+    def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows of one run, oldest first."""
+        with self._reading() as cursor:
+            cursor.execute(
+                self._sql(_SELECT_AUTOMATIC_RESUMES + " WHERE run_id = ?" + _AUTOMATIC_RESUME_ORDER), (run_id,)
+            )
+            return tuple(_automatic_resume_from_row(row) for row in cursor.fetchall())
+
+    def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]:
+        """Return, for each run of ``run_ids`` that has any, the number of rows whose resume Sync submitted.
+
+        A row whose resume no worker picked up counts too (`AutomaticResume.resume_submitted`).
+        """
+        counts: dict[str, int] = {}
+        unique = tuple(dict.fromkeys(run_ids))
+        with self._reading() as cursor:
+            for start in range(0, len(unique), _EVENT_RESOURCE_BATCH):
+                batch = unique[start : start + _EVENT_RESOURCE_BATCH]
+                placeholders = ", ".join("?" for _ in batch)
+                cursor.execute(
+                    self._sql(
+                        "SELECT run_id, COUNT(*) FROM automatic_resumes "  # noqa: S608 - placeholders only.
+                        f"WHERE resume_flow_run_id IS NOT NULL AND run_id IN ({placeholders}) GROUP BY run_id"
+                    ),
+                    batch,
+                )
+                counts.update({str(run_id): int(count) for run_id, count in cursor.fetchall()})
+        return counts
+
+    def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows that are not ``ended``, oldest first."""
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_AUTOMATIC_RESUMES + " WHERE state <> 'ended'" + _AUTOMATIC_RESUME_ORDER))
+            return tuple(_automatic_resume_from_row(row) for row in cursor.fetchall())
+
+    def move_automatic_resume(
+        self,
+        run_id: str,
+        interrupted_flow_run_id: str,
+        *,
+        from_state: AutomaticResumeState,
+        to_state: AutomaticResumeState,
+        event: AuditEvent | None = None,
+        **fields: object,
+    ) -> bool:
+        """Move one automatic resume row from ``from_state`` to ``to_state`` and set ``fields``.
+
+        The move is a compare-and-set on the row's key and its state, so when two Sync API
+        processes move the same row, one of them moves it and the other gets ``False``
+        (data-model.md, "State transitions"). ``fields`` must include ``updated_at``. The moved
+        row is checked as an `AutomaticResume` before the transaction commits. ``event`` is
+        written in the transaction of the move, and only when the row moved (FR-017). A move
+        to ``ended`` with the decision ``no-resume`` counts a scheduled run as one failed run
+        in the same transaction (`_settle_scheduled_run_end`, research R11).
+
+        Raises:
+            ValueError: ``fields`` names a field that a move cannot set or lacks ``updated_at``,
+                the move is not one of the state transitions, or the moved row is not valid.
+        """
+        unknown = set(fields) - _AUTOMATIC_RESUME_MOVABLE_FIELDS
+        if unknown:
+            msg = f"a move of an automatic resume row cannot set {', '.join(sorted(unknown))}"
+            raise ValueError(msg)
+        if "updated_at" not in fields:
+            msg = "a move of an automatic resume row must set updated_at"
+            raise ValueError(msg)
+        if to_state not in _AUTOMATIC_RESUME_TRANSITIONS.get(from_state, frozenset()):
+            msg = f"an automatic resume row in the state {from_state!r} cannot move to the state {to_state!r}"
+            raise ValueError(msg)
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql(
+                    _SELECT_AUTOMATIC_RESUMES + " WHERE run_id = ? AND interrupted_flow_run_id = ? AND state = ?"
+                ),
+                (run_id, interrupted_flow_run_id, from_state),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return False
+            stored = _automatic_resume_from_row(row)
+            moved = AutomaticResume.model_validate({**stored.model_dump(), **fields, "state": to_state})
+            names = sorted(fields)
+            cursor.execute(
+                self._sql(
+                    "UPDATE automatic_resumes SET state = ?, "  # noqa: S608 - column names from a fixed set.
+                    + ", ".join(f"{name} = ?" for name in names)
+                    + " WHERE run_id = ? AND interrupted_flow_run_id = ? AND state = ?"
+                ),
+                (
+                    to_state,
+                    *(_automatic_resume_column_value(moved, name) for name in names),
+                    run_id,
+                    interrupted_flow_run_id,
+                    from_state,
+                ),
+            )
+            moved_row = cursor.rowcount == 1
+            if moved_row and event is not None:
+                self._insert_event(cursor, event)
+            if moved_row and to_state == "ended" and moved.decision == "no-resume":
+                # The run stays interrupted, so it counts as one failed run (research R11).
+                self._settle_scheduled_run_end(
+                    cursor, run_id, interrupted_flow_run_id, verdict="failed", ended_at=moved.updated_at
+                )
+            if moved_row and to_state == "resuming" and moved.resume_flow_run_id is not None:
+                self._settle_resume_ended_before_its_move(
+                    cursor, run_id, moved.resume_flow_run_id, ended_at=moved.updated_at
+                )
+        return moved_row
+
+    def _settle_resume_ended_before_its_move(
+        self, cursor: _Cursor, run_id: str, resume_flow_run_id: str, *, ended_at: datetime
+    ) -> None:
+        """Count a scheduled run whose automatic resume ended before the row named it (research R11).
+
+        The end of an automatic resume counts for the run's ``sync`` through the row's
+        ``resume_flow_run_id``, which the move to ``resuming`` sets after the submission. When a
+        restart or a lost answer delays that move, the resume can end first, and its end then
+        counted nothing. The move counts it here instead, with the verdict its end would have
+        given. A resume that was interrupted and whose next row is not ``ended`` counts nothing:
+        that row's end counts the run.
+
+        The resume's execution row is locked before its verdict is read, so on PostgreSQL the
+        transaction that ends the execution and this move cannot both miss each other: one
+        waits for the other, and exactly one of them counts the run.
+        """
+        cursor.execute(
+            self._sql("UPDATE prefect_executions SET flow_run_id = flow_run_id WHERE run_id = ? AND flow_run_id = ?"),
+            (run_id, resume_flow_run_id),
+        )
+        cursor.execute(
+            self._sql(
+                "SELECT terminal_state, terminal_outcome FROM prefect_executions "
+                "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NOT NULL"
+            ),
+            (run_id, resume_flow_run_id),
+        )
+        ended = cursor.fetchone()
+        if ended is None:
+            return
+        cursor.execute(
+            self._sql("SELECT state FROM automatic_resumes WHERE run_id = ? AND interrupted_flow_run_id = ?"),
+            (run_id, resume_flow_run_id),
+        )
+        next_row = cursor.fetchone()
+        if next_row is not None and str(next_row[0]) != "ended":
+            return
+        verdict = _scheduled_run_verdict(str(ended[0]), str(ended[1]))
+        self._settle_scheduled_run_end(cursor, run_id, resume_flow_run_id, verdict=verdict, ended_at=ended_at)
 
     def commit_claimed_execution(
         self,
@@ -1428,8 +2435,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
     ) -> bool:
-        """Commit one claimed worker verdict, its business writeback and its event together."""
+        """Commit one claimed worker verdict, its business writeback and its events together.
+
+        ``event`` and then each event of ``events`` are written in the transaction of the
+        verdict. The end of a scheduled run also updates its schedule's count of failed runs
+        in a row in that transaction (`_settle_scheduled_run_end`).
+        """
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1478,6 +2491,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     # the reviewed plan once (spec 007 FR-012, ADR 0020).
                     if _releases_write_admission(writeback, terminal_state, terminal_outcome):
                         cursor.execute(self._sql(_RELEASE_STOPPED_SYNC_ADMISSION), (run_id, run_id))
+                    self._settle_own_branch(cursor, run_id, writeback, terminal_state, terminal_outcome)
                 else:
                     cursor.execute(
                         self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
@@ -1518,8 +2532,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 self._settle_resume(
                     cursor, run_id, flow_run_id, terminal_state=terminal_state, terminal_outcome=terminal_outcome
                 )
-                if event is not None:
-                    self._insert_event(cursor, event)
+                self._settle_scheduled_run_end(
+                    cursor,
+                    run_id,
+                    flow_run_id,
+                    verdict=_scheduled_run_verdict(terminal_state, terminal_outcome, writeback),
+                    ended_at=terminal_at,
+                )
+                for item in _merged_events(event, events):
+                    self._insert_event(cursor, item)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -1530,6 +2551,25 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
+
+    def _settle_own_branch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        run_id: str,
+        writeback: ExecutionFinishWriteback,
+        terminal_state: str,
+        terminal_outcome: str,
+    ) -> None:
+        """Move the branch row of a run with branch review to ``removed`` when its committed result says so.
+
+        The first part of ``branch_review`` is saved with the stage result (spec 021,
+        data-model.md): a run whose plan held no operation deleted its own branch.
+        """
+        if _removed_own_branch(writeback, terminal_state, terminal_outcome):
+            cursor.execute(
+                self._sql("UPDATE schedule_branches SET state = 'removed' WHERE run_id = ? AND state = 'pending'"),
+                (run_id,),
+            )
 
     def _record_configuration_baseline(
         self,
@@ -1564,33 +2604,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             ),
         )
 
-    def publish_worker_environment(self, environment: WorkerEnvironment) -> None:
-        """Replace one worker's published credential variable names (spec 007 FR-035)."""
-        with self._transaction() as cursor:
-            cursor.execute(
-                self._sql(_UPSERT_WORKER_ENVIRONMENT),
-                (
-                    environment.worker_id,
-                    _json(list(environment.credential_names)),
-                    environment.observed_at.isoformat(),
-                ),
-            )
-
-    def worker_environments(self) -> tuple[WorkerEnvironment, ...]:
-        """Return every worker's last published credential variable names, by worker."""
-        with self._reading() as cursor:
-            cursor.execute(self._sql(_SELECT_WORKER_ENVIRONMENTS))
-            rows = cursor.fetchall()
-        return tuple(
-            WorkerEnvironment.model_validate(
-                {
-                    "worker_id": row[0],
-                    "credential_names": tuple(_JSON_LIST_ADAPTER.validate_json(str(row[1]))),
-                    "observed_at": row[2],
-                }
-            )
-            for row in rows
-        )
+    def write_bootstrap_record(self, record: BootstrapRecord) -> None:
+        """Replace the one bootstrap record when it names another version or work pool (spec 018 FR-007b)."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(_UPSERT_BOOTSTRAP_RECORD),
+                    (record.sync_version, record.work_pool, record.completed_at.isoformat()),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
         """Return the configuration's durable safety reference, if a write has set one."""
@@ -1733,6 +2764,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
                     )
                     self._keep_interrupted_run_resumable(cursor, run_id)
+                    # A person asked to cancel the run, so this ambiguous end does not change
+                    # its schedule's count of failed runs.
+                    self._settle_scheduled_run_end(
+                        cursor, run_id, flow_run_id, verdict="unchanged", ended_at=acknowledged_at
+                    )
                     refusal = (
                         _cancellation_ambiguous_response(run_id, receipt_id)
                         if claimed_write
@@ -1809,6 +2845,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     (_utc_iso(terminal_at), run_id, flow_run_id),
                 )
                 self._keep_interrupted_run_resumable(cursor, run_id)
+                # A run that a person cancelled does not change its schedule's count of failed runs.
+                self._settle_scheduled_run_end(cursor, run_id, flow_run_id, verdict="unchanged", ended_at=terminal_at)
                 if event is not None:
                     self._insert_event(cursor, event)
                 connection.commit()
@@ -1877,6 +2915,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
                 )
                 self._keep_interrupted_run_resumable(cursor, run_id)
+                # The execution ended because a person asked to cancel it, whatever verdict the
+                # expired recovery left, so its schedule's count of failed runs does not change.
+                self._settle_scheduled_run_end(cursor, run_id, flow_run_id, verdict="unchanged", ended_at=terminal_at)
                 if not acknowledged:
                     receipt_id = str(row[2])
                     self._complete_receipt_row(
@@ -1996,6 +3037,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         phase: str,
         outcome: str,
         event: AuditEvent | None = None,
+        automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool:
         connection = self._connect()
         try:
@@ -2029,8 +3072,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     terminal_outcome=terminal_outcome,
                 )
                 self._keep_interrupted_run_resumable(cursor, run_id)
+                verdict = _scheduled_run_verdict(terminal_state, terminal_outcome)
+                if automatic_resume is not None:
+                    cursor.execute(self._sql(_INSERT_AUTOMATIC_RESUME), _automatic_resume_values(automatic_resume))
+                    # The schedule counts the run once the automatic resume ends (research R11).
+                    if automatic_resume.state != "ended":
+                        verdict = "unchanged"
+                self._settle_scheduled_run_end(cursor, run_id, flow_run_id, verdict=verdict, ended_at=terminal_at)
                 if event is not None:
                     self._insert_event(cursor, event)
+                if automatic_resume is not None and automatic_resume_event is not None:
+                    self._insert_event(cursor, automatic_resume_event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2041,6 +3093,82 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
+
+    def _settle_scheduled_run_end(
+        self,
+        cursor: _Cursor,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        verdict: _ScheduledRunVerdict,
+        ended_at: datetime,
+    ) -> None:
+        """Update a schedule's count of failed runs in a row when the ``sync`` of its run ends (FR-032).
+
+        Runs with the caller's cursor, so the count, the stop and its event are saved in the
+        transaction that saves the end of the run. ``succeeded`` sets the count to zero and
+        ``failed`` adds one; ``unchanged`` writes nothing. When the count reaches
+        ``MAX_CONSECUTIVE_FAILURES`` on an active schedule, the schedule moves to the state
+        ``stopped`` with the reason ``repeated-failures``, its Prefect schedule is marked as
+        not matching the record, and the event ``infrahub_sync.schedule.stopped`` names the
+        run. A paused schedule keeps its state. A run that no schedule started, and a stage
+        that a person starts on a scheduled run, change nothing. The end of an automatic
+        resume counts as the end of the execution its chain of rows interrupted first, so the
+        end of a scheduled run's automatic resume counts as the end of its ``sync`` (spec 030,
+        research R11).
+        """
+        if verdict == "unchanged":
+            return
+        flow_run_id = self._execution_an_automatic_resume_chain_started_from(cursor, run_id, flow_run_id)
+        cursor.execute(self._sql(_SELECT_SCHEDULE_OF_ENDED_SYNC), (run_id, run_id, flow_run_id))
+        row = cursor.fetchone()
+        if row is None:
+            return
+        schedule_id = str(row[0])
+        if verdict == "succeeded":
+            cursor.execute(
+                self._sql("UPDATE schedules SET consecutive_failures = 0 WHERE schedule_id = ? AND state <> 'deleted'"),
+                (schedule_id,),
+            )
+            return
+        cursor.execute(
+            self._sql(
+                "UPDATE schedules SET consecutive_failures = consecutive_failures + 1 "
+                "WHERE schedule_id = ? AND state <> 'deleted'"
+            ),
+            (schedule_id,),
+        )
+        cursor.execute(
+            self._sql(
+                "UPDATE schedules SET state = 'stopped', state_reason = 'repeated-failures', "
+                "prefect_synced = FALSE, waiting_start_at = NULL, updated_at = ? WHERE schedule_id = ? AND state = 'active' "
+                "AND consecutive_failures >= ?"
+            ),
+            (_utc_iso(ended_at), schedule_id, MAX_CONSECUTIVE_FAILURES),
+        )
+        if cursor.rowcount != 1:
+            return
+        schedule = self._read_schedule(cursor, schedule_id)
+        if schedule is not None:
+            self._insert_event(cursor, _schedule_stopped_event(schedule, run_id, ended_at))
+
+    def _execution_an_automatic_resume_chain_started_from(self, cursor: _Cursor, run_id: str, flow_run_id: str) -> str:
+        """Return the execution that the automatic resumes ending in ``flow_run_id`` resumed first.
+
+        An automatic resume is the execution that a row of ``automatic_resumes`` names as its
+        ``resume_flow_run_id``. Its end, and the end of a row that an interrupted automatic
+        resume inserted, count for the execution that the first row of the chain interrupted:
+        for a scheduled run, its ``sync`` (spec 030, research R11). Any other execution,
+        including a resume that a person started, is returned unchanged.
+        """
+        seen = {flow_run_id}
+        while True:
+            cursor.execute(self._sql(_SELECT_EXECUTION_AN_AUTOMATIC_RESUME_RESUMED), (run_id, flow_run_id))
+            row = cursor.fetchone()
+            if row is None or str(row[0]) in seen:
+                return flow_run_id
+            flow_run_id = str(row[0])
+            seen.add(flow_run_id)
 
     def reserve_mutation(
         self,
@@ -2526,7 +3654,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         flow_run_id: str | None,
         updated_at: datetime,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
     ) -> MutationReceipt:
+        """Complete a receipt with its stored answer; ``event`` and then ``events`` are saved with it."""
         with self._transaction() as cursor:
             cursor.execute(
                 self._sql(
@@ -2536,8 +3666,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 (response_status, _json(response_body), flow_run_id, updated_at.isoformat(), receipt_id),
             )
             completed = cursor.rowcount == 1
-            if completed and event is not None:
-                self._insert_event(cursor, event)
+            if completed:
+                for item in _merged_events(event, events):
+                    self._insert_event(cursor, item)
         receipt = self._lookup_mutation_by_id(receipt_id)
         if completed:
             return receipt
@@ -2638,6 +3769,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 event.config_id,
                 event.registry_version,
                 event.branch,
+                None if event.details is None else _json(event.details.model_dump(mode="json", exclude_none=True)),
             ),
         )
         for resource in event.related:
@@ -2669,10 +3801,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             resources = self._read_event_resources(cursor, rows)
         return tuple(_audit_from_row(row, resources[str(row[0])]) for row in rows)
 
-    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage:
-        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``, oldest first.
+    def list_events(self, filters: EventFilters, *, limit: int, offset: int, order: EventOrder = "asc") -> EventPage:
+        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``.
 
-        Events are ordered by ``created_at`` and then ``event_id``. An event without a type,
+        Events are ordered by ``created_at`` and then ``event_id``: oldest first for ``asc``,
+        newest first, both descending, for ``desc``. An event without a type,
         a request refused for a missing or invalid token, is never listed (research R6).
 
         Raises:
@@ -2703,7 +3836,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             parameters.append(_utc_iso(filters.until))
         statement = (
             f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE {' AND '.join(conditions)} "  # noqa: S608
-            "ORDER BY created_at, event_id LIMIT ? OFFSET ?"
+            f"{_EVENT_ORDER_CLAUSES[order]} LIMIT ? OFFSET ?"
         )
         resources: dict[str, list[tuple[str, str]]] = {}
 
@@ -2725,8 +3858,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> ConfigurationVersion:
-        """Durably register a brand-new configuration and its first version."""
+        """Durably register a brand-new configuration and its first version.
+
+        ``registered_without_validation`` marks the version in the same transaction.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has the name of the package.
+        """
         config_id = _generate_config_id()
         version = ConfigurationVersion(
             config_id=config_id,
@@ -2734,11 +3874,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             package_checksum=package.checksum(),
             declared_content=package.declared_content(),
             created_at=datetime.now(timezone.utc),
+            registered_without_validation=registered_without_validation,
         )
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
+                self._require_named_credentials(cursor, package)
                 cursor.execute(self._sql(_INSERT_CONFIGURATION), (config_id, version.created_at.isoformat()))
                 self._insert_configuration_version_row(
                     cursor,
@@ -2747,12 +3889,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     registered_by=registered_by,
                     registration_reason=registration_reason,
                 )
+                self._insert_version_credentials(cursor, version, package)
                 connection.commit()
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 # DB-API drivers do not share an integrity-error base class;
                 # inspect only documented SQLite/PostgreSQL uniqueness markers.
                 connection.rollback()
                 if _is_unique_violation(exc):
+                    # Two registrations can both pass the name check; the unique index refuses
+                    # the second, and the check on a new connection names the configuration.
+                    self._refuse_configuration_name_in_use_now(package.configuration.name or None, config_id)
                     msg = f"Configuration ID {config_id!r} already exists"
                     raise DuplicateConfigurationError(msg) from exc
                 raise
@@ -2761,6 +3907,37 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
         return version
+
+    def _require_named_credentials(self, cursor: _Cursor, package: ConfigurationPackage) -> None:
+        """Lock the stored credentials the package names and check that each one can serve its block.
+
+        Runs first in the transaction that registers the version. The rows stay locked until
+        that transaction ends, so no deletion and no value change of a named credential
+        commits between this check and the version (spec 027, research R8, critique E4).
+
+        Raises:
+            StoredCredentialCheckError: a named credential does not exist, or does not hold a
+                field its block needs. Nothing was written.
+        """
+        named = named_credentials(package)
+        if not named:
+            return
+        held = credential_statements.lock_and_read_fields(cursor, self._sql, tuple(named.values()))
+        findings = stored_credential_findings(package, held.get)
+        if findings:
+            raise StoredCredentialCheckError(findings)
+
+    def _insert_version_credentials(
+        self, cursor: _Cursor, version: ConfigurationVersion, package: ConfigurationPackage
+    ) -> None:
+        """Record the credential each block of the version names, in the transaction that inserts it."""
+        credential_statements.write_version_credentials(
+            cursor,
+            self._sql,
+            config_id=version.config_id,
+            registry_version=version.registry_version,
+            credentials=named_credentials(package),
+        )
 
     def _insert_configuration_version_row(
         self,
@@ -2775,7 +3952,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         Runs inside the transaction that allocates the version, which is always the newest
         one, so the configuration's name is always its latest version's name. ``name`` is
-        ``None`` when the package declares an empty name.
+        ``None`` when the package declares an empty name. A version marked
+        ``registered_without_validation`` gets its mark row after the version row, which the
+        mark's foreign key requires.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has ``name``. The check runs after
+                the version row, so a known checksum still answers with its stored version.
         """
         _require_checksum_digests_content(version.package_checksum, version.declared_content)
         cursor.execute(
@@ -2790,10 +3973,29 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 registration_reason,
             ),
         )
+        self._refuse_configuration_name_in_use(cursor, name, version.config_id)
+        if version.registered_without_validation:
+            cursor.execute(
+                self._sql(_INSERT_CONFIGURATION_VERSION_UNVALIDATED), (version.config_id, version.registry_version)
+            )
         cursor.execute(
             self._sql(_UPDATE_CONFIGURATION_NAME),
             (name, version.config_id),
         )
+
+    def _refuse_configuration_name_in_use(self, cursor: _Cursor, name: str | None, config_id: str) -> None:
+        """Raise when a configuration other than ``config_id`` has ``name``; no name is never in use."""
+        if name is None:
+            return
+        cursor.execute(self._sql(_SELECT_CONFIGURATION_WITH_NAME), (name, config_id))
+        row = cursor.fetchone()
+        if row is not None:
+            raise ConfigurationNameInUseError(config_id=str(row[0]), name=name)
+
+    def _refuse_configuration_name_in_use_now(self, name: str | None, config_id: str) -> None:
+        """Run the name check on a new connection, after a unique index refused a write."""
+        with self._reading() as cursor:
+            self._refuse_configuration_name_in_use(cursor, name, config_id)
 
     def add_configuration_version(
         self,
@@ -2802,11 +4004,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
     ) -> tuple[ConfigurationVersion, bool]:
         """Atomically allocate the next version, or return the existing one for a known checksum.
 
-        An existing version is returned unchanged: its actor and reason stay those of the
-        request that created it.
+        An existing version is returned unchanged: its actor, reason and
+        ``registered_without_validation`` mark stay those of the request that created it.
         """
         checksum = package.checksum()
         last_conflict: BaseException | None = None
@@ -2815,6 +4018,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             try:
                 cursor = connection.cursor()
                 try:
+                    self._require_named_credentials(cursor, package)
                     cursor.execute(self._sql(_SELECT_NEXT_CONFIGURATION_VERSION), (config_id,))
                     next_row = cursor.fetchone()
                     next_version = int(next_row[0]) if next_row is not None else 1
@@ -2824,6 +4028,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         package_checksum=checksum,
                         declared_content=package.declared_content(),
                         created_at=datetime.now(timezone.utc),
+                        registered_without_validation=registered_without_validation,
                     )
                     self._insert_configuration_version_row(
                         cursor,
@@ -2832,6 +4037,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         registered_by=registered_by,
                         registration_reason=registration_reason,
                     )
+                    self._insert_version_credentials(cursor, version, package)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # DB-API drivers do not share an integrity-error base class;
@@ -2850,6 +4056,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             existing = self._lookup_configuration_version_by_checksum(config_id, checksum)
             if existing is not None:
                 return existing, False
+            # The unique index on the name refused a registration that passed the name check.
+            self._refuse_configuration_name_in_use_now(package.configuration.name or None, config_id)
             if attempt + 1 == _CONFIGURATION_VERSION_ATTEMPTS:
                 msg = f"Could not allocate a configuration version for {config_id!r}"
                 raise ConfigurationVersionAllocationError(msg) from last_conflict
@@ -2999,6 +4207,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if filters.registry_version is not None:
             conditions.append(_RUN_LIST_VERSION)
             parameters.append(filters.registry_version)
+        if filters.trigger_type is not None:
+            conditions.append(_RUN_LIST_TRIGGER_TYPE)
+            parameters.append(filters.trigger_type)
+        if filters.schedule_id is not None:
+            conditions.append(_RUN_LIST_SCHEDULE)
+            parameters.append(filters.schedule_id)
+        if filters.scheduled_start_at is not None:
+            conditions.append(_RUN_LIST_SCHEDULED_START)
+            parameters.append(_utc_iso(filters.scheduled_start_at))
         if after is not None:
             conditions.append(_RUN_LIST_AFTER)
             parameters.extend(_keyset_parameters(after))
@@ -3014,6 +4231,1212 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         rows, has_more = self._read_page(statement, parameters, limit, read_audit_links)
         return RunPage(items=tuple(_run_from_rows(row, (), (), audit_links[row[0]]) for row in rows), has_more=has_more)
+
+    def create_schedule(self, schedule: ScheduleRecord, *, events: Sequence[AuditEvent] = ()) -> None:
+        """Store a new schedule, in the state ``active``, and ``events`` in one transaction.
+
+        Raises:
+            ValueError: The schedule is not in the state ``active``.
+            ScheduleNameInUseError: A schedule that is not deleted has the name.
+            ScheduleExistsForConfigurationError: The configuration has a schedule that is not deleted.
+            VersionCredentialsMissingError: A stored credential the version names does not exist.
+        """
+        if schedule.state != "active":
+            msg = "a schedule is created in the state active"
+            raise ValueError(msg)
+        try:
+            with self._transaction() as cursor:
+                self._refuse_schedule_conflict(cursor, schedule)
+                credential_statements.lock_version_credentials(
+                    cursor, self._sql, config_id=schedule.config_id, registry_version=schedule.registry_version
+                )
+                cursor.execute(self._sql(_INSERT_SCHEDULE), _schedule_values(schedule))
+                for event in events:
+                    self._insert_event(cursor, event)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # Synchronous DB-API drivers do not share an integrity-error base class. Two
+            # requests can both pass the check above; the unique indexes refuse the second,
+            # and the check on a new connection then names which rule it broke.
+            if not _is_unique_violation(exc):
+                raise
+            with self._reading() as cursor:
+                self._refuse_schedule_conflict(cursor, schedule)
+            raise
+
+    def _refuse_schedule_conflict(self, cursor: _Cursor, schedule: ScheduleRecord) -> None:
+        """Raise when another schedule that is not deleted has the name or the configuration."""
+        cursor.execute(
+            self._sql("SELECT 1 FROM schedules WHERE name = ? AND state <> 'deleted' AND schedule_id <> ?"),
+            (schedule.name, schedule.schedule_id),
+        )
+        if cursor.fetchone() is not None:
+            msg = f"a schedule that is not deleted already has the name {schedule.name!r}"
+            raise ScheduleNameInUseError(msg)
+        cursor.execute(
+            self._sql(
+                "SELECT schedule_id, name FROM schedules WHERE config_id = ? AND state <> 'deleted' "
+                "AND schedule_id <> ?"
+            ),
+            (schedule.config_id, schedule.schedule_id),
+        )
+        row = cursor.fetchone()
+        if row is not None:
+            raise ScheduleExistsForConfigurationError(
+                config_id=schedule.config_id, schedule_id=str(row[0]), name=str(row[1])
+            )
+
+    def _read_schedule(self, cursor: _Cursor, schedule_id: str) -> ScheduleRecord | None:
+        cursor.execute(self._sql(_SELECT_SCHEDULE), (schedule_id,))
+        row = cursor.fetchone()
+        return None if row is None else _schedule_from_row(row)
+
+    def _locked_schedule(self, cursor: _Cursor, schedule_id: str) -> ScheduleRecord:
+        """Lock one schedule row for the caller's transaction, then read it.
+
+        Raises:
+            ScheduleNotFoundError: No schedule has the identifier.
+        """
+        cursor.execute(self._sql(_LOCK_SCHEDULE), (schedule_id,))
+        schedule = self._read_schedule(cursor, schedule_id)
+        if schedule is None:
+            msg = f"schedule {schedule_id!r} is not stored"
+            raise ScheduleNotFoundError(msg)
+        return schedule
+
+    def lookup_schedule(self, schedule_id: str) -> LookupResult[ScheduleRecord]:
+        """Look up one schedule by its identifier; a deleted schedule is returned too."""
+        with self._reading() as cursor:
+            schedule = self._read_schedule(cursor, schedule_id)
+        if schedule is None:
+            return LookupResult(value=None, reason="schedule is not stored")
+        return LookupResult(value=schedule)
+
+    def list_schedules(
+        self, filters: ScheduleFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> SchedulePage:
+        """Return up to ``limit`` schedules matching ``filters``, newest first, after the ``after`` key.
+
+        Schedules are ordered by ``(created_at, schedule_id)`` descending; ``after`` is the last
+        key of the previous page. Without a state filter, deleted schedules are left out. The
+        query reads one row past the page to detect a further page.
+        """
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if filters.config_id is not None:
+            conditions.append(_SCHEDULE_LIST_CONFIGURATION)
+            parameters.append(filters.config_id)
+        if filters.state is None:
+            conditions.append(_SCHEDULE_LIST_NOT_DELETED)
+        else:
+            conditions.append(_SCHEDULE_LIST_STATE)
+            parameters.append(filters.state)
+        if after is not None:
+            conditions.append(_SCHEDULE_LIST_AFTER)
+            parameters.extend(_keyset_parameters(after))
+        statement = _filtered(_SELECT_SCHEDULE_LIST, conditions) + _SCHEDULE_LIST_ORDER
+        rows, has_more = self._read_page(statement, parameters, limit)
+        return SchedulePage(items=tuple(_schedule_from_row(row) for row in rows), has_more=has_more)
+
+    def update_schedule(
+        self,
+        schedule: ScheduleRecord,
+        *,
+        expected_updated_at: datetime | None = None,
+        events: Sequence[AuditEvent] = (),
+    ) -> ScheduleRecord:
+        """Save a change of a schedule's settings, state or owner, with ``events``, and return what is stored.
+
+        The row is locked first, so the checks and the update see one state. The change
+        writes the version, the cadence, the write settings, the state and its reason, the
+        owner, the Prefect schedule fields and ``updated_at``. It does not write
+        ``last_start_at`` or the count of failed runs, which the admission of a start and the
+        end of a run own; a schedule that leaves the reason ``repeated-failures``, by a resume
+        or by a stop with another reason, gets the count set to zero (FR-032). It clears ``waiting_start_at`` when the schedule leaves the
+        state ``active`` or its cadence or overlap policy changes: the waiting flow run then
+        creates no run, and the wait must not block the later starts.
+
+        Raises:
+            ScheduleNotFoundError: No schedule has the identifier.
+            ScheduleDeletedError: The stored schedule is deleted.
+            ScheduleChangedError: ``expected_updated_at`` is given and differs from the stored value.
+            ScheduleTransitionError: The stored state cannot move to the requested state.
+            ValueError: The change sets the name, the configuration or the creation time.
+            VersionCredentialsMissingError: The change pins another version, and a stored
+                credential that version names does not exist.
+        """
+        with self._transaction() as cursor:
+            stored = self._locked_schedule(cursor, schedule.schedule_id)
+            if stored.state == "deleted":
+                msg = f"schedule {schedule.schedule_id!r} is deleted and accepts no action"
+                raise ScheduleDeletedError(msg)
+            if expected_updated_at is not None and stored.updated_at != expected_updated_at:
+                msg = f"schedule {schedule.schedule_id!r} changed after it was read"
+                raise ScheduleChangedError(msg)
+            for field in _SCHEDULE_FIXED_FIELDS:
+                if getattr(schedule, field) != getattr(stored, field):
+                    msg = f"a change cannot set the {field} of a schedule"
+                    raise ValueError(msg)
+            if schedule.state not in _SCHEDULE_TRANSITIONS[stored.state]:
+                msg = f"a schedule in the state {stored.state!r} cannot move to the state {schedule.state!r}"
+                raise ScheduleTransitionError(msg)
+            if schedule.state != "deleted" and schedule.registry_version != stored.registry_version:
+                # The same lock and check as a creation: a deletion of a credential that the new
+                # version names cannot commit beside this change.
+                credential_statements.lock_version_credentials(
+                    cursor, self._sql, config_id=schedule.config_id, registry_version=schedule.registry_version
+                )
+            # A schedule that leaves a stop for repeated failures counts its failed runs from zero
+            # again: when it is resumed, and when a resume stores another reason to stop it, so a
+            # later change that makes it active does not keep the old count.
+            resumed_after_failures = (
+                stored.state_reason == "repeated-failures" and schedule.state_reason != "repeated-failures"
+            )
+            cursor.execute(
+                self._sql(_UPDATE_SCHEDULE),
+                (
+                    schedule.registry_version,
+                    schedule.cron,
+                    schedule.timezone,
+                    schedule.write_target,
+                    schedule.write_when_left_out,
+                    schedule.left_out_set_by,
+                    None if schedule.left_out_set_at is None else _utc_iso(schedule.left_out_set_at),
+                    schedule.overlap_policy,
+                    schedule.start_late_by_at_most_seconds,
+                    schedule.state,
+                    schedule.state_reason,
+                    schedule.owner,
+                    0 if resumed_after_failures else stored.consecutive_failures,
+                    schedule.prefect_schedule_id,
+                    schedule.prefect_synced,
+                    _utc_iso(schedule.updated_at),
+                    schedule.schedule_id,
+                ),
+            )
+            if _ends_waiting_start(stored, schedule):
+                cursor.execute(
+                    self._sql("UPDATE schedules SET waiting_start_at = NULL WHERE schedule_id = ?"),
+                    (schedule.schedule_id,),
+                )
+            for event in events:
+                self._insert_event(cursor, event)
+            updated = self._read_schedule(cursor, schedule.schedule_id)
+        assert updated is not None
+        return updated
+
+    def record_schedule_prefect_sync(
+        self,
+        schedule_id: str,
+        *,
+        prefect_schedule_id: str | None,
+        synced: bool,
+        expected_updated_at: datetime | None = None,
+    ) -> bool:
+        """Record the Prefect schedule of a schedule and whether it matches the record.
+
+        Only these two fields are written, so a call made after a request to Prefect cannot
+        undo a change that was saved in between. With ``expected_updated_at``, nothing is
+        written when the stored schedule changed after it was read: the Prefect schedule was
+        made from the earlier record, so the change keeps ``prefect_synced`` as it saved it.
+        Returns whether a schedule was written.
+        """
+        if expected_updated_at is None:
+            return self._execution_update(
+                "UPDATE schedules SET prefect_schedule_id = ?, prefect_synced = ? WHERE schedule_id = ?",
+                (prefect_schedule_id, synced, schedule_id),
+            )
+        return self._execution_update(
+            "UPDATE schedules SET prefect_schedule_id = ?, prefect_synced = ? WHERE schedule_id = ? AND updated_at = ?",
+            (prefect_schedule_id, synced, schedule_id, _utc_iso(expected_updated_at)),
+        )
+
+    def _read_schedule_branches(
+        self, cursor: _Cursor, schedule_id: str, states: Sequence[ScheduleBranchState]
+    ) -> tuple[ScheduleBranch, ...]:
+        statement = _SELECT_SCHEDULE_BRANCHES
+        if states:
+            statement += f" AND state IN ({', '.join('?' for _ in states)})"
+        cursor.execute(self._sql(statement + _SCHEDULE_BRANCH_ORDER), (schedule_id, *states))
+        return tuple(_schedule_branch_from_row(row) for row in cursor.fetchall())
+
+    def schedule_branches(
+        self, schedule_id: str, *, states: Sequence[ScheduleBranchState] = ()
+    ) -> tuple[ScheduleBranch, ...]:
+        """Return the branch rows of a schedule, oldest first, optionally only those in ``states``."""
+        with self._reading() as cursor:
+            return self._read_schedule_branches(cursor, schedule_id, states)
+
+    def lookup_schedule_branch(self, run_id: str) -> LookupResult[ScheduleBranch]:
+        """Look up the branch row of one run with branch review."""
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_SCHEDULE_BRANCH), (run_id,))
+            row = cursor.fetchone()
+        if row is None:
+            return LookupResult(value=None, reason="the run has no schedule branch")
+        return LookupResult(value=_schedule_branch_from_row(row))
+
+    def update_schedule_branch(self, branch: ScheduleBranch, *, events: Sequence[AuditEvent] = ()) -> ScheduleBranch:
+        """Save the state, the proposed change and the replacing run of a branch row, with ``events``.
+
+        A row moves from ``pending`` to ``open``, ``removed``, ``replaced`` or ``kept``, and
+        from ``open`` to ``replaced`` or ``kept``. A row in a final state accepts no change.
+
+        Raises:
+            ScheduleNotFoundError: The run has no branch row.
+            ScheduleTransitionError: The stored state cannot move to the requested state.
+            ValueError: The change sets the schedule, the branch name or the creation time.
+        """
+        with self._transaction() as cursor:
+            cursor.execute(self._sql("UPDATE schedule_branches SET run_id = run_id WHERE run_id = ?"), (branch.run_id,))
+            cursor.execute(self._sql(_SELECT_SCHEDULE_BRANCH), (branch.run_id,))
+            row = cursor.fetchone()
+            if row is None:
+                msg = f"run {branch.run_id!r} has no schedule branch"
+                raise ScheduleNotFoundError(msg)
+            stored = _schedule_branch_from_row(row)
+            for field in _SCHEDULE_BRANCH_FIXED_FIELDS:
+                if getattr(branch, field) != getattr(stored, field):
+                    msg = f"a change cannot set the {field} of a schedule branch"
+                    raise ValueError(msg)
+            if branch.state not in _SCHEDULE_BRANCH_TRANSITIONS.get(stored.state, frozenset()):
+                msg = f"a schedule branch in the state {stored.state!r} cannot move to the state {branch.state!r}"
+                raise ScheduleTransitionError(msg)
+            cursor.execute(
+                self._sql(
+                    "UPDATE schedule_branches SET state = ?, proposed_change_id = ?, replaced_by_run_id = ? "
+                    "WHERE run_id = ?"
+                ),
+                (branch.state, branch.proposed_change_id, branch.replaced_by_run_id, branch.run_id),
+            )
+            for event in events:
+                self._insert_event(cursor, event)
+        return branch
+
+    def record_branch_review_outcome(
+        self,
+        outcome: BranchReviewOutcome,
+        *,
+        events: Sequence[AuditEvent] = (),
+        earlier_events: Mapping[str, Sequence[AuditEvent]] | None = None,
+    ) -> BranchReviewOutcome:
+        """Save the part of a run's ``branch_review`` that follows its write, in one transaction.
+
+        The run's own branch row moves from ``pending`` to ``open`` when the run opened its
+        proposed change; a row that another run already handled stays as it is. Each run of ``outcome.replaced`` moves to ``replaced`` and each run
+        of ``outcome.kept`` whose cause is ``merged`` or ``closed`` moves to ``kept``; a run
+        kept because it is ``approved`` stays ``open``. An earlier row that is no longer in
+        the state ``pending`` or ``open`` was handled by another run: it is left as it is,
+        left out of the saved outcome, and its events of ``earlier_events`` are not written.
+        The saved outcome is merged into ``branch_review`` of the run's results, and
+        ``events`` and the events of the handled earlier rows are written.
+
+        Raises:
+            ScheduleNotFoundError: The run has no branch row.
+        """
+        by_run = earlier_events or {}
+        with self._transaction() as cursor:
+            cursor.execute(
+                self._sql("UPDATE schedule_branches SET run_id = run_id WHERE run_id = ?"), (outcome.run_id,)
+            )
+            cursor.execute(self._sql(_SELECT_SCHEDULE_BRANCH), (outcome.run_id,))
+            row = cursor.fetchone()
+            if row is None:
+                msg = f"run {outcome.run_id!r} has no schedule branch"
+                raise ScheduleNotFoundError(msg)
+            own = _schedule_branch_from_row(row)
+            if outcome.proposed_change_id is not None:
+                # A later run of the schedule may have replaced this run's `pending` row while
+                # the proposed change was opened (research R15); that row stays as it is.
+                cursor.execute(
+                    self._sql(
+                        "UPDATE schedule_branches SET state = 'open', proposed_change_id = ? "
+                        "WHERE run_id = ? AND state = 'pending'"
+                    ),
+                    (outcome.proposed_change_id, outcome.run_id),
+                )
+            handled: list[str] = []
+            replaced = [
+                earlier
+                for earlier in outcome.replaced
+                if self._settle_earlier_branch(cursor, own.schedule_id, earlier, "replaced", outcome.run_id)
+            ]
+            handled.extend(replaced)
+            kept = [
+                item
+                for item in outcome.kept
+                if self._settle_earlier_branch(
+                    cursor, own.schedule_id, item.run_id, "open" if item.cause == "approved" else "kept", None
+                )
+            ]
+            handled.extend(item.run_id for item in kept)
+            saved = outcome.model_copy(update={"replaced": tuple(replaced), "kept": tuple(kept)})
+            cursor.execute(self._sql("SELECT results FROM product_runs WHERE run_id = ?"), (outcome.run_id,))
+            results_row = cursor.fetchone()
+            current = {} if results_row is None else dict(_JSON_MAPPING_ADAPTER.validate_json(str(results_row[0])))
+            previous = current.get("branch_review")
+            entry = dict(previous) if isinstance(previous, Mapping) else {}
+            current["branch_review"] = {**entry, **saved.results_entry()}
+            cursor.execute(
+                self._sql("UPDATE product_runs SET results = ? WHERE run_id = ?"), (_json(current), outcome.run_id)
+            )
+            for event in (*events, *(item for run_id in handled for item in by_run.get(run_id, ()))):
+                self._insert_event(cursor, event)
+        return saved
+
+    def _settle_earlier_branch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        schedule_id: str,
+        run_id: str,
+        state: ScheduleBranchState,
+        replaced_by_run_id: str | None,
+    ) -> bool:
+        """Move an earlier branch row of the schedule to ``state``; return whether it was still pending or open."""
+        cursor.execute(
+            self._sql(
+                "UPDATE schedule_branches SET state = ?, replaced_by_run_id = ? "
+                "WHERE run_id = ? AND schedule_id = ? AND state IN ('pending', 'open')"
+            ),
+            (state, replaced_by_run_id, run_id, schedule_id),
+        )
+        return cursor.rowcount == 1
+
+    def _run_of_start(self, cursor: _Cursor, schedule_id: str, scheduled_start_at: datetime) -> str | None:
+        cursor.execute(self._sql(_SELECT_RUN_OF_START), (schedule_id, _utc_iso(scheduled_start_at)))
+        row = cursor.fetchone()
+        return None if row is None else str(row[0])
+
+    def admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        schedule_id: str,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
+    ) -> ScheduledStartResult:
+        """Write the decision on one start of a schedule in one transaction (spec 021, research R2).
+
+        The schedule row is locked first, so two admissions of one schedule run one after the
+        other. A schedule that is not ``active`` writes nothing and answers
+        ``schedule-not-active``. Otherwise the transaction moves the rows of
+        ``decision.kept_run_ids`` to the state ``kept``, writes the events of the decision, and
+        sets ``last_start_at`` to the start when it is later. A start queued under the ``queue``
+        policy becomes ``waiting_start_at``; any other decision on the waiting start clears it,
+        and that start is exempt from the check against ``last_start_at``. A decision with the
+        cause ``approval-required`` or ``owner-not-found`` also moves the schedule to the state
+        ``stopped`` with that reason. For a start that runs it also writes the run, its
+        receipt already accepted, its ``sync`` write admission, its one execution already
+        claimed by ``worker_id``, and a ``pending`` branch row for a run with branch review.
+        When ``receipt_age_limit`` is given, a start that runs checks again, in the transaction,
+        that no run of the configuration is in progress (`run_in_progress`). This finds a run that
+        a person started while the decision was made, which can take seconds when it reads
+        Infrahub. It does not close the race: a person's request takes no lock that this
+        transaction holds, so on PostgreSQL one that commits between this check and the commit
+        of the admission is not seen.
+
+        Raises:
+            ScheduleNotFoundError: No schedule has the identifier.
+            DuplicateRunError: The start already has a run; nothing is written.
+            ScheduledStartAlreadyRecordedError: The start is not later than ``last_start_at``,
+                is not the waiting start and has no run, so it was already recorded.
+            ScheduleChangedError: The decision was made from another ``last_start_at``,
+                ``waiting_start_at`` or ``updated_at``, its
+                run does not match the stored schedule, a kept run has no branch row in
+                the states ``pending`` and ``open``, or a run of the configuration started
+                after a decision to run.
+            ConfigurationNotFoundError: The schedule's configuration version is not registered.
+        """
+        try:
+            with self._transaction() as cursor:
+                return self._admit_scheduled_start(
+                    cursor,
+                    schedule_id,
+                    scheduled_start_at,
+                    flow_run_id,
+                    worker_id,
+                    now,
+                    decision,
+                    receipt_age_limit=receipt_age_limit,
+                )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # The unique index on the start is what refuses a second run if the check under
+            # the lock did not; DB-API drivers share no integrity-error base class.
+            if not _is_unique_violation(exc):
+                raise
+            with self._reading() as cursor:
+                existing = self._run_of_start(cursor, schedule_id, scheduled_start_at)
+            if existing is None:
+                raise
+            raise DuplicateRunError(_start_has_run_message(schedule_id, scheduled_start_at, existing)) from exc
+
+    def _admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        schedule_id: str,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
+    ) -> ScheduledStartResult:
+        schedule = self._locked_schedule(cursor, schedule_id)
+        if schedule.state != "active":
+            return ScheduledStartResult(started=False, cause="schedule-not-active", schedule=schedule)
+        existing = self._run_of_start(cursor, schedule_id, scheduled_start_at)
+        if existing is not None:
+            raise DuplicateRunError(_start_has_run_message(schedule_id, scheduled_start_at, existing))
+        # The start that waits under the `queue` policy was recorded when it was queued; its
+        # later admissions are the same start (research R7).
+        waiting = schedule.waiting_start_at is not None and scheduled_start_at == schedule.waiting_start_at
+        if not waiting and schedule.last_start_at is not None and scheduled_start_at <= schedule.last_start_at:
+            msg = (
+                f"the start {_utc_iso(scheduled_start_at)} of schedule {schedule_id!r} is not later than "
+                "its last recorded start"
+            )
+            raise ScheduledStartAlreadyRecordedError(msg)
+        _refuse_stale_decision(schedule, decision)
+        if isinstance(decision, ScheduledStartRun) and receipt_age_limit is not None:
+            self._refuse_run_started_since(cursor, schedule.config_id, now - receipt_age_limit)
+        for kept_run_id in decision.kept_run_ids:
+            cursor.execute(
+                self._sql(
+                    "UPDATE schedule_branches SET state = 'kept' WHERE run_id = ? AND schedule_id = ? "
+                    "AND state IN ('pending', 'open')"
+                ),
+                (kept_run_id, schedule_id),
+            )
+            if cursor.rowcount != 1:
+                msg = f"run {kept_run_id!r} has no pending or open branch of schedule {schedule_id!r}"
+                raise ScheduleChangedError(msg)
+        run_id: str | None = None
+        cause = None
+        if isinstance(decision, ScheduledStartRun):
+            run_id = decision.run.run_id
+            self._insert_scheduled_run(cursor, schedule, scheduled_start_at, flow_run_id, worker_id, now, decision)
+        else:
+            cause = decision.cause
+        for event in decision.events:
+            self._insert_event(cursor, event)
+        # A queued start waits; the waiting start's own admission ends the wait unless it is
+        # queued again. `last_start_at` never moves back to the waiting start.
+        if cause == "queued":
+            waiting_start_at: datetime | None = scheduled_start_at
+        elif waiting:
+            waiting_start_at = None
+        else:
+            waiting_start_at = schedule.waiting_start_at
+        last_start_at = (
+            scheduled_start_at if schedule.last_start_at is None else max(schedule.last_start_at, scheduled_start_at)
+        )
+        cursor.execute(
+            self._sql("UPDATE schedules SET last_start_at = ?, waiting_start_at = ? WHERE schedule_id = ?"),
+            (
+                _utc_iso(last_start_at),
+                None if waiting_start_at is None else _utc_iso(waiting_start_at),
+                schedule_id,
+            ),
+        )
+        self._stop_for_cause(cursor, schedule_id, cause, now)
+        stored = self._read_schedule(cursor, schedule_id)
+        assert stored is not None
+        earlier = self._read_schedule_branches(cursor, schedule_id, _EARLIER_BRANCH_STATES)
+        return ScheduledStartResult(
+            started=run_id is not None,
+            cause=cause,
+            run_id=run_id,
+            schedule=stored,
+            earlier_branches=tuple(branch for branch in earlier if branch.run_id != run_id),
+        )
+
+    def _refuse_run_started_since(self, cursor: _Cursor, config_id: str, oldest: datetime) -> None:
+        """Raise ``ScheduleChangedError`` when a run of the configuration is in progress.
+
+        The decision to run read the runs in progress outside the admission's transaction,
+        possibly seconds earlier while it read Infrahub: a run admitted since then makes the
+        caller decide again.
+        """
+        in_progress = self._run_in_progress(cursor, config_id, oldest)
+        if in_progress is not None:
+            msg = f"run {in_progress!r} of configuration {config_id!r} started after the decision to run"
+            raise ScheduleChangedError(msg)
+
+    def _stop_for_cause(self, cursor: _Cursor, schedule_id: str, cause: str | None, now: datetime) -> None:
+        """Stop the schedule when the cause of the decision is ``approval-required`` or ``owner-not-found``.
+
+        The worker found, when it admitted a start, that the schedule writes to the default
+        branch while the Sync API requires approval (research R6), or that the owner's account
+        is disabled or deleted. The stop is saved in the transaction of that admission, with the
+        events of the decision, and the cause is the reason. ``updated_at`` moves, so a request
+        of the Sync API made from the schedule as it was read is refused and reads it again.
+        Any other cause does nothing.
+        """
+        if cause not in {"approval-required", "owner-not-found"}:
+            return
+        cursor.execute(
+            self._sql(
+                "UPDATE schedules SET state = 'stopped', state_reason = ?, "
+                "prefect_synced = FALSE, waiting_start_at = NULL, updated_at = ? WHERE schedule_id = ?"
+            ),
+            (cause, _utc_iso(now), schedule_id),
+        )
+
+    def _insert_scheduled_run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        cursor: _Cursor,
+        schedule: ScheduleRecord,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartRun,
+    ) -> None:
+        """Write the run of a start with its receipt, its write admission and its claimed execution."""
+        run = decision.run
+        from_schedule = (schedule.schedule_id, schedule.owner, schedule.config_id, schedule.registry_version)
+        if (
+            (run.schedule_id, run.actor, run.config_id, run.registry_version) != from_schedule
+            or run.scheduled_start_at != scheduled_start_at
+            or decision.branch_review is not (schedule.write_target == "branch-review")
+        ):
+            msg = f"the run of the start does not match the stored schedule {schedule.schedule_id!r}"
+            raise ScheduleChangedError(msg)
+        cursor.execute(
+            self._sql(
+                "SELECT package_checksum FROM configuration_versions WHERE config_id = ? AND registry_version = ?"
+            ),
+            (schedule.config_id, schedule.registry_version),
+        )
+        version = cursor.fetchone()
+        if version is None:
+            msg = f"configuration version {schedule.config_id}@{schedule.registry_version} is not registered"
+            raise ConfigurationNotFoundError(msg)
+        if str(version[0]) != run.package_checksum:
+            msg = f"the run of the start does not hold the package of {schedule.config_id}@{schedule.registry_version}"
+            raise ScheduleChangedError(msg)
+        receipt = _scheduled_start_receipt(run, flow_run_id, now)
+        self._insert_product_run_row(cursor, run)
+        cursor.execute(self._sql(_INSERT_MUTATION_RECEIPT), _receipt_values(receipt))
+        cursor.execute(
+            self._sql("INSERT INTO write_admissions (run_id, receipt_id, operation) VALUES (?, ?, ?)"),
+            (run.run_id, receipt.receipt_id, receipt.operation),
+        )
+        link = PrefectExecutionLink(
+            flow_run_id=flow_run_id,
+            purpose="sync",
+            attempt=1,
+            submitted_at=now,
+            claimed_at=now,
+            claiming_worker_id=worker_id,
+        )
+        self._insert_prefect_execution(cursor, run.run_id, link, 0, mutation_receipt_id=receipt.receipt_id)
+        if decision.branch_review:
+            cursor.execute(
+                self._sql(_INSERT_SCHEDULE_BRANCH),
+                (run.run_id, schedule.schedule_id, run.destination_branch, None, "pending", None, _utc_iso(now)),
+            )
+
+    def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None:
+        """Return the newest run of a configuration that is in progress, or ``None`` (research R7).
+
+        A run is in progress when one of its executions has no terminal verdict, when it has
+        an automatic resume row that is not ``ended`` (spec 030, research R11), or when it
+        has an unresolved receipt of a stage operation that was created less than
+        ``receipt_age_limit`` before ``now``. A run in phase ``planned`` that waits for a
+        person, an abandoned execution, and an interrupted run with no automatic resume row
+        waiting or running all have a terminal verdict, so they are not in progress. The
+        receipt times are compared as times, not as text.
+        """
+        with self._reading() as cursor:
+            return self._run_in_progress(cursor, config_id, now - receipt_age_limit)
+
+    def _run_in_progress(self, cursor: _Cursor, config_id: str, oldest: datetime) -> str | None:
+        """`run_in_progress` with the caller's cursor; a receipt counts when created after ``oldest``."""
+        cursor.execute(self._sql(_SELECT_RUN_WITH_OPEN_EXECUTION), (config_id,))
+        row = cursor.fetchone()
+        if row is not None:
+            return str(row[0])
+        cursor.execute(self._sql(_SELECT_UNRESOLVED_STAGE_RECEIPTS), (config_id, *_ARBITRATED_OPERATIONS))
+        for run_id, created_at in cursor.fetchall():
+            if datetime.fromisoformat(str(created_at)) > oldest:
+                return str(run_id)
+        return None
+
+    def write_holder_state(self, run_id: str, config_id: str) -> HolderState | None:
+        """Return whether one run of a configuration still has an open write, in one read.
+
+        ``None`` when the run does not exist or belongs to another configuration. Otherwise
+        ``HolderState.writing`` is true when the run has an execution whose purpose is in
+        ``WRITE_PURPOSES``, that a worker claimed and that has no terminal verdict, and
+        ``HolderState.write_ended_at`` is the latest terminal time of those claimed write
+        executions, in UTC.
+        """
+        with self._reading() as cursor:
+            cursor.execute(self._sql(_SELECT_RUN_WRITE_STATE), (*WRITE_PURPOSES, run_id, config_id))
+            rows = cursor.fetchall()
+        if not rows:
+            return None
+        writing = False
+        ended: list[datetime] = []
+        for flow_run_id, terminal_at in rows:
+            if flow_run_id is None:
+                continue
+            if terminal_at is None:
+                writing = True
+            else:
+                ended.append(datetime.fromisoformat(str(terminal_at)).astimezone(timezone.utc))
+        return HolderState(writing=writing, write_ended_at=max(ended, default=None))
+
+    def create_account(
+        self,
+        *,
+        name: str,
+        password_hash: str | None,
+        administrator: bool = False,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+        event_for: Callable[[str], AuditEvent] | None = None,
+    ) -> Account:
+        """Create an active account with a new identifier and a new short identifier.
+
+        ``event_for`` builds the event of the creation from the new identifier; the event is
+        written in the transaction of the account, so a failure of either writes neither.
+
+        Raises:
+            AccountNameTakenError: an account that is not deleted has this name, in any letter case.
+            AccountIdentifierAllocationError: every generated identifier was already in use.
+        """
+        created_at = _now(now)
+        for _attempt in range(_ACCOUNT_IDENTIFIER_ATTEMPTS):
+            try:
+                with self._transaction() as cursor:
+                    account = account_statements.create_account(
+                        cursor,
+                        self._sql,
+                        name=name,
+                        password_hash=password_hash,
+                        administrator=administrator,
+                        environment_managed=environment_managed,
+                        now=created_at,
+                    )
+                    if event_for is not None:
+                        self._insert_event(cursor, event_for(account.account_id))
+                    return account
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # DB-API drivers do not share an integrity-error base class;
+                # inspect only documented SQLite/PostgreSQL uniqueness markers.
+                if not _is_unique_violation(exc):
+                    raise
+            # The refused transaction is over. A new read tells a taken name from an identifier
+            # that is in use; only the second is worth another attempt.
+            if self.lookup_account_by_name(name) is not None:
+                msg = f"The account name {name!r} is already taken"
+                raise AccountNameTakenError(msg)
+        msg = "Could not choose an unused account identifier"
+        raise AccountIdentifierAllocationError(msg)
+
+    def lookup_account(self, account_id: str) -> Account | None:
+        """Return the account with this identifier, deleted or not."""
+        with self._reading() as cursor:
+            return account_statements.read_account(cursor, self._sql, account_id)
+
+    def lookup_account_by_name(self, name: str) -> Account | None:
+        """Return the account that has this name, in any letter case."""
+        with self._reading() as cursor:
+            return account_statements.read_account_by_name(cursor, self._sql, name)
+
+    def lookup_accounts(self, account_ids: Sequence[str]) -> dict[str, Account]:
+        """Return the accounts among these identifiers, deleted or not, by identifier."""
+        if not account_ids:
+            return {}
+        with self._reading() as cursor:
+            return account_statements.read_accounts(cursor, self._sql, account_ids)
+
+    def list_accounts(self, *, disabled: bool | None = None) -> tuple[Account, ...]:
+        """Return the accounts that are not deleted, by name; only one state when ``disabled`` is given."""
+        with self._reading() as cursor:
+            return account_statements.list_accounts(cursor, self._sql, disabled=disabled)
+
+    def set_account_level(
+        self, account_id: str, *, administrator: bool, now: datetime | None = None, event: AuditEvent | None = None
+    ) -> bool:
+        """Set whether the account is an administrator, and write ``event`` in the same transaction.
+
+        Return whether an account changed; the event is written only then.
+        """
+        with self._transaction() as cursor:
+            changed = account_statements.set_account_level(
+                cursor, self._sql, account_id, administrator=administrator, now=_now(now)
+            )
+            if changed and event is not None:
+                self._insert_event(cursor, event)
+            return changed
+
+    def set_account_password_hash(self, account_id: str, *, password_hash: str, now: datetime | None = None) -> bool:
+        """Replace the password hash of the account. Return whether an account changed."""
+        with self._transaction() as cursor:
+            return account_statements.set_account_password_hash(
+                cursor, self._sql, account_id, password_hash=password_hash, now=_now(now)
+            )
+
+    def replace_account_password(
+        self,
+        account_id: str,
+        *,
+        password_hash: str,
+        event: AuditEvent,
+        keep_session_id: str | None = None,
+        clear_sign_in_name: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Store a new password hash, end the sessions and write the event, in one transaction.
+
+        Every session of the account ends, except ``keep_session_id`` when it is given. The failed
+        sign-ins counted for ``clear_sign_in_name`` are deleted. Return whether an account
+        changed; nothing is written when no account that is not deleted has the identifier.
+        """
+        with self._transaction() as cursor:
+            if not account_statements.set_account_password_hash(
+                cursor, self._sql, account_id, password_hash=password_hash, now=_now(now)
+            ):
+                return False
+            if keep_session_id is None:
+                account_statements.delete_sessions(cursor, self._sql, account_id)
+            else:
+                account_statements.delete_other_sessions(cursor, self._sql, account_id, keep_session_id)
+            if clear_sign_in_name is not None:
+                account_statements.clear_sign_in_attempts(cursor, self._sql, clear_sign_in_name)
+            self._insert_event(cursor, event)
+            return True
+
+    def disable_account(self, account_id: str, *, now: datetime | None = None, event: AuditEvent | None = None) -> bool:
+        """Disable the account, delete its tokens and its sessions, and write ``event``, in one transaction.
+
+        Return whether an account changed; the event is written only then.
+        """
+        with self._transaction() as cursor:
+            changed = account_statements.disable_account(cursor, self._sql, account_id, now=_now(now))
+            if changed and event is not None:
+                self._insert_event(cursor, event)
+            return changed
+
+    def enable_account(self, account_id: str, *, now: datetime | None = None, event: AuditEvent | None = None) -> bool:
+        """Enable the account and write ``event``, in one transaction. Return whether an account changed."""
+        with self._transaction() as cursor:
+            changed = account_statements.enable_account(cursor, self._sql, account_id, now=_now(now))
+            if changed and event is not None:
+                self._insert_event(cursor, event)
+            return changed
+
+    def delete_account(self, account_id: str, *, event: AuditEvent, now: datetime | None = None) -> Account | None:
+        """Delete the account and write the event of the deletion, in one transaction.
+
+        Return the account as it was before the deletion, or nothing when no account that is not
+        deleted has the identifier; the event is then not written. A failure of the event rolls
+        the deletion back.
+        """
+        with self._transaction() as cursor:
+            deleted = account_statements.delete_account(cursor, self._sql, account_id, now=_now(now))
+            if deleted is not None:
+                self._insert_event(cursor, event)
+            return deleted
+
+    def create_account_token(
+        self,
+        account_id: str,
+        *,
+        name: str,
+        digest: str,
+        expires_at: datetime | None = None,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+        event: AuditEvent | None = None,
+    ) -> AccountToken:
+        """Create an API token row from the digest of its value, and write ``event``, in one transaction.
+
+        The row of the account is locked first, so a disable or a deletion of the account that
+        runs at the same time either is seen here or deletes the new token.
+
+        Raises:
+            AccountNotActiveError: the account is missing, disabled or deleted; nothing is written.
+            AccountTokenNameTakenError: the account already has a token with this name.
+            DuplicateCredentialError: the store already holds this digest.
+        """
+        try:
+            with self._transaction() as cursor:
+                account_statements.lock_active_account(cursor, self._sql, account_id)
+                token = account_statements.create_token(
+                    cursor,
+                    self._sql,
+                    account_id,
+                    name=name,
+                    digest=digest,
+                    expires_at=expires_at,
+                    environment_managed=environment_managed,
+                    now=_now(now),
+                )
+                if event is not None:
+                    self._insert_event(cursor, event)
+                return token
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # DB-API drivers do not share an integrity-error base class;
+            # inspect only documented SQLite/PostgreSQL uniqueness markers.
+            if not _is_unique_violation(exc):
+                raise
+        # Raised outside the handler, so the driver's error, which can quote the digest, is
+        # neither the cause nor the context of the exception that leaves the store.
+        with self._reading() as cursor:
+            name_taken = account_statements.token_name_exists(cursor, self._sql, account_id, name)
+        if name_taken:
+            msg = f"The account already has an API token named {name!r}"
+            raise AccountTokenNameTakenError(msg)
+        raise DuplicateCredentialError(_DUPLICATE_CREDENTIAL_MESSAGE)
+
+    def list_account_tokens(self, account_id: str) -> tuple[AccountToken, ...]:
+        """Return the API tokens of the account, oldest first."""
+        with self._reading() as cursor:
+            return account_statements.list_tokens(cursor, self._sql, account_id)
+
+    def delete_account_token(self, account_id: str, token_id: str, *, event: AuditEvent | None = None) -> bool:
+        """Delete one API token of the account and write ``event``, in one transaction.
+
+        Return whether a token was deleted; the event is written only then.
+        """
+        with self._transaction() as cursor:
+            deleted = account_statements.delete_token(cursor, self._sql, account_id, token_id)
+            if deleted and event is not None:
+                self._insert_event(cursor, event)
+            return deleted
+
+    def delete_account_tokens(self, account_id: str) -> int:
+        """Delete every API token of the account. Return the number deleted."""
+        with self._transaction() as cursor:
+            return account_statements.delete_tokens(cursor, self._sql, account_id)
+
+    def create_account_session(
+        self,
+        account_id: str,
+        *,
+        digest: str,
+        now: datetime | None = None,
+        signed_in: Account | None = None,
+        event: AuditEvent | None = None,
+    ) -> AccountSession:
+        """Create a session row from the digest of its session token, and write ``event``, in one transaction.
+
+        The row of the account is locked first, so a disable, a deletion or a password change of
+        the account that runs at the same time either is seen here or deletes the new session.
+        ``signed_in`` is the account as the sign-in read it before it checked the password: the
+        session is created only when the password hash and its time of change are still the same.
+        The failed sign-ins counted for its name are deleted in the same transaction.
+
+        Raises:
+            AccountNotActiveError: the account is missing, disabled or deleted, or its password
+                changed after ``signed_in`` was read; nothing is written.
+            DuplicateCredentialError: the store already holds this digest.
+        """
+        try:
+            with self._transaction() as cursor:
+                account = account_statements.lock_active_account(cursor, self._sql, account_id, signed_in=signed_in)
+                if signed_in is not None and account.name is not None:
+                    account_statements.clear_sign_in_attempts(cursor, self._sql, account.name)
+                session = account_statements.create_session(cursor, self._sql, account_id, digest=digest, now=_now(now))
+                if event is not None:
+                    self._insert_event(cursor, event)
+                return session
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # DB-API drivers do not share an integrity-error base class;
+            # inspect only documented SQLite/PostgreSQL uniqueness markers.
+            if not _is_unique_violation(exc):
+                raise
+        # Raised outside the handler: see ``create_account_token``.
+        raise DuplicateCredentialError(_DUPLICATE_CREDENTIAL_MESSAGE)
+
+    def list_account_sessions(self, account_id: str) -> tuple[AccountSession, ...]:
+        """Return the sessions of the account, oldest first."""
+        with self._reading() as cursor:
+            return account_statements.list_sessions(cursor, self._sql, account_id)
+
+    def delete_account_session(self, session_id: str, *, event: AuditEvent | None = None) -> bool:
+        """Delete one session and write ``event``, in one transaction.
+
+        Return whether a session was deleted; the event is written only then.
+        """
+        with self._transaction() as cursor:
+            deleted = account_statements.delete_session(cursor, self._sql, session_id)
+            if deleted and event is not None:
+                self._insert_event(cursor, event)
+            return deleted
+
+    def delete_account_sessions(self, account_id: str) -> int:
+        """Delete every session of the account. Return the number deleted."""
+        with self._transaction() as cursor:
+            return account_statements.delete_sessions(cursor, self._sql, account_id)
+
+    def resolve_digest(self, digest: str, *, now: datetime | None = None) -> ResolvedCredential | None:
+        """Read the token or the session of a digest with its account, and record the use.
+
+        One connection and one transaction. See ``accounts.resolve_digest``.
+        """
+        with self._transaction() as cursor:
+            return account_statements.resolve_digest(cursor, self._sql, digest, now=_now(now))
+
+    def apply_environment_account(
+        self,
+        *,
+        name: str,
+        password_hash_for: Callable[[str | None], str | None],
+        token_name: str,
+        token_digest: str | None,
+        now: datetime | None = None,
+        administrator: bool = True,
+        claim_existing: bool = True,
+    ) -> Account:
+        """Make the account that the environment defines match the environment, in one transaction.
+
+        Two callers that start together are serialized: PostgreSQL takes the lock of schema
+        initialization for the transaction, and SQLite takes its write lock before the first read.
+        See ``accounts.apply_environment_account``.
+
+        Raises:
+            DuplicateCredentialError: another token of the store already holds this digest.
+            EnvironmentAccountConflictError: ``claim_existing`` is false and an account with the
+                name exists that the environment does not manage. Nothing was written.
+        """
+        try:
+            with self._transaction() as cursor:
+                if self._dialect == "postgresql":
+                    cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
+                else:
+                    cursor.execute(_SQLITE_BEGIN_IMMEDIATE)
+                return account_statements.apply_environment_account(
+                    cursor,
+                    self._sql,
+                    name=name,
+                    password_hash_for=password_hash_for,
+                    token_name=token_name,
+                    token_digest=token_digest,
+                    now=_now(now),
+                    administrator=administrator,
+                    claim_existing=claim_existing,
+                )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # DB-API drivers do not share an integrity-error base class;
+            # inspect only documented SQLite/PostgreSQL uniqueness markers.
+            if not _is_unique_violation(exc):
+                raise
+        # Raised outside the handler: see ``create_account_token``. The lock leaves one cause: a
+        # token of another account already has the digest.
+        raise DuplicateCredentialError(_DUPLICATE_CREDENTIAL_MESSAGE)
+
+    def read_sign_in_attempt(self, name: str) -> SignInAttempt | None:
+        """Return the failed sign-ins counted for this name, in any letter case, or nothing."""
+        with self._reading() as cursor:
+            return account_statements.read_sign_in_attempt(cursor, self._sql, name)
+
+    def record_sign_in_failure(
+        self, name: str, *, now: datetime | None = None, bound: int = SIGN_IN_ATTEMPTS_BOUND
+    ) -> SignInAttempt:
+        """Count one failed sign-in for this name, in one transaction.
+
+        Two callers that fail at the same moment are serialized, so no count is lost and no
+        caller receives the error of a duplicate row: PostgreSQL takes a lock for the
+        transaction, and SQLite takes its write lock before the first read. See
+        ``accounts.record_sign_in_failure``.
+        """
+        with self._transaction() as cursor:
+            if self._dialect == "postgresql":
+                cursor.execute(_POSTGRESQL_SIGN_IN_ATTEMPTS_LOCK)
+            else:
+                cursor.execute(_SQLITE_BEGIN_IMMEDIATE)
+            return account_statements.record_sign_in_failure(cursor, self._sql, name, now=_now(now), bound=bound)
+
+    def clear_sign_in_attempts(self, name: str, *, event: AuditEvent | None = None) -> bool:
+        """Delete the failed sign-ins counted for this name and write ``event``, in one transaction.
+
+        Return whether a row was deleted. The event is written either way.
+        """
+        with self._transaction() as cursor:
+            cleared = account_statements.clear_sign_in_attempts(cursor, self._sql, name)
+            if event is not None:
+                self._insert_event(cursor, event)
+            return cleared
+
+    def create_stored_credential(
+        self,
+        *,
+        name: str,
+        description: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential:
+        """Create a credential and its revision 1, and the event ``event_for`` builds, in one transaction.
+
+        ``encrypt`` is called with the new identifier and revision 1 inside the transaction.
+
+        Raises:
+            StoredCredentialInvalidError: the name, the description or the set of fields breaks a rule.
+            CredentialNameTakenError: a credential already has this name.
+            CredentialIdentifierAllocationError: every generated identifier was already in use.
+        """
+        created_at = _now(now)
+        for _attempt in range(_CREDENTIAL_IDENTIFIER_ATTEMPTS):
+            try:
+                with self._transaction() as cursor:
+                    credential = credential_statements.create_credential(
+                        cursor,
+                        self._sql,
+                        name=name,
+                        description=description,
+                        fields=fields,
+                        encrypt=encrypt,
+                        actor=actor,
+                        now=created_at,
+                    )
+                    if event_for is not None:
+                        self._insert_event(cursor, event_for(credential))
+                    return credential
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # DB-API drivers do not share an integrity-error base class;
+                # inspect only documented SQLite/PostgreSQL uniqueness markers.
+                if not _is_unique_violation(exc):
+                    raise
+            # The refused transaction is over. A new read tells a taken name from an identifier
+            # that is in use; only the second is worth another attempt. The driver's error is
+            # not chained: it can quote the refused row.
+            if self.lookup_stored_credential(name) is not None:
+                msg = f"The credential name {name!r} is already taken"
+                raise credential_statements.CredentialNameTakenError(msg)
+        msg = "Could not choose an unused credential identifier"
+        raise credential_statements.CredentialIdentifierAllocationError(msg)
+
+    def lookup_stored_credential(self, name: str) -> StoredCredential | None:
+        """Return the credential with this name, or ``None``."""
+        with self._reading() as cursor:
+            return credential_statements.read_credential_by_name(cursor, self._sql, name)
+
+    def list_stored_credentials(self, *, offset: int = 0, limit: int = DEFAULT_LIMIT) -> StoredCredentialPage:
+        """Return one page of credentials sorted by name, in byte order."""
+        with self._reading() as cursor:
+            return credential_statements.list_credentials(
+                cursor, self._sql, dialect=self._dialect, offset=offset, limit=limit
+            )
+
+    def change_stored_credential_value(
+        self,
+        *,
+        name: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential:
+        """Write the next revision of a credential with the whole new set of fields, in one transaction.
+
+        ``encrypt`` is called with the identifier and the next revision once the row is locked.
+
+        Raises:
+            StoredCredentialInvalidError: the set of fields breaks a rule.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        with self._transaction() as cursor:
+            credential = credential_statements.change_value(
+                cursor, self._sql, name=name, fields=fields, encrypt=encrypt, actor=actor, now=_now(now)
+            )
+            if event_for is not None:
+                self._insert_event(cursor, event_for(credential))
+            return credential
+
+    def set_stored_credential_description(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+    ) -> StoredCredential:
+        """Replace the description of a credential; its revision stays.
+
+        Raises:
+            StoredCredentialInvalidError: the description is too long.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        with self._transaction() as cursor:
+            credential = credential_statements.set_description(
+                cursor, self._sql, name=name, description=description, actor=actor, now=_now(now)
+            )
+            if event_for is not None:
+                self._insert_event(cursor, event_for(credential))
+            return credential
+
+    def delete_stored_credential(
+        self, *, name: str, event_for: Callable[[StoredCredential], AuditEvent] | None = None
+    ) -> StoredCredential:
+        """Delete a credential that nothing current names, with its revisions and the event, in one transaction.
+
+        The transaction locks the credential row first, as a registration that names the
+        credential does, and as a schedule does that is created or changed to pin a version that
+        names it, so the two cannot both pass their check (research R8, critique E4).
+
+        Returns:
+            The credential as it was before the deletion.
+
+        Raises:
+            StoredCredentialNotFoundError: no credential has this name.
+            CredentialInUseError: the latest version of a configuration, or a schedule that is
+                not deleted, names the credential. Nothing was removed and no event was written.
+        """
+        with self._transaction() as cursor:
+            credential = credential_statements.delete_credential(cursor, self._sql, name)
+            if event_for is not None:
+                self._insert_event(cursor, event_for(credential))
+            return credential
+
+    def lookup_stored_credential_revision(self, credential_id: str, revision: int) -> StoredCredentialRevision | None:
+        """Return one revision of a credential, with its key identifier, nonce and ciphertext."""
+        with self._reading() as cursor:
+            return credential_statements.read_revision(cursor, self._sql, credential_id, revision)
+
+    def record_version_credentials(
+        self, config_id: str, registry_version: int, credentials: Mapping[CredentialBlock, str]
+    ) -> None:
+        """Record the credential name each block of a version names, in a transaction of its own.
+
+        Registration calls ``stored_credentials.write_version_credentials`` with its own cursor
+        instead, so the rows are written with the version.
+        """
+        with self._transaction() as cursor:
+            credential_statements.write_version_credentials(
+                cursor, self._sql, config_id=config_id, registry_version=registry_version, credentials=credentials
+            )
+
+    def version_credentials(self, config_id: str, registry_version: int) -> dict[CredentialBlock, str]:
+        """Return the credential name each block of a version names."""
+        with self._reading() as cursor:
+            return credential_statements.read_version_credentials(
+                cursor, self._sql, config_id=config_id, registry_version=registry_version
+            )
+
+    def record_credential_uses(self, uses: Sequence[CredentialUse], *, event: AuditEvent | None = None) -> None:
+        """Record the revisions a stage execution received, and ``event``, in one transaction."""
+        with self._transaction() as cursor:
+            credential_statements.record_credential_uses(cursor, self._sql, uses)
+            if event is not None:
+                self._insert_event(cursor, event)
+
+    def credential_uses(self, run_id: str) -> tuple[CredentialUse, ...]:
+        """Return the credentials every stage execution of a run received."""
+        with self._reading() as cursor:
+            return credential_statements.read_credential_uses(cursor, self._sql, run_id)
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         with self._transaction() as cursor:
@@ -3397,6 +5820,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """
         return self._records.record_apply_progress(run_id, flow_run_id, document)
 
+    def record_plan_step(self, run_id: str, flow_run_id: str, document: Mapping[str, Any]) -> bool:
+        """Store the plan step document on a non-terminal execution; return whether it changed.
+
+        The document names the parts of the plan step with their start and end times, and the
+        part that runs; never an error message or a data value (spec 019 data-model.md).
+        """
+        return self._records.record_plan_step(run_id, flow_run_id, document)
+
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
         effective_stalled_at = stalled_at if stalled_at is not None else datetime.now(timezone.utc)
@@ -3409,7 +5840,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         _require_execution_timestamp(effective_terminal_at)
         return self._records.abandon_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
 
-    def interrupt_execution(
+    def interrupt_execution(  # pylint: disable=too-many-arguments
         self,
         run_id: str,
         flow_run_id: str,
@@ -3417,12 +5848,56 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         terminal_at: datetime | None = None,
         event: AuditEvent | None = None,
         secrets: Sequence[str] = (),
+        automatic_resume: AutomaticResume | None = None,
+        automatic_resume_event: AuditEvent | None = None,
     ) -> bool:
-        """CAS a claimed execution into the terminal interrupted/ambiguous verdict, with its event."""
+        """CAS a claimed execution into the terminal interrupted/ambiguous verdict, with its event.
+
+        ``automatic_resume`` and its ``automatic_resume_event`` are inserted in the same
+        transaction, only when the verdict is saved (spec 030, FR-013, FR-017).
+        """
         effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_terminal_at)
         return self._records.interrupt_execution(
-            run_id, flow_run_id, terminal_at=effective_terminal_at, event=_redacted_event(event, secrets)
+            run_id,
+            flow_run_id,
+            terminal_at=effective_terminal_at,
+            event=_redacted_event(event, secrets),
+            automatic_resume=automatic_resume,
+            automatic_resume_event=_redacted_event(automatic_resume_event, secrets),
+        )
+
+    def automatic_resumes_of(self, run_id: str) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows of one run, oldest first."""
+        return self._records.automatic_resumes_of(run_id)
+
+    def automatic_resume_counts(self, run_ids: Sequence[str]) -> dict[str, int]:
+        """Return, for each run of ``run_ids`` that has any, the number of automatic resumes it received."""
+        return self._records.automatic_resume_counts(run_ids)
+
+    def open_automatic_resumes(self) -> tuple[AutomaticResume, ...]:
+        """Return the automatic resume rows that are not ``ended``, oldest first."""
+        return self._records.open_automatic_resumes()
+
+    def move_automatic_resume(
+        self,
+        run_id: str,
+        interrupted_flow_run_id: str,
+        *,
+        from_state: AutomaticResumeState,
+        to_state: AutomaticResumeState,
+        event: AuditEvent | None = None,
+        **fields: object,
+    ) -> bool:
+        """Compare-and-set one automatic resume row from ``from_state`` to ``to_state`` with ``fields``.
+
+        ``updated_at`` defaults to the current time. Returns ``False`` when the row is not in
+        ``from_state``, because another process moved it first. ``event`` is written with the
+        move, and only when the row moved.
+        """
+        fields.setdefault("updated_at", datetime.now(timezone.utc))
+        return self._records.move_automatic_resume(
+            run_id, interrupted_flow_run_id, from_state=from_state, to_state=to_state, event=event, **fields
         )
 
     def commit_claimed_execution(
@@ -3436,9 +5911,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
         secrets: Sequence[str] = (),
     ) -> bool:
-        """Atomically commit one claimed verdict and its business writeback.
+        """Atomically commit one claimed verdict, its business writeback, ``event`` and then ``events``.
 
         A live worker that may already have reached the destination commits
         `interrupted` / `ambiguous`; the same transaction records that the run requires
@@ -3489,6 +5965,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             terminal_outcome=terminal_outcome,
             writeback=sanitized,
             event=_redacted_event(event, secrets),
+            events=tuple(_redact_event(item, secrets) for item in events),
         )
 
     def request_execution_cancellation(
@@ -3698,9 +6175,13 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         response_body: Mapping[str, Any],
         flow_run_id: str | None,
         event: AuditEvent | None = None,
+        events: Sequence[AuditEvent] = (),
         secrets: Sequence[str] = (),
     ) -> MutationReceipt:
-        """Persist the exact accepted HTTP response, Prefect identity and the decision's event together."""
+        """Persist the exact accepted HTTP response, Prefect identity and the decision's events together.
+
+        ``event`` and then each event of ``events`` are saved in the transaction of the answer.
+        """
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response_body), secrets))
         return self._records.complete_mutation(
             redact(receipt_id, secrets),
@@ -3709,6 +6190,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             flow_run_id=None if flow_run_id is None else redact(flow_run_id, secrets),
             updated_at=datetime.now(timezone.utc),
             event=_redacted_event(event, secrets),
+            events=tuple(_redact_event(item, secrets) for item in events),
         )
 
     def claim_mutation(self, receipt_id: str, *, secrets: Sequence[str] = ()) -> bool:
@@ -3727,13 +6209,15 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return all audit evidence, optionally narrowed to one Sync run."""
         return self._records.audit_events(run_id)
 
-    def list_events(self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> EventPage:
-        """Return one page of typed events matching ``filters``, oldest first.
+    def list_events(
+        self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0, order: EventOrder = "asc"
+    ) -> EventPage:
+        """Return one page of typed events matching ``filters``, oldest first, or newest first for ``desc``.
 
         Raises:
             ValueError: ``limit`` is less than 1 or ``offset`` is negative.
         """
-        return self._records.list_events(filters, limit=limit, offset=offset)
+        return self._records.list_events(filters, limit=limit, offset=offset, order=order)
 
     def create_configuration(
         self,
@@ -3741,16 +6225,25 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
         secrets: Sequence[str] = (),
     ) -> ConfigurationVersion:
         """Validate, then durably register a brand-new configuration's first version.
 
         ``registered_by`` and ``registration_reason`` are recorded on the version with every
-        value in ``secrets`` redacted.
+        value in ``secrets`` redacted, and ``registered_without_validation`` marks it.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has the name of the package.
         """
         validate_package_credentials(package)
         actor, reason = _redacted_registration(registered_by, registration_reason, secrets)
-        return self._records.create_configuration(package, registered_by=actor, registration_reason=reason)
+        return self._records.create_configuration(
+            package,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
+        )
 
     def add_configuration_version(
         self,
@@ -3759,12 +6252,18 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         *,
         registered_by: str | None = None,
         registration_reason: str | None = None,
+        registered_without_validation: bool = False,
         secrets: Sequence[str] = (),
     ) -> tuple[ConfigurationVersion, bool]:
         """Validate, then atomically add a version to an existing configuration.
 
         ``registered_by`` and ``registration_reason`` are recorded on a created version with
-        every value in ``secrets`` redacted.
+        every value in ``secrets`` redacted, and ``registered_without_validation`` marks it;
+        an identical existing version keeps its own values.
+
+        Raises:
+            ConfigurationNameInUseError: Another configuration has the name of the package. A
+                package whose checksum the configuration already has returns that version.
         """
         validate_package_credentials(package)
         if not self._records.configuration_exists(config_id):
@@ -3772,7 +6271,11 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             raise ConfigurationNotFoundError(msg)
         actor, reason = _redacted_registration(registered_by, registration_reason, secrets)
         return self._records.add_configuration_version(
-            config_id, package, registered_by=actor, registration_reason=reason
+            config_id,
+            package,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
         )
 
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]:
@@ -3812,6 +6315,621 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     ) -> RunPage:
         """Return one page of runs, newest first, without artifact references or execution links."""
         return self._records.list_runs(filters, after=after, limit=limit)
+
+    def create_schedule(
+        self, schedule: ScheduleRecord, *, events: Sequence[AuditEvent] = (), secrets: Sequence[str] = ()
+    ) -> None:
+        """Store a new active schedule and its secret-safe events in one transaction.
+
+        Raises:
+            ScheduleNameInUseError: A schedule that is not deleted has the name.
+            ScheduleExistsForConfigurationError: The configuration has a schedule that is not
+                deleted; the error holds its identifier and its name.
+            VersionCredentialsMissingError: A stored credential the version names does not exist.
+        """
+        self._records.create_schedule(
+            _redacted_schedule(schedule, secrets), events=tuple(_redact_event(event, secrets) for event in events)
+        )
+
+    def lookup_schedule(self, schedule_id: str) -> LookupResult[ScheduleRecord]:
+        """Look up one schedule by its identifier; a deleted schedule is returned too."""
+        return self._records.lookup_schedule(schedule_id)
+
+    def list_schedules(
+        self, filters: ScheduleFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> SchedulePage:
+        """Return one page of schedules, newest first; without a state filter, deleted ones are left out."""
+        return self._records.list_schedules(filters, after=after, limit=limit)
+
+    def update_schedule(
+        self,
+        schedule: ScheduleRecord,
+        *,
+        expected_updated_at: datetime | None = None,
+        events: Sequence[AuditEvent] = (),
+        secrets: Sequence[str] = (),
+    ) -> ScheduleRecord:
+        """Save a change of a schedule with its secret-safe events, and return the stored schedule.
+
+        The change follows the state transitions of the schedule and cannot set its name, its
+        configuration or its creation time. ``expected_updated_at`` refuses a change that was
+        made from a schedule that changed since it was read. The store keeps
+        ``last_start_at``, ``waiting_start_at`` and the count of failed runs as they are stored.
+
+        Raises:
+            ScheduleNotFoundError, ScheduleDeletedError, ScheduleChangedError,
+            ScheduleTransitionError, ValueError, VersionCredentialsMissingError: see
+                `_RelationalRunStore.update_schedule`.
+        """
+        return self._records.update_schedule(
+            _redacted_schedule(schedule, secrets),
+            expected_updated_at=expected_updated_at,
+            events=tuple(_redact_event(event, secrets) for event in events),
+        )
+
+    def record_schedule_prefect_sync(
+        self,
+        schedule_id: str,
+        *,
+        prefect_schedule_id: str | None,
+        synced: bool,
+        expected_updated_at: datetime | None = None,
+    ) -> bool:
+        """Record a schedule's Prefect schedule and whether it matches the record; nothing else changes.
+
+        With ``expected_updated_at``, nothing is written when the schedule changed after it was read.
+        """
+        return self._records.record_schedule_prefect_sync(
+            schedule_id,
+            prefect_schedule_id=prefect_schedule_id,
+            synced=synced,
+            expected_updated_at=expected_updated_at,
+        )
+
+    def schedule_branches(
+        self, schedule_id: str, *, states: Sequence[ScheduleBranchState] = ()
+    ) -> tuple[ScheduleBranch, ...]:
+        """Return the branch rows of a schedule, oldest first, optionally only those in ``states``."""
+        return self._records.schedule_branches(schedule_id, states=states)
+
+    def lookup_schedule_branch(self, run_id: str) -> LookupResult[ScheduleBranch]:
+        """Look up the branch row of one run with branch review."""
+        return self._records.lookup_schedule_branch(run_id)
+
+    def update_schedule_branch(
+        self, branch: ScheduleBranch, *, events: Sequence[AuditEvent] = (), secrets: Sequence[str] = ()
+    ) -> ScheduleBranch:
+        """Save the state, the proposed change and the replacing run of a branch row, with its events.
+
+        Raises:
+            ScheduleNotFoundError, ScheduleTransitionError, ValueError: see
+            `_RelationalRunStore.update_schedule_branch`.
+        """
+        # Validated again, so a copy made with an update cannot store a row the model refuses.
+        checked = ScheduleBranch.model_validate(branch.model_dump())
+        return self._records.update_schedule_branch(
+            checked, events=tuple(_redact_event(event, secrets) for event in events)
+        )
+
+    def record_branch_review_outcome(
+        self,
+        outcome: BranchReviewOutcome,
+        *,
+        events: Sequence[AuditEvent] = (),
+        earlier_events: Mapping[str, Sequence[AuditEvent]] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> BranchReviewOutcome:
+        """Save the part of a run's ``branch_review`` that follows its write, with its events.
+
+        ``earlier_events`` holds, by earlier run, the events that are written only when that
+        run's branch row was still ``pending`` or ``open``. Returns the outcome as saved.
+
+        Raises:
+            ScheduleNotFoundError: The run has no branch row.
+        """
+        checked = BranchReviewOutcome.model_validate(outcome.model_dump())
+        return self._records.record_branch_review_outcome(
+            checked,
+            events=tuple(_redact_event(event, secrets) for event in events),
+            earlier_events={
+                run_id: tuple(_redact_event(event, secrets) for event in items)
+                for run_id, items in (earlier_events or {}).items()
+            },
+        )
+
+    def admit_scheduled_start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        schedule_id: str,
+        scheduled_start_at: datetime,
+        flow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        decision: ScheduledStartDecision,
+        *,
+        receipt_age_limit: timedelta | None = None,
+        secrets: Sequence[str] = (),
+    ) -> ScheduledStartResult:
+        """Write the worker's decision on one start of a schedule in one transaction.
+
+        A start that runs gets its run, its accepted receipt, its write admission, its
+        execution claimed by ``worker_id`` and its events; a start that does not run gets only
+        its events. Either way ``last_start_at`` of the schedule becomes the start. A schedule
+        that is not active writes nothing and answers ``schedule-not-active``. Only a canonical
+        Prefect worker UUID is accepted, as for `claim_execution`.
+
+        Raises:
+            DuplicateRunError: The start already has a run.
+            ScheduleNotFoundError, ScheduledStartAlreadyRecordedError, ScheduleChangedError,
+            ConfigurationNotFoundError: see `_RelationalRunStore.admit_scheduled_start`.
+        """
+        if not _is_canonical_uuid(worker_id):
+            raise ValueError(_INVALID_SERVICE_WORKER_ID)
+        _require_execution_timestamp(now)
+        _require_execution_timestamp(scheduled_start_at)
+        updates: dict[str, Any] = {"events": tuple(_redact_event(event, secrets) for event in decision.events)}
+        if isinstance(decision, ScheduledStartRun):
+            updates["run"] = _redacted_run(decision.run, secrets)
+        return self._records.admit_scheduled_start(
+            schedule_id,
+            scheduled_start_at,
+            flow_run_id,
+            worker_id,
+            now,
+            decision.model_copy(update=updates),
+            receipt_age_limit=receipt_age_limit,
+        )
+
+    def run_in_progress(self, config_id: str, now: datetime, receipt_age_limit: timedelta) -> str | None:
+        """Return the newest run of a configuration that is in progress, or ``None``.
+
+        In progress means an execution with no terminal verdict, or an unresolved receipt of
+        a stage operation created less than ``receipt_age_limit`` before ``now``.
+        """
+        return self._records.run_in_progress(config_id, now, receipt_age_limit)
+
+    def write_holder_state(self, run_id: str, config_id: str) -> HolderState | None:
+        """Return whether one run of a configuration still has an open write, and when its write last ended.
+
+        ``None`` when the run does not exist or belongs to another configuration: see
+        `_RelationalRunStore.write_holder_state`.
+        """
+        return self._records.write_holder_state(run_id, config_id)
+
+    def create_account(
+        self,
+        *,
+        name: str,
+        password_hash: str | None,
+        administrator: bool = False,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+        event_for: Callable[[str], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> Account:
+        """Create an active account. ``password_hash`` is stored as given; the store reads no password.
+
+        ``event_for`` builds the secret-safe event of the creation from the new identifier, and
+        the event is written in the transaction of the account.
+
+        Raises:
+            AccountNameTakenError: an account that is not deleted has this name, in any letter case.
+        """
+        return self._records.create_account(
+            name=name,
+            password_hash=password_hash,
+            administrator=administrator,
+            environment_managed=environment_managed,
+            now=now,
+            event_for=None if event_for is None else lambda account_id: _redact_event(event_for(account_id), secrets),
+        )
+
+    def lookup_account(self, account_id: str) -> Account | None:
+        """Return the account with this identifier, deleted or not."""
+        return self._records.lookup_account(account_id)
+
+    def lookup_account_by_name(self, name: str) -> Account | None:
+        """Return the account that has this name, in any letter case. A deleted account has no name."""
+        return self._records.lookup_account_by_name(name)
+
+    def lookup_accounts(self, account_ids: Sequence[str]) -> dict[str, Account]:
+        """Return the accounts among these identifiers, deleted or not, by identifier, in one store call."""
+        return self._records.lookup_accounts(account_ids)
+
+    def list_accounts(self, *, disabled: bool | None = None) -> tuple[Account, ...]:
+        """Return the accounts that are not deleted, by name; only one state when ``disabled`` is given."""
+        return self._records.list_accounts(disabled=disabled)
+
+    def set_account_level(
+        self,
+        account_id: str,
+        *,
+        administrator: bool,
+        now: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Set whether the account is an administrator, and write the secret-safe event, in one transaction.
+
+        Return whether an account changed; the event is written only then.
+        """
+        return self._records.set_account_level(
+            account_id, administrator=administrator, now=now, event=_redacted_event(event, secrets)
+        )
+
+    def set_account_password_hash(self, account_id: str, *, password_hash: str, now: datetime | None = None) -> bool:
+        """Replace the password hash of the account. Return whether an account changed."""
+        return self._records.set_account_password_hash(account_id, password_hash=password_hash, now=now)
+
+    def replace_account_password(
+        self,
+        account_id: str,
+        *,
+        password_hash: str,
+        event: AuditEvent,
+        keep_session_id: str | None = None,
+        clear_sign_in_name: str | None = None,
+        now: datetime | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Store a new password hash, end the sessions and write the secret-safe event, in one transaction.
+
+        Every session of the account ends, except ``keep_session_id`` when it is given; the tokens
+        stay. The failed sign-ins counted for ``clear_sign_in_name`` are deleted. Return whether an
+        account changed; nothing is written when no account that is not deleted has the identifier.
+        """
+        return self._records.replace_account_password(
+            account_id,
+            password_hash=password_hash,
+            event=_redact_event(event, secrets),
+            keep_session_id=keep_session_id,
+            clear_sign_in_name=clear_sign_in_name,
+            now=now,
+        )
+
+    def disable_account(
+        self,
+        account_id: str,
+        *,
+        now: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Disable the account, delete its tokens and its sessions, and write the secret-safe event.
+
+        One transaction. Return whether an account changed; the event is written only then.
+        """
+        return self._records.disable_account(account_id, now=now, event=_redacted_event(event, secrets))
+
+    def enable_account(
+        self,
+        account_id: str,
+        *,
+        now: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Enable the account and write the secret-safe event, in one transaction. Return whether it changed."""
+        return self._records.enable_account(account_id, now=now, event=_redacted_event(event, secrets))
+
+    def delete_account(
+        self, account_id: str, *, event: AuditEvent, now: datetime | None = None, secrets: Sequence[str] = ()
+    ) -> Account | None:
+        """Delete the account and write the secret-safe event of the deletion, in one transaction.
+
+        The name, the key and the password hash are emptied, the tokens, the sessions and the
+        failed sign-ins of the name are deleted, and the identifier and the short identifier stay.
+        No run, approval, receipt, audit event or configuration version changes. Return the account
+        as it was before the deletion, or nothing when no account that is not deleted has the
+        identifier.
+        """
+        return self._records.delete_account(account_id, event=_redact_event(event, secrets), now=now)
+
+    def create_account_token(
+        self,
+        account_id: str,
+        *,
+        name: str,
+        digest: str,
+        expires_at: datetime | None = None,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> AccountToken:
+        """Create an API token row from the SHA-256 digest of its value, with its secret-safe event.
+
+        One transaction, which inserts the row only while the account is active and not deleted.
+
+        Raises:
+            AccountNotActiveError: the account is missing, disabled or deleted; nothing is written.
+            AccountTokenNameTakenError: the account already has a token with this name.
+            DuplicateCredentialError: the store already holds this digest.
+        """
+        return self._records.create_account_token(
+            account_id,
+            name=name,
+            digest=digest,
+            expires_at=expires_at,
+            environment_managed=environment_managed,
+            now=now,
+            event=_redacted_event(event, secrets),
+        )
+
+    def list_account_tokens(self, account_id: str) -> tuple[AccountToken, ...]:
+        """Return the API tokens of the account, oldest first."""
+        return self._records.list_account_tokens(account_id)
+
+    def delete_account_token(
+        self, account_id: str, token_id: str, *, event: AuditEvent | None = None, secrets: Sequence[str] = ()
+    ) -> bool:
+        """Delete one API token of the account and write the secret-safe event, in one transaction.
+
+        Return whether a token was deleted; the event is written only then.
+        """
+        return self._records.delete_account_token(account_id, token_id, event=_redacted_event(event, secrets))
+
+    def delete_account_tokens(self, account_id: str) -> int:
+        """Delete every API token of the account. Return the number deleted."""
+        return self._records.delete_account_tokens(account_id)
+
+    def create_account_session(
+        self,
+        account_id: str,
+        *,
+        digest: str,
+        now: datetime | None = None,
+        signed_in: Account | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> AccountSession:
+        """Create a session row from the SHA-256 digest of its session token, with its secret-safe event.
+
+        One transaction, which inserts the row only while the account is active and not deleted
+        and, when ``signed_in`` is given, while its password is the one the sign-in checked. The
+        failed sign-ins of the name of ``signed_in`` are deleted in the same transaction.
+
+        Raises:
+            AccountNotActiveError: the account is missing, disabled or deleted, or its password
+                changed after ``signed_in`` was read; nothing is written.
+            DuplicateCredentialError: the store already holds this digest.
+        """
+        return self._records.create_account_session(
+            account_id, digest=digest, now=now, signed_in=signed_in, event=_redacted_event(event, secrets)
+        )
+
+    def list_account_sessions(self, account_id: str) -> tuple[AccountSession, ...]:
+        """Return the sessions of the account, oldest first."""
+        return self._records.list_account_sessions(account_id)
+
+    def delete_account_session(
+        self, session_id: str, *, event: AuditEvent | None = None, secrets: Sequence[str] = ()
+    ) -> bool:
+        """Delete one session and write the secret-safe event, in one transaction.
+
+        Return whether a session was deleted; the event is written only then.
+        """
+        return self._records.delete_account_session(session_id, event=_redacted_event(event, secrets))
+
+    def delete_account_sessions(self, account_id: str) -> int:
+        """Delete every session of the account. Return the number deleted."""
+        return self._records.delete_account_sessions(account_id)
+
+    def resolve_digest(self, digest: str, *, now: datetime | None = None) -> ResolvedCredential | None:
+        """Return the API token or the session that holds this digest, with its account.
+
+        One store call. The use is recorded when the stored time is empty or more than a minute
+        old, and the result carries the time stored before this call. Nothing is refused here:
+        the caller checks the account's state, a token's expiry date and a session's idle period.
+        """
+        return self._records.resolve_digest(digest, now=now)
+
+    def apply_environment_account(
+        self,
+        *,
+        name: str,
+        password_hash_for: Callable[[str | None], str | None],
+        token_name: str,
+        token_digest: str | None,
+        now: datetime | None = None,
+        administrator: bool = True,
+        claim_existing: bool = True,
+    ) -> Account:
+        """Make the account that the environment defines match the environment, in one transaction.
+
+        The account is created when it is missing. ``password_hash_for`` receives the stored hash,
+        or nothing for a new account, and returns the hash to store, or nothing to keep the stored
+        one; a new hash for an existing account ends its sessions. The account keeps one token
+        that the environment manages, or none when ``token_digest`` is empty. The record of failed
+        sign-in attempts for the name is deleted. Two processes that start together do not
+        conflict. The store reads no password and returns no digest.
+
+        Raises:
+            DuplicateCredentialError: another token of the store already holds this digest.
+            EnvironmentAccountConflictError: ``claim_existing`` is false and an account with the
+                name exists that the environment does not manage. Nothing was written.
+        """
+        return self._records.apply_environment_account(
+            name=name,
+            password_hash_for=password_hash_for,
+            token_name=token_name,
+            token_digest=token_digest,
+            now=now,
+            administrator=administrator,
+            claim_existing=claim_existing,
+        )
+
+    def read_sign_in_attempt(self, name: str) -> SignInAttempt | None:
+        """Return the failed sign-ins counted for this name, in any letter case, or nothing.
+
+        The row can hold a refusal that has passed: the caller compares ``refused_until`` with
+        its clock.
+        """
+        return self._records.read_sign_in_attempt(name)
+
+    def record_sign_in_failure(
+        self, name: str, *, now: datetime | None = None, bound: int = SIGN_IN_ATTEMPTS_BOUND
+    ) -> SignInAttempt:
+        """Count one failed sign-in for this name, and return what the store then holds for it.
+
+        The count restarts when the window of 15 minutes or a refusal has passed. The fifth
+        failure of a window refuses the name for 15 minutes. A name that is refused keeps its row
+        as it is. The table never holds more than ``bound`` rows: the rows whose window has passed
+        are deleted first, then the rows with the oldest window, and a row whose refusal is in
+        force is never deleted. Two callers that fail at the same moment do not conflict.
+
+        Raises:
+            ValueError: the lower-case name is empty, longer than 64 characters or holds a NUL
+                character. Nothing is written.
+            SignInAttemptsFullError: the table is full and its rows hold refusals in force, so
+                the new name is not recorded. Nothing is written.
+        """
+        return self._records.record_sign_in_failure(name, now=now, bound=bound)
+
+    def clear_sign_in_attempts(
+        self, name: str, *, event: AuditEvent | None = None, secrets: Sequence[str] = ()
+    ) -> bool:
+        """Delete the failed sign-ins counted for this name and write the secret-safe event, in one transaction.
+
+        Return whether a row was deleted. The event is written either way.
+        """
+        return self._records.clear_sign_in_attempts(name, event=_redacted_event(event, secrets))
+
+    def create_stored_credential(
+        self,
+        *,
+        name: str,
+        description: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Create a credential and its revision 1 from the value ``encrypt`` encrypts.
+
+        The store receives the key identifier, the nonce and the ciphertext, never the value.
+        ``encrypt`` is called with the new identifier and revision 1 inside the transaction, and
+        the secret-safe event that ``event_for`` builds is written in the same transaction.
+
+        Raises:
+            StoredCredentialInvalidError: the name, the description or the set of fields breaks a rule.
+            CredentialNameTakenError: a credential already has this name.
+        """
+        return self._records.create_stored_credential(
+            name=name,
+            description=description,
+            fields=fields,
+            encrypt=encrypt,
+            actor=actor,
+            now=now,
+            event_for=_redacted_event_for(event_for, secrets),
+        )
+
+    def lookup_stored_credential(self, name: str) -> StoredCredential | None:
+        """Return the credential with this name, or ``None``."""
+        return self._records.lookup_stored_credential(name)
+
+    def list_stored_credentials(self, *, offset: int = 0, limit: int = DEFAULT_LIMIT) -> StoredCredentialPage:
+        """Return one page of credentials sorted by name, in byte order."""
+        return self._records.list_stored_credentials(offset=offset, limit=limit)
+
+    def change_stored_credential_value(
+        self,
+        *,
+        name: str,
+        fields: Collection[str],
+        encrypt: Encrypt,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Write the next revision of a credential with the whole new set of fields.
+
+        ``encrypt`` is called with the identifier and the next revision once the row is locked.
+
+        Raises:
+            StoredCredentialInvalidError: the set of fields breaks a rule.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        return self._records.change_stored_credential_value(
+            name=name,
+            fields=fields,
+            encrypt=encrypt,
+            actor=actor,
+            now=now,
+            event_for=_redacted_event_for(event_for, secrets),
+        )
+
+    def set_stored_credential_description(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor: str,
+        now: datetime | None = None,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Replace the description of a credential; its revision stays.
+
+        Raises:
+            StoredCredentialInvalidError: the description is too long.
+            StoredCredentialNotFoundError: no credential has this name.
+        """
+        return self._records.set_stored_credential_description(
+            name=name,
+            description=description,
+            actor=actor,
+            now=now,
+            event_for=_redacted_event_for(event_for, secrets),
+        )
+
+    def delete_stored_credential(
+        self,
+        *,
+        name: str,
+        event_for: Callable[[StoredCredential], AuditEvent] | None = None,
+        secrets: Sequence[str] = (),
+    ) -> StoredCredential:
+        """Delete a credential that nothing current names, with every revision (FR-010).
+
+        The secret-safe event that ``event_for`` builds is written in the same transaction.
+
+        Returns:
+            The credential as it was before the deletion.
+
+        Raises:
+            StoredCredentialNotFoundError: no credential has this name.
+            CredentialInUseError: the latest version of a configuration, or a schedule that is
+                not deleted, names the credential.
+        """
+        return self._records.delete_stored_credential(name=name, event_for=_redacted_event_for(event_for, secrets))
+
+    def lookup_stored_credential_revision(self, credential_id: str, revision: int) -> StoredCredentialRevision | None:
+        """Return one revision of a credential, with its key identifier, nonce and ciphertext."""
+        return self._records.lookup_stored_credential_revision(credential_id, revision)
+
+    def record_version_credentials(
+        self, config_id: str, registry_version: int, credentials: Mapping[CredentialBlock, str]
+    ) -> None:
+        """Record the credential name each block of a version names (research R8)."""
+        self._records.record_version_credentials(config_id, registry_version, credentials)
+
+    def version_credentials(self, config_id: str, registry_version: int) -> dict[CredentialBlock, str]:
+        """Return the credential name each block of a version names; a block that names none is absent."""
+        return self._records.version_credentials(config_id, registry_version)
+
+    def record_credential_uses(
+        self, uses: Sequence[CredentialUse], *, event: AuditEvent | None = None, secrets: Sequence[str] = ()
+    ) -> None:
+        """Record the revisions a stage execution received, replacing an earlier release, with the event."""
+        self._records.record_credential_uses(uses, event=_redacted_event(event, secrets))
+
+    def credential_uses(self, run_id: str) -> tuple[CredentialUse, ...]:
+        """Return the credentials every stage execution of a run received (research R9)."""
+        return self._records.credential_uses(run_id)
 
     def record_results(
         self,
@@ -3903,29 +7021,24 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return one configuration's durable source-count and full-extract reference."""
         return self._records.lookup_configuration_baseline(config_id)
 
-    def publish_worker_environment(
-        self, worker_id: str, credential_names: Iterable[str], *, observed_at: datetime | None = None
-    ) -> None:
-        """Record the credential variable NAMES one worker holds now; never a value (spec 007 FR-035).
+    def write_bootstrap_record(
+        self, sync_version: str, work_pool: str, *, completed_at: datetime | None = None
+    ) -> BootstrapRecord:
+        """Record the Sync version and work pool the bootstrap set up, replacing a record of another one.
 
-        Each call replaces that worker's previous names, so the record follows the variables
-        the worker holds at its latest poll.
+        The bootstrap calls this as its last step. The Sync API and the worker read the record
+        with `read_bootstrap_record` before they start (spec 018 FR-007b). A record that already
+        names this version and work pool is left as it is, with its first completion time, so
+        a repeated bootstrap changes nothing (FR-010). Returns the record as this call asked it
+        to be written.
         """
-        self._records.publish_worker_environment(
-            WorkerEnvironment(
-                worker_id=worker_id,
-                credential_names=tuple(credential_names),
-                observed_at=observed_at or datetime.now(timezone.utc),
-            )
+        record = BootstrapRecord(
+            sync_version=sync_version,
+            work_pool=work_pool,
+            completed_at=completed_at or datetime.now(timezone.utc),
         )
-
-    def live_worker_environments(self, *, observed_after: datetime) -> tuple[WorkerEnvironment, ...]:
-        """Return the publications of the workers that published at or after `observed_after`, by worker."""
-        return tuple(
-            environment
-            for environment in self._records.worker_environments()
-            if environment.observed_at >= observed_after
-        )
+        self._records.write_bootstrap_record(record)
+        return record
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
         """Resolve only a published, public, run-owned reference, with explicit unavailability."""
@@ -4048,6 +7161,39 @@ def production_product_projection(
     )
 
 
+def read_bootstrap_record(connection: DBAPIConnection) -> BootstrapRecord | None:
+    """Return the bootstrap record, or None when there is none, on a plain connection.
+
+    This runs no schema initialization and no column migration, so a process that refuses to
+    start after this read has changed nothing in the database. A database in which the table
+    does not exist (SQLite's "no such table", PostgreSQL's `undefined_table`) holds no record.
+    The read is rolled back in every case, so the connection is not left in an aborted
+    transaction. The caller owns the connection and closes it.
+    """
+    cursor = connection.cursor()
+    try:
+        cursor.execute(_SELECT_BOOTSTRAP_RECORD)
+        row = cursor.fetchone()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # DB-API drivers share no error base; only an absent table means "no record".
+        connection.rollback()
+        if _is_undefined_table_error(exc):
+            return None
+        raise
+    finally:
+        cursor.close()
+    connection.rollback()
+    if row is None:
+        return None
+    return BootstrapRecord.model_validate({"sync_version": row[0], "work_pool": row[1], "completed_at": row[2]})
+
+
+def _is_undefined_table_error(exc: BaseException) -> bool:
+    if isinstance(exc, sqlite3.OperationalError):
+        return "no such table" in str(exc).lower()
+    return _sqlstate(exc) == _POSTGRESQL_UNDEFINED_TABLE_CODE
+
+
 def _side_read_column(side: str) -> str:
     """The column that stores `side`'s read document; refuses any other side name."""
     # Compared, not looked up: `side` comes from a caller and may be any string.
@@ -4098,6 +7244,64 @@ def _side_read_value_allowed(key: str, value: Any) -> bool:
     return _is_iso_timestamp(value)
 
 
+def _check_plan_step_document(document: Mapping[str, Any]) -> None:
+    """Refuse a plan step document that holds a key or a value the plan step does not allow.
+
+    The document holds `parts`, a mapping of part names to `started_at` and an optional
+    `ended_at`, each an ISO 8601 time with a time zone, and an optional `running` that names a
+    part that started and has not ended. The error names the key, never the value, because a
+    refused value may be an exception message or a secret (FR-021).
+    """
+    if not isinstance(document, Mapping):
+        msg = "the plan step document is not a mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    if any(not isinstance(key, str) or key not in _PLAN_STEP_FIELDS for key in document):
+        msg = "the plan step document holds a key that is not allowed"
+        raise ValueError(msg)
+    parts = document.get("parts")
+    if not isinstance(parts, Mapping):
+        msg = "the plan step document has no 'parts' mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    for name, part in parts.items():
+        if not isinstance(name, str) or name not in _PLAN_STEP_PARTS:
+            msg = "the plan step document names a part that is not allowed"
+            raise ValueError(msg)
+        _check_plan_step_part(name, part)
+    if "running" in document:
+        running = document["running"]
+        if not isinstance(running, str) or running not in _PLAN_STEP_PARTS:
+            msg = "the plan step document has a value for 'running' that is not allowed"
+            raise ValueError(msg)
+        if running not in parts or "ended_at" in parts[running]:
+            msg = f"the plan step document names {running!r} as running, but that part did not start or has ended"
+            raise ValueError(msg)
+
+
+def _check_plan_step_part(name: str, part: Any) -> None:
+    """Refuse one part entry of a plan step document; the error names the part, never a value."""
+    if not isinstance(part, Mapping):
+        msg = f"the plan step document has a {name!r} part that is not a mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    if any(not isinstance(key, str) or key not in _PLAN_STEP_PART_FIELDS for key in part):
+        msg = f"the plan step document has a {name!r} part that holds a key that is not allowed"
+        raise ValueError(msg)
+    if "started_at" not in part:
+        msg = f"the plan step document has a {name!r} part with no 'started_at'"
+        raise ValueError(msg)
+    for key, value in part.items():
+        if not isinstance(value, str) or not _is_aware_iso_timestamp(value):
+            msg = f"the plan step document has a value for {name!r} {key!r} that is not allowed"
+            raise ValueError(msg)
+
+
+def _is_aware_iso_timestamp(value: str) -> bool:
+    """Whether `value` is an ISO 8601 timestamp with a time zone."""
+    try:
+        return datetime.fromisoformat(value).utcoffset() is not None
+    except ValueError:
+        return False
+
+
 def _is_iso_timestamp(value: str) -> bool:
     """Whether `value` is an ISO 8601 timestamp, the form of `started_at` and `ended_at`."""
     try:
@@ -4113,6 +7317,11 @@ def _json(value: Any) -> str:
 
 def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
+
+
+def _now(value: datetime | None) -> datetime:
+    """Return the caller's time, or the current time in UTC when the caller gives none."""
+    return datetime.now(timezone.utc) if value is None else value
 
 
 def _utc_iso(value: datetime) -> str:
@@ -4174,13 +7383,28 @@ def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[st
     A side's read state is a progress report, so a damaged value must not stop a run from being
     read. The warning names the run, the column and the error class, never the stored text.
     """
+    return _stored_json_object(value, run_id=run_id, column=column, label="side-read")
+
+
+def _stored_plan_step(value: str | None, *, run_id: str) -> dict[str, Any] | None:
+    """Parse the stored plan step column; a value that is not a JSON object reads as ``None``.
+
+    The timings are a progress report, so a damaged value must not stop a run from being read
+    (FR-019). The response derivation checks each key again before it returns a part.
+    """
+    return _stored_json_object(value, run_id=run_id, column="plan_step", label="plan-step")
+
+
+def _stored_json_object(value: str | None, *, run_id: str, column: str, label: str) -> dict[str, Any] | None:
+    """Parse one stored JSON-object column; the warning names the run, the column and the error class only."""
     if value is None:
         return None
     try:
         document = json.loads(value)
     except (json.JSONDecodeError, TypeError) as exc:
         logger.warning(
-            "Ignoring an unreadable side-read column: run_id=%s column=%s error=%s",
+            "Ignoring an unreadable %s column: run_id=%s column=%s error=%s",
+            label,
             run_id,
             column,
             type(exc).__name__,
@@ -4188,7 +7412,8 @@ def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[st
         return None
     if not isinstance(document, dict):
         logger.warning(
-            "Ignoring a side-read column that is not a JSON object: run_id=%s column=%s type=%s",
+            "Ignoring a %s column that is not a JSON object: run_id=%s column=%s type=%s",
+            label,
             run_id,
             column,
             type(document).__name__,
@@ -4224,6 +7449,9 @@ def _run_from_rows(
             "reconciliation_required": bool(row[14]),
             "destination_branch": row[15],
             "approval": RunApproval.from_columns(row[16], row[17], row[18], row[19]),
+            "trigger_type": row[20],
+            "schedule_id": row[21],
+            "scheduled_start_at": row[22],
             "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {
@@ -4247,11 +7475,212 @@ def _run_from_rows(
                     "source_read": _stored_side_read(item[19], run_id=row[0], column="source_read"),
                     "destination_read": _stored_side_read(item[20], run_id=row[0], column="destination_read"),
                     "apply_progress": _stored_apply_progress(item[21], run_id=row[0]),
+                    "plan_step": _stored_plan_step(item[22], run_id=row[0]),
                 }
                 for item in links
             ],
         }
     )
+
+
+_ScheduledRunVerdict = Literal["succeeded", "failed", "unchanged"]
+
+
+def _scheduled_run_verdict(
+    terminal_state: str, terminal_outcome: str, writeback: ExecutionWriteback | None = None
+) -> _ScheduledRunVerdict:
+    """Say how the end of an execution counts for its schedule's failed runs in a row (FR-032).
+
+    A run that ends as failed, interrupted or ambiguous counts as failed. A run that succeeds,
+    or that ends with no change, sets the count to zero. A run that stopped for a review of
+    records left out is a completed stage that gives back its write admission; it changes
+    nothing, and neither does a cancelled or an abandoned execution.
+    """
+    if (terminal_state, terminal_outcome) == ("completed", "succeeded"):
+        stopped_for_review = isinstance(writeback, ExecutionFinishWriteback) and writeback.release_write_admission
+        return "unchanged" if stopped_for_review else "succeeded"
+    if terminal_outcome in {"failed", "ambiguous"}:
+        return "failed"
+    return "unchanged"
+
+
+def _merged_events(event: AuditEvent | None, events: Sequence[AuditEvent]) -> tuple[AuditEvent, ...]:
+    """Return the single ``event`` of a call, if any, followed by its ``events``."""
+    return (*(() if event is None else (event,)), *events)
+
+
+def _schedule_values(schedule: ScheduleRecord) -> tuple[Any, ...]:
+    """Return the values of one schedule row, in the order of ``_SCHEDULE_COLUMNS``; times are in UTC."""
+
+    def when(value: datetime | None) -> str | None:
+        return None if value is None else _utc_iso(value)
+
+    return (
+        schedule.schedule_id,
+        schedule.name,
+        schedule.config_id,
+        schedule.registry_version,
+        schedule.cron,
+        schedule.timezone,
+        schedule.write_target,
+        schedule.write_when_left_out,
+        schedule.left_out_set_by,
+        when(schedule.left_out_set_at),
+        schedule.overlap_policy,
+        schedule.start_late_by_at_most_seconds,
+        schedule.state,
+        schedule.state_reason,
+        schedule.owner,
+        schedule.consecutive_failures,
+        when(schedule.last_start_at),
+        schedule.prefect_schedule_id,
+        schedule.prefect_synced,
+        when(schedule.waiting_start_at),
+        # Stored as UTC so that text order equals time order when schedules are listed.
+        _utc_iso(schedule.created_at),
+        _utc_iso(schedule.updated_at),
+    )
+
+
+_SCHEDULE_FIELDS = tuple(name.strip() for name in _SCHEDULE_COLUMNS.split(","))
+
+
+def _schedule_from_row(row: Sequence[Any]) -> ScheduleRecord:
+    return ScheduleRecord.model_validate(dict(zip(_SCHEDULE_FIELDS, row, strict=True)))
+
+
+def _automatic_resume_values(record: AutomaticResume) -> tuple[Any, ...]:
+    return (
+        record.run_id,
+        record.interrupted_flow_run_id,
+        record.cause,
+        record.worker_name,
+        record.state,
+        record.decision,
+        record.reason,
+        None if record.reason_detail is None else _json(record.reason_detail),
+        record.operations_not_checked,
+        record.start_after,
+        record.check_flow_run_id,
+        record.resume_flow_run_id,
+        _utc_iso(record.decided_at),
+        _utc_iso(record.updated_at),
+    )
+
+
+def _automatic_resume_column_value(record: AutomaticResume, name: str) -> Any:
+    """Return the stored form of one field of ``record``, as ``_automatic_resume_values`` writes it."""
+    return _automatic_resume_values(record)[_AUTOMATIC_RESUME_FIELDS.index(name)]
+
+
+def _automatic_resume_from_row(row: Sequence[Any]) -> AutomaticResume:
+    values = dict(zip(_AUTOMATIC_RESUME_FIELDS, row, strict=True))
+    if values["reason_detail"] is not None:
+        values["reason_detail"] = _JSON_MAPPING_ADAPTER.validate_json(str(values["reason_detail"]))
+    return AutomaticResume.model_validate(values)
+
+
+def _schedule_branch_from_row(row: Sequence[Any]) -> ScheduleBranch:
+    return ScheduleBranch.model_validate(
+        {
+            "run_id": row[0],
+            "schedule_id": row[1],
+            "branch": row[2],
+            "proposed_change_id": row[3],
+            "state": row[4],
+            "replaced_by_run_id": row[5],
+            "created_at": row[6],
+        }
+    )
+
+
+def _start_has_run_message(schedule_id: str, scheduled_start_at: datetime, run_id: str) -> str:
+    return f"the start {_utc_iso(scheduled_start_at)} of schedule {schedule_id!r} already has the Sync run {run_id!r}"
+
+
+def _refuse_stale_decision(schedule: ScheduleRecord, decision: ScheduledStartDecision) -> None:
+    """Raise `ScheduleChangedError` when a decision on a start was made from another state of the schedule.
+
+    The decision names the ``last_start_at`` and ``waiting_start_at`` it was made from, so no
+    missed start is recorded twice, and the ``updated_at``, so a change of the cadence, the
+    left-out setting or the overlap policy saved after the read is not admitted under the
+    earlier settings. The caller decides again from the stored schedule.
+    """
+    if (decision.last_start_at, decision.waiting_start_at) != (schedule.last_start_at, schedule.waiting_start_at):
+        msg = f"schedule {schedule.schedule_id!r} recorded another start after the decision was made"
+        raise ScheduleChangedError(msg)
+    if decision.schedule_updated_at is not None and decision.schedule_updated_at != schedule.updated_at:
+        msg = f"schedule {schedule.schedule_id!r} changed after the decision was made"
+        raise ScheduleChangedError(msg)
+
+
+def _scheduled_start_receipt(run: ProductRun, flow_run_id: str, now: datetime) -> MutationReceipt:
+    """Build the receipt of a scheduled run, already accepted (spec 021 data-model.md).
+
+    The key digest and the request fingerprint come from the schedule and the start time
+    only, so a second attempt of one start builds the same key.
+    """
+    assert run.schedule_id is not None
+    assert run.scheduled_start_at is not None
+    assert run.actor is not None
+    start = _utc_iso(run.scheduled_start_at)
+    receipt_id = f"m-{uuid4().hex}"
+    identity = {"schedule_id": run.schedule_id, "scheduled_start_at": start}
+    return MutationReceipt(
+        receipt_id=receipt_id,
+        actor=run.actor,
+        key_digest=sha256(f"schedule:{run.schedule_id}:{start}".encode()).hexdigest(),
+        operation="sync",
+        request_fingerprint=sha256(canonical_json_bytes(identity)).hexdigest(),
+        reason=None,
+        resource_id=run.run_id,
+        run_id=run.run_id,
+        prefect_key=sha256(f"infrahub-sync:{receipt_id}".encode()).hexdigest(),
+        state="accepted",
+        response_status=_SCHEDULED_START_STATUS,
+        response_body={"run": {"run_id": run.run_id}, **identity},
+        flow_run_id=flow_run_id,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _schedule_stopped_event(schedule: ScheduleRecord, run_id: str, created_at: datetime) -> AuditEvent:
+    """Build the event of a schedule that stopped because its fifth run in a row failed.
+
+    The event names the run, the owner's account, the configuration, its version and the
+    schedule, as every schedule event does (spec 021 contracts/events.md).
+    """
+    return AuditEvent(
+        event_id=f"a-{uuid4().hex}",
+        run_id=run_id,
+        actor=schedule.owner,
+        operation=SCHEDULE_START_OPERATION,
+        reason=None,
+        outcome="repeated-failures",
+        created_at=created_at,
+        event_type=SCHEDULE_STOPPED_EVENT_TYPE,
+        config_id=schedule.config_id,
+        registry_version=schedule.registry_version,
+        related=(
+            RelatedResource(kind="account", id=schedule.owner),
+            RelatedResource(kind="config", id=schedule.config_id),
+            RelatedResource(kind="config_version", id=f"{schedule.config_id}@{schedule.registry_version}"),
+            RelatedResource(kind="schedule", id=schedule.schedule_id),
+        ),
+    )
+
+
+def _redacted_schedule(schedule: ScheduleRecord, secrets: Sequence[str]) -> ScheduleRecord:
+    """Return ``schedule`` with every configured secret removed from the text a caller supplies."""
+    values = schedule.model_dump()
+    if secrets:
+        for field in ("name", "cron", "timezone", "owner", "left_out_set_by"):
+            if values[field] is not None:
+                values[field] = redact(values[field], secrets)
+    # Validated again also with no secret, so a copy made with an update cannot store a record
+    # that the model refuses.
+    return ScheduleRecord.model_validate(values)
 
 
 def _receipt_values(receipt: MutationReceipt) -> tuple[Any, ...]:
@@ -4314,6 +7743,16 @@ def _releases_write_admission(writeback: ExecutionFinishWriteback, terminal_stat
         and writeback.phase == "planned"
         and not writeback.summary.get("applied_operations")
         and not writeback.results.get("applied_operations")
+    )
+
+
+def _removed_own_branch(writeback: ExecutionFinishWriteback, terminal_state: str, terminal_outcome: str) -> bool:
+    """Answer whether a succeeded finish writeback says that a run with branch review deleted its branch."""
+    entry = writeback.results.get("branch_review")
+    return (
+        (terminal_state, terminal_outcome) == ("completed", "succeeded")
+        and isinstance(entry, Mapping)
+        and entry.get("branch_state") == "removed"
     )
 
 
@@ -4404,21 +7843,53 @@ def _cancellation_unconfirmed_response(run_id: str, receipt_id: str) -> dict[str
 # Redacting them could only break their validation: a secret such as `infrahub` would turn the
 # event type into text the type pattern refuses, and fail the decision the event is saved with.
 _EVENT_FIXED_FIELDS = frozenset({"event_id", "event_type", "created_at", "registry_version"})
+# The text keys of an event's ``details`` that are redacted. Its start times, its counts and
+# the run it names are computed by Sync, and redacting one could only break its validation.
+_EVENT_DETAILS_TEXT_KEYS = frozenset({"branch", "proposed_change_id", "cause"})
 
 
 def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
     """Return ``event`` with every configured secret removed from its caller-supplied values."""
     ordered = redaction_order(secrets)
-    return AuditEvent.model_validate(
-        {
-            name: value if name in _EVENT_FIXED_FIELDS else _redact_ordered_value(value, ordered, numbers=False)
-            for name, value in event.model_dump(mode="json").items()
+    values = event.model_dump(mode="json")
+    details = values.pop("details")
+    redacted = {
+        name: value if name in _EVENT_FIXED_FIELDS else _redact_ordered_value(value, ordered, numbers=False)
+        for name, value in values.items()
+    }
+    if details is not None:
+        redacted["details"] = {
+            key: _redact_ordered_value(value, ordered, numbers=False) if key in _EVENT_DETAILS_TEXT_KEYS else value
+            for key, value in details.items()
         }
-    )
+        if details.get("changes") is not None:
+            # The text values of a changed setting, such as a cadence or a time zone, are
+            # redacted as the stored schedule is; the setting's name and the numbers are not.
+            redacted["details"]["changes"] = [
+                {
+                    **change,
+                    **{
+                        side: _redact_ordered_value(change[side], ordered, numbers=False)
+                        for side in ("before", "after")
+                        if isinstance(change[side], str)
+                    },
+                }
+                for change in details["changes"]
+            ]
+    return AuditEvent.model_validate(redacted)
 
 
 def _redacted_event(event: AuditEvent | None, secrets: Sequence[str]) -> AuditEvent | None:
     return None if event is None else _redact_event(event, secrets)
+
+
+def _redacted_event_for(
+    event_for: Callable[[StoredCredential], AuditEvent] | None, secrets: Sequence[str]
+) -> Callable[[StoredCredential], AuditEvent] | None:
+    """Wrap a builder of a stored credential's event so that the event it builds is secret-safe."""
+    if event_for is None:
+        return None
+    return lambda credential: _redact_event(event_for(credential), secrets)
 
 
 def _audit_from_row(row: Sequence[Any], related: Sequence[tuple[str, str]] = ()) -> AuditEvent:
@@ -4436,6 +7907,7 @@ def _audit_from_row(row: Sequence[Any], related: Sequence[tuple[str, str]] = ())
             "registry_version": row[9],
             "branch": row[10],
             "related": tuple({"kind": kind, "id": resource_id} for kind, resource_id in related),
+            "details": None if row[11] is None else json.loads(row[11]),
         }
     )
 
@@ -4472,6 +7944,7 @@ def _configuration_version_summary_from_row(
         created_at=row[3],
         registered_by=row[4],
         registration_reason=row[5],
+        registered_without_validation=bool(row[6]),
         latest_run=latest.get((int(row[1]), "latest")),
         latest_applied_run=latest.get((int(row[1]), "applied")),
     )
@@ -4500,6 +7973,8 @@ def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:
             "package_checksum": row[2],
             "declared_content": json.loads(row[3]),
             "created_at": row[4],
+            # SQLite returns the ``EXISTS`` column as 0 or 1, PostgreSQL as a boolean.
+            "registered_without_validation": bool(row[5]),
         }
     )
 

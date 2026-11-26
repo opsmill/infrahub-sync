@@ -16,7 +16,8 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 ### Orientation
 
 - [Sync architecture](sync-architecture.md) — service components, the registered-run
-  lifecycle, durable records and deployment limits.
+  lifecycle, scheduled runs and the starts that wait or get no flow run, durable records and
+  deployment limits.
 - [Repository tour](repository-tour.md) — the modules for CLI requests, service execution,
   plans, storage and adapters, with a trace from the HTTP client to worker operations.
 
@@ -49,17 +50,26 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
   writes across processes: its direct-connection requirement, key derivation, deadline
   bounds, ownership proof, and failure sanitizing.
 
+### Accounts and sign-in
+
+- [Local accounts and sign-in](local-accounts.md) — the four account tables, how a request is
+  resolved to an account, password hashing and its limits, the refusal after failed sign-ins,
+  the `admin` account of the environment, account names in answers, the session file of the
+  CLI, and the sign-in of the web interface.
+
 ### Configuration and execution {#running-a-sync-from-something-other-than-the-cli}
 
 - [Configuration foundation](configuration-foundation.md) — declared package identity,
-  runtime credential references, and the connection-free adapter capability declaration.
+  the stored credential that each adapter block names, and the connection-free adapter
+  capability declaration.
 - [V2 configuration conversion](v2-configuration-conversion.md) — how `configs convert` is
   built: the pure conversion, the fixed tables of v2 behaviour, the live-schema fill, and how
   the file is written.
 - [The shared execution surface](execution-surface.md) — service and direct Prefect
   callers, plan/verify/apply inputs and return types, failure handling and filesystem locks.
 - [Prefect orchestration](orchestration-prefect.md) — registered service execution and
-  direct read-only planning, with their inputs, results and optional dependencies.
+  direct read-only planning, with their inputs, results and optional dependencies, and the
+  Prefect behaviors that schedules depend on.
 
 ### Repository workflow
 

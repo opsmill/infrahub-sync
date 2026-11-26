@@ -97,42 +97,58 @@ def test_example_converts_and_its_package_has_no_error_finding(example: str) -> 
     assert errors == []
 
 
+# The stored credential each v2 example's source block names, written out by hand: the fields v2
+# ``2.0.2`` read for that example decide the name. ``None`` is a source that used no authentication.
+_SOURCE_CREDENTIAL: dict[str, tuple[str, tuple[str, ...]] | None] = {
+    "aci_to_infrahub": ("aci-account", ("username", "password")),
+    "device42_to_infrahub": ("genericrestapi-account", ("username", "password")),
+    "ipfabric_to_infrahub": ("ipfabricsync-auth", ("token",)),
+    "librenms_to_infrahub": ("genericrestapi-token", ("token",)),
+    "nautobot-v1_to_infrahub": ("nautobot-token", ("token",)),
+    "nautobot-v2_to_infrahub": ("nautobot-token", ("token",)),
+    "netbox_to_infrahub": ("netbox-token", ("token",)),
+    "observium_to_infrahub": ("genericrestapi-account", ("username", "password")),
+    "peering-manager_to_infrahub": ("peeringmanager-token", ("token",)),
+    "peeringdb_to_infrahub": ("genericrestapi-token", ("token",)),
+    "prometheus_to_infrahub (node_exporter)": None,
+    "slurpit_to_infrahub": ("slurpitsync-api-key", ("token",)),
+}
+_CREDENTIAL_SETTINGS = ("token", "username", "password", "api_key", "auth")
+
+
+def test_the_source_credentials_cover_the_converted_examples() -> None:
+    assert set(_SOURCE_CREDENTIAL) == set(CONVERTED)
+
+
 @pytest.mark.parametrize("example", CONVERTED)
-def test_example_package_has_no_reference_for_an_unused_credential(example: str) -> None:
-    """Each reference is one that v2's authentication method used or that config.yml filled (FR-006)."""
-    data = _load(example)
+def test_example_package_names_a_stored_credential_in_each_authenticated_block(example: str) -> None:
+    """Each block that uses authentication names one stored credential (spec 027 FR-009, SC-005)."""
     result = _convert(example)
     assert result.package is not None
-    source = data["source"]
-    used = _used_source_credentials(source["name"], source.get("settings") or {})
-    referenced = {
-        key
-        for key, value in result.package["configuration"]["source"]["settings"].items()
-        if isinstance(value, dict) and "$credential" in value
-    }
-    assert referenced == used
-    expected_references = {f"{source['name']}-{key}".replace("_", "-") for key in used} | {"infrahub-token"}
-    assert set(result.package["credentials"]) == expected_references
+    configuration = result.package["configuration"]
+    expected = _SOURCE_CREDENTIAL[example]
+
+    assert configuration["source"].get("credential") == (None if expected is None else expected[0])
+    assert configuration["destination"]["credential"] == "infrahub-token"
+    listed = {entry.location: (entry.name, entry.fields) for entry in result.credentials}
+    assert listed.get("source.credential") == expected
+    assert listed["destination.credential"] == ("infrahub-token", ("token",))
 
 
-def _used_source_credentials(name: str, settings: dict[str, Any]) -> set[str]:
-    """Return the credential settings v2 ``2.0.2`` read for these examples, written out by hand."""
-    filled = {key for key in ("token", "username", "password", "api_key", "auth") if settings.get(key)}
-    if name in {"genericrestapi", "peeringmanager"}:
-        method = settings.get("auth_method", "token")
-        used = {"basic": {"username", "password"}, "none": set()}.get(method, {"token"})
-    elif name == "prometheus":
-        method = settings.get("auth_method", "none")
-        used = {"basic": {"username", "password"}, "bearer": {"token"}}.get(method, set())
-    elif name == "slurpitsync":
-        used = {"api_key"}
-    elif name == "aci":
-        used = {"username", "password"}
-    elif name == "ipfabricsync":
-        used = {"auth"}
-    else:
-        used = {"token"}
-    return used | filled
+@pytest.mark.parametrize("example", CONVERTED)
+def test_example_package_has_no_credentials_block_no_env_reference_and_no_value(example: str) -> None:
+    """The old format is not produced, and no credential setting stays in a block (SC-005)."""
+    result = _convert(example)
+    assert result.package is not None
+    configuration = result.package["configuration"]
+    written = yaml.safe_dump(dict(result.package))
+
+    assert "credentials" not in result.package
+    assert "$credential" not in written
+    assert "provider: env" not in written
+    assert "INFRAHUB_SYNC_CREDENTIAL_" not in written
+    for role in ("source", "destination"):
+        assert set(_CREDENTIAL_SETTINGS) & set(configuration[role]["settings"]) == set()
 
 
 @pytest.mark.parametrize(("example", "reasons"), list(REFUSED.items()), ids=list(REFUSED))

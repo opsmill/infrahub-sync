@@ -22,9 +22,12 @@ plugin is absent too, so a missing psutil leaves nothing to patch.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Iterator
 from types import ModuleType
 from typing import ParamSpec, TypeVar
+
+import pytest
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -70,3 +73,24 @@ except ImportError:  # pragma: no cover -- without psutil the plugin is not inst
 else:
     # psutil's own `cpu_freq` returns None on some platforms too, so callers already handle it.
     patch_cpu_freq(psutil)
+
+
+@pytest.fixture(autouse=True)
+def restore_package_log_handlers() -> Iterator[None]:
+    """Remove the handlers a test adds to the `infrahub_sync` logger, and restore its level.
+
+    A test that runs the CLI through `CliRunner` calls `cli._setup_logging`, which adds a
+    `StreamHandler` bound to the runner's stderr. The runner closes that stream when the call
+    ends, so without this fixture every later `infrahub_sync` log record prints a
+    "Logging error" traceback. In CI that output slowed the unit jobs past their timeout.
+    """
+    package_logger = logging.getLogger("infrahub_sync")
+    handlers = list(package_logger.handlers)
+    level = package_logger.level
+    yield
+    for handler in list(package_logger.handlers):
+        if handler not in handlers:
+            package_logger.removeHandler(handler)
+    # `configure_service_logging` and the CLI set the package logger's level; a level left
+    # behind would decide which records a later test's `caplog` receives.
+    package_logger.setLevel(level)

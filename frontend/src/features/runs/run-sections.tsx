@@ -1,14 +1,17 @@
-import { Card, LinkButton } from "@infrahub/ui";
+import { Button, Card } from "@infrahub/ui";
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { cn } from "tailwind-variants";
 
+import { fetchWithToken } from "#/api/client";
+import { describeError } from "#/api/queries";
 import type { Plan, Run } from "#/api/types";
 import { DownloadIcon } from "#/components/icons";
-import { CopyButton, FOCUS, SectionHeading } from "#/components/page";
+import { CopyButton, FOCUS, Notice, SectionHeading } from "#/components/page";
 import { BranchBadge, When } from "#/components/run-status";
 import { PLAN_ARTIFACT_ID } from "#/domain/run-steps";
 import type { System } from "#/domain/systems";
+import { RunScheduleLine } from "#/features/schedules/ScheduleLine";
 import { formatAbsolute, formatDuration } from "#/lib/time";
 
 export { PLAN_ARTIFACT_ID };
@@ -34,6 +37,100 @@ const kindTitle = (kind: string) => {
   const words = kind.replaceAll("-", " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 };
+
+/** Saves a file from the browser; the link exists only for the click. */
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Some browsers read the file after `click` returns, so the address stays valid for a while.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/** A link cannot send the token, so the file is fetched with it and then saved. */
+function ArtifactDownload({
+  url,
+  filename,
+  title,
+  size,
+}: {
+  url: string;
+  filename: string;
+  title: string;
+  /** The size the Sync service recorded, in bytes, to show the progress. */
+  size: number;
+}) {
+  const [pending, setPending] = useState(false);
+  const [received, setReceived] = useState(0);
+  const [error, setError] = useState<unknown>();
+
+  async function download() {
+    setPending(true);
+    setReceived(0);
+    setError(undefined);
+    try {
+      const response = await fetchWithToken(url);
+      // The file is read in parts so the button shows how much has arrived.
+      const chunks: BlobPart[] = [];
+      const reader = response.body?.getReader();
+      if (reader) {
+        let total = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          total += value.byteLength;
+          setReceived(total);
+        }
+      } else {
+        chunks.push(await response.blob());
+      }
+      saveBlob(new Blob(chunks, { type: response.headers.get("Content-Type") ?? "" }), filename);
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const percent = size > 0 ? Math.min(100, Math.floor((received / size) * 100)) : undefined;
+
+  const d = error === undefined ? undefined : describeError(error);
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        onPress={download}
+        isDisabled={pending}
+        aria-label={
+          pending
+            ? `Downloading ${title}${percent !== undefined ? `, ${percent}%` : ""}`
+            : `Download ${title}`
+        }
+        className="text-foreground-muted pointer-coarse:h-11"
+      >
+        <DownloadIcon />
+        {pending ? (
+          <span className="tabular-nums">Downloading{percent !== undefined && ` ${percent}%`}</span>
+        ) : (
+          "Download"
+        )}
+      </Button>
+      {d && (
+        <Notice tone="danger" role="alert" title={d.title} className="basis-full">
+          {d.detail && <p className="text-pretty text-foreground-muted">{d.detail}</p>}
+          {d.codeLine && <p className="font-mono text-subtle text-xs">{d.codeLine}</p>}
+        </Notice>
+      )}
+    </>
+  );
+}
 
 /** Files the Sync service keeps for the run, from `run.artifact_refs`. */
 export function RunFiles({ run }: { run: Run }) {
@@ -73,17 +170,12 @@ export function RunFiles({ run }: { run: Run }) {
                     <CopyButton value={a.digest} label="Copy SHA-256 digest" />
                   </span>
                 </div>
-                <LinkButton
-                  variant="ghost"
-                  size="sm"
-                  href={`/api/runs/${encodeURIComponent(run.run_id)}/artifacts/${encodeURIComponent(a.artifact_id)}`}
-                  download={`${run.run_id}-${a.artifact_id}${json ? ".json" : ""}`}
-                  aria-label={`Download ${title}`}
-                  className="text-foreground-muted pointer-coarse:h-11"
-                >
-                  <DownloadIcon />
-                  Download
-                </LinkButton>
+                <ArtifactDownload
+                  url={`/api/runs/${encodeURIComponent(run.run_id)}/artifacts/${encodeURIComponent(a.artifact_id)}`}
+                  filename={`${run.run_id}-${a.artifact_id}${json ? ".json" : ""}`}
+                  title={title}
+                  size={a.size}
+                />
               </li>
             );
           })}
@@ -158,6 +250,27 @@ export function Details({
     rows.push(["Destination branch", <BranchBadge branch={run.destination_branch} />]);
   }
   rows.push(["Started", formatAbsolute(run.started_at)]);
+  // A scheduled run names its schedule, then the account it ran as: the schedule's owner when it
+  // started. Older records name no account; the row then names only the schedule, or is left out.
+  if (run.trigger_type === "scheduled") {
+    rows.push([
+      "Started by",
+      <span className="flex min-w-0 flex-col">
+        <RunScheduleLine run={run} />
+        {run.actor && (
+          <span className="text-subtle [overflow-wrap:anywhere]">Account: {run.actor}</span>
+        )}
+      </span>,
+    ]);
+  } else if (run.actor) {
+    rows.push(["Started by", <span className="[overflow-wrap:anywhere]">{run.actor}</span>]);
+  }
+  if (run.approval) {
+    rows.push([
+      "Plan approved by",
+      <span className="[overflow-wrap:anywhere]">{run.approval.approved_by}</span>,
+    ]);
+  }
   rows.push(["Finished", run.finished_at ? formatAbsolute(run.finished_at) : "Not finished"]);
   if (run.finished_at) {
     rows.push([

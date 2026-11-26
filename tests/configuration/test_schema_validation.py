@@ -36,12 +36,13 @@ from infrahub_sync.configuration.capabilities import (
 )
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.configuration.schema_validation import (
+    DestinationSchemaOptions,
     collect_destination_schema_findings,
     resolve_declared_destination_branch,
 )
 from infrahub_sync.configuration.validation import collect_findings, validate_package_credentials
 from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, normalize_destination_schema
-from tests.configuration.validation_packages import package, package_data
+from tests.configuration.validation_packages import credential_package_data, package, package_data
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -125,6 +126,19 @@ def _table_with_accessor(
     return table
 
 
+_DESTINATION_TOKEN = "test-token"  # noqa: S105 - a test value, not a secret.
+
+
+def _stored_fields(name: str) -> dict[str, str]:
+    """Return the fields of the stored credential that the destination names."""
+    del name
+    return {"token": _DESTINATION_TOKEN}
+
+
+# The destination names a stored credential, so each validation reads its fields through this.
+_OPTIONS = DestinationSchemaOptions(credential_values=_stored_fields)
+
+
 def _inject(
     monkeypatch: pytest.MonkeyPatch,
     table: dict[str, AdapterConfigurationCapabilities],
@@ -137,7 +151,7 @@ def _mapping_package_data(
     *,
     kind: str = "InfraDevice",
 ) -> dict[str, Any]:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["schema_mapping"] = [
         {"name": kind, "mapping": "dcim.devices", "fields": [] if fields is None else fields}
     ]
@@ -155,7 +169,7 @@ def test_schema_validation_names_a_read_only_selected_identity(monkeypatch: pyte
     content = _mapping_package_data(fields=[{"name": "name", "mapping": "name"}])
     content["configuration"]["schema_mapping"][0]["identifiers"] = ["name"]
 
-    findings = collect_destination_schema_findings(package(content)).findings
+    findings = collect_destination_schema_findings(package(content), _OPTIONS).findings
 
     assert any(
         finding.code == "destination-schema-mismatch" and "name__value" in finding.message for finding in findings
@@ -170,7 +184,7 @@ def test_schema_validation_refuses_a_kind_with_no_selected_or_declared_key(monke
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(snapshot)))
     content = _mapping_package_data(fields=[{"name": "name", "mapping": "name"}])
 
-    findings = collect_destination_schema_findings(package(content)).findings
+    findings = collect_destination_schema_findings(package(content), _OPTIONS).findings
 
     assert any(
         finding.code == "destination-schema-mismatch" and "no declared destination key" in finding.message
@@ -216,17 +230,17 @@ def test_a_read_error_requires_a_short_lowercase_reason() -> None:
 
 
 def test_the_declared_branch_setting_is_resolved() -> None:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["destination"]["settings"]["branch"] = "staging"
     assert resolve_declared_destination_branch(package(data)) == "staging"
 
 
 def test_an_absent_branch_setting_resolves_to_main() -> None:
-    assert resolve_declared_destination_branch(package(package_data())) == "main"
+    assert resolve_declared_destination_branch(package(credential_package_data())) == "main"
 
 
 def test_a_non_string_branch_setting_resolves_to_main() -> None:
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["destination"]["settings"]["branch"] = 5
     assert resolve_declared_destination_branch(package(data)) == "main"
 
@@ -235,16 +249,16 @@ def test_the_ambient_environment_is_never_read_for_the_branch(monkeypatch: pytes
     # The helper reads the declared setting only — never the environment (SYNC-79).
     monkeypatch.setenv("INFRAHUB_BRANCH", "ambient-branch")
     monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH", "ambient-branch")
-    assert resolve_declared_destination_branch(package(package_data())) == "main"
+    assert resolve_declared_destination_branch(package(credential_package_data())) == "main"
 
 
 def test_the_schema_read_consumes_the_resolved_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     accessor = _SpiedAccessor()
     _inject(monkeypatch, _table_with_accessor(accessor))
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["destination"]["settings"]["branch"] = "staging"
 
-    collect_destination_schema_findings(package(data))
+    collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert accessor.calls == ["staging"]
 
@@ -256,9 +270,9 @@ def test_schema_client_ignores_ambient_git_branch(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH", "ambient")
     monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH_FROM_GIT", "true")
     monkeypatch.setenv("INFRAHUB_ADDRESS", "invalid-ambient-address")
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
-    content = package_data()
-    _, settings = capabilities_module._resolved_client_settings(package(content), "review")
+    content = credential_package_data()
+    with capabilities_module.destination_token(_DESTINATION_TOKEN):
+        _, settings = capabilities_module._resolved_client_settings(package(content), "review")
 
     config = Config(**settings)
     assert config.default_branch_from_git is False
@@ -274,9 +288,8 @@ def test_schema_client_never_takes_authority_from_the_worker_environment(monkeyp
     monkeypatch.setenv("INFRAHUB_PASSWORD", "ambient-password")
     monkeypatch.setenv("INFRAHUB_TLS_INSECURE", "true")
     monkeypatch.setenv("INFRAHUB_ADDRESS", "https://ambient-infrahub.example")
-    content = package_data()
-    del content["configuration"]["destination"]["settings"]["token"]
-    del content["credentials"]["infrahub-token"]
+    content = credential_package_data()
+    del content["configuration"]["destination"]["credential"]
     url, settings = capabilities_module._resolved_client_settings(package(content), "main")
 
     config = Config(**settings)
@@ -296,7 +309,7 @@ def test_an_unknown_kind_is_an_error_finding(monkeypatch: pytest.MonkeyPatch) ->
     # subtree unevaluable, so exactly one finding names the defect (the OES-15 rule).
     data = _mapping_package_data([{"name": "bogus"}], kind="NopeKind")
 
-    result = collect_destination_schema_findings(package(data))
+    result = collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-mismatch", "/configuration/schema_mapping/0/name")
@@ -307,7 +320,7 @@ def test_an_unknown_field_is_an_error_finding(monkeypatch: pytest.MonkeyPatch) -
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor()))
     data = _mapping_package_data([{"name": "serial_number", "mapping": "serial"}])
 
-    result = collect_destination_schema_findings(package(data))
+    result = collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-mismatch", "/configuration/schema_mapping/0/fields/0/name"),
@@ -320,7 +333,7 @@ def test_a_reference_on_an_attribute_is_a_wrong_type_error_finding(monkeypatch: 
     # `name` is an attribute of InfraDevice; a reference can only bind a relationship.
     data = _mapping_package_data([{"name": "name", "mapping": "name", "reference": "LocationSite"}])
 
-    result = collect_destination_schema_findings(package(data))
+    result = collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-mismatch", "/configuration/schema_mapping/0/fields/0/reference")
@@ -347,7 +360,7 @@ def test_a_wrong_relationship_cardinality_is_an_error_finding(
 ) -> None:
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor()))
 
-    result = collect_destination_schema_findings(package(_mapping_package_data([field])))
+    result = collect_destination_schema_findings(package(_mapping_package_data([field])), _OPTIONS)
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-mismatch", location),
@@ -366,7 +379,7 @@ def test_a_conforming_mapping_yields_no_findings_and_a_fingerprint(monkeypatch: 
     )
     parsed = package(data)
 
-    result = collect_destination_schema_findings(parsed)
+    result = collect_destination_schema_findings(parsed, _OPTIONS)
 
     assert result.findings == ()
     assert result.schema_fingerprint == compute_consumed_schema_fingerprint(
@@ -381,26 +394,27 @@ def test_an_explicit_request_against_a_non_declaring_destination_is_an_error_fin
     # peeringmanager is a real destination that does not declare schema validation, and it
     # declares no write operation, so the shipped infrahub_to_peering-manager
     # shape — creates requested, none declared — reports both defects (AR5 fixture).
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["destination"]["name"] = "peeringmanager"
 
-    result = collect_destination_schema_findings(package(data))
+    result = collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-validation-unsupported", "/configuration/destination"),
         ("unsupported-destination-write", "/configuration/destination"),
     ]
     assert result.schema_fingerprint is None
+    assert result.schema_read is False
 
 
 def test_an_update_only_request_against_peeringmanager_is_refused_as_an_unsupported_write() -> None:
     # SKIP_UNMATCHED_SRC removes create, and delete is never requested under the supported
     # live-sync profile even though SKIP_UNMATCHED_DST is not configured (SYNC-78).
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["destination"]["name"] = "peeringmanager"
     data["configuration"]["diffsync_flags"] = ["SKIP_UNMATCHED_SRC"]
 
-    result = collect_destination_schema_findings(package(data))
+    result = collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert [finding.code for finding in result.findings] == [
         "destination-schema-validation-unsupported",
@@ -411,16 +425,17 @@ def test_an_update_only_request_against_peeringmanager_is_refused_as_an_unsuppor
 def test_an_unknown_destination_adapter_adds_no_schema_findings() -> None:
     # The core already reports missing-adapter for the destination and keeps judging
     # everything independent of it; the schema checks add nothing on the unevaluable subtree.
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["destination"]["name"] = "doesnotexist"
     data["configuration"]["source"]["settings"]["bogus_source"] = "x"
     parsed = package(data)
 
-    result = collect_destination_schema_findings(parsed)
+    result = collect_destination_schema_findings(parsed, _OPTIONS)
     core = collect_findings(parsed)
 
     assert result.findings == ()
     assert result.schema_fingerprint is None
+    assert result.schema_read is False
     assert ("missing-adapter", "/configuration/destination") in _codes_and_locations(core)
     assert ("undeclared-setting", "/configuration/source/settings/bogus_source") in _codes_and_locations(core)
 
@@ -428,15 +443,58 @@ def test_an_unknown_destination_adapter_adds_no_schema_findings() -> None:
 # --- AR9: a failed schema read is a typed error finding -------------------------------
 
 
-@pytest.mark.parametrize("reason", ["timeout", "unauthorized", "unreachable"])
+@pytest.mark.parametrize("reason", ["timeout", "unauthorized", "unreachable", "rejected"])
 def test_a_failed_schema_read_is_an_error_finding_not_a_raise(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
     _inject(monkeypatch, _table_with_accessor(_raising_accessor(reason)))
 
-    result = collect_destination_schema_findings(package(package_data()))
+    result = collect_destination_schema_findings(package(credential_package_data()), _OPTIONS)
 
     assert _codes_and_locations(result.findings) == [("destination-schema-read-failed", "/configuration/destination")]
     assert reason in result.findings[0].message
     assert result.schema_fingerprint is None
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["timeout", "unreachable", "unauthorized", "forbidden", "nobranch", "rejected", "unconfigured", "credentials"],
+)
+def test_a_failed_schema_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
+    _inject(monkeypatch, _table_with_accessor(_raising_accessor(reason)))
+
+    result = collect_destination_schema_findings(package(package_data()))
+
+    assert result.read_failure_reason == reason
+    assert result.schema_read is False
+    assert [finding.code for finding in result.findings] == ["destination-schema-read-failed"]
+
+
+def test_a_failed_access_read_returns_its_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The schema was read and fingerprinted, but `schema_read` covers the access read too."""
+
+    def failing_access(package_: ConfigurationPackage, branch: str) -> DestinationAccess:
+        del package_
+        msg = f"access read failed for branch {branch!r}"
+        raise DestinationSchemaReadError(msg, reason="forbidden")
+
+    table = _table_with_accessor(_SpiedAccessor())
+    table["infrahub"] = replace(table["infrahub"], destination_access_accessor=failing_access)
+    _inject(monkeypatch, table)
+
+    result = collect_destination_schema_findings(package(package_data()))
+
+    assert result.read_failure_reason == "forbidden"
+    assert result.schema_read is False
+    assert result.schema_fingerprint is not None
+    assert "destination-schema-read-failed" in [finding.code for finding in result.findings]
+
+
+def test_a_successful_read_returns_no_read_failure_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor()))
+
+    result = collect_destination_schema_findings(package(package_data()))
+
+    assert result.read_failure_reason is None
+    assert result.schema_read is True
 
 
 def test_a_failed_schema_read_does_not_suppress_the_write_operations_check(
@@ -451,10 +509,10 @@ def test_a_failed_schema_read_does_not_suppress_the_write_operations_check(
         destination_schema_accessor=_raising_accessor("timeout"),
     )
     _inject(monkeypatch, table)
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["destination"]["name"] = "peeringmanager"
 
-    result = collect_destination_schema_findings(package(data))
+    result = collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-read-failed", "/configuration/destination"),
@@ -471,8 +529,8 @@ def test_the_same_package_and_snapshot_produce_byte_identical_findings(
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor()))
     data = _mapping_package_data([{"name": "bogus"}, {"name": "also_bogus"}])
 
-    first = collect_destination_schema_findings(package(data))
-    second = collect_destination_schema_findings(package(data))
+    first = collect_destination_schema_findings(package(data), _OPTIONS)
+    second = collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert first.findings == second.findings
     assert first.schema_fingerprint == second.schema_fingerprint
@@ -480,13 +538,13 @@ def test_the_same_package_and_snapshot_produce_byte_identical_findings(
 
 def test_schema_findings_arrive_in_the_stable_sort_order(monkeypatch: pytest.MonkeyPatch) -> None:
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor()))
-    data = package_data()
+    data = credential_package_data()
     data["configuration"]["schema_mapping"] = [
         {"name": "InfraDevice", "mapping": "dcim.devices", "fields": [{"name": "bogus"}]},
         {"name": "NopeKind", "mapping": "dcim.nope"},
     ]
 
-    result = collect_destination_schema_findings(package(data))
+    result = collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-mismatch", "/configuration/schema_mapping/0/fields/0/name"),
@@ -503,10 +561,10 @@ def test_the_wrapper_and_the_core_never_call_a_schema_accessor(monkeypatch: pyte
     table = _table_with_accessor(accessor)
     monkeypatch.setattr(validation_module, "BUILTIN_ADAPTER_CAPABILITIES", table)
     _inject(monkeypatch, table)
-    defective = package_data()
+    defective = credential_package_data()
     defective["configuration"]["destination"]["settings"]["bogus_dest"] = "x"
 
-    assert validate_package_credentials(package(package_data())) is None
+    assert validate_package_credentials(package(credential_package_data())) is None
     with pytest.raises(CredentialConfigurationError, match="bogus_dest"):
         validate_package_credentials(package(defective))
     collect_findings(package(defective))
@@ -599,15 +657,17 @@ def test_every_frozen_schema_code_is_reachable_and_nothing_else_is_emitted(
     severities: set[str] = set()
 
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor()))
-    for finding in collect_destination_schema_findings(package(_mapping_package_data(kind="NopeKind"))).findings:
+    for finding in collect_destination_schema_findings(
+        package(_mapping_package_data(kind="NopeKind")), _OPTIONS
+    ).findings:
         reached.add(finding.code)
         severities.add(finding.severity)
     _inject(monkeypatch, _table_with_accessor(_raising_accessor("timeout")))
-    for finding in collect_destination_schema_findings(package(package_data())).findings:
+    for finding in collect_destination_schema_findings(package(credential_package_data()), _OPTIONS).findings:
         reached.add(finding.code)
         severities.add(finding.severity)
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_UNSUPPORTED_SNAPSHOT)))
-    for finding in collect_destination_schema_findings(package(package_data())).findings:
+    for finding in collect_destination_schema_findings(package(credential_package_data()), _OPTIONS).findings:
         reached.add(finding.code)
         severities.add(finding.severity)
     # Spec 007: a Dropdown literal outside its choices, and an access read that finds gaps.
@@ -615,13 +675,13 @@ def test_every_frozen_schema_code_is_reachable_and_nothing_else_is_emitted(
     table["infrahub"] = replace(table["infrahub"], destination_access_accessor=_access_accessor)
     _inject(monkeypatch, table)
     dropdown = _mapping_package_data([{"name": "name", "mapping": "name"}, {"name": "status", "static": "retired"}])
-    for finding in collect_destination_schema_findings(package(dropdown)).findings:
+    for finding in collect_destination_schema_findings(package(dropdown), _OPTIONS).findings:
         reached.add(finding.code)
         severities.add(finding.severity)
     _inject(monkeypatch, dict(BUILTIN_ADAPTER_CAPABILITIES))
-    non_declaring = package_data()
+    non_declaring = credential_package_data()
     non_declaring["configuration"]["destination"]["name"] = "peeringmanager"
-    for finding in collect_destination_schema_findings(package(non_declaring)).findings:
+    for finding in collect_destination_schema_findings(package(non_declaring), _OPTIONS).findings:
         reached.add(finding.code)
         severities.add(finding.severity)
 
@@ -660,9 +720,8 @@ class _FakeClient:
 
 def _mock_schema_read_failure(monkeypatch: pytest.MonkeyPatch, exception: Exception) -> None:
     _inject(monkeypatch, _live_read_table())
-    # The declared token reference must resolve, or the credentials arm reports before
-    # the mocked client is ever constructed.
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
+    # The validation reads the token of the destination's stored credential through `_OPTIONS`;
+    # without it, the credentials arm reports before the mocked client is ever constructed.
 
     def _fake_client(address: str, config: object) -> _FakeClient:
         del address, config
@@ -671,8 +730,8 @@ def _mock_schema_read_failure(monkeypatch: pytest.MonkeyPatch, exception: Except
     monkeypatch.setattr("infrahub_sdk.InfrahubClientSync", _fake_client)
 
 
-def _read_failure_and_write_findings(reason: str) -> None:
-    result = collect_destination_schema_findings(package(package_data()))
+def _read_failure_and_write_findings(reason: str, options: DestinationSchemaOptions | None = _OPTIONS) -> None:
+    result = collect_destination_schema_findings(package(credential_package_data()), options)
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-read-failed", "/configuration/destination"),
@@ -733,7 +792,7 @@ def test_a_schema_read_without_permission_quotes_the_missing_permission(monkeypa
     )
     _mock_schema_read_failure(monkeypatch, httpx.HTTPStatusError("refused", request=request, response=response))
 
-    result = collect_destination_schema_findings(package(package_data()))
+    result = collect_destination_schema_findings(package(credential_package_data()), _OPTIONS)
 
     message = result.findings[0].message
     assert "forbidden" in message
@@ -763,8 +822,8 @@ def test_the_accessor_classifies_a_missing_branch_as_nobranch(monkeypatch: pytes
     """FR-002: the SDK's BranchNotFoundError is a missing branch, not a generic rejection."""
     _mock_schema_read_failure(monkeypatch, sdk_exceptions.BranchNotFoundError("demo-test"))
 
-    with pytest.raises(DestinationSchemaReadError) as caught:
-        _live_accessor()(package(package_data()), "demo-test")
+    with pytest.raises(DestinationSchemaReadError) as caught, capabilities_module.destination_token(_DESTINATION_TOKEN):
+        _live_accessor()(package(credential_package_data()), "demo-test")
 
     assert caught.value.reason == "nobranch"
     assert caught.value.detail is None
@@ -779,7 +838,6 @@ def test_an_http_400_on_the_schema_endpoint_reads_as_a_missing_branch(monkeypatc
     """
     import infrahub_sdk  # pylint: disable=import-outside-toplevel
 
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
     real_client = infrahub_sdk.InfrahubClientSync
     requested: list[str] = []
 
@@ -795,8 +853,8 @@ def test_an_http_400_on_the_schema_endpoint_reads_as_a_missing_branch(monkeypatc
 
     monkeypatch.setattr("infrahub_sdk.InfrahubClientSync", _client_with_400)
 
-    with pytest.raises(DestinationSchemaReadError) as caught:
-        _live_accessor()(package(package_data()), "demo-test")
+    with pytest.raises(DestinationSchemaReadError) as caught, capabilities_module.destination_token(_DESTINATION_TOKEN):
+        _live_accessor()(package(credential_package_data()), "demo-test")
 
     assert caught.value.reason == "nobranch"
     assert len(requested) == 1
@@ -822,7 +880,6 @@ def test_an_unusable_declared_client_configuration_lands_as_a_typed_finding(
     monkeypatch: pytest.MonkeyPatch, exception: Exception
 ) -> None:
     _inject(monkeypatch, _live_read_table())
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _refusing_config(**kwargs: object) -> object:
         del kwargs
@@ -836,19 +893,18 @@ def test_an_unusable_declared_client_configuration_lands_as_a_typed_finding(
 def test_an_unresolvable_declared_token_lands_as_a_typed_finding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The destination names a stored credential, and this validation has no way to read it.
     _inject(monkeypatch, _live_read_table())
-    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", raising=False)
 
-    _read_failure_and_write_findings("credentials")
+    _read_failure_and_write_findings("credentials", options=None)
 
 
 def test_a_missing_declared_url_lands_as_a_typed_finding(monkeypatch: pytest.MonkeyPatch) -> None:
     _inject(monkeypatch, _live_read_table())
-    data = package_data()
+    data = credential_package_data()
     del data["configuration"]["destination"]["settings"]["url"]
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
-    result = collect_destination_schema_findings(package(data))
+    result = collect_destination_schema_findings(package(data), _OPTIONS)
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-read-failed", "/configuration/destination"),
@@ -877,7 +933,6 @@ class _ReturningClient:
 
 def _mock_schema_read_response(monkeypatch: pytest.MonkeyPatch, response: object) -> None:
     _inject(monkeypatch, _live_read_table())
-    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _fake_client(address: str, config: object) -> _ReturningClient:
         del address, config
@@ -1024,7 +1079,7 @@ def test_a_snapshot_outside_the_closed_domain_reports_a_finding(monkeypatch: pyt
     # must be visible to an operator rather than only erasing the fingerprint.
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_UNSUPPORTED_SNAPSHOT)))
 
-    result = collect_destination_schema_findings(package(package_data()))
+    result = collect_destination_schema_findings(package(credential_package_data()), _OPTIONS)
 
     assert result.schema_fingerprint is None
     assert "destination-schema-unsupported-semantics" in {finding.code for finding in result.findings}
@@ -1046,7 +1101,7 @@ def _dropdown_snapshot(choices: list[str] | None) -> dict[str, Any]:
 def _dropdown_findings(monkeypatch: pytest.MonkeyPatch, *, choices: list[str] | None, value: str) -> list[Any]:
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_dropdown_snapshot(choices))))
     data = _mapping_package_data([{"name": "name", "mapping": "name"}, {"name": "status", "static": value}])
-    findings = collect_destination_schema_findings(package(data)).findings
+    findings = collect_destination_schema_findings(package(data), _OPTIONS).findings
     assert "destination-schema-read-failed" not in {finding.code for finding in findings}
     return [finding for finding in findings if finding.code == "destination-dropdown-value-not-in-choices"]
 

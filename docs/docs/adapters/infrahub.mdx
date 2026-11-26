@@ -38,16 +38,14 @@ A single package moves data one way, from its source to its destination.
     name: from-netbox
     source:
       name: netbox
+      credential: netbox-token
       settings:
         url: "https://netbox.example.com"
-        token:
-          $credential: netbox-token
     destination:
       name: infrahub
+      credential: infrahub-token
       settings:
         url: "https://infrahub.example.com"
-        token:
-          $credential: infrahub-token
         branch: "main"            # Optional
         verify_ssl: true          # Optional, defaults to true
         source:                   # Optional, defaults to the import account
@@ -58,13 +56,6 @@ A single package moves data one way, from its source to its destination.
           name: network-team
         protect: false            # Optional, defaults to false
     schema_mapping: []            # See the schema mapping section below
-  credentials:
-    netbox-token:
-      provider: env
-      identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
-    infrahub-token:
-      provider: env
-      identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
   ```
 
   </TabItem>
@@ -76,25 +67,16 @@ A single package moves data one way, from its source to its destination.
     name: infrahub-to-infrahub
     source:
       name: infrahub
+      credential: source-infrahub-token
       settings:
         url: "https://infrahub-a.example.com"
-        token:
-          $credential: source-infrahub-token
         branch: "main"
     destination:
       name: infrahub
+      credential: infrahub-token
       settings:
         url: "https://infrahub-b.example.com"
-        token:
-          $credential: infrahub-token
     schema_mapping: []
-  credentials:
-    source-infrahub-token:
-      provider: env
-      identifier: INFRAHUB_SYNC_CREDENTIAL_SOURCE_INFRAHUB_TOKEN
-    infrahub-token:
-      provider: env
-      identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
   ```
 
   </TabItem>
@@ -105,7 +87,6 @@ A single package moves data one way, from its source to its destination.
 | Setting | Type | Required | Default | Description |
 |---------|------|----------|---------|-------------|
 | `url` | string | Yes | - | Infrahub server URL, as the Sync worker reaches it |
-| `token` | `$credential` reference | Yes | - | API token for authentication |
 | `branch` | string | No | See below | Branch to read or write |
 | `verify_ssl` | boolean | No | true | Verify TLS certificates |
 | `source` | `{kind, name}` mapping | No | The import account | Node recorded as the source of every value the import writes. See [Lineage tracking](#lineage-tracking) |
@@ -123,7 +104,7 @@ For a registered package, the SDK validates the declared destination URL. An inv
 A registered package declares its own connection settings:
 
 - The worker connects to the `url` declared in the package, for data and for the destination schema read. `INFRAHUB_ADDRESS` and `INFRAHUB_URL` in the worker environment do not replace it.
-- The worker reads the token from the environment variable that the package's `credentials` entry names, for example `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. Set that variable in the worker environment. On a Compose deployment, set it in `.env`.
+- The block names a stored credential that holds the field `token`, for example `credential: infrahub-token`. An administrator creates it with `infrahub-sync credentials create infrahub-token`, which asks for the token and does not echo it. The worker gets the token from the Sync API for each run, and reads no token from its environment. Do not write `token` in `settings`. See [Manage stored credentials](../guides/credentials.mdx).
 - To change a URL or a branch, edit the package and register it as a new version with `configs version`. Then plan with the new version.
 
 ### Direct adapter use
@@ -213,10 +194,9 @@ Create one Infrahub account for each import, for example `netbox`, and give its 
 ```yaml
 destination:
   name: infrahub
+  credential: infrahub-token
   settings:
     url: "https://infrahub.example.com"
-    token:
-      $credential: infrahub-token
     source:
       kind: CoreAccountGroup
       name: data-sync
@@ -317,7 +297,7 @@ When Infrahub refuses a request with HTTP 403, the run reports a missing permiss
 
 ### Authentication errors
 
-- Check that the worker environment sets the variable that the package's token credential names, for example `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. On a Compose deployment, run `docker compose up -d --wait` after you change `.env`.
+- Check that the stored credential the block names holds the current token. `infrahub-sync credentials show <name>` shows its fields and its revision, never the value. An administrator replaces the value with `infrahub-sync credentials set <name>`; no worker restart is needed.
 - Check that the token has permission to read and write the target branch.
 - Check the `url` in the registered package with `configs show <config-id> --version <version>`. The worker does not read `INFRAHUB_ADDRESS`.
 

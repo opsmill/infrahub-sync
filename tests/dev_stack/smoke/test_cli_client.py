@@ -125,10 +125,13 @@ def run_cli(
     return fields(completed.stdout)
 
 
-def package_file(smoke_env: dict[str, Any], directory: Path) -> Path:
-    """Write the smoke package where `configs register` can read it as an argument."""
+def package_file(smoke_env: dict[str, Any], directory: Path, name: str | None = None) -> Path:
+    """Write the smoke package where `configs register` can read it as an argument.
+
+    The package has a new unique name unless `name` is given; see `smoke_package`.
+    """
     path = directory / "smoke-package.json"
-    path.write_text(json.dumps(smoke_package(smoke_env["urls"]["infrahub"])), encoding="utf-8")
+    path.write_text(json.dumps(smoke_package(smoke_env["urls"]["infrahub"], name)), encoding="utf-8")
     return path
 
 

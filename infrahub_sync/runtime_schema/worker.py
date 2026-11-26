@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from infrahub_sync.configuration.capabilities import (
     DestinationSchemaReadError,
+    destination_token,
     get_adapter_capabilities,
 )
 from infrahub_sync.configuration.capabilities import (
@@ -189,7 +190,14 @@ def build_runtime_model_plan(
     _require_admitted_destination(instance)
     branch = effective_destination_branch(instance.destination.settings, run_branch)
     try:
-        raw = read_destination_schema_snapshot(package, branch)
+        if package.configuration.destination.credential is None:
+            raw = read_destination_schema_snapshot(package, branch)
+        else:
+            # The destination names a stored credential: the read takes the token that
+            # `resolve_runtime_instance` wrote into the instance from the released values.
+            released = (instance.destination.settings or {}).get("token")
+            with destination_token(released if isinstance(released, str) else None):
+                raw = read_destination_schema_snapshot(package, branch)
     except DestinationSchemaReadError as exc:
         if exc.reason == "nobranch":
             raise DestinationBranchNotFoundError(branch=branch) from None

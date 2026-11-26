@@ -315,3 +315,58 @@ def test_worker_identity_rejects_noncanonical_values(
     with pytest.raises(RuntimeError, match="service worker execution identity is invalid"):
         service_flow._claim_current_execution(projection, "run-worker-claim")
     assert projection.lookup_run("run-worker-claim").value.prefect_executions[0].claimed_at is None  # type: ignore[union-attr]
+
+
+class _ScheduledFlowRunClient(_PrefectWorkerClient):
+    """The same worker registry, with a flow run that holds the scheduling facts Prefect stores."""
+
+    def __init__(self, *, auto_scheduled: object, expected_start_time: object) -> None:
+        super().__init__()
+        self.auto_scheduled = auto_scheduled
+        self.expected_start_time = expected_start_time
+
+    def read_flow_run(self, flow_run_id: UUID) -> SimpleNamespace:
+        flow_run = super().read_flow_run(flow_run_id)
+        flow_run.auto_scheduled = self.auto_scheduled
+        flow_run.expected_start_time = self.expected_start_time
+        return flow_run
+
+
+_START = datetime(2026, 3, 2, 2, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("auto_scheduled", "expected_start_time", "expected"),
+    [
+        (True, _START, service_flow.ScheduledFlowRun(auto_scheduled=True, expected_start_time=_START)),
+        (False, _START, service_flow.ScheduledFlowRun(auto_scheduled=False, expected_start_time=_START)),
+        (None, _START, service_flow.ScheduledFlowRun(auto_scheduled=False, expected_start_time=_START)),
+        (
+            True,
+            _START.replace(tzinfo=None),
+            service_flow.ScheduledFlowRun(auto_scheduled=True, expected_start_time=None),
+        ),
+        (True, None, service_flow.ScheduledFlowRun(auto_scheduled=True, expected_start_time=None)),
+    ],
+)
+def test_the_scheduling_facts_come_from_the_flow_run_read_for_the_worker_identity_check(
+    monkeypatch: pytest.MonkeyPatch,
+    auto_scheduled: object,
+    expected_start_time: object,
+    expected: service_flow.ScheduledFlowRun,
+) -> None:
+    """Spec 021, R2: only a flow run that a schedule created, with a start time in a time zone, is scheduled."""
+    client = _ScheduledFlowRunClient(auto_scheduled=auto_scheduled, expected_start_time=expected_start_time)
+    monkeypatch.setattr(service_flow, "get_client", lambda **_kwargs: client, raising=False)
+
+    assert service_flow._scheduled_flow_run(FLOW_ID, WORKER_ID) == expected
+
+
+def test_the_scheduling_facts_are_not_read_for_a_worker_that_is_not_the_current_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _ScheduledFlowRunClient(auto_scheduled=True, expected_start_time=_START)
+    monkeypatch.setattr(service_flow, "get_client", lambda **_kwargs: client, raising=False)
+
+    with pytest.raises(RuntimeError, match="identity is unavailable"):
+        service_flow._scheduled_flow_run(FLOW_ID, "00000000-0000-4000-8000-000000000000")

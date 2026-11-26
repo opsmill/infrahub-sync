@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ipaddress
-import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+import structlog
 from diffsync import Adapter, DiffSyncModel
 from diffsync.exceptions import ObjectAlreadyExists, ObjectNotFound
 from infrahub_sdk import (
@@ -70,7 +70,7 @@ from infrahub_sync.plan.models import (
     RecordedAccountRecord,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[str | None, str | None]:
@@ -86,11 +86,52 @@ def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[
     return url, settings.get("branch") or branch
 
 
+def infrahub_sdk_config(settings: Mapping[str, Any], *, url: str, token: str, branch: str) -> dict[str, Any]:
+    """The Infrahub SDK `Config` fields of a client of this destination, with `branch` as its default.
+
+    The destination adapter and the branch review operations of a scheduled run
+    (`infrahub_sync.service.branch_review`) build their clients from it, so both read the same
+    address, token and TLS setting.
+    """
+    sdk_config: dict[str, Any] = {
+        "address": url,
+        "timeout": 60,
+        "api_token": token,
+        "default_branch": branch,
+        "default_branch_from_git": False,
+    }
+    verify_ssl = settings.get("verify_ssl")
+    if verify_ssl is not None:
+        sdk_config["tls_insecure"] = not verify_ssl
+    if is_registered_context(settings):
+        # Direct use keeps the SDK's `INFRAHUB_*` fallbacks; a registered package does not.
+        sdk_config = pin_infrahub_sdk_authority(sdk_config)
+    return sdk_config
+
+
 # GraphQL filter kwarg for timestamp-based incremental queries.
 # Verified against a live Infrahub via __type introspection — every node
 # exposes the metadata-prefixed `node_metadata__updated_at__after` arg.
 # Adjust if the server renames this field.
 _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
+
+# The creator Infrahub records in the node metadata of a node it creates itself, such as the
+# `IpamNamespace` named `default` of every branch (spec 019 research R2, probe of T001).
+INFRAHUB_SYSTEM_ACCOUNT_ID = "__system__"
+
+INFRAHUB_BUILTIN_NODE_KINDS: frozenset[str] = frozenset({"IpamNamespace"})
+"""The kinds of the nodes that Infrahub creates itself in a branch (ADR 0047, research R2).
+
+The creator `__system__` alone does not mark a node as built in. Infrahub 1.11.9 also records
+`__system__` as the creator of IPAM nodes that a sync imported, such as the `IpamPrefix`,
+`IpamIPAddress` and `IpamAggregate` nodes of a NetBox import
+(`dev/specs/archive/009-import-lineage/opsmill-implement-report.md`). A plan must keep the delete
+of such a node when the source deletes it, so a node counts as built in only when its creator is
+`__system__` and its kind is listed here. The probe of a new Infrahub 1.11.9 branch found one
+such node, the `IpamNamespace` named `default`
+(`tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`). Add a kind only when a probe of a
+new branch finds a node of that kind.
+"""
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, MutableMapping, Sequence
@@ -939,6 +980,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     # plans over the same values give the same operations. Set by `__init__` and reset by
     # `resolve_lineage`; read and written through `last_changes`.
     _last_changes: dict[tuple[str, str], LastChange] | None = None
+    # The ids of the destination nodes this plan read that Infrahub created itself (spec 019
+    # FR-001, research R2). Filled by `model_loader` from the node metadata that a read with
+    # metadata returns; reset by `resolve_lineage`; read through `builtin_node_ids`.
+    _builtin_node_ids: set[str] | None = None
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
@@ -960,7 +1005,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         settings = adapter.settings or {}
         infrahub_url, infrahub_branch = resolved_endpoint(settings, branch)
         infrahub_token = select_runtime_credential(settings, "token", ("INFRAHUB_API_TOKEN",))
-        verify_ssl = settings.get("verify_ssl")
 
         if not infrahub_url or not infrahub_token:
             msg = "Both url and token must be specified!"
@@ -970,19 +1014,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         infrahub_branch = infrahub_branch or "main"
         self.destination_binding = DestinationBindingRecord(url=infrahub_url, branch=infrahub_branch)
 
-        sdk_config: dict[str, Any] = {
-            "address": infrahub_url,
-            "timeout": 60,
-            "api_token": infrahub_token,
-            "default_branch": infrahub_branch,
-            "default_branch_from_git": False,
-        }
-        if verify_ssl is not None:
-            sdk_config["tls_insecure"] = not verify_ssl
-        if is_registered_context(settings):
-            # Direct use keeps the SDK's `INFRAHUB_*` fallbacks; a registered package does not.
-            sdk_config = pin_infrahub_sdk_authority(sdk_config)
-
+        sdk_config = infrahub_sdk_config(settings, url=infrahub_url, token=infrahub_token, branch=infrahub_branch)
         self.client = InfrahubClientSync(address=infrahub_url, config=Config(**sdk_config))
 
         # Parsed here, resolved against the destination by `resolve_lineage` at the start of
@@ -1019,6 +1051,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     @last_changes.setter
     def last_changes(self, value: dict[tuple[str, str], LastChange]) -> None:
         self._last_changes = value
+
+    @property
+    def builtin_node_ids(self) -> frozenset[str]:
+        """The ids of the destination nodes this plan read that Infrahub created itself.
+
+        The member of `BuiltinNodeReadingDestination`. A node is in the set when its node
+        metadata names the creator `__system__` and its kind is in `INFRAHUB_BUILTIN_NODE_KINDS`
+        (research R2, ADR 0047). Empty when the plan read no
+        metadata (`metadata_read` is false), so every unmatched node then becomes a delete.
+        """
+        return frozenset(self._builtin_node_ids or ())
 
     def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> ResolvedLineage:
         """Resolve the import account, the source and the owner this run writes, and keep them.
@@ -1071,6 +1114,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         )
         self.metadata_read = False
         self.last_changes = {}
+        self._builtin_node_ids = set()
         return self.lineage
 
     def resolve_metadata_read(self) -> None:
@@ -1268,6 +1312,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         if self.metadata_read:
             for node in nodes:
                 self._record_last_changes(node, mapped=mapped)
+                if self.target == "destination":
+                    self._record_builtin_node(node)
         total = len(node_dict_pairs)
         records = [pair[1] for pair in node_dict_pairs]
 
@@ -1436,12 +1482,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             self._peer_unique_ids[cache_key] = None
             raise err
 
+        # Conversion runs before model_loader filters and transforms records. Only the
+        # loader may add models to the DiffSync store, so excluded peers stay excluded.
         unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
-        try:
-            peer_item = self.store.get(model=peer_kind, identifier=unique_id)
-        except ObjectNotFound:
-            peer_item = peer_model(**peer_data)
-            self.update_or_add_model_instance(peer_item)
 
         # Identifier-only hydration is deliberately adapter-local: inserting its
         # narrow result into the shared SDK store can replace a fuller node that
@@ -1454,8 +1497,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             identifiers=identifiers,
             fallback_node=None if hydrated else peer_node,
         )
-        resolved_unique_id = peer_item.get_unique_id()
-        self._peer_unique_ids[cache_key] = resolved_unique_id
+        self._peer_unique_ids[cache_key] = unique_id
         if verified_null_identifiers:
             logger.warning(
                 "Resolved peer %s[%s] with verified null attribute identifier(s): %s",
@@ -1463,7 +1505,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 peer_id,
                 sorted(verified_null_identifiers),
             )
-        return resolved_unique_id
+        return unique_id
 
     def _reconcile_peer_sdk_alias(
         self,
@@ -1636,6 +1678,25 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 continue
             last_changes[node_id, rel_schema.name] = change
 
+    def _record_builtin_node(self, node: InfrahubNodeSync) -> None:
+        """Keep the id of a node read with metadata when Infrahub created it itself (research R2).
+
+        Infrahub 1.11.9 names the creator `__system__` in the node metadata of a node it creates
+        itself (`tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`), and also of some IPAM
+        nodes that a sync imported. A node is therefore kept only when its kind is in
+        `INFRAHUB_BUILTIN_NODE_KINDS` as well. The mark is read from the read that already
+        returns the metadata; no request is added. Nothing here reaches the DiffSync models.
+        """
+        if node.get_kind() not in INFRAHUB_BUILTIN_NODE_KINDS:
+            return
+        metadata = node.get_node_metadata()
+        creator = None if metadata is None else metadata.created_by
+        if creator is None or creator.id != INFRAHUB_SYSTEM_ACCOUNT_ID:
+            return
+        if self._builtin_node_ids is None:
+            self._builtin_node_ids = set()
+        self._builtin_node_ids.add(str(node.id))
+
     def new_peer_resolver(self) -> PeerResolver:
         """Build the peer resolver for one apply (FR-014, AD086).
 
@@ -1657,27 +1718,35 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             return
         schemas = self.client.schema.all(refresh=True)
         missing_by_kind: dict[str, set[str]] = {}
+        faults_by_kind: dict[str, set[str]] = {}
         for operation in operations:
             if operation.action == "delete":
                 continue
             schema = schemas.get(operation.kind)
+            faults: set[str] = set()
             if isinstance(schema, NodeSchemaAPI):
                 missing = self._unwritable_reviewed_fields(operation=operation, node_schema=schema)
                 if not missing:
-                    missing = self._omitted_rendered_fields(operation=operation, node_schema=schema)
+                    missing, faults = self._omitted_rendered_fields(operation=operation, node_schema=schema)
             else:
                 missing = set(operation.payload or {})
             if missing:
                 missing_by_kind.setdefault(operation.kind, set()).update(missing)
+            if faults:
+                faults_by_kind.setdefault(operation.kind, set()).update(faults)
         if missing_by_kind:
-            details = "; ".join(
-                f"{kind!r}: {', '.join(repr(field) for field in sorted(fields))}"
-                for kind, fields in sorted(missing_by_kind.items())
-            )
             msg = (
                 f"The live destination schema cannot represent reviewed direct payload field(s) for "
-                f"destination kind(s) {details}. The whole plan was refused before its first write; "
-                "no destination write was attempted."
+                f"destination kind(s) {_fields_by_kind(missing_by_kind)}. The whole plan was refused before its "
+                "first write; no destination write was attempted."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
+        if faults_by_kind:
+            msg = (
+                "An update empties a one-peer relationship, but the SDK mutation renders relationship field(s) "
+                f"of destination kind(s) {_fields_by_kind(faults_by_kind)} as something other than the reviewed "
+                "change: an emptied field must render as null, and no relationship the operation does not name "
+                "may render. The whole plan was refused before its first write; no destination write was attempted."
             )
             raise ReviewedPayloadFieldMissingError(msg)
         refuse_destination_identity_collisions(schema=schemas, operations=operations)
@@ -1706,20 +1775,54 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         writable = {attribute.name for attribute in node_schema.attributes if not attribute.read_only}
         return cls._reviewed_direct_fields(operation=operation, node_schema=node_schema) - writable
 
-    def _omitted_rendered_fields(self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
-        """Find reviewed direct values the SDK would leave out of its mutation input."""
+    def _omitted_rendered_fields(
+        self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI
+    ) -> tuple[set[str], set[str]]:
+        """Find what the SDK would render differently from the reviewed operation.
+
+        Returns the reviewed direct values the SDK would leave out of its mutation input, and
+        the relationship fields whose render differs from an emptying update's reviewed change
+        (`_emptied_render_faults`).
+        """
         payload = operation.payload or {}
         data = self.client.schema.generate_payload_create(schema=node_schema, data=payload)
-        node = self.client.create(kind=operation.kind, data=data)
-        if operation.action == "update":
-            node.id = operation.destination_id
-        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        node = self._planned_write_node(operation=operation, node_schema=node_schema, create_data=data)
         rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
-        return {
+        omitted = {
             field
             for field in self._reviewed_direct_fields(operation=operation, node_schema=node_schema)
             if field not in rendered_data
         }
+        return omitted, _emptied_render_faults(
+            operation=operation, node_schema=node_schema, rendered_data=rendered_data
+        )
+
+    def _planned_write_node(
+        self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI, create_data: dict[str, Any]
+    ) -> InfrahubNodeSync:
+        """Build the SDK node a planned create or update renders its Upsert from.
+
+        An update that empties a one-peer relationship, and only such an update, gets its
+        destination id in the create data, so the SDK builds the node as an existing one; the
+        SDK renders a relationship set to `None` as `null` only for an existing node
+        (research R8). Every other operation is built as a new node, as before plan format 5,
+        so its rendered input does not change.
+        """
+        emptied = _emptied_one_peer_fields(operation)
+        if emptied:
+            create_data = {**create_data, "id": operation.destination_id}
+        node = self.client.create(kind=operation.kind, data=create_data)
+        if operation.action == "update":
+            # The recorded id, set on the node rather than put into `data`. The SDK renders
+            # `data["id"] = self.id` when the node carries one and only otherwise considers
+            # `hfid` (`infrahub_sdk/node/node.py:295-298`), so this is what makes the upsert
+            # a keyed update of that exact object. Putting `id` into the payload `data` instead
+            # would render it as the attribute-shaped `id: {}` and key nothing.
+            node.id = operation.destination_id
+        for field in emptied:
+            setattr(node, field, None)
+        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        return node
 
     @staticmethod
     def _set_reviewed_null_attributes(
@@ -1829,10 +1932,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 "does not declare them as writable attributes. No write was made for this operation."
             )
             raise ReviewedPayloadFieldMissingError(msg)
+        emptied = set(_emptied_one_peer_fields(operation))
         null_to_one_relationships = [
             relationship
             for relationship in node_schema.relationships
-            if relationship.cardinality == "one" and relationship.name in payload and payload[relationship.name] is None
+            if relationship.cardinality == "one"
+            and ((relationship.name in payload and payload[relationship.name] is None) or relationship.name in emptied)
         ]
         mandatory_null_fields = sorted(
             relationship.name for relationship in null_to_one_relationships if not relationship.optional
@@ -1850,6 +1955,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         references = list(operation.relationships or ())
         _refuse_partial_key_peer_filter(operation, self.schema)
         for reference in references:
+            if reference.empties_one_peer:
+                # Written as `null` on the node below, never as an entry in the data.
+                continue
             peer_ids = [
                 peers.resolve(
                     peer_kind=reference.peer_kind,
@@ -1901,24 +2009,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             owner=owner_id if operation.action == "create" else None,
             is_protected=is_protected,
         )
-        if operation.action == "update" and owner_id is not None and references:
+        # An emptied relationship adds no edge, so it needs no read of the current peers.
+        written_references = [reference for reference in references if not reference.empties_one_peer]
+        if operation.action == "update" and owner_id is not None and written_references:
             self._set_owner_on_added_edges(
                 create_data=create_data,
                 operation=operation,
                 node_schema=node_schema,
-                references=references,
+                references=written_references,
                 owner_id=owner_id,
             )
         clear_lineage_on_pool_edges(create_data, node_schema)
-        node = self.client.create(kind=operation.kind, data=create_data)
-        if operation.action == "update":
-            # The recorded id, set on the node rather than put into `data`. The SDK renders
-            # `data["id"] = self.id` when the node carries one and only otherwise considers
-            # `hfid` (`infrahub_sdk/node/node.py:295-298`), so this is what makes the upsert
-            # a keyed update of that exact object. Putting `id` into `data` instead would
-            # render it as the attribute-shaped `id: {}` and key nothing.
-            node.id = operation.destination_id
-        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        node = self._planned_write_node(operation=operation, node_schema=node_schema, create_data=create_data)
         # generate_payload_create retains unknown keys as empty dictionaries. The node
         # drops them while building the input to the mutation, so check that final input.
         rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
@@ -1933,6 +2035,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
                 f"would omit reviewed direct payload field(s) {fields} from the SDK mutation. "
                 "No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
+        render_faults = _emptied_render_faults(
+            operation=operation, node_schema=node_schema, rendered_data=rendered_data
+        )
+        if render_faults:
+            fields = ", ".join(repr(field) for field in sorted(render_faults))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} empties a "
+                f"one-peer relationship, but the SDK mutation renders relationship field(s) {fields} as "
+                "something other than the reviewed change: an emptied field must render as null, and no "
+                "relationship the operation does not name may render. No write was made for this operation."
             )
             raise ReviewedPayloadFieldMissingError(msg)
         try:
@@ -2157,6 +2271,38 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             "unkeyed and every re-apply would duplicate the object."
         )
         raise UnaccountedIdentityComponentError(msg)
+
+
+def _emptied_one_peer_fields(operation: PlannedOperation) -> list[str]:
+    """The one-peer relationships an update empties (plan format 5), sorted by name."""
+    return sorted(reference.field for reference in operation.relationships or () if reference.empties_one_peer)
+
+
+def _fields_by_kind(fields_by_kind: Mapping[str, set[str]]) -> str:
+    """Name each kind and its fields for a refusal message, in a fixed order."""
+    return "; ".join(
+        f"{kind!r}: {', '.join(repr(field) for field in sorted(fields))}"
+        for kind, fields in sorted(fields_by_kind.items())
+    )
+
+
+def _emptied_render_faults(
+    *, operation: PlannedOperation, node_schema: NodeSchemaAPI, rendered_data: Mapping[str, Any]
+) -> set[str]:
+    """The relationship fields whose render differs from what an emptying update reviewed.
+
+    Empty for an operation that empties no relationship, whose render is checked as before.
+    Otherwise an emptied field that does not render as `null`, and a relationship the
+    operation does not name that renders at all: an SDK in the allowed range renders `null`
+    for every uninitialized optional one-peer relationship of an existing node (research R8).
+    """
+    emptied = _emptied_one_peer_fields(operation)
+    if not emptied:
+        return set()
+    named = {reference.field for reference in operation.relationships or ()} | set(operation.payload or {})
+    faults = {field for field in emptied if field not in rendered_data or rendered_data[field] is not None}
+    faults.update(name for name in node_schema.relationship_names if name in rendered_data and name not in named)
+    return faults
 
 
 def _keyed_by_identity(operation: PlannedOperation) -> bool:

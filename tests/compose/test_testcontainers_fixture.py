@@ -18,7 +18,6 @@ refuse to run when the engine does not hold it, as every other case in this suit
 from __future__ import annotations
 
 import json
-import os
 import socket
 import subprocess  # noqa: S404 -- `docker compose port`, through the project's own command
 import uuid
@@ -32,6 +31,7 @@ pytest.importorskip("infrahub_testcontainers", reason="needs the `testcontainers
 
 from infrahub_sync import testcontainers as sync_testcontainers
 from tests.compose.lifecycle import await_phase, idempotency, register
+from tests.helpers.stored_credentials import create_credentials_through_api
 
 # The module comes from `importorskip`, not from a static import: the Python 3.10 profile has
 # no `infrahub-testcontainers`, and its type check covers this file.
@@ -50,16 +50,17 @@ OVERRIDE_VARIABLE = "INFRAHUB_SYNC_TESTCONTAINERS_OVERRIDE"
 OVERRIDE_VALUE = "set-by-the-override-file"
 # A variable the root file passes to `sync-worker`, exported with a value Compose would
 # change if the project's `.env` held it unquoted. Not a real credential.
-LITERAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"
+LITERAL_VARIABLE = "INFRAHUB_SYNC_WORKER_TOKEN"
 LITERAL_VALUE = "dummy-$token $$double ${NAME} it's"
+# The stored credential both blocks of the package name.
+INFRAHUB_CREDENTIAL = "infrahub-token"
 
 # `sync-worker` joins the Infrahub project's network and reaches the server by its
 # service name; the host reaches the same server at the port Docker published.
 INFRAHUB_INTERNAL_URL = "http://infrahub-server:8000"
-# The token the Infrahub project starts with, resolved as `environment_values` resolves it.
-INFRAHUB_TOKEN: str = (
-    os.environ.get(HELPERS.INFRAHUB_ADMIN_TOKEN_VARIABLE) or HELPERS.TEST_DEFAULTS[HELPERS.INFRAHUB_CREDENTIAL_VARIABLE]
-)
+# The token the Infrahub project starts with. No Sync service is given it: the class stores
+# it as the credential `infrahub-token` through the Sync API.
+INFRAHUB_TOKEN: str = HELPERS.infrahub_admin_token()
 SOURCE_BRANCH = "testcontainers-source"
 TAG_KIND = "BuiltinTag"
 
@@ -77,17 +78,18 @@ def run_in(project: InfrahubSyncDockerCompose, service: str, command: list[str])
 def tag_package(name: str) -> dict[str, object]:
     """An Infrahub-to-Infrahub package over `BuiltinTag`, a kind every Infrahub has.
 
-    `SOURCE_BRANCH` is the source and `main` the destination. The token is a credential
-    reference that the worker resolves from its own environment, where the test class sets
-    it to the Infrahub test deployment's administrator token.
+    `SOURCE_BRANCH` is the source and `main` the destination. Both blocks name the stored
+    credential `infrahub-token`, which the test creates through the Sync API with the
+    administrator token of the Infrahub test deployment before it registers the package.
     """
-    settings = {"url": INFRAHUB_INTERNAL_URL, "token": {"$credential": "infrahub-token"}}
+    settings = {"url": INFRAHUB_INTERNAL_URL}
+    block = {"name": "infrahub", "credential": INFRAHUB_CREDENTIAL}
     return {
         "format_version": 1,
         "configuration": {
             "name": name,
-            "source": {"name": "infrahub", "settings": {**settings, "branch": SOURCE_BRANCH}},
-            "destination": {"name": "infrahub", "settings": {**settings, "branch": "main"}},
+            "source": {**block, "settings": {**settings, "branch": SOURCE_BRANCH}},
+            "destination": {**block, "settings": {**settings, "branch": "main"}},
             "schema_mapping": [
                 {
                     "name": TAG_KIND,
@@ -96,9 +98,6 @@ def tag_package(name: str) -> dict[str, object]:
                     "fields": [{"name": field, "mapping": field} for field in ("name", "description")],
                 }
             ],
-        },
-        "credentials": {
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
         },
     }
 
@@ -161,8 +160,12 @@ class TestPlanAndApply(sync_testcontainers.TestInfrahubSyncDocker):
         sync_api_url: str, sync_api_token: str, planted_tag: str, infrahub_port: int
     ) -> None:
         with httpx.Client(
-            base_url=sync_api_url, headers={"Authorization": f"Bearer {sync_api_token}"}, timeout=60
+            base_url=f"{sync_api_url}/api", headers={"Authorization": f"Bearer {sync_api_token}"}, timeout=60
         ) as client:
+            # The Sync API refuses a package that names a credential it does not hold.
+            create_credentials_through_api(
+                sync_api_url, sync_api_token, {INFRAHUB_CREDENTIAL: {"token": INFRAHUB_TOKEN}}
+            )
             config_id, registry_version = register(
                 client, tag_package("testcontainers-tags"), "testcontainers: register the tag package"
             )
@@ -263,4 +266,4 @@ class TestSettingsReachTheProject(sync_testcontainers.TestInfrahubSyncDocker):
         ).stdout.strip()
         assert published == f"127.0.0.1:{exported_api_port}"
         assert sync_api_url == f"http://127.0.0.1:{exported_api_port}"
-        assert httpx.get(f"{sync_api_url}/version", timeout=30).status_code == 200
+        assert httpx.get(f"{sync_api_url}/api/version", timeout=30).status_code == 200

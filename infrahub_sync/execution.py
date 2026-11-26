@@ -30,7 +30,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -41,6 +41,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 import pydantic
+import structlog
 import yaml
 from filelock import Timeout
 
@@ -72,15 +73,16 @@ from infrahub_sync.potenda.apply_progress import ApplyProgressLostError
 from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Sequence
+    from collections.abc import Callable, Iterable, Iterator
 
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.review import SavedPlan
     from infrahub_sync.potenda import Potenda
     from infrahub_sync.potenda.apply_progress import ApplyProgressObserver
+    from infrahub_sync.potenda.plan_step import PlanStepObserver
     from infrahub_sync.potenda.read_progress import SideReadObserver
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # The level every engine this module builds sets on the `diffsync` logger.
 _DIFFSYNC_LOG_LEVEL = logging.INFO
@@ -185,10 +187,13 @@ _URL_USERINFO = re.compile(r"://(?P<userinfo>[^/\s@]+)@")
 # close to this depth; hitting it means the walk stops descending, never raises.
 MAX_SETTINGS_DEPTH = 64
 
-# Private composition channel used only by the packaged direct Prefect flow.
+# The redaction registry of the current run or request: one mutable list, bound by
+# `redaction_scope` and shared by reference with every thread and task that copies the
+# context. The direct Prefect flow, the service worker and each Sync API request bind one.
 # Keeping this out of ``run_remote_request``'s parameters preserves that
 # function's remote-shaped call contract while allowing the bridge's mutable
-# collection to learn configuration-derived values after resolution.
+# collection to learn configuration-derived values after resolution, and lets the code
+# that decrypts or receives a stored value add it before it returns it.
 _REMOTE_SECRET_VALUES: ContextVar[list[str] | None] = ContextVar("remote_secret_values", default=None)
 
 # Runner-environment variables each adapter reads its credentials from, keyed by
@@ -459,14 +464,128 @@ def collect_secret_values(
     return redaction_order(values)
 
 
+class NoRedactionScopeError(RuntimeError):
+    """A secret value was about to be used where no redaction registry is bound.
+
+    Raised instead of returning the value: a value that is in no registry would be in no
+    redaction list. The message holds no value.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("a secret value can be used only inside a redaction scope (execution.redaction_scope)")
+
+
+@contextmanager
+def redaction_scope(values: list[str] | None = None) -> Iterator[list[str]]:
+    """Bind the redaction registry of one run or one request, and return it.
+
+    The registry is one mutable list. The Sync API binds a new one for each request; a
+    worker binds the list its log bridge and its failure boundary already hold, so a
+    value added during the run is redacted in the lines written after it. The values
+    last as long as the list: a request's values end with the request.
+
+    Bind it above every thread or task that can add a value. A thread or task that copies
+    the context (a FastAPI route in the thread pool) shares the same list. A thread started
+    without the context has no registry, and `register_secret_values` refuses there.
+    """
+    registry: list[str] = [] if values is None else values
+    token = _REMOTE_SECRET_VALUES.set(registry)
+    try:
+        yield registry
+    finally:
+        _REMOTE_SECRET_VALUES.reset(token)
+
+
 @contextmanager
 def _bind_remote_secret_values(values: list[str]) -> Iterator[None]:
     """Bind a flow-owned mutable secret collection for one remote request."""
-    token = _REMOTE_SECRET_VALUES.set(values)
-    try:
+    with redaction_scope(values):
         yield
-    finally:
-        _REMOTE_SECRET_VALUES.reset(token)
+
+
+def register_secret_values(values: Iterable[str]) -> None:
+    """Add secret values to the redaction registry of the current run or request.
+
+    Call it before the function that decrypted or received the values returns them: the
+    values are then redacted from that moment in every message the run or the request
+    writes. `service.credential_crypto.CredentialCipher.decrypt` calls it, and the worker's
+    credential client must call it with the values the Sync API releases.
+
+    Values shorter than :data:`MIN_SECRET_LENGTH` are not added, for the reason
+    `collect_secret_values` drops them, so such a value is not redacted.
+
+    Raises:
+        NoRedactionScopeError: no registry is bound. The caller must not use the values.
+    """
+    registry = _REMOTE_SECRET_VALUES.get()
+    if registry is None:
+        raise NoRedactionScopeError
+    merge_secret_values(registry, values)
+
+
+def registered_secret_values() -> tuple[str, ...]:
+    """Return the values of the current registry, or nothing when none is bound."""
+    registry = _REMOTE_SECRET_VALUES.get()
+    return () if registry is None else tuple(registry)
+
+
+def merge_secret_values(registry: list[str], values: Iterable[str]) -> None:
+    """Add to a registry the values it does not hold yet; never remove one.
+
+    A registry is rebuilt from the environment and the configuration more than once in a
+    run. Replacing its content would drop the values registered at the moment of use.
+    """
+    held = set(registry)
+    for value in values:
+        if isinstance(value, str) and len(value) >= MIN_SECRET_LENGTH and value not in held:
+            held.add(value)
+            registry.append(value)
+
+
+class LiveSecretValues(Sequence[str]):
+    """Fixed secret values, plus the values of the registry bound when the list is read.
+
+    A long-lived service holds one of these in place of a tuple computed once: each read
+    includes the values registered in the current request or run, and no value of an
+    earlier request.
+    """
+
+    __slots__ = ("_fixed",)
+
+    def __init__(self, fixed: Iterable[str] = ()) -> None:
+        self._fixed: tuple[str, ...] = tuple(dict.fromkeys(fixed))
+
+    @property
+    def fixed(self) -> tuple[str, ...]:
+        """Return the fixed values only, without the values registered in the current request or run."""
+        return self._fixed
+
+    def _values(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((*self._fixed, *registered_secret_values())))
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+    @overload
+    def __getitem__(self, index: slice) -> tuple[str, ...]: ...
+    def __getitem__(self, index: int | slice) -> str | tuple[str, ...]:
+        """Return the value, or the values, at `index` of the current reading."""
+        return self._values()[index]
+
+    def __len__(self) -> int:
+        """Return the number of values of the current reading."""
+        return len(self._values())
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over one reading: the fixed values, then the registered ones."""
+        return iter(self._values())
+
+    def __contains__(self, value: object) -> bool:
+        """Return whether the current reading holds `value`."""
+        return value in self._values()
+
+    def __repr__(self) -> str:
+        """Show the counts only, never a value."""
+        return f"LiveSecretValues(fixed={len(self._fixed)}, registered={len(registered_secret_values())})"
 
 
 def redaction_order(secrets: Iterable[str]) -> tuple[str, ...]:
@@ -495,8 +614,12 @@ def json_string_forms(secrets: Iterable[str]) -> tuple[str, ...]:
 
 
 def redact(message: str, secrets: Iterable[str]) -> str:
-    """Replace every occurrence of a collected secret value with ``***``, longest first."""
-    return redact_ordered(message, redaction_order(secrets))
+    """Replace every occurrence of a collected secret value with ``***``, longest first.
+
+    The values of the redaction registry of the current run or request are replaced too,
+    so a value registered at the moment of use is covered whatever list the caller holds.
+    """
+    return redact_ordered(message, redaction_order((*secrets, *registered_secret_values())))
 
 
 def redact_ordered(message: str, ordered: Sequence[str]) -> str:
@@ -1153,6 +1276,7 @@ def execute_run(
     _read_observer: SideReadObserver | None = None,
     _apply_progress: ApplyProgressObserver | None = None,
     _start_after: int | None = None,
+    _plan_step_observer: PlanStepObserver | None = None,
 ) -> RunResult | SavedPlan:
     """Run one product operation against a resolved instance.
 
@@ -1173,6 +1297,10 @@ def execute_run(
     progress marker and for a resume (spec 016): the observer that saves the marker, and the
     position of the last operation an earlier execution committed. Both default to `None`, so
     the CLI-local and direct Prefect paths apply the whole plan and report nothing.
+
+    `_read_observer` and `_plan_step_observer` are the worker's seams for the timings of a
+    plan: each side's read (spec 013) and the parts of the plan step after the reads (spec 019,
+    research R12). Both are set on the built engine, after the factory call.
 
     `base_directory` names the cache root this run works in. A caller that owns a
     private directory for the run — the Sync service, whose stages share no filesystem
@@ -1251,6 +1379,7 @@ def execute_run(
         ptd.force_full_extract = full_extract
         # Set after the factory call so its pinned five-keyword shape does not change.
         ptd.read_observer = _read_observer
+        ptd.plan_step_observer = _plan_step_observer
         if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
             msg = "get_potenda_from_instance did not allocate a run_dir"
             raise RuntimeError(msg)
@@ -1367,7 +1496,7 @@ def run_remote_request(
     secrets = collect_secret_values()
     shared_secrets = _REMOTE_SECRET_VALUES.get()
     if shared_secrets is not None:
-        shared_secrets[:] = secrets
+        merge_secret_values(shared_secrets, secrets)
     if operation == "sync":
         # Stated here as well as inside `execute_run`, because `sync` has no overload to
         # forward to: this parameter still accepts it, and a remote caller that asks for one
@@ -1379,7 +1508,7 @@ def run_remote_request(
         sync_instance = resolve_sync_instance(sync_name, directory=config_directory)
         secrets = collect_secret_values(sync_instance)
         if shared_secrets is not None:
-            shared_secrets[:] = secrets
+            merge_secret_values(shared_secrets, secrets)
         return execute_run(
             sync_instance,
             operation=operation,

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import os
-import sqlite3
+import signal
 import sys
-import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -22,55 +22,27 @@ import httpx
 from prefect.client.schemas.objects import Worker, WorkerStatus
 from prefect.exceptions import ObjectNotFound
 from prefect.logging.loggers import PrefectLogAdapter
+from prefect.settings import get_current_settings
 from prefect.utilities.processutils import command_to_string, get_sys_executable
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker, ProcessWorkerResult
 from pydantic import PrivateAttr
 
-from infrahub_sync.configuration.worker_credentials import held_credential_names
-
-from .orchestration import SERVICE_DEFINITION
-from .storage import service_product_projection
+from .orchestration import SERVICE_DEFINITION, SERVICE_WORKER_NAME_PREFIX
+from .start_check import StartRefusedError, check_bootstrap_record
 from .trust_store import TrustStoreError, install_custom_ca_bundle
+from .worker_alive import alive_file_path, remove_alive_file, run_alive_writer
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Awaitable, Callable, Iterator, Sequence
 
     from anyio.abc import TaskStatus
     from prefect.client.schemas.objects import Flow as APIFlow
     from prefect.client.schemas.objects import FlowRun, WorkPool
     from prefect.client.schemas.responses import DeploymentResponse
 
-    from infrahub_sync.product_store import ProductProjection
-
 _IDENTITY_ERROR = "service worker identity is unavailable"
-_WORKER_NAME_PREFIX = "infrahub-sync-service"
 _WORKER_PAGE_SIZE = 200
-# How long one poll waits for the product store to record the worker's credential variable names.
-_PUBLICATION_TIMEOUT_SECONDS = 10.0
-
-
-class _Publication:
-    """One publication of the worker's credential variable names: started by its thread, or abandoned first."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._started = False
-        self._abandoned = False
-
-    def start(self) -> bool:
-        """Start the publication in its thread; `False` when the poll abandoned it before."""
-        with self._lock:
-            self._started = not self._abandoned
-            return self._started
-
-    def abandon(self) -> bool:
-        """Abandon the publication; `True` when its thread had not started, so it never will."""
-        with self._lock:
-            self._abandoned = not self._started
-            return self._abandoned
-
-
 _NOT_ADMITTED = "flow run was not admitted as the service deployment"
 # What Prefect 3.8.6's process job configuration resolves an unset command to.
 _SERVICE_CHILD_COMMAND = command_to_string([get_sys_executable(), "-m", "prefect.engine"])
@@ -90,7 +62,7 @@ class ServiceFlowRunRefusedError(RuntimeError):
 
 def service_worker_name() -> str:
     """Return a process-unique Prefect worker name for the supported entrypoint."""
-    return f"{_WORKER_NAME_PREFIX}-{uuid4()}"
+    return f"{SERVICE_WORKER_NAME_PREFIX}-{uuid4()}"
 
 
 def _canonical_uuid(value: object) -> UUID | None:
@@ -276,11 +248,6 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
         self._identity_generation = 0
         self._identity_refresh_requests = 0
         self._identity_refresh_active = False
-        # The store this worker publishes its credential variable names to; built on the
-        # first poll that reaches it, and again after a publication fails.
-        self._environment_projection: ProductProjection | None = None
-        # Set while a publication runs in its thread, which can outlive the poll that started it.
-        self._publication_in_flight = False
 
     @classmethod
     def __dispatch_key__(cls) -> str | None:
@@ -376,57 +343,7 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
             return None
         return self._identity_generation
 
-    def _publish_credential_names_now(self, names: tuple[str, ...], publication: _Publication) -> None:
-        """Write this worker's credential variable names to the product store (blocking)."""
-        if not publication.start():
-            return  # the poll gave up before this thread started, and released the publication
-        try:
-            projection = self._environment_projection
-            if projection is None:
-                projection = self._environment_projection = service_product_projection()
-            projection.publish_worker_environment(str(self.name), names)
-        finally:
-            self._publication_in_flight = False
-
-    async def _publish_credential_names(self) -> None:
-        """Publish the names of the set, non-empty credential variables this worker holds.
-
-        Names only, never a value. Best effort: a store that cannot be reached leaves the
-        poll running, logs a fixed line with no detail, and is tried again on the next poll.
-        The poll waits at most `_PUBLICATION_TIMEOUT_SECONDS` for the store; a publication
-        that is still blocked then is left to finish on its own, and no other one starts
-        until it does. A publication whose thread had not started by then never starts, so
-        the next poll publishes.
-        """
-        if self._publication_in_flight:
-            return
-        names = held_credential_names()
-        publication = _Publication()
-        self._publication_in_flight = True
-        try:
-            with anyio.move_on_after(_PUBLICATION_TIMEOUT_SECONDS) as scope:
-                await anyio.to_thread.run_sync(
-                    self._publish_credential_names_now, names, publication, abandon_on_cancel=True
-                )
-            if scope.cancelled_caught:
-                if publication.abandon():
-                    self._publication_in_flight = False
-                self._environment_projection = None
-                self._logger.debug(
-                    "The product store did not answer in time; the worker's credential variable names are "
-                    "published on a later poll."
-                )
-        except (RuntimeError, ValueError, OSError, sqlite3.Error):
-            # RuntimeError covers ProductStoreProviderError and ServiceStorageStartupError;
-            # ValueError covers missing or invalid store settings. No exception text is
-            # logged: a database error can repeat its connection string.
-            self._environment_projection = None
-            self._logger.debug("Could not publish the worker's credential variable names; retrying on the next poll.")
-
     async def get_and_submit_flow_runs(self) -> list[FlowRun]:
-        # Before the identity check: a worker publishes its variables even while Prefect
-        # has not resolved its record yet, so `configs validate` can see it (spec 007 FR-035).
-        await self._publish_credential_names()
         generation = self._submission_generation()
         if generation is None:
             self._logger.debug("Service worker identity is unavailable; skipping flow run submission.")
@@ -551,14 +468,98 @@ def neutral_working_directory() -> Iterator[Path]:
         rmtree(root, ignore_errors=True)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Start one fail-closed service process worker."""
+async def run_until_terminated(start: Callable[[], Awaitable[object]]) -> None:
+    """Run `start()` and stop it when the process receives SIGTERM.
+
+    Kubernetes and Docker stop a container with SIGTERM, and tini, the image's entrypoint,
+    passes it on to the worker. Python installs no SIGTERM handler, and neither does
+    Prefect's worker, so without this handler the signal ends the worker at once, before
+    its exit steps run; a worker started as the container's first process (PID 1), without
+    tini, does not receive the signal at all and is killed when the grace period ends. The
+    handler cancels the worker task, so the worker's own exit steps run, and the process
+    exits 0.
+    """
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    if task is None:  # pragma: no cover -- a coroutine run by asyncio always has a task
+        msg = "run_until_terminated must run inside an asyncio task"
+        raise RuntimeError(msg)
+    terminated = False
+
+    def terminate() -> None:
+        nonlocal terminated
+        terminated = True
+        task.cancel()
+
+    loop.add_signal_handler(signal.SIGTERM, terminate)
+    try:
+        await start()
+    except asyncio.CancelledError:
+        if not terminated:
+            raise
+        # The cancellation this handler requested ends here. asyncio asks a task that
+        # suppresses one to withdraw it, so a later `TaskGroup` or `timeout` in this task
+        # does not count it as a cancellation still pending.
+        if sys.version_info >= (3, 11):
+            task.uncancel()
+    finally:
+        loop.remove_signal_handler(signal.SIGTERM)
+
+
+async def run_with_alive_file(start: Callable[[], Awaitable[object]], interval_seconds: int) -> None:
+    """Run `start()` with the alive-file writer beside it, and stop the writer when it returns.
+
+    The writer is an asyncio task of this process only; it calls neither Prefect, PostgreSQL
+    nor the Sync API, so the Compose healthcheck that reads its file reports this process and
+    nothing else (spec 029, research R-7).
+    """
+    writer = asyncio.create_task(run_alive_writer(interval_seconds, alive_file_path(os.environ)))
+    try:
+        await start()
+    finally:
+        writer.cancel()
+        # The writer only ends by this cancellation; waiting for it keeps the task from
+        # outliving the worker. `gather` with `return_exceptions` collects that cancellation
+        # instead of raising it into this task.
+        await asyncio.gather(writer, return_exceptions=True)
+
+
+def _heartbeat_interval_seconds() -> int:
+    """Return the worker's heartbeat interval: `PREFECT_WORKER_HEARTBEAT_SECONDS`, 30 by default.
+
+    Read from the local Prefect settings; no server is called.
+    """
+    # Whole seconds, at least one: the file holds an integer, and a zero would spin the writer.
+    return max(1, math.ceil(get_current_settings().worker.heartbeat_seconds))
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    start_check: Callable[[str], None] | None = None,
+) -> int:
+    """Start one fail-closed service process worker.
+
+    The bootstrap record is checked before the worker is built: a worker whose version or
+    work pool the bootstrap has not set up exits 1 (spec 018 FR-007b). `start_check`
+    replaces that check, for tests; unset, `check_bootstrap_record` is looked up when
+    `main` runs.
+
+    The alive file of a previous process is removed first, so the Compose healthcheck fails
+    until this process writes its own.
+    """
+    remove_alive_file(alive_file_path(os.environ))
     try:
         install_custom_ca_bundle()
     except TrustStoreError as error:
         sys.stderr.write(f"{error}\n")
         return 1
     pool = _pool_argument(argv)
+    try:
+        (start_check or check_bootstrap_record)(pool)
+    except StartRefusedError as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
     # Entered before the worker exists, so nothing this parent imports later -- the
     # runner, its crash hooks, or an adapter -- can resolve out of a source tree.
     with neutral_working_directory():
@@ -567,7 +568,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             name=service_worker_name(),
             create_pool_if_not_found=False,
         )
-        asyncio.run(worker.start())
+        interval_seconds = _heartbeat_interval_seconds()
+        asyncio.run(run_until_terminated(lambda: run_with_alive_file(worker.start, interval_seconds)))
     return 0
 
 

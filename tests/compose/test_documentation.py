@@ -150,7 +150,7 @@ def client_chains(source: str) -> list[tuple[tuple[str, bool], ...]]:
     """Return every attribute chain the example takes from a `SyncClient` binding.
 
     Each step is the attribute name and whether the example calls it, because
-    `get_status` and `get_status()` resolve to different things.
+    `get_health` and `get_health()` resolve to different things.
     """
     tree = ast.parse(source)
     bound = {
@@ -263,7 +263,11 @@ def required_compose_variables() -> set[str]:
 
 def test_the_compose_file_has_required_credentials_to_document() -> None:
     """Guards the credential checks below against a pattern that matches nothing."""
-    assert required_compose_variables() == {"INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"}, required_compose_variables()
+    assert required_compose_variables() == {
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD",
+        "INFRAHUB_SYNC_ENCRYPTION_KEY",
+        "INFRAHUB_SYNC_WORKER_TOKEN",
+    }, required_compose_variables()
 
 
 # The credentials the file's own services use between themselves, each with a
@@ -416,12 +420,44 @@ def test_the_page_selects_the_image_through_the_two_compose_settings() -> None:
     assert "INFRAHUB_SYNC_DOCKER_IMAGE" in image_section
 
 
-@pytest.mark.parametrize("state", ["ready", "busy", "no-live-worker"])
-def test_the_status_table_documents_every_worker_state(state: str) -> None:
-    """`/status` is the only readiness signal now that the wrapper's states are gone."""
+ERROR_CATEGORIES = (
+    "none",
+    "timeout",
+    "connection_refused",
+    "connection_closed",
+    "name_resolution_failed",
+    "unavailable",
+    "unknown_error",
+)
+DOCS_ROOT = REPO_ROOT / "docs" / "docs"
+
+
+@pytest.mark.parametrize("category", ERROR_CATEGORIES)
+def test_the_status_section_documents_every_error_category(category: str) -> None:
+    """An operator names the failed component's reason from the Compose page alone."""
+    rows = [line for line in section(page(), "Status").splitlines() if line.startswith("| ")]
+
+    assert any(row.startswith(f"| `{category}` |") for row in rows), category
+
+
+@pytest.mark.parametrize("state", ["live", "stale"])
+def test_the_status_section_documents_every_worker_state(state: str) -> None:
+    """`/api/health` lists each worker as `live` or `stale`."""
     rows = [line for line in section(page(), "Status").splitlines() if line.startswith("| ")]
 
     assert any(row.startswith(f"| `{state}` |") for row in rows), state
+
+
+def test_no_page_names_the_removed_status_route() -> None:
+    """`/api/status` was replaced by `/api/health`; only the release notes may name it."""
+    pages = [
+        path for path in sorted(DOCS_ROOT.rglob("*.md*")) if "release-notes" not in path.relative_to(DOCS_ROOT).parts
+    ]
+
+    naming = [str(path.relative_to(DOCS_ROOT)) for path in pages if "/api/status" in path.read_text(encoding="utf-8")]
+
+    assert pages
+    assert naming == []
 
 
 def test_the_quickstart_fetches_the_file_from_the_release_tag() -> None:
@@ -459,12 +495,18 @@ def test_the_page_starts_the_deployment_with_a_bounded_wait() -> None:
 
 
 def test_the_troubleshooting_page_covers_an_operator_file_without_the_cli_token() -> None:
-    """An `operator.env` from an earlier alpha has no `INFRAHUB_SYNC_API_TOKEN` line at all."""
+    """An `operator.env` from an earlier alpha has no `INFRAHUB_SYNC_API_TOKEN` line at all.
+
+    It may also still set the variable that spec 022 removed, so the page names it, says to
+    remove it, and names the `admin` token that `INFRAHUB_SYNC_API_TOKEN` takes instead.
+    """
     troubleshooting = TROUBLESHOOTING.read_text(encoding="utf-8")
 
     assert "`operator.env`" in troubleshooting
     assert "INFRAHUB_SYNC_API_TOKEN" in troubleshooting
+    assert "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN" in troubleshooting
     assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in troubleshooting
+    assert "Remove it" in troubleshooting
 
 
 PREFECT_UI_SNIPPET = REPO_ROOT / "docs" / "docs" / "snippets" / "prefect-ui.override.yml"

@@ -44,7 +44,6 @@ stack.
 from __future__ import annotations
 
 import concurrent.futures
-import json
 import threading
 import time
 import uuid
@@ -120,7 +119,7 @@ def live_stack_fixture() -> LiveStack:
     except dev.DevStackError as exc:
         pytest.skip(f"development stack settings unavailable ({exc}); start the stack with `invoke dev.start`")
     for description, url in (
-        ("Sync API", f"{settings.sync_api_url}/openapi.json"),
+        ("Sync API", f"{settings.sync_api_url}/api/openapi.json"),
         ("Infrahub", f"{settings.infrahub_url}/api/config"),
         ("Prefect", f"{settings.prefect_url}/api/health"),
     ):
@@ -137,14 +136,12 @@ def live_stack_fixture() -> LiveStack:
             probe.execute("SELECT 1")
     except psycopg.Error as exc:
         pytest.skip(f"development stack PostgreSQL unreachable ({exc}); start it with `invoke dev.start`")
-    principals = json.loads(settings.bearer_tokens)
-    actor = min(principals)
     return LiveStack(
         sync_api=settings.sync_api_url,
         infrahub=settings.worker_infrahub_url,
         infrahub_host=settings.infrahub_url,
         infrahub_token=settings.infrahub_admin_token,
-        bearer_token=principals[actor]["token"],
+        bearer_token=settings.admin_token,
         database_url=database_url,
     )
 
@@ -153,7 +150,7 @@ def live_stack_fixture() -> LiveStack:
 def api_fixture(live_stack: LiveStack) -> Iterator[httpx.Client]:
     """A bearer-authenticated client for the live Sync API."""
     with httpx.Client(
-        base_url=live_stack.sync_api,
+        base_url=f"{live_stack.sync_api}/api",
         headers={"Authorization": f"Bearer {live_stack.bearer_token}"},
         timeout=60,
     ) as client:
@@ -178,19 +175,13 @@ def _register_configuration(api: httpx.Client, live_stack: LiveStack, name: str)
             "name": name,
             "source": {
                 "name": "infrahub",
-                "settings": {
-                    "url": live_stack.infrahub,
-                    "branch": "main",
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": dev.INFRAHUB_CREDENTIAL,
+                "settings": {"url": live_stack.infrahub, "branch": "main"},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": live_stack.infrahub,
-                    "branch": SMOKE_BRANCH,
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": dev.INFRAHUB_CREDENTIAL,
+                "settings": {"url": live_stack.infrahub, "branch": SMOKE_BRANCH},
             },
             "schema_mapping": [
                 {
@@ -200,9 +191,6 @@ def _register_configuration(api: httpx.Client, live_stack: LiveStack, name: str)
                     "fields": [{"name": field_name, "mapping": field_name} for field_name in _MAPPED_FIELDS],
                 }
             ],
-        },
-        "credentials": {
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
         },
     }
     registered = api.post(

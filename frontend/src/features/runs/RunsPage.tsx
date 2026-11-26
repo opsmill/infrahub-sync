@@ -13,21 +13,32 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import { configsQuery, describeError, runPagesQuery, runQuery } from "#/api/queries";
+import {
+  configsQuery,
+  describeError,
+  describeScheduleError,
+  runPagesQuery,
+  runQuery,
+  scheduleQuery,
+} from "#/api/queries";
 import type { Run, RunResource } from "#/api/types";
 import {
   Bar,
   EmptyPanel,
   ErrorPanel,
   FilterTabs,
+  FOCUS,
   SearchField,
   StaleNotice,
 } from "#/components/page";
 import { fmt, type ListRunState, listRunStates } from "#/domain/run-state";
+import { FormSelect } from "#/features/schedules/form-parts";
+import { useAllSchedules } from "#/features/schedules/use-all-schedules";
 import { useNow } from "#/lib/time";
 import { useDocumentTitle } from "#/lib/title";
 
 import { RunsTable, RunsTableSkeleton } from "./RunsTable";
+import { scheduleChoices, scheduleFilterText } from "./schedule-choices";
 
 export const FILTER_IDS = ["all", "action", "running", "failed", "applied"] as const;
 export type FilterId = (typeof FILTER_IDS)[number];
@@ -36,6 +47,8 @@ export interface RunsSearch {
   q?: string;
   show?: FilterId;
   config?: string;
+  /** A schedule identifier: only the runs this schedule started. */
+  schedule?: string;
 }
 
 const FILTERS: { id: FilterId; label: string; test: (run: Run, s: ListRunState) => boolean }[] = [
@@ -47,6 +60,7 @@ const FILTERS: { id: FilterId; label: string; test: (run: Run, s: ListRunState) 
 ];
 
 const ALL_CONFIGS = "__all__";
+const ALL_SCHEDULES = "__all__";
 
 const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`;
 
@@ -83,11 +97,12 @@ function changedRuns(details: RunResource[], listed: Run[]): Map<string, Run> {
 
 const SUBTITLE = "Verify and apply are steps of a plan run.";
 
-export function RunsPage({ q, show = "all", config }: RunsSearch) {
+export function RunsPage({ q, show = "all", config, schedule }: RunsSearch) {
   useDocumentTitle("Runs");
   const navigate = useNavigate();
   const setSearch = (patch: RunsSearch) =>
     navigate({
+      from: "/runs/",
       to: "/runs",
       search: (prev) => ({ ...prev, ...patch }),
       replace: true,
@@ -95,8 +110,9 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
     });
 
   const queryClient = useQueryClient();
-  const runs = useInfiniteQuery(runPagesQuery(config));
+  const runs = useInfiniteQuery(runPagesQuery(config, schedule));
   const configs = useQuery(configsQuery());
+  const scheduleRead = useQuery({ ...scheduleQuery(schedule ?? ""), enabled: Boolean(schedule) });
 
   const listed = useMemo(() => runs.data?.pages.flatMap((p) => p.items) ?? [], [runs.data]);
   const configNames = useMemo(
@@ -209,13 +225,14 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
 
   const showAll = () => setSearch({ q: undefined, show: undefined });
   const showAllConfigs = () => setSearch({ config: undefined, show: undefined });
+  const showAllSchedules = () => setSearch({ schedule: undefined, show: undefined });
   const retryRefresh = async () => {
     const r = await runs.refetch();
     if (!r.isError) summaryRef.current?.focus();
   };
 
   const toolbar = runs.data !== undefined || configs.data !== undefined;
-  const noRunsAnywhere = !config && runs.data !== undefined && listed.length === 0;
+  const noRunsAnywhere = !config && !schedule && runs.data !== undefined && listed.length === 0;
   const filterCount = (id: FilterId) =>
     runs.data === undefined ? undefined : counts[id] === 0 && !more ? 0 : countLabel(counts[id]);
   const loadedNoun: [string, string] = more ? ["loaded run", "loaded runs"] : ["run", "runs"];
@@ -233,6 +250,28 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
     );
   } else if (!runs.data) {
     body = <ErrorPanel error={runs.error} onRetry={() => runs.refetch()} />;
+  } else if (schedule && listed.length === 0) {
+    body = (
+      <EmptyPanel title="No runs of this schedule">
+        <p className="max-w-[52ch] text-pretty text-foreground-muted">
+          {config
+            ? "The schedule started no run of this configuration."
+            : "The schedule has started no run yet."}
+        </p>
+        <div className="mt-1 flex flex-wrap justify-center gap-2">
+          <Link
+            to="/schedules/$scheduleId"
+            params={{ scheduleId: schedule }}
+            className={buttonVariants({ variant: "outline", size: "sm", className: TOUCH })}
+          >
+            View schedule
+          </Link>
+          <Button variant="outline" size="sm" className={TOUCH} onPress={showAllSchedules}>
+            Show runs of every schedule
+          </Button>
+        </div>
+      </EmptyPanel>
+    );
   } else if (missingConfig) {
     body = (
       <EmptyPanel title={`No configuration has the ID ${config}`}>
@@ -384,11 +423,18 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
               configs={configs.data?.items ?? []}
               onChange={(id) => setSearch({ config: id, show: undefined })}
             />
+            <ScheduleSelect
+              value={schedule}
+              config={config}
+              selected={scheduleRead.data}
+              configNames={configNames}
+              onChange={(id) => setSearch({ schedule: id, show: undefined })}
+            />
             <SearchField
               value={q ?? ""}
               onChange={(v) => setSearch({ q: v || undefined })}
               placeholder="Search runs"
-              label="Search runs by configuration, version, run ID, branch, actor or state"
+              label="Search runs by configuration, version, run ID, branch, state or the account that started the run"
             />
             <div className="hidden h-10 items-center sm:flex xl:ml-auto">
               <FilterTabs
@@ -422,10 +468,56 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
               </Select>
             </div>
           </div>
+          {schedule && (
+            <ScheduleFilter scheduleId={schedule} read={scheduleRead} onRemove={showAllSchedules} />
+          )}
           {body}
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * The active schedule filter, which names the schedule and removes the filter. The schedule's name
+ * comes from `GET /schedules/{schedule_id}`. The identifier is never shown: while the schedule
+ * loads, or when it cannot be read, the filter shows `scheduleFilterText`.
+ */
+function ScheduleFilter({
+  scheduleId,
+  read,
+  onRemove,
+}: {
+  scheduleId: string;
+  read: { data?: { name: string }; isPending: boolean; isError: boolean; error: unknown };
+  onRemove: () => void;
+}) {
+  const missing = !read.data && read.isError && describeScheduleError(read.error).notFound;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <span className="inline-flex min-w-0 items-center gap-1 rounded-md border px-2 py-1">
+        <span className="text-subtle">Schedule:</span>
+        {read.data ? (
+          <Link
+            to="/schedules/$scheduleId"
+            params={{ scheduleId }}
+            className={cn(
+              "min-w-0 rounded-sm text-accent [overflow-wrap:anywhere] hover:underline",
+              FOCUS
+            )}
+          >
+            {read.data.name}
+          </Link>
+        ) : (
+          <span className="min-w-0 text-foreground-muted [overflow-wrap:anywhere]">
+            {scheduleFilterText({ pending: read.isPending && !read.isError, notFound: missing })}
+          </span>
+        )}
+      </span>
+      <Button variant="outline" size="sm" className={TOUCH} onPress={onRemove}>
+        Remove schedule filter
+      </Button>
+    </div>
   );
 }
 
@@ -442,10 +534,59 @@ function ToolbarSkeleton() {
   return (
     <div className="flex flex-wrap items-end gap-3" aria-hidden="true">
       {field("w-full sm:w-64")}
+      {field("w-full sm:w-64")}
       <Bar className="h-10 w-full sm:w-80" />
       <Bar className="mb-0.5 hidden h-9 w-[440px] sm:block xl:ml-auto" />
       {field("w-full sm:hidden")}
     </div>
+  );
+}
+
+/**
+ * The schedule filter: a searchable list of the schedules, of the configuration filter's
+ * configuration when it is set. Choosing one sets the `schedule` search parameter.
+ */
+function ScheduleSelect({
+  value,
+  config,
+  selected,
+  configNames,
+  onChange,
+}: {
+  value?: string;
+  config?: string;
+  /** The schedule of the address as `GET /schedules/{schedule_id}` answered it. */
+  selected?: { schedule_id: string; name: string; config_id: string; state: string };
+  configNames: ReadonlyMap<string, string>;
+  onChange: (id: string | undefined) => void;
+}) {
+  const live = useAllSchedules({ config });
+  const deleted = useAllSchedules({ state: "deleted", config });
+  const options = useMemo(
+    () => [
+      { id: ALL_SCHEDULES, label: "All schedules" },
+      ...scheduleChoices({
+        live: live.data?.pages.flatMap((p) => p.items) ?? [],
+        deleted: deleted.data?.pages.flatMap((p) => p.items) ?? [],
+        selected: selected?.schedule_id === value ? selected : undefined,
+        configNames,
+      }),
+    ],
+    [live.data, deleted.data, selected, value, configNames]
+  );
+  const known = !value || options.some((o) => o.id === value);
+  return (
+    <FormSelect
+      label="Schedule"
+      labelClassName="text-subtle text-xs"
+      className="w-full sm:w-64"
+      value={known ? (value ?? ALL_SCHEDULES) : undefined}
+      placeholder="The schedule in the address"
+      options={options}
+      searchable
+      noMatch="No schedule matches"
+      onChange={(id) => onChange(id === ALL_SCHEDULES ? undefined : id)}
+    />
   );
 }
 
@@ -588,7 +729,7 @@ function NoMatch({
   } else if (query || filter === "all") {
     title = `No runs match “${query ?? ""}”`;
     body =
-      "Search looks at configuration names and references, versions, run IDs, branches, actors and states.";
+      "Search looks at configuration names and references, versions, run IDs, branches, states and the accounts that started the runs.";
   } else {
     [title, body] = NO_MATCH[filter](loaded, configName);
   }

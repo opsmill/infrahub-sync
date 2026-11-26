@@ -33,6 +33,7 @@ from tests.compose.lifecycle import (
     await_verification,
     container_reachable_host,
     docker,
+    health_report,
     idempotency,
     online_worker_names,
     operator_environment,
@@ -42,6 +43,7 @@ from tests.compose.lifecycle import (
     smoke_package,
     wait_for,
     worker_state,
+    worker_state_of,
 )
 from tests.compose.redaction import SECRETS
 
@@ -76,6 +78,7 @@ GENERATED_SETTINGS = (
     "INFRAHUB_SYNC_PRODUCT_PASSWORD",
     "INFRAHUB_SYNC_PREFECT_PASSWORD",
     "INFRAHUB_SYNC_S3_SECRET_KEY",
+    "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD",
     "INFRAHUB_SYNC_API_TOKEN",
 )
 
@@ -119,9 +122,7 @@ def observe_worker_states() -> set[str]:
     observed: set[str] = set()
     deadline = time.monotonic() + BUSY_OBSERVATION_SECONDS
     while time.monotonic() < deadline:
-        response = httpx.get(f"http://127.0.0.1:{API_PORT}/status", timeout=15)
-        response.raise_for_status()
-        observed.add(response.json()["worker"]["state"])
+        observed.add(worker_state_of(health_report(f"http://127.0.0.1:{API_PORT}")))
         if "busy" in observed:
             break
         time.sleep(1)
@@ -158,15 +159,14 @@ def started(
 ) -> Iterator[Deployment]:
     """A fresh project of the operator file, written a `.env` and taken to READY.
 
-    The destination credential is supplied for the managed rows below, which do
-    register a package and run against the pinned Infrahub. The start itself
-    needs neither.
+    The destination credential is stored through the Sync API once it runs, for the
+    managed rows below, which do register a package and run against the pinned
+    Infrahub. The start itself needs neither.
     """
     destination = f"http://{container_reachable_host()}:{FIXTURE_INFRAHUB_PORT}"
     environment_file = operator_environment(
         tmp_path_factory.mktemp("lifecycle"),
         image=sync_image,
-        destination_token=infrahub_fixture["token"],
         canaries=canaries,
         api_port=int(API_PORT),
         prefect_port=int(PREFECT_PORT),
@@ -184,6 +184,9 @@ def started(
     assert launched.returncode == 0, launched.stderr[-3000:]
     try:
         wait_until_ready(deployment)
+        # The credential the smoke package names. PostgreSQL keeps it across the stops,
+        # restarts and replacements below, as it keeps the registry.
+        deployment.store_destination_token(infrahub_fixture["token"])
         yield deployment
     finally:
         deployment.down(volumes=True)
@@ -191,9 +194,8 @@ def started(
 
 @pytest.fixture(scope="module")
 def principal(started: Deployment) -> str:
-    """The bearer token of this deployment's one principal."""
-    tokens = json.loads(started.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))
-    return str(next(iter(tokens.values()))["token"])
+    """The API token of this deployment's `admin` account."""
+    return started.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN")
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +354,7 @@ def test_a_stopped_worker_ages_into_degraded_while_the_api_stays_reachable(start
         assert degraded
         # The half that makes this DEGRADED rather than STOPPED, asked of the
         # published surface an operator would use.
-        answered = httpx.get(f"{started.api}/version", timeout=30)
+        answered = httpx.get(f"{started.api}/api/version", timeout=30)
         assert answered.status_code == 200, answered.text
         assert worker_state(started) == "no-live-worker"
     finally:

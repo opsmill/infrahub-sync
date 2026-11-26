@@ -7,24 +7,39 @@
 from __future__ import annotations
 
 import json
-import logging
+import re
 import sys
 import threading
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from uuid import uuid4
 
+import structlog
 from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
-from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResource
-from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResource, PlanStepPart, PlanStepTimings
+from infrahub_sync.configuration import (
+    ConfigurationPackageParseError,
+    RemovedCredentialFormatError,
+    parse_stored_configuration_package,
+)
+from infrahub_sync.configuration.credential_admission import (
+    CREDENTIAL_BLOCKS,
+    STAGE_CREDENTIAL_BLOCKS,
+    StoredCredentialFinding,
+    stored_credential_findings,
+)
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+    STORED_VERSION_FORMAT_REMOVED_MESSAGE,
+)
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
-from infrahub_sync.configuration.validation import credential_namespace_finding
-from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
+from infrahub_sync.execution import LiveSecretValues, collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     NO_SAVED_PLAN_MESSAGE,
@@ -33,6 +48,7 @@ from infrahub_sync.product_store import (
     AuditEvent,
     DuplicatePrefectExecutionError,
     EventFilters,
+    EventOrder,
     MutationReceipt,
     PrefectExecutionLink,
     ProductProjection,
@@ -42,6 +58,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.product_store.configs import CONFIGURATION_NOT_FOUND_REASON, CONFIGURATION_VERSION_NOT_FOUND_REASON
 from infrahub_sync.product_store.models import (
+    ACCOUNT_ID_PATTERN,
     RUN_ALREADY_CANCELLED_MESSAGE,
     RUN_CANCELLED_MESSAGE,
     RunApproval,
@@ -49,8 +66,17 @@ from infrahub_sync.product_store.models import (
     not_approvable_message,
 )
 
-from .events import RUN_CANCELLED, run_decision_type, run_event
-from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
+from .auth import Principal
+from .credentials import contains_token_prefix
+from .events import RUN_CANCELLED, account_event, automatic_resume_event, run_decision_type, run_event
+from .liveness import (
+    AUTOMATIC_RESUME_ACTOR,
+    CancellationSelectionUnavailableError,
+    SubmissionOutcome,
+    automatic_check_key,
+    automatic_resume_key,
+    select_cancellable_execution,
+)
 from .models import (
     ApplyRunRequest,
     ApprovedPlanSummaryResource,
@@ -59,6 +85,7 @@ from .models import (
     ArtifactListResource,
     CancelRunRequest,
     CreateRunRequest,
+    CredentialUsedResource,
     EmittedArtifactListResource,
     EmittedPlanResource,
     EventPage,
@@ -70,9 +97,7 @@ from .models import (
     RunLogPage,
     RunPage,
     RunResource,
-    ServiceStatusResource,
     VerifyRunRequest,
-    WorkerStatusResource,
     public_event_page,
     public_run_log_page,
     public_run_page,
@@ -81,15 +106,16 @@ from .models import (
 from .orchestration import (
     Observation,
     OrchestrationUnavailableError,
-    PoolStatus,
     ServiceOrchestration,
-    normalized_pool_status,
 )
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
+from .plan_step import stage_plan_step
 from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
 from .resume_view import (
     apply_progress_view,
+    automatic_resume_count,
+    automatic_resume_view,
     run_has_saved_plan,
     run_is_resumable,
     run_resumes,
@@ -99,13 +125,32 @@ from .run_log import sync_lines
 from .settings import approval_required
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from infrahub_sync.configuration import ConfigurationPackage
+    from infrahub_sync.product_store import Account
 
-    from .auth import Principal
+logger = structlog.get_logger(__name__)
 
-logger = logging.getLogger(__name__)
+
+def _plan_step_timings(link: PrefectExecutionLink, *, run_id: str, prefect_state: str | None) -> PlanStepTimings | None:
+    """The plan step timings of one execution as the run response returns them (spec 019, FR-014).
+
+    `None` for an execution that stored no plan step document, including every execution
+    recorded before the timings (FR-019).
+    """
+    state = stage_plan_step(link, run_id=run_id, prefect_state=prefect_state)
+    if state is None:
+        return None
+    return PlanStepTimings(
+        running=state.running,
+        parts={
+            name: PlanStepPart(started_at=times.started_at, ended_at=times.ended_at, stopped_at=times.stopped_at)
+            for name, times in state.parts.items()
+        },
+    )
+
+
 # How many plan operations the in-process cache of plan layouts holds, over all its runs
 # (research R14). A tier L plan has about 88,000 operations, and one cached operation takes
 # about 200 bytes, so the bound keeps the cache under about 40 MB in every API process.
@@ -123,6 +168,11 @@ def _refusal_code(receipt: MutationReceipt) -> str | None:
     error = body.get("error") if isinstance(body, dict) else None
     code = error.get("code") if isinstance(error, dict) else None
     return code if isinstance(code, str) else None
+
+
+def _stored_refusal(receipt: MutationReceipt) -> bool:
+    """Whether the reservation answered the request with a stored refusal instead of admitting it."""
+    return receipt.state == "accepted" and receipt.response_status is not None and receipt.response_status >= 400
 
 
 def _reservation_outcome(receipt: MutationReceipt) -> str:
@@ -147,38 +197,8 @@ def _not_resumable_before_plan(run: ProductRun) -> str | None:
     return None
 
 
-def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:
-    """Project internal pool evidence into the deliberately small public schema."""
-    snapshot = normalized_pool_status(snapshot)
-    if not snapshot.detail_available:
-        return ServiceStatusResource(
-            service="ready",
-            worker=WorkerStatusResource(
-                state="unavailable", detail_available=False, live_workers=None, queue_depth=None, observed_at=None
-            ),
-        )
-    assert snapshot.queue_depth is not None
-    assert snapshot.observed_at is not None
-    now = snapshot.observed_at
-    live = sum(
-        worker.status == "online"
-        and worker.last_heartbeat is not None
-        and worker.heartbeat_interval_seconds is not None
-        and worker.heartbeat_interval_seconds > 0
-        and max(0.0, (now - worker.last_heartbeat).total_seconds()) <= max(3 * worker.heartbeat_interval_seconds, 30)
-        for worker in snapshot.workers
-    )
-    state = "no-live-worker" if live == 0 else "busy" if snapshot.queue_depth > 0 else "ready"
-    return ServiceStatusResource(
-        service="ready",
-        worker=WorkerStatusResource(
-            state=state,
-            detail_available=True,
-            live_workers=live,
-            queue_depth=snapshot.queue_depth,
-            observed_at=snapshot.observed_at,
-        ),
-    )
+# The state an automatic resume record must be in for the reserved actor to run each operation.
+_AUTOMATIC_RESUME_WAITING_STATES = {"verify": "waiting-check", "resume": "waiting-resume"}
 
 
 class ServiceAPIError(Exception):
@@ -193,7 +213,7 @@ class ServiceAPIError(Exception):
         run_id: str | None = None,
         mutation_id: str | None = None,
         details: dict[str, Any] | None = None,
-        secrets: tuple[str, ...] = (),
+        secrets: Sequence[str] = (),
         left_out: int | None = None,
     ) -> None:
         self.status = status
@@ -208,7 +228,20 @@ class ServiceAPIError(Exception):
         super().__init__(self.message)
 
 
-def page_size_or_refuse(limit: int | None, *, secrets: tuple[str, ...] = ()) -> int:
+def stored_version_refusal(error: ConfigurationPackageParseError, unavailable_message: str) -> ServiceAPIError:
+    """Return the refusal of a worker route for a stored configuration version that cannot be parsed.
+
+    A version stored in the removed credential format answers ``422 credential-format-removed``
+    with fixed text that says to register a new version (spec 027, FR-021). Any other version
+    answers ``500 configuration-version-unavailable`` with ``unavailable_message``. Neither
+    answer holds the text of ``error``, which can quote the stored content.
+    """
+    if isinstance(error, RemovedCredentialFormatError):
+        return ServiceAPIError(422, CREDENTIAL_FORMAT_REMOVED_REASON, STORED_VERSION_FORMAT_REMOVED_MESSAGE)
+    return ServiceAPIError(500, "configuration-version-unavailable", unavailable_message)
+
+
+def page_size_or_refuse(limit: int | None, *, secrets: Sequence[str] = ()) -> int:
     """Return the requested page size, refusing one outside the shared paging bounds.
 
     Raises:
@@ -298,7 +331,37 @@ class _PlanLayoutCache:
                 self._operations -= len(dropped)
 
 
-class RunService:
+REASON_REFUSED_MESSAGE = "reason must not contain a secret or a token"
+
+
+def is_free_text(value: str, secrets: Sequence[str]) -> bool:
+    """Return whether a free-text value of a request can be recorded as it was sent.
+
+    It cannot when it holds a secret that the process knows, or the prefix of an API token or of
+    a session token: the store holds only the digest of a token, so the process cannot list them.
+    """
+    return redact(value, secrets) == value and not contains_token_prefix(value)
+
+
+@dataclass(frozen=True)
+class AccountAccess:
+    """What the account routes use of the service: the product store, the clock and the free-text check."""
+
+    projection: ProductProjection
+    now: Callable[[], datetime]
+    secrets: Sequence[str] = ()
+
+    def accepts_free_text(self, value: str) -> bool:
+        """Return whether a free-text value holds no secret of the process and no token prefix."""
+        return is_free_text(value, self.secrets)
+
+    def account_identifier(self, name: str) -> str | None:
+        """Return the identifier of the account that has this name, in any letter case, or nothing."""
+        account = self.projection.lookup_account_by_name(name)
+        return None if account is None else account.account_id
+
+
+class RunService:  # pylint: disable=too-many-public-methods  # the routes and the automatic resume submitter
     """Direct application service; Prefect owns all execution mechanics."""
 
     def __init__(
@@ -314,15 +377,52 @@ class RunService:
         self._projection = projection
         self._prefect_ui_url = prefect_ui_url
         self._orchestration = orchestration
-        self._secrets = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
+        # Read again at each use: a value decrypted in the current request is in the list from the
+        # moment `CredentialCipher.decrypt` returns it, and in no list after the request.
+        self._secrets = LiveSecretValues((*collect_secret_values(), *secrets))
         self._cancellation_recovery_seconds = cancellation_recovery_seconds
         self._clock = clock
         self._plan_layouts = _PlanLayoutCache(PLAN_LAYOUT_CACHE_OPERATIONS)
+
+    def read_accounts(self, account_ids: Sequence[str]) -> dict[str, Account]:
+        """Return the accounts among these identifiers, deleted or not, in one store call."""
+        return self._projection.lookup_accounts(account_ids)
+
+    @property
+    def accounts(self) -> AccountAccess:
+        """Return the product store and the clock, for the account routes."""
+        return AccountAccess(projection=self._projection, now=self._clock, secrets=self._secrets)
+
+    def record_account_event(
+        self,
+        event_type: str,
+        *,
+        actor: str,
+        account_id: str,
+        operation: str,
+        reason: str | None = None,
+        outcome: str = "accepted",
+    ) -> None:
+        """Record the event of an account action that ``actor`` made on the account ``account_id``.
+
+        Both are account identifiers. The event holds no password and no token value.
+        """
+        event = account_event(
+            event_type,
+            actor=actor,
+            account_id=account_id,
+            operation=operation,
+            reason=reason,
+            outcome=outcome,
+            created_at=self._clock(),
+        )
+        self._projection.record_audit(event, secrets=self._secrets)
 
     async def create_run(
         self, request: CreateRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Reserve one product identity and accept its first service execution."""
+        self._require_safe_reason(principal.actor, request.operation, request.reason)
         self._require_non_secret_parameters(
             principal.actor,
             request.operation,
@@ -347,7 +447,9 @@ class RunService:
             self._require_matching_receipt(existing, receipt)
             if existing.state == "accepted":
                 return await self._resume_or_replay(existing, {}, principal, request.reason)
-        package, package_checksum = self._registered_configuration(request.config_id, request.registry_version)
+        package, package_checksum = self._registered_configuration(
+            request.config_id, request.registry_version, stage=request.operation
+        )
         sync_name = package.configuration.name
         # The worker resolves the branch it plans and writes against through the same function,
         # so the stored branch is the saved plan's destination branch.
@@ -423,41 +525,72 @@ class RunService:
         return await self._submit(reserved, parameters, principal, request.reason)
 
     def _registered_configuration(
-        self, config_id: str, registry_version: int, *, expected_checksum: str | None = None
+        self, config_id: str, registry_version: int, *, stage: str, expected_checksum: str | None = None
     ) -> tuple[ConfigurationPackage, str]:
-        """Read the immutable registered package before allocating any run-side state."""
+        """Read the immutable registered package before allocating any run-side state.
+
+        ``stage`` is the operation that is about to start. The stored credentials that the
+        blocks of that stage name must exist and hold the fields the blocks need, because a
+        credential can be deleted or changed after registration (spec 027, FR-008).
+
+        Raises:
+            ServiceAPIError: ``404`` for a version that does not exist, ``503`` for one that
+                cannot be read, and ``422`` for an unsupported store, ``credential-format-removed``
+                for a version stored in the removed credential format, ``credential-not-found``,
+                ``credential-field-missing`` and ``credential-method-unknown``. No refusal holds a
+                value.
+        """
         stored = self._projection.lookup_configuration_version(config_id, registry_version).value
         if stored is None:
             raise self._error(
                 404, "configuration-version-not-found", "the requested configuration version does not exist"
             )
         try:
-            package = parse_configuration_package(stored.declared_content)
+            package, stored_checksum = parse_stored_configuration_package(stored.declared_content)
+        except RemovedCredentialFormatError:
+            # Stored before the removal of the `credentials` block (spec 027, FR-021): no run of
+            # it can start. The message is fixed text and names nothing of the stored content.
+            raise self._error(422, CREDENTIAL_FORMAT_REMOVED_REASON, STORED_VERSION_FORMAT_REMOVED_MESSAGE) from None
         except ConfigurationPackageParseError:
             raise self._error(
                 503, "configuration-version-invalid", "the registered configuration version is invalid"
             ) from None
-        if package.checksum() != stored.package_checksum or (
+        if stored_checksum != stored.package_checksum or (
             expected_checksum is not None and expected_checksum != stored.package_checksum
         ):
             raise self._error(503, "configuration-version-invalid", "the registered configuration version is invalid")
         if package.configuration.store is not None:
             raise self._error(422, UNSUPPORTED_STORE_REASON, UNSUPPORTED_STORE_MESSAGE)
-        for name, reference in package.credentials.items():
-            if (finding := credential_namespace_finding(name, reference, secrets=self._secrets)) is not None:
-                raise self._error(
-                    422,
-                    finding.code,
-                    f"{finding.message}; register a new version with prefixed identifiers "
-                    "and recreate saved plans against it",
-                )
+        refused = self._stored_credential_refusal(package, stage)
+        if refused is not None:
+            raise self._error(422, refused.code, refused.message, details=refused.details())
         return package, stored.package_checksum
+
+    def _stored_credential_refusal(self, package: ConfigurationPackage, stage: str) -> StoredCredentialFinding | None:
+        """Return why a named stored credential cannot serve a block of the stage, or ``None``.
+
+        Only the blocks the stage connects to are checked, as the worker route releases only
+        those: an apply, a resume and a verify are not refused for the credential of the
+        source. An approval is checked as the apply it precedes. One indexed read for each
+        named credential, and no value.
+        """
+
+        def stored_fields(name: str) -> tuple[str, ...] | None:
+            credential = self._projection.lookup_stored_credential(name)
+            return None if credential is None else tuple(credential.fields)
+
+        findings = stored_credential_findings(
+            package, stored_fields, blocks=STAGE_CREDENTIAL_BLOCKS.get(stage, CREDENTIAL_BLOCKS)
+        )
+        return findings[0] if findings else None
 
     async def verify_run(
         self, run_id: str, request: VerifyRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Accept an independently auditable, read-only verification."""
+        self._require_safe_reason(principal.actor, "verify", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "verify", request.reason)
+        self._refuse_scheduled_branch_review(run, principal, "verify", request.reason)
         body = request.model_dump(mode="json")
         # The branch the run was created for, so the destination-binding check compares the
         # plan with the destination it was planned against. `None` for a run that predates the
@@ -473,13 +606,14 @@ class RunService:
         )
         if existing is not None:
             return await self._resume_or_replay(existing, parameters, principal, request.reason)
-        self._require_supported_run_configuration(run)
+        self._require_supported_run_configuration(run, "verify")
         if not run.reconciliation_required or run_has_saved_plan(run):
             # A run that requires reconciliation but saved no plan, a `sync` stopped while it
             # was still planning, keeps its write admission, so the reservation refuses it with
             # `run-execution-conflict`, which the audit history records. Reading its plan first
             # would answer 503 instead (research R14).
             self._plan(run_id)
+        self._refuse_during_automatic_submission(run, principal, "verify", request.reason)
         receipt = self._reserve_existing(
             run,
             principal,
@@ -488,13 +622,17 @@ class RunService:
             reason=request.reason,
             body=body,
         )
+        if not _stored_refusal(receipt):
+            self._take_over_automatic_resume(run, principal)
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
     async def apply_run(
         self, run_id: str, request: ApplyRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Accept apply only for the exact reviewed retained plan."""
+        self._require_safe_reason(principal.actor, "apply", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "apply", request.reason)
+        self._refuse_scheduled_branch_review(run, principal, "apply", request.reason)
         body = request.model_dump(mode="json")
         parameters = self._stage_parameters(
             run,
@@ -532,7 +670,7 @@ class RunService:
         self._refuse_cancelled(run, principal, "apply", request.reason)
         if approval_required():
             self._require_matching_approval(run, request, principal)
-        self._require_supported_run_configuration(run)
+        self._require_supported_run_configuration(run, "apply")
         plan = self._plan(run_id)
         if not plan.checksum_ok or plan.checksum != request.expected_checksum:
             raise self._refusal(
@@ -576,7 +714,9 @@ class RunService:
         checksum of the plan it saved before its apply part (FR-017).
         """
         operation = "resume"
+        self._require_safe_reason(principal.actor, operation, request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, operation, request.reason)
+        self._refuse_scheduled_branch_review(run, principal, operation, request.reason)
         body = request.model_dump(mode="json")
         # The branch the run was planned against, as `verify` uses: the saved plan's destination.
         parameters = self._stage_parameters(
@@ -615,7 +755,7 @@ class RunService:
             )
         if approval_required():
             self._require_matching_approval(run, request, principal, operation=operation)
-        self._require_supported_run_configuration(run)
+        self._require_supported_run_configuration(run, operation)
         try:
             plan = self._plan(run_id)
         except ServiceAPIError:
@@ -641,12 +781,15 @@ class RunService:
                 outcome="refused-checksum",
             )
         self._require_left_out_confirmation(run_id, plan, request, principal, operation)
+        self._refuse_during_automatic_submission(run, principal, operation, request.reason)
         requested = self._run_receipt(
             run_id, principal, idempotency_key, operation=operation, reason=request.reason, body=body
         )
         reserved, created = self._projection.reserve_resume(run_id, requested, secrets=self._secrets)
         self._require_matching_receipt(reserved, requested)
         refusal = _refusal_code(reserved) if reserved.state == "accepted" else None
+        if refusal is None:
+            self._take_over_automatic_resume(run, principal)
         if created and refusal is not None:
             # The store answered the request with its refusal; the event records which one.
             self._audit(
@@ -654,6 +797,159 @@ class RunService:
             )
             return self._stored_response(reserved)
         return await self._resume_or_replay(reserved, parameters, principal, request.reason)
+
+    async def submit_check(self, run_id: str, idempotency_key: str) -> SubmissionOutcome:
+        """Submit the automatic check of the run: a `verify` by the reserved actor (spec 030, research R4).
+
+        Implements ``AutomaticResumeSubmitter``. The same key replays the same receipt, so a
+        repeated call submits nothing new.
+        """
+        principal = Principal(actor=AUTOMATIC_RESUME_ACTOR)
+        try:
+            status, body = await self.verify_run(run_id, VerifyRunRequest(), principal, idempotency_key)
+        except ServiceAPIError as error:
+            return SubmissionOutcome(refusal=error.code, status=error.status)
+        return self._submission_outcome(principal, idempotency_key, status, body)
+
+    async def submit_resume(self, run_id: str, idempotency_key: str) -> SubmissionOutcome:
+        """Submit the automatic resume of the run by the reserved actor (spec 030, research R4, R6).
+
+        Implements ``AutomaticResumeSubmitter``. The request names the saved plan's checksum and
+        confirms the writes; it confirms the records the plan leaves out only when the
+        interrupted write was admitted with that confirmation (`_admitted_left_out`).
+        """
+        principal = Principal(actor=AUTOMATIC_RESUME_ACTOR)
+        try:
+            run = self._required_run(run_id)
+            plan = self._plan(run_id)
+            request = ResumeRunRequest(
+                expected_checksum=plan.checksum,
+                confirm_writes=True,
+                confirm_left_out=plan.summary.left_out > 0 and self._admitted_left_out(run),
+            )
+            status, body = await self.resume_run(run_id, request, principal, idempotency_key)
+        except ServiceAPIError as error:
+            return SubmissionOutcome(refusal=error.code, status=error.status)
+        return self._submission_outcome(principal, idempotency_key, status, body)
+
+    def _refuse_during_automatic_submission(
+        self, run: ProductRun, principal: Principal, operation: str, reason: str | None
+    ) -> None:
+        """Refuse a person's `verify` or `runs resume` while Sync submits the automatic check or resume (FR-019).
+
+        Called by `verify_run` and `resume_run` for a principal that is not the reserved actor,
+        after every refusal that reserves nothing and before the receipt is reserved. The
+        reconciler submits first and moves the record second. A record that still waits but
+        whose automatic check or resume already has a receipt is therefore being submitted:
+        the person does not take over, and the request is refused, so the automatic execution
+        keeps its record and the reconciler's move still succeeds.
+
+        Raises:
+            ServiceAPIError: ``409 run-execution-conflict`` while the automatic check or resume
+                of a waiting record is being submitted.
+        """
+        if principal.actor == AUTOMATIC_RESUME_ACTOR:
+            return
+        for row in self._projection.automatic_resumes_of(run.run_id):
+            if row.state == "waiting-check":
+                key, step = automatic_check_key(row), "check"
+            elif row.state == "waiting-resume":
+                key, step = automatic_resume_key(row), "resume"
+            else:
+                continue
+            submitted = self._projection.lookup_mutation(AUTOMATIC_RESUME_ACTOR, sha256(key.encode()).hexdigest()).value
+            if submitted is not None and (submitted.response_status is None or submitted.response_status < 400):
+                raise self._refusal(
+                    409,
+                    "run-execution-conflict",
+                    f"Sync is submitting the automatic {step} of this run; wait for it to end",
+                    run_id=run.run_id,
+                    actor=principal.actor,
+                    operation=operation,
+                    reason=reason,
+                    outcome="refused-run-execution-conflict",
+                )
+
+    def _take_over_automatic_resume(self, run: ProductRun, principal: Principal) -> None:
+        """End the run's automatic resume record that waits for a live worker, because a person acts (FR-019).
+
+        Called by `verify_run` and `resume_run` once the person's receipt is reserved and not
+        refused, so a request that the reservation refuses leaves the record waiting and the
+        reconciler still checks and resumes the run. The person's request then proceeds as it
+        does today (research R15). The record ends as `no-resume`, `person-took-over`, with its
+        `automatic_resume_not_started` event in the same transaction; the event names the
+        person as its actor.
+
+        `_refuse_during_automatic_submission` runs before the reservation. In one Sync API
+        process the check, the reservation and this move run with no await between them, so
+        the reconciler cannot reserve its receipt in between. Two Sync API processes can
+        still interleave there; the reconciler then logs the automatic execution it submitted
+        after the person took over (`RunLivenessReconciler._after_submission`).
+        """
+        if principal.actor == AUTOMATIC_RESUME_ACTOR:
+            return
+        for row in self._projection.automatic_resumes_of(run.run_id):
+            if row.state not in {"waiting-check", "waiting-resume"}:
+                continue
+            now = datetime.now(timezone.utc)
+            ended = row.model_copy(
+                update={"state": "ended", "decision": "no-resume", "reason": "person-took-over", "updated_at": now}
+            )
+            # A `False` move means another Sync API process moved the record first; the
+            # reservation below then meets its unfinished execution, as any request does.
+            self._projection.move_automatic_resume(
+                run.run_id,
+                row.interrupted_flow_run_id,
+                from_state=row.state,
+                to_state="ended",
+                event=automatic_resume_event(ended, run, actor=principal.actor, created_at=now),
+                decision="no-resume",
+                reason="person-took-over",
+                updated_at=now,
+            )
+
+    def _admitted_left_out(self, run: ProductRun) -> bool:
+        """Whether the write that the run's waiting automatic resume record names confirmed the left-out records.
+
+        The mutation receipt stores a fingerprint of its request, not the request, so the
+        confirmation is read from how the write was admitted (research R6): an `apply` or a
+        `resume` of a plan that leaves out records is admitted only with the confirmation, which
+        its receipt holds; a manual `sync` cannot confirm and stops before it writes; a scheduled
+        `sync` writes when its schedule's left-out setting is on.
+        """
+        row = next(
+            (row for row in self._projection.automatic_resumes_of(run.run_id) if row.state == "waiting-resume"), None
+        )
+        link = (
+            None
+            if row is None
+            else next(
+                (link for link in run.prefect_executions if link.flow_run_id == row.interrupted_flow_run_id), None
+            )
+        )
+        if link is None:
+            return False
+        if link.purpose in {"apply", "resume"}:
+            return self._projection.lookup_mutation_for_execution(run.run_id, link.flow_run_id, link.purpose).available
+        if link.purpose == "sync" and run.trigger_type == "scheduled" and run.schedule_id is not None:
+            schedule = self._projection.lookup_schedule(run.schedule_id).value
+            return schedule is not None and schedule.write_when_left_out
+        return False
+
+    def _submission_outcome(
+        self, principal: Principal, idempotency_key: str, status: int, body: dict[str, Any]
+    ) -> SubmissionOutcome:
+        """The flow run identifier of an accepted submission, read from its receipt, or the refusal's code."""
+        if status >= 400:
+            error = body.get("error")
+            code = error.get("code") if isinstance(error, dict) else None
+            return SubmissionOutcome(refusal=code if isinstance(code, str) else "refused", status=status)
+        key_digest = sha256(idempotency_key.encode()).hexdigest()
+        receipt = self._projection.lookup_mutation(principal.actor, key_digest).value
+        if receipt is None or receipt.flow_run_id is None:
+            # Not confirmed yet: the next loop repeats the call with the same key.
+            return SubmissionOutcome(refusal="orchestration-unavailable", status=503)
+        return SubmissionOutcome(flow_run_id=receipt.flow_run_id)
 
     def _refuse_cancelled(self, run: ProductRun, principal: Principal, operation: str, reason: str | None) -> None:
         """Refuse to approve or apply a run in phase ``cancelled``, before any receipt is reserved.
@@ -672,6 +968,32 @@ class RunService:
             operation=operation,
             reason=reason,
             outcome="refused-cancelled",
+        )
+
+    def _refuse_scheduled_branch_review(
+        self, run: ProductRun, principal: Principal, operation: str, reason: str | None
+    ) -> None:
+        """Refuse to verify, apply or resume a scheduled run with branch review (spec 021, FR-028).
+
+        A run has branch review when the admission of its start wrote its branch row; the
+        schedule's write target of today does not decide it. The refusal is recorded like any
+        other, before any receipt is looked up or reserved.
+
+        Raises:
+            ServiceAPIError: ``409 scheduled-run-not-appliable``.
+        """
+        if run.trigger_type != "scheduled" or not self._projection.lookup_schedule_branch(run.run_id).available:
+            return
+        raise self._refusal(
+            409,
+            "scheduled-run-not-appliable",
+            "this scheduled run writes through branch review and cannot be verified, applied or resumed by a "
+            "person; the next run of its schedule replaces it",
+            run_id=run.run_id,
+            actor=principal.actor,
+            operation=operation,
+            reason=reason,
+            outcome="refused-scheduled-run-not-appliable",
         )
 
     def _require_write_confirmation(
@@ -778,6 +1100,7 @@ class RunService:
         order of the HTTP contract, and the approval is stored in the same store transaction
         that completes the request's receipt, so a retry with the same key replays the body.
         """
+        self._require_safe_reason(principal.actor, "approve", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "approve", request.reason)
         body = request.model_dump(mode="json")
         existing = self._lookup_existing_receipt(
@@ -793,6 +1116,7 @@ class RunService:
             return self._stored_response(existing)
         self._refuse_cancelled(run, principal, "approve", request.reason)
         self._require_approvable(run, principal, request.reason)
+        self._require_stored_credentials_for_approval(run, principal, request.reason)
         try:
             plan = self._plan(run_id)
         except ServiceAPIError:
@@ -832,6 +1156,7 @@ class RunService:
         response = ApprovedRunResource(
             run=resource.run,
             orchestration=resource.orchestration,
+            credentials_used=resource.credentials_used,
             plan_summary=ApprovedPlanSummaryResource(
                 creates=by_action.get("create", 0),
                 updates=by_action.get("update", 0),
@@ -867,6 +1192,44 @@ class RunService:
             outcome = "refused-not-approvable"
         self._audit(run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome=outcome)
         return status, content
+
+    def _require_stored_credentials_for_approval(
+        self, run: ProductRun, principal: Principal, reason: str | None
+    ) -> None:
+        """Refuse an approval when the apply it precedes would be refused for a stored credential (FR-008).
+
+        The refusal is recorded, as every refused approval is. A version stored in the removed
+        credential format is refused in the same way (FR-021). Any other version that cannot be
+        read is left to the plan lookup that follows, and to the apply.
+        """
+        binding = run.configuration_binding
+        if binding is None:
+            return
+        stored = self._projection.lookup_configuration_version(binding[0], binding[1]).value
+        if stored is None:
+            return
+        try:
+            package = parse_stored_configuration_package(stored.declared_content).package
+        except RemovedCredentialFormatError:
+            self._audit(
+                run.run_id,
+                actor=principal.actor,
+                operation="approve",
+                reason=reason,
+                outcome=f"refused-{CREDENTIAL_FORMAT_REMOVED_REASON}",
+            )
+            raise self._error(
+                422, CREDENTIAL_FORMAT_REMOVED_REASON, STORED_VERSION_FORMAT_REMOVED_MESSAGE, run_id=run.run_id
+            ) from None
+        except ConfigurationPackageParseError:
+            return
+        refused = self._stored_credential_refusal(package, "approve")
+        if refused is None:
+            return
+        self._audit(
+            run.run_id, actor=principal.actor, operation="approve", reason=reason, outcome=f"refused-{refused.code}"
+        )
+        raise self._error(422, refused.code, refused.message, run_id=run.run_id, details=refused.details())
 
     def _require_approvable(self, run: ProductRun, principal: Principal, reason: str | None) -> None:
         """Refuse a run that is still running a stage, or that is neither planned nor resumable.
@@ -938,6 +1301,7 @@ class RunService:
         ``cancelled`` in one store transaction and nothing is sent to Prefect (``200``). A run
         already cancelled, or in any other phase with nothing running, is refused (``409``).
         """
+        self._require_safe_reason(principal.actor, "cancel", request.reason, run_id=run_id)
         run = self._owned_run(run_id, principal, "cancel", request.reason)
         body = request.model_dump(mode="json")
         receipt = self._lookup_existing_receipt(
@@ -1325,44 +1689,59 @@ class RunService:
         rendered = self._required_run(run_id) if wrote else run
         return self._resource_with_observations(self._redacted_links(rendered), collected)
 
-    async def status(self, work_pool_name: str) -> ServiceStatusResource:
-        """Return lifecycle-safe pool state without exposing provider identifiers."""
-        snapshot = await self._orchestration.pool_status(work_pool_name, datetime.now(timezone.utc))
-        return _service_status(snapshot)
-
     def list_runs(
         self,
         *,
         config_id: str | None = None,
         registry_version: int | None = None,
+        trigger_type: str | None = None,
+        schedule_id: str | None = None,
         cursor: str | None = None,
         limit: int | None = None,
     ) -> RunPage:
         """Return one page of runs, newest first, optionally for one configuration or version.
 
+        ``trigger_type`` (``manual`` or ``scheduled``) and ``schedule_id`` restrict the list to
+        the runs that a person or a schedule started (spec 021). An unknown schedule matches
+        no run rather than being refused.
+
         Raises:
-            ServiceAPIError: ``422 request-invalid`` for a version without a configuration or a
-                limit outside 1-200; ``404 configuration-not-found`` or
+            ServiceAPIError: ``422 request-invalid`` for a version without a configuration, a
+                limit outside 1-200, an unknown trigger type or a malformed schedule
+                identifier; ``404 configuration-not-found`` or
                 ``404 configuration-version-not-found`` for an unknown filter value.
             InvalidCursorError: ``cursor`` does not decode or was issued for other filters.
         """
         if registry_version is not None and config_id is None:
             raise self._error(422, "request-invalid", "registry_version requires config_id")
         page_size = page_size_or_refuse(limit, secrets=self._secrets)
+        try:
+            run_filters = RunFilters.model_validate(
+                {
+                    "config_id": config_id,
+                    "registry_version": registry_version,
+                    "trigger_type": trigger_type,
+                    "schedule_id": schedule_id,
+                }
+            )
+        except ValueError:
+            # The message names no value: the query string is the caller's, not the server's.
+            raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
         if config_id is not None:
             self._require_configuration_filter(config_id, registry_version)
         filters: dict[str, FilterValue] = {
             "list": "runs",
             "config_id": config_id,
             "registry_version": registry_version,
+            "trigger_type": trigger_type,
+            "schedule_id": schedule_id,
         }
         after = None if cursor is None else timestamp_key(decode_cursor(cursor, filters))
-        page = self._projection.list_runs(
-            RunFilters(config_id=config_id, registry_version=registry_version), after=after, limit=page_size
-        )
+        page = self._projection.list_runs(run_filters, after=after, limit=page_size)
         last = page.items[-1] if page.has_more else None
         next_cursor = None if last is None else timestamp_cursor(last.started_at, last.run_id, filters)
-        return public_run_page(page.items, next_cursor)
+        counts = self._projection.automatic_resume_counts([run.run_id for run in page.items])
+        return public_run_page(page.items, next_cursor, counts)
 
     def list_events(  # pylint: disable=too-many-arguments
         self,
@@ -1375,8 +1754,9 @@ class RunService:
         until: datetime | None = None,
         limit: int | None = None,
         offset: int = 0,
+        order: EventOrder = "asc",
     ) -> EventPage:
-        """Return one page of typed events, oldest first (spec 012, contracts/events-route.md).
+        """Return one page of typed events, oldest first, or newest first for ``desc`` (spec 012, spec 026).
 
         ``related`` holds ``<kind>:<id>`` values; an event must name every one of them. An
         unknown run or configuration matches no event rather than being refused.
@@ -1394,15 +1774,28 @@ class RunService:
                 run_id=run_id,
                 config_id=config_id,
                 event_types=event_types,
-                related=tuple(_related_resource(value) for value in related),
+                related=tuple(self._stored_related(_related_resource(value)) for value in related),
                 since=since,
                 until=until,
             )
         except ValueError:
             # The message names no value: the query string is the caller's, not the server's.
             raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
-        page = self._projection.list_events(filters, limit=page_size, offset=offset)
+        page = self._projection.list_events(filters, limit=page_size, offset=offset, order=order)
         return public_event_page(page.items, limit=page_size, offset=offset, has_more=page.has_more)
+
+    def _stored_related(self, resource: RelatedResource) -> RelatedResource:
+        """Return the related resource as the store holds it: an account by its identifier.
+
+        A caller names an account by its name. A value that is an identifier is used as it is. A
+        name that no account has is used as it is too: a record made before the accounts existed
+        holds a plain name, and any other record does not match it.
+        """
+        # PostgreSQL stores no NUL character in a text, so a name that holds one is never read there.
+        if resource.kind != "account" or re.fullmatch(ACCOUNT_ID_PATTERN, resource.id) or "\x00" in resource.id:
+            return resource
+        account_id = self.accounts.account_identifier(resource.id)
+        return resource if account_id is None else RelatedResource(kind="account", id=account_id)
 
     async def read_run_logs(
         self, run_id: str, *, stage: str | None = None, limit: int = DEFAULT_LOG_LIMIT, offset: int = 0
@@ -1668,11 +2061,11 @@ class RunService:
         self._require_matching_receipt(existing, requested)
         return existing
 
-    def _require_supported_run_configuration(self, run: ProductRun) -> None:
-        """Validate the immutable binding before submitting another execution."""
+    def _require_supported_run_configuration(self, run: ProductRun, stage: str) -> None:
+        """Validate the immutable binding, and the stored credentials of ``stage``, before another execution."""
         binding = run.configuration_binding
         if binding is not None:
-            self._registered_configuration(binding[0], binding[1], expected_checksum=binding[2])
+            self._registered_configuration(binding[0], binding[1], stage=stage, expected_checksum=binding[2])
 
     async def _resume_or_replay(
         self,
@@ -1694,7 +2087,7 @@ class RunService:
             )
             return self._stored_response(receipt)
         assert receipt.run_id is not None
-        self._require_supported_run_configuration(self._required_run(receipt.run_id))
+        self._require_supported_run_configuration(self._required_run(receipt.run_id), receipt.operation)
         return await self._submit(receipt, parameters, principal, reason)
 
     @staticmethod
@@ -1751,18 +2144,28 @@ class RunService:
 
     def _owned_run(self, run_id: str, principal: Principal, operation: str, reason: str | None) -> ProductRun:
         run = self._required_run(run_id)
-        if not principal.administrator and run.actor != principal.actor:
-            raise self._refusal(
-                403,
-                "forbidden",
-                "only the initiating actor or an administrator may mutate this run",
-                run_id=run_id,
-                actor=principal.actor,
-                operation=operation,
-                reason=reason,
-                outcome="refused-authorization",
-            )
-        return run
+        if principal.actor == AUTOMATIC_RESUME_ACTOR:
+            # The reserved actor of the automatic check and resume acts only on a run whose
+            # automatic resume record waits for that step: `verify` while it waits for the check,
+            # `resume` while it waits for the resume (research R5). It is never the run's actor
+            # and never an administrator, so it does not reach the rule below.
+            waiting = _AUTOMATIC_RESUME_WAITING_STATES.get(operation)
+            if waiting is not None and any(
+                row.state == waiting for row in self._projection.automatic_resumes_of(run_id)
+            ):
+                return run
+        elif principal.administrator or run.actor == principal.actor:
+            return run
+        raise self._refusal(
+            403,
+            "forbidden",
+            "only the initiating actor or an administrator may mutate this run",
+            run_id=run_id,
+            actor=principal.actor,
+            operation=operation,
+            reason=reason,
+            outcome="refused-authorization",
+        )
 
     def _required_run(self, run_id: str) -> ProductRun:
         result = self._projection.lookup_run(run_id)
@@ -1948,9 +2351,11 @@ class RunService:
                         terminal_outcome=link.terminal_outcome,
                         prefect_flow_run_url=link_url,
                         reads=stage_reads(link, run_id=run.run_id, prefect_state=link.last_observed_state),
+                        plan_step=_plan_step_timings(link, run_id=run.run_id, prefect_state=link.last_observed_state),
                     )
                 )
                 continue
+            prefect_state = observed.state if observed.available else link.last_observed_state
             live = None if observed.state is None else redact(observed.state, self._secrets)
             reason = None if observed.reason is None else redact(observed.reason, self._secrets)
             orchestration.append(
@@ -1971,19 +2376,27 @@ class RunService:
                     terminal_state=link.terminal_state,
                     terminal_outcome=link.terminal_outcome,
                     prefect_flow_run_url=link_url,
-                    reads=stage_reads(
-                        link,
-                        run_id=run.run_id,
-                        prefect_state=observed.state if observed.available else link.last_observed_state,
-                    ),
+                    reads=stage_reads(link, run_id=run.run_id, prefect_state=prefect_state),
+                    plan_step=_plan_step_timings(link, run_id=run.run_id, prefect_state=prefect_state),
                 )
             )
         operations = self._plan_operations(run)
+        automatic_resumes = self._projection.automatic_resumes_of(run.run_id)
+        count = automatic_resume_count(automatic_resumes)
         return RunResource(
-            run=public_run_resource(run),
+            run=public_run_resource(run, automatic_resume_count=count),
             orchestration=tuple(orchestration),
             apply_progress=apply_progress_view(run, operations),
             resumes=run_resumes(run, lambda link: self._resume_receipt(run, link, pending), operations),
+            # The recorded name and revision of each release, never a value (spec 027, FR-003).
+            credentials_used=tuple(
+                CredentialUsedResource(
+                    stage=use.stage, block=use.block, name=use.credential_name, revision=use.revision
+                )
+                for use in self._projection.credential_uses(run.run_id)
+            ),
+            automatic_resumes=automatic_resume_view(automatic_resumes),
+            automatic_resume_count=count,
         )
 
     def _event(
@@ -2070,7 +2483,7 @@ class RunService:
         **parameters: str | None,
     ) -> None:
         for name, value in parameters.items():
-            if value is not None and redact(value, self._secrets) != value:
+            if value is not None and not is_free_text(value, self._secrets):
                 raise self._refusal(
                     422,
                     "secret-parameter-refused",
@@ -2081,6 +2494,26 @@ class RunService:
                     reason=reason,
                     outcome="refused-secret-parameter",
                 )
+
+    def _require_safe_reason(
+        self, actor: str, operation: str, reason: str | None, *, run_id: str | None = None
+    ) -> None:
+        """Refuse a ``reason`` that holds a secret of the process or the prefix of a token.
+
+        The check runs before anything records the reason. The event of the refusal holds no
+        reason: a token that the process cannot list would otherwise be stored as it was sent.
+        """
+        if reason is not None and not is_free_text(reason, self._secrets):
+            raise self._refusal(
+                422,
+                "secret-parameter-refused",
+                REASON_REFUSED_MESSAGE,
+                run_id=run_id,
+                actor=actor,
+                operation=operation,
+                reason=None,
+                outcome="refused-secret-parameter",
+            )
 
     def _refusal(
         self,

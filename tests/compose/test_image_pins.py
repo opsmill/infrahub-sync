@@ -39,7 +39,7 @@ PREFECT_IMAGE = "prefecthq/prefect"
 # `prefect:3.8`, `prefect 3.8.6`. `opsmill_prefect_extras` and `PREFECT_HOME`
 # name no version.
 PREFECT_VERSION_OR_IMAGE = re.compile(r"prefecthq/|\bprefect(?:==|>=|~=|<=|[:@\s])\s*v?\d+\.\d+", re.IGNORECASE)
-DOCKERFILE = REPO_ROOT / "Dockerfile"
+DOCKERFILE = REPO_ROOT / "development" / "Dockerfile"
 
 DEVELOPMENT = REPO_ROOT / "development"
 DEVELOPMENT_STACK = DEVELOPMENT / "docker-compose.yml"

@@ -1,0 +1,1 @@
+`GET /api/status` is replaced by `GET /api/health` and now answers `404`. In the Python client, `SyncClient.get_status()`, `ServiceStatusResource` and `WorkerStatusResource` are replaced by `SyncClient.get_health()` and `HealthResource`. The web interface and `invoke dev.smoke` read `/api/health`, and `GET /api` redirects to it.

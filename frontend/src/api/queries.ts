@@ -1,19 +1,30 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
+import { cronFields } from "#/domain/cadence";
+import { DEFAULT_HISTORY_EVENT_TYPES, untilAfter } from "#/domain/schedule-events";
+
 import { $api, fetchClient } from "./client";
-import { isEnvelope, isTimeout, SyncApiUnavailable } from "./errors";
+import { isEnvelope, isHealthReport, isTimeout, SyncApiUnavailable } from "./errors";
 import type {
   ConfigurationSummary,
   ConfigurationVersion,
+  Credential,
+  CredentialPage,
+  HealthReport,
   Run,
   RunLogLine,
   RunResource,
 } from "./types";
+import type { components } from "./types.generated";
+
+type EventPage = components["schemas"]["EventPage"];
 
 /** Lists are re-read on this interval, so a run started elsewhere appears without a reload. */
 export const LIST_REFRESH_MS = 10_000;
 /** A run in progress is re-read on this interval. */
 const RUN_REFRESH_MS = 2_000;
+/** The health report is re-read on this interval; the Health page names it. */
+export const HEALTH_REFRESH_MS = 15_000;
 
 /** The largest page the Sync API serves. */
 const PAGE_LIMIT = 200;
@@ -37,8 +48,19 @@ const poll =
  * The status check keeps polling after a failure, so the header turns back to green when the Sync
  * API answers again. It uses the shared retry rule: a timeout or a refusal is not retried.
  */
-export const statusQuery = () =>
-  $api.queryOptions("get", "/status", {}, { refetchInterval: 15_000, retryDelay: 1_000 });
+export const healthQuery = () =>
+  queryOptions({
+    queryKey: ["get", "/health"],
+    queryFn: async ({ signal }): Promise<HealthReport> => {
+      const { data, error, response } = await fetchClient.GET("/health", { signal });
+      if (data) return data;
+      // A 503 carries the report when a component is down; the page reads its workers section.
+      if (response.status === 503 && isHealthReport(error)) return error;
+      throw error;
+    },
+    refetchInterval: HEALTH_REFRESH_MS,
+    retryDelay: 1_000,
+  });
 
 export const meQuery = () => $api.queryOptions("get", "/me", {}, { staleTime: 5 * 60_000 });
 
@@ -51,6 +73,10 @@ export const configsQuery = () =>
     { params: { query: { limit: String(PAGE_LIMIT) } } },
     { refetchInterval: poll(LIST_REFRESH_MS) }
   );
+
+/** `GET /configs?name=`: the configurations with this name, newest first. Names are not unique. */
+export const configsNamedQuery = (name: string) =>
+  $api.queryOptions("get", "/configs", { params: { query: { name, limit: "1" } } });
 
 /** `GET /configs/{config_id}`; the OpenAPI document types its response as `any`. */
 export const configQuery = (configId: string) =>
@@ -74,6 +100,16 @@ export const versionsQuery = (configId: string) =>
     { params: { path: { config_id: configId }, query: { limit: String(PAGE_LIMIT) } } },
     { refetchInterval: poll(LIST_REFRESH_MS) }
   );
+
+/**
+ * `GET /configs/{config_id}/versions?limit=1`: the newest version of one configuration, with the
+ * account that registered it, which `GET /configs/{config_id}/versions/{registry_version}` does
+ * not return.
+ */
+export const newestVersionQuery = (configId: string) =>
+  $api.queryOptions("get", "/configs/{config_id}/versions", {
+    params: { path: { config_id: configId }, query: { limit: "1" } },
+  });
 
 /** A registered version never changes, so it is read once. */
 export const configVersionQuery = (configId: string, version: number) =>
@@ -111,6 +147,15 @@ export const runsQuery = (filters: { config_id?: string; registry_version?: numb
     { refetchInterval: poll(LIST_REFRESH_MS) }
   );
 
+/** The newest runs of one schedule, for the timeline of the schedule page. */
+export const scheduleRunsQuery = (scheduleId: string, limit: number) =>
+  $api.queryOptions(
+    "get",
+    "/runs",
+    { params: { query: { schedule_id: scheduleId, limit: String(limit) } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
 /** The newest run of one configuration, for when the newest page of `GET /runs` does not include it. */
 export const latestRunQuery = (configId: string) =>
   $api.queryOptions(
@@ -121,12 +166,12 @@ export const latestRunQuery = (configId: string) =>
   );
 
 /**
- * `GET /runs` 50 runs at a time, newest first, optionally for one configuration. With older pages
- * loaded, every page is read again on each refresh, so the interval grows.
+ * `GET /runs` 50 runs at a time, newest first, optionally for one configuration and one schedule.
+ * With older pages loaded, every page is read again on each refresh, so the interval grows.
  */
-export const runPagesQuery = (config?: string) =>
+export const runPagesQuery = (config?: string, schedule?: string) =>
   infiniteQueryOptions({
-    queryKey: ["get", "/runs", "pages", { config }],
+    queryKey: ["get", "/runs", "pages", { config, schedule }],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam, signal }) => {
       const { data, error } = await fetchClient.GET("/runs", {
@@ -135,6 +180,7 @@ export const runPagesQuery = (config?: string) =>
             limit: "50",
             ...(pageParam ? { cursor: pageParam } : {}),
             ...(config ? { config_id: config } : {}),
+            ...(schedule ? { schedule_id: schedule } : {}),
           },
         },
         signal,
@@ -167,6 +213,26 @@ export const runQuery = (runId: string) =>
       refetchInterval: (query) =>
         isInProgress(query.state.data as RunResource | undefined) ? RUN_REFRESH_MS : false,
     }
+  );
+
+/** The most left-out records a dialog lists; the count of the rest is shown instead. */
+export const LEFT_OUT_SHOWN = 20;
+
+/**
+ * The first records the saved plan leaves out, for the plan with this checksum. A saved plan never
+ * changes, so the answer is kept for the session; a 409 means the run holds another plan.
+ */
+export const planLeftOutQuery = (runId: string, checksum: string) =>
+  $api.queryOptions(
+    "get",
+    "/runs/{run_id}/plan/left-out",
+    {
+      params: {
+        path: { run_id: runId },
+        query: { expected_checksum: checksum, limit: String(LEFT_OUT_SHOWN) },
+      },
+    },
+    { staleTime: Number.POSITIVE_INFINITY }
   );
 
 /** A step in progress asks for the new lines of its log on this interval. */
@@ -207,6 +273,232 @@ export const runLogQuery = (runId: string, stage: string) =>
     },
     staleTime: Number.POSITIVE_INFINITY,
   });
+
+/* ---------- schedules ---------- */
+
+/** The filters of the schedules list. Without `state`, the Sync API leaves deleted schedules out. */
+export interface ScheduleFilters {
+  state?: string;
+  config?: string;
+}
+
+/**
+ * `GET /schedules` 200 schedules at a time, the largest page the Sync API allows, optionally in one
+ * state or for one configuration. With more than one page loaded, every page is read again on each
+ * refresh, so the interval grows.
+ */
+export const schedulePagesQuery = ({ state, config }: ScheduleFilters = {}) =>
+  infiniteQueryOptions({
+    queryKey: ["get", "/schedules", "pages", { state, config }],
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam, signal }) => {
+      const { data, error } = await fetchClient.GET("/schedules", {
+        params: {
+          query: {
+            limit: "200",
+            ...(pageParam ? { cursor: pageParam } : {}),
+            ...(state ? { state } : {}),
+            ...(config ? { config_id: config } : {}),
+          },
+        },
+        signal,
+      });
+      if (error) throw error;
+      return data;
+    },
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    refetchInterval: (query) =>
+      failedFirstRead(query)
+        ? false
+        : (query.state.data?.pages.length ?? 1) > 1
+          ? 30_000
+          : LIST_REFRESH_MS,
+  });
+
+export const scheduleQuery = (scheduleId: string) =>
+  $api.queryOptions(
+    "get",
+    "/schedules/{schedule_id}",
+    { params: { path: { schedule_id: scheduleId } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
+/** The schedule of one configuration, which has at most one schedule that is not deleted. */
+export const configScheduleQuery = (configId: string) =>
+  $api.queryOptions(
+    "get",
+    "/schedules",
+    { params: { query: { config_id: configId, limit: "1" } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
+/**
+ * The next start times of a cron expression in a time zone, as the scheduler computes them. The
+ * values travel in a JSON body so that they never reach an access log. A refusal is shown as it
+ * is, so it is not retried; nothing is asked while the expression does not have five fields or the
+ * time zone is empty (the form asks for a time zone itself).
+ */
+export const nextStartsQuery = (cron: string, timezone: string, count: number) =>
+  queryOptions({
+    queryKey: ["post", "/schedules/next-starts", { cron, timezone, count }] as const,
+    queryFn: async ({ signal }) => {
+      const { data, error } = await fetchClient.POST("/schedules/next-starts", {
+        body: { cron, timezone, count },
+        signal,
+      });
+      if (error) throw error;
+      return data;
+    },
+    staleTime: 60_000,
+    retry: false,
+    enabled: cronFields(cron) !== null && timezone.trim() !== "",
+  });
+
+/** The number of history entries read at a time. */
+const EVENT_PAGE_LIMIT = 50;
+
+/**
+ * One page of a schedule's history, with the `until` every older page of the list uses; `null`
+ * when the first page is empty.
+ */
+export type ScheduleEventPage = EventPage & { until: string | null };
+
+type ScheduleEventPageParam = { offset: number; until: string | null };
+
+/** One read of a schedule's history, newest first; without `until`, the newest events. */
+async function readScheduleEvents(
+  scheduleId: string,
+  includeAll: boolean,
+  { offset, until, signal }: { offset: number; until?: string | null; signal: AbortSignal }
+): Promise<EventPage> {
+  const { data, error } = await fetchClient.GET("/events", {
+    params: {
+      query: {
+        related: [`schedule:${scheduleId}`],
+        order: "desc",
+        ...(until ? { until } : {}),
+        limit: String(EVENT_PAGE_LIMIT),
+        offset: String(offset),
+        ...(includeAll ? {} : { event_type: [...DEFAULT_HISTORY_EVENT_TYPES] }),
+      },
+    },
+    signal,
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * The history of a schedule, newest first, 50 entries at a time. The first page is read without
+ * `until`; every older page uses `until` set to one millisecond after the newest event of the first
+ * page (`untilAfter`), so events recorded later do not shift the offsets of older pages. The time
+ * comes from the events the Sync API returned, not from the browser's clock. Unless `includeAll`,
+ * only the schedule event types are asked for. Events recorded after `until` come from
+ * `scheduleNewestEventsQuery`.
+ */
+export const scheduleEventsQuery = (
+  scheduleId: string,
+  { includeAll = false }: { includeAll?: boolean } = {}
+) =>
+  infiniteQueryOptions({
+    queryKey: ["get", "/events", "schedule", { scheduleId, includeAll }],
+    initialPageParam: { offset: 0, until: null } as ScheduleEventPageParam,
+    queryFn: async ({ pageParam, signal }): Promise<ScheduleEventPage> => {
+      const data = await readScheduleEvents(scheduleId, includeAll, {
+        offset: pageParam.offset,
+        until: pageParam.until,
+        signal,
+      });
+      return { ...data, until: pageParam.until ?? untilAfter(data.items[0]) };
+    },
+    // The offset counts every event the pages returned, repeats included, so no event is skipped.
+    getNextPageParam: (last, pages): ScheduleEventPageParam | undefined =>
+      last.has_more
+        ? {
+            offset: pages.reduce((count, page) => count + page.items.length, 0),
+            until: pages[0].until,
+          }
+        : undefined,
+  });
+
+/**
+ * The newest 50 events of a schedule, read without `until` every 10 seconds (contracts/http-api.md),
+ * so the history can add the events recorded after its first page above the list.
+ */
+export const scheduleNewestEventsQuery = (
+  scheduleId: string,
+  { includeAll = false }: { includeAll?: boolean } = {}
+) =>
+  queryOptions({
+    queryKey: ["get", "/events", "schedule-newest", { scheduleId, includeAll }],
+    queryFn: ({ signal }) => readScheduleEvents(scheduleId, includeAll, { offset: 0, signal }),
+    refetchInterval: poll(LIST_REFRESH_MS),
+  });
+
+/* ---------- accounts and tokens ---------- */
+
+/** The states `GET /accounts` filters on. */
+export type AccountState = "active" | "disabled" | "all";
+
+/**
+ * The API tokens of the signed-in account, oldest first. The account lists poll as the other lists
+ * do, so a change made by another administrator or in another tab shows up.
+ */
+export const myTokensQuery = () =>
+  $api.queryOptions("get", "/me/tokens", {}, { refetchInterval: poll(LIST_REFRESH_MS) });
+
+/** Every account in a state, by name. Only an administrator can read it. */
+export const accountsQuery = (state: AccountState) =>
+  $api.queryOptions(
+    "get",
+    "/accounts",
+    { params: { query: { state } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
+/** The API tokens of another account, oldest first. Only an administrator can read them. */
+export const accountTokensQuery = (name: string) =>
+  $api.queryOptions(
+    "get",
+    "/accounts/{name}/tokens",
+    { params: { path: { name } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
+
+/* ---------- stored credentials ---------- */
+
+/**
+ * Every stored credential, sorted by name, with the names of its fields and no value. Every
+ * signed-in account can read it. `GET /credentials` serves pages; this reads them all.
+ */
+export const credentialsQuery = () =>
+  queryOptions({
+    queryKey: ["get", "/credentials"] as const,
+    queryFn: async ({ signal }): Promise<Credential[]> => {
+      const items: Credential[] = [];
+      for (let offset = 0; ; ) {
+        const page: { data?: CredentialPage; error?: unknown } = await fetchClient.GET(
+          "/credentials",
+          { params: { query: { offset, limit: PAGE_LIMIT } }, signal }
+        );
+        if (page.error || !page.data) throw page.error;
+        items.push(...page.data.items);
+        if (page.data.next_offset == null) break;
+        offset = page.data.next_offset;
+      }
+      return items;
+    },
+    refetchInterval: poll(LIST_REFRESH_MS),
+  });
+
+/** One stored credential by its name, with the names of its fields and no value. */
+export const credentialQuery = (name: string) =>
+  $api.queryOptions(
+    "get",
+    "/credentials/{name}",
+    { params: { path: { name } } },
+    { refetchInterval: poll(LIST_REFRESH_MS) }
+  );
 
 /** The newest run of each configuration, from one page of `GET /runs`. */
 export function latestRunByConfig(runs: Run[]): Map<string, Run> {
@@ -307,7 +599,7 @@ function noAnswerDetail(): string {
     : "Check that the Sync service is running, then try again.";
 }
 
-/** A sentence for each failure a page can meet: no answer, a refused token, a missing record or a refusal. */
+/** A sentence for each failure a page can meet: no answer, a refused session, a missing record or a refusal. */
 export function describeError(error: unknown): DescribedError {
   if (isEnvelope(error)) {
     const { code, message, status } = error.error;
@@ -353,10 +645,8 @@ export function describeError(error: unknown): DescribedError {
     if (status === 401) {
       return {
         ...base,
-        title: "The Sync API refused the token",
-        detail: import.meta.env.DEV
-          ? "Set INFRAHUB_SYNC_API_TOKEN to a bearer token the Sync API accepts, then restart the development server."
-          : "The Sync API did not accept the token sent with requests from this page.",
+        title: "The Sync API refused the session",
+        detail: "The session has ended. Sign in again.",
         retryable: false,
         notFound: false,
       };
@@ -404,5 +694,326 @@ export function describeError(error: unknown): DescribedError {
     retryable: true,
     notFound: false,
     kind: "unknown",
+  };
+}
+
+/** The shortest and the longest password the Sync API accepts, in characters. */
+export const PASSWORD_MIN = 12;
+export const PASSWORD_MAX = 1024;
+
+/** Refusals of an account or token action, in words. The keys are the Sync API error codes. */
+const ACCOUNT_ERRORS: Record<string, { title: string; detail?: string }> = {
+  forbidden: {
+    title: "Only an administrator can manage accounts",
+    detail: "Ask an administrator to make this change.",
+  },
+  "current-password-refused": {
+    title: "The current password is not accepted",
+    detail:
+      "Type the password you signed in with. After repeated failures, the account is refused for a while.",
+  },
+  "password-too-short": {
+    title: "The new password is too short",
+    detail: `Use at least ${PASSWORD_MIN} characters.`,
+  },
+  "password-too-long": {
+    title: "The new password is too long",
+    detail: `Use at most ${PASSWORD_MAX.toLocaleString("en")} characters.`,
+  },
+  "password-invalid": {
+    title: "The new password contains a character that cannot be stored",
+    detail: "Remove the character, then try again.",
+  },
+  "sign-in-busy": {
+    title: "The Sync service is checking too many passwords",
+    detail: "Try again in a moment.",
+  },
+  "environment-managed-account": {
+    title: "The deployment's environment defines the admin account",
+    detail:
+      "The environment of the Sync service defines this account, which is always an active administrator. Change its password or its token there.",
+  },
+  "account-name-taken": {
+    title: "An account with this name exists",
+    detail: "Names are compared without regard to letter case. Choose another name.",
+  },
+  "account-name-invalid": {
+    title: "This account name is not allowed",
+    detail:
+      "Use a name without spaces. The names admin, unknown and unauthenticated are reserved, and a name cannot start with acct_ or contain a token prefix.",
+  },
+  "account-not-found": {
+    title: "No account with this name",
+    detail: "Another administrator may have deleted it. The list shows the accounts that exist.",
+  },
+  "token-name-taken": {
+    title: "You already have a token with this name",
+    detail: "Choose another name.",
+  },
+  "token-not-found": {
+    title: "This token no longer exists",
+    detail: "It may have been deleted already. The list shows the tokens that exist.",
+  },
+  "expiry-in-the-past": {
+    title: "The expiry date is in the past",
+    detail: "Choose a date and a time in the future, or leave the expiry empty.",
+  },
+  "secret-parameter-refused": {
+    title: "A value in this form looks like a token or a secret",
+    detail: "Change the name or the reason, then try again.",
+  },
+};
+
+/** `describeError`, with the refusals of the account and token routes said for those pages. */
+export function describeAccountError(error: unknown): DescribedError {
+  const described = describeError(error);
+  const code = described.code;
+  if (described.kind !== "envelope" || !code || !Object.hasOwn(ACCOUNT_ERRORS, code)) {
+    return described;
+  }
+  const words = ACCOUNT_ERRORS[code];
+  return { ...described, title: words.title, detail: words.detail, notFound: false };
+}
+
+/* ---------- stored credentials: errors ---------- */
+
+/** The longest value of a credential field the Sync API accepts, in characters. */
+export const CREDENTIAL_VALUE_MAX = 4096;
+/** The longest description of a credential the Sync API accepts, in characters. */
+export const CREDENTIAL_DESCRIPTION_MAX = 500;
+/** A credential name: a lowercase letter, then up to 62 lowercase letters, digits or hyphens. */
+export const CREDENTIAL_NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/;
+
+/**
+ * Refusals that name a stored credential, in words. The keys are the Sync API error codes. A
+ * registration refusal carries the same code in `reason`, under the code `configs-validation`.
+ */
+const CREDENTIAL_ERRORS: Record<string, { title: string; detail?: string }> = {
+  forbidden: {
+    title: "Only an administrator can create, change or delete credentials",
+    detail: "Ask an administrator to create or change credentials.",
+  },
+  "credential-exists": {
+    title: "A credential with this name exists",
+    detail: "Choose another name, or change the value of the existing credential.",
+  },
+  "credential-fields-invalid": {
+    title: "The Sync service refused these fields",
+    detail: `A credential holds a token, a username and a password, or a username and a token. Each value holds 1 to ${CREDENTIAL_VALUE_MAX.toLocaleString("en")} characters and no control character.`,
+  },
+  "credential-in-use": {
+    title: "This credential is in use",
+    detail:
+      "The latest version of a configuration, or a schedule that is not deleted, names it. Register a version that names another credential, or change or delete the schedule, then delete the credential.",
+  },
+  "credential-key-not-configured": {
+    title: "The Sync service has no encryption key",
+    detail:
+      "The Sync service cannot store a credential value until its operator sets INFRAHUB_SYNC_ENCRYPTION_KEY.",
+  },
+  "credential-field-missing": {
+    title: "A stored credential lacks a field that the configuration needs",
+    detail:
+      "Ask an administrator to change the value of the credential so that it holds the field, or register a version that names another credential.",
+  },
+  "credential-method-unknown": {
+    title: "No stored field is known for the adapter or the authentication method of a block",
+    detail:
+      "Register a version whose source and destination use an authentication method that reads a token, or a username with a password or a token.",
+  },
+  "credential-not-used": {
+    title: "A block names a credential that its authentication method does not use",
+    detail: "Remove the credential from that block, then register the configuration again.",
+  },
+  "credential-format-removed": {
+    title: "This version holds its credentials in a format that was removed",
+    detail:
+      "Register a new version of the configuration that names stored credentials: write credential: <name> in the source and in the destination.",
+  },
+  "credential-undecryptable": {
+    title: "The Sync service cannot decrypt the stored value of a credential",
+    detail:
+      "The encryption key of the Sync service may have changed. Ask an administrator to change the value of the credential, which stores it again.",
+  },
+  "destination-credential-not-named": {
+    title: "The destination of this version names no stored credential",
+    detail: "Register a version whose destination names a stored credential.",
+  },
+  "secret-parameter-refused": {
+    title: "The description looks like a token or a secret",
+    detail: "Change the description, then try again.",
+  },
+};
+
+/**
+ * `describeError`, with the refusals that name a stored credential said for the Credentials page,
+ * a registration and a run. `credential-not-found` is a missing record on a credential route
+ * (404) and a refusal of a configuration elsewhere (422).
+ */
+export function describeCredentialError(error: unknown): DescribedError {
+  const described = describeError(error);
+  if (described.kind !== "envelope") return described;
+  const code =
+    described.code === "configs-validation" && described.reason ? described.reason : described.code;
+  if (!code) return described;
+  if (code === "credential-not-found") {
+    return described.status === 404
+      ? {
+          ...described,
+          title: "No stored credential with this name",
+          detail:
+            "Another administrator may have deleted it. The Credentials page lists the credentials that exist.",
+          notFound: true,
+        }
+      : {
+          ...described,
+          title: "The configuration names a stored credential that does not exist",
+          detail:
+            "Ask an administrator to create the credential on the Credentials page, then try again.",
+          notFound: false,
+        };
+  }
+  if (!Object.hasOwn(CREDENTIAL_ERRORS, code)) return described;
+  const words = CREDENTIAL_ERRORS[code];
+  return { ...described, title: words.title, detail: words.detail, notFound: false };
+}
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+
+/** The configurations and the schedules that name a credential, from a `credential-in-use` refusal. */
+export interface CredentialInUse {
+  /** Configuration IDs. */
+  configurations: string[];
+  /** Schedule names. */
+  schedules: string[];
+}
+
+/** The `details` of a `409 credential-in-use` refusal, or `undefined` for any other error. */
+export function credentialInUse(error: unknown): CredentialInUse | undefined {
+  if (!isEnvelope(error) || error.error.code !== "credential-in-use") return undefined;
+  const details = error.error.details ?? {};
+  return { configurations: strings(details.configurations), schedules: strings(details.schedules) };
+}
+
+/** One block of a refused registration whose stored credential does not exist or lacks a field. */
+export interface CredentialFinding {
+  /** "source" or "destination". */
+  block: string;
+  /** The name of the stored credential the block names. */
+  name: string;
+  /** `credential-not-found` or `credential-field-missing`. */
+  code: string;
+  /** Every field the block needs (not found), or the fields the credential lacks (field missing). */
+  fields: string[];
+}
+
+/** The `details.credentials` list of a refused registration; empty for any other error. */
+export function credentialFindings(error: unknown): CredentialFinding[] {
+  if (!isEnvelope(error)) return [];
+  const list = error.error.details?.credentials;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry: unknown): CredentialFinding[] => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const { block, name, code, fields } = entry as Record<string, unknown>;
+    if (typeof block !== "string" || typeof name !== "string" || typeof code !== "string") {
+      return [];
+    }
+    return [{ block, name, code, fields: strings(fields) }];
+  });
+}
+
+/** The refusals whose detail is the Sync API message, because it names the value or the reason. */
+const SCHEDULE_MESSAGE_DETAIL = new Set([
+  "schedule-cron-invalid",
+  "schedule-timezone-invalid",
+  "schedule-stopped",
+  "request-invalid",
+  "credential-not-found",
+]);
+
+/** Refusals of a schedule read or action, in words. The keys are the Sync API error codes. */
+const SCHEDULE_ERRORS: Record<string, { title: string; detail?: string }> = {
+  forbidden: {
+    title: "Only the owner of this schedule or an administrator can do this",
+    detail: "Ask the owner of this schedule, or an administrator, to make this change.",
+  },
+  "schedule-not-found": {
+    title: "Schedule not found",
+    detail: "Check the schedule ID in the address. The Schedules page lists every schedule.",
+  },
+  "schedule-deleted": {
+    title: "This schedule is deleted",
+    detail: "A deleted schedule accepts no action. Its runs and its history stay available.",
+  },
+  "schedule-stopped": { title: "This schedule cannot be resumed yet" },
+  "schedule-changed": {
+    title: "Another change was saved at the same time. Save again.",
+    detail: "The values you entered are kept.",
+  },
+  "schedule-name-in-use": {
+    title: "A schedule with this name exists",
+    detail: "Choose another name.",
+  },
+  // Not the Sync API message: it holds the identifier of the existing schedule (FR-007, SC-006).
+  "schedule-exists-for-configuration": {
+    title: "This configuration already has a schedule",
+    detail:
+      "A configuration has one schedule that is not deleted. Change or delete that schedule from the Schedules page.",
+  },
+  "approval-required-for-schedule": {
+    title: "This Sync service requires an approved plan before any write",
+    detail: "A schedule cannot write to the default branch here. Choose Branch review.",
+  },
+  "schedule-branch-declared": {
+    title: "The configuration version declares its own destination branch",
+    detail:
+      "A run with branch review would write to that branch without a review. Choose Default branch.",
+  },
+  "schedule-left-out-not-applicable": {
+    title: "Writing when records are left out applies only to the default branch",
+    detail:
+      "A run with branch review always writes the remaining records, and its proposed change states how many were left out.",
+  },
+  "schedule-cron-invalid": { title: "The Sync service refused the cron expression" },
+  "schedule-timezone-invalid": { title: "The Sync service does not know this time zone" },
+  // The Sync API message names each missing credential and the command that creates it.
+  "credential-not-found": {
+    title: "The configuration version names a stored credential that does not exist",
+  },
+  "configuration-version-not-found": {
+    title: "No such version of this configuration",
+    detail: "Choose a registered version of the configuration.",
+  },
+  "orchestration-unavailable": {
+    title:
+      "The Sync service saved the change, but could not confirm what the task manager holds for this schedule",
+    detail:
+      "The Sync service matches the task manager to the saved schedules again at the next change to any schedule or when the Sync API restarts. Until then, the task manager may still hold this schedule as it was before the change, also after a deletion, and start runs with it. Open the schedule page to check its state.",
+  },
+  "secret-parameter-refused": {
+    title: "A value in this form matches a secret the Sync service holds",
+    detail: "Change the value that holds the secret, then try again.",
+  },
+  "request-invalid": { title: "The Sync service refused the values in this form" },
+};
+
+/**
+ * `describeError`, with the refusals of the schedule routes said for the schedule pages. For
+ * `secret-parameter-refused` the Sync API message is never shown, so no value entered is repeated.
+ */
+export function describeScheduleError(error: unknown): DescribedError {
+  const described = describeError(error);
+  const code = described.code;
+  if (described.kind !== "envelope" || !code || !Object.hasOwn(SCHEDULE_ERRORS, code)) {
+    return described;
+  }
+  const words = SCHEDULE_ERRORS[code];
+  const message = isEnvelope(error) ? capitalize(error.error.message) : undefined;
+  return {
+    ...described,
+    title: words.title,
+    detail: SCHEDULE_MESSAGE_DETAIL.has(code) ? message : words.detail,
+    notFound: code === "schedule-not-found",
   };
 }

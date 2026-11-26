@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import shlex
@@ -15,11 +16,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NoReturn, cast
+from typing import Any, Literal, NoReturn, cast
 
 import pytest
 import yaml
 from invoke import Context
+from typing_extensions import Self
 
 from development.bench.records import (
     ResultRecord,
@@ -36,6 +38,18 @@ from development.bench.records import (
 )
 from development.bench.runtime import BenchmarkError, docker_memory_mib, measured_process, output
 from development.netbox.datasets.change_netbox import expected_text, plan_changes
+from infrahub_sync.client.models import (
+    ArtifactReferenceResource,
+    OrchestrationSummary,
+    PlanOperationResource,
+    PlanStepPart,
+    PlanStepTimings,
+    PlanSummaryResource,
+    PublicRunResource,
+    SideRead,
+    StageReads,
+)
+from infrahub_sync.plan.digest import operations_digest
 from tasks import bench, dev
 
 DESTINATION_TOKEN = dev.PUBLIC_INFRAHUB_ADMIN_TOKEN
@@ -170,9 +184,9 @@ def test_jsonl_contract_and_invalid_times(tmp_path, status) -> None:
         "machine",
         "harness_commit",
         "mapping_sha256",
-        "builtin_deletes",
         "skipped_deletes",
     } <= rows[0].keys()
+    assert "builtin_deletes" not in rows[0]
     assert rows[0]["wall_seconds"] == (3 if status == "ok" else None)
     assert rows[0]["plan_seconds"] == (1 if status == "ok" else None)
     assert rows[0]["apply_seconds"] == (2 if status == "ok" else None)
@@ -415,7 +429,6 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
             if record.scenario == "changed"
             else {action: {} for action in ("create", "update", "delete")}
         )
-        record.builtin_deletes = {"IpamNamespace": 1}
         if record.scenario == "changed":
             counts["InterfacePhysical"] += 1
             record.skipped_deletes = {"InterfacePhysical": {"exact": 1, "missing": 0, "extra": 2}[delete_evidence]}
@@ -480,7 +493,6 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
     else:
         assert all(row["wall_seconds"] == 1 for row in rows)
     if scenario == "changed" and line == "v3":
-        assert all(row["builtin_deletes"] == {"IpamNamespace": 1} for row in rows)
         assert all(
             row["skipped_deletes"]["InterfacePhysical"] == {"exact": 1, "missing": 0, "extra": 2}[delete_evidence]
             for row in rows
@@ -536,13 +548,294 @@ def test_quiet_context_suppresses_success_and_failure_output(capsys) -> None:
     assert "secret-token" not in captured.out + captured.err
 
 
+def plan_operation(action: Literal["create", "update", "delete"], kind: str, name: str) -> PlanOperationResource:
+    """One operation of the saved-plan route."""
+    return PlanOperationResource(
+        operation_id=f"{action}-{kind}-{name}", action=action, kind=kind, identity={"name": name}, tier=0
+    )
+
+
+def plan_summary(
+    *, total: int, deletes_not_executed: int = 0, left_out: int = 0, kept: int = 0, problems: int = 0
+) -> PlanSummaryResource:
+    """The summary of a saved plan with the counts a benchmark test needs."""
+    return PlanSummaryResource(
+        by_action={},
+        by_kind={},
+        total=total,
+        delete_operations_computed=True,
+        deletes_not_executed=deletes_not_executed,
+        left_out=left_out,
+        kept=kept,
+        problems=problems,
+    )
+
+
+def sync_entry(start: datetime, *, saving_ended: bool = True) -> SimpleNamespace:
+    """The `sync` entry of a run response, with every part of the plan step and both reads."""
+
+    def at(seconds: float) -> datetime:
+        return start + timedelta(seconds=seconds)
+
+    return SimpleNamespace(
+        purpose="sync",
+        plan_step=PlanStepTimings(
+            parts={
+                "waiting": PlanStepPart(started_at=at(0), ended_at=at(0.5)),
+                "preparing": PlanStepPart(started_at=at(0.5), ended_at=at(1)),
+                "comparing": PlanStepPart(started_at=at(1.5), ended_at=at(1.75)),
+                "checking": PlanStepPart(started_at=at(1.75), ended_at=at(1.875)),
+                "saving": PlanStepPart(started_at=at(1.875), ended_at=at(2) if saving_ended else None),
+            }
+        ),
+        reads=StageReads(
+            source=SideRead(state="succeeded", started_at=at(1), ended_at=at(1.5), read_mode="full"),
+            destination=SideRead(state="succeeded", started_at=at(1), ended_at=at(1.25), read_mode="incremental"),
+        ),
+    )
+
+
+def sync_run(start: datetime, *, phase: str = "applied", outcome: str = "applied") -> PublicRunResource:
+    """A finished `sync` run whose saved-plan review artifact was published two seconds in."""
+    digest = "a" * 64
+    return PublicRunResource(
+        run_id="run",
+        operation="sync",
+        configuration_reference="config@1",
+        phase=phase,
+        outcome=outcome,
+        started_at=start,
+        finished_at=start + timedelta(seconds=4),
+        artifact_refs=(
+            ArtifactReferenceResource(
+                artifact_id="plan-review",
+                run_id="run",
+                kind="saved-plan-review",
+                media_type="application/json",
+                digest=digest,
+                size=1843,
+                object_key=f"artifacts/{digest}/plan-review",
+                manifest_key=f"manifests/{digest}/plan-review",
+                created_at=start + timedelta(seconds=2),
+            ),
+        ),
+    )
+
+
+@dataclass
+class FakeSyncClient:
+    """Answer the calls `v3_sync` makes with one finished run, its saved plan and its results."""
+
+    run: PublicRunResource
+    entry: SimpleNamespace
+    plan: SimpleNamespace
+    applied: dict[str, int] | None = None
+    results_read: list[str] = field(default_factory=list)
+
+    def __call__(self, *_args: object) -> Self:
+        return self
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        pass
+
+    def sync(self, _request: object, _key: str) -> SimpleNamespace:
+        return SimpleNamespace(run=self.run)
+
+    def wait_for_run(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(run=self.run, orchestration=(self.entry,))
+
+    def get_plan(self, _run_id: str) -> SimpleNamespace:
+        return self.plan
+
+    def get_results(self, run_id: str) -> SimpleNamespace:
+        self.results_read.append(run_id)
+        return SimpleNamespace(results={"summary": self.applied})
+
+
+def run_v3(monkeypatch, client: FakeSyncClient, scenario: str = "cold") -> ResultRecord:
+    """Run `v3_sync` against `client` and return its record."""
+    monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", "test-api-token")
+    monkeypatch.setattr(bench, "SyncClient", client)
+    record = ResultRecord("v3", "3", "abc", "S", scenario, "full", 1)
+    bench.v3_sync(cast("bench.CellStack", SimpleNamespace(memory=lambda: 12)), ("config", 1), record, 10)
+    return record
+
+
+NEW_FIELDS: dict[str, Any] = {
+    "plan_parts": {"waiting": 0.5, "saving": 0.125},
+    "source_read_mode": "full",
+    "destination_read_mode": "incremental",
+    "plan_bytes": 1843,
+    "operations_digest": "f" * 64,
+    "left_out": 3,
+    "kept": 1,
+    "problems": 2,
+}
+
+
+@pytest.mark.parametrize("status", ["ok", "failed", "timed_out"])
+def test_record_writes_the_plan_step_fields_and_clears_them_unless_ok(tmp_path, status) -> None:
+    record = ResultRecord(
+        "v3", "3", "abc", "S", "warm", "full", 1, status=status, wall_seconds=3, peak_rss_mb=4, **NEW_FIELDS
+    )
+    target = tmp_path / "results.jsonl"
+    record.append(target)
+    row = json.loads(target.read_text(encoding="utf-8"))
+    assert {name: row[name] for name in NEW_FIELDS} == (NEW_FIELDS if status == "ok" else dict.fromkeys(NEW_FIELDS))
+
+
+def test_plan_parts_hold_each_part_and_both_reads_in_seconds() -> None:
+    start = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    assert bench.plan_parts(cast("OrchestrationSummary", sync_entry(start))) == {
+        "waiting": 0.5,
+        "preparing": 0.5,
+        "source_read": 0.5,
+        "destination_read": 0.25,
+        "comparing": 0.25,
+        "checking": 0.125,
+        "saving": 0.125,
+    }
+
+
+def test_plan_parts_leave_out_a_part_without_both_times() -> None:
+    start = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    entry = sync_entry(start, saving_ended=False)
+    entry.plan_step.parts["saving"] = PlanStepPart(started_at=start, stopped_at=start + timedelta(seconds=1))
+    entry.reads = StageReads(source=SideRead(state="not_started"), destination=None)
+    parts = bench.plan_parts(cast("OrchestrationSummary", entry))
+    assert set(parts) == {"waiting", "preparing", "comparing", "checking"}
+    assert 0 not in parts.values()
+
+
+def test_v3_record_holds_the_plan_step_fields(monkeypatch) -> None:
+    start = datetime.now(timezone.utc)
+    operations = (plan_operation("update", "InterfaceVirtual", "test"), plan_operation("delete", "IpamVLAN", "10"))
+    client = FakeSyncClient(
+        run=sync_run(start),
+        entry=sync_entry(start),
+        plan=SimpleNamespace(
+            operations=operations,
+            summary=plan_summary(total=2, deletes_not_executed=1, kept=4, problems=5),
+        ),
+        applied={"create": 0, "update": 1, "delete": 1},
+    )
+    record = run_v3(monkeypatch, client)
+    assert record.plan_parts == bench.plan_parts(cast("OrchestrationSummary", client.entry))
+    assert (record.source_read_mode, record.destination_read_mode) == ("full", "incremental")
+    assert record.plan_bytes == 1843
+    assert record.operations_digest == operations_digest(operations)
+    assert (record.left_out, record.kept, record.problems) == (0, 4, 5)
+
+
+@pytest.mark.parametrize(
+    "operation", [("create", "IpamVLAN"), ("update", "InterfaceVirtual"), ("delete", "IpamNamespace")]
+)
+def test_v3_warm_fails_on_any_planned_operation_deletes_included(monkeypatch, operation) -> None:
+    start = datetime.now(timezone.utc)
+    action, kind = operation
+    client = FakeSyncClient(
+        run=sync_run(start),
+        entry=sync_entry(start),
+        plan=SimpleNamespace(
+            operations=(plan_operation(action, kind, "x"),),
+            summary=plan_summary(total=1, deletes_not_executed=int(action == "delete")),
+        ),
+        applied={name: int(name == action) for name in ("create", "update", "delete")},
+    )
+    with pytest.raises(BenchmarkError, match="warm plan holds 1 operation"):
+        run_v3(monkeypatch, client, scenario="warm")
+
+
+def test_v3_warm_passes_on_an_empty_plan(monkeypatch) -> None:
+    start = datetime.now(timezone.utc)
+    client = FakeSyncClient(
+        run=sync_run(start),
+        entry=sync_entry(start),
+        plan=SimpleNamespace(operations=(), summary=plan_summary(total=0)),
+        applied={"create": 0, "update": 0, "delete": 0},
+    )
+    record = run_v3(monkeypatch, client, scenario="warm")
+    assert record.actions == {"create": {}, "update": {}, "delete": {}}
+    assert record.skipped_deletes == {}
+
+
+def test_warm_check_counts_a_planned_delete_as_an_operation(mapping) -> None:
+    with pytest.raises(BenchmarkError, match="nonzero"):
+        validate_result("S", "warm", expected_counts("S", mapping), {}, mapping, skipped_deletes={"IpamVLAN": 1})
+
+
+def test_v3_plan_that_leaves_records_out_records_the_report_counts_without_an_apply(monkeypatch) -> None:
+    start = datetime.now(timezone.utc)
+    operations = (plan_operation("create", "IpamVLAN", "10"), plan_operation("delete", "IpamNamespace", "x"))
+    client = FakeSyncClient(
+        run=sync_run(start, phase="planned", outcome="left-out-review-required"),
+        entry=sync_entry(start),
+        plan=SimpleNamespace(
+            operations=operations,
+            summary=plan_summary(total=2, deletes_not_executed=1, left_out=3, kept=1, problems=2),
+        ),
+    )
+    record = run_v3(monkeypatch, client)
+    assert client.results_read == []
+    assert (record.left_out, record.kept, record.problems) == (3, 1, 2)
+    assert record.actions == {"create": {}, "update": {}, "delete": {}}
+    assert record.skipped_deletes == {"IpamNamespace": 1}
+    assert record.action_evidence == "run-plan-left-out-stop"
+    assert record.plan_seconds == 2
+    assert record.apply_seconds is None
+
+
+@pytest.mark.parametrize(("phase", "outcome"), [("planned", "failed"), ("planned", "cancelled"), ("failed", "failed")])
+def test_v3_plan_that_leaves_records_out_is_not_a_stop_when_the_run_did_not_complete(
+    monkeypatch, phase: str, outcome: str
+) -> None:
+    """Only a completed stop for records left out is recorded; a failed or cancelled sync is an error."""
+    start = datetime.now(timezone.utc)
+    client = FakeSyncClient(
+        run=sync_run(start, phase=phase, outcome=outcome),
+        entry=sync_entry(start),
+        plan=SimpleNamespace(
+            operations=(plan_operation("create", "IpamVLAN", "10"),),
+            summary=plan_summary(total=1, left_out=3),
+        ),
+    )
+    with pytest.raises(BenchmarkError, match=f"outcome {outcome}, not as a completed stop for records left out"):
+        run_v3(monkeypatch, client)
+
+
+def test_v3_plan_that_leaves_records_out_compares_the_apply_summary_when_an_apply_ran(monkeypatch) -> None:
+    start = datetime.now(timezone.utc)
+    client = FakeSyncClient(
+        run=sync_run(start),
+        entry=sync_entry(start),
+        plan=SimpleNamespace(
+            operations=(plan_operation("create", "IpamVLAN", "10"),),
+            summary=plan_summary(total=1, left_out=3),
+        ),
+        applied={"create": 0, "update": 0, "delete": 0},
+    )
+    with pytest.raises(BenchmarkError, match="apply summary differs"):
+        run_v3(monkeypatch, client)
+    assert client.results_read == ["run"]
+
+
+def test_v3_sync_that_stops_before_its_apply_without_records_left_out_fails(monkeypatch) -> None:
+    start = datetime.now(timezone.utc)
+    client = FakeSyncClient(
+        run=sync_run(start, phase="planned", outcome="planned"),
+        entry=sync_entry(start),
+        plan=SimpleNamespace(operations=(), summary=plan_summary(total=0)),
+    )
+    with pytest.raises(BenchmarkError, match="stopped before its apply"):
+        run_v3(monkeypatch, client)
+
+
 @pytest.mark.parametrize("applied_updates", [0, 1])
 @pytest.mark.parametrize("namespace", ["default", "seed-vrf"])
 def test_v3_uses_api_plan_and_apply_evidence(monkeypatch, applied_updates, namespace) -> None:
-    from types import SimpleNamespace
-
-    from infrahub_sync.client.models import ArtifactReferenceResource, PublicRunResource
-
     start = datetime.now(timezone.utc)
     plan_time = start + timedelta(seconds=2)
     digest = "a" * 64
@@ -587,17 +880,17 @@ def test_v3_uses_api_plan_and_apply_evidence(monkeypatch, applied_updates, names
 
         @staticmethod
         def wait_for_run(*_args: object, **_kwargs: object) -> SimpleNamespace:
-            return SimpleNamespace(run=run)
+            return SimpleNamespace(run=run, orchestration=(sync_entry(start),))
 
         @staticmethod
         def get_plan(_run_id) -> SimpleNamespace:
             return SimpleNamespace(
                 operations=[
-                    SimpleNamespace(action="delete", kind="IpamNamespace", identity={"name": namespace}),
-                    SimpleNamespace(action="delete", kind="InterfacePhysical", identity={"name": "eth0"}),
-                    SimpleNamespace(action="update", kind="InterfaceVirtual", identity={"name": "test"}),
+                    plan_operation("delete", "IpamNamespace", namespace),
+                    plan_operation("delete", "InterfacePhysical", "eth0"),
+                    plan_operation("update", "InterfaceVirtual", "test"),
                 ],
-                summary=SimpleNamespace(deletes_not_executed=2),
+                summary=plan_summary(deletes_not_executed=2, total=3),
             )
 
         @staticmethod
@@ -611,10 +904,9 @@ def test_v3_uses_api_plan_and_apply_evidence(monkeypatch, applied_updates, names
     if applied_updates:
         bench.v3_sync(stack, ("config", 1), record, 10)
         assert record.actions == {"create": {}, "update": {"InterfaceVirtual": 1}, "delete": {}}
-        assert record.builtin_deletes == ({"IpamNamespace": 1} if namespace == "default" else {})
-        assert record.skipped_deletes == (
-            {"InterfacePhysical": 1} if namespace == "default" else {"InterfacePhysical": 1, "IpamNamespace": 1}
-        )
+        # The runner counts every planned delete by kind; it no longer excludes any node by name.
+        assert record.skipped_deletes == {"InterfacePhysical": 1, "IpamNamespace": 1}
+        assert not hasattr(record, "builtin_deletes")
         assert (record.plan_seconds, record.apply_seconds) == (2, 2)
         assert record.peak_rss_mb == 12
     else:
@@ -1025,6 +1317,18 @@ def test_sync_cleanup_only_owns_created_containers_and_pins_compose(monkeypatch,
     monkeypatch.delenv("COMPOSE_FILE", raising=False)
     monkeypatch.setattr(bench.dev, "attach_dev_worker", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: ["worker"])
+    monkeypatch.setattr(bench.netbox, "netbox_token", lambda _env: "benchmark-netbox-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", "benchmark-api-token")
+    stack.infrahub_token = "benchmark-infrahub-token"  # noqa: S105 -- a test value
+    stored = []
+
+    def store(service_url, admin_token, values) -> None:
+        """Record the stored credentials by name and digest, after the stack is up."""
+        assert any("up" in command for command in commands)
+        digests = {name: hashlib.sha256(value.encode()).hexdigest() for name, value in values.items()}
+        stored.append((service_url, hashlib.sha256(admin_token.encode()).hexdigest(), digests))
+
+    monkeypatch.setattr(bench.dev, "store_development_credentials", store)
 
     def docker(command, **_kwargs: object):
         """Simulate container creation at each setup phase and record lifecycle commands."""
@@ -1050,6 +1354,13 @@ def test_sync_cleanup_only_owns_created_containers_and_pins_compose(monkeypatch,
             stack.start_sync()
     stack.close()
     assert stack.started_sync == (phase in {"start-created", "ready"})
+    # The credentials the shipped package names are stored through the Sync API once it runs.
+    expected = {
+        "netbox-token": hashlib.sha256(b"benchmark-netbox-token").hexdigest(),
+        "infrahub-token": hashlib.sha256(b"benchmark-infrahub-token").hexdigest(),
+    }
+    api_token = hashlib.sha256(b"benchmark-api-token").hexdigest()
+    assert stored == ([(dev.API_URL, api_token, expected)] if phase == "ready" else [])
     lifecycle = [command for command in commands if command[:2] == ["docker", "compose"]]
     assert all(
         command[command.index("--project-name") : command.index("--project-name") + 4]

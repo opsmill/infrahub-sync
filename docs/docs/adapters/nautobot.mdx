@@ -76,7 +76,7 @@ These files are `config.yml` files, not packages. Registration refuses them as t
 
 ### Configuration parameters
 
-Set `source.name` to `nautobot`. In a registered package, the token is a `$credential` reference:
+Set `source.name` to `nautobot`. The block names a stored credential that holds the Nautobot API token; the package holds no token:
 
 ```yaml
 format_version: 1
@@ -84,28 +84,30 @@ configuration:
   name: from-nautobot
   source:
     name: nautobot
+    credential: nautobot-token
     settings:
       url: "https://nautobot.example.com"
-      token:
-        $credential: nautobot-token
       verify_ssl: true # Default value
       depth: 1 # Optional. Omit to send no depth parameter.
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "https://infrahub.example.com"
-      token:
-        $credential: infrahub-token
-credentials:
-  nautobot-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
-The worker uses the declared `url`. `NAUTOBOT_ADDRESS` and `NAUTOBOT_URL` in the worker environment do not replace it. The worker reads the token from the environment variable that the credential names. For direct adapter use without a registered package, `NAUTOBOT_ADDRESS`, `NAUTOBOT_URL`, and `NAUTOBOT_TOKEN` take precedence over the declared settings.
+An administrator creates both credentials before the package is registered. Each command asks for the token and does not echo it:
+
+```bash
+infrahub-sync credentials create nautobot-token
+infrahub-sync credentials create infrahub-token
+```
+
+| Key of the block | Required | Description |
+| --- | --- | --- |
+| `credential` | Yes | Name of a stored credential that holds the field `token`: the Nautobot API token. See [Manage stored credentials](../guides/credentials.mdx). |
+
+The worker uses the declared `url`. `NAUTOBOT_ADDRESS` and `NAUTOBOT_URL` in the worker environment do not replace it. The worker gets the token of the stored credential from the Sync API for each run, and reads no token from its environment. Do not write `token` in `settings`. For direct adapter use without a registered package, `NAUTOBOT_ADDRESS`, `NAUTOBOT_URL`, and `NAUTOBOT_TOKEN` take precedence over the declared settings.
 
 `depth` is passed straight through to Nautobot as a query parameter on every list
 request the adapter makes. It is an integer between 0 and 10; any other value is

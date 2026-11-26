@@ -7,6 +7,7 @@ session-scoped stack can be shared by every case that needs one.
 
 from __future__ import annotations
 
+import base64
 import json
 import secrets
 import time
@@ -20,6 +21,7 @@ import pytest
 from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 from tests.compose.conftest import COMPOSE_FILE, PROJECT_PREFIX, compose, start_command
 from tests.compose.redaction import SECRETS, Captured, capture
+from tests.helpers.stored_credentials import create_credentials_through_api
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -52,6 +54,17 @@ POLL_SECONDS = 3
 def canary(kind: str) -> str:
     """Return a throwaway secret whose appearance anywhere is a leak."""
     value = f"canary-{kind}-{secrets.token_hex(12)}"
+    SECRETS.register(value)
+    return value
+
+
+def encryption_key() -> str:
+    """Return a throwaway key of stored credentials: 32 random bytes as base64 text.
+
+    `canary()` cannot make one, because the Sync API refuses a key that is not 32 bytes of
+    base64. The value is registered like a canary, so its appearance anywhere is a leak.
+    """
+    value = base64.b64encode(secrets.token_bytes(32)).decode()
     SECRETS.register(value)
     return value
 
@@ -124,6 +137,21 @@ class Deployment:
             if line.startswith(f"{name}="):
                 return line.split("=", 1)[1]
         return ""
+
+    def store_credentials(self, credentials: Mapping[str, Mapping[str, str]]) -> None:
+        """Store credentials in this deployment's Sync API, as its `admin` account.
+
+        `credentials` maps each name to its fields. Every value is registered at the redaction
+        boundary first. A name that exists gets a new revision, so a call can be repeated.
+        The Sync API must run: call this after `up`, and before a package that names one of
+        the credentials is registered.
+        """
+        SECRETS.register(*(value for fields in credentials.values() for value in fields.values() if value))
+        create_credentials_through_api(self.api, self.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"), credentials)
+
+    def store_destination_token(self, token: str) -> None:
+        """Store `token` as the credential the smoke package names for both of its blocks."""
+        self.store_credentials({SMOKE_CREDENTIAL: {"token": token}})
 
     def up(self, *services: str) -> Captured:
         """Start the named services, or all of them, and wait for their health gates.
@@ -202,9 +230,14 @@ class Deployment:
 # The dependencies whose health is an answer from the service -- a PostgreSQL
 # readiness check and two HTTP endpoints -- rather than the fact a container is up.
 STATUS_DEPENDENCIES = ("postgres", "object-store", "prefect-server")
-# The worker state the Sync API reports, asked from inside the deployment so the
-# answer does not depend on how the host maps container ports onto loopback.
-STATUS = "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])"
+# The worker state read from the Sync API's health report, asked from inside the deployment so
+# the answer does not depend on how the host maps container ports onto loopback. The report
+# answers 200 or 503; both carry the `workers` section. The four names are `worker_state_of`'s.
+STATUS = (
+    "import httpx; w = httpx.get('http://sync-api:8000/api/health', timeout=5).json()['workers']; "
+    "print('unavailable' if w['state'] == 'unknown' else 'no-live-worker' if w['live_workers'] == 0 "
+    "else 'busy' if w['queue_depth'] else 'ready')"
+)
 
 
 def wait_for(description: str, probe: Callable[[], object], *, timeout: int = READY_TIMEOUT_SECONDS) -> object:
@@ -228,7 +261,7 @@ def wait_for(description: str, probe: Callable[[], object], *, timeout: int = RE
 def api_client(deployment: Deployment, token: str) -> httpx.Client:
     """An authenticated client for the deployment's published Sync API."""
     return httpx.Client(
-        base_url=deployment.api,
+        base_url=f"{deployment.api}/api",
         headers={"Authorization": f"Bearer {token}"},
         timeout=60,
     )
@@ -239,11 +272,31 @@ def idempotency(prefix: str) -> dict[str, str]:
     return {"Idempotency-Key": f"{prefix}-{secrets.token_hex(8)}"}
 
 
+def worker_state_of(report: Mapping[str, Any]) -> str:
+    """Name the worker state of one `GET /api/health` report from its `workers` section alone.
+
+    `unavailable` when the work pool could not be read, `no-live-worker` when no worker is live,
+    `busy` when runs wait in the queue, and `ready` otherwise.
+    """
+    workers = report["workers"]
+    if workers["state"] == "unknown":
+        return "unavailable"
+    if workers["live_workers"] == 0:
+        return "no-live-worker"
+    return "busy" if workers["queue_depth"] else "ready"
+
+
+def health_report(base_url: str) -> dict[str, Any]:
+    """Read the unauthenticated health report, which answers 200 or 503 with the same shape."""
+    response = httpx.get(f"{base_url}/api/health", timeout=30)
+    if response.status_code not in {200, 503}:
+        response.raise_for_status()
+    return cast("dict[str, Any]", response.json())
+
+
 def worker_state(deployment: Deployment) -> str:
-    """Return the worker state the unauthenticated status endpoint reports."""
-    response = httpx.get(f"{deployment.api}/status", timeout=30)
-    response.raise_for_status()
-    return str(response.json()["worker"]["state"])
+    """Return the worker state the unauthenticated health report gives."""
+    return worker_state_of(health_report(deployment.api))
 
 
 def register(client: httpx.Client, package: Mapping[str, Any], reason: str) -> tuple[str, int]:
@@ -335,7 +388,6 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
     directory: Path,
     *,
     image: str,
-    destination_token: str,
     canaries: Mapping[str, str],
     api_port: int = API_PORT,
     prefect_port: int = PREFECT_PORT,
@@ -345,15 +397,18 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
 
     The shape the operator documentation asks for: every required credential, the
     image under test as `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and the
-    principal's token a second time as `INFRAHUB_SYNC_API_TOKEN`, which is what
-    the `cli` service presents to the API. The passwords are the session's
+    API token of the `admin` account a second time as `INFRAHUB_SYNC_API_TOKEN`,
+    which is what the `cli` service presents to the API. The passwords are the session's
     canaries, so their appearance anywhere an operator can see is a leak.
+
+    It holds no source or destination credential: the Sync API stores them, encrypted with
+    `INFRAHUB_SYNC_ENCRYPTION_KEY`, and the worker reads them with `INFRAHUB_SYNC_WORKER_TOKEN`.
+    A test stores one with `Deployment.store_credentials` once the Sync API runs.
 
     The S3 access key is a fixed name unless a caller passes one: the external store
     tests start their own store with the same constant.
     """
     repository, _, version = image.rpartition(":")
-    principals = json.dumps({"compose-suite": {"token": canaries["principal"], "administrator": True}})
     values = {
         "INFRAHUB_SYNC_DOCKER_IMAGE": repository,
         "VERSION": version,
@@ -365,9 +420,11 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
         "INFRAHUB_SYNC_PREFECT_AUTH_STRING": canaries["prefect_auth"],
         "INFRAHUB_SYNC_S3_ACCESS_KEY": access_key,
         "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
-        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": principals,
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": canaries["admin_account"],
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": canaries["principal"],
         "INFRAHUB_SYNC_API_TOKEN": canaries["principal"],
-        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": destination_token,
+        "INFRAHUB_SYNC_ENCRYPTION_KEY": canaries["encryption_key"],
+        "INFRAHUB_SYNC_WORKER_TOKEN": canaries["worker"],
     }
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / ".env"
@@ -428,15 +485,17 @@ def container_reachable_host() -> str:
 # `infrahub` adapter, so the registered worker resolves them through the
 # installed loader with nothing generated and nothing on a filesystem.
 SMOKE_FIELDS = ("name", "type")
+# The stored credential both blocks of the smoke package name.
+SMOKE_CREDENTIAL = "infrahub-token"
 
 
 def smoke_package(destination_url: str) -> dict[str, Any]:
     """The declared package this suite registers.
 
     Infrahub to Infrahub against the fixture's own instance: `main` as the
-    source, the disposable smoke branch as the destination. The token is a
-    credential reference the worker resolves from its own environment, so no
-    secret value is posted, stored, or echoed.
+    source, the disposable smoke branch as the destination. Both blocks name the
+    stored credential `infrahub-token`, which `Deployment.store_destination_token`
+    creates before the package is registered, so the package holds no value.
     """
     return {
         "format_version": 1,
@@ -444,19 +503,13 @@ def smoke_package(destination_url: str) -> dict[str, Any]:
             "name": "compose-suite-registered",
             "source": {
                 "name": "infrahub",
-                "settings": {
-                    "url": destination_url,
-                    "branch": "main",
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": SMOKE_CREDENTIAL,
+                "settings": {"url": destination_url, "branch": "main"},
             },
             "destination": {
                 "name": "infrahub",
-                "settings": {
-                    "url": destination_url,
-                    "branch": SMOKE_BRANCH,
-                    "token": {"$credential": "infrahub-token"},
-                },
+                "credential": SMOKE_CREDENTIAL,
+                "settings": {"url": destination_url, "branch": SMOKE_BRANCH},
             },
             "schema_mapping": [
                 {
@@ -466,9 +519,6 @@ def smoke_package(destination_url: str) -> dict[str, Any]:
                     "fields": [{"name": name, "mapping": name} for name in SMOKE_FIELDS],
                 }
             ],
-        },
-        "credentials": {
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
         },
     }
 

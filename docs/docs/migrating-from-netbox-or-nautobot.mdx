@@ -40,19 +40,21 @@ dependency, and registers the `from-netbox` configuration package. Use
 `examples/nautobot-v1_to_infrahub/` for Nautobot 1.x or `examples/nautobot-v2_to_infrahub/`
 for Nautobot 2.0 and later as a configuration reference, and replace its model and field
 names with the equivalents in your Infrahub schema. Neither Nautobot example ships a
-package envelope yet; wrap its `config.yml` in a `format_version`/`configuration`/`credentials`
+package envelope yet; wrap its `config.yml` in a `format_version`/`configuration`
 package as described below before registering it. The Nautobot 2.0 example's
-`source.settings.token` is also an inline placeholder value, not a real credential — replace
-it with a `$credential` reference before registering, as described in
+`source.settings.token` is also an inline placeholder value, not a real credential. Remove
+it and name a stored credential in the source block with `credential: <name>` before
+registering, as described in
 [Credentials](./configuration-package.mdx#credentials). Registration rejects a literal token
-in `configuration`. The Nautobot 1.x example sets no `source.settings.token` at all; add a
-`$credential` reference for it before registering.
+in `configuration`. The Nautobot 1.x example sets no `source.settings.token` at all; name a
+stored credential in its source block too.
 
 ## Phase 2 — Build the sync project
 
-Create a configuration package file (for example `package.yml`) with `format_version`,
-a `configuration` object, and a `credentials` block; see
-[Configuration package](./configuration-package.mdx). The `configuration` object defines
+Create a configuration package file (for example `package.yml`) with `format_version`
+and a `configuration` object; see
+[Configuration package](./configuration-package.mdx). The package holds no credential value:
+each block that uses authentication names a [stored credential](./guides/credentials.mdx) with `credential: <name>`. The `configuration` object defines
 the source (NetBox or Nautobot), the destination (Infrahub), and the per-model schema
 mapping.
 
@@ -212,7 +214,7 @@ For the first sync, enable only the most independent models (tags, locations). V
 
 After the initial seed, schedule the sync to run on a recurring cadence so Infrahub stays current with changes in the source system. The cadence depends on how often the source data changes — hourly, daily, or on-demand are all reasonable.
 
-This release of Infrahub Sync has no built-in scheduler. Use cron, CI, Prefect, or another workflow tool — see [Schedule sync runs](./orchestration.mdx).
+Create the cadence with `infrahub-sync schedules create`, or start runs from cron, CI, or another workflow tool. See [Schedule sync runs](./orchestration.mdx).
 
 ### Default behavior preserves Infrahub-only data
 

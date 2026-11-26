@@ -35,6 +35,7 @@ import { StartRunDialog, type StartRunTarget } from "#/features/runs/StartRunDia
 import { useDocumentTitle } from "#/lib/title";
 
 import { InSyncSection } from "./InSyncSection";
+import { PackageRegistration } from "./PackageReview";
 import { LIFT, SearchHint, SystemsLine } from "./row-parts";
 
 import {
@@ -155,7 +156,6 @@ function Reason({ row, quiet }: { row: ConfigurationRow; quiet: boolean }) {
       {(e.at || last) && (
         <p className="pl-5 text-subtle text-xs">
           {e.at && <When iso={e.at.iso} prefix={e.at.prefix} className={LIFT} />}
-          {e.by && <> by {e.by}</>}
           {/* The space before the dot is the only place the line can break between the two facts. */}
           {e.at && last && (
             <>
@@ -614,6 +614,8 @@ export function ConfigurationsPage({
       <output aria-live="polite" className="sr-only">
         {announcement}
       </output>
+
+      <PackageRegistration action="Register a configuration" target={{ kind: "configuration" }} />
 
       <div ref={groupsRef} aria-busy={isPending}>
         {isPending ? (

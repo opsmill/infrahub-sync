@@ -49,6 +49,7 @@ READ_ONLY_ROOTS = (
     "/opt/infrahub-sync",
     "/opt/infrahub-sync/venv",
     "/opt/infrahub-sync/venv/bin",
+    "/opt/infrahub-sync/web",
     "/usr/local/lib",
 )
 
@@ -165,8 +166,13 @@ STORAGE_READY_SECONDS = 120
 # Distinct, greppable throwaway values, so a test can prove none of them reaches
 # the container's logs (constitution Principle VI).
 BEARER_TOKEN = "smoke-token-0123456789"  # noqa: S105 -- throwaway credential for the smoke container
+ADMIN_PASSWORD = "smoke-admin-password-7c3e1a"  # noqa: S105 -- throwaway credential for the smoke container
 S3_SECRET_KEY = "smoke-secret-key-8a4f2b"  # noqa: S105 -- throwaway credential for the smoke container
-INJECTED_SECRETS = (BEARER_TOKEN, STORAGE_PASSWORD, S3_SECRET_KEY)
+# The Sync API refuses to start without these two (spec 027). The key is the base64 text of 32
+# throwaway bytes; it is not the key of any deployment.
+WORKER_TOKEN = "smoke-worker-token-2f6a8c-0123456789"  # noqa: S105 -- throwaway credential for the smoke container
+ENCRYPTION_KEY = "c21va2UtZW5jcnlwdGlvbi1rZXktNGU5YjdkLTAwMDA="
+INJECTED_SECRETS = (BEARER_TOKEN, ADMIN_PASSWORD, STORAGE_PASSWORD, S3_SECRET_KEY, WORKER_TOKEN, ENCRYPTION_KEY)
 API_READY_SECONDS = 60
 
 
@@ -248,13 +254,41 @@ def api_environment(storage_host: str) -> dict[str, str]:
         "AWS_ACCESS_KEY_ID": "smoke-access-key",
         "AWS_SECRET_ACCESS_KEY": S3_SECRET_KEY,
         "PREFECT_API_URL": "http://127.0.0.1:4200/api",
-        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": json.dumps({"smoke": {"token": BEARER_TOKEN, "administrator": False}}),
+        # The `admin` account: the API does not start without its password.
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": ADMIN_PASSWORD,
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": BEARER_TOKEN,
+        # The API does not start without the key of stored credentials or the worker token.
+        "INFRAHUB_SYNC_ENCRYPTION_KEY": ENCRYPTION_KEY,
+        "INFRAHUB_SYNC_WORKER_TOKEN": WORKER_TOKEN,
     }
+
+
+# The bootstrap's last step, run from the image: the Sync API refuses to start until the
+# bootstrap record names its version and work pool (spec 018 FR-007b). The full bootstrap
+# needs a Prefect server, which this suite does not run.
+WRITE_BOOTSTRAP_RECORD = (
+    "import os; "
+    "from infrahub_sync.service.compatibility import installed_server_version; "
+    "from infrahub_sync.service.storage import service_product_projection; "
+    "service_product_projection().write_bootstrap_record("
+    "installed_server_version(), os.environ.get('INFRAHUB_SYNC_SERVICE_WORK_POOL', 'default'))"
+)
+
+
+def write_bootstrap_record(image_ref: str, storage_network: str, storage: str) -> None:
+    """Record this image's version and the default work pool, as the bootstrap does last."""
+    command = ["run", "--rm", "--read-only", "--network", storage_network, *tmpfs_arguments(WRITABLE_ROOTS)]
+    for key, value in api_environment(storage).items():
+        command += ["--env", f"{key}={value}"]
+    command += [image_ref, "python", "-c", WRITE_BOOTSTRAP_RECORD]
+    written = docker(command)
+    assert written.returncode == 0, written.stderr
 
 
 @pytest.fixture
 def started_container(image_ref: str, storage_network: str, storage: str) -> Iterator[str]:
     """Start the image's default command against real storage and yield its identifier."""
+    write_bootstrap_record(image_ref, storage_network, storage)
     command = [
         "run",
         "--detach",
@@ -276,8 +310,8 @@ def started_container(image_ref: str, storage_network: str, storage: str) -> Ite
 
 
 def wait_for_api(container: str, *, timeout: int = API_READY_SECONDS) -> dict[str, object]:
-    """Return the served `GET /version` document once the container's API answers it."""
-    probe = "import json,httpx;print(json.dumps(httpx.get('http://127.0.0.1:8000/version', timeout=5).raise_for_status().json()))"
+    """Return the served `GET /api/version` document once the container's API answers it."""
+    probe = "import json,httpx;print(json.dumps(httpx.get('http://127.0.0.1:8000/api/version', timeout=5).raise_for_status().json()))"
     deadline = time.monotonic() + timeout
     last = "no attempt made"
     while time.monotonic() < deadline:
@@ -287,4 +321,4 @@ def wait_for_api(container: str, *, timeout: int = API_READY_SECONDS) -> dict[st
         last = result.stderr.strip()[-400:]
         time.sleep(2)
     logs = docker(["logs", "--tail", "40", container]).stdout
-    pytest.fail(f"the image's default command did not answer GET /version within {timeout}s: {last}\n{logs}")
+    pytest.fail(f"the image's default command did not answer GET /api/version within {timeout}s: {last}\n{logs}")

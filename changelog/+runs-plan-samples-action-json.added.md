@@ -1,0 +1,1 @@
+`infrahub-sync runs plan` gains `--samples <number>`, which prints, for each destination kind and action, the operation count and that number of its first operations; `--action`, which limits the operations of `--detail` or `--samples` to creates, updates or deletes; and `--json`, which prints the plan that the Sync API returns as one JSON object.

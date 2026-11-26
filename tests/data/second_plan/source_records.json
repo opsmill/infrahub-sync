@@ -1,0 +1,162 @@
+{
+  "devices": {
+    "DcimDevice": [
+      {
+        "id": 1,
+        "name": "leaf-1",
+        "description": "first leaf"
+      },
+      {
+        "id": 2,
+        "name": "leaf-2",
+        "description": "second leaf"
+      }
+    ]
+  },
+  "lag": {
+    "InterfaceLag": [
+      {
+        "id": 10,
+        "name": "ae0",
+        "device": {
+          "id": 1
+        }
+      }
+    ],
+    "InterfacePhysical": [
+      {
+        "id": 20,
+        "name": "eth0",
+        "description": "ae0 member",
+        "device": {
+          "id": 1
+        },
+        "lag": {
+          "id": 10
+        }
+      },
+      {
+        "id": 21,
+        "name": "eth1",
+        "description": "ae0 member",
+        "device": {
+          "id": 1
+        },
+        "lag": {
+          "id": 10
+        }
+      },
+      {
+        "id": 22,
+        "name": "eth2",
+        "description": "not in a LAG",
+        "device": {
+          "id": 1
+        },
+        "lag": null
+      }
+    ]
+  },
+  "no_vrf": {
+    "IpamPrefix": [
+      {
+        "id": 40,
+        "prefix": "10.0.0.0/24",
+        "description": "servers",
+        "vrf": null,
+        "namespace_name": "default"
+      },
+      {
+        "id": 41,
+        "prefix": "10.0.1.0/24",
+        "description": "storage",
+        "vrf": null,
+        "namespace_name": "default"
+      }
+    ],
+    "IpamIPAddress": [
+      {
+        "id": 50,
+        "address": "10.0.0.1/24",
+        "description": "gateway",
+        "vrf": null,
+        "namespace_name": "default"
+      },
+      {
+        "id": 51,
+        "address": "10.0.1.1/24",
+        "description": "gateway",
+        "vrf": null,
+        "namespace_name": "default"
+      }
+    ]
+  },
+  "tagged_vlans": {
+    "IpamVLAN": [
+      {
+        "id": 30,
+        "vid": 100,
+        "name": "users"
+      },
+      {
+        "id": 31,
+        "vid": 200,
+        "name": "voice"
+      },
+      {
+        "id": 32,
+        "vid": 300,
+        "name": "printers"
+      }
+    ],
+    "InterfacePhysical": [
+      {
+        "id": 23,
+        "name": "eth0",
+        "description": "trunk",
+        "device": {
+          "id": 2
+        },
+        "lag": null,
+        "tagged_vlans": [
+          {
+            "id": 30
+          },
+          {
+            "id": 31
+          }
+        ]
+      },
+      {
+        "id": 24,
+        "name": "eth1",
+        "description": "trunk, peers listed in reverse",
+        "device": {
+          "id": 2
+        },
+        "lag": null,
+        "tagged_vlans": [
+          {
+            "id": 32
+          },
+          {
+            "id": 31
+          },
+          {
+            "id": 30
+          }
+        ]
+      },
+      {
+        "id": 25,
+        "name": "eth2",
+        "description": "access",
+        "device": {
+          "id": 2
+        },
+        "lag": null,
+        "tagged_vlans": []
+      }
+    ]
+  }
+}

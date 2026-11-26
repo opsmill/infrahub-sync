@@ -1,24 +1,88 @@
-"""Application-owned principal resolution for the Sync API."""
+"""Application-owned principal resolution for the Sync API.
+
+A request presents one value: an API token or a session token. ``StoreAccountResolver`` reads its
+SHA-256 digest in the product store, with the account that owns it, for every request. Nothing is
+cached, so the next request of a disabled account is refused.
+
+``apply_admin_account`` makes the ``admin`` account match the variables of the environment when
+the service starts, and ``apply_worker_account`` does the same for the ``worker`` account, whose
+token the workers present on the worker routes and nowhere else.
+"""
 
 from __future__ import annotations
 
-import hmac
-import json
-import os
-from typing import Protocol
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
-PRINCIPALS_ENV = "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"
+from .credentials import digest, hash_password, verify_password
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from infrahub_sync.product_store import Account, ProductProjection
+
+    from .settings import AdminAccountSettings
+
+ADMIN_ACCOUNT_NAME = "admin"
+# The name of the one API token of ``admin`` that the environment defines.
+ADMIN_ACCOUNT_TOKEN_NAME = "environment"
+# The account of the workers: environment-managed, no password, not an administrator. The pair
+# "named ``worker`` and environment-managed" identifies it (spec 027, research R4).
+WORKER_ACCOUNT_NAME = "worker"
+WORKER_ACCOUNT_TOKEN_NAME = "environment"
+
+CredentialKind = Literal["token", "session"]
+RefusalCode = Literal["unauthenticated", "token-expired"]
 
 
 class Principal(BaseModel):
-    """Authenticated Sync API actor."""
+    """Authenticated Sync API actor.
+
+    ``actor`` is what every write records and what the rights checks compare. For an account of
+    the product store it is the account identifier, and ``name`` is the account name. ``worker``
+    is true for the ``worker`` account only, which passes the worker routes and no other route.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     actor: str = Field(min_length=1)
     administrator: bool = False
+    name: str | None = None
+    kind: CredentialKind | None = None
+    session_id: str | None = None
+    worker: bool = False
+
+
+def is_worker_account(account: Account) -> bool:
+    """Return whether the account is the ``worker`` account: named ``worker`` and environment-managed."""
+    return account.name == WORKER_ACCOUNT_NAME and account.environment_managed
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """What a presented value resolves to: a principal, or the code of a refusal."""
+
+    principal: Principal | None = None
+    refusal: RefusalCode | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse a result that is both, or neither, a principal and a refusal."""
+        if (self.principal is None) == (self.refusal is None):
+            msg = "a resolution holds a principal or a refusal code, and only one of them"
+            raise ValueError(msg)
+
+    @classmethod
+    def accepted(cls, principal: Principal) -> Resolution:
+        """Return the result for a value that belongs to this principal."""
+        return cls(principal=principal)
+
+    @classmethod
+    def refused(cls, code: RefusalCode = "unauthenticated") -> Resolution:
+        """Return the result for a value that is refused with this code."""
+        return cls(refusal=code)
 
 
 class PrincipalResolver(Protocol):
@@ -27,62 +91,150 @@ class PrincipalResolver(Protocol):
     @property
     def secret_values(self) -> tuple[str, ...]: ...
 
-    def resolve(self, token: str) -> Principal | None: ...
+    def resolve(self, token: str) -> Resolution: ...
+
+    def principal_of(self, actor: str) -> Principal | None:
+        """Return the principal of the account that ``actor`` identifies, or ``None`` when it cannot act."""
+        ...
 
 
-class _ConfiguredPrincipal(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    token: str = Field(min_length=16)
-    administrator: bool = False
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-class EnvironmentPrincipalResolver:
-    """Resolve bearer tokens from one environment-configured JSON mapping."""
+class StoreAccountResolver:
+    """Resolve an API token or a session token to its account, with one store call for each request.
 
-    def __init__(self, entries: tuple[tuple[str, _ConfiguredPrincipal], ...]) -> None:
-        self._entries = entries
+    A session found idle costs one more call, which deletes it.
+    """
 
-    @classmethod
-    def from_environment(cls) -> EnvironmentPrincipalResolver:
-        """Load ``{actor: {token, administrator}}`` without retaining raw JSON."""
-        raw = os.environ.get(PRINCIPALS_ENV)
-        if not raw:
-            msg = f"{PRINCIPALS_ENV} must contain a JSON object of Sync API principals"
-            raise ValueError(msg)
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            msg = f"{PRINCIPALS_ENV} must contain valid JSON"
-            raise ValueError(msg) from None
-        if not isinstance(payload, dict) or not payload:
-            msg = f"{PRINCIPALS_ENV} must contain a non-empty JSON object"
-            raise ValueError(msg)
-        try:
-            entries = tuple(
-                (str(actor).strip(), _ConfiguredPrincipal.model_validate(value)) for actor, value in payload.items()
-            )
-        except ValidationError:
-            msg = f"{PRINCIPALS_ENV} contains an invalid principal definition"
-            raise ValueError(msg) from None
-        if any(not actor for actor, _ in entries):
-            msg = f"{PRINCIPALS_ENV} contains an empty actor name"
-            raise ValueError(msg)
-        tokens = [entry.token for _, entry in entries]
-        if len(tokens) != len(set(tokens)):
-            msg = f"{PRINCIPALS_ENV} assigns one bearer token to multiple actors"
-            raise ValueError(msg)
-        return cls(entries)
+    def __init__(
+        self,
+        projection: ProductProjection,
+        *,
+        idle_seconds: int,
+        admin_token: str | None = None,
+        worker_token: str | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> None:
+        self._projection = projection
+        self._idle_period = timedelta(seconds=idle_seconds)
+        self._admin_token = admin_token
+        self._worker_token = worker_token
+        self._clock = clock
 
     @property
     def secret_values(self) -> tuple[str, ...]:
-        """Return token values for boundary redaction, never persistence."""
-        return tuple(entry.token for _, entry in self._entries)
+        """Return the tokens of ``admin`` and ``worker`` that the environment defines, for boundary redaction.
 
-    def resolve(self, token: str) -> Principal | None:
-        """Compare every configured token with a timing-safe operation."""
-        matched: Principal | None = None
-        for actor, entry in self._entries:
-            if hmac.compare_digest(token.encode(), entry.token.encode()):
-                matched = Principal(actor=actor, administrator=entry.administrator)
-        return matched
+        The store holds every other token as a digest, so the process cannot list them. The
+        password of ``admin`` is never in this list.
+        """
+        return tuple(token for token in (self._admin_token, self._worker_token) if token is not None)
+
+    def resolve(self, token: str) -> Resolution:
+        """Return the account that owns the presented value, or the code of the refusal.
+
+        An unknown value, a disabled account, a deleted account and a session that was not used
+        for longer than the idle period are refused as ``unauthenticated``. An API token after its
+        expiry date is refused as ``token-expired``.
+        """
+        now = self._clock()
+        resolved = self._projection.resolve_digest(digest(token), now=now)
+        if resolved is None:
+            return Resolution.refused()
+        account = resolved.account
+        if account.disabled or account.deleted_at is not None:
+            return Resolution.refused()
+        if resolved.kind == "token":
+            if resolved.expires_at is not None and resolved.expires_at <= now:
+                return Resolution.refused("token-expired")
+        elif resolved.last_used_at is None or now - resolved.last_used_at > self._idle_period:
+            # The store recorded this use before the verdict. The session is deleted, or its
+            # next request would find it used a moment ago.
+            self._projection.delete_account_session(resolved.credential_id)
+            return Resolution.refused()
+        return Resolution.accepted(
+            Principal(
+                actor=account.account_id,
+                administrator=account.administrator,
+                name=account.name,
+                kind=resolved.kind,
+                session_id=resolved.credential_id if resolved.kind == "session" else None,
+                worker=is_worker_account(account),
+            )
+        )
+
+    def principal_of(self, actor: str) -> Principal | None:
+        """Return the principal of the account with this identifier, or ``None``.
+
+        A schedule acts as its owner with no request, so no token or session is read. An unknown
+        identifier, a disabled account and a deleted account return ``None``, as ``resolve``
+        refuses their values. No result is cached.
+        """
+        account = self._projection.lookup_account(actor)
+        if account is None or account.disabled or account.deleted_at is not None:
+            return None
+        return Principal(
+            actor=account.account_id,
+            administrator=account.administrator,
+            name=account.name,
+            worker=is_worker_account(account),
+        )
+
+
+def apply_admin_account(projection: ProductProjection, settings: AdminAccountSettings) -> Account:
+    """Make the ``admin`` account of the store match the variables of the environment.
+
+    One transaction, which two processes that start together run one after the other:
+
+    - ``admin`` is created when it is missing, as an active administrator that the environment
+      manages;
+    - when the stored hash does not verify the password of the environment, a new hash is stored
+      and the sessions of ``admin`` end;
+    - ``admin`` keeps one API token, the token of the environment, or none when it is not set;
+    - a refusal after repeated failed sign-ins for ``admin`` ends.
+
+    A call that finds the store as the environment describes it changes no row. The caller removes
+    the password from the environment of the process afterwards.
+
+    Raises:
+        DuplicateCredentialError: another account already has an API token with the same value.
+    """
+
+    def password_hash_for(stored_hash: str | None) -> str | None:
+        if stored_hash is not None and verify_password(settings.password, stored_hash):
+            return None
+        return hash_password(settings.password)
+
+    return projection.apply_environment_account(
+        name=ADMIN_ACCOUNT_NAME,
+        password_hash_for=password_hash_for,
+        token_name=ADMIN_ACCOUNT_TOKEN_NAME,
+        token_digest=None if settings.token is None else digest(settings.token),
+    )
+
+
+def apply_worker_account(projection: ProductProjection, token: str) -> Account:
+    """Make the ``worker`` account of the store match ``INFRAHUB_SYNC_WORKER_TOKEN``.
+
+    One transaction, as for ``admin``: ``worker`` is created when it is missing, as an active
+    account that the environment manages, with no password and not an administrator; it keeps one
+    API token, the token of the environment, so a new value replaces the previous one. A call
+    that finds the store as the environment describes it changes no row.
+
+    Raises:
+        EnvironmentAccountConflictError: an account named ``worker`` exists that the environment
+            does not manage. Nothing was written.
+        DuplicateCredentialError: another account already has an API token with the same value.
+    """
+    return projection.apply_environment_account(
+        name=WORKER_ACCOUNT_NAME,
+        # No password: a new `worker` gets none, and only this function creates an
+        # environment-managed `worker`, so no hash is ever computed or stored for it.
+        password_hash_for=lambda _stored_hash: None,
+        token_name=WORKER_ACCOUNT_TOKEN_NAME,
+        token_digest=digest(token),
+        administrator=False,
+        claim_existing=False,
+    )

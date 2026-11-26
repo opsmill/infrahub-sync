@@ -3,10 +3,10 @@ the cache for a given sync name at a time."""
 
 from __future__ import annotations
 
-import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+import structlog
 from filelock import FileLock
 
 from infrahub_sync.cache.paths import cache_root_for
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @contextmanager

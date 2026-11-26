@@ -18,7 +18,7 @@ fresh local Infrahub and the public NetBox demo, follow the
 ## Before you start
 
 - Complete [Start a Compose deployment](../quickstart-compose.mdx) and confirm
-  that the worker reports `ready`.
+  that `/api/health` reports `healthy`.
 - Have NetBox and Infrahub running, with API tokens for each. The worker
   container must be able to reach both servers; the Docker host must also reach
   Infrahub to load its schema.
@@ -41,8 +41,8 @@ The two YAML files have different purposes:
 
 - `schema.yml` defines the types and fields in Infrahub. Load it with
   `infrahubctl`.
-- `package.yml` declares the Sync source, destination, mappings, and credential
-  references. Register it with the `infrahub-sync` CLI.
+- `package.yml` declares the Sync source, destination, mappings, and the names of the
+  stored credentials. Register it with the `infrahub-sync` CLI.
 
 ## Measured scenario
 
@@ -51,12 +51,13 @@ compatibility with other server versions.
 
 ## Set NetBox and Infrahub credentials
 
-Open `.env` and add the source and destination tokens:
+Have the source token and the destination token at hand. Do not write them in `.env` or in
+`package.yml`. In
+[Store the credentials and register the package](#store-the-credentials-and-register-the-package),
+an administrator stores each one in the Sync API as a stored credential:
 
-```dotenv
-INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=<your NetBox token>
-INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
-```
+- `netbox-token`: the NetBox API token.
+- `infrahub-token`: the Infrahub API token.
 
 For NetBox 4.6, use a v2 API token. It starts with `nbt_` and contains a dot;
 paste the complete string. For Infrahub, use an API token created under your
@@ -64,9 +65,9 @@ account settings; a login password does not work here. Use source credentials
 that can read the mapped objects and an Infrahub token that can load schema and
 read those destination kinds on your chosen branch.
 
-Do not change the Sync API credentials you generated for the deployment. The bundled CLI uses them to
-contact Sync; `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` authenticates to the destination Infrahub.
-Do not run `source .env`: that file also contains the deployment's
+Do not change the Sync API credentials you generated for the deployment. The CLI uses them to
+contact Sync; the stored credential `infrahub-token` authenticates to the destination Infrahub.
+Do not run `source .env`: that file contains the deployment's
 internal credentials.
 
 ## Prepare the destination schema
@@ -118,14 +119,15 @@ python3 -m venv .schema-tools
 
 The version command must complete successfully before you continue. Replace
 `https://infrahub.example.invalid` below with the address the **Docker host**
-uses to reach Infrahub. The commands in parentheses read only the
-destination token from `.env`. These environment settings apply only
+uses to reach Infrahub. Each block of commands in parentheses asks for the
+destination token and does not echo it. These environment settings apply only
 inside the parentheses.
 
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' .env)"
+  printf 'Infrahub API token: ' >&2
+  IFS= read -rs INFRAHUB_API_TOKEN && export INFRAHUB_API_TOKEN
   .schema-tools/bin/infrahubctl branch list
 )
 ```
@@ -138,7 +140,8 @@ environment block before loading the schema.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' .env)"
+  printf 'Infrahub API token: ' >&2
+  IFS= read -rs INFRAHUB_API_TOKEN && export INFRAHUB_API_TOKEN
   .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
 )
 ```
@@ -161,22 +164,22 @@ loaded:
 ```yaml
 ---
 # Replace the URL placeholders and load a matching destination schema before registration.
-# Supply token values through the named environment variables, never in this file.
-# Set INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
-# in the deployment's .env file.
+# This file holds no token value.
+# The blocks name the stored credentials netbox-token and infrahub-token.
+# An administrator creates both in the Sync API before registration.
 format_version: 1
 configuration:
   name: netbox-evaluation
   source:
     name: netbox
+    credential: netbox-token
     settings:
       url: REPLACE_WITH_NETBOX_URL
-      token: {$credential: netbox-token}
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: REPLACE_WITH_INFRAHUB_URL
-      token: {$credential: infrahub-token}
   schema_mapping:
     - name: TestingSite
       mapping: dcim.sites
@@ -197,9 +200,6 @@ configuration:
         - name: site
           mapping: site
           reference: TestingSite
-credentials:
-  netbox-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN}
-  infrahub-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN}
 ```
 
 Before registering `package.yml`:
@@ -210,8 +210,8 @@ Before registering `package.yml`:
   address containers can reach, not only on `127.0.0.1`, and use `http://<host-IP>:<port>`.
   The destination must be the same Infrahub instance where you loaded the
   schema, even if the host uses a different address to reach it.
-- Keep the `{$credential: ...}` references in YAML; token values belong in
-  `.env`.
+- Keep the two `credential` keys and write no `token` in `settings`; the token values
+  belong in the stored credentials.
 - Keep the mapping's destination kinds and fields consistent with `schema.yml`.
 
 The mapping includes sites and devices only. It does not import IP addressing
@@ -234,18 +234,15 @@ devices have no name, and three share the name `PP:MDF`. Add these filters to th
 The demo devices also have no serial numbers, so each device's `serial` is written as an
 empty value.
 
-## Reload credentials and register the package
+## Store the credentials and register the package
 
-Recreate services whose environment changed, then check readiness:
+Check that the deployment is ready:
 
 ```sh
-docker compose up -d --wait
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/health
 ```
 
-Continue only when the `/status` response shows `worker.state` as `ready`.
-`up -d --wait` recreates the services whose environment changed;
-`docker compose restart` keeps the environment from when the containers were created.
+Continue only when the `/api/health` response shows `status` as `healthy`.
 
 The commands below use the `infrahub-sync` CLI on your machine; see
 [Connect the CLI to the Sync API](../running-a-sync.mdx#connect-the-cli-to-the-sync-api).
@@ -261,7 +258,20 @@ The same commands also run from the deployment's `cli` service, as
 `package.yml` then needs the file mounted into the container; see
 [Registering a package](../compose-deployment.mdx#registering-a-package).
 
-Register your package:
+Store the two tokens, signed in as an administrator. Each command asks for the token and does
+not echo it. No service restarts, and the worker gets the values from the Sync API for each run:
+
+```sh
+infrahub-sync credentials create netbox-token
+infrahub-sync credentials create infrahub-token
+```
+
+From the `cli` service, send each token on standard input with `--token-stdin` instead, because
+`-T` gives the command no terminal to ask on.
+[Manage stored credentials](../guides/credentials.mdx) describes these commands.
+
+Register your package. Registration refuses a package that names a stored credential that does
+not exist:
 
 ```sh
 infrahub-sync configs register package.yml --reason 'register NetBox first preview'
@@ -341,8 +351,8 @@ docker compose logs --no-color --tail 200 sync-worker
 
 Find the `flow_run_id` from `runs show` in the logs to identify the Prefect
 flow-run name. Read the messages for that name. If they report a source connection
-failure, check the source URL and reachability from the worker container. Correct the cause before creating another preview. After credential
-edits, run `docker compose up -d --wait` again; after package edits, register and validate the new version.
+failure, check the source URL and reachability from the worker container. Correct the cause before creating another preview. To replace a
+token, run `infrahub-sync credentials set <name>`; after package edits, register and validate the new version.
 
 ## Continue
 

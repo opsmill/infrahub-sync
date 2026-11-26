@@ -22,6 +22,7 @@ import { mappingEntries, removedEntries } from "#/domain/mapping";
 import { type Explanation, explain, type RunState, runState } from "#/domain/run-state";
 import { RunsTable, RunsTableSkeleton } from "#/features/runs/RunsTable";
 import { StartRunDialog, type StartRunTarget } from "#/features/runs/StartRunDialog";
+import { ConfigScheduleLine } from "#/features/schedules/ScheduleLine";
 import { useDocumentTitle } from "#/lib/title";
 
 import { type ConfigurationDetail, useConfigurationDetail } from "./detail";
@@ -29,6 +30,7 @@ import { MappingList } from "./detail-mapping";
 import { MappingPanel } from "./detail-mapping-panel";
 import { MAPPING_SECTION_ID, Systems } from "./detail-systems";
 import { VersionBar } from "./detail-version-bar";
+import { PackageRegistration } from "./PackageReview";
 
 /** The runs of the version shown before "Show all". */
 const RUNS_SHOWN = 5;
@@ -295,6 +297,7 @@ export function ConfigurationPage({
               </p>
             )}
             {state && <AppliedLine detail={detail} />}
+            <ConfigScheduleLine configId={configId} name={name} latestVersion={latest} />
           </div>
           {selected !== undefined ? (
             <Button
@@ -350,6 +353,8 @@ export function ConfigurationPage({
           }}
         />
       )}
+
+      <PackageRegistration action="Add a version" target={{ kind: "version", configId }} />
 
       {selected === undefined ? (
         versions.isPending ? (
@@ -417,7 +422,7 @@ export function ConfigurationPage({
           <section
             id={MAPPING_SECTION_ID}
             aria-labelledby="mapping-title"
-            className="flex scroll-mt-16 flex-col gap-2"
+            className="flex scroll-mt-16 flex-col gap-2 max-sm:scroll-mt-24"
           >
             <SectionHeading
               id="mapping-title"

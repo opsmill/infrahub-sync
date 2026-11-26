@@ -11,11 +11,17 @@ title: "The saved plan artifact"
 A run records what it intends to change as a **plan artifact** under its cache run directory. The
 artifact is what `infrahub-sync runs plan` renders for review and what an apply executes, and it
 exists so that the set of changes an operator reads is the set that gets written. The format is owned
-by `infrahub_sync/plan/` and is versioned: `format_version` is `4`. Plans of format `2` and `3` can
-still be read and reviewed, but `apply` refuses them: a format `2` plan's updates record no
-destination id, and neither format was checked for problems or records a count of left-out records
-to confirm
-([ADR 0022](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0022-saved-plan-format-4.md)). `1` is
+by `infrahub_sync/plan/` and is versioned: `format_version` is `5` for every plan written now.
+Format `5` is format `4` with one change: a one-peer reference of an update can hold no peer, which
+records that the relationship becomes empty
+([ADR 0046](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0046-saved-plan-format-5-records-an-emptied-one-peer-relationship.md)).
+Plans of format `4` are still read, verified, approved, applied and resumed. Plans of format `2`
+and `3` can still be read and reviewed, but `apply` refuses them: a format `2` plan's updates
+record no destination id, and neither format was checked for problems or records a count of
+left-out records to confirm
+([ADR 0022](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0022-saved-plan-format-4.md)).
+A release earlier than format `5` refuses a format `5` plan, with a message that names the version
+and the versions it supports, so the Sync API and the worker are upgraded together. `1` is
 reserved for the pre-existing `plan.parquet` row format, which is still written for querying and
 never read by this path.
 
@@ -32,7 +38,7 @@ For *why* the format is shaped this way, see [ADR 0001](https://github.com/opsmi
 └── plan/                     # the artifact
     ├── operations.jsonl      # written FIRST
     ├── last_changes.jsonl    # written second, only when the destination is Infrahub
-    ├── report.jsonl          # format 4, written before the manifest: problems, left-out and kept records
+    ├── report.jsonl          # from format 4, written before the manifest: problems, left-out and kept records
     └── manifest.json         # written LAST — its presence is the commit point
 ```
 
@@ -45,7 +51,7 @@ load-bearing, and it is what makes the failure verdicts disjoint without any heu
 | `plan/` present, `manifest.json` absent or malformed | **Torn** |
 | `manifest.json` present, `operations.jsonl` absent | **Torn** |
 | `manifest.json` present, line count ≠ `operations_count` | **Torn** |
-| `manifest.json` present at format 4, `report` record absent or malformed, `report.jsonl` absent, its digest, size or counts differ, or one of its lines is not a valid report entry | Refused (`PlanVerificationError`); the pre-apply check reports `report` |
+| `manifest.json` present at format 4 or 5, `report` record absent or malformed, `report.jsonl` absent, its digest, size or counts differ, or one of its lines is not a valid report entry | Refused (`PlanVerificationError`); the pre-apply check reports `report` |
 | `manifest.json` present, `format_version` unrecognized | Unrecognized version — worded distinctly from the v1 message |
 | Any path exists but cannot be read | Unreadable, naming the path |
 
@@ -94,13 +100,60 @@ relationship values at all; it is never `[]`. A `peers: []` inside a `cardinalit
 means the peer set is deliberately empty, and the replace-set write acts on it. There is no field
 grouping operations into write units at either level.
 
-**A plan cannot clear a cardinality-one peer.** The asymmetry above only runs one way: an empty
-*many* set is expressible, an emptied *one* peer is not. `cardinality: "one"` requires exactly one
-peer, and an absent reference means "this operation carries no value for that field", not "empty it" —
-so nothing in the format says *clear this*. Derivation cannot produce it either: a reference field
-whose mapped value is `None` is treated as absent and skipped. This is an intended v1 scope limit: a
-relationship a plan does not mention is one the apply leaves alone. Clearing a cardinality-one peer is done at the destination,
-and encoding it requires a future `format_version` extension.
+#### An emptied one-peer relationship
+
+From format 5 on, a `cardinality: "one"` reference with `peers: []` on an update means that the
+relationship becomes empty, for example an interface that leaves its LAG:
+
+```json
+{"cardinality":"one","field":"bundle","peer_kind":"InterfaceLag","peers":[]}
+```
+
+`RelationshipReference.empties_one_peer` is true for such a reference. An absent reference still
+means "this operation carries no value for that field": a relationship a plan does not mention is
+one the apply leaves alone. The data model refuses an empty one-peer reference when the plan is read
+in these cases:
+
+- on a create, because a node created without a peer holds no entry for the relationship;
+- on a delete;
+- on a field that is part of the operation identity;
+- in a plan of format 4 or earlier, where a one-peer reference names exactly one peer.
+
+Derivation (`infrahub_sync/plan/derive.py`) adds the empty reference to an update when all of these
+hold:
+
+- the field is a one-peer reference field of the mapping, and not an identifier;
+- the source value is `None` and the destination node holds a peer, so the field is a difference;
+- the destination schema does not require the field;
+- the source adapter did not remove the peer through a configured filter. The shared reference
+  helper records each such field in the adapter's `filtered_peer_fields`, and derivation leaves
+  that relationship alone. The IP Fabric adapter records a field in the same set when the source
+  names a peer that its read did not store.
+
+When the adapter recorded filtered fields but the source store does not hold the record that the
+update belongs to, derivation cannot tell whether a filter removed the peer. It leaves the
+relationship alone and logs one warning that names the kind and the field.
+
+A peer that the problem pass leaves out of the plan removes the reference from the update, so a
+kept record does not record an emptied relationship.
+
+A required one-peer relationship that the source empties gives a problem of type
+`required_relationship_empty_in_source` that names the record and the field. The record is left
+out of the plan and its destination node is kept, as for `required_peer_excluded_by_filter`. Two
+steps report it:
+
+- the source read, when the source mapping model does not accept `None` for the field;
+- the problem pass (`infrahub_sync/plan/problems.py`), when the source mapping model accepts
+  `None`, the destination schema requires the field, and the destination node holds a peer.
+
+Apply writes the emptied relationship as `<field>: null` in the one Upsert of the operation. The
+write is refused before it is sent when the rendered input holds anything else for that field, or
+renders a relationship that the operation does not name. The pre-write checks compare the empty
+planned peer set with the destination peer set like any other relationship, and
+`runs plan --detail` prints `<field>: becomes empty`.
+
+One case is not covered: a record with no source ID whose peer a configured filter removed is not
+recorded in `filtered_peer_fields`, so the plan empties that relationship.
 
 #### The payload carries the identity
 
@@ -167,7 +220,7 @@ The data model rejects a stored identifier that does not match its own triple.
 
 | Key | Meaning |
 |---|---|
-| `format_version` | `4` for every plan written now; `2` and `3` are accepted for review only |
+| `format_version` | `5` for every plan written now; `4` is read and applied; `2` and `3` are accepted for review only |
 | `run_id` | The run the plan was produced under; excluded from the checksum, checked by equality |
 | `created_at` | ISO-8601 UTC; excluded from the checksum |
 | `config_version` | Opaque, non-empty printable ASCII; compared for equality, never parsed |
@@ -177,8 +230,8 @@ The data model rejects a stored identifier that does not match its own triple.
 | `destination_binding` | `{url, branch}` — the destination the plan was computed against, URL-normalized, **never the token**. A registered package takes the URL from its declared settings only; a local configuration directory lets `INFRAHUB_ADDRESS` or `INFRAHUB_URL` override it. Compared for equality at apply time. Additive: absent on plans written before it existed, and the check is skipped for them |
 | `lineage` | `{import_account: {name, id}, source: {kind, name}, owner: {kind, name} or null, protect}` — the import account the plan was computed with and the lineage its writes carry. `source` is `CoreAccount` and the import account's name when the package names no source; `owner` is `null` when it names none. An Infrahub apply refuses before any write when its own import account's `id` differs, and refuses a plan without this field, asking for a new plan. Additive: absent when the destination is not Infrahub and on plans written before it existed |
 | `last_changes` | `{path, sha256, count, metadata_read}` — the record of `last_changes.jsonl`. `path` is always `last_changes.jsonl`, relative to `plan/`; `sha256` is the digest of the file's bytes; `count` is its number of records; `metadata_read` is `false` when the plan did not ask Infrahub for `updated_by` and `updated_at`, because the server is older than 1.7.0, its version could not be parsed, or Infrahub refused the version query. Additive: absent when the destination is not Infrahub and on plans written before it existed; review then shows no last-change data |
-| `report` | Format 4: `{digest, size, problems, left_out, left_out_with_problem, left_out_dependent, kept}` — the SHA-256 digest and size of `report.jsonl` and its counts. A plan with no problem writes an empty file and zeros. Required at format 4; absent on format 2 and 3 plans |
-| `dropdown_values_checked` | Format 4: written only as `false`, when the run had no destination schema snapshot and the plan could not compare Dropdown values with their choices. Absent otherwise |
+| `report` | From format 4: `{digest, size, problems, left_out, left_out_with_problem, left_out_dependent, kept}` — the SHA-256 digest and size of `report.jsonl` and its counts. A plan with no problem writes an empty file and zeros. Required at format 4 and 5; absent on format 2 and 3 plans |
+| `dropdown_values_checked` | From format 4: written only as `false`, when the run had no destination schema snapshot and the plan could not compare Dropdown values with their choices. Absent otherwise |
 | `plan_checksum` | Lowercase sha256 hex over the manifest body plus the operations bytes |
 | *(any other key)* | Tolerated on read, preserved, and included in the bytes the checksum covers |
 
@@ -294,8 +347,7 @@ and every failure is named, so one apply attempt tells the operator everything t
 Recorded so nothing reads an obligation into the silence: retention, expiry or pruning of a stored
 plan; pagination or truncation; volume or latency targets; the stability of *rendered* review text,
 which is operator-facing output rather than a format; a governance process for changing the format
-— `format_version` and the unknown-key tolerance are the two mechanisms provided; and clearing a
-cardinality-one peer, which the operation shape cannot express (see **An operation** above).
+— `format_version` and the unknown-key tolerance are the two mechanisms provided.
 
 ### See also
 

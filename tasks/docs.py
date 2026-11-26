@@ -46,17 +46,22 @@ def _generate_infrahubsync_documentation() -> None:
 # Hand-written paragraph placed before the root command's first "**Usage**:" line. Typer has
 # no place for it, so generation inserts it after every run.
 _AUTHENTICATION_INTRO = (
-    "Set `INFRAHUB_SYNC_API_TOKEN` to the bearer token for your actor before running any\n"
-    "command; the CLI reads it from the environment and never accepts it as a flag. See\n"
-    "[Sync HTTP API — Configure principals](./sync-http-api.mdx#configure-principals) for how\n"
-    "tokens are issued.\n"
+    "Sign in with `infrahub-sync login`, which saves a session for the address in\n"
+    "`INFRAHUB_SYNC_API_URL`, or, for a script, set `INFRAHUB_SYNC_API_TOKEN` to an API token\n"
+    "of an account. When `INFRAHUB_SYNC_API_TOKEN` is set and not empty, every command other than\n"
+    "`login` and `logout` presents it and not the saved session. The CLI reads the token from the\n"
+    "environment and never accepts it as a flag.\n"
+    "See [Manage accounts](../guides/accounts.mdx) for accounts and tokens, and\n"
+    "[Sync HTTP API — Accounts and API tokens](./sync-http-api.mdx#accounts-and-api-tokens).\n"
     "\n"
     "When the Sync API address is missing or invalid, or the token is missing, a command prints\n"
     "`error: client-input` and `argument: service_url` or `argument: token` on standard error,\n"
     "then a `hint:` line. An address is invalid when it does not use `http` or `https`, has no\n"
     "host, or carries a user name, a password, a query string or a fragment. For the address,\n"
-    "set `INFRAHUB_SYNC_API_URL` or pass `--api-url` with the absolute URL of the Sync API; for\n"
-    "the token, set `INFRAHUB_SYNC_API_TOKEN`. Other `client-input` errors print no `hint:` line.\n"
+    "set `INFRAHUB_SYNC_API_URL` or pass `--api-url` with the address of the Sync service, for\n"
+    "example `http://127.0.0.1:8001`; the client adds `/api`. For the token, run\n"
+    "`infrahub-sync login` or set `INFRAHUB_SYNC_API_TOKEN`. Other `client-input` errors print no\n"
+    "`hint:` line.\n"
 )
 
 

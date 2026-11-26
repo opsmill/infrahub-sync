@@ -82,10 +82,10 @@ jobs:
         run: uv run invoke tests.tests-unit
 
   # The unit tier above excludes `integration`, so nothing there touches a real
-  # PostgreSQL server. This job runs only the product store's and the admission
-  # race's integration tests against a service container, and `tests-product-store-postgresql` fails on
-  # any skip, an unset DSN, or an empty selection, so a missing server or driver
-  # cannot pass as green.
+  # PostgreSQL server. This job runs only the product store's, the admission
+  # race's and the write lock's integration tests against one service container,
+  # and `tests-product-store-postgresql` fails on any skip, an unset DSN, or an
+  # empty selection, so a missing server or driver cannot pass as green.
   product-store-postgresql:
     name: "Product store on PostgreSQL"
     needs: ["files-changed"]
@@ -107,6 +107,7 @@ jobs:
           --health-retries 12
     env:
       PRODUCT_STORE_TEST_POSTGRESQL_DSN: "host=127.0.0.1 port=5432 user=postgres password=probe dbname=probe"
+      APPLY_GUARD_TEST_POSTGRESQL_DSN: "host=127.0.0.1 port=5432 user=postgres password=probe dbname=probe"
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v7"

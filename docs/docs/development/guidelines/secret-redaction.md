@@ -48,6 +48,15 @@ and of its immediate cause, and only these fields:
 - the permission or message Infrahub returns with a 403, as before
 - the kind, the source record and the field that a typed Sync error names
 - the operations written, the operation count of the plan and the operation that failed
+- for a write that could not take the configuration's write guard, `active_run_id`: the run ID
+  read from the label (`application_name`) of the database session that holds the guard, and
+  stored only when the run records hold a run with that ID for the same configuration. The
+  label is neither private nor trusted. On PostgreSQL 16, a session of another account that is
+  not a superuser, connected to the same database, read the holder's label (PostgreSQL's
+  `pg_stat_activity` rules decide whether it can), so a guard label must never hold anything
+  but a run ID. Any session that can connect to that database can set
+  a false label; the check in the run records limits it to a real run of the same
+  configuration. Only the run ID is stored, never the label
 - text from a fixed template filled with the fields above, setting names, kind names, node
   names, account names, branch names and IDs
 
@@ -124,6 +133,16 @@ Logs need separate handling. `RunLoggerBridge` redacts the formatted message fro
 `infrahub_sync` logger hierarchy before forwarding it to the Prefect run logger. The
 direct flow installs this bridge; the service worker installs it when a Prefect run
 context exists. This is not a filter for every logger, return value or artifact.
+
+A `structlog` event reaches the bridge because `infrahub_sync/log.py` delivers it through the
+standard `logging` logger of the same name, with each key-value pair written into the message
+as `key=value`. A string value is written as it is, so the bridge finds a collected secret in
+it. A string inside a mapping, a list, a tuple or a set is also written as it is, without
+quotes. Any other value is written with `str`; when the `str` of a value escapes the strings it
+holds, as the `str` of a `dataclass` instance does, the bridge can miss a secret that contains a quote, a
+backslash or a control character, so pass such a value as a string. An application that
+calls `structlog.configure` itself replaces this delivery, and then the bridge receives only
+what that configuration sends to standard `logging`.
 See [Prefect logging](../knowledge/orchestration-prefect.md#the-log-bridge).
 
 A boundary that catches `Exception` to sanitize and re-raise it may need a targeted
@@ -241,6 +260,72 @@ line can hold a token. When a command reports a parse error in a file that can h
 credential, report only the position, as `configs convert` does: "error: config.yml is not
 valid YAML at line 12, column 3". Take the line and the column from the error's mark, and drop
 the message.
+
+### Check every free-text field of a request for token values
+
+<!-- Extracted from dev/specs/archive/022-local-accounts on 2026-11-18 -->
+
+The product store holds only the SHA-256 digest of each API token and session token, so no
+collector can list their values. A free-text field that a record keeps, such as `reason` or the
+name of an API token, can therefore hold a token that redaction would not find.
+
+When you add a free-text field to a request of the Sync API:
+
+- pass it through `is_free_text` in `infrahub_sync/service/service.py` before anything records
+  it. The function refuses a known secret value and the prefixes `ifs_pat_` and `ifs_ses_`;
+- refuse it with `422 secret-parameter-refused`, and write the refusal event without the
+  refused text;
+- give it a maximum length; every `reason` field has at most 512 characters
+  (`REASON_MAX_LENGTH` in `infrahub_sync/client/models.py`).
+
+Do not add the password of `admin` to a list of secret values. `serve.py` removes it from the
+process environment after it applies it, so that no free-text check can be used to test
+candidate passwords. See [Local accounts and sign-in](../knowledge/local-accounts.md).
+
+### Register a stored credential value before you return it
+
+The values of stored credentials are in no environment variable and in no configuration
+setting, so `collect_secret_values` cannot find them. A value enters a process in one of three
+ways, and each one adds it to a redaction registry before any other code receives it ([ADR 0057](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0057-the-sync-api-stores-credentials-and-releases-them-to-the-worker-account.md)):
+
+- **A request that creates a credential or changes its value.** `CredentialActions` in
+  `service/credential_actions.py` calls `register_secret_values` with the submitted values
+  before any other check, so every message that the request writes afterwards is redacted.
+- **A decryption in the Sync API.** `CredentialCipher.decrypt` in
+  `service/credential_crypto.py` adds each decrypted value before it returns the fields.
+- **A release to the worker.** `release_run_credentials` in `service/credential_client.py` adds
+  every released value before it checks the answer and before it returns.
+
+The registry is one list, bound with `execution.redaction_scope`. `service/app.py` binds a new
+one for each request of the Sync API, and `service_sync_run` binds one for the whole flow run;
+the worker's log bridge and its failure boundary read that list at each use. A long-lived
+service holds a `LiveSecretValues`, which adds the values of the current registry to its fixed
+values at each read.
+
+Rules for new code:
+
+- Call `register_secret_values` before the function that decrypted or received a value returns
+  it. Outside a scope it raises `NoRedactionScopeError` and the caller must not use the value.
+  The credential client makes that call before it sends its request, so no value is received
+  without a registry.
+- Bind the scope above every thread or task that can add a value. A thread started without the
+  context has no registry.
+- A value shorter than `MIN_SECRET_LENGTH` is not added, so it is not redacted. Keep such a
+  value out of text by construction; see [Drop values below a length floor](#drop-values-below-a-length-floor).
+- Never build a message from the text of an answer of the worker route. `CredentialUnavailableError`
+  writes its message from the reason, the refusal code and the names that the refusal gives.
+- Do not give the worker route that releases values an `Idempotency-Key`: a mutation receipt
+  stores the whole answer. The receipt of a credential request for accounts stores the credential
+  resource, which holds no value, and a keyed fingerprint of the request
+  (`CredentialCipher.request_fingerprint`).
+- In a test, compare digests of values and never put a value in an assertion message.
+  `decrypt_stored_credential` in `tests/helpers/stored_credentials.py` returns values that are
+  in no redaction list after it returns.
+
+`INFRAHUB_SYNC_WORKER_TOKEN` and `INFRAHUB_SYNC_ENCRYPTION_KEY` are environment variables with
+credential-shaped names, so the environment collector takes their values in a process that
+holds them. `StoreAccountResolver.secret_values` also gives the tokens of `admin` and `worker`
+to the boundary redaction of the Sync API.
 
 ### Anti-patterns
 

@@ -39,7 +39,12 @@ measured, and they are not excluded.
 
 ## Product limits
 
-- The deployment runs on one host, with no clustering, no public ingress, and no TLS.
+- The [Compose deployment](../compose-deployment.mdx) runs on one host, with no clustering, no
+  public ingress, and no TLS.
+- The [Kubernetes deployment](../kubernetes-deployment.mdx) runs one Sync API and one worker.
+  More than one replica of either is not tested. The chart can route traffic to the Sync API
+  through an Ingress or a Gateway API `HTTPRoute`, with TLS ending there; neither route was
+  tested on a cluster.
 - Deletes are recorded in plans but are not executed.
 - A sync cannot remove an optional single-object relationship from a destination
   object, for example the rack of a device. When the source value is empty, apply
@@ -47,8 +52,12 @@ measured, and they are not excluded.
   relationship in Infrahub directly.
 - There is no verified in-place upgrade, migration, rollback, backup, or restore
   procedure.
-- There is no built-in schedule. Start each run with the CLI or the Sync API, for
-  example from cron or a CI job.
+- A schedule starts runs with branch review, or writes to the branch that a `sync` of the
+  configuration writes to: the destination branch that the configuration declares, else the
+  default branch. The second write target needs a Sync API and workers that do not require
+  approval. Infrahub Sync sends no notification for a scheduled run. See
+  [Schedule sync runs](../orchestration.mdx).
 
 For the operating procedure of a release, including replacement with a fresh
-deployment, use the [Compose deployment guide](../compose-deployment).
+deployment, use the [Compose deployment guide](../compose-deployment) or the
+[Kubernetes deployment guide](../kubernetes-deployment.mdx).

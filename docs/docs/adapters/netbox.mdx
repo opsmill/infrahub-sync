@@ -32,7 +32,7 @@ The example package maps NetBox data into the `infrahub/traditional-infrastructu
 
 ## Configuration
 
-Set `source.name` to `netbox`. In a registered package, the token is a `$credential` reference:
+Set `source.name` to `netbox`. The block names a stored credential that holds the NetBox API token; the package holds no token:
 
 ```yaml
 format_version: 1
@@ -40,33 +40,35 @@ configuration:
   name: from-netbox
   source:
     name: netbox
+    credential: netbox-token
     settings:
       url: "https://netbox.example.com"
-      token:
-        $credential: netbox-token
       verify_ssl: true # Default value
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "https://infrahub.example.com"
-      token:
-        $credential: infrahub-token
-credentials:
-  netbox-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
+
+An administrator creates both credentials before the package is registered. Each command asks
+for the token and does not echo it:
+
+```bash
+infrahub-sync credentials create netbox-token
+infrahub-sync credentials create infrahub-token
+```
+
+| Key of the block | Required | Description |
+| --- | --- | --- |
+| `credential` | Yes | Name of a stored credential that holds the field `token`: the NetBox API token. See [Manage stored credentials](../guides/credentials.mdx). |
 
 | Setting | Required | Description |
 | --- | --- | --- |
 | `url` | Yes | NetBox URL, as the Sync worker reaches it |
-| `token` | Yes | `$credential` reference to the NetBox API token |
 | `verify_ssl` | No | Verify TLS certificates. Defaults to `true`. |
 
-The worker uses the declared `url`. `NETBOX_ADDRESS` and `NETBOX_URL` in the worker environment do not replace it. The worker reads the token from the environment variable that the credential names. For direct adapter use without a registered package, `NETBOX_ADDRESS`, `NETBOX_URL`, and `NETBOX_TOKEN` take precedence over the declared settings.
+The worker uses the declared `url`. `NETBOX_ADDRESS` and `NETBOX_URL` in the worker environment do not replace it. The worker gets the token of the stored credential from the Sync API for each run, and reads no token from its environment. Do not write `token` in `settings`. For direct adapter use without a registered package, such as the [Prefect remote run](../reference/prefect-remote-run.mdx), `NETBOX_ADDRESS`, `NETBOX_URL`, and `NETBOX_TOKEN` take precedence over the declared settings.
 
 ### Schema mapping
 

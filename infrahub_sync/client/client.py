@@ -9,10 +9,11 @@ from datetime import datetime
 from hashlib import sha256
 from math import isfinite
 from time import monotonic, sleep
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from uuid import uuid4
 
 import httpx
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from typing_extensions import Self
 
 from .errors import (
@@ -21,23 +22,30 @@ from .errors import (
     ClientTimeoutError,
     CompatibilityError,
     ConfigsAPIError,
+    NotSyncAPIError,
     ProtocolError,
+    RefusedCredential,
     RunTerminalError,
     RunWaitTimeoutError,
     TransportError,
 )
 from .models import (
+    ACCOUNT_NAME_PATTERN,
+    CREDENTIAL_NAME_PATTERN,
     LOG_STAGES,
     MAX_LIMIT,
     MAX_LOG_LIMIT,
     MAX_REPORT_LIMIT,
     MIN_LIMIT,
+    REASON_MAX_LENGTH,
+    AccountResource,
     ApplyRunRequest,
     ApprovedRunResource,
     ApproveRunRequest,
     ArtifactContent,
     ArtifactListResource,
     CancelRunRequest,
+    ChangeScheduleRequest,
     ConfigErrorEnvelope,
     ConfigMutationRequest,
     ConfigurationPage,
@@ -45,12 +53,20 @@ from .models import (
     ConfigurationVersionPage,
     ConfigurationVersionResource,
     ConfigurationVersionSummaryResource,
+    CreatedTokenResource,
     CreateRunRequest,
+    CreateScheduleRequest,
+    CredentialPage,
+    CredentialResource,
+    DeletedAccountResource,
     ErrorEnvelope,
     EventPage,
     EventResource,
+    HealthResource,
     ListPage,
     OrchestrationSummary,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanReportPageResource,
     PlanResource,
     PrincipalResource,
@@ -62,14 +78,18 @@ from .models import (
     RunLogPage,
     RunPage,
     RunResource,
-    ServiceStatusResource,
+    ScheduleActionRequest,
+    SchedulePage,
+    ScheduleResource,
+    SessionResource,
+    TokenResource,
     ValidationReportResource,
     VerifyRunRequest,
     VersionResource,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from types import TracebackType
 
 _Model = TypeVar("_Model", bound=BaseModel)
@@ -80,6 +100,8 @@ _DIGEST = re.compile(r"sha-256=(?P<digest>[0-9a-f]{64})")
 _ERROR_STATUSES = frozenset({401, 403, 404, 409, 410, 422, 503})
 _CONFIG_ERROR_STATUSES = _ERROR_STATUSES | {400}
 _MAX_JSON_BYTES = 16 * 1024 * 1024
+# The health report's `status` that each HTTP status of `GET /health` must carry.
+_HEALTH_STATUS_BY_CODE = {200: "healthy", 503: "unhealthy"}
 _SERVICE_URL_ARG = "service_url"
 _TOKEN_ARG = "token"
 _TIMEOUT_ARG = "timeout"
@@ -105,6 +127,83 @@ _CLOSE = "close"
 _WAIT_FOR_RUN = "wait_for_run"
 _POLL_INTERVAL_ARG = "poll_interval"
 _STAGE_ARG = "stage"
+_LIST_SCHEDULES = "list_schedules"
+_SCHEDULE_ID_ARG = "schedule_id"
+_STATE_ARG = "state"
+_TRIGGER_TYPE_ARG = "trigger_type"
+# The trigger types a run records (`TriggerType` in models.py).
+_TRIGGER_TYPES = frozenset({"manual", "scheduled"})
+_PASSWORD_ARG = "password"
+_CURRENT_PASSWORD_ARG = "current_password"
+_NEW_PASSWORD_ARG = "new_password"
+_REASON_ARG = "reason"
+_STATE_ARG = "state"
+_ADMINISTRATOR_ARG = "administrator"
+_DISABLED_ARG = "disabled"
+_EXPIRES_AT_ARG = "expires_at"
+_TOKEN_ID_ARG = "token_id"
+_ACCOUNT_STATES = frozenset({"active", "disabled", "all"})
+# The rule of an account name, as the Sync API applies it. A name that matches is safe in a URL path.
+_ACCOUNT_NAME = re.compile(ACCOUNT_NAME_PATTERN)
+_CREDENTIAL_NAME = re.compile(CREDENTIAL_NAME_PATTERN)
+_DESCRIPTION_ARG = "description"
+_LIST_CREDENTIALS = "list_credentials"
+# The refusal of a deletion while something current names the credential: its ``details`` hold two lists.
+_CREDENTIAL_IN_USE = (409, "credential-in-use")
+# The value a client built by `SyncClient.without_token` holds in place of a token. It is never sent.
+_NO_TOKEN = "-"
+
+
+def _text_list(details: Mapping[str, object] | None, field: str) -> tuple[str, ...]:
+    """Return one list of texts of the ``details`` of a refusal.
+
+    Raises:
+        ValueError: the details hold no such list, or an item is not a text.
+    """
+    items = None if details is None else details.get(field)
+    if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+        raise ValueError
+    return tuple(cast("list[str]", items))
+
+
+class _RefusedCredentialEntry(BaseModel):
+    """One entry of ``details.credentials`` of a refused registration; any other shape is refused."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    block: Literal["source", "destination"]
+    name: str
+    code: Literal["credential-not-found", "credential-field-missing", "credential-method-unknown"]
+    fields: tuple[str, ...]
+
+    @field_validator("fields", mode="before")
+    @classmethod
+    def _fields_from_a_list(cls, value: object) -> object:
+        # JSON has no tuple, and strict mode takes no list for one.
+        return tuple(value) if isinstance(value, list) else value
+
+
+class _RefusedCredentialDetails(BaseModel):
+    """The ``details`` of a refused registration: ``credentials`` is absent or a list of entries."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    credentials: list[_RefusedCredentialEntry] = []
+
+
+def _refused_credentials(details: Mapping[str, object] | None) -> tuple[RefusedCredential, ...]:
+    """Return the stored credentials that the ``details`` of a refused registration name.
+
+    An answer without ``details``, or whose details hold no ``credentials``, names none.
+
+    Raises:
+        ValidationError: ``credentials`` is not a list of entries with a known block, a name, a
+            known code and a list of field names.
+    """
+    if details is None:
+        return ()
+    parsed = _RefusedCredentialDetails.model_validate(details)
+    return tuple(RefusedCredential(item.block, item.name, item.code, item.fields) for item in parsed.credentials)
 
 
 class SyncClient:  # pylint: disable=too-many-public-methods
@@ -123,14 +222,31 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise ClientInputError(_TOKEN_ARG)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not isfinite(timeout) or timeout <= 0:
             raise ClientInputError(_TIMEOUT_ARG)
+        self._service = url
         self._http = httpx.Client(
-            base_url=url,
+            base_url=f"{url}/api",
             timeout=float(timeout),
             transport=transport,
             follow_redirects=False,
         )
-        self._authorization = f"Bearer {token}"
+        self._authorization: str | None = f"Bearer {token}"
         self._compatible = False
+
+    @classmethod
+    def without_token(
+        cls,
+        service_url: str,
+        *,
+        timeout: float = 30.0,
+        transport: httpx.BaseTransport | None = None,
+    ) -> SyncClient:
+        """Build a client that holds no token: it can call `sign_in` and the routes that need no token.
+
+        Every other call raises `ClientInputError("token")` before any request is sent.
+        """
+        client = cls(service_url, _NO_TOKEN, timeout=timeout, transport=transport)
+        client._authorization = None
+        return client
 
     @classmethod
     def from_environment(
@@ -159,7 +275,20 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         carries_credentials = any((url.username, url.password, url.query, url.fragment))
         if authority_invalid or carries_credentials:
             raise ClientInputError(_SERVICE_URL_ARG)
-        return str(url).rstrip("/")
+        # The value is the Sync service's address; one trailing `api` path segment is the Sync
+        # API's own prefix, which the client adds itself (ADR 0043, decision 4). The path stays
+        # percent-encoded: decoding it would turn `%2F` into `/` and make `%3F` or `%23` invalid.
+        # An empty `?` or `#` passes the check above and is dropped here, so the routes the client
+        # adds never land in a query string or a fragment.
+        path = url.raw_path.partition(b"?")[0].decode("ascii").rstrip("/")
+        if path.endswith("/api"):
+            path = path.removesuffix("/api").rstrip("/")
+        return str(url.copy_with(raw_path=(path or "/").encode("ascii"), fragment=None)).rstrip("/")
+
+    @property
+    def service_url(self) -> str:
+        """Return the Sync service's address, without the `/api` prefix the client adds."""
+        return self._service
 
     def close(self) -> None:
         """Close the underlying HTTP transport."""
@@ -183,7 +312,13 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     def get_version(self) -> VersionResource:
         """Return the unauthenticated server version declaration."""
 
-        response = self._send("get_version", "GET", "/version", authenticated=False)
+        operation = "get_version"
+        response = self._send(operation, "GET", "/version", authenticated=False)
+        self._require_json(response, operation)
+        if response.status_code == 404 and not self._is_error_envelope(response, operation):
+            # A route that does not exist on a Sync API: an older service without `/api`, or
+            # another application at this address.
+            raise self._not_sync_api(response, operation)
         if response.status_code != 200:
             raise self._compatibility_error(response)
         try:
@@ -191,14 +326,36 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         except (ValidationError, ProtocolError):
             raise self._compatibility_error(response) from None
 
-    def get_status(self) -> ServiceStatusResource:
-        """Return unauthenticated service and worker status."""
+    def get_health(self) -> HealthResource:
+        """Return the unauthenticated health report of the Sync API's components and workers.
 
-        operation = "get_status"
-        response = self._send(operation, "GET", "/status", authenticated=False)
-        if response.status_code != 200:
+        A ``200`` answer that carries a ``healthy`` report, or a ``503`` answer that carries an
+        ``unhealthy`` report, returns it. A ``503`` that carries the error envelope instead raises
+        ``APIError``. Any other answer, including a report whose ``status`` does not match the
+        HTTP status, raises ``ProtocolError``.
+        """
+
+        operation = "get_health"
+        response = self._send(operation, "GET", "/health", authenticated=False)
+        self._require_json(response, operation)
+        if response.status_code not in _HEALTH_STATUS_BY_CODE:
             raise ProtocolError(operation, response.status_code)
-        return self._success(response, operation, ServiceStatusResource, {200})
+        payload = self._json(response, operation)
+        try:
+            report = HealthResource.model_validate(payload)
+        except (ValidationError, TypeError, ValueError):
+            report = None
+        if report is not None:
+            if report.status != _HEALTH_STATUS_BY_CODE[response.status_code]:
+                raise ProtocolError(operation, response.status_code)
+            return report
+        if response.status_code != 503:
+            raise ProtocolError(operation, response.status_code)
+        try:
+            error = self._parse_api_error(payload, response.status_code, config_route=False)
+        except (ValidationError, KeyError, TypeError, ValueError):
+            raise ProtocolError(operation, response.status_code) from None
+        raise error
 
     def register_config(self, request: ConfigMutationRequest, idempotency_key: str) -> RegisteredConfigurationResource:
         """Register a configuration package idempotently."""
@@ -311,27 +468,41 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     ) -> ValidationReportResource:
         """Validate a configuration version and return one findings page.
 
-        With ``branch``, the service also checks the mapping, the import account's permissions
-        and the workers' credential variables against that Infrahub branch (spec 007 FR-034).
+        With ``branch``, the service also checks the mapping and the import account's permissions
+        against that Infrahub branch (spec 007 FR-034), read with the destination's stored
+        credential (spec 027).
         """
 
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
-        self._offset(offset)
-        if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_LIMIT_ARG)
-        # The service refuses an empty name and one with surrounding whitespace (`parse_branch`).
-        if branch is not None and (type(branch) is not str or not branch.strip() or branch != branch.strip()):  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_BRANCH_ARG)
         return self._request_model(
             "validate_config",
             "POST",
             f"/configs/{config_id}/versions/{version}/validate",
             model=ValidationReportResource,
             success={200},
-            params={"offset": offset, "limit": limit}
-            if branch is None
-            else {"offset": offset, "limit": limit, "branch": branch},
+            params=self._validation_params(offset, limit, branch),
+            config_route=True,
+        )
+
+    def check_package(
+        self, request: PackageCheckRequest, *, offset: int = 0, limit: int = 256, branch: str | None = None
+    ) -> PackageCheckResource:
+        """Validate a package without registering it and return one findings page.
+
+        The service stores nothing. With ``branch``, it also reads the destination schema of that
+        Infrahub branch; ``destination_read`` in the result says whether the read succeeded.
+        An administrator token is required.
+        """
+
+        return self._request_model(
+            "check_package",
+            "POST",
+            "/configs/validate",
+            model=PackageCheckResource,
+            success={200},
+            body=request,
+            params=self._validation_params(offset, limit, branch),
             config_route=True,
         )
 
@@ -362,30 +533,165 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise ClientInputError(_REQUEST_ARG)
         return self.create_run(request, idempotency_key)
 
-    def list_runs(
+    def list_runs(  # pylint: disable=too-many-arguments
         self,
         config_id: str | None = None,
         registry_version: int | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        *,
+        trigger_type: str | None = None,
+        schedule_id: str | None = None,
     ) -> RunPage:
-        """Return one page of runs, newest first, optionally for one configuration or version."""
+        """Return one page of runs, newest first.
+
+        The filters are optional and every given one must match: one configuration or version,
+        the trigger type (``manual`` or ``scheduled``), or the schedule that started the run.
+        """
 
         params: dict[str, str | int] = {}
         if config_id is not None:
             params[_CONFIG_ID_ARG] = self._identifier(config_id, _CONFIG_ID_ARG)
         if registry_version is not None:
             params["registry_version"] = self._positive_integer(registry_version, "registry_version")
+        if trigger_type is not None:
+            if not isinstance(trigger_type, str) or trigger_type not in _TRIGGER_TYPES:
+                raise ClientInputError(_TRIGGER_TYPE_ARG)
+            params[_TRIGGER_TYPE_ARG] = trigger_type
+        if schedule_id is not None:
+            params[_SCHEDULE_ID_ARG] = self._identifier(schedule_id, _SCHEDULE_ID_ARG)
         params.update(self._page_params(limit, cursor))
         return self._request_model(_LIST_RUNS, "GET", "/runs", model=RunPage, success={200}, params=params)
 
     def iter_runs(
-        self, config_id: str | None = None, registry_version: int | None = None, limit: int | None = None
+        self,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+        limit: int | None = None,
+        *,
+        trigger_type: str | None = None,
+        schedule_id: str | None = None,
     ) -> Iterator[PublicRunResource]:
         """Yield every run that matches the filters, newest first, reading pages until ``next_cursor`` is null."""
 
         return self._iterate(
-            _LIST_RUNS, self.list_runs, config_id=config_id, registry_version=registry_version, limit=limit
+            _LIST_RUNS,
+            self.list_runs,
+            config_id=config_id,
+            registry_version=registry_version,
+            limit=limit,
+            trigger_type=trigger_type,
+            schedule_id=schedule_id,
+        )
+
+    def create_schedule(self, request: CreateScheduleRequest, idempotency_key: str) -> ScheduleResource:
+        """Create a schedule that starts a ``sync`` run of one configuration version on a cron cadence.
+
+        The Sync API validates the cron expression and the time zone. A ``503
+        orchestration-unavailable`` refusal means the schedule is stored but starts no run until
+        the Sync API hands it to the task manager.
+        """
+
+        return self._request_model(
+            "create_schedule",
+            "POST",
+            "/schedules",
+            model=ScheduleResource,
+            success={201},
+            body=request,
+            idempotency_key=idempotency_key,
+        )
+
+    def list_schedules(
+        self,
+        config_id: str | None = None,
+        state: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> SchedulePage:
+        """Return one page of schedules, newest first; without ``state``, deleted schedules are left out."""
+
+        params: dict[str, str | int] = {}
+        if config_id is not None:
+            params[_CONFIG_ID_ARG] = self._identifier(config_id, _CONFIG_ID_ARG)
+        if state is not None:
+            if not isinstance(state, str) or not state or state.strip() != state:
+                raise ClientInputError(_STATE_ARG)
+            params[_STATE_ARG] = state
+        params.update(self._page_params(limit, cursor))
+        return self._request_model(
+            _LIST_SCHEDULES, "GET", "/schedules", model=SchedulePage, success={200}, params=params
+        )
+
+    def iter_schedules(
+        self, config_id: str | None = None, state: str | None = None, limit: int | None = None
+    ) -> Iterator[ScheduleResource]:
+        """Yield every schedule that matches the filters, newest first, reading pages until ``next_cursor`` is null."""
+
+        return self._iterate(_LIST_SCHEDULES, self.list_schedules, config_id=config_id, state=state, limit=limit)
+
+    def get_schedule(self, schedule_id: str) -> ScheduleResource:
+        """Return one schedule, also a deleted schedule."""
+
+        schedule_id = self._identifier(schedule_id, _SCHEDULE_ID_ARG)
+        return self._request_model(
+            "get_schedule", "GET", f"/schedules/{schedule_id}", model=ScheduleResource, success={200}
+        )
+
+    def change_schedule(
+        self, schedule_id: str, request: ChangeScheduleRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Change one or more settings of a schedule; the answer holds the new ``next_start_at``."""
+
+        return self._schedule_action("change_schedule", schedule_id, "change", request, idempotency_key)
+
+    def pause_schedule(
+        self, schedule_id: str, request: ScheduleActionRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Pause a schedule: it starts no run until it is resumed."""
+
+        return self._schedule_action("pause_schedule", schedule_id, "pause", request, idempotency_key)
+
+    def resume_schedule(
+        self, schedule_id: str, request: ScheduleActionRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Make a paused schedule active, or a stopped schedule whose reason no longer holds."""
+
+        return self._schedule_action("resume_schedule", schedule_id, "resume", request, idempotency_key)
+
+    def delete_schedule(
+        self, schedule_id: str, request: ScheduleActionRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Delete a schedule; its record, its runs and its open proposed change are kept.
+
+        The answer's ``open_branch`` names the branch and the proposed change that stay in Infrahub.
+        """
+
+        return self._schedule_action("delete_schedule", schedule_id, "delete", request, idempotency_key)
+
+    def take_over_schedule(
+        self, schedule_id: str, request: ScheduleActionRequest, idempotency_key: str
+    ) -> ScheduleResource:
+        """Make the calling administrator the owner of a schedule.
+
+        A schedule stopped because its owner's account is disabled or deleted becomes active. The Sync API
+        refuses a caller who is not an administrator with ``403 forbidden``.
+        """
+
+        return self._schedule_action("take_over_schedule", schedule_id, "take-over", request, idempotency_key)
+
+    def _schedule_action(
+        self, operation: str, schedule_id: str, suffix: str, request: BaseModel, idempotency_key: str
+    ) -> ScheduleResource:
+        schedule_id = self._identifier(schedule_id, _SCHEDULE_ID_ARG)
+        return self._request_model(
+            operation,
+            "POST",
+            f"/schedules/{schedule_id}/{suffix}",
+            model=ScheduleResource,
+            success={200},
+            body=request,
+            idempotency_key=idempotency_key,
         )
 
     def list_events(  # pylint: disable=too-many-arguments
@@ -403,8 +709,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         """Return one page of typed events, oldest first.
 
         Every given filter must match. ``event_types`` matches any of the types; ``related``
-        takes ``(kind, id)`` pairs, such as ``("account", "alice")``, and an event must name
-        each of them. ``since`` is inclusive and ``until`` exclusive; both need a timezone.
+        takes ``(kind, id)`` pairs, such as ``("account", "alice")`` or
+        ``("schedule", schedule_id)``, and an event must name each of them. ``since`` is inclusive and ``until`` exclusive; both need a timezone.
         """
 
         params: list[tuple[str, str | int]] = []
@@ -458,10 +764,317 @@ class SyncClient:  # pylint: disable=too-many-public-methods
                 raise ProtocolError(_LIST_EVENTS)
             offset += len(page.items)
 
+    def list_credentials(self, *, offset: int = 0, limit: int | None = None) -> CredentialPage:
+        """Return one page of stored credentials sorted by name, with the names of their fields and no value."""
+
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
+        params: dict[str, str | int] = {_OFFSET_ARG: offset}
+        params.update(self._page_params(limit, None))
+        return self._request_model(
+            _LIST_CREDENTIALS, "GET", "/credentials", model=CredentialPage, success={200}, params=params
+        )
+
+    def iter_credentials(self, limit: int | None = None) -> Iterator[CredentialResource]:
+        """Yield every stored credential sorted by name, reading pages until ``next_offset`` is null."""
+
+        offset = 0
+        while True:
+            page = self.list_credentials(offset=offset, limit=limit)
+            yield from page.items
+            if page.next_offset is None:
+                return
+            # A page that names a next offset but holds no item would repeat forever.
+            if page.next_offset <= offset or not page.items:
+                raise ProtocolError(_LIST_CREDENTIALS)
+            offset = page.next_offset
+
+    def get_credential(self, name: str) -> CredentialResource:
+        """Return one stored credential by its name, with the names of its fields and no value."""
+
+        name = self._credential_name(name)
+        return self._request_model(
+            "get_credential", "GET", f"/credentials/{name}", model=CredentialResource, success={200}
+        )
+
+    def create_credential(
+        self,
+        name: str,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+        token: str | None = None,
+        description: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> CredentialResource:
+        """Create a stored credential with its first value. Administrator only.
+
+        The values are sent in the request body only, as given; the answer holds no value. A call
+        without ``idempotency_key`` sends a new key.
+        """
+
+        body: dict[str, object] = {"name": self._credential_name(name)}
+        if description is not None:
+            body[_DESCRIPTION_ARG] = self._text(description, _DESCRIPTION_ARG)
+        body.update(self._credential_values(username=username, password=password, token=token))
+        return self._request_model(
+            "create_credential",
+            "POST",
+            "/credentials",
+            model=CredentialResource,
+            success={201},
+            body=body,
+            idempotency_key=self._new_key(idempotency_key),
+        )
+
+    def set_credential_value(
+        self,
+        name: str,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+        token: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> CredentialResource:
+        """Replace the whole set of fields of a stored credential; its revision goes up by one. Administrator only.
+
+        The values are sent in the request body only, as given. A call without ``idempotency_key``
+        sends a new key.
+        """
+
+        name = self._credential_name(name)
+        return self._request_model(
+            "set_credential_value",
+            "PUT",
+            f"/credentials/{name}/value",
+            model=CredentialResource,
+            success={200},
+            body=self._credential_values(username=username, password=password, token=token),
+            idempotency_key=self._new_key(idempotency_key),
+        )
+
+    def set_credential_description(
+        self, name: str, description: str, *, idempotency_key: str | None = None
+    ) -> CredentialResource:
+        """Replace the description of a stored credential; its revision stays. Administrator only."""
+
+        name = self._credential_name(name)
+        return self._request_model(
+            "set_credential_description",
+            "PATCH",
+            f"/credentials/{name}",
+            model=CredentialResource,
+            success={200},
+            body={_DESCRIPTION_ARG: self._text(description, _DESCRIPTION_ARG)},
+            idempotency_key=self._new_key(idempotency_key),
+        )
+
+    def delete_credential(self, name: str, *, idempotency_key: str | None = None) -> None:
+        """Delete a stored credential and every revision of its value. Administrator only.
+
+        The deletion cannot be reversed. A call without ``idempotency_key`` sends a new key.
+
+        Raises:
+            APIError: with ``409 credential-in-use`` when the latest version of a configuration, or
+                a schedule that is not deleted, names the credential. ``configurations`` and
+                ``schedules`` of the error list them, and nothing was deleted.
+        """
+
+        name = self._credential_name(name)
+        self._request_empty(
+            "delete_credential", "DELETE", f"/credentials/{name}", idempotency_key=self._new_key(idempotency_key)
+        )
+
     def me(self) -> PrincipalResource:
         """Return the actor the token authenticates as and whether it is an administrator."""
 
         return self._request_model("me", "GET", "/me", model=PrincipalResource, success={200})
+
+    def sign_in(self, name: str, password: str) -> SessionResource:
+        """Open a session with an account name and its password. The request carries no token.
+
+        The answer holds the session token once. The password is sent in the request body only.
+        """
+
+        body = {"name": self._text(name, _NAME_ARG), "password": self._text(password, _PASSWORD_ARG)}
+        return self._request_model(
+            "sign_in",
+            "POST",
+            "/auth/sign-in",
+            model=SessionResource,
+            success={200},
+            body=body,
+            authenticated=False,
+        )
+
+    def sign_out(self) -> None:
+        """End the session whose token this client presents."""
+
+        self._request_empty("sign_out", "POST", "/auth/sign-out")
+
+    def change_password(self, current_password: str, new_password: str, *, reason: str | None = None) -> None:
+        """Replace the password of the caller's account. Both passwords are sent in the request body only."""
+
+        body = {
+            "current_password": self._text(current_password, _CURRENT_PASSWORD_ARG),
+            "new_password": self._text(new_password, _NEW_PASSWORD_ARG),
+        }
+        self._request_empty("change_password", "PUT", "/me/password", body=self._with_reason(body, reason))
+
+    def list_tokens(self) -> tuple[TokenResource, ...]:
+        """Return the API tokens of the caller's account, without any value."""
+
+        return self._request_list("list_tokens", "/me/tokens", TokenResource)
+
+    def create_token(
+        self, name: str, *, expires_at: datetime | None = None, reason: str | None = None
+    ) -> CreatedTokenResource:
+        """Create an API token for the caller's account. The answer holds its value this once.
+
+        ``expires_at`` must carry a time zone.
+        """
+
+        body: dict[str, object] = {"name": self._text(name, _NAME_ARG)}
+        if expires_at is not None:
+            body["expires_at"] = self._aware_time(expires_at, _EXPIRES_AT_ARG)
+        return self._request_model(
+            "create_token",
+            "POST",
+            "/me/tokens",
+            model=CreatedTokenResource,
+            success={201},
+            body=self._with_reason(body, reason),
+        )
+
+    def delete_token(self, token_id: str, *, reason: str | None = None) -> None:
+        """Delete one API token of the caller's account."""
+
+        token_id = self._identifier(token_id, _TOKEN_ID_ARG)
+        params = self._with_reason({}, reason)
+        self._request_empty(
+            "delete_token", "DELETE", f"/me/tokens/{token_id}", params=cast("dict[str, str | int]", params)
+        )
+
+    def list_accounts(self, state: str = "all") -> tuple[AccountResource, ...]:
+        """Return the accounts in one state: ``active``, ``disabled`` or ``all``. Administrator only."""
+
+        if not isinstance(state, str) or state not in _ACCOUNT_STATES:
+            raise ClientInputError(_STATE_ARG)
+        return self._request_list("list_accounts", "/accounts", AccountResource, params={"state": state})
+
+    def create_account(
+        self, name: str, password: str, *, administrator: bool = False, reason: str | None = None
+    ) -> AccountResource:
+        """Create an account with its first password. Administrator only.
+
+        The password is sent in the request body only.
+        """
+
+        if not isinstance(administrator, bool):
+            raise ClientInputError(_ADMINISTRATOR_ARG)
+        body: dict[str, object] = {
+            "name": self._text(name, _NAME_ARG),
+            "password": self._text(password, _PASSWORD_ARG),
+            "administrator": administrator,
+        }
+        return self._request_model(
+            "create_account",
+            "POST",
+            "/accounts",
+            model=AccountResource,
+            success={201},
+            body=self._with_reason(body, reason),
+        )
+
+    def get_account(self, name: str) -> AccountResource:
+        """Return one account by its name. Administrator only."""
+
+        name = self._account_name(name)
+        return self._request_model("get_account", "GET", f"/accounts/{name}", model=AccountResource, success={200})
+
+    def set_account_disabled(self, name: str, disabled: bool, *, reason: str | None = None) -> AccountResource:
+        """Disable an account, which deletes its tokens and its sessions, or enable it again. Administrator only."""
+
+        name = self._account_name(name)
+        if not isinstance(disabled, bool):
+            raise ClientInputError(_DISABLED_ARG)
+        return self._request_model(
+            "set_account_disabled",
+            "PATCH",
+            f"/accounts/{name}",
+            model=AccountResource,
+            success={200},
+            body=self._with_reason({"disabled": disabled}, reason),
+        )
+
+    def set_account_password(self, name: str, new_password: str, *, reason: str | None = None) -> None:
+        """Replace the password of an account. Administrator only.
+
+        The password is sent in the request body only.
+        """
+
+        name = self._account_name(name)
+        body = {"new_password": self._text(new_password, _NEW_PASSWORD_ARG)}
+        self._request_empty(
+            "set_account_password", "PUT", f"/accounts/{name}/password", body=self._with_reason(body, reason)
+        )
+
+    def unlock_account(self, name: str, *, reason: str | None = None) -> None:
+        """End the refusal of an account's sign-ins that follows repeated failures. Administrator only."""
+
+        name = self._account_name(name)
+        body = self._with_reason({}, reason)
+        self._request_empty("unlock_account", "POST", f"/accounts/{name}/unlock", body=body or None)
+
+    def set_account_level(self, name: str, administrator: bool, *, reason: str | None = None) -> AccountResource:
+        """Set whether an account is an administrator. Administrator only.
+
+        The account has the new level from its next request, with no new sign-in.
+        """
+
+        name = self._account_name(name)
+        if not isinstance(administrator, bool):
+            raise ClientInputError(_ADMINISTRATOR_ARG)
+        return self._request_model(
+            "set_account_level",
+            "PATCH",
+            f"/accounts/{name}",
+            model=AccountResource,
+            success={200},
+            body=self._with_reason({"administrator": administrator}, reason),
+        )
+
+    def delete_account(self, name: str, *, reason: str | None = None) -> str:
+        """Delete an account and return what its records display from now on. Administrator only.
+
+        The deletion cannot be reversed. The answer is ``Deleted account`` and a short identifier.
+        """
+
+        name = self._account_name(name)
+        params = cast("dict[str, str | int]", self._with_reason({}, reason))
+        deleted = self._request_model(
+            "delete_account",
+            "DELETE",
+            f"/accounts/{name}",
+            model=DeletedAccountResource,
+            success={200},
+            params=params or None,
+        )
+        return deleted.placeholder
+
+    def list_account_tokens(self, name: str) -> tuple[TokenResource, ...]:
+        """Return the API tokens of an account, without any value. Administrator only."""
+
+        name = self._account_name(name)
+        return self._request_list("list_account_tokens", f"/accounts/{name}/tokens", TokenResource)
+
+    def delete_account_token(self, name: str, token_id: str, *, reason: str | None = None) -> None:
+        """Delete one API token of an account. Administrator only."""
+
+        name = self._account_name(name)
+        token_id = self._identifier(token_id, _TOKEN_ID_ARG)
+        params = cast("dict[str, str | int]", self._with_reason({}, reason))
+        self._request_empty("delete_account_token", "DELETE", f"/accounts/{name}/tokens/{token_id}", params=params)
 
     def get_run(self, run_id: str) -> RunResource:
         """Return one run and its orchestration history."""
@@ -854,26 +1467,78 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         *,
         model: type[_Model],
         success: set[int],
-        body: BaseModel | None = None,
+        body: BaseModel | Mapping[str, object] | None = None,
         idempotency_key: str | None = None,
         params: dict[str, str | int] | tuple[tuple[str, str | int], ...] | None = None,
         config_route: bool = False,
         request_timeout: float | None = None,
+        authenticated: bool = True,
     ) -> _Model:
         if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key.strip()):
             raise ClientInputError(_IDEMPOTENCY_KEY_ARG)
+        if authenticated:
+            self._require_token()
         self._ensure_compatible()
         headers = {"Idempotency-Key": idempotency_key} if idempotency_key is not None else None
         response = self._send(
             operation,
             method,
             path,
+            authenticated=authenticated,
             headers=headers,
-            json=None if body is None else body.model_dump(mode="json"),
+            json=body.model_dump(mode="json") if isinstance(body, BaseModel) else body,
             params=params,
             request_timeout=request_timeout,
         )
         return self._success(response, operation, model, success, config_route=config_route)
+
+    def _request_empty(
+        self,
+        operation: str,
+        method: str,
+        path: str,
+        *,
+        body: Mapping[str, object] | None = None,
+        params: dict[str, str | int] | None = None,
+        idempotency_key: str | None = None,
+    ) -> None:
+        """Send a request whose success answer is ``204`` with no body."""
+        if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key.strip()):
+            raise ClientInputError(_IDEMPOTENCY_KEY_ARG)
+        self._require_token()
+        self._ensure_compatible()
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key is not None else None
+        response = self._send(operation, method, path, headers=headers, json=body, params=params or None)
+        if response.status_code != 204:
+            self._raise_response_error(response, operation, config_route=False)
+
+    def _request_list(
+        self,
+        operation: str,
+        path: str,
+        model: type[_Model],
+        *,
+        params: dict[str, str | int] | None = None,
+    ) -> tuple[_Model, ...]:
+        """Read a route whose success answer is a JSON array of one resource."""
+        self._require_token()
+        self._ensure_compatible()
+        response = self._send(operation, "GET", path, params=params)
+        self._require_json(response, operation)
+        if response.status_code != 200:
+            self._raise_response_error(response, operation, config_route=False)
+        payload = self._json(response, operation)
+        if not isinstance(payload, list):
+            raise ProtocolError(operation, response.status_code)
+        try:
+            return tuple(model.model_validate(item) for item in payload)
+        except (ValidationError, TypeError, ValueError):
+            raise ProtocolError(operation, response.status_code) from None
+
+    def _require_token(self) -> None:
+        """Refuse, before any request, a call that needs a token on a client that holds none."""
+        if self._authorization is None:
+            raise ClientInputError(_TOKEN_ARG)
 
     def _success(
         self,
@@ -884,6 +1549,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         *,
         config_route: bool = False,
     ) -> _Model:
+        self._require_json(response, operation)
         if response.status_code not in success:
             self._raise_response_error(response, operation, config_route=config_route)
         try:
@@ -932,6 +1598,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     ) -> httpx.Response:
         request_headers = dict(headers or {})
         if authenticated:
+            if self._authorization is None:
+                raise ClientInputError(_TOKEN_ARG)
             request_headers["Authorization"] = self._authorization
         try:
             return self._http.request(
@@ -958,7 +1626,30 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         except Exception:  # noqa: BLE001 - response decoders are contained at the external boundary.
             raise ProtocolError(operation, response.status_code) from None
 
+    @staticmethod
+    def _not_sync_api(response: httpx.Response, operation: str) -> NotSyncAPIError:
+        # Only the address without its query string and the status are kept, never the body.
+        url = response.request.url.copy_with(query=None, fragment=None)
+        return NotSyncAPIError(operation, str(url), response.status_code)
+
+    @classmethod
+    def _require_json(cls, response: httpx.Response, operation: str) -> None:
+        """Refuse an answer that is not a JSON document: it does not come from a Sync API."""
+        media_type = response.headers.get("Content-Type", "").partition(";")[0].strip().lower()
+        if media_type != "application/json" and not media_type.endswith("+json"):
+            raise cls._not_sync_api(response, operation)
+
+    @classmethod
+    def _is_error_envelope(cls, response: httpx.Response, operation: str) -> bool:
+        try:
+            ErrorEnvelope.model_validate(cls._json(response, operation))
+        except (ValidationError, ProtocolError):
+            return False
+        return True
+
     def _raise_response_error(self, response: httpx.Response, operation: str, *, config_route: bool) -> None:
+        # Reached by every operation's error answer, `get_artifact` included.
+        self._require_json(response, operation)
         accepted = _CONFIG_ERROR_STATUSES if config_route else _ERROR_STATUSES
         if response.is_redirect or response.status_code not in accepted:
             raise ProtocolError(operation, response.status_code)
@@ -985,12 +1676,27 @@ class SyncClient:  # pylint: disable=too-many-public-methods
                 detail.family,
                 detail.reason,
                 mutation_id=mutation_id,
+                credentials=_refused_credentials(detail.details),
             )
         detail = ErrorEnvelope.model_validate(payload).error
         if detail.status != status:
             raise ValueError
+        if (detail.status, detail.code) == _CREDENTIAL_IN_USE:
+            return APIError(
+                detail.status,
+                detail.code,
+                mutation_id=detail.mutation_id,
+                configurations=_text_list(detail.details, "configurations"),
+                schedules=_text_list(detail.details, "schedules"),
+                details=detail.details,
+            )
         return APIError(
-            detail.status, detail.code, run_id=detail.run_id, mutation_id=detail.mutation_id, left_out=detail.left_out
+            detail.status,
+            detail.code,
+            run_id=detail.run_id,
+            mutation_id=detail.mutation_id,
+            left_out=detail.left_out,
+            details=detail.details,
         )
 
     @staticmethod
@@ -998,6 +1704,58 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
             raise ClientInputError(argument)
         return value
+
+    @staticmethod
+    def _account_name(value: object) -> str:
+        """Refuse an account name that the Sync API cannot hold, so the name is safe in a URL path."""
+        if not isinstance(value, str) or _ACCOUNT_NAME.fullmatch(value) is None:
+            raise ClientInputError(_NAME_ARG)
+        return value
+
+    @staticmethod
+    def _credential_name(value: object) -> str:
+        """Refuse a name that no stored credential can have, so the name is safe in a URL path."""
+        if not isinstance(value, str) or _CREDENTIAL_NAME.fullmatch(value) is None:
+            raise ClientInputError(_NAME_ARG)
+        return value
+
+    @classmethod
+    def _credential_values(cls, **values: str | None) -> dict[str, object]:
+        """Return the fields of a credential that are set. Each value is sent as given, never trimmed.
+
+        A value that is not text is refused by its argument name; the Sync API checks the set.
+        """
+        return {name: cls._text(value, name) for name, value in values.items() if value is not None}
+
+    @staticmethod
+    def _new_key(value: str | None) -> str:
+        """Return the given idempotency key, or a new one for a call that gives none."""
+        return f"credential-{uuid4().hex}" if value is None else value
+
+    @staticmethod
+    def _text(value: object, argument: str) -> str:
+        """Refuse a value that is not text. The error names the argument and never the value."""
+        if not isinstance(value, str):
+            raise ClientInputError(argument)
+        return value
+
+    @staticmethod
+    def _with_reason(values: dict[str, Any], reason: object) -> dict[str, Any]:
+        """Add the optional audit reason to a request body or to query parameters.
+
+        The reason follows the rule of the account routes: 1 to 512 printable characters, with no
+        space at either end. Another reason is refused before any request.
+        """
+        if reason is None:
+            return values
+        if (
+            not isinstance(reason, str)
+            or not 1 <= len(reason) <= REASON_MAX_LENGTH
+            or reason != reason.strip()
+            or not reason.isprintable()
+        ):
+            raise ClientInputError(_REASON_ARG)
+        return {**values, _REASON_ARG: reason}
 
     @staticmethod
     def _sequence(value: object, argument: str) -> tuple[object, ...]:
@@ -1025,6 +1783,21 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if not isinstance(value, datetime) or value.utcoffset() is None:
             raise ClientInputError(argument)
         return value.isoformat()
+
+    @classmethod
+    def _validation_params(cls, offset: int, limit: int, branch: str | None) -> dict[str, str | int]:
+        """Check and return the query parameters of a validation findings page."""
+        cls._offset(offset)
+        if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_LIMIT_ARG)
+        # The service refuses an empty name and one with surrounding whitespace (`parse_branch`).
+        if branch is not None and (type(branch) is not str or not branch.strip() or branch != branch.strip()):  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_BRANCH_ARG)
+        return (
+            {"offset": offset, "limit": limit}
+            if branch is None
+            else {"offset": offset, "limit": limit, "branch": branch}
+        )
 
     @staticmethod
     def _offset(offset: object) -> None:

@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # the service operations, their refusal vocabulary and the redaction of their output
 """The shared ``configs`` application service.
 
 This module owns validation invocation, finding ordering, store access, and record projection.
@@ -24,7 +25,6 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, TypeVar
 
@@ -35,10 +35,18 @@ from infrahub_sync.configuration import (
     ConfigurationPackage,
     ConfigurationPackageParseError,
     CredentialConfigurationError,
+    RemovedCredentialFormatError,
     ValidationFinding,
     collect_findings,
     parse_configuration_package,
+    parse_stored_configuration_package,
     sort_findings,
+    validate_package_credentials,
+)
+from infrahub_sync.configuration.credential_admission import (
+    StoredCredentialCheckError,
+    StoredCredentialFinding,
+    stored_credential_findings,
 )
 from infrahub_sync.configuration.models import (
     _MAX_FINDING_TEXT_LENGTH,
@@ -46,16 +54,21 @@ from infrahub_sync.configuration.models import (
     _require_json_native,
     safe_pointer_component,
 )
+from infrahub_sync.configuration.removed_credential_format import (
+    CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+    CREDENTIAL_FORMAT_REMOVED_REASON,
+)
 from infrahub_sync.configuration.schema_validation import (
     DestinationSchemaOptions,
+    DestinationSchemaValidation,
     collect_destination_schema_findings,
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
-from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _finding_message, _location_digest
-from infrahub_sync.configuration.worker_credentials import referenced_credential_variables
+from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redaction_order
 from infrahub_sync.product_store.models import DEFAULT_LIMIT, MAX_REGISTRY_VERSION
 from infrahub_sync.product_store.store import (
+    ConfigurationNameInUseError,
     ConfigurationNotFoundError,
     ConfigurationVersionAllocationError,
     DuplicateConfigurationError,
@@ -65,6 +78,7 @@ from infrahub_sync.product_store.store import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from datetime import datetime
 
     from infrahub_sync.product_store.models import (
         ConfigurationPage,
@@ -99,12 +113,22 @@ class ConfigsValidationError(ConfigsError):
     family: ClassVar[str] = "validation"
 
     def __init__(
-        self, message: str, *, findings: tuple[ValidationFinding, ...] = (), reason: str | None = None
+        self,
+        message: str,
+        *,
+        findings: tuple[ValidationFinding, ...] = (),
+        reason: str | None = None,
+        stored_credentials: tuple[StoredCredentialFinding, ...] = (),
     ) -> None:
-        """Keep the structured refusal independent of its display message."""
+        """Keep the structured refusal independent of its display message.
+
+        ``stored_credentials`` holds each block whose named stored credential cannot serve it,
+        in the order source, destination. It is empty for every other refusal.
+        """
         super().__init__(message)
         self.findings = findings
         self.reason = reason
+        self.stored_credentials = stored_credentials
 
 
 class ConfigsNotFoundError(ConfigsError):
@@ -126,6 +150,21 @@ class ConfigsNotFoundError(ConfigsError):
         self.reason = reason
 
 
+class ConfigsNameInUseError(ConfigsError):
+    """Another configuration already has the name of the package, so nothing was stored.
+
+    ``config_id`` and ``name`` identify that configuration, so the caller can add the package
+    as a new version of it instead.
+    """
+
+    family: ClassVar[str] = "name-in-use"
+
+    def __init__(self, message: str, *, config_id: str, name: str) -> None:
+        super().__init__(message)
+        self.config_id = config_id
+        self.name = name
+
+
 class ConfigsStorageError(ConfigsError):
     """The durable store refused the operation for a reason the caller cannot fix by input."""
 
@@ -144,9 +183,6 @@ class ConfigsInternalError(ConfigsError):
     family: ClassVar[str] = "internal"
 
 
-# The floor of the service liveness rule (`service/liveness.py`): a worker that published within this
-# many seconds counts as live. The Sync API passes its own policy value.
-DEFAULT_WORKER_LIVENESS_SECONDS = 30.0
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -635,17 +671,21 @@ def _require_json_native_package(package: object) -> None:
         raise ConfigsRequestError(msg) from None
 
 
-def _parse(package: Mapping[str, Any], *, refuse_store: bool = True) -> ConfigurationPackage:
+def _parse(package: Mapping[str, Any], *, stored: bool = False) -> ConfigurationPackage:
     """Parse declared JSON-native content, requiring exactly that shape before anything else.
 
     Structural acceptance (:func:`_require_json_native_package`) runs first, so only a
     recursively exact JSON-native ``dict`` ever reaches ``parse_configuration_package`` —
     what the store persists is exactly what the shared parser validated, and a hostile or
     merely non-native value is refused as the caller's own input without being invoked.
+
+    ``stored`` is for the content of a registered version, read from the store: its ``store``
+    block is not refused here, and an empty ``credentials`` block, which the build before the
+    removal of that block wrote into every version, is ignored. New input is refused for both.
     """
     _require_json_native_package(package)
     configuration = package.get("configuration")
-    if refuse_store and isinstance(configuration, dict) and configuration.get("store") is not None:
+    if not stored and isinstance(configuration, dict) and configuration.get("store") is not None:
         raise ConfigsValidationError(
             UNSUPPORTED_STORE_MESSAGE,
             reason=UNSUPPORTED_STORE_REASON,
@@ -659,7 +699,23 @@ def _parse(package: Mapping[str, Any], *, refuse_store: bool = True) -> Configur
             ),
         )
     try:
+        if stored:
+            return parse_stored_configuration_package(dict(package)).package
         return parse_configuration_package(dict(package))
+    except RemovedCredentialFormatError as exc:
+        # The message of the parse error is fixed text; it names nothing of the package.
+        raise ConfigsValidationError(
+            str(exc),
+            reason=CREDENTIAL_FORMAT_REMOVED_REASON,
+            findings=(
+                ValidationFinding(
+                    code=CREDENTIAL_FORMAT_REMOVED_REASON,
+                    severity="error",
+                    location="",
+                    message=CREDENTIAL_FORMAT_REMOVED_MESSAGE,
+                ),
+            ),
+        ) from None
     except ConfigurationPackageParseError as exc:
         raise ConfigsRequestError(str(exc)) from None
 
@@ -670,7 +726,18 @@ def _validation_refusal(exc: CredentialConfigurationError, package: Configuratio
     The store raises on the first defect because registration must reject before it persists.
     Collecting here is what makes the same package report N findings rather than one.
     """
-    return ConfigsValidationError(str(exc), findings=collect_findings(package))
+    findings = collect_findings(package)
+    if isinstance(exc, StoredCredentialCheckError):
+        # The declared content cannot show these: they come from the store, read inside the
+        # registration's transaction. The reason is the code of the first one.
+        stored = tuple(item.finding for item in exc.findings)
+        return ConfigsValidationError(
+            str(exc),
+            findings=sort_findings((*findings, *stored)),
+            reason=exc.findings[0].code,
+            stored_credentials=exc.findings,
+        )
+    return ConfigsValidationError(str(exc), findings=findings)
 
 
 @_service_boundary
@@ -680,6 +747,7 @@ def register(
     projection: ProductProjection,
     actor: str | None = None,
     reason: str | None = None,
+    registered_without_validation: bool = False,
     secrets: Sequence[str] = (),
 ) -> RegisteredConfiguration:
     """Register a brand-new declared configuration and return it with its first version.
@@ -690,14 +758,22 @@ def register(
     :func:`validate`. The caller supplies the durable-store :class:`ProductProjection`
     through ``projection``. ``actor`` and ``reason`` are recorded on the first version as
     who registered it and why, with every value in ``secrets`` redacted.
+    ``registered_without_validation`` marks the first version as registered without
+    validation; only the web interface's "Register without validation" sets it.
     """
     parsed = _parse(package)
     try:
         version = projection.create_configuration(
-            parsed, registered_by=actor, registration_reason=reason, secrets=secrets
+            parsed,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
+            secrets=secrets,
         )
     except CredentialConfigurationError as exc:
         raise _validation_refusal(exc, parsed) from None
+    except ConfigurationNameInUseError as exc:
+        raise ConfigsNameInUseError(str(exc), config_id=exc.config_id, name=exc.name) from None
     except DuplicateConfigurationError as exc:
         raise ConfigsStorageError(str(exc)) from None
     summary = projection.lookup_configuration(version.config_id).value
@@ -715,6 +791,7 @@ def create_version(
     projection: ProductProjection,
     actor: str | None = None,
     reason: str | None = None,
+    registered_without_validation: bool = False,
     secrets: Sequence[str] = (),
 ) -> RegisteredVersion:
     """Add one version to an existing configuration, or return the identical stored one.
@@ -722,18 +799,26 @@ def create_version(
     ``package`` is declared JSON-native content; a prebuilt package instance is refused
     (:func:`_parse`). The caller supplies the durable-store :class:`ProductProjection`
     through ``projection``. ``actor`` and ``reason`` are recorded on a created version, with
-    every value in ``secrets`` redacted; an identical stored version keeps its own.
+    every value in ``secrets`` redacted, and ``registered_without_validation`` marks it; an
+    identical stored version keeps its own values.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     parsed = _parse(package)
     try:
         version, created = projection.add_configuration_version(
-            config_id, parsed, registered_by=actor, registration_reason=reason, secrets=secrets
+            config_id,
+            parsed,
+            registered_by=actor,
+            registration_reason=reason,
+            registered_without_validation=registered_without_validation,
+            secrets=secrets,
         )
     except CredentialConfigurationError as exc:
         raise _validation_refusal(exc, parsed) from None
     except ConfigurationNotFoundError as exc:
         raise ConfigsNotFoundError(str(exc)) from None
+    except ConfigurationNameInUseError as exc:
+        raise ConfigsNameInUseError(str(exc), config_id=exc.config_id, name=exc.name) from None
     except ConfigurationVersionAllocationError as exc:
         raise ConfigsStorageError(str(exc)) from None
     return RegisteredVersion(version=version, created=created)
@@ -822,40 +907,82 @@ def get_version(
     return stored
 
 
-# Spec 007 FR-035: the credential check of the validation opt-in. It runs here, beside the
-# product store the workers publish to, and outside the declared-content warning channel.
-_CODE_CREDENTIAL_NOT_SET_IN_WORKER = "credential-not-set-in-worker"
-_CODE_WORKER_ENVIRONMENT_UNKNOWN = "worker-environment-unknown"
-_CREDENTIALS_LOCATION = "/credentials"
+def _stored_credential_items(
+    package: ConfigurationPackage, projection: ProductProjection
+) -> tuple[StoredCredentialFinding, ...]:
+    """Return each block whose named stored credential is missing or lacks a field, as the store holds it now."""
+
+    def stored_fields(name: str) -> tuple[str, ...] | None:
+        credential = projection.lookup_stored_credential(name)
+        return None if credential is None else tuple(credential.fields)
+
+    return stored_credential_findings(package, stored_fields)
 
 
-def _worker_credential_findings(
-    package: ConfigurationPackage, held: frozenset[str] | None
+def _stored_credential_findings(
+    package: ConfigurationPackage, projection: ProductProjection
 ) -> tuple[ValidationFinding, ...]:
-    """Report each `$credential` variable the package references that no live worker holds.
+    """Report each block whose named stored credential is missing or lacks a field, as the store holds it now."""
+    return tuple(item.finding for item in _stored_credential_items(package, projection))
 
-    `held` is the union of the variable names the live workers published, or `None` when no
-    live worker has published: the check cannot run then, and one warning says so. A finding
-    names the variable, never a value.
+
+# The three `destination_read` values that are not a read failure reason.
+DESTINATION_READ_NOT_REQUESTED = "not_requested"
+DESTINATION_READ_OK = "read"
+# A branch was given, but the destination adapter is unknown or declares no schema read, so
+# nothing was read; a finding names the reason. No current destination reaches this: the core
+# check refuses an unknown adapter and every adapter without a schema read as a destination.
+DESTINATION_READ_NOT_READ = "not_read"
+
+
+def _destination_read(schema_validation: DestinationSchemaValidation) -> str:
+    """Name what happened to the destination read of one check against a branch."""
+    if schema_validation.read_failure_reason is not None:
+        return schema_validation.read_failure_reason
+    return DESTINATION_READ_OK if schema_validation.schema_read else DESTINATION_READ_NOT_READ
+
+
+@dataclass(frozen=True, slots=True)
+class _PackageChecks:
+    """The result of every validation check on one parsed package.
+
+    ``destination_read`` is ``"not_requested"`` when the caller asked for no destination
+    checks, ``"read"`` when the destination schema of the branch was read, ``"not_read"``
+    when the destination adapter is unknown or declares no schema read, or the ``reason`` of the
+    ``DestinationSchemaReadError`` a failed read raised (``timeout``, ``unreachable``,
+    ``unauthorized``, ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured``,
+    ``credentials``).
     """
-    if held is None:
-        return (
-            ValidationFinding(
-                code=_CODE_WORKER_ENVIRONMENT_UNKNOWN,
-                severity="warning",
-                location=_CREDENTIALS_LOCATION,
-                message="no live worker has published which credential variables it holds",
-            ),
+
+    findings: tuple[ValidationFinding, ...]
+    schema_fingerprint: str | None
+    destination_read: str
+
+
+def _check_parsed_package(
+    parsed: ConfigurationPackage,
+    *,
+    destination_schema: DestinationSchemaOptions | None,
+    secrets: Sequence[str],
+    projection: ProductProjection,
+) -> _PackageChecks:
+    """Run every validation check on one parsed package, registered or not.
+
+    Registered-version validation and the check of an unregistered package both call this
+    function, so the two report the same findings in the same order for the same package.
+    Every call reports each block whose named stored credential does not exist now, or lacks a
+    field the block needs (spec 027, FR-008).
+    """
+    findings = sort_findings((*collect_findings(parsed, secrets), *_stored_credential_findings(parsed, projection)))
+    if destination_schema is None:
+        return _PackageChecks(
+            findings=findings, schema_fingerprint=None, destination_read=DESTINATION_READ_NOT_REQUESTED
         )
-    return tuple(
-        ValidationFinding(
-            code=_CODE_CREDENTIAL_NOT_SET_IN_WORKER,
-            severity="error",
-            location=f"{_CREDENTIALS_LOCATION}/{safe_pointer_component(reference_name)}",
-            message=_finding_message(f"no live worker holds the credential variable {variable}"),
-        )
-        for reference_name, variable in referenced_credential_variables(package)
-        if variable not in held
+    schema_validation = collect_destination_schema_findings(parsed, destination_schema)
+    return _PackageChecks(
+        findings=sort_findings((*findings, *schema_validation.findings)),
+        schema_fingerprint=schema_validation.schema_fingerprint,
+        destination_read=_destination_read(schema_validation),
     )
 
 
@@ -867,7 +994,6 @@ def validate(
     projection: ProductProjection,
     destination_schema: DestinationSchemaOptions | None = None,
     secrets: Sequence[str] = (),
-    worker_liveness_seconds: float = DEFAULT_WORKER_LIVENESS_SECONDS,
 ) -> ValidationReport:
     """Report every declared defect in one registered version, in contract order.
 
@@ -886,9 +1012,10 @@ def validate(
     records the judged snapshot's fingerprint. The caller supplies the durable-store
     :class:`ProductProjection` through ``projection``.
 
-    The same opt-in compares the package's `$credential` references with the variable names
-    the live workers published to ``projection`` (spec 007 FR-035): a worker is live while its
-    last publication is no older than ``worker_liveness_seconds``.
+    Every call also reports each block whose named stored credential does not exist now, or
+    lacks a field the block needs (``credential-not-found``, ``credential-field-missing``;
+    spec 027, FR-008): one indexed read for each named credential, and no value.
+
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_registry_version(registry_version)
@@ -899,20 +1026,80 @@ def validate(
     if stored is None:
         msg = f"configuration {config_id!r} has no registered version {registry_version} ({lookup.reason})"
         raise ConfigsNotFoundError(msg)
-    parsed = _parse(stored.declared_content, refuse_store=False)
-    findings = collect_findings(parsed, secrets)
-    fingerprint: str | None = None
-    if destination_schema is not None:
-        schema_validation = collect_destination_schema_findings(parsed, destination_schema)
-        observed_after = datetime.now(timezone.utc) - timedelta(seconds=worker_liveness_seconds)
-        live = projection.live_worker_environments(observed_after=observed_after)
-        held = frozenset(name for environment in live for name in environment.credential_names) if live else None
-        findings = sort_findings((*findings, *schema_validation.findings, *_worker_credential_findings(parsed, held)))
-        fingerprint = schema_validation.schema_fingerprint
+    parsed = _parse(stored.declared_content, stored=True)
+    checks = _check_parsed_package(
+        parsed,
+        destination_schema=destination_schema,
+        secrets=secrets,
+        projection=projection,
+    )
     return ValidationReport(
         config_id=stored.config_id,
         registry_version=stored.registry_version,
         package_checksum=stored.package_checksum,
-        findings=findings,
-        destination_schema_fingerprint=fingerprint,
+        findings=checks.findings,
+        destination_schema_fingerprint=checks.schema_fingerprint,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PackageCheck:
+    """Every declared defect in one package that is not registered, in contract order.
+
+    ``package_checksum`` and ``declared_content`` are what the registration of the same
+    package would store, so the package that is checked is the package that is registered.
+    ``name`` is the configuration name the package declares, or ``None``.
+    ``destination_read`` is ``"not_requested"`` without a destination schema request,
+    ``"read"`` when the destination was read, or the reason the read failed.
+    """
+
+    package_checksum: str
+    name: str | None
+    declared_content: dict[str, Any]
+    findings: tuple[ValidationFinding, ...]
+    destination_schema_fingerprint: str | None
+    destination_read: str
+
+
+@_service_boundary
+def check_package(
+    *,
+    package: Mapping[str, Any],
+    projection: ProductProjection,
+    destination_schema: DestinationSchemaOptions | None = None,
+    secrets: Sequence[str] = (),
+) -> PackageCheck:
+    """Validate a package without registering it, with the checks of :func:`validate`.
+
+    The package first passes the checks the registration runs before it stores anything, and
+    raises the same refusal: a store key, a structural error or a credential error. Then it
+    goes through the checks a registered version goes through, so the findings equal those of
+    validating the version the registration would create (spec 025 FR-002). Nothing is
+    stored. ``destination_schema`` and ``secrets`` mean what they mean for :func:`validate`.
+    """
+    if destination_schema is not None:
+        _require_argument_type(destination_schema, name="destination_schema", expected=DestinationSchemaOptions)
+    parsed = _parse(package)
+    try:
+        validate_package_credentials(parsed)
+        # Registration refuses a package whose named stored credential cannot serve its block
+        # (spec 027, FR-007), so the check raises the same refusal.
+        stored_items = _stored_credential_items(parsed, projection)
+        if stored_items:
+            raise StoredCredentialCheckError(stored_items)
+    except CredentialConfigurationError as exc:
+        raise _validation_refusal(exc, parsed) from None
+    checks = _check_parsed_package(
+        parsed,
+        destination_schema=destination_schema,
+        secrets=secrets,
+        projection=projection,
+    )
+    return PackageCheck(
+        package_checksum=parsed.checksum(),
+        name=parsed.configuration.name or None,
+        declared_content=parsed.declared_content(),
+        findings=checks.findings,
+        destination_schema_fingerprint=checks.schema_fingerprint,
+        destination_read=checks.destination_read,
     )

@@ -28,7 +28,7 @@ from Observium to Infrahub. Writing data back into Observium is not supported.
 
 The repository contains a mapping example: [`examples/observium_to_infrahub/config.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/observium_to_infrahub/config.yml). It is a `config.yml` file, not a package, and registration refuses it as it is. To use it, convert it as described in [Convert a config.yml file](../configuration-package.mdx#convert-a-configyml-file).
 
-The package declares the Observium connection in `source.settings`. Credentials are `$credential` references:
+The package declares the Observium connection in `source.settings`. The block names a stored credential that holds the Observium username and password, because `auth_method` is `basic`:
 
 ```yaml
 format_version: 1
@@ -36,30 +36,23 @@ configuration:
   name: from-observium
   source:
     name: genericrestapi
+    credential: observium-account
     settings:
       url: "https://observium.example.com"
       api_endpoint: "api/v0"
       auth_method: "basic"
-      username:
-        $credential: observium-username
-      password:
-        $credential: observium-password
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: "https://infrahub.example.com"
-      token:
-        $credential: infrahub-token
-credentials:
-  observium-username:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_USERNAME
-  observium-password:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_PASSWORD
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
-See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.
+An administrator creates both credentials before the package is registered. The first command asks for the Observium password, the second for the Infrahub token, and neither echoes it:
+
+```bash
+infrahub-sync credentials create observium-account --username <Observium username>
+infrahub-sync credentials create infrahub-token
+```
+
+See [Manage stored credentials](../guides/credentials.mdx) for the commands. See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.

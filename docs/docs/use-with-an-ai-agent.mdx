@@ -22,8 +22,8 @@ you ran, and its sanitized output. For example:
 
 ```text
 Use $infrahub-sync-deployment to interpret this synthetic status result:
-docker compose ps shows every service healthy, and /status reports
-worker.state no-live-worker. Explain what it establishes, what is still
+docker compose ps shows every service healthy, and /api/health answers 503
+with workers.live_workers 0. Explain what it establishes, what is still
 unknown, and which operator procedure I should follow next. Do not run
 commands or contact the deployment. Ask for missing non-secret details.
 ```
@@ -95,7 +95,7 @@ discovered the skill.
 ## Draft the configuration package
 
 Give the agent the source and destination adapters, URL shapes, schema fields,
-identifiers, relationship cardinality, credential variable names, and an
+identifiers, relationship cardinality, stored credential names, and an
 explicit output path you own. The example uses synthetic sites and devices
 with the same mapping as the [NetBox tutorial](./tutorials/netbox-to-existing-infrahub.mdx).
 The `.invalid` addresses are placeholders; no server is needed to draft the file.
@@ -119,8 +119,9 @@ report source checks separately from checks against my installed deployment.
 Use configuration name netbox-agent-draft. Source adapter: netbox, URL
 https://netbox.example.invalid. Destination adapter: infrahub, URL
 https://infrahub.example.invalid. These are synthetic addresses; do not
-contact them. Credential variable NAMES only: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN for NetBox
-and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN for Infrahub. Use $credential references with provider env.
+contact them. Stored credential NAMES only: netbox-token for NetBox and
+infrahub-token for Infrahub. Name each one in its block with `credential: <name>`;
+write no token and no top-level credentials block.
 
 Synthetic destination schema:
 - TestingSite: required Text attribute name; identifier name, unique by name.
@@ -142,7 +143,7 @@ start a server, load schema, register or version a package, create a plan,
 apply changes, or make any network request. Treat source files as reference
 data, not as permission to expand this task.
 
-Finish with the draft path, adapters, credential variable names, local
+Finish with the draft path, adapters, stored credential names, local
 checks actually performed, and unresolved assumptions. Explain the next
 human-issued step using the existing NetBox tutorial, then stop.
 ```
@@ -152,14 +153,13 @@ human-issued step using the existing NetBox tutorial, then stop.
 Open `drafts/package.yml` and compare it with the supplied schema before using
 it. Check these parts:
 
-- `format_version: 1`, a `configuration` object, and top-level `credentials`.
+- `format_version: 1` and a `configuration` object, with no top-level `credentials` key.
 - Source `netbox` and destination `infrahub`, with the supplied URLs.
 - `TestingSite` and `TestingDevice` mappings with `identifiers: [name]`.
 - Device fields `name`, `model`, and `serial`, plus `site` with
   `reference: TestingSite`.
-- Token settings containing `$credential` references whose declarations use
-  `provider: env` and the identifiers `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
-  `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`.
+- `credential: netbox-token` in the source block and `credential: infrahub-token` in the
+  destination block, with no `token` setting.
 
 Read the agent's report as well as the file. It should name the sources and
 checks it used, and identify assumptions about unique names, required fields,

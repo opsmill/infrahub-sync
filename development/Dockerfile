@@ -1,0 +1,174 @@
+# One Infrahub Sync image for the Sync API, the service worker, deployment
+# bootstrap, and one-off CLI or Python commands.
+#
+# Every external base carries its digest. The tag beside a digest is there for a
+# human reader; the digest is the only authority, so a re-pointed tag cannot
+# change what a rebuild of a recorded revision produces.
+
+FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS base
+
+# The pinned base predates Debian's fixes for CVE-2026-86145 (libpcre2-8-0) and
+# CVE-2026-75803, CVE-2026-63072, CVE-2026-63076, CVE-2026-54874 (libssl3,
+# openssl), and for ten perl-base findings (CVE-2026-12087, CVE-2026-13221,
+# CVE-2026-42496, CVE-2026-57433, CVE-2026-8376, CVE-2026-42497,
+# CVE-2026-48959, CVE-2026-48962, CVE-2026-57432, CVE-2026-7017). Pin the
+# fixed packages too, so rebuilds cannot silently fall back to the vulnerable
+# releases.
+#
+# The base's own pip is removed as well. uv builds the venv and the venv does not
+# see the system site-packages, so nothing in this image can run that pip, yet its
+# vendored copies (setuptools, msgpack, urllib3) are what image scanners report.
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends \
+    libpcre2-8-0=10.42-1+deb12u2 \
+    libssl3=3.0.22-1~deb12u2 \
+    openssl=3.0.22-1~deb12u2 \
+    perl-base=5.36.0-7+deb12u4 \
+ && rm -rf /var/lib/apt/lists/* \
+ && python -m pip uninstall --yes --no-cache-dir pip \
+ && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13
+
+# ---------------------------------------------------------------------------
+# Build stage: resolve nothing, install the committed lock, keep uv out of the
+# runtime image.
+# ---------------------------------------------------------------------------
+FROM base AS build
+
+COPY --from=ghcr.io/astral-sh/uv:0.9.7@sha256:ba4857bf2a068e9bc0e64eed8563b065908a4cd6bfb66b531a9c424c8e25e142 /uv /usr/local/bin/uv
+
+ENV UV_PROJECT_ENVIRONMENT=/opt/infrahub-sync/venv \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+
+WORKDIR /src
+COPY pyproject.toml uv.lock README.md LICENSE.txt ./
+
+# Third-party dependencies come from the committed lock and change only when that
+# lock does, so they install from their own layer against the shared uv cache.
+#
+# The project depends on a bare `infrahub-sdk` and takes `infrahub-sdk[ctl]` only in
+# the `service` extra, so no test framework reaches this profile and nothing has to
+# be excluded from it. `tests/image/` holds that to the built image.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --extra service
+
+COPY infrahub_sync ./infrahub_sync
+COPY opsmill_prefect_extras ./opsmill_prefect_extras
+# The NetBox demo's destination schema and configuration package. `pyproject.toml`
+# force-includes them into the wheel under `infrahub_sync/demo/assets/`, so they keep
+# their repository paths here and the wheel build below fails if either is missing.
+COPY examples/netbox_to_infrahub/package.yml ./examples/netbox_to_infrahub/package.yml
+COPY tests/data/nightly_schema/traditional-infrastructure-sot ./tests/data/nightly_schema/traditional-infrastructure-sot
+
+# One local distribution carries both import trees above. uv keys a built wheel of
+# a local distribution on metadata it can read without walking the tree, so a cache
+# hit after a Python-only edit installs the earlier source while this image's
+# recorded revision advances. Refreshing and reinstalling that one package builds
+# its wheel from the source copied above; every dependency still comes from cache.
+#
+# `--no-editable` installs the project as a built distribution, so the runtime
+# resolves `infrahub_sync` — and the worker's managed flow — by installed dotted
+# identity rather than from a source tree the image would then have to carry.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable --extra service \
+        --refresh-package infrahub-sync --reinstall-package infrahub-sync
+
+# ---------------------------------------------------------------------------
+# Web stage: build the web interface; no Node runtime reaches the runtime image.
+# ---------------------------------------------------------------------------
+# node:22-bookworm-slim matches the Node series of the frontend CI job. As above,
+# the tag is for the reader and the digest is the authority.
+FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS web
+
+WORKDIR /src/frontend
+
+# Corepack installs the pnpm release that `packageManager` in package.json names.
+RUN corepack enable
+
+# The install reads only the manifests, so it is copied first: a change to the
+# sources then reuses the installed dependencies instead of installing them again.
+COPY frontend/.npmrc frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+# The `[d]` wildcard lets the copy match nothing when the submodule was not
+# fetched, so the guard below can name the cause instead of the COPY failing
+# with a bare "not found".
+COPY fronten[d]/vendor/infrahub/frontend/packages/ui/package.json ./vendor/infrahub/frontend/packages/ui/
+
+# Without the submodule, `pnpm install --frozen-lockfile` still succeeds and the
+# build fails later in `vite build` with an error that does not name the cause.
+RUN test -f vendor/infrahub/frontend/packages/ui/package.json || { echo "frontend/vendor/infrahub is missing: run git submodule update --init frontend/vendor/infrahub" >&2; exit 1; }
+
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+COPY frontend/index.html frontend/vite.config.ts frontend/tsconfig.json frontend/tsr.config.json ./
+COPY frontend/src ./src
+# Only the design system package of the opsmill/infrahub submodule; the rest of
+# the submodule is not part of the build.
+COPY fronten[d]/vendor/infrahub/frontend/packages/ui ./vendor/infrahub/frontend/packages/ui
+
+RUN pnpm build
+
+# ---------------------------------------------------------------------------
+# Runtime stage
+# ---------------------------------------------------------------------------
+FROM base AS runtime
+
+ARG VERSION
+ARG REVISION
+ARG CREATED
+# The SHA-256 of `development/Dockerfile`, `pyproject.toml`, `uv.lock` and the web interface's
+# build inputs under `frontend/`, set only by the development build. The
+# development tasks compare it with the checkout to decide whether the image
+# needs a rebuild. Release builds leave it empty.
+ARG BUILD_INPUTS=""
+
+LABEL org.opsmill.infrahub-sync.build-inputs="${BUILD_INPUTS}" \
+      org.opencontainers.image.title="infrahub-sync" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.source="https://github.com/opsmill/infrahub-sync" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.created="${CREATED}"
+
+# The three directories below are the only paths any command in this image
+# writes to, so a deployment can mount them and leave the root filesystem
+# read-only. Everything else — the interpreter, the installed distribution, and
+# the recorded lock — stays owned by root and unwritable by the runtime user.
+RUN groupadd --system --gid 10001 infrahub-sync \
+ && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /var/lib/infrahub-sync infrahub-sync \
+ && install -d -o 10001 -g 10001 -m 0755 \
+      /var/lib/infrahub-sync \
+      /var/lib/infrahub-sync/prefect \
+      /tmp/infrahub-sync
+
+# tini is the first process (PID 1) of every container started from this image.
+# The kernel delivers no signal to PID 1 that has no handler, and PID 1 must
+# collect the exit status of orphaned processes. tini does both: it passes
+# SIGTERM on to the command (`-g`: to its whole process group, so the child
+# process of each run receives it too) and removes finished orphans. Same
+# entrypoint as the Infrahub image.
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends tini=0.19.0-1+b3 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build --chown=0:0 /opt/infrahub-sync/venv /opt/infrahub-sync/venv
+COPY --chown=0:0 pyproject.toml uv.lock /opt/infrahub-sync/
+# The built web interface, served by the Sync API at the root.
+COPY --from=web --chown=0:0 /src/frontend/dist /opt/infrahub-sync/web
+
+ENV PATH=/opt/infrahub-sync/venv/bin:$PATH \
+    HOME=/var/lib/infrahub-sync \
+    PREFECT_HOME=/var/lib/infrahub-sync/prefect \
+    TMPDIR=/tmp/infrahub-sync \
+    INFRAHUB_SYNC_WEB_DIRECTORY=/opt/infrahub-sync/web
+
+USER 10001:10001
+WORKDIR /var/lib/infrahub-sync
+
+# The API is the default because it is the safe one: it admits nothing until it
+# is configured. The worker, the bootstrap, the CLI, and Python are explicit
+# command overrides, which is why this image needs no shell dispatcher. A Compose
+# `command:` keeps this entrypoint. A Kubernetes `command:` replaces it, so the
+# Helm chart starts each command with `/usr/bin/tini -g --` itself.
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
+CMD ["python", "-m", "infrahub_sync.service.serve"]

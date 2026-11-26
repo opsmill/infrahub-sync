@@ -26,17 +26,15 @@ configuration:
   name: my-nautobot-evaluation
   source:
     name: nautobot
+    credential: nautobot-token
     settings:
       url: https://nautobot.example.invalid
-      token:
-        $credential: nautobot-token
       depth: 1
   destination:
     name: infrahub
+    credential: infrahub-token
     settings:
       url: https://infrahub.example.invalid
-      token:
-        $credential: infrahub-token
   schema_mapping:
     - name: TestingSite
       mapping: dcim.locations
@@ -57,13 +55,6 @@ configuration:
         - name: site
           mapping: location
           reference: TestingSite
-credentials:
-  nautobot-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN
-  infrahub-token:
-    provider: env
-    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
 The sections below explain each part. For the package format itself, see
@@ -71,7 +62,7 @@ The sections below explain each part. For the package format itself, see
 
 ## Source and destination
 
-`source` and `destination` each name an adapter and its connection settings:
+`source` and `destination` each name an adapter, a stored credential and the connection settings:
 
 - `name` selects a bundled adapter. See [Choose an adapter](./adapters/choosing-an-adapter.mdx)
   for the adapters and their settings.
@@ -85,18 +76,32 @@ The sections below explain each part. For the package format itself, see
   `http://host.docker.internal:<port>`. The root `docker-compose.yml` adds no such route, so on
   a Compose deployment use an address the worker can reach on your network, or add the route
   yourself. Docker Desktop resolves the name without a route; Docker Engine on Linux does not.
-- A token or password is a `$credential` reference, never a literal value.
+- `credential` names the stored credential that holds the token or the password. The package
+  never holds a value, and `settings` holds no `token`, `username` or `password`.
 
 A registered run can write only to Infrahub, so `destination.name` is `infrahub`.
 
 ## Credentials
 
-The `credentials` block declares each `$credential` reference. `identifier` is the name of
-the environment variable that the Sync worker reads when a run starts. In this example, the
-worker needs `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. On a Compose deployment, set them in
-the deployment's `.env`, then run `docker compose up -d --wait`. On the local development
-stack, export them in your shell, then run `uv run invoke dev.start`. See
-[Credentials](./configuration-package.mdx#credentials).
+Each block names a stored credential with `credential: <name>`. An administrator creates each
+one in the Sync API before the package is registered. In this example, both hold a token. Each
+command asks for the token and does not echo it:
+
+```bash
+infrahub-sync credentials create nautobot-token
+infrahub-sync credentials create infrahub-token
+```
+
+The worker gets the values from the Sync API for each run. It needs no credential variable and
+no restart, on a Compose deployment and on the local development stack. Registration refuses a
+package that names a credential that does not exist. See
+[Credentials](./configuration-package.mdx#credentials) and
+[Manage stored credentials](./guides/credentials.mdx).
+
+On the local development stack, `uv run invoke dev.start` stores the credential
+`infrahub-token` itself, with the token of the stack's own Infrahub or the value of
+`INFRAHUB_SYNC_DEV_INFRAHUB_TOKEN`. Use `infrahub-sync credentials set infrahub-token` to
+replace its value.
 
 ## Schema mapping
 

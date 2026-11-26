@@ -28,6 +28,9 @@ from infrahub_sync.client import (
     CreateRunRequest,
     EventPage,
     EventResource,
+    NotSyncAPIError,
+    PackageCheckRequest,
+    PackageCheckResource,
     PlanReportPageResource,
     PrincipalResource,
     ProtocolError,
@@ -48,6 +51,26 @@ NOW = datetime(2026, 8, 30, 12, tzinfo=timezone.utc).isoformat()
 
 def _version(**extra: object) -> dict[str, object]:
     return {"server_version": "3.0.0", "api_versions": ["v3-unstable"], "stability": "unstable", **extra}
+
+
+def _health(**extra: object) -> dict[str, object]:
+    return {
+        "status": "healthy",
+        "dependencies": [{"name": "database", "status": "up", "error": "none"}],
+        "workers": {
+            "state": "known",
+            "minimum": 1,
+            "live_workers": 1,
+            "queue_depth": 0,
+            "items": [{"name": "worker-1", "state": "live", "last_heartbeat": NOW}],
+        },
+        "timestamp": NOW,
+        **extra,
+    }
+
+
+def _unhealthy_health() -> dict[str, object]:
+    return _health(status="unhealthy", dependencies=[{"name": "database", "status": "down", "error": "timeout"}])
 
 
 def _run(run_id: str = "run-1") -> dict[str, object]:
@@ -149,12 +172,47 @@ def test_constructor_closes_connection_inputs(url: str, token: str, timeout: obj
     assert TOKEN not in repr(raised.value)
 
 
+@pytest.mark.parametrize(
+    ("configured", "service_url", "requested"),
+    [
+        ("http://sync-api:8000", "http://sync-api:8000", "http://sync-api:8000/api/version"),
+        ("http://sync-api:8000/", "http://sync-api:8000", "http://sync-api:8000/api/version"),
+        ("http://sync-api:8000/api", "http://sync-api:8000", "http://sync-api:8000/api/version"),
+        ("http://sync-api:8000/api/", "http://sync-api:8000", "http://sync-api:8000/api/version"),
+        ("https://proxy.example/sync", "https://proxy.example/sync", "https://proxy.example/sync/api/version"),
+        ("https://proxy/sync/api", "https://proxy/sync", "https://proxy/sync/api/version"),
+        # Only a whole trailing `api` path segment is removed: not a host named `api`, not `myapi`.
+        ("http://api", "http://api", "http://api/api/version"),
+        ("http://host/myapi", "http://host/myapi", "http://host/myapi/api/version"),
+        # A percent-encoded path keeps its encoding: `%2F` is not a separator, `%3F` not a query.
+        ("https://proxy/a%2Fb/api", "https://proxy/a%2Fb", "https://proxy/a%2Fb/api/version"),
+        ("https://proxy/a%3Fb", "https://proxy/a%3Fb", "https://proxy/a%3Fb/api/version"),
+        # An empty query or fragment is dropped, so the route never lands after `?` or `#`.
+        ("http://sync-api:8000/sync?", "http://sync-api:8000/sync", "http://sync-api:8000/sync/api/version"),
+        ("http://sync-api:8000/api#", "http://sync-api:8000", "http://sync-api:8000/api/version"),
+        ("http://sync-api:8000/?#", "http://sync-api:8000", "http://sync-api:8000/api/version"),
+    ],
+)
+def test_the_client_adds_api_to_the_service_address(configured: str, service_url: str, requested: str) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=_version())
+
+    client = SyncClient(configured, TOKEN, transport=httpx.MockTransport(handler))
+    client.get_version()
+
+    assert client.service_url == service_url
+    assert [str(request.url) for request in requests] == [requested]
+
+
 def test_compatibility_precedes_auth_and_is_cached() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version(future="readable"))
         return httpx.Response(200, json={"items": [], "next_cursor": None})
 
@@ -162,7 +220,7 @@ def test_compatibility_precedes_auth_and_is_cached() -> None:
     assert client.list_configs().items == ()
     assert client.list_configs().items == ()
 
-    assert [request.url.path for request in requests] == ["/version", "/configs", "/configs"]
+    assert [request.url.path for request in requests] == ["/api/version", "/api/configs", "/api/configs"]
     assert "Authorization" not in requests[0].headers
     assert requests[1].headers["Authorization"] == f"Bearer {TOKEN}"
     assert client.get_version().model_extra == {"future": "readable"}
@@ -172,7 +230,7 @@ def test_compatibility_precedes_auth_and_is_cached() -> None:
     "response",
     [
         httpx.Response(503, json={"error": {"code": "down"}}),
-        httpx.Response(200, content=b"not-json"),
+        httpx.Response(200, headers={"Content-Type": "application/json"}, content=b"not-json"),
         httpx.Response(200, json={}),
         httpx.Response(200, json={"server_version": "3", "api_versions": [], "stability": "unstable"}),
         httpx.Response(200, json={"server_version": "3", "api_versions": ["v4"], "stability": "stable"}),
@@ -188,7 +246,7 @@ def test_compatibility_refuses_before_protected_request(response: httpx.Response
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
     with pytest.raises(CompatibilityError):
         client.list_configs()
-    assert [request.url.path for request in requests] == ["/version"]
+    assert [request.url.path for request in requests] == ["/api/version"]
     assert "Authorization" not in requests[0].headers
 
 
@@ -215,17 +273,14 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
     version = _config_version()
     config = {"config_id": "cfg", "created_at": NOW}
     responses: dict[tuple[str, str], tuple[int, object]] = {
-        ("GET", "/status"): (
-            200,
-            {"service": "ready", "worker": {"state": "unavailable", "detail_available": False, "observed_at": None}},
-        ),
-        ("POST", "/configs"): (201, {"configuration": config, "version": version}),
-        ("POST", "/configs/cfg/versions"): (200, {"version": version, "created": False}),
-        ("GET", "/configs"): (200, {"items": [config], "next_cursor": None}),
-        ("GET", "/configs/cfg"): (200, config),
-        ("GET", "/configs/cfg/versions"): (200, {"items": [version], "next_cursor": None}),
-        ("GET", "/configs/cfg/versions/1"): (200, version),
-        ("POST", "/configs/cfg/versions/1/validate?offset=2&limit=3"): (
+        ("GET", "/api/health"): (200, _health()),
+        ("POST", "/api/configs"): (201, {"configuration": config, "version": version}),
+        ("POST", "/api/configs/cfg/versions"): (200, {"version": version, "created": False}),
+        ("GET", "/api/configs"): (200, {"items": [config], "next_cursor": None}),
+        ("GET", "/api/configs/cfg"): (200, config),
+        ("GET", "/api/configs/cfg/versions"): (200, {"items": [version], "next_cursor": None}),
+        ("GET", "/api/configs/cfg/versions/1"): (200, version),
+        ("POST", "/api/configs/cfg/versions/1/validate?offset=2&limit=3"): (
             200,
             {
                 **version,
@@ -237,22 +292,22 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
                 "next_offset": None,
             },
         ),
-        ("POST", "/runs"): (202, _run()),
-        ("GET", "/runs/run-1"): (200, _run()),
-        ("GET", "/runs/run-1/plan"): (
+        ("POST", "/api/runs"): (202, _run()),
+        ("GET", "/api/runs/run-1"): (200, _run()),
+        ("GET", "/api/runs/run-1/plan"): (
             200,
             _plan_response(),
         ),
-        ("GET", "/runs/run-1/results"): (200, {"run_id": "run-1", "results": {}}),
-        ("GET", "/runs/run-1/artifacts"): (200, {"run_id": "run-1", "artifacts": []}),
-        ("POST", "/runs/run-1/verify"): (202, _run()),
-        ("POST", "/runs/run-1/apply"): (202, _run()),
-        ("POST", "/runs/run-1/cancel"): (202, _run()),
+        ("GET", "/api/runs/run-1/results"): (200, {"run_id": "run-1", "results": {}}),
+        ("GET", "/api/runs/run-1/artifacts"): (200, {"run_id": "run-1", "artifacts": []}),
+        ("POST", "/api/runs/run-1/verify"): (202, _run()),
+        ("POST", "/api/runs/run-1/apply"): (202, _run()),
+        ("POST", "/api/runs/run-1/cancel"): (202, _run()),
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         key = (request.method, request.url.raw_path.decode())
         status, body = responses[key]
@@ -260,7 +315,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
 
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
     mutation = ConfigMutationRequest(package={"format_version": 1}, reason="test")
-    client.get_status()
+    client.get_health()
     client.register_config(mutation, "key-1")
     client.create_config_version("cfg", mutation, "key-2")
     client.list_configs()
@@ -277,7 +332,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
     client.apply_run("run-1", ApplyRunRequest(expected_checksum="a" * 64, confirm_writes=True, reason="test"), "key-5")
     client.cancel_run("run-1", CancelRunRequest(reason="test"), "key-6")
 
-    protected = [request for request in requests if request.url.path not in {"/version", "/status"}]
+    protected = [request for request in requests if request.url.path not in {"/api/version", "/api/health"}]
     assert all(request.headers["Authorization"] == f"Bearer {TOKEN}" for request in protected)
     assert [request.headers.get("Idempotency-Key") for request in requests if request.method == "POST"] == [
         "key-1",
@@ -297,12 +352,12 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
         "reason": "test",
     }
     body_paths = {
-        "/configs",
-        "/configs/cfg/versions",
-        "/configs/cfg/versions/1/validate?offset=2&limit=3",
-        "/runs/run-1/verify",
-        "/runs/run-1/apply",
-        "/runs/run-1/cancel",
+        "/api/configs",
+        "/api/configs/cfg/versions",
+        "/api/configs/cfg/versions/1/validate?offset=2&limit=3",
+        "/api/runs/run-1/verify",
+        "/api/runs/run-1/apply",
+        "/api/runs/run-1/cancel",
     }
     mutation_bodies = {
         request.url.raw_path.decode(): json.loads(request.content) if request.content else None
@@ -310,23 +365,23 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
         if request.method == "POST" and request.url.raw_path.decode() in body_paths
     }
     assert mutation_bodies == {
-        "/configs": {"package": {"format_version": 1}, "reason": "test"},
-        "/configs/cfg/versions": {"package": {"format_version": 1}, "reason": "test"},
-        "/configs/cfg/versions/1/validate?offset=2&limit=3": None,
-        "/runs/run-1/verify": {"reason": "test"},
-        "/runs/run-1/apply": {
+        "/api/configs": {"package": {"format_version": 1}, "reason": "test"},
+        "/api/configs/cfg/versions": {"package": {"format_version": 1}, "reason": "test"},
+        "/api/configs/cfg/versions/1/validate?offset=2&limit=3": None,
+        "/api/runs/run-1/verify": {"reason": "test"},
+        "/api/runs/run-1/apply": {
             "expected_checksum": "a" * 64,
             "confirm_writes": True,
             "branch": None,
             "reason": "test",
         },
-        "/runs/run-1/cancel": {"reason": "test"},
+        "/api/runs/run-1/cancel": {"reason": "test"},
     }
 
 
 def test_get_results_parses_schema_drift_apply_failure() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(
             200,
@@ -352,7 +407,7 @@ def test_get_results_parses_schema_drift_apply_failure() -> None:
 
 def test_register_config_403_retains_machine_fields_and_discards_secrets() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(
             403,
@@ -385,11 +440,39 @@ def test_register_config_403_retains_machine_fields_and_discards_secrets() -> No
     assert raised.value.__cause__ is None
 
 
+def test_register_config_name_in_use_keeps_the_configuration_that_has_the_name() -> None:
+    details = {"config_id": "20261120T1249-9d57f620", "name": "from-netbox"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            409,
+            json={
+                "error": {
+                    "code": "configuration-name-in-use",
+                    "message": "server message",
+                    "status": 409,
+                    "details": details,
+                }
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+    request = ConfigMutationRequest(package={"format_version": 1}, reason="test")
+
+    with pytest.raises(APIError) as raised:
+        client.register_config(request, "key-1")
+
+    assert not isinstance(raised.value, ConfigsAPIError)
+    assert (raised.value.status, raised.value.code, raised.value.details) == (409, "configuration-name-in-use", details)
+
+
 @pytest.mark.parametrize(
     ("response", "error_type"),
     [
-        (httpx.Response(307, headers={"Location": "https://other.test/configs"}), ProtocolError),
-        (httpx.Response(200, content=b"not-json"), ProtocolError),
+        (httpx.Response(307, headers={"Location": "https://other.test/configs"}), NotSyncAPIError),
+        (httpx.Response(200, headers={"Content-Type": "application/json"}, content=b"not-json"), ProtocolError),
         (httpx.Response(200, json={"wrong": True}), ProtocolError),
         (httpx.Response(418, json={"error": {"code": "teapot", "message": "secret", "status": 418}}), ProtocolError),
         (
@@ -426,7 +509,7 @@ def test_register_config_403_retains_machine_fields_and_discards_secrets() -> No
 )
 def test_response_failures_are_typed_and_secret_safe(response: httpx.Response, error_type: type[Exception]) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return response
 
@@ -438,7 +521,48 @@ def test_response_failures_are_typed_and_secret_safe(response: httpx.Response, e
     assert raised.value.__cause__ is None
 
 
-def test_status_accepts_only_its_declared_success_status() -> None:
+def test_get_health_returns_a_healthy_report_for_200() -> None:
+    client = SyncClient(
+        "https://example.test",
+        TOKEN,
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=_health())),
+    )
+
+    report = client.get_health()
+
+    assert report.status == "healthy"
+    assert report.workers.live_workers == 1
+
+
+def test_get_health_returns_an_unhealthy_report_for_503() -> None:
+    body = _health(
+        status="unhealthy",
+        dependencies=[{"name": "database", "status": "down", "error": "timeout"}],
+    )
+    client = SyncClient(
+        "https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: httpx.Response(503, json=body))
+    )
+
+    report = client.get_health()
+
+    assert report.status == "unhealthy"
+    assert report.dependencies[0].error == "timeout"
+
+
+def test_get_health_sends_no_credential() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=_health())
+
+    SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler)).get_health()
+
+    assert [request.url.path for request in requests] == ["/api/health"]
+    assert "Authorization" not in requests[0].headers
+
+
+def test_get_health_raises_the_error_envelope_error_for_a_503_envelope() -> None:
     response = httpx.Response(
         503,
         json={
@@ -453,8 +577,42 @@ def test_status_accepts_only_its_declared_success_status() -> None:
     )
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: response))
 
-    with pytest.raises(ProtocolError):
-        client.get_status()
+    with pytest.raises(APIError) as raised:
+        client.get_health()
+
+    assert (raised.value.status, raised.value.code) == (503, "unavailable")
+    assert "secret" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param(
+            httpx.Response(
+                404,
+                json={
+                    "error": {"code": "not_found", "message": "x", "status": 404, "run_id": None, "mutation_id": None}
+                },
+            ),
+            id="404",
+        ),
+        pytest.param(httpx.Response(500, json=_health()), id="500"),
+        pytest.param(
+            httpx.Response(200, content=b"not json", headers={"Content-Type": "application/json"}), id="non-json"
+        ),
+        pytest.param(httpx.Response(200, json={"status": "healthy"}), id="200-invalid-body"),
+        pytest.param(httpx.Response(503, json={"status": "unhealthy"}), id="503-invalid-body"),
+        pytest.param(httpx.Response(200, json=_unhealthy_health()), id="200-unhealthy-report"),
+        pytest.param(httpx.Response(503, json=_health()), id="503-healthy-report"),
+    ],
+)
+def test_get_health_raises_protocol_error_for_any_other_answer(response: httpx.Response) -> None:
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: response))
+
+    with pytest.raises(ProtocolError) as raised:
+        client.get_health()
+
+    assert raised.value.operation == "get_health"
 
 
 def test_json_response_over_16_mib_is_a_protocol_error() -> None:
@@ -462,7 +620,7 @@ def test_json_response_over_16_mib_is_a_protocol_error() -> None:
     assert json.loads(oversized_json) == []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(200, content=oversized_json, headers={"Content-Type": "application/json"})
 
@@ -482,7 +640,7 @@ def test_partial_execution_terminal_fields_are_a_protocol_error() -> None:
     execution["terminal_state"] = "failed"
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(200, json=response)
 
@@ -500,7 +658,7 @@ def test_malformed_plan_summary_is_a_protocol_error() -> None:
     del summary["total"]
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(200, json=response)
 
@@ -518,7 +676,7 @@ def test_malformed_plan_operation_is_a_protocol_error() -> None:
     del operations[0]["kind"]
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(200, json=response)
 
@@ -569,7 +727,7 @@ def test_artifact_requires_a_matching_digest(digest_header: str | None) -> None:
     data = b"artifact"
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         headers = {"Content-Type": "application/octet-stream"}
         if digest_header is not None:
@@ -587,7 +745,7 @@ def test_artifact_requires_a_matching_digest(digest_header: str | None) -> None:
         transport=httpx.MockTransport(
             lambda request: (
                 httpx.Response(200, json=_version())
-                if request.url.path == "/version"
+                if request.url.path == "/api/version"
                 else httpx.Response(
                     200, content=data, headers={"Content-Type": "application/octet-stream", "Digest": matching}
                 )
@@ -607,7 +765,7 @@ def _list_client(pages: dict[str | None, object], requests: list[httpx.Request])
     """Answer each list request with the page keyed by its ``cursor`` query parameter."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         requests.append(request)
         return httpx.Response(200, json=pages[request.url.params.get("cursor")])
@@ -625,7 +783,7 @@ def test_list_runs_sends_filters_limit_and_cursor_and_parses_the_page() -> None:
     assert [run.run_id for run in page.items] == ["run-2"]
     assert page.items[0].destination_branch == "main"
     assert page.next_cursor == "c2"
-    assert requests[0].url.path == "/runs"
+    assert requests[0].url.path == "/api/runs"
     assert dict(requests[0].url.params) == {
         "config_id": "cfg",
         "registry_version": "3",
@@ -711,14 +869,14 @@ def test_me_parses_the_principal() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(200, json={"actor": "operator", "administrator": True})
 
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
 
     assert client.me() == PrincipalResource(actor="operator", administrator=True)
-    assert [request.url.path for request in requests] == ["/version", "/me"]
+    assert [request.url.path for request in requests] == ["/api/version", "/api/me"]
     assert requests[1].headers["Authorization"] == f"Bearer {TOKEN}"
 
 
@@ -733,7 +891,7 @@ def test_list_configs_sends_name_limit_and_cursor_and_parses_the_page() -> None:
     assert page.items[0].name == "from-netbox"
     assert page.items[0].latest_version == 2
     assert page.next_cursor is None
-    assert requests[0].url.path == "/configs"
+    assert requests[0].url.path == "/api/configs"
     assert dict(requests[0].url.params) == {"name": "from-netbox", "limit": "5", "cursor": "c1"}
 
 
@@ -767,7 +925,7 @@ def test_list_config_versions_sends_limit_and_cursor_and_parses_the_page() -> No
     assert page.items[0].latest_run is not None
     assert page.items[0].latest_run.run_id == "run-1"
     assert page.next_cursor == "c2"
-    assert requests[0].url.path == "/configs/cfg/versions"
+    assert requests[0].url.path == "/api/configs/cfg/versions"
     assert dict(requests[0].url.params) == {"limit": "1", "cursor": "c1"}
 
 
@@ -806,7 +964,7 @@ def test_approve_posts_the_reviewed_checksum_and_parses_the_approved_run(method:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(200, json=_approved_run())
 
@@ -816,7 +974,7 @@ def test_approve_posts_the_reviewed_checksum_and_parses_the_approved_run(method:
     approved = getattr(client, method)("run-1", request, "key-approve")
 
     sent = requests[-1]
-    assert (sent.method, sent.url.path) == ("POST", "/runs/run-1/approve")
+    assert (sent.method, sent.url.path) == ("POST", "/api/runs/run-1/approve")
     assert sent.headers["Idempotency-Key"] == "key-approve"
     assert sent.headers["Authorization"] == f"Bearer {TOKEN}"
     assert json.loads(sent.content) == {"expected_checksum": "a" * 64, "reason": "reviewed"}
@@ -829,7 +987,7 @@ def test_approve_posts_the_reviewed_checksum_and_parses_the_approved_run(method:
 
 def test_approve_refusal_is_a_typed_api_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(
             409,
@@ -862,9 +1020,9 @@ def test_cancel_run_accepts_the_200_of_a_withdrawn_plan() -> None:
     withdrawn = {**base, "run": {**run, "phase": "cancelled"}}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
-        assert (request.method, request.url.path) == ("POST", "/runs/run-1/cancel")
+        assert (request.method, request.url.path) == ("POST", "/api/runs/run-1/cancel")
         return httpx.Response(200, json=withdrawn)
 
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
@@ -892,7 +1050,7 @@ def _events_client(pages: dict[str, object], requests: list[httpx.Request]) -> S
     """Answer each event-list request with the page keyed by its ``offset`` query parameter."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         requests.append(request)
         return httpx.Response(200, json=pages[request.url.params.get("offset", "0")])
@@ -930,7 +1088,7 @@ def test_list_events_sends_the_contract_query_and_parses_the_page() -> None:
     assert event.primary_resource is not None
     assert (event.primary_resource.kind, event.primary_resource.id) == ("run", "run-1")
     assert [(item.kind, item.id) for item in event.related] == [("account", "alice"), ("branch", "main")]
-    assert requests[0].url.path == "/events"
+    assert requests[0].url.path == "/api/events"
     assert requests[0].url.params.multi_items() == [
         ("run_id", "run-1"),
         ("config_id", "cfg"),
@@ -1030,7 +1188,7 @@ def _log_page(**extra: object) -> dict[str, object]:
 
 def _logs_client(response: httpx.Response, requests: list[httpx.Request]) -> SyncClient:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         requests.append(request)
         return response
@@ -1056,7 +1214,7 @@ def test_read_run_logs_sends_the_contract_query_and_parses_the_page() -> None:
     assert isinstance(line, RunLogLine)
     assert (line.stage, line.attempt, line.level, line.source) == ("plan", 1, "ERROR", "infrahub_sync.service.flow")
     assert line.timestamp == datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
-    assert requests[0].url.path == "/runs/run-1/logs"
+    assert requests[0].url.path == "/api/runs/run-1/logs"
     assert requests[0].url.params.multi_items() == [("stage", "plan"), ("limit", "50"), ("offset", "3")]
 
 
@@ -1180,14 +1338,14 @@ def test_the_plan_report_reads_send_paging_and_filters_and_parse_the_page(
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.url.path == "/version":
+        if request.url.path == "/api/version":
             return httpx.Response(200, json=_version())
         return httpx.Response(200, json=_report_page([entry], next_offset=2))
 
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
     page = cast("PlanReportPageResource", read(client))
 
-    assert requests[-1].url.raw_path.decode() == f"/runs/run-1/plan/{route}?{query}"
+    assert requests[-1].url.raw_path.decode() == f"/api/runs/run-1/plan/{route}?{query}"
     assert page.entries == (entry,)
     assert (page.total, page.next_offset) == (3, 2)
 
@@ -1225,3 +1383,110 @@ def test_validate_config_refuses_a_branch_with_surrounding_whitespace(branch: st
     with pytest.raises(ClientInputError):
         client.validate_config("cfg", 1, branch=branch)
     assert requests == []
+
+
+def _package_check(**extra: object) -> dict[str, object]:
+    return {
+        "package_checksum": "b" * 64,
+        "name": "edge-sync",
+        "declared_content": {"format_version": 1, "configuration": {"name": "edge-sync"}},
+        "destination_read": "not_requested",
+        "destination_schema_fingerprint": None,
+        "offset": 0,
+        "limit": 256,
+        "total_findings": 1,
+        "next_offset": None,
+        "findings": [{"code": "finding", "severity": "warning", "location": "/a", "message": "a finding"}],
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("request_fields", "body"),
+    [
+        pytest.param(
+            {"package": {"format_version": 1, "configuration": {"name": "edge-sync"}}},
+            {"package": {"format_version": 1, "configuration": {"name": "edge-sync"}}},
+            id="package",
+        ),
+        pytest.param(
+            {"document": "format_version: 1\nconfiguration:\n  name: edge-sync\n"},
+            {"document": "format_version: 1\nconfiguration:\n  name: edge-sync\n"},
+            id="document",
+        ),
+    ],
+)
+def test_check_package_posts_exactly_one_field_without_an_idempotency_key(
+    request_fields: dict[str, object], body: dict[str, object]
+) -> None:
+    """contracts/sync-api.md: `POST /api/configs/validate` takes one of `package` and `document`."""
+    requests: list[httpx.Request] = []
+    client = _list_client({None: _package_check(destination_read="read")}, requests)
+
+    report = client.check_package(
+        PackageCheckRequest.model_validate(request_fields), offset=2, limit=3, branch="review"
+    )
+
+    (request,) = requests
+    assert (request.method, request.url.path) == ("POST", "/api/configs/validate")
+    assert dict(request.url.params) == {"offset": "2", "limit": "3", "branch": "review"}
+    assert json.loads(request.content) == body
+    assert "Idempotency-Key" not in request.headers
+    assert request.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert isinstance(report, PackageCheckResource)
+    assert report.destination_read == "read"
+    assert [finding.code for finding in report.findings] == ["finding"]
+
+
+def test_check_package_without_a_branch_sends_no_branch() -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({None: _package_check()}, requests)
+
+    client.check_package(PackageCheckRequest(package={"format_version": 1}))
+
+    assert dict(requests[0].url.params) == {"offset": "0", "limit": "256"}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"offset": -1}, id="negative-offset"),
+        pytest.param({"limit": 0}, id="zero-limit"),
+        pytest.param({"limit": 257}, id="limit-over-256"),
+        pytest.param({"branch": " main"}, id="untrimmed-branch"),
+        pytest.param({"branch": ""}, id="empty-branch"),
+    ],
+)
+def test_check_package_refuses_bad_page_or_branch_arguments_before_sending(arguments: dict[str, object]) -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({}, requests)
+
+    with pytest.raises(ClientInputError):
+        client.check_package(PackageCheckRequest(package={"format_version": 1}), **arguments)  # ty: ignore[invalid-argument-type]
+    assert requests == []
+
+
+def test_check_package_v2_refusal_is_a_configs_api_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            422,
+            json={
+                "error": {
+                    "code": "validation",
+                    "message": "run infrahub-sync configs convert",
+                    "status": 422,
+                    "family": "validation",
+                    "reason": "v2_configuration",
+                }
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ConfigsAPIError) as raised:
+        client.check_package(PackageCheckRequest(document="source: {}\ndestination: {}\n"))
+
+    assert raised.value.status == 422
+    assert raised.value.reason == "v2_configuration"

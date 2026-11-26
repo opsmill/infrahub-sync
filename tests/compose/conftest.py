@@ -34,6 +34,7 @@ from tests.docker_image import (
     image_reference,
     missing_image_settings,
 )
+from tests.helpers.stored_credentials import TEST_ENCRYPTION_KEY_BASE64
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator, Mapping, Sequence
@@ -160,8 +161,11 @@ CONTRACT_ENVIRONMENT: dict[str, str] = {
     "INFRAHUB_SYNC_PREFECT_AUTH_STRING": "contract-prefect-auth-string",
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "contract-access-key",
     "INFRAHUB_SYNC_S3_SECRET_KEY": "contract-secret-key",
-    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"contract": {"token": "contract-token-0123456789"}}',
-    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "contract-destination-token",
+    "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": "contract-admin-account-password",
+    # Stored credentials: the key only has to be 32 bytes of base64, and the worker token at
+    # least 16 characters and another value than the token of `admin`.
+    "INFRAHUB_SYNC_ENCRYPTION_KEY": TEST_ENCRYPTION_KEY_BASE64,
+    "INFRAHUB_SYNC_WORKER_TOKEN": "contract-worker-account-token",
 }
 
 
@@ -338,7 +342,7 @@ def docker_daemon() -> None:
 
 # How to name the image under test, quoted wherever the suite refuses to guess one.
 IMAGE_USAGE = (
-    "build one with `docker build -t infrahub-sync:compose-test .` and run "
+    "build one with `docker build -f development/Dockerfile -t infrahub-sync:compose-test .` and run "
     f"`{IMAGE_REPOSITORY_ENV}=infrahub-sync {IMAGE_VERSION_ENV}=compose-test uv run pytest -m compose tests/compose`"
 )
 
@@ -475,12 +479,24 @@ def canaries() -> dict[str, str]:
     rows look for, and a deployment whose credentials were constants could not
     prove anything about that.
     """
-    from tests.compose.lifecycle import canary
+    from tests.compose.lifecycle import canary, encryption_key
 
     planted = {
         kind: canary(kind)
-        for kind in ("administrator", "product", "prefect", "prefect_auth", "object_store", "principal")
+        for kind in (
+            "administrator",
+            "product",
+            "prefect",
+            "prefect_auth",
+            "object_store",
+            "admin_account",
+            "principal",
+            # The token of the `worker` account, which reads the values of stored credentials.
+            "worker",
+        )
     }
+    # The key of stored credentials: 32 bytes of base64, which `canary` cannot produce.
+    planted["encryption_key"] = encryption_key()
     # Registered at the boundary, so no retained Compose or Docker stream can
     # render one. The sweeps still search the raw streams for these values.
     SECRETS.register(*planted.values())
@@ -513,7 +529,6 @@ def deployment(
     environment_file = operator_environment(
         directory,
         image=sync_image,
-        destination_token=infrahub_fixture["token"],
         canaries=canaries,
     )
     started = Deployment(instance=instance, environment_file=environment_file, overrides=(FIXTURE_OVERRIDE,))
@@ -529,6 +544,8 @@ def deployment(
             "the deployment reporting a live worker",
             lambda: worker_state(started) in {"ready", "busy"},
         )
+        # The credential the smoke package names, stored before any test registers it.
+        started.store_destination_token(infrahub_fixture["token"])
         yield started
     finally:
         started.down(volumes=True)

@@ -119,12 +119,15 @@ metric, needs its own distinct name.
 | `timeout` | number | No | 10 | Request timeout in seconds |
 | `verify_ssl` | boolean | No | true | Verify SSL certificates |
 | `auth_method` | string | No | `none` | Authentication: `none`, `basic`, or `bearer` |
-| `username` | `$credential` reference | No | - | Username for basic auth |
-| `password` | `$credential` reference | No | - | Password for basic auth |
-| `token` | `$credential` reference | No | - | Token for bearer auth |
 | `headers` | object | No | - | Additional HTTP headers. Direct adapter use only: registration refuses this setting. |
 | `params` | object | No | - | Query parameters for scrape mode. Direct adapter use only: registration refuses this setting. |
 | `promql.resources` | object | No | - | PromQL queries for API mode (`resource_name`: `query`) |
+
+In a registered package, the source block names a stored credential with `credential: <name>`, next to `name` and `settings`, when `auth_method` is `basic` or `bearer`:
+
+| Key of the block | Required | Description |
+| --- | --- | --- |
+| `credential` | For `basic` and `bearer` | Name of a stored credential. `bearer` needs the field `token`. `basic` needs the fields `username` and `password`; create that credential with `infrahub-sync credentials create <name> --username <username>`. With `none`, do not name a credential. See [Manage stored credentials](../guides/credentials.mdx). |
 
 ## Schema mapping
 
@@ -309,9 +312,10 @@ schema_mapping:
 
 ### Authentication issues
 
-- For basic auth, set both `username` and `password`
-- For bearer auth, set `auth_method: bearer` and provide `token`
-- In a registered package, declare credentials as `$credential` references and set their variables in the worker environment. On a Compose deployment, use `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME` and `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD`, the names the worker receives. `PROM_USERNAME`, `PROM_PASSWORD`, and `PROM_TOKEN` apply only to direct adapter use.
+- For basic auth, set `auth_method: basic` and name a stored credential that holds `username` and `password`.
+- For bearer auth, set `auth_method: bearer` and name a stored credential that holds `token`.
+- With `auth_method: none`, the default, do not name a credential.
+- In a registered package, do not write `username`, `password` or `token` in `settings`. Check the fields of the stored credential with `infrahub-sync credentials show <name>`. `PROM_USERNAME`, `PROM_PASSWORD`, and `PROM_TOKEN` apply only to direct adapter use.
 
 ### API mode specific
 

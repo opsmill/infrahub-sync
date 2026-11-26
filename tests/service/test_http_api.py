@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import socket
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -35,9 +37,10 @@ from prefect.states import Cancelled, Cancelling, Running
 from pydantic import BaseModel
 
 from infrahub_sync.adapters.infrahub import resolved_endpoint
+from infrahub_sync.client import PlanStepTimings
+from infrahub_sync.client.models import HealthResource
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.configuration.runtime import effective_destination_branch
-from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.potenda import Potenda
@@ -54,8 +57,8 @@ from infrahub_sync.product_store import (
     local_product_projection,
 )
 from infrahub_sync.service import flow as service_flow
-from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+from infrahub_sync.service.app import HealthReporter, create_app
+from infrahub_sync.service.auth import StoreAccountResolver
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.service.models import (
     ApplyRunRequest,
@@ -75,9 +78,21 @@ from infrahub_sync.service.orchestration import (
     RunLogRead,
     Submission,
 )
+from infrahub_sync.service.plan_step import StorePlanStepObserver
 from infrahub_sync.service.read_progress import StoreSideReadObserver, record_waiting
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
+from tests.configuration.validation_packages import DESTINATION_CREDENTIAL, SOURCE_CREDENTIAL
+from tests.helpers.removed_credential_format import (
+    REMOVED_IDENTIFIER,
+    REMOVED_REFERENCE_NAME,
+    store_in_removed_format,
+)
+from tests.helpers.stored_credentials import create_stored_credential_names
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
+from tests.service.health_fixtures import WORKER_NAME, RaisingHealthChecker, fake_health_checker
+from tests.service.schedule_fixtures import OWNER_TOKEN as SCHEDULE_OWNER_TOKEN
+from tests.service.schedule_fixtures import NoDeploymentSchedules, schedule_api
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -108,6 +123,10 @@ _LEGACY_EXECUTION_FIELDS = {
 }
 
 
+# What a run-starting route answers for a version stored in the removed credential format.
+_REMOVED_FORMAT_REFUSAL = (422, "credential-format-removed")
+
+
 def _json_timestamp(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat().replace("+00:00", "Z")
 
@@ -120,23 +139,24 @@ def _registered_package() -> ConfigurationPackage:
                 "name": "registered-inventory",
                 "source": {
                     "name": "netbox",
-                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                    "credential": SOURCE_CREDENTIAL,
+                    "settings": {"url": "https://netbox.example"},
                 },
                 "destination": {
                     "name": "infrahub",
-                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
+                    "credential": DESTINATION_CREDENTIAL,
+                    "settings": {"url": "https://infrahub.example"},
                 },
                 "order": [],
                 "schema_mapping": [],
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 
 
-class _FakeOrchestration:
+class _FakeOrchestration(NoDeploymentSchedules):
     def __init__(self) -> None:
         self.submissions: list[tuple[dict[str, object], str]] = []
         self.by_key: dict[str, Submission] = {}
@@ -191,22 +211,20 @@ class _FakeOrchestration:
 
 
 @pytest.fixture
-def service_api(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> tuple[TestClient, ProductProjection, _FakeOrchestration]:
-    monkeypatch.setenv(
-        PRINCIPALS_ENV,
-        json.dumps(
-            {
-                "owner": {"token": OWNER_TOKEN},
-                "other": {"token": OTHER_TOKEN},
-                "admin": {"token": ADMIN_TOKEN, "administrator": True},
-            }
-        ),
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
+def service_api(tmp_path: Path) -> tuple[TestClient, ProductProjection, _FakeOrchestration]:
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(
+        projection,
+        {
+            "owner": {"token": OWNER_TOKEN},
+            "other": {"token": OTHER_TOKEN},
+            "admin": {"token": ADMIN_TOKEN, "administrator": True},
+        },
+        # The service lists one token for redaction: the token of ``admin`` that the environment defines.
+        environment_token=True,
+    ).resolver
     orchestration = _FakeOrchestration()
+    create_stored_credential_names(projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
     client = TestClient(create_app(service, resolver))
@@ -239,7 +257,8 @@ def test_admission_reads_registered_binding_before_allocating_run(
 ) -> None:
     """Admission takes package identity and display name from the immutable registry row."""
     _client, projection, orchestration = service_api
-    version = projection.create_configuration(_registered_package())
+    # The fixture registered the package's name already, and a name is unique.
+    version = projection.create_configuration(_package_variant(name="admitted-inventory"))
     request = CreateRunRequest(
         operation="plan",
         config_id=version.config_id,
@@ -247,14 +266,14 @@ def test_admission_reads_registered_binding_before_allocating_run(
         reason="plan registered package",
     )
     service = RunService(projection, orchestration)
-    principal = EnvironmentPrincipalResolver.from_environment().resolve(OWNER_TOKEN)
+    principal = StoreAccountResolver(projection, idle_seconds=600).resolve(OWNER_TOKEN).principal
     assert principal is not None
 
     _status, body = asyncio.run(service.create_run(request, principal, "registered-key"))
     run = projection.lookup_run(body["run"]["run_id"]).value
     assert run is not None
     assert run.configuration_binding == (version.config_id, version.registry_version, version.package_checksum)
-    assert run.summary["sync_name"] == "registered-inventory"
+    assert run.summary["sync_name"] == "admitted-inventory"
     assert set(orchestration.submissions[0][0]) == {
         "run_id",
         "stage",
@@ -275,210 +294,25 @@ def test_admission_reads_registered_binding_before_allocating_run(
     assert len(orchestration.submissions) == 1
 
 
-@pytest.mark.parametrize("operation", ["plan", "sync"])
-@pytest.mark.parametrize("identifier", ["NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_", "credential-value-canary"])
-def test_run_creation_refuses_legacy_credential_identifiers_before_reservation(
-    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-    identifier: str,
-) -> None:
-    """Refuse legacy declarations through HTTP without creating or submitting a run."""
-    client, projection, orchestration = service_api
-    content = _registered_package().model_dump(mode="json")
-    content["credentials"] = {"netbox-token": {"provider": "env", "identifier": identifier}}
-    for role in ("source", "destination"):
-        content["configuration"][role]["settings"]["token"] = {"$credential": "netbox-token"}
-    legacy_package = ConfigurationPackage.model_validate(content)
-    with monkeypatch.context() as before_policy:
-        before_policy.setattr("infrahub_sync.product_store.store.validate_package_credentials", lambda _package: None)
-        version = projection.create_configuration(legacy_package)
-    monkeypatch.setenv(identifier, "legacy-credential-value-canary")
-    monkeypatch.setattr("infrahub_sync.service.service.generate_run_id", lambda: "refused-credential-run")
-    monkeypatch.setattr(
-        "infrahub_sync.configuration.credentials.EnvironmentCredentialProvider.resolve",
-        lambda *_args: pytest.fail("API admission resolved a credential"),
-    )
-
-    response = client.post(
-        "/runs",
-        headers=AUTH,
-        json={
-            "operation": operation,
-            "config_id": version.config_id,
-            "registry_version": version.registry_version,
-            "reason": "review legacy inventory",
-            "confirm_writes": True,
-        },
-    )
-
-    assert response.status_code == 422
-    error = response.json()["error"]
-    assert error["code"] == "malformed-credential-reference"
-    assert "credential reference 'netbox-token'" in error["message"]
-    assert "must start with 'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in error["message"]
-    assert "register a new version with prefixed identifiers" in error["message"]
-    finding = credential_namespace_finding("netbox-token", legacy_package.credentials["netbox-token"])
-    assert finding is not None
-    assert error["message"] == (
-        f"{finding.message}; register a new version with prefixed identifiers and recreate saved plans against it"
-    )
-    assert "legacy-credential-value-canary" not in response.text
-    if identifier != "INFRAHUB_SYNC_CREDENTIAL_":
-        assert identifier not in response.text
-    assert projection.lookup_run("refused-credential-run").value is None
-    assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value is None
-    assert orchestration.submissions == []
-    assert projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
-
-
-@pytest.mark.parametrize("operation", ["plan", "sync"])
-def test_run_creation_accepts_prefixed_credentials_without_api_host_values(
-    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-) -> None:
-    """The API accepts valid declarations without resolving worker credentials."""
-    client, projection, orchestration = service_api
-    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_TOKEN", raising=False)
-    monkeypatch.setattr(
-        "infrahub_sync.configuration.credentials.EnvironmentCredentialProvider.resolve",
-        lambda *_args: pytest.fail("API admission resolved a credential"),
-    )
-    version = client.app.state.run_binding
-
-    response = client.post(
-        "/runs",
-        headers=AUTH,
-        json={
-            "operation": operation,
-            "config_id": version.config_id,
-            "registry_version": version.registry_version,
-            "reason": "review inventory",
-            "confirm_writes": True,
-        },
-    )
-
-    assert response.status_code == 202
-    assert projection.lookup_run(response.json()["run"]["run_id"]).value is not None
-    assert len(orchestration.submissions) == 1
-
-
-def _legacy_source_credential_version(
-    projection: ProductProjection, monkeypatch: pytest.MonkeyPatch, *, unused: bool = False
-) -> ConfigurationVersion:
-    """Store a pre-upgrade declaration while retaining a valid destination credential."""
-    content = _registered_package().model_dump(mode="json")
-    content["credentials"]["legacy-source"] = {"provider": "env", "identifier": "LEGACY_SOURCE_TOKEN"}
-    if not unused:
-        content["configuration"]["source"]["settings"]["token"] = {"$credential": "legacy-source"}
-    with monkeypatch.context() as before_policy:
-        before_policy.setattr("infrahub_sync.product_store.store.validate_package_credentials", lambda _package: None)
-        version = projection.create_configuration(ConfigurationPackage.model_validate(content))
-    monkeypatch.setenv("LEGACY_SOURCE_TOKEN", "legacy-source-value-canary")
-    monkeypatch.setattr(
-        "infrahub_sync.configuration.credentials.EnvironmentCredentialProvider.resolve",
-        lambda *_args: pytest.fail("API admission resolved a credential"),
-    )
-    return version
-
-
-@pytest.mark.parametrize("operation", ["plan", "sync"])
-def test_run_creation_refuses_unused_legacy_credential_declarations(
-    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-) -> None:
-    """Admission checks every declaration, including one no setting references."""
-    client, projection, orchestration = service_api
-    version = _legacy_source_credential_version(projection, monkeypatch, unused=True)
-    monkeypatch.setattr("infrahub_sync.service.service.generate_run_id", lambda: "unused-credential-run")
-
-    response = client.post(
-        "/runs",
-        headers=AUTH,
-        json={
-            "operation": operation,
-            "config_id": version.config_id,
-            "registry_version": version.registry_version,
-            "reason": "review unused legacy declaration",
-            "confirm_writes": True,
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "malformed-credential-reference"
-    assert "credential reference 'legacy-source'" in response.json()["error"]["message"]
-    assert "LEGACY_SOURCE_TOKEN" not in response.text
-    assert "legacy-source-value-canary" not in response.text
-    assert projection.lookup_run("unused-credential-run").value is None
-    assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value is None
-    assert orchestration.submissions == []
-
-
-@pytest.mark.parametrize("operation", ["verify", "apply"])
-def test_saved_plan_refuses_legacy_source_credential_before_reservation(
-    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-) -> None:
-    """Even destination-only apply requires a supported immutable package binding."""
-    client, projection, orchestration = service_api
-    version = _legacy_source_credential_version(projection, monkeypatch)
-    run = ProductRun(
-        run_id="legacy-saved-plan",
-        operation="plan",
-        actor="owner",
-        configuration_reference=f"{version.config_id}@{version.registry_version}",
-        config_id=version.config_id,
-        registry_version=version.registry_version,
-        package_checksum=version.package_checksum,
-        started_at=datetime.now(timezone.utc),
-        phase="planned",
-    )
-    projection.create_run(run)
-    plan = _publish_plan(projection, run.run_id)
-    before_request = projection.lookup_run(run.run_id).value
-    body: dict[str, object] = {"reason": "review legacy saved plan"}
-    if operation == "apply":
-        body.update(expected_checksum=plan.checksum, confirm_writes=True)
-
-    response = client.post(f"/runs/{run.run_id}/{operation}", headers=AUTH, json=body)
-
-    assert response.status_code == 422
-    error = response.json()["error"]
-    assert error["code"] == "malformed-credential-reference"
-    assert "credential reference 'legacy-source'" in error["message"]
-    assert "must start with 'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in error["message"]
-    assert "register a new version with prefixed identifiers" in error["message"]
-    assert "recreate saved plans against it" in error["message"]
-    assert "LEGACY_SOURCE_TOKEN" not in response.text
-    assert "legacy-source-value-canary" not in response.text
-    assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value is None
-    assert projection.lookup_run(run.run_id).value == before_request
-    assert projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
-    assert orchestration.submissions == []
-    retained_plan = client.get(f"/runs/{run.run_id}/plan", headers=AUTH)
-    assert retained_plan.status_code == 200
-    assert retained_plan.json()["checksum"] == plan.checksum
-
-
 @pytest.mark.parametrize("operation", ["plan", "sync", "verify", "apply"])
 @pytest.mark.parametrize("accepted", [False, True])
-def test_legacy_credential_receipts_replay_only_accepted_responses(
+def test_removed_format_receipts_replay_only_accepted_responses(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     operation: str,
     *,
     accepted: bool,
 ) -> None:
-    """Refuse unsubmitted retries while replaying accepted receipts after upgrade."""
+    """Refuse unsubmitted retries while replaying accepted receipts of a version stored in the removed format."""
     client, projection, orchestration = service_api
-    version = _legacy_source_credential_version(projection, monkeypatch)
+    version = client.app.state.run_binding
+    store_in_removed_format(
+        tmp_path.resolve(), version.config_id, version.registry_version, _registered_package().declared_content()
+    )
     run = ProductRun(
-        run_id="legacy-credential-receipt",
+        run_id="removed-format-receipt",
         operation="sync" if operation == "sync" else "plan",
-        actor="owner",
+        actor=account_identifier(projection, "owner"),
         configuration_reference=f"{version.config_id}@{version.registry_version}",
         config_id=version.config_id,
         registry_version=version.registry_version,
@@ -491,21 +325,25 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
             operation="sync" if operation == "sync" else "plan",
             config_id=version.config_id,
             registry_version=version.registry_version,
-            reason="retry legacy work",
+            reason="retry work of a version stored in the removed format",
             confirm_writes=True,
         )
         path, target = "/runs", None
     else:
         projection.create_run(run)
         request = (
-            VerifyRunRequest(reason="retry legacy work")
+            VerifyRunRequest(reason="retry work of a version stored in the removed format")
             if operation == "verify"
-            else ApplyRunRequest(reason="retry legacy work", expected_checksum="a" * 64, confirm_writes=True)
+            else ApplyRunRequest(
+                reason="retry work of a version stored in the removed format",
+                expected_checksum="a" * 64,
+                confirm_writes=True,
+            )
         )
         path, target = f"/runs/{run.run_id}/{operation}", run.run_id
     body = request.model_dump(mode="json")
     receipt = RunService._new_receipt(
-        actor="owner",
+        actor=account_identifier(projection, "owner"),
         idempotency_key=RAW_KEY,
         operation=operation,
         target_run_id=target,
@@ -525,7 +363,9 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
             response_body=stored_response,
             flow_run_id=str(uuid5(NAMESPACE_URL, receipt.receipt_id)),
         )
-    before_retry = projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value
+    before_retry = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()
+    ).value
 
     response = client.post(path, headers=AUTH, json=body)
 
@@ -534,7 +374,10 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
     assert retained_run is not None
     assert retained_run.model_dump(exclude={"audit_links"}) == run.model_dump(exclude={"audit_links"})
     assert [event.outcome for event in projection.audit_events(run.run_id)] == (["replayed"] if accepted else [])
-    assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value == before_retry
+    assert (
+        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(RAW_KEY.encode()).hexdigest()).value
+        == before_retry
+    )
     if accepted:
         assert response.status_code == 202
         assert response.json() == stored_response
@@ -543,10 +386,9 @@ def test_legacy_credential_receipts_replay_only_accepted_responses(
         assert conflict.status_code == 409
         assert conflict.json()["error"]["code"] == "idempotency-conflict"
     else:
-        assert response.status_code == 422
-        assert response.json()["error"]["code"] == "malformed-credential-reference"
-        assert "legacy-source-value-canary" not in response.text
-        assert "LEGACY_SOURCE_TOKEN" not in response.text
+        assert (response.status_code, response.json()["error"]["code"]) == _REMOVED_FORMAT_REFUSAL
+        assert REMOVED_REFERENCE_NAME not in response.text
+        assert REMOVED_IDENTIFIER not in response.text
 
 
 def _plan_document(run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
@@ -616,14 +458,12 @@ def _settle_open_executions(projection: ProductProjection, run_id: str) -> None:
         )
 
 
-def test_worker_published_plan_is_retrievable_through_an_independent_api_projection(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_worker_published_plan_is_retrievable_through_an_independent_api_projection(tmp_path: Path) -> None:
     """Worker publication crosses the shared backend and the API artifact boundary."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     api_projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(api_projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     worker_projection = local_product_projection(tmp_path.resolve())
+    create_stored_credential_names(api_projection, SOURCE_CREDENTIAL, DESTINATION_CREDENTIAL)
     version = api_projection.create_configuration(_registered_package())
     run_id = "run-worker-api-artifact"
     api_projection.create_run(
@@ -634,7 +474,7 @@ def test_worker_published_plan_is_retrievable_through_an_independent_api_project
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(api_projection, "owner"),
             started_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc),
             phase="accepted",
         )
@@ -690,8 +530,13 @@ def test_authentication_idempotency_and_secret_boundaries(
         assert response.json()["error"]["code"] == "unauthenticated"
         assert response.headers["WWW-Authenticate"] == "Bearer"
 
-    first = _create(client, reason=f"requested because {OWNER_TOKEN}", authorization=f"Bearer    {OWNER_TOKEN}")
-    replay = _create(client, reason=f"requested because {OWNER_TOKEN}")
+    # A reason that holds the token of `admin` is refused before the request reserves its key,
+    # and the event of the refusal holds no reason.
+    assert (
+        _create(client, reason=f"requested because {ADMIN_TOKEN}").json()["error"]["code"] == "secret-parameter-refused"
+    )
+    first = _create(client, reason="requested by the owner", authorization=f"Bearer    {OWNER_TOKEN}")
+    replay = _create(client, reason="requested by the owner")
     conflict = _create(client, reason="different reason")
 
     assert first.status_code == replay.status_code == 202
@@ -716,10 +561,12 @@ def test_authentication_idempotency_and_secret_boundaries(
     }
     assert RAW_KEY not in opaque_key
     boundary = repr((first.json(), parameters, projection.audit_events()))
+    assert ADMIN_TOKEN not in boundary
     assert OWNER_TOKEN not in boundary
     assert RAW_KEY not in boundary
     database_bytes = (tmp_path / "product-records.sqlite3").read_bytes()
     assert OWNER_TOKEN.encode() not in database_bytes
+    assert ADMIN_TOKEN.encode() not in database_bytes
     assert RAW_KEY.encode() not in database_bytes
     assert any(event.outcome == "refused-authentication" for event in projection.audit_events())
 
@@ -728,7 +575,7 @@ def test_authentication_idempotency_and_secret_boundaries(
         headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "secret-parameter-key"},
         json={
             "operation": "plan",
-            "config_id": OWNER_TOKEN,
+            "config_id": ADMIN_TOKEN,
             "registry_version": 1,
             "reason": "reject credential-bearing parameter",
         },
@@ -881,7 +728,9 @@ def test_cancellation_transport_failure_remains_a_typed_mutation_error(
     assert run is not None
     assert run.prefect_executions[-1].cancellation_requested_at is not None
     assert run.prefect_executions[-1].cancellation_acknowledged_at is None
-    receipt = projection.lookup_mutation("owner", sha256(b"cancel-transport-failure").hexdigest()).value
+    receipt = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(b"cancel-transport-failure").hexdigest()
+    ).value
     assert receipt is not None
     assert receipt.state == "processing"
 
@@ -955,7 +804,9 @@ def test_cancel_rejected_or_malformed_prefect_results_never_acknowledge_or_repla
     run = projection.lookup_run(run_id).value
     assert run is not None
     assert run.prefect_executions[-1].cancellation_acknowledged_at is None
-    receipt = projection.lookup_mutation("owner", sha256(b"cancel-prefect-refusal").hexdigest()).value
+    receipt = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(b"cancel-prefect-refusal").hexdigest()
+    ).value
     assert receipt is not None
     assert receipt.state == "processing"
     assert prefect_client.calls == [UUID(flow_run_id), UUID(flow_run_id)]
@@ -1005,7 +856,7 @@ def test_cancel_refuses_run_without_execution_without_reserving_receipt(
             run_id=run_id,
             operation="plan",
             configuration_reference="legacy",
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc),
             phase="accepted",
         )
@@ -1019,7 +870,10 @@ def test_cancel_refuses_run_without_execution_without_reserving_receipt(
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "no-active-execution"
-    assert projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value is None
+    assert (
+        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(key.encode()).hexdigest()).value
+        is None
+    )
     assert orchestration.cancelled == []
 
 
@@ -1049,7 +903,10 @@ def test_cancel_observation_failure_before_admission_has_no_receipt_or_secret(
     assert response.json()["error"]["code"] == "orchestration-unavailable"
     assert response.json()["error"]["mutation_id"] is None
     assert "token-canary" not in response.text
-    assert projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value is None
+    assert (
+        projection.lookup_mutation(account_identifier(projection, "owner"), sha256(key.encode()).hexdigest()).value
+        is None
+    )
     assert orchestration.cancelled == []
 
 
@@ -1085,7 +942,12 @@ def test_cancel_replays_same_key_and_refuses_distinct_key_without_reserving_rece
     assert replayed.json() == accepted.json()
     assert refused.status_code == 409
     assert refused.json()["error"]["code"] == "execution-terminal"
-    assert projection.lookup_mutation("owner", sha256(second_key.encode()).hexdigest()).value is None
+    assert (
+        projection.lookup_mutation(
+            account_identifier(projection, "owner"), sha256(second_key.encode()).hexdigest()
+        ).value
+        is None
+    )
     assert len(orchestration.cancelled) == 1
 
 
@@ -1169,7 +1031,9 @@ def test_cancel_post_admission_cas_loss_completes_replayable_conflict(
     assert refused.status_code == 409
     assert refused.json()["error"]["code"] == "execution-terminal"
     assert replayed.json() == refused.json()
-    receipt = projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value
+    receipt = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(key.encode()).hexdigest()
+    ).value
     assert receipt is not None
     assert (receipt.state, receipt.response_status) == ("accepted", 409)
     assert orchestration.cancelled == []
@@ -1218,7 +1082,9 @@ def test_cancel_append_during_observation_never_targets_the_stale_execution(
     assert replayed.json() == refused.json()
     assert orchestration.cancelled == []
     run = projection.lookup_run(run_id).value
-    receipt = projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value
+    receipt = projection.lookup_mutation(
+        account_identifier(projection, "owner"), sha256(key.encode()).hexdigest()
+    ).value
     assert run is not None
     assert receipt is not None
     assert all(link.cancellation_requested_at is None for link in run.prefect_executions)
@@ -1309,18 +1175,23 @@ def test_public_run_resource_is_a_self_contained_projection_of_the_product_run_c
     )
     public_run = public_run_resource(product_run)
     projected_field = "prefect_executions"
+    # Read from the run's automatic resume records, not from the run record (spec 030).
+    derived_fields = {"automatic_resume_count"}
     product_fields = set(ProductRun.model_fields)
 
     assert not issubclass(PublicRunResource, ProductRun)
-    assert set(PublicRunResource.model_fields) == product_fields
-    assert public_run.model_dump(exclude={projected_field}) == product_run.model_dump(exclude={projected_field})
+    assert set(PublicRunResource.model_fields) == product_fields | derived_fields
+    assert public_run.model_dump(exclude={projected_field, *derived_fields}) == product_run.model_dump(
+        exclude={projected_field}
+    )
+    assert public_run.automatic_resume_count == 0
 
     openapi = client.get("/openapi.json").json()
     public_schema = openapi["components"]["schemas"]["PublicRunResource"]
     product_app = FastAPI()
     product_app.add_api_route("/product-run", lambda: product_run, response_model=ProductRun)
     product_schema = product_app.openapi()["components"]["schemas"]["ProductRun"]
-    assert set(public_schema["properties"]) == product_fields
+    assert set(public_schema["properties"]) == product_fields | derived_fields
     assert set(public_schema.get("required", ())) - {projected_field} == set(product_schema.get("required", ())) - {
         projected_field
     }
@@ -1678,7 +1549,10 @@ def test_owner_and_administrator_mutation_matrix(
     allowed = expected_status == 202
     expected_outcome = "accepted" if allowed else "refused-authorization"
     assert any(
-        event.actor == actor and event.operation == operation and event.outcome == expected_outcome for event in events
+        event.actor == account_identifier(projection, actor)
+        and event.operation == operation
+        and event.outcome == expected_outcome
+        for event in events
     )
     if allowed and operation in {"verify", "apply"}:
         assert len(orchestration.submissions) == 2
@@ -1825,8 +1699,22 @@ def test_confirmation_schema_errors_and_openapi_contract(
 
     paths = openapi["paths"]
     assert set(paths) == {
+        "/accounts",
+        "/accounts/{name}",
+        "/accounts/{name}/password",
+        "/accounts/{name}/unlock",
+        "/accounts/{name}/tokens",
+        "/accounts/{name}/tokens/{token_id}",
+        "/auth/sign-in",
+        "/auth/sign-out",
+        "/credentials",
+        "/credentials/{name}",
+        "/credentials/{name}/value",
         "/events",
         "/me",
+        "/me/password",
+        "/me/tokens",
+        "/me/tokens/{token_id}",
         "/runs",
         "/runs/{run_id}",
         "/runs/{run_id}/plan",
@@ -1842,12 +1730,15 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}/resume",
         "/runs/{run_id}/approve",
         "/runs/{run_id}/cancel",
-        "/status",
+        "/health",
         "/version",
+        "/worker/runs/{run_id}/credentials",
+        "/worker/schedules/{schedule_id}/proposed-change-states",
     }
     for path, route in paths.items():
         for operation in route.values():
-            if path in {"/status", "/version"}:
+            # A sign-in presents a name and a password, not a bearer value.
+            if path in {"/health", "/version", "/auth/sign-in"}:
                 assert "security" not in operation
                 continue
             assert "401" in operation["responses"]
@@ -1855,7 +1746,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
             assert operation["security"] == [{"BearerAuth": []}]
 
 
-def test_version_is_unauthenticated_and_declares_the_unstable_api(
+def test_version_is_unauthenticated_and_declares_the_unstable_api_and_sdk(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
     """Lifecycle discovery does not require a bearer token."""
@@ -1870,9 +1761,12 @@ def test_version_is_unauthenticated_and_declares_the_unstable_api(
         "server_version": installed_version("infrahub-sync"),
         "api_versions": ["v3-unstable"],
         "stability": "unstable",
+        "sdk_version": installed_version("infrahub-sdk"),
     }
-    operation = client.get("/openapi.json").json()["paths"]["/version"]["get"]
+    openapi = client.get("/openapi.json").json()
+    operation = openapi["paths"]["/version"]["get"]
     assert "security" not in operation
+    assert "sdk_version" in openapi["components"]["schemas"]["VersionResource"]["properties"]
 
 
 def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
@@ -2566,7 +2460,7 @@ def test_an_accepted_plan_records_a_run_accepted_event_with_its_resources(
         run.destination_branch,
     )
     assert event.related == (
-        RelatedResource(kind="account", id="owner"),
+        RelatedResource(kind="account", id=account_identifier(projection, "owner")),
         RelatedResource(kind="config", id=version.config_id),
         RelatedResource(kind="config_version", id=f"{version.config_id}@{version.registry_version}"),
         RelatedResource(kind="branch", id=run.destination_branch),
@@ -2583,10 +2477,12 @@ def test_a_replayed_request_records_a_run_replayed_event(
     assert _create(client).status_code == 202
 
     assert _typed(projection, run_id) == [
-        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
-        ("infrahub_sync.run.replayed", "plan", "replayed", "owner"),
+        ("infrahub_sync.run.accepted", "plan", "accepted", account_identifier(projection, "owner")),
+        ("infrahub_sync.run.replayed", "plan", "replayed", account_identifier(projection, "owner")),
     ]
-    assert projection.audit_events(run_id)[-1].related[0] == RelatedResource(kind="account", id="owner")
+    assert projection.audit_events(run_id)[-1].related[0] == RelatedResource(
+        kind="account", id=account_identifier(projection, "owner")
+    )
 
 
 def test_every_refusal_except_authentication_records_a_run_refused_event(
@@ -2616,7 +2512,7 @@ def test_every_refusal_except_authentication_records_a_run_refused_event(
         assert event.event_type == expected, event.outcome
     authorization = next(event for event in refusals if event.outcome == "refused-authorization")
     assert authorization.primary_resource == PrimaryResource(kind="run", id=run_id)
-    assert authorization.related[0] == RelatedResource(kind="account", id="other")
+    assert authorization.related[0] == RelatedResource(kind="account", id=account_identifier(projection, "other"))
 
 
 def test_an_orchestration_failure_records_a_run_unavailable_event(
@@ -2630,7 +2526,9 @@ def test_an_orchestration_failure_records_a_run_unavailable_event(
 
     assert response.status_code == 503
     run_id = response.json()["error"]["run_id"]
-    assert _typed(projection, run_id) == [("infrahub_sync.run.unavailable", "plan", "unavailable", "owner")]
+    assert _typed(projection, run_id) == [
+        ("infrahub_sync.run.unavailable", "plan", "unavailable", account_identifier(projection, "owner"))
+    ]
 
 
 def test_an_accepted_cancel_and_the_recorded_cancellation_record_their_events(
@@ -2654,9 +2552,9 @@ def test_an_accepted_cancel_and_the_recorded_cancellation_record_their_events(
     asyncio.run(reconciler.reconcile_run(run_id))
 
     assert _typed(projection, run_id) == [
-        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
-        ("infrahub_sync.run.accepted", "cancel", "accepted", "admin"),
-        ("infrahub_sync.run.cancelled", "cancel", "cancelled", "admin"),
+        ("infrahub_sync.run.accepted", "plan", "accepted", account_identifier(projection, "owner")),
+        ("infrahub_sync.run.accepted", "cancel", "accepted", account_identifier(projection, "admin")),
+        ("infrahub_sync.run.cancelled", "cancel", "cancelled", account_identifier(projection, "admin")),
     ]
     cancelled = projection.audit_events(run_id)[-1]
     assert cancelled.primary_resource == PrimaryResource(kind="run", id=run_id)
@@ -2683,8 +2581,8 @@ def test_an_interrupted_execution_records_a_run_failed_event_with_its_verdict(
     asyncio.run(reconciler.reconcile_run(run_id))
 
     assert _typed(projection, run_id) == [
-        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
-        ("infrahub_sync.run.failed", "plan", "ambiguous", "owner"),
+        ("infrahub_sync.run.accepted", "plan", "accepted", account_identifier(projection, "owner")),
+        ("infrahub_sync.run.failed", "plan", "ambiguous", account_identifier(projection, "owner")),
     ]
     stored = projection.lookup_run(run_id).value
     assert stored is not None
@@ -2845,3 +2743,284 @@ def test_an_execution_recorded_before_the_read_state_returns_reads_null(
     run_id = _create(client).json()["run"]["run_id"]
 
     assert _reads(client, run_id) is None
+
+
+def _plan_step(client: TestClient, run_id: str) -> dict[str, Any] | None:
+    response = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+    assert response.status_code == 200
+    return response.json()["orchestration"][0]["plan_step"]
+
+
+@pytest.mark.parametrize("operation", ["plan", "sync"])
+def test_run_response_returns_the_plan_step_timings_of_a_new_execution(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration], operation: str
+) -> None:
+    """FR-014, FR-017: the parts that started, with the running part named; a part not started has no entry."""
+    client, projection, _orchestration = service_api
+    version = client.app.state.run_binding
+    body: dict[str, object] = {
+        "operation": operation,
+        "config_id": version.config_id,
+        "registry_version": version.registry_version,
+        "reason": "plan step timings",
+    }
+    if operation == "sync":
+        body["confirm_writes"] = True
+    created = client.post(
+        "/runs",
+        headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": f"plan-step-{operation}"},
+        json=body,
+    )
+    assert created.status_code == 202, created.text
+    run_id = created.json()["run"]["run_id"]
+    flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_PLAN_WORKER_ID)
+    claimed_at = datetime.fromisoformat(_reads_claimed_at(client, run_id))
+    record_waiting(projection, run_id, flow_run_id)
+    ticks = iter(claimed_at + timedelta(seconds=seconds) for seconds in (5, 30, 30))
+    observer = StorePlanStepObserver(projection, run_id, flow_run_id, clock=lambda: next(ticks))
+    observer.begin()
+    observer.part_started("comparing")
+    observer.part_ended("comparing")
+    observer.part_started("checking")
+
+    plan_step = _plan_step(client, run_id)
+
+    assert plan_step is not None
+    assert plan_step["running"] == "checking"
+    assert set(plan_step["parts"]) == {"waiting", "preparing", "comparing", "checking"}
+    assert plan_step["parts"]["waiting"]["ended_at"] is not None
+    assert _part_times(plan_step["parts"]["comparing"]) == (
+        claimed_at + timedelta(seconds=5),
+        claimed_at + timedelta(seconds=30),
+        None,
+    )
+    assert _part_times(plan_step["parts"]["checking"]) == (claimed_at + timedelta(seconds=30), None, None)
+
+
+def _part_times(part: dict[str, str | None]) -> tuple[datetime | None, ...]:
+    return tuple(
+        None if part[key] is None else datetime.fromisoformat(cast("str", part[key]))
+        for key in ("started_at", "ended_at", "stopped_at")
+    )
+
+
+def _reads_claimed_at(client: TestClient, run_id: str) -> str:
+    response = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+    claimed_at = response.json()["orchestration"][0]["claimed_at"]
+    assert claimed_at is not None
+    return claimed_at
+
+
+def test_an_execution_recorded_before_the_plan_step_timings_returns_plan_step_null(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """FR-019: an execution with no stored plan step document is returned without an error."""
+    client, _projection, _orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+
+    assert _plan_step(client, run_id) is None
+
+
+def test_the_client_keeps_a_plan_step_part_and_field_from_a_newer_server() -> None:
+    """A part or a field a later Sync API adds does not fail an older client (research R14)."""
+    started_at = datetime(2026, 11, 16, 10, 0, tzinfo=timezone.utc)
+    payload = {
+        "running": "publishing",
+        "parts": {
+            "comparing": {"started_at": started_at.isoformat(), "field_from_a_newer_server": "readable"},
+            "publishing": {"started_at": started_at.isoformat()},
+        },
+        "field_from_a_newer_server": 1,
+    }
+
+    parsed = PlanStepTimings.model_validate(payload)
+
+    assert parsed.running == "publishing"
+    assert set(parsed.parts) == {"comparing", "publishing"}
+    assert parsed.parts["comparing"].model_extra == {"field_from_a_newer_server": "readable"}
+    assert parsed.model_extra == {"field_from_a_newer_server": 1}
+
+
+# The routes of the schedules (spec 021): every one is authenticated and declares 401 and 422.
+_SCHEDULE_OPERATIONS = {
+    ("/schedules", "post"),
+    ("/schedules", "get"),
+    ("/schedules/next-starts", "post"),
+    ("/schedules/{schedule_id}", "get"),
+    ("/schedules/{schedule_id}/change", "post"),
+    ("/schedules/{schedule_id}/pause", "post"),
+    ("/schedules/{schedule_id}/resume", "post"),
+    ("/schedules/{schedule_id}/delete", "post"),
+    ("/schedules/{schedule_id}/take-over", "post"),
+}
+
+
+def test_the_schedule_routes_are_authenticated_and_declare_their_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    api = schedule_api(monkeypatch, tmp_path)
+
+    paths = api.client.get("/openapi.json").json()["paths"]
+
+    operations = {(path, method) for path, route in paths.items() if path.startswith("/schedules") for method in route}
+    assert operations == _SCHEDULE_OPERATIONS
+    for path, method in operations:
+        operation = paths[path][method]
+        assert "401" in operation["responses"]
+        assert "422" in operation["responses"]
+        assert operation["security"] == [{"BearerAuth": []}]
+        url = path.replace("{schedule_id}", f"s-{'0' * 32}")
+        unauthenticated = api.client.request(method.upper(), url, headers={"Idempotency-Key": "no-token"}, json={})
+        assert unauthenticated.status_code == 401, (path, method, unauthenticated.text)
+    assert {"/runs", "/runs/{run_id}", "/events"} <= set(paths)
+
+
+def test_the_run_list_filters_on_the_trigger_and_the_schedule_and_returns_the_run_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    api = schedule_api(monkeypatch, tmp_path)
+    read = {"Authorization": f"Bearer {SCHEDULE_OWNER_TOKEN}"}
+    schedule_id = api.create(write_target="default-branch")["schedule_id"]
+    start = datetime(2027, 1, 5, 1, tzinfo=timezone.utc)
+    scheduled = api.scheduled_run(schedule_id, start)
+    manual = api.client.post(
+        "/runs",
+        json={"operation": "plan", "config_id": api.config_id, "registry_version": 1, "reason": "by hand"},
+        headers={**read, "Idempotency-Key": "manual-plan"},
+    )
+    assert manual.status_code == 202, manual.text
+    manual_id = manual.json()["run"]["run_id"]
+
+    def listed(**params: str) -> list[str]:
+        response = api.client.get("/runs", headers=read, params=params)
+        assert response.status_code == 200, response.text
+        return [item["run_id"] for item in response.json()["items"]]
+
+    assert listed(trigger_type="scheduled") == [scheduled]
+    assert listed(trigger_type="manual") == [manual_id]
+    assert listed(schedule_id=schedule_id) == [scheduled]
+    assert listed(schedule_id=f"s-{'0' * 32}") == []
+    assert set(listed()) == {scheduled, manual_id}
+    item = api.client.get("/runs", headers=read, params={"schedule_id": schedule_id}).json()["items"][0]
+    assert (item["trigger_type"], item["schedule_id"], item["scheduled_start_at"]) == (
+        "scheduled",
+        schedule_id,
+        "2027-01-05T01:00:00Z",
+    )
+    scheduled_resource = api.client.get(f"/runs/{scheduled}", headers=read).json()["run"]
+    assert (
+        scheduled_resource["trigger_type"],
+        scheduled_resource["schedule_id"],
+        scheduled_resource["scheduled_start_at"],
+    ) == ("scheduled", schedule_id, "2027-01-05T01:00:00Z")
+    resource = api.client.get(f"/runs/{manual_id}", headers=read).json()["run"]
+    assert (resource["trigger_type"], resource["schedule_id"], resource["scheduled_start_at"]) == (
+        "manual",
+        None,
+        None,
+    )
+    for invalid in ({"trigger_type": "hourly"}, {"schedule_id": "not-a-schedule"}):
+        refused = api.client.get("/runs", headers=read, params=invalid)
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["error"]["code"] == "request-invalid"
+    # A cursor is valid only for the filters it was issued for.
+    again = api.client.post(
+        "/runs",
+        json={"operation": "plan", "config_id": api.config_id, "registry_version": 1, "reason": "again"},
+        headers={**read, "Idempotency-Key": "manual-plan-again"},
+    )
+    assert again.status_code == 202, again.text
+    first = api.client.get("/runs", headers=read, params={"trigger_type": "manual", "limit": "1"}).json()
+    assert first["next_cursor"] is not None
+    same_filter = api.client.get(
+        "/runs", headers=read, params={"trigger_type": "manual", "cursor": first["next_cursor"]}
+    )
+    other_filter = api.client.get(
+        "/runs", headers=read, params={"trigger_type": "scheduled", "cursor": first["next_cursor"]}
+    )
+    assert same_filter.status_code == 200, same_filter.text
+    assert other_filter.status_code == 422, other_filter.text
+
+
+# --- GET /health (spec 029, T010) -------------------------------------------------------------
+
+_IP_ADDRESS = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+
+
+def _health_client(tmp_path: Path, checker: HealthReporter) -> TestClient:
+    projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
+    service = RunService(projection, _FakeOrchestration(), secrets=resolver.secret_values)
+    return TestClient(create_app(service, resolver, health_checker=checker))
+
+
+@pytest.mark.parametrize(("healthy", "expected_status"), [(True, 200), (False, 503)])
+def test_health_answers_its_report_without_credentials(tmp_path: Path, expected_status: int, *, healthy: bool) -> None:
+    client = _health_client(tmp_path, fake_health_checker(healthy=healthy))
+
+    response = client.get("/health")
+
+    assert response.status_code == expected_status
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-type"] == "application/json"
+    report = HealthResource.model_validate(response.json())
+    assert report.status == ("healthy" if healthy else "unhealthy")
+    assert report.workers.items[0].name == WORKER_NAME
+    assert "acct_" not in response.text
+    assert socket.gethostname() not in response.text
+    assert "localhost" not in response.text
+    assert _IP_ADDRESS.search(response.text) is None
+    assert installed_version("infrahub-sync") not in response.text
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_head_health_answers_the_status_and_headers_of_get_without_a_body(tmp_path: Path, *, healthy: bool) -> None:
+    client = _health_client(tmp_path, fake_health_checker(healthy=healthy))
+
+    get = client.get("/health")
+    head = client.head("/health")
+
+    assert head.status_code == get.status_code == (200 if healthy else 503)
+    assert dict(head.headers) == dict(get.headers)
+    assert head.content == b""
+
+
+def test_a_health_checker_that_raises_answers_the_service_unavailable_envelope(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = _health_client(tmp_path, RaisingHealthChecker())
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.service.app"):
+        response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "service-unavailable"
+    assert "health-checker-canary" not in response.text + caplog.text
+    assert "db.internal" not in response.text + caplog.text
+
+
+def test_health_declares_its_report_for_200_and_503_and_needs_no_credential(tmp_path: Path) -> None:
+    client = _health_client(tmp_path, fake_health_checker())
+
+    operation = client.get("/openapi.json").json()["paths"]["/health"]["get"]
+
+    assert "security" not in operation
+    responses = operation["responses"]
+    assert responses["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/HealthResource"}
+    # A 503 carries the unhealthy report, or the error envelope when no report could be built.
+    assert responses["503"]["content"]["application/json"]["schema"]["anyOf"] == [
+        {"$ref": "#/components/schemas/HealthResource"},
+        {"$ref": "#/components/schemas/ErrorEnvelope"},
+    ]
+
+
+def test_an_api_built_without_a_health_checker_answers_the_service_unavailable_envelope(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "service-unavailable"

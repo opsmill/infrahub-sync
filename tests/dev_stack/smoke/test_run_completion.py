@@ -214,7 +214,7 @@ def test_raw_http_synchronizes_in_one_run(smoke_env: dict[str, Any], evidence_di
 
     assert device_types(infrahub_client(smoke_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type
     captured = transcript.read_text(encoding="utf-8")
-    assert ("POST", "/runs", 202) in {
+    assert ("POST", "/api/runs", 202) in {
         (json.loads(line)["method"], json.loads(line)["path"], json.loads(line)["status"])
         for line in captured.splitlines()
     }
@@ -353,7 +353,7 @@ def test_raw_http_cancels_a_run_it_has_just_admitted(smoke_env: dict[str, Any], 
             _record_cancellation(evidence_dir, "http", "accepted: run cancelled")
 
     captured = transcript.read_text(encoding="utf-8")
-    assert ("POST", f"/runs/{run_id}/cancel", cancel.status_code) in {
+    assert ("POST", f"/api/runs/{run_id}/cancel", cancel.status_code) in {
         (json.loads(line)["method"], json.loads(line)["path"], json.loads(line)["status"])
         for line in captured.splitlines()
     }

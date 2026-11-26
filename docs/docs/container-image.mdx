@@ -71,6 +71,7 @@ the reference you pulled, such as `registry.opsmill.io/opsmill/infrahub-sync:<ve
 | Sync API | `docker run IMAGE` |
 | Service worker | `docker run IMAGE python -m infrahub_sync.service.worker --pool POOL` |
 | Deployment bootstrap | `docker run IMAGE python -m infrahub_sync.service.deploy` |
+| Service bootstrap, which the Sync API and the worker require before they start | `docker run IMAGE python -m infrahub_sync.service.bootstrap` |
 | CLI | `docker run IMAGE infrahub-sync --help` |
 | Python | `docker run IMAGE python -c "import infrahub_sync"` |
 
@@ -161,7 +162,7 @@ registry.opsmill.io` first, because cosign reads the same private registry.
 To build from a checkout instead of pulling, run from the repository root:
 
 ```bash
-docker build -t infrahub-sync:local .
+docker build -f development/Dockerfile -t infrahub-sync:local .
 ```
 
 A local build is unsigned and carries no release labels. Use it for development and

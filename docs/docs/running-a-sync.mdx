@@ -30,8 +30,15 @@ export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
 export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
 ```
 
-The token has no command-line option, so it does not appear in shell history or in
-process arguments. `--api-url` overrides the URL for one command. For a
+`infrahub-sync-dev-token` is the API token of the stack's `admin` account. The token has no
+command-line option, so it does not appear in shell history or in process arguments.
+
+Instead of a token, a person can sign in with an account name and password. Leave
+`INFRAHUB_SYNC_API_TOKEN` unset and run `infrahub-sync login`; the CLI saves a session for the
+address in `INFRAHUB_SYNC_API_URL` and presents it to every later command. When
+`INFRAHUB_SYNC_API_TOKEN` is set and not empty, the CLI presents the variable and not the
+session, except for `login` and `logout`. See
+[Manage accounts](./guides/accounts.mdx). `--api-url` overrides the URL for one command. For a
 [Compose deployment](./compose-deployment.mdx) with the default port, the URL is
 `http://127.0.0.1:8001`, and the token is the `INFRAHUB_SYNC_API_TOKEN` value in its `.env`.
 
@@ -57,17 +64,29 @@ accept fails with an authentication error.
 In the commands below, replace `CONFIG_ID`, `RUN_ID`, and `CHECKSUM` with the values that
 the previous command printed, and `BRANCH` with the destination branch. Wherever a command
 takes `CONFIG_ID`, you can give the configuration's name instead. The CLI tries the value as
-an identifier first, then as a name. When several configurations share the name, the command
-exits with status 2 and lists their identifiers; use one of them.
+an identifier first, then as a name. A name belongs to one configuration only.
 
 ## Register the package
+
+The package names a stored credential in its source block and in its destination block. An
+administrator creates each one before the registration; the command asks for the value and does
+not echo it. See [Manage stored credentials](./guides/credentials.mdx).
+
+```bash
+infrahub-sync credentials create netbox-token
+infrahub-sync credentials create infrahub-token
+```
+
+Registration refuses a package that names a credential that does not exist.
 
 ```bash
 infrahub-sync configs register package.yml --reason "register inventory import"
 ```
 
 The output includes the `config_id` and the `registry_version`, which is `1` for a new
-registration. Every later command names the package by these two values. The file itself is
+registration. If another configuration already has the name in the package, the command is
+refused with `code: configuration-name-in-use` and prints the `configs version` command that
+adds the package to that configuration instead. Every later command names the package by these two values. The file itself is
 not read again. For what registration checks and returns, see
 [Configuration package](./configuration-package.mdx#registration-and-versions).
 
@@ -78,8 +97,9 @@ infrahub-sync configs validate CONFIG_ID 1
 infrahub-sync configs show CONFIG_ID --version 1
 ```
 
-`configs validate` reports findings in the declared content. It does not connect to the
-source or the destination.
+`configs validate` reports findings in the declared content. It also reports each stored
+credential that a block names and that does not exist, or that lacks a field the block needs. It
+does not connect to the source or the destination.
 
 To check the version against the Infrahub branch that the run will write to, add `--branch`:
 
@@ -92,8 +112,9 @@ With `--branch`, validation also reads that branch and reports:
 - each mapped kind, attribute or relationship that the branch schema does not hold;
 - each literal Dropdown value in the mapping that is not one of the attribute's choices;
 - each permission that the import account lacks to view, create or update a mapped kind;
-- a `source` or `owner` setting that names no node, or more than one node;
-- each `$credential` variable that no running worker holds.
+- a `source` or `owner` setting that names no node, or more than one node.
+
+The Sync API reads the branch with the stored credential that the destination block names.
 
 The command exits with code 1 when one of these findings is an error. The finding codes are
 listed in [Durable product records](./reference/durable-product-records.mdx).
@@ -175,6 +196,29 @@ either side. Only
 [Sync HTTP API reference](./reference/sync-http-api.mdx#read-state-of-each-side) describes each
 state.
 
+After the two read lines, `runs show` prints one `plan_<part>` line for each part of the plan
+step that started, so you can view which part of a plan takes the time:
+
+```text
+plan_waiting: 4.0s
+plan_preparing: 5.1s
+plan_comparing: 31.7s
+plan_checking: 2.3s
+plan_saving: running
+```
+
+`plan_waiting` is the time the execution waited for a worker, and `plan_preparing` the time
+from the moment a worker took it to the start of the first read. `plan_comparing` covers
+deriving the operations, `plan_checking` the checks on the derived plan, which build the plan
+report, and `plan_saving` writing and publishing the plan. A part that ended shows its duration in
+seconds, and the part that runs shows `running`. A part that was running when the stage
+failed, was cancelled or was interrupted shows `stopped after <seconds>s`, or `stopped`
+when the service has not recorded the stage's verdict yet. A part that did not start prints no
+line, and a run created before the service recorded these timings prints no `plan_` line. These
+lines are subject to change in a later release; the
+[Sync HTTP API reference](./reference/sync-http-api.mdx#timings-of-the-plan-step) describes
+each part.
+
 When a side's read ends, the run's log also holds one line for it, which
 `infrahub-sync runs logs RUN_ID` prints. The example shows the message only; `runs logs` also
 prints each line's timestamp, stage and level:
@@ -191,16 +235,85 @@ A `sync` run shows the same lines for its `sync` stage.
 ```bash
 infrahub-sync runs plan RUN_ID --detail
 infrahub-sync runs plan RUN_ID --detail --kind <destination-kind>
+infrahub-sync runs plan RUN_ID --detail --action <create|update|delete>
+infrahub-sync runs plan RUN_ID --samples 3
+infrahub-sync runs plan RUN_ID --json
 ```
 
-`runs plan` prints the summary and the checksum. `--detail` also prints every operation, and
-`--kind` limits the list to one destination kind. A kind that matches no operation is an
-input error.
+`runs plan` prints the summary and the checksum. `--detail` also prints every operation.
+`--kind` limits the list to one destination kind, and `--action` limits it to creates, updates
+or deletes. The two can be combined. A kind that matches no operation is an input error.
+
+Each operation starts with one line: the operation ID, the action, the destination kind and the
+identity of the node. The lines below it show the values the operation writes (`payload`) and
+one line for each peer of each relationship:
+
+```text
+op_3f2a9c0d1e4b5a67 create InterfacePhysical device=Rack-1,DM-Akron,rtr01 name=ge-0/0/0
+  payload: {"mtu":1500,"name":"ge-0/0/0"}
+  device -> DcimDevice[Rack-1,DM-Akron,rtr01]
+  tags -> BuiltinTag[core]
+  tags -> BuiltinTag[prod]
+```
+
+A peer is printed by its kind and its identity values, without the names of the identity
+fields. The values are in the alphabetical order of the field names. When an identity field
+refers to another peer, the identity values of that peer are printed in its place. In the
+example, the identity of the device has the fields `location` and `name`, and the identity of
+its rack has the fields `name` and `site`: the device `rtr01` is in the rack `Rack-1` of the
+site `DM-Akron`. An identity value of a peer is printed between double quotes in the same cases as
+an identity value of the node, and also when it contains a comma or a square bracket, so each
+value ends only at the next comma outside quotes. `<field> -> no peers` means that the operation removes every peer of a
+relationship that can hold several.
+
+To review a plan that is too large to read in full, start with `--samples <number>`. For each
+destination kind and action, it prints the number of operations and that number of its first
+operations, in the order that apply writes them:
+
+```text
+InterfacePhysical create: 3 of 1420 operations shown
+op_3f2a9c0d1e4b5a67 create InterfacePhysical device=Rack-1,DM-Akron,rtr01 name=ge-0/0/0
+  payload: {"mtu":1500,"name":"ge-0/0/0"}
+  device -> DcimDevice[Rack-1,DM-Akron,rtr01]
+...
+```
+
+`--samples` does not print the other operations of a kind and action. Print them with `--detail`,
+`--kind` and `--action`. `--kind` and `--action` also limit the output of `--samples`. `--samples`
+and `--detail` cannot be combined.
+
+`--json` prints the plan that the Sync API returns as one JSON object, with the field names and
+the kind of every peer. Use it when a value contains a comma, or to query a large plan with a
+tool such as `jq`. It cannot be combined with another option.
+
+The `operations` line counts only creates, updates and deletes. A plan with `operations: 0`
+writes nothing, but its `left_out`, `problems` and `kept_without_relationship` counts can still
+be above zero. Records left out, problems and kept records are part of the plan report, not
+operations. When `left_out` is above zero, the plan does not import those records, and the next
+plan on the same source data lists them again. See
+[Review the problems and the left-out records](#review-the-problems-and-the-left-out-records).
 
 The review prints control characters and invisible characters in source values as visible
 escapes, such as `\x1b` or `\u202e`, so a value cannot hide or rewrite a line. Only the
 printed review changes: the saved plan and JSON output keep the real values. A value that
-contains the literal text `\x1b` looks the same as an escaped character.
+contains the literal text `\x1b` looks the same as an escaped character, except in an identity
+value, where a literal backslash is printed as `\\`.
+
+Each operation line of `--detail` names the object by its identity, as `key=value` fields
+separated by a space. An identity value is printed between double quotes when it is empty or
+contains a space or other whitespace, `=`, `(`, `)`, `'`, `"` or `\`. Inside the quotes, a
+backslash is printed as `\\` and a double quote as `\"`, so the value ends only at the closing
+quote. A value such as `edge-01` is printed without quotes.
+
+```text
+op_1 create Device name="x site=prod (not executed)"
+op_2 create Device name=edge-01 site="par 1"
+op_3 delete Site name=retired (not executed)
+```
+
+In this example, `op_1` is a create whose name contains the text `site=prod (not executed)`.
+Only text after the last identity field, outside the quotes, is a marker. The `record:` and
+`failed operation:` lines of a failed run print identities the same way.
 
 The plan can contain delete operations for destination objects that the source does not
 contain. Apply never executes a delete. The detailed output marks each delete as
@@ -248,7 +361,7 @@ infrahub-sync runs plan RUN_ID --kept
 Each option reads every page and prints one line per entry: the problem type or the cause, the
 kind, the record's identity (or its source ID when the identity is not known), and the reason.
 `--kind` limits a list to one kind, and `--type` limits `--problems` to one problem type.
-`--problems`, `--left-out`, `--kept` and `--detail` cannot be combined.
+`--problems`, `--left-out`, `--kept`, `--detail` and `--samples` cannot be combined.
 
 The problem types are:
 
@@ -260,6 +373,9 @@ The problem types are:
 - `wrong_value_type`: a value does not have the type the attribute needs.
 - `required_peer_excluded_by_filter`: a configured filter removed the peer of a required
   relationship.
+- `required_relationship_empty_in_source`: a source record holds no peer for a required one-peer
+  relationship. The plan leaves the record out and counts it in `left_out`, and its Infrahub
+  node is kept as it is.
 - `identities_merge_in_destination`: two or more source records with different identities
   would be stored as one Infrahub node.
 - `peer_not_found_in_source`: a record refers to a peer that the source does not return.
@@ -491,6 +607,11 @@ created most recently, shown with its start time (`started_at`). `latest_applied
 run applied most recently, which can be an older plan that you applied after a newer one. It
 is shown with the time its apply finished (`finished_at`).
 
+The list does not show whether a version was registered without validation. Run
+`infrahub-sync configs show CONFIG_ID --version VERSION` and read
+`registered_without_validation`; see
+[Versions registered without validation](./configuration-package.mdx#versions-registered-without-validation).
+
 `runs artifacts RUN_ID` lists the files that the service kept for a run.
 `runs cancel RUN_ID` cancels a run's stage that is still running, or withdraws a finished
 plan; see [Withdraw a plan](#withdraw-a-plan). It asks for confirmation, or refuses when it
@@ -579,6 +700,43 @@ recorded by an earlier release has none of them and prints as before.
 When the destination branch does not exist, the `cause:` line names the branch, and the
 `hint:` line says to create it or to start the run with `--branch <existing branch>`. A
 failure to read the destination schema also prints a `cause:` and a `hint:` line.
+
+Sync writes to one configuration from one run at a time. When a `sync`, `apply` or `runs resume`
+waits 30 seconds for another write of the same configuration to finish and it does not, the
+write does not start and changes nothing. The command prints the failure type
+`write_guard_contended` and, when Sync can name it, the other run's ID:
+
+```text
+apply failed: ApplyGuardContentionError
+failure type: write_guard_contended
+cause: Sync run <run_id> was writing to this configuration and held its write guard when this write's wait for the guard ended, ...
+active run: <run_id>
+hint: Check that run with `infrahub-sync runs show <run_id>` and wait for it to finish, then plan again.
+```
+
+The `cause:` line is shortened here. Sync names the run whose database session held the
+configuration's write guard when the wait ended, and only when its run records hold that run for
+the same configuration. When Sync cannot prove which run holds the guard, the output has no
+`active run:` line, the `cause:` line says that the run is not known, and the `hint:` line
+names `infrahub-sync runs list`.
+
+When the named run's write had already ended before the wait began and its worker still holds the
+guard, waiting does not help. The guard is released only when that worker stops:
+
+```text
+apply failed: ApplyGuardContentionError
+failure type: write_guard_contended
+cause: Sync run <run_id> held this configuration's write guard when this write's wait for the guard ended, although its write had ended before that wait began, ...
+active run: <run_id>
+hint: The guard is released only when the worker of run <run_id> stops. Ask the administrator of the Sync service to stop or restart that worker, then plan again.
+```
+
+When the refused write is a `runs resume`, the `hint:` line ends with `infrahub-sync verify` and
+`infrahub-sync runs resume` instead of a new plan.
+
+In the web interface, the failed run's failure notice shows the same cause and next action.
+When Sync names the run that holds the guard, the notice also has an **Open run** link to that
+run's page.
 
 `infrahub-sync runs logs RUN_ID` prints the lines that Sync wrote during the run, including
 the ERROR line that holds the cause and the next step. It reads them through the Sync API.
@@ -760,6 +918,55 @@ save the progress marker for 5 minutes, the apply stops and the run is interrupt
 
 An interrupted `sync` run is resumed in the same way, with the checksum of the plan that the
 `sync` run saved. Read it with `runs plan RUN_ID`.
+
+### View an automatic resume
+
+When the Sync API runs with `INFRAHUB_SYNC_AUTOMATIC_RESUME` on, it runs `verify` and resumes a
+run by itself after the worker of its write disappeared: Prefect reported the flow run as
+crashed, or the worker stopped sending heartbeats. The setting, the reasons the Sync API does not
+resume a run, and the limits are described in
+[Automatic resume of an interrupted write](./operations/day-2-operations.mdx#automatic-resume-of-an-interrupted-write).
+
+`infrahub-sync runs show RUN_ID` prints one block for each interrupted write that the Sync API
+recorded for automatic resume, oldest first, after the progress lines:
+
+```text
+Automatic resume 1: started
+  cause: the worker infrahub-sync-service-3b2f… stopped sending heartbeats
+  check: passed, 0 differs, 0 not checked
+  resumed after operation 5999 by Sync (automatic resume)
+
+Automatic resume 2: not started
+  cause: Prefect reported the flow run as crashed
+  reason: the check found 1 node that differs from the plan
+  next: run `infrahub-sync verify RUN_ID`, then a new plan or `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`
+```
+
+- The first line gives the state: `started` or `not started` once the automatic resume ended, and
+  `waiting for a live worker to run the check`, `checking`, `waiting for a live worker to
+  resume` or `resuming` before. When the Sync API submitted the resume and no worker started it
+  in time, the first line says `submitted, no worker started it`, a line `submitted after
+  operation N by Sync (automatic resume)` follows the check, and the resume counts toward the
+  limit of 3.
+- `cause` says why the write was interrupted.
+- `check` appears once the automatic `verify` passed, also when the automatic resume ended later, with the count of uncertain operations
+  it did not read (`not checked`) because of its limit of 2,000. A check that did not pass is
+  stated under `reason`.
+- `reason` says why the Sync API did not resume the run.
+- `next` appears on the last block only, when the Sync API did not resume the run and the run
+  is still interrupted. When the run cannot be resumed, it says to create a new plan.
+
+The resume lines of `runs show` and the run page of the web interface name
+`Sync (automatic resume)` as the actor of an automatic resume. `infrahub-sync runs list` adds
+`auto resumes: N` to a run that the Sync API resumed. The event list records
+`infrahub_sync.run.automatic_resume_started` when the Sync API submits a resume, and
+`infrahub_sync.run.automatic_resume_not_started`, with the reason code, when it does not resume
+the run; see [List events](./reference/sync-http-api.mdx#list-events).
+
+While the Sync API waits for a live worker, your own `verify` or `runs resume` stops the
+automatic resume, and its block then says that a person ran `verify` or `runs resume` while the
+automatic resume waited for a live worker. While its check or its resume is being submitted or
+runs, your request is refused with `run-execution-conflict`.
 
 ## Change a registered package
 

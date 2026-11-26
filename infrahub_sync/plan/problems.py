@@ -1,7 +1,7 @@
 """The plan problem pass, the dependency walk and the selection step (spec 007 research R3).
 
 `find_problems` reads the source adapter's load report, the source store, the destination
-schema and the derived operations, and returns the plan report: the problems of the nine
+schema and the derived operations, and returns the plan report: the problems of the ten
 types, the records the plan leaves out and the records it keeps without one optional
 relationship. It changes no store and no operation.
 
@@ -17,19 +17,23 @@ rendered from one fixed template per problem type over typed fields (research R1
 
 from __future__ import annotations
 
-import logging
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+import structlog
 from diffsync.exceptions import ObjectNotFound
 
 from infrahub_sync.load_report import source_record_id
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.plan.derive import _identity_from_keys, _resolve_references, unique_identity_groups
+from infrahub_sync.plan.derive import (
+    _identity_from_keys,
+    _resolve_references,
+    destination_requires,
+    unique_identity_groups,
+)
 from infrahub_sync.plan.destination_only_peer import destination_only_peers
 from infrahub_sync.plan.errors import SourcePeerUnresolvedError, UnformableDestinationIdentityError
-from infrahub_sync.plan.keying import _component_field
 from infrahub_sync.plan.models import (
     REPORT_REASON_LIMIT,
     KeptRecord,
@@ -52,7 +56,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.destination_only_peer import DestinationOnlyPeers
     from infrahub_sync.plan.keying import IdentityGroup
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # The longest text a source value takes inside a reason, so the reason stays readable.
 _REASON_VALUE_LIMIT = 80
@@ -89,6 +93,10 @@ _REASON_TEMPLATES: Mapping[ProblemType, str] = {
     "transform_failed": (
         "{record}: {transform} of the {kind} mapping entry, which writes {field}, failed for this record, "
         "so the record is not loaded."
+    ),
+    "required_relationship_empty_in_source": (
+        "{record}: the source holds no peer for the required relationship {field}, so the plan does not "
+        "change this record."
     ),
 }
 
@@ -331,12 +339,9 @@ def _requires(kind: str, field_name: str, *, source: Any, destination_schema: An
     model = getattr(source, kind, None)
     if field_name in (getattr(model, "_identifiers", None) or ()):
         return True
-    node = destination_schema.get(kind) if hasattr(destination_schema, "get") else None
-    if field_name in {_component_field(component) for component in getattr(node, "human_friendly_id", None) or ()}:
-        return True
-    for relationship in getattr(node, "relationships", None) or ():
-        if getattr(relationship, "name", None) == field_name:
-            return not getattr(relationship, "optional", True)
+    required = destination_requires(destination_schema, kind, field_name)
+    if required is not None:
+        return required
     info = None if model is None else getattr(model, "model_fields", {}).get(field_name)
     return info is not None and info.is_required()
 
@@ -379,6 +384,10 @@ def _group_problem(problem_type: ProblemType, members: Iterable[_Record], findin
         return
     problem = _problem(problem_type, ordered[0].reference(), other_records=[m.reference() for m in ordered[1:]])
     findings.add(problem, [member.key for member in ordered])
+
+
+# The load report reasons that give one problem of the same name, naming the record and the field.
+_FIELD_PROBLEMS: frozenset[str] = frozenset({"transform_failed", "required_relationship_empty_in_source"})
 
 
 def _load_report_problems(
@@ -427,8 +436,10 @@ def _load_report_problems(
                 config_entry=entry.config_entry,
             )
             findings.add(problem, [key])
-        elif entry.reason == "transform_failed":
-            problem = _problem("transform_failed", reference, field_name=entry.field, config_entry=entry.config_entry)
+        elif entry.reason in _FIELD_PROBLEMS:
+            problem = _problem(
+                cast("ProblemType", entry.reason), reference, field_name=entry.field, config_entry=entry.config_entry
+            )
             findings.add(problem, [key])
         elif entry.reason == "peer_not_found_in_source":
             missing = None if entry.peer is None else entry.peer.model_copy(update={"identity": None})
@@ -472,6 +483,89 @@ def _dropdown_problems(
                     allowed=sorted(choices),
                 )
                 findings.add(problem, [record.key])
+
+
+def _destination_required_empty_problems(  # pylint: disable=too-many-arguments  # the check's inputs, keyword-only
+    *,
+    source: Any,
+    destination: Any,
+    view: _SourceView,
+    load_report: Sequence[LoadReportEntry],
+    config: SyncConfig | None,
+    findings: _Findings,
+) -> None:
+    """Leave out a stored record that empties a one-peer relationship the destination requires (FR-013a).
+
+    The source read leaves out a record whose source model requires the peer. This check
+    covers a relationship that the source model marks optional and the destination schema
+    requires: the source record holds no peer and the destination node holds one. The record
+    gets a `required_relationship_empty_in_source` problem, so the plan holds no operation for
+    it and keeps its destination node.
+
+    A field the load report already describes for the record (a peer the read could not
+    build), and a field whose peer a configured filter removed (research R7), are not checked
+    here: the source names a peer for them.
+    """
+    destination_schema = getattr(destination, "schema", None)
+    destination_store = getattr(destination, "store", None)
+    if destination_schema is None or destination_store is None:
+        return
+    reported: set[tuple[_RecordKey, str]] = set()
+    for index, entry in enumerate(load_report):
+        key = view.by_entry.get(index)
+        if key is not None and entry.field is not None:
+            reported.add((key, entry.field))
+    filtered = getattr(source, "filtered_peer_fields", None) or frozenset()
+    for kind in getattr(source, "top_level", ()) or ():
+        fields = _destination_required_one_peer_fields(
+            source, kind, config=config, destination_schema=destination_schema
+        )
+        for item in source.get_all(kind) if fields else ():
+            record = view.records.get(_item_key(kind, item))
+            if record is None:
+                continue
+            emptied = [
+                name
+                for name in fields
+                if getattr(item, name, None) is None
+                and (record.key, name) not in reported
+                and (kind, record.source_id, name) not in filtered
+            ]
+            for field_name in _held_by_destination(destination_store, kind, item.get_unique_id(), emptied):
+                problem = _problem("required_relationship_empty_in_source", record.reference(), field_name=field_name)
+                findings.add(problem, [record.key])
+
+
+def _destination_required_one_peer_fields(
+    source: Any, kind: str, *, config: SyncConfig | None, destination_schema: Any
+) -> list[str]:
+    """The one-peer reference fields of `kind` that the destination schema requires, identifiers aside."""
+    model = getattr(source, kind, None)
+    identifiers = getattr(model, "_identifiers", None) or ()
+    model_fields = getattr(model, "model_fields", None) or {}
+    return [
+        name
+        for name, peer_kinds in sorted(reference_candidates(config, kind).items())
+        if peer_kinds
+        and name not in identifiers
+        and not (name in model_fields and isinstance(model_fields[name].default, list))
+        and destination_requires(destination_schema, kind, name) is True
+    ]
+
+
+def _held_by_destination(destination_store: Any, kind: str, unique_id: str, fields: Sequence[str]) -> list[str]:
+    """The fields of `fields` for which the destination node `unique_id` of `kind` holds one peer."""
+    if not fields:
+        return []
+    try:
+        held = destination_store.get(model=kind, identifier=unique_id)
+    except ObjectNotFound:
+        return []
+    return [
+        name
+        for name in fields
+        if getattr(held, name, None) is not None and not isinstance(getattr(held, name, None), (list, tuple))
+    ]
 
 
 def _identity_group_problems(groups: Sequence[IdentityGroup], view: _SourceView, findings: _Findings) -> None:
@@ -698,6 +792,9 @@ def find_problems(
         logger.warning("Plan: Dropdown values were not checked: this run has no destination schema snapshot")
     else:
         _dropdown_problems(source=source, view=view, dropdown_choices=dropdown_choices, findings=findings)
+    _destination_required_empty_problems(
+        source=source, destination=destination, view=view, load_report=load_report, config=config, findings=findings
+    )
     _identity_group_problems(identity_groups, view, findings)
     _destination_ambiguity_problems(destination=destination, view=view, config=config, findings=findings)
     left, kept = _walk(

@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "tailwind-variants";
 
 import type { Run } from "#/api/types";
-import { Bar, CLICKABLE, STRETCHED } from "#/components/page";
+import { Bar, CLICKABLE, FOCUS, STRETCHED } from "#/components/page";
 import { BranchBadge, CHANGE_TONE, StateLabel, When } from "#/components/run-status";
 import {
   type Counts as ChangeCounts,
@@ -166,7 +166,30 @@ const hasStateNote = (run: Run, state: ListRunState) => {
 const Dot = () => <span aria-hidden="true">·</span>;
 
 /**
- * Version, the selectable run ID and the sync note, on the line under the run's name. The ID comes
+ * The mark of a run that a schedule started. It links to the schedule above the row's stretched
+ * link: the row link is stretched with a pseudo-element, so this link is its sibling, not nested.
+ */
+function ScheduledMark({ run }: { run: Run }) {
+  if (run.trigger_type !== "scheduled") return null;
+  if (!run.schedule_id) return <span className="whitespace-nowrap">Scheduled</span>;
+  return (
+    <Link
+      to="/schedules/$scheduleId"
+      params={{ scheduleId: run.schedule_id }}
+      className={cn(
+        "relative z-10 whitespace-nowrap rounded-sm text-accent hover:underline",
+        FOCUS
+      )}
+    >
+      Scheduled
+      <span className="sr-only">, view the schedule</span>
+    </Link>
+  );
+}
+
+/**
+ * Version, the selectable run ID, the sync note, the scheduled mark and the account that started
+ * the run, on the line under the run's name. The ID comes
  * before the note so that it is never cut and lines up from row to row; the line wraps instead.
  * On touch the ID stays under the stretched link, so a tap anywhere opens the run.
  */
@@ -188,6 +211,18 @@ function IdLine({ run, withVersion }: { run: Run; withVersion: boolean }) {
         <>
           <Dot />
           <span className="whitespace-nowrap">Sync run, no review step</span>
+        </>
+      )}
+      {run.trigger_type === "scheduled" && (
+        <>
+          <Dot />
+          <ScheduledMark run={run} />
+        </>
+      )}
+      {run.actor && (
+        <>
+          <Dot />
+          <span className="min-w-0 [overflow-wrap:anywhere]">Started by {run.actor}</span>
         </>
       )}
     </div>

@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Get Version
-         * @description Return the installed server and supported unstable API versions.
+         * @description Return the installed server and Infrahub SDK versions and the supported unstable API versions.
          */
         get: operations["get_version_version_get"];
         put?: never;
@@ -24,7 +24,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/status": {
+    "/health": {
         parameters: {
             query?: never;
             header?: never;
@@ -32,10 +32,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Status
-         * @description Return unauthenticated lifecycle state without provider identifiers.
+         * Get Health
+         * @description Return the health of the components and workers, without authentication (spec 029).
          */
-        get: operations["get_status_status_get"];
+        get: operations["get_health_health_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -53,7 +53,7 @@ export interface paths {
         };
         /**
          * Get Me
-         * @description Return the caller's actor name and administrator flag; performs no other action.
+         * @description Return the caller's actor name, administrator flag and the approval setting; performs no other action.
          */
         get: operations["get_me_me_get"];
         put?: never;
@@ -73,7 +73,7 @@ export interface paths {
         };
         /**
          * List Runs
-         * @description Return one page of runs, newest first, optionally for one configuration or version.
+         * @description Return one page of runs, newest first, optionally for one configuration, version, trigger or schedule.
          */
         get: operations["list_runs_runs_get"];
         put?: never;
@@ -94,23 +94,6 @@ export interface paths {
         };
         /** Get Run */
         get: operations["get_run_runs__run_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/runs/{run_id}/plan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Plan */
-        get: operations["get_plan_runs__run_id__plan_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -204,6 +187,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Run
+         * @description Resume an interrupted write from the run's saved position, after a `verify` passed (spec 016).
+         */
+        post: operations["resume_run_runs__run_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{run_id}/cancel": {
         parameters: {
             query?: never;
@@ -236,6 +239,26 @@ export interface paths {
         put?: never;
         /** Register */
         post: operations["register_configs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/configs/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Package
+         * @description Validate a package without registering it; an administrator token is required.
+         */
+        post: operations["check_package_configs_validate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -314,6 +337,193 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Schedules
+         * @description Return one page of schedules, newest first; without ``state``, deleted schedules are left out.
+         */
+        get: operations["list_schedules_schedules_get"];
+        put?: never;
+        /**
+         * Create Schedule
+         * @description Create a schedule that starts a ``sync`` run of one configuration version on a cron cadence.
+         */
+        post: operations["create_schedule_schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/next-starts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Schedule Next Starts
+         * @description Return the next start times of a cron expression in a time zone; stores nothing and records no event.
+         *
+         *     The values travel in the body, not in the query string, so a credential typed by mistake
+         *     never reaches the access log. It takes no ``Idempotency-Key``.
+         */
+        post: operations["schedule_next_starts_schedules_next_starts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Schedule
+         * @description Return one schedule, also a deleted schedule.
+         */
+        get: operations["get_schedule_schedules__schedule_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change Schedule
+         * @description Change one or more settings of a schedule.
+         */
+        post: operations["change_schedule_schedules__schedule_id__change_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause Schedule
+         * @description Pause a schedule: it starts no run until it is resumed.
+         */
+        post: operations["pause_schedule_schedules__schedule_id__pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Schedule
+         * @description Make a paused schedule active, or a stopped schedule whose reason no longer holds.
+         */
+        post: operations["resume_schedule_schedules__schedule_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete Schedule
+         * @description Delete a schedule; its record, its runs and its open proposed change are kept.
+         */
+        post: operations["delete_schedule_schedules__schedule_id__delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{schedule_id}/take-over": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take Over Schedule
+         * @description Make the calling administrator the owner of a schedule; a schedule stopped because its owner is gone becomes active.
+         */
+        post: operations["take_over_schedule_schedules__schedule_id__take_over_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Run
+         * @description Record approval of the run's saved plan without applying it; submits no execution.
+         */
+        post: operations["approve_run_runs__run_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/events": {
         parameters: {
             query?: never;
@@ -323,7 +533,7 @@ export interface paths {
         };
         /**
          * List Events
-         * @description Return one page of typed events, oldest first, that match every given filter.
+         * @description Return one page of typed events that match every given filter, oldest first or, for ``desc``, newest first.
          */
         get: operations["list_events_events_get"];
         put?: never;
@@ -354,13 +564,519 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Plan */
+        get: operations["get_plan_runs__run_id__plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/plan/problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan Problems
+         * @description Return one page of the saved plan's problems (spec 007, contracts/sync-api.md).
+         */
+        get: operations["get_plan_problems_runs__run_id__plan_problems_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/plan/left-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan Left Out
+         * @description Return one page of the records the saved plan leaves out (spec 007).
+         */
+        get: operations["get_plan_left_out_runs__run_id__plan_left_out_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/plan/kept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan Kept
+         * @description Return one page of the records the saved plan keeps without one optional relationship (spec 007).
+         */
+        get: operations["get_plan_kept_runs__run_id__plan_kept_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/sign-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign In
+         * @description Open a session with an account name and its password; the answer holds the session token once.
+         */
+        post: operations["sign_in_auth_sign_in_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/sign-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign Out
+         * @description End the session of the request; its session token is refused afterwards.
+         */
+        post: operations["sign_out_auth_sign_out_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Accounts
+         * @description Return the accounts that are not deleted, by name; one state only when ``state`` names it.
+         */
+        get: operations["list_accounts_accounts_get"];
+        put?: never;
+        /**
+         * Create Account
+         * @description Create an account with its first password.
+         */
+        post: operations["create_account_accounts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Account
+         * @description Return one account by its name, in any letter case.
+         */
+        get: operations["read_account_accounts__name__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Account
+         * @description Delete an account; its records display the placeholder of the answer. It cannot be reversed.
+         */
+        delete: operations["delete_account_accounts__name__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Account
+         * @description Disable an account, which deletes its tokens and its sessions, enable it again, or set its level.
+         */
+        patch: operations["update_account_accounts__name__patch"];
+        trace?: never;
+    };
+    "/accounts/{name}/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Account Password
+         * @description Replace the password of an account; every session of the account ends.
+         */
+        put: operations["set_account_password_accounts__name__password_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{name}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unlock Account
+         * @description End the refusal of an account's sign-ins that follows repeated failures.
+         */
+        post: operations["unlock_account_accounts__name__unlock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{name}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Account Tokens
+         * @description Return the API tokens of an account, without any value.
+         */
+        get: operations["list_account_tokens_accounts__name__tokens_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{name}/tokens/{token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Account Token
+         * @description Delete one API token of an account; its value is refused afterwards.
+         */
+        delete: operations["delete_account_token_accounts__name__tokens__token_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change Own Password
+         * @description Replace the caller's password; the other sessions of the account end and its tokens stay.
+         */
+        put: operations["change_own_password_me_password_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Own Tokens
+         * @description Return the API tokens of the caller's account, without any value.
+         */
+        get: operations["list_own_tokens_me_tokens_get"];
+        put?: never;
+        /**
+         * Create Own Token
+         * @description Create an API token for the caller's account; the answer holds its value this once.
+         */
+        post: operations["create_own_token_me_tokens_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/tokens/{token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Own Token
+         * @description Delete one API token of the caller's account; its value is refused afterwards.
+         */
+        delete: operations["delete_own_token_me_tokens__token_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Credentials
+         * @description Return one page of credentials sorted by name, with the names of their fields and no value.
+         */
+        get: operations["list_credentials_credentials_get"];
+        put?: never;
+        /**
+         * Create Credential
+         * @description Create a credential with its first value; the answer holds the names of its fields only.
+         */
+        post: operations["create_credential_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Credential
+         * @description Return one credential by its name, with the names of its fields and no value.
+         */
+        get: operations["read_credential_credentials__name__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Credential
+         * @description Delete a credential that no latest version of a configuration and no schedule that is not deleted names.
+         *
+         *     The refusal ``409 credential-in-use`` lists those configurations and schedules in
+         *     ``details``. A deletion cannot be reversed.
+         */
+        delete: operations["delete_credential_credentials__name__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Describe Credential
+         * @description Replace the description of a credential; its revision stays.
+         */
+        patch: operations["describe_credential_credentials__name__patch"];
+        trace?: never;
+    };
+    "/credentials/{name}/value": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Credential Value
+         * @description Replace the whole set of fields of a credential; its revision goes up by one.
+         */
+        put: operations["set_credential_value_credentials__name__value_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/worker/runs/{run_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release Credentials
+         * @description Return the values of the blocks that the stage of one claimed execution of the run needs.
+         *
+         *     The answer is built here and not checked against the model again: an error of that
+         *     check could quote a value.
+         */
+        post: operations["release_credentials_worker_runs__run_id__credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/worker/schedules/{schedule_id}/proposed-change-states": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Proposed Change States
+         * @description Return the state of each earlier proposed change of the schedule, read from Infrahub by the Sync API.
+         *
+         *     The route declares no body, so nothing a request sends can change the address, the
+         *     token or the proposed changes that are read. The answer holds the states only.
+         */
+        post: operations["read_proposed_change_states_worker_schedules__schedule_id__proposed_change_states_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AccountResource
+         * @description What an answer shows of an account: never its identifier and never its password hash.
+         */
+        AccountResource: {
+            /** Name */
+            name: string;
+            /** Administrator */
+            administrator: boolean;
+            /** Disabled */
+            disabled: boolean;
+            /** Environment Managed */
+            environment_managed: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Sign In Refused Until */
+            sign_in_refused_until?: string | null;
+        };
+        /**
+         * ApplyProgressKindResource
+         * @description How many of one kind's operations were committed, are uncertain, and were not reached.
+         */
+        ApplyProgressKindResource: {
+            /** Kind */
+            kind: string;
+            /** Committed */
+            committed: number;
+            /** Uncertain */
+            uncertain: number;
+            /** Not Reached */
+            not_reached: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ApplyProgressResource
+         * @description How far a run's write got through its saved plan (spec 016 data-model.md "Run progress view").
+         *
+         *     `position` is the highest saved position over all the run's write executions, or `None` when
+         *     none was saved. `resumable` is true when the run's write was interrupted and no execution is
+         *     unfinished; `verify_required` is true when no `verify` passed after the latest interruption.
+         */
+        ApplyProgressResource: {
+            /** Position */
+            position?: number | null;
+            /** Saved At */
+            saved_at?: string | null;
+            /**
+             * Resumable
+             * @default false
+             */
+            resumable: boolean;
+            /**
+             * Verify Required
+             * @default false
+             */
+            verify_required: boolean;
+            /**
+             * By Kind
+             * @default []
+             */
+            by_kind: components["schemas"]["ApplyProgressKindResource"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ApplyRunRequest
          * @description Request application of a reviewed plan checksum.
+         *
+         *     `confirm_left_out` confirms that the person reviewed the records the plan leaves out
+         *     (spec 007 FR-010). It is a strict JSON boolean, and it is serialized only when true, so a
+         *     request that does not confirm keeps today's body and today's idempotency fingerprint.
          */
         ApplyRunRequest: {
             /** Expected Checksum */
@@ -370,10 +1086,72 @@ export interface components {
              * @default false
              */
             confirm_writes: boolean;
+            /**
+             * Confirm Left Out
+             * @default false
+             */
+            confirm_left_out: boolean;
             /** Branch */
             branch?: string | null;
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * ApproveRunRequest
+         * @description Request approval of a run's saved plan, bound to the reviewed checksum, without applying it.
+         */
+        ApproveRunRequest: {
+            /** Expected Checksum */
+            expected_checksum: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ApprovedPlanSummaryResource
+         * @description The counts of the plan an approval covers: creates, updates and recorded deletes.
+         */
+        ApprovedPlanSummaryResource: {
+            /** Creates */
+            creates: number;
+            /** Updates */
+            updates: number;
+            /** Deletes Recorded */
+            deletes_recorded: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ApprovedRunResource
+         * @description The approve response: the run with its approval, and the counts of the plan approved.
+         */
+        ApprovedRunResource: {
+            run: components["schemas"]["PublicRunResource"];
+            /** Orchestration */
+            orchestration: components["schemas"]["OrchestrationSummary"][];
+            apply_progress?: components["schemas"]["ApplyProgressResource"] | null;
+            /**
+             * Resumes
+             * @default []
+             */
+            resumes: components["schemas"]["ResumeResource"][];
+            /**
+             * Credentials Used
+             * @default []
+             */
+            credentials_used: components["schemas"]["CredentialUsedResource"][];
+            /**
+             * Automatic Resumes
+             * @default []
+             */
+            automatic_resumes: components["schemas"]["AutomaticResumeResource"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
+            plan_summary: components["schemas"]["ApprovedPlanSummaryResource"];
+        } & {
+            [key: string]: unknown;
         };
         /**
          * ArtifactListResource
@@ -419,6 +1197,55 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * AutomaticResumeResource
+         * @description Sync's decision on resuming one interrupted write without a person (spec 030 contracts/http-api.md).
+         *
+         *     `state` is `waiting-check`, `checking`, `waiting-resume`, `resuming` or `ended`. `decision` is
+         *     `resume` once Sync submitted the resume, and `no-resume` with a `reason` code when it did not.
+         *     `cause_text` and `reason_text` are fixed English sentences built from the codes. `actor` is
+         *     the name the Sync API shows for the reserved actor of the automatic check and resume,
+         *     `Sync (automatic resume)`. The fields are plain strings, so a client still reads a code that
+         *     a later Sync API adds.
+         */
+        AutomaticResumeResource: {
+            /** Interrupted Flow Run Id */
+            interrupted_flow_run_id: string;
+            /** Actor */
+            actor: string;
+            /** Cause */
+            cause: string;
+            /** Cause Text */
+            cause_text: string;
+            /** State */
+            state: string;
+            /** Decision */
+            decision?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Reason Text */
+            reason_text?: string | null;
+            /** Operations Not Checked */
+            operations_not_checked?: number | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Check Flow Run Id */
+            check_flow_run_id?: string | null;
+            /** Resume Flow Run Id */
+            resume_flow_run_id?: string | null;
+            /**
+             * Decided At
+             * Format: date-time
+             */
+            decided_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * CancelRunRequest
          * @description Request cancellation of an accepted run.
          */
@@ -427,16 +1254,104 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * ChangePasswordRequest
+         * @description The current password of the caller and the password that replaces it.
+         */
+        ChangePasswordRequest: {
+            /** Current Password */
+            current_password: string;
+            /** New Password */
+            new_password: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ChangeScheduleRequest
+         * @description Request a change of one or more settings of a schedule.
+         *
+         *     A setting that is `None` keeps its value. The request must name at least one setting. The
+         *     name, the configuration and the owner of a schedule cannot be changed, so the model refuses
+         *     them as unknown fields. `cron` and `timezone` are not validated here, as in
+         *     `CreateScheduleRequest`.
+         */
+        ChangeScheduleRequest: {
+            /** Registry Version */
+            registry_version?: number | null;
+            /** Cron */
+            cron?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Write Target */
+            write_target?: ("branch-review" | "default-branch") | null;
+            /** Write When Left Out */
+            write_when_left_out?: boolean | null;
+            /** Overlap Policy */
+            overlap_policy?: ("reject" | "queue") | null;
+            /** Start Late By At Most Seconds */
+            start_late_by_at_most_seconds?: number | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ConfigErrorDetail
+         * @description Parse the public fields in a configuration API error.
+         */
+        ConfigErrorDetail: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Status */
+            status: number;
+            /** Family */
+            family: string;
+            /** Reason */
+            reason?: string | null;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ConfigErrorEnvelope
+         * @description Wrap a configuration API error response.
+         */
+        ConfigErrorEnvelope: {
+            error: components["schemas"]["ConfigErrorDetail"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ConfigMutationRequest
          * @description Submit a configuration package with an optional audit reason.
+         *
+         *     The package is ``package``, as JSON, or ``document``, the text of a package file, YAML or
+         *     JSON, which the Sync API parses as `POST /configs/validate` does. The web interface sends
+         *     ``document``, because a browser that parses and serializes the file again can change its
+         *     numbers; the CLI sends ``package``. Exactly one is set. The Sync API checks that rule
+         *     itself, after the administrator check, so this model shared with it does not; the field
+         *     that is not set is omitted.
+         *
+         *     ``registered_without_validation`` marks the created version as registered without
+         *     validation. The web interface sets it; the CLI never does. A request without the mark
+         *     keeps today's body, so it is omitted when ``false``.
          */
         ConfigMutationRequest: {
             /** Package */
-            package: {
+            package?: {
                 [key: string]: unknown;
-            };
+            } | null;
+            /** Document */
+            document?: string | null;
             /** Reason */
             reason?: string | null;
+            /**
+             * Registered Without Validation
+             * @default false
+             */
+            registered_without_validation: boolean;
         };
         /**
          * ConfigurationPage
@@ -503,10 +1418,53 @@ export interface components {
             registered_by?: string | null;
             /** Registration Reason */
             registration_reason?: string | null;
+            /**
+             * Registered Without Validation
+             * @default false
+             */
+            registered_without_validation: boolean;
             latest_run?: components["schemas"]["RunReference"] | null;
             latest_applied_run?: components["schemas"]["RunReference"] | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * CreateAccountRequest
+         * @description The name, the first password and the level of a new account.
+         *
+         *     The name and the password have no rule here: each rule has its own refusal code.
+         */
+        CreateAccountRequest: {
+            /** Name */
+            name: string;
+            /** Password */
+            password: string;
+            /**
+             * Administrator
+             * @default false
+             */
+            administrator: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * CreateCredentialRequest
+         * @description A new credential: ``POST /credentials``.
+         */
+        CreateCredentialRequest: {
+            /** Username */
+            username?: string | null;
+            /** Password */
+            password?: string | null;
+            /** Token */
+            token?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
         };
         /**
          * CreateRunRequest
@@ -534,6 +1492,196 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * CreateScheduleRequest
+         * @description Request a schedule that starts a `sync` run of one configuration version on a cron cadence.
+         *
+         *     `cron` and `timezone` are text that this model does not validate: the Sync API validates
+         *     both and answers `schedule-cron-invalid` or `schedule-timezone-invalid`. The Sync API also
+         *     decides which pairs of settings it accepts. `start_late_by_at_most_seconds` is `None` when
+         *     the request does not set it, and the Sync API then uses 3600.
+         */
+        CreateScheduleRequest: {
+            /** Name */
+            name: string;
+            /** Config Id */
+            config_id: string;
+            /** Registry Version */
+            registry_version: number;
+            /** Cron */
+            cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            timezone: string;
+            /**
+             * Write Target
+             * @default branch-review
+             * @enum {string}
+             */
+            write_target: "branch-review" | "default-branch";
+            /**
+             * Write When Left Out
+             * @default false
+             */
+            write_when_left_out: boolean;
+            /**
+             * Overlap Policy
+             * @default reject
+             * @enum {string}
+             */
+            overlap_policy: "reject" | "queue";
+            /** Start Late By At Most Seconds */
+            start_late_by_at_most_seconds?: number | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * CreateTokenRequest
+         * @description The name of a new API token and, when it has one, its expiry date with a time zone.
+         */
+        CreateTokenRequest: {
+            /** Name */
+            name: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * CreatedTokenResource
+         * @description The answer of the creation of an API token: the token and its value, returned this once.
+         */
+        CreatedTokenResource: {
+            /** Token Id */
+            token_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Last Used At */
+            last_used_at?: string | null;
+            /** Token */
+            token: string;
+        };
+        /**
+         * CredentialPage
+         * @description One page of credentials sorted by name; ``next_offset`` is ``None`` on the last page.
+         */
+        CredentialPage: {
+            /** Items */
+            items: components["schemas"]["CredentialResource"][];
+            /** Next Offset */
+            next_offset: number | null;
+        };
+        /**
+         * CredentialResource
+         * @description A stored credential as the routes return it: the names of its fields, never their values.
+         *
+         *     ``created_by`` and ``updated_by`` hold account identifiers here; the answer shows names.
+         */
+        CredentialResource: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Fields */
+            fields: string[];
+            /** Revision */
+            revision: number;
+            /** Created By */
+            created_by: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Updated By */
+            updated_by: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * CredentialUsedResource
+         * @description The stored credential that one stage of a run received for one block: its name and revision, never a value.
+         *
+         *     `stage` is `plan`, `verify`, `apply`, `sync` or `resume`, and `block` is `source` or
+         *     `destination`. Both are plain strings so the client still reads a value a newer server adds.
+         *     The name and the revision are the ones recorded when the stage received the values, so they
+         *     stay after the credential is changed or deleted.
+         */
+        CredentialUsedResource: {
+            /** Stage */
+            stage: string;
+            /** Block */
+            block: string;
+            /** Name */
+            name: string;
+            /** Revision */
+            revision: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CredentialValueRequest
+         * @description The whole new set of fields of a credential: ``PUT /credentials/{name}/value``.
+         */
+        CredentialValueRequest: {
+            /** Username */
+            username?: string | null;
+            /** Password */
+            password?: string | null;
+            /** Token */
+            token?: string | null;
+        };
+        /**
+         * DeletedAccountResource
+         * @description The answer of a deletion: what every record of the account displays from now on.
+         */
+        DeletedAccountResource: {
+            /** Placeholder */
+            placeholder: string;
+        };
+        /**
+         * DependencyHealthResource
+         * @description Report whether one component of the Sync API answered its health check.
+         */
+        DependencyHealthResource: {
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "database" | "object_store" | "task_manager" | "task_manager_db";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "up" | "down";
+            /**
+             * Error
+             * @enum {string}
+             */
+            error: "none" | "timeout" | "connection_refused" | "connection_closed" | "name_resolution_failed" | "unavailable" | "unknown_error";
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * DescribeCredentialRequest
+         * @description A new description: ``PATCH /credentials/{name}``.
+         */
+        DescribeCredentialRequest: {
+            /** Description */
+            description: string;
+        };
+        /**
          * ErrorDetail
          * @description Parse the public fields in a general API error.
          */
@@ -548,6 +1696,12 @@ export interface components {
             run_id?: string | null;
             /** Mutation Id */
             mutation_id?: string | null;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+            /** Left Out */
+            left_out?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -557,6 +1711,50 @@ export interface components {
          */
         ErrorEnvelope: {
             error: components["schemas"]["ErrorDetail"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EventDetailsResource
+         * @description The facts of one event, under a closed set of keys. A key the event does not use is ``None``.
+         *
+         *     ``cause`` is a refusal code or a failure class, never free text from Infrahub.
+         */
+        EventDetailsResource: {
+            /** Start At */
+            start_at?: string | null;
+            /** Starts */
+            starts?: number | null;
+            /** First Start At */
+            first_start_at?: string | null;
+            /** Last Start At */
+            last_start_at?: string | null;
+            /** Left Out */
+            left_out?: number | null;
+            /** Branch */
+            branch?: string | null;
+            /** Proposed Change Id */
+            proposed_change_id?: string | null;
+            /** Replaced Run Id */
+            replaced_run_id?: string | null;
+            /** Cause */
+            cause?: string | null;
+            /** Revision */
+            revision?: number | null;
+            /** Changes */
+            changes?: components["schemas"]["ScheduleSettingChangeResource"][] | null;
+            /** Reason */
+            reason?: string | null;
+            /** Reason Detail */
+            reason_detail?: {
+                [key: string]: number | string;
+            } | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Operations Not Checked */
+            operations_not_checked?: number | null;
+            /** Resume Flow Run Id */
+            resume_flow_run_id?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -630,6 +1828,7 @@ export interface components {
              * @default []
              */
             related: components["schemas"]["EventRelatedResource"][];
+            details?: components["schemas"]["EventDetailsResource"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -637,6 +1836,30 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HealthResource
+         * @description Report the health of the Sync API's components and of its workers.
+         *
+         *     The model does not fix the number or the order of the components: it requires at least one,
+         *     each named once, and a ``status`` that matches the components and the workers.
+         */
+        HealthResource: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "healthy" | "unhealthy";
+            /** Dependencies */
+            dependencies: components["schemas"]["DependencyHealthResource"][];
+            workers: components["schemas"]["WorkersHealthResource"];
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * OrchestrationSummary
@@ -676,6 +1899,60 @@ export interface components {
             /** Prefect Flow Run Url */
             prefect_flow_run_url?: string | null;
             reads?: components["schemas"]["StageReads"] | null;
+            plan_step?: components["schemas"]["PlanStepTimings"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PackageCheckRequest
+         * @description The body of `POST /configs/validate`: a package as JSON, or the text of a package file.
+         *
+         *     Exactly one field is set. The route checks that rule itself, so that breaking it is the
+         *     `request` refusal of the contract rather than a schema refusal, and so that it is checked
+         *     only after the caller is known to be an administrator.
+         */
+        PackageCheckRequest: {
+            /** Package */
+            package?: {
+                [key: string]: unknown;
+            } | null;
+            /** Document */
+            document?: string | null;
+        };
+        /**
+         * PackageCheckResource
+         * @description Return the check of a package that is not registered, with one page of its findings.
+         *
+         *     ``package_checksum`` and ``declared_content`` are what registering the package would store.
+         *     ``destination_read`` is ``not_requested`` without a branch, ``read`` when the destination
+         *     schema was read, ``not_read`` when the destination adapter is unknown or declares no schema
+         *     read, or the reason the read failed: ``timeout``, ``unreachable``,
+         *     ``unauthorized``, ``forbidden``, ``nobranch``, ``rejected``, ``unconfigured`` or
+         *     ``credentials``.
+         */
+        PackageCheckResource: {
+            /** Package Checksum */
+            package_checksum: string;
+            /** Name */
+            name?: string | null;
+            /** Declared Content */
+            declared_content: {
+                [key: string]: unknown;
+            };
+            /** Destination Read */
+            destination_read: string;
+            /** Destination Schema Fingerprint */
+            destination_schema_fingerprint?: string | null;
+            /** Findings */
+            findings: components["schemas"]["ValidationFindingResource"][];
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Total Findings */
+            total_findings: number;
+            /** Next Offset */
+            next_offset: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -787,6 +2064,33 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PlanReportPageResource
+         * @description One page of the problems, left-out records or kept records of a saved plan (spec 007).
+         *
+         *     `entries` are the lines of the plan's `report.jsonl` without their `entry` key, in the
+         *     report's stable order. `next_offset` is `None` on the last page.
+         */
+        PlanReportPageResource: {
+            /** Run Id */
+            run_id: string;
+            /** Plan Checksum */
+            plan_checksum: string;
+            /** Entries */
+            entries: {
+                [key: string]: unknown;
+            }[];
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Total */
+            total: number;
+            /** Next Offset */
+            next_offset?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * PlanResource
          * @description Return a saved plan, checksum, summary, and operations.
          */
@@ -813,6 +2117,47 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PlanStepPart
+         * @description The times of one part of the plan step of a `plan` or `sync` execution.
+         *
+         *     `ended_at` is set once the part ended. `stopped_at` is set for the part that was running
+         *     when the plan step failed, was cancelled or was interrupted: the time of that verdict. A part
+         *     that runs has `started_at` only. No field holds an error message or a data value.
+         */
+        PlanStepPart: {
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Ended At */
+            ended_at?: string | null;
+            /** Stopped At */
+            stopped_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PlanStepTimings
+         * @description The timings of the plan step of one `plan` or `sync` execution; subject to change.
+         *
+         *     `parts` maps a part name to its times, in the order the plan step runs them: `waiting`,
+         *     `preparing`, `comparing`, `checking` and `saving` today. A part that did not start has no
+         *     entry. `running` names the part that runs, or is `None`. Part names are plain strings, so a
+         *     part a later Sync API adds does not fail the whole run response. The two reads keep their
+         *     times in `OrchestrationSummary.reads`.
+         */
+        PlanStepTimings: {
+            /** Running */
+            running?: string | null;
+            /** Parts */
+            parts?: {
+                [key: string]: components["schemas"]["PlanStepPart"];
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * PlanSummaryResource
          * @description Validated saved-plan counts and delete-review disclosures.
          */
@@ -831,20 +2176,82 @@ export interface components {
             delete_operations_computed: boolean;
             /** Deletes Not Executed */
             deletes_not_executed: number;
+            /**
+             * Left Out
+             * @default 0
+             */
+            left_out: number;
+            /**
+             * Left Out With Problem
+             * @default 0
+             */
+            left_out_with_problem: number;
+            /**
+             * Left Out Dependent
+             * @default 0
+             */
+            left_out_dependent: number;
+            /** Left Out By Kind */
+            left_out_by_kind?: {
+                [key: string]: number;
+            };
+            /**
+             * Problems
+             * @default 0
+             */
+            problems: number;
+            /** Problems By Type */
+            problems_by_type?: {
+                [key: string]: number;
+            };
+            /**
+             * Kept
+             * @default 0
+             */
+            kept: number;
+            /** Deletes Withheld By Kind */
+            deletes_withheld_by_kind?: {
+                [key: string]: number;
+            };
+            /**
+             * Dropdown Values Checked
+             * @default false
+             */
+            dropdown_values_checked: boolean;
         } & {
             [key: string]: unknown;
         };
         /**
          * PrincipalResource
-         * @description Name the authenticated caller and whether it is an administrator.
+         * @description Name the authenticated caller, whether it is an administrator, and whether the site requires approval.
+         *
+         *     ``approval_required`` defaults to ``False`` for a Sync API that predates the setting, since such a
+         *     service never requires approval.
          */
         PrincipalResource: {
             /** Actor */
             actor: string;
             /** Administrator */
             administrator: boolean;
+            /**
+             * Approval Required
+             * @default false
+             */
+            approval_required: boolean;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * ProposedChangeStates
+         * @description The answer of the second worker route: the state of each earlier proposed change, by its run.
+         *
+         *     It holds no value, no address and no proposed-change identifier.
+         */
+        ProposedChangeStates: {
+            /** States */
+            states: {
+                [key: string]: string;
+            };
         };
         /**
          * PublicExecutionLink
@@ -919,6 +2326,17 @@ export interface components {
             reconciliation_required: boolean;
             /** Destination Branch */
             destination_branch?: string | null;
+            approval?: components["schemas"]["RunApprovalResource"] | null;
+            /**
+             * Trigger Type
+             * @default manual
+             * @enum {string}
+             */
+            trigger_type: "manual" | "scheduled";
+            /** Schedule Id */
+            schedule_id?: string | null;
+            /** Scheduled Start At */
+            scheduled_start_at?: string | null;
             /**
              * Artifact Refs
              * @default []
@@ -929,8 +2347,47 @@ export interface components {
              * @default []
              */
             prefect_executions: components["schemas"]["PublicExecutionLink"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * ReleaseCredentialsRequest
+         * @description The execution that asks for its values: ``POST /worker/runs/{run_id}/credentials``.
+         */
+        ReleaseCredentialsRequest: {
+            /** Flow Run Id */
+            flow_run_id: string;
+        };
+        /**
+         * ReleasedBlock
+         * @description The credential of one block as the worker route releases it: its fields hold the values.
+         */
+        ReleasedBlock: {
+            /** Name */
+            name: string;
+            /** Revision */
+            revision: number;
+            /** Fields */
+            fields: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * ReleasedCredentials
+         * @description The answer of the worker route: the blocks the stage needs that name a credential.
+         */
+        ReleasedCredentials: {
+            /** Run Id */
+            run_id: string;
+            /** Blocks */
+            blocks: {
+                [key: string]: components["schemas"]["ReleasedBlock"];
+            };
         };
         /**
          * ResultsResource
@@ -943,6 +2400,77 @@ export interface components {
             results: {
                 [key: string]: unknown;
             };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ResumeResource
+         * @description One resume request of a run: who asked, when, why, where it started, and how it ended.
+         *
+         *     `outcome` is the resume execution's terminal outcome, or `None` while it has not ended.
+         *     `operations_written` is the number of creates and updates this resume committed: every one after
+         *     `start_after` for a resume that succeeded, otherwise those through its own last saved position,
+         *     a lower bound for a resume that was stopped after writing past it. `None` when the saved plan
+         *     cannot be read.
+         */
+        ResumeResource: {
+            /** Actor */
+            actor: string;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            requested_at: string;
+            /** Reason */
+            reason?: string | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Outcome */
+            outcome?: string | null;
+            /** Operations Written */
+            operations_written?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ResumeRunRequest
+         * @description Request a resume of an interrupted apply from the run's saved position (spec 016 data-model.md).
+         *
+         *     The checks match `ApplyRunRequest`: `expected_checksum` must equal the saved plan's checksum,
+         *     `confirm_writes` must be true, and `confirm_left_out` is required when the plan left out records.
+         */
+        ResumeRunRequest: {
+            /** Expected Checksum */
+            expected_checksum: string;
+            /**
+             * Confirm Writes
+             * @default false
+             */
+            confirm_writes: boolean;
+            /**
+             * Confirm Left Out
+             * @default false
+             */
+            confirm_left_out: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * RunApprovalResource
+         * @description The one recorded approval of a run's saved plan: who approved which checksum, and when.
+         */
+        RunApprovalResource: {
+            /** Approved By */
+            approved_by: string;
+            /**
+             * Approved At
+             * Format: date-time
+             */
+            approved_at: string;
+            /** Plan Checksum */
+            plan_checksum: string;
+            /** Reason */
+            reason?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -1032,27 +2560,227 @@ export interface components {
         /**
          * RunResource
          * @description Combine a public run record with its orchestration history.
+         *
+         *     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
+         *     predates spec 016; `resumes` is then empty. `automatic_resumes` holds Sync's decisions on
+         *     resuming the run's interrupted writes without a person, oldest first, and
+         *     `automatic_resume_count` the number of them whose resume Sync submitted (spec 030). For a run
+         *     that no decision concerns, and for a Sync API that predates spec 030, `automatic_resumes` is
+         *     empty and `automatic_resume_count` is 0. `credentials_used` holds one entry for each block
+         *     whose stored credential values a stage execution received, oldest first; it is empty for a
+         *     run whose stages received none, and for a Sync API that predates spec 027.
          */
         RunResource: {
             run: components["schemas"]["PublicRunResource"];
             /** Orchestration */
             orchestration: components["schemas"]["OrchestrationSummary"][];
+            apply_progress?: components["schemas"]["ApplyProgressResource"] | null;
+            /**
+             * Resumes
+             * @default []
+             */
+            resumes: components["schemas"]["ResumeResource"][];
+            /**
+             * Credentials Used
+             * @default []
+             */
+            credentials_used: components["schemas"]["CredentialUsedResource"][];
+            /**
+             * Automatic Resumes
+             * @default []
+             */
+            automatic_resumes: components["schemas"]["AutomaticResumeResource"][];
+            /**
+             * Automatic Resume Count
+             * @default 0
+             */
+            automatic_resume_count: number;
         } & {
             [key: string]: unknown;
         };
         /**
-         * ServiceStatusResource
-         * @description Report service readiness and worker availability.
+         * ScheduleActionRequest
+         * @description Request a pause, a resume, a deletion or a take-over of a schedule, with an optional reason.
          */
-        ServiceStatusResource: {
+        ScheduleActionRequest: {
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ScheduleNextStarts
+         * @description The next start times of a cadence, in UTC and in increasing order.
+         *
+         *     ``starts`` holds fewer times than requested when the cadence has fewer starts before
+         *     ``searched_until``.
+         */
+        ScheduleNextStarts: {
+            /** Cron */
+            cron: string;
+            /** Timezone */
+            timezone: string;
+            /** Starts */
+            starts: string[];
             /**
-             * Service
-             * @constant
+             * Searched Until
+             * Format: date-time
              */
-            service: "ready";
-            worker: components["schemas"]["WorkerStatusResource"];
+            searched_until: string;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * ScheduleNextStartsRequest
+         * @description Request the next start times of a cron expression in a time zone, before a schedule is saved.
+         *
+         *     `cron` and `timezone` are not validated here, as in `CreateScheduleRequest`: the Sync API
+         *     answers `schedule-cron-invalid` or `schedule-timezone-invalid`.
+         */
+        ScheduleNextStartsRequest: {
+            /** Cron */
+            cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            timezone: string;
+            /**
+             * Count
+             * @default 5
+             */
+            count: number;
+        };
+        /**
+         * ScheduleOpenBranchResource
+         * @description The most recent branch of a schedule that is open for review, with the run that wrote it.
+         */
+        ScheduleOpenBranchResource: {
+            /** Run Id */
+            run_id: string;
+            /** Branch */
+            branch: string;
+            /** Proposed Change Id */
+            proposed_change_id?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SchedulePage
+         * @description One page of the schedule list, newest first. ``next_cursor`` is ``None`` on the last page.
+         */
+        SchedulePage: {
+            /** Items */
+            items: components["schemas"]["ScheduleResource"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleResource
+         * @description Represent one schedule: its cadence, its settings, its state and its most recent run.
+         *
+         *     ``write_target``, ``overlap_policy``, ``state`` and ``state_reason`` are plain strings, so
+         *     the client still reads a value a newer Sync API adds. ``newer_version``,
+         *     ``start_late_by_at_most_seconds`` and ``waiting_start_at`` are ``None`` for a Sync API that
+         *     does not return them. All times are in UTC.
+         */
+        ScheduleResource: {
+            /** Schedule Id */
+            schedule_id: string;
+            /** Name */
+            name: string;
+            /** Config Id */
+            config_id: string;
+            /** Registry Version */
+            registry_version: number;
+            /** Newer Version */
+            newer_version?: number | null;
+            /** Cron */
+            cron: string;
+            /** Timezone */
+            timezone: string;
+            /** Write Target */
+            write_target: string;
+            /** Write When Left Out */
+            write_when_left_out: boolean;
+            /** Left Out Set By */
+            left_out_set_by?: string | null;
+            /** Left Out Set At */
+            left_out_set_at?: string | null;
+            /** Overlap Policy */
+            overlap_policy: string;
+            /** Start Late By At Most Seconds */
+            start_late_by_at_most_seconds?: number | null;
+            /** State */
+            state: string;
+            /** State Reason */
+            state_reason?: string | null;
+            /** Owner */
+            owner: string;
+            /** Next Start At */
+            next_start_at?: string | null;
+            /** Waiting Start At */
+            waiting_start_at?: string | null;
+            /** Last Run Id */
+            last_run_id?: string | null;
+            /** Prefect Synced */
+            prefect_synced: boolean;
+            /** Consecutive Failures */
+            consecutive_failures: number;
+            open_branch?: components["schemas"]["ScheduleOpenBranchResource"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleSettingChangeResource
+         * @description One setting that a change of a schedule altered, with its stored value before and after.
+         *
+         *     ``field`` is the name of the setting as the change request names it, such as ``cron`` or
+         *     ``start_late_by_at_most_seconds``; the values are the stored values, such as a version
+         *     number, a cron expression or a number of seconds.
+         */
+        ScheduleSettingChangeResource: {
+            /** Field */
+            field: string;
+            /** Before */
+            before: boolean | number | string;
+            /** After */
+            after: boolean | number | string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SessionResource
+         * @description The answer of a sign-in: the session token, the account and the idle period of a session.
+         *
+         *     The token is returned once. The store keeps its digest only.
+         */
+        SessionResource: {
+            /** Token */
+            token: string;
+            account: components["schemas"]["AccountResource"];
+            /** Idle Seconds */
+            idle_seconds: number;
+        };
+        /**
+         * SetPasswordRequest
+         * @description The new password that an administrator gives an account.
+         */
+        SetPasswordRequest: {
+            /** New Password */
+            new_password: string;
+            /** Reason */
+            reason?: string | null;
         };
         /**
          * SideRead
@@ -1084,6 +2812,19 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * SignInRequest
+         * @description The name and the password of a sign-in.
+         *
+         *     Neither field has a length rule here: a value that is too long or empty gets the answer of a
+         *     wrong password, not the answer of a request that does not match the schema.
+         */
+        SignInRequest: {
+            /** Name */
+            name: string;
+            /** Password */
+            password: string;
+        };
+        /**
          * StageReads
          * @description The read state of the source and the destination of one execution.
          */
@@ -1092,6 +2833,48 @@ export interface components {
             destination?: components["schemas"]["SideRead"] | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * TokenResource
+         * @description What an answer shows of an API token: never its value and never its digest.
+         */
+        TokenResource: {
+            /** Token Id */
+            token_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Last Used At */
+            last_used_at?: string | null;
+        };
+        /**
+         * UnlockRequest
+         * @description The optional reason for ending the refusal of an account's sign-ins.
+         */
+        UnlockRequest: {
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * UpdateAccountRequest
+         * @description The change of the state of an account, of its level, or of both.
+         *
+         *     ``disabled`` disables the account or enables it again. ``administrator`` sets its level. A
+         *     field left out keeps its value.
+         */
+        UpdateAccountRequest: {
+            /** Disabled */
+            disabled?: boolean | null;
+            /** Administrator */
+            administrator?: boolean | null;
+            /** Reason */
+            reason?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -1105,6 +2888,25 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * ValidationFindingResource
+         * @description Describe one ordered configuration validation finding.
+         */
+        ValidationFindingResource: {
+            /** Code */
+            code: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "error" | "warning";
+            /** Location */
+            location: string;
+            /** Message */
+            message: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * VerifyRunRequest
@@ -1125,27 +2927,49 @@ export interface components {
             api_versions: string[];
             /** Stability */
             stability: string;
+            /** Sdk Version */
+            sdk_version?: string | null;
         } & {
             [key: string]: unknown;
         };
         /**
-         * WorkerStatusResource
-         * @description Report bounded worker availability details.
+         * WorkerHealthResource
+         * @description Report one worker that sent a heartbeat within the last 24 hours.
          */
-        WorkerStatusResource: {
+        WorkerHealthResource: {
+            /** Name */
+            name: string;
             /**
              * State
              * @enum {string}
              */
-            state: "ready" | "busy" | "no-live-worker" | "unavailable";
-            /** Detail Available */
-            detail_available: boolean;
+            state: "live" | "stale";
+            /**
+             * Last Heartbeat
+             * Format: date-time
+             */
+            last_heartbeat: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WorkersHealthResource
+         * @description Report the workers of the work pool, or that the work pool could not be read.
+         */
+        WorkersHealthResource: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "known" | "unknown";
+            /** Minimum */
+            minimum: number;
             /** Live Workers */
-            live_workers?: number | null;
+            live_workers: number | null;
             /** Queue Depth */
-            queue_depth?: number | null;
-            /** Observed At */
-            observed_at: string | null;
+            queue_depth: number | null;
+            /** Items */
+            items: components["schemas"]["WorkerHealthResource"][];
         } & {
             [key: string]: unknown;
         };
@@ -1178,7 +3002,7 @@ export interface operations {
             };
         };
     };
-    get_status_status_get: {
+    get_health_health_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1193,7 +3017,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ServiceStatusResource"];
+                    "application/json": components["schemas"]["HealthResource"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResource"] | components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -1261,7 +3094,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1286,6 +3119,8 @@ export interface operations {
             query?: {
                 config_id?: string | null;
                 registry_version?: string | null;
+                trigger_type?: string | null;
+                schedule_id?: string | null;
                 limit?: string | null;
                 cursor?: string | null;
             };
@@ -1349,7 +3184,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1438,7 +3273,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1523,92 +3358,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    get_plan_runs__run_id__plan_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PlanResource"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Gone */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1693,7 +3443,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1778,7 +3528,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1864,7 +3614,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1955,7 +3705,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2046,7 +3796,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2066,7 +3816,7 @@ export interface operations {
             };
         };
     };
-    cancel_run_runs__run_id__cancel_post: {
+    resume_run_runs__run_id__resume_post: {
         parameters: {
             query?: never;
             header?: {
@@ -2079,7 +3829,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CancelRunRequest"];
+                "application/json": components["schemas"]["ResumeRunRequest"];
             };
         };
         responses: {
@@ -2137,7 +3887,107 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancel_run_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelRunRequest"];
+            };
+        };
+        responses: {
+            /** @description The finished plan was withdrawn; the run is cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunResource"];
+                };
+            };
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2214,6 +4064,79 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description The request sets both or neither of `package` and `document`, or `document` is not a YAML or JSON mapping (`ConfigErrorEnvelope`, family `request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorEnvelope"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request does not match the API schema (`ErrorEnvelope`), or the validation refused the package (`ConfigErrorEnvelope`, family `validation`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"] | components["schemas"]["ConfigErrorEnvelope"];
+                };
+            };
+        };
+    };
+    check_package_configs_validate_post: {
+        parameters: {
+            query?: {
+                offset?: string;
+                limit?: string;
+                branch?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackageCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageCheckResource"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2285,13 +4208,49 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description Validation Error */
+            /** @description The request sets both or neither of `package` and `document`, or `document` is not a YAML or JSON mapping (`ConfigErrorEnvelope`, family `request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorEnvelope"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request does not match the API schema (`ErrorEnvelope`), or the validation refused the package (`ConfigErrorEnvelope`, family `validation`). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"] | components["schemas"]["ConfigErrorEnvelope"];
                 };
             };
         };
@@ -2364,6 +4323,7 @@ export interface operations {
             query?: {
                 offset?: string;
                 limit?: string;
+                branch?: string | null;
             };
             header?: never;
             path: {
@@ -2394,6 +4354,820 @@ export interface operations {
             };
         };
     };
+    list_schedules_schedules_get: {
+        parameters: {
+            query?: {
+                config_id?: string | null;
+                state?: string | null;
+                limit?: string | null;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_schedule_schedules_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    schedule_next_starts_schedules_next_starts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleNextStartsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleNextStarts"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_schedule_schedules__schedule_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    change_schedule_schedules__schedule_id__change_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    pause_schedule_schedules__schedule_id__pause_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    resume_schedule_schedules__schedule_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_schedule_schedules__schedule_id__delete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    take_over_schedule_schedules__schedule_id__take_over_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    approve_run_runs__run_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovedRunResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     list_events_events_get: {
         parameters: {
             query?: {
@@ -2405,6 +5179,7 @@ export interface operations {
                 until?: string | null;
                 limit?: string | null;
                 offset?: string | null;
+                order?: "asc" | "desc";
             };
             header?: never;
             path?: never;
@@ -2466,7 +5241,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2555,8 +5330,2072 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_plan_runs__run_id__plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_plan_problems_runs__run_id__plan_problems_get: {
+        parameters: {
+            query?: {
+                offset?: string | null;
+                limit?: string | null;
+                problem_type?: string | null;
+                kind?: string | null;
+                expected_checksum?: string | null;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanReportPageResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_plan_left_out_runs__run_id__plan_left_out_get: {
+        parameters: {
+            query?: {
+                offset?: string | null;
+                limit?: string | null;
+                kind?: string | null;
+                expected_checksum?: string | null;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanReportPageResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_plan_kept_runs__run_id__plan_kept_get: {
+        parameters: {
+            query?: {
+                offset?: string | null;
+                limit?: string | null;
+                kind?: string | null;
+                expected_checksum?: string | null;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanReportPageResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    sign_in_auth_sign_in_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    sign_out_auth_sign_out_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_accounts_accounts_get: {
+        parameters: {
+            query?: {
+                state?: "active" | "disabled" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResource"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_account_accounts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    read_account_accounts__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_account_accounts__name__delete: {
+        parameters: {
+            query?: {
+                reason?: string | null;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedAccountResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_account_accounts__name__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    set_account_password_accounts__name__password_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    unlock_account_accounts__name__unlock_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UnlockRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_account_tokens_accounts__name__tokens_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResource"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_account_token_accounts__name__tokens__token_id__delete: {
+        parameters: {
+            query?: {
+                reason?: string | null;
+            };
+            header?: never;
+            path: {
+                name: string;
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    change_own_password_me_password_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_own_tokens_me_tokens_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResource"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_own_token_me_tokens_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedTokenResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_own_token_me_tokens__token_id__delete: {
+        parameters: {
+            query?: {
+                reason?: string | null;
+            };
+            header?: never;
+            path: {
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_credentials_credentials_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_credential_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    read_credential_credentials__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_credential_credentials__name__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    describe_credential_credentials__name__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DescribeCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    set_credential_value_credentials__name__value_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialValueRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    release_credentials_worker_runs__run_id__credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseCredentialsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleasedCredentials"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    read_proposed_change_states_worker_schedules__schedule_id__proposed_change_states_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposedChangeStates"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Failed Dependency */
+            424: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

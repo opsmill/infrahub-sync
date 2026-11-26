@@ -1,8 +1,9 @@
 # 16. The Compose deployment is one tag-pinned file
 
 **Status**: Accepted; partly superseded on 2026-11-16 by
-[ADR 0045](0045-the-compose-file-defaults-its-internal-credentials.md) — the credentials that only
-the file's own services use now have fixed defaults; the API bearer tokens stay required.
+[ADR 0059](0059-the-compose-file-defaults-its-internal-credentials.md) — the credentials that only
+the file's own services use now have fixed defaults; the `admin` password, the worker token and
+the encryption key stay required.
 **Date**: 2026-10-01
 **Source**: dev/specs/archive/005-harbor-image-publishing/research.md (R3, R6, R7); spec.md clarifications
 
