@@ -1,0 +1,21 @@
+examples/slurpit_to_infrahub/slurpitsync/sync_adapter.py
+  s_5c07df28acc2f7::t_3c10205520842c 1-3,21-25,29
+examples/slurpit_to_infrahub/slurpitsync/sync_models.py
+  s_5c07df28acc2f7::t_3c10205520842c 5-18,24,39,54,66,79,89,100,111,121,133,162,173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e6371dd06f76820bb2c1f6c9258a044ce8e29a4",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
