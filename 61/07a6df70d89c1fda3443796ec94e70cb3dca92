@@ -1,0 +1,19 @@
+tests/adapters_parity/test_slurpitsync_project.py
+  s_5c07df28acc2f7::t_396bb2608b7fed 81-112,168-169,198,295,516-572,687-691
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6107a6df70d89c1fda3443796ec94e70cb3dca92",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
