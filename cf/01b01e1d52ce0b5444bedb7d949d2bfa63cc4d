@@ -1,0 +1,176 @@
+docs/docs/reference/python-api.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 121-170
+infrahub_sync/service/adapter_bootstrap.py
+  s_5c07df28acc2f7::t_4f54146bc1fb59 87
+  s_5c07df28acc2f7::t_39038e0df1a27c 91-92
+docs/docs/development/adr-index.mdx
+  s_5c07df28acc2f7::t_a819fad5c7e194 54
+tasks/adapters.py
+  s_5c07df28acc2f7::t_39038e0df1a27c 40-41
+  s_5c07df28acc2f7::t_2c053e23fdb659 11-12
+tests/cli/test_parity_and_closure.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 470-529
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 54-57
+tests/docker_image.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 7
+tests/test_workflow_contracts.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 51,768-772,1130,1138
+docs/docs/quickstart-compose.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 57-63,87-89
+frontend/src/features/configurations/package-review.test.ts
+  s_5c07df28acc2f7::t_708631a8cc0c94 6-9,12-15,154-378
+dev/specs/027-stored-credentials/notes.md
+  s_5c07df28acc2f7::t_708631a8cc0c94 198-233
+changelog/+dockerfile-in-development.housekeeping.md
+  s_5c07df28acc2f7::t_708631a8cc0c94 1
+frontend/src/features/configurations/PackageReview.tsx
+  s_5c07df28acc2f7::t_708631a8cc0c94 17,23,37-41,48,224,249-254,431-432,602,698,700,710-711,760-762,768-774,776,787-793,796-809
+infrahub_sync/adapter_files/image.py
+  s_5c07df28acc2f7::t_2c053e23fdb659 17-19
+docs/docs/development/constitution.md
+  s_5c07df28acc2f7::t_044e73285ac35d 250
+  s_5c07df28acc2f7::t_708631a8cc0c94 134-142,175-176
+docs/docs/guides/credentials.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 22-35
+changelog/+compose-default-internal-credentials.changed.md
+  s_5c07df28acc2f7::t_708631a8cc0c94 1
+.github/workflows/workflow-nightly-e2e.yml
+  s_5c07df28acc2f7::t_708631a8cc0c94 333
+frontend/src/features/configurations/package-review.ts
+  s_5c07df28acc2f7::t_708631a8cc0c94 107-207,347-374
+tests/compose/conftest.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 351
+docs/docs/container-image.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 165
+frontend/src/features/credentials/CredentialForm.tsx
+  s_5c07df28acc2f7::t_708631a8cc0c94 55-59,61,258,263-264,267
+frontend/src/domain/systems.test.ts
+  s_5c07df28acc2f7::t_708631a8cc0c94 1-19
+dev/adr/0016-the-compose-deployment-is-one-tag-pinned-file.md
+  s_5c07df28acc2f7::t_708631a8cc0c94 3-6
+docs/docs/contributing.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 184
+README.md
+  s_5c07df28acc2f7::t_708631a8cc0c94 89
+tests/compose/test_documentation.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 266-293
+frontend/src/routes/credentials.tsx
+  s_5c07df28acc2f7::t_708631a8cc0c94 6-15,17-20
+infrahub_sync/testcontainers/docker-compose.yml
+  s_5c07df28acc2f7::t_708631a8cc0c94 9-12,29-41,57,71-72,78,92,114,117,120,164-165,183,202,216,240,259,323,410
+tests/compose/test_redaction.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 247
+frontend/src/domain/systems.ts
+  s_5c07df28acc2f7::t_708631a8cc0c94 25-26,52-58
+development/docker-compose.yml
+  s_5c07df28acc2f7::t_708631a8cc0c94 34,74
+dev/adr/0059-the-compose-file-defaults-its-internal-credentials.md
+  s_5c07df28acc2f7::t_708631a8cc0c94 1-43,45-76
+  s_5c07df28acc2f7::t_044e73285ac35d 44
+tests/dev_stack/test_build_inputs.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 30,68,138,196
+  s_5c07df28acc2f7::t_75d04e6bb9bacd 3
+  s_5c07df28acc2f7::t_4f54146bc1fb59 94
+frontend/src/features/configurations/PackageReview.test.tsx
+  s_5c07df28acc2f7::t_708631a8cc0c94 1-259
+dev/adr/README.md
+  s_5c07df28acc2f7::t_a819fad5c7e194 190-193
+  s_5c07df28acc2f7::t_708631a8cc0c94 51
+pyproject.toml
+  s_5c07df28acc2f7::t_708631a8cc0c94 3
+development/Dockerfile
+  s_5c07df28acc2f7::t_708631a8cc0c94 1-148,150-210
+  s_5c07df28acc2f7::t_0223188abf4e9e 149
+.github/workflows/ci-docker-image.yml
+  s_5c07df28acc2f7::t_708631a8cc0c94 163,201
+tests/service/test_bootstrap_adapters.py
+  s_5c07df28acc2f7::t_4f54146bc1fb59 464
+.github/file-filters.yml
+  s_5c07df28acc2f7::t_708631a8cc0c94 64,93
+docs/docs/development/guidelines/testing-tiers.md
+  s_5c07df28acc2f7::t_708631a8cc0c94 617,633,729
+changelog/+credential-refusal-in-package-review.added.md
+  s_5c07df28acc2f7::t_708631a8cc0c94 1
+frontend/src/features/configurations/CredentialRefusal.tsx
+  s_5c07df28acc2f7::t_708631a8cc0c94 1-173
+frontend/src/features/credentials/CredentialsPage.tsx
+  s_5c07df28acc2f7::t_708631a8cc0c94 3,18,92,110-111,116-125,250-259,265-267,285-288
+frontend/src/features/credentials/fields.test.ts
+  s_5c07df28acc2f7::t_708631a8cc0c94 1-145
+docs/docs/operations/compose-troubleshooting.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 27
+tests/compose/test_compose_contract.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 56-58,63-73,417,421-431,438,445-458,562-564,566,568-583
+infrahub_sync/provided_libraries.json
+  s_5c07df28acc2f7::t_dd9ab47d4e7ad5 2
+tasks/dev.py
+  s_5c07df28acc2f7::t_75d04e6bb9bacd 673-674
+  s_5c07df28acc2f7::t_708631a8cc0c94 27,144,355,598,602
+tests/compose/test_image_pins.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 42
+docs/docs/compose-deployment.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 90-93,96,107-110,119-143,189-193,676-677,1651
+tests/test_provided_libraries.py
+  s_5c07df28acc2f7::t_4f54146bc1fb59 85
+tests/image/test_build_context.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 13
+infrahub_sync/runtime_schema/errors.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 40-41,49-50
+tests/image/test_version_policy.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 21
+changelog/+stored-credential-wording.fixed.md
+  s_5c07df28acc2f7::t_708631a8cc0c94 1
+tests/dev_stack/test_dev_tasks.py
+  s_5c07df28acc2f7::t_708631a8cc0c94 664
+frontend/src/features/configurations/detail-systems.tsx
+  s_5c07df28acc2f7::t_708631a8cc0c94 114-129
+docs/docs/reference/config.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 10-13
+docs/docs/development/knowledge/repository-tour.md
+  s_5c07df28acc2f7::t_4f54146bc1fb59 511
+frontend/src/features/credentials/fields.ts
+  s_5c07df28acc2f7::t_708631a8cc0c94 56-73
+docs/docs/development-stack.mdx
+  s_5c07df28acc2f7::t_708631a8cc0c94 217
+docker-compose.yml
+  s_5c07df28acc2f7::t_708631a8cc0c94 9-12,29-41,57,71-72,78,92,114,117,120,164-165,183,202,216,240,259,323,410
+adapters/aci/uv.lock
+  s_5c07df28acc2f7::t_f698d93c1f3bf6 354
+adapters/genericrestapi/uv.lock
+  s_5c07df28acc2f7::t_48c5aceb32ead0 354
+adapters/ipfabricsync/uv.lock
+  s_5c07df28acc2f7::t_6ecc6949973f56 582
+adapters/msgraphsync/uv.lock
+  s_5c07df28acc2f7::t_789247430b5645 775
+adapters/nautobot/uv.lock
+  s_5c07df28acc2f7::t_579324c1708dda 354
+adapters/netbox/uv.lock
+  s_5c07df28acc2f7::t_9b45f5cb9828ab 357
+adapters/peeringmanager/uv.lock
+  s_5c07df28acc2f7::t_ff733d9e93c694 354
+adapters/prometheus/uv.lock
+  s_5c07df28acc2f7::t_4b0fab602572d4 354
+adapters/slurpitsync/uv.lock
+  s_5c07df28acc2f7::t_7d5379541a1103 354
+adapters/webex/uv.lock
+  s_5c07df28acc2f7::t_8bf0ea2a1acfb7 354
+uv.lock
+  s_5c07df28acc2f7::t_bd10138fc749b4 1209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf01b01e1d52ce0b5444bedb7d949d2bfa63cc4d",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
