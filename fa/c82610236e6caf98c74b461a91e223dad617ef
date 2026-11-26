@@ -1,0 +1,35 @@
+docs/docs/development-stack.mdx
+  s_b7e124e0850544::t_94b70f74f7d192 41-42
+  s_b7e124e0850544::t_62ea1d1383ebc6 628
+README.md
+  s_b7e124e0850544::t_51f094734fa2ff 22,24
+  s_b7e124e0850544::t_8f5e9cfaf70bd7 23
+AGENTS.md
+  s_b7e124e0850544::t_62ea1d1383ebc6 113
+docs/docs/tutorials/try-the-netbox-demo.mdx
+  s_b7e124e0850544::t_62ea1d1383ebc6 16,72,113,150,162,196,259,262,268
+  s_b7e124e0850544::t_563f1b18cdb58a 119-124,260-261,264-266
+  s_b7e124e0850544::t_bb0a8242fe0c45 20-21,27,33,35-45,73-74,86,90,115,118,125,145,153-154,157-159,161,171,178-179,181,183-184,194-195,197
+  s_b7e124e0850544::t_e813e366629751 263
+examples/netbox_to_infrahub/README.md
+  s_b7e124e0850544::t_62ea1d1383ebc6 17
+docs/docs/installation.mdx
+  s_b7e124e0850544::t_51f094734fa2ff 70-76
+  s_b7e124e0850544::t_8f5e9cfaf70bd7 49-52,57,65,68-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fac82610236e6caf98c74b461a91e223dad617ef",
+  "prompts": {},
+  "sessions": {
+    "s_b7e124e0850544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a9e16b5-a567-44a0-b993-a44493a00002",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
