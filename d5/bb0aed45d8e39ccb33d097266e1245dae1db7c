@@ -1,0 +1,28 @@
+infrahub_sync/adapter_files/loading.py
+  s_5c07df28acc2f7::t_5be9d6df9d0c11 24-26,127-138,173-174,626-628,630-631,635,653-655
+tests/service/test_settings_adapters.py
+  s_5c07df28acc2f7::t_00bc2d4b9a6142 10,67-69
+  s_5c07df28acc2f7::t_1e1d52d6633167 70-71
+tests/adapter_files/test_loading.py
+  s_5c07df28acc2f7::t_21cd0c6f85d385 661-700
+changelog/+adapter-unpack-noexec-check.changed.md
+  s_5c07df28acc2f7::t_14af4868d5b199 1
+docs/docs/reference/sync-http-api.mdx
+  s_5c07df28acc2f7::t_0f446ac0f5b650 720
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5bb0aed45d8e39ccb33d097266e1245dae1db7c",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
