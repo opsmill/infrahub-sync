@@ -1,0 +1,61 @@
+tests/image/test_build_context.py
+  s_76562c1487d5a7::t_adc0d559ed2f50 13
+docs/docs/adapters/slurpit.mdx
+  s_76562c1487d5a7::t_ce9188490056a0 28
+docs/docs/container-image.mdx
+  s_76562c1487d5a7::t_c5012804699837 165
+tests/docker_image.py
+  s_76562c1487d5a7::t_c5012804699837 7
+tests/compose/test_image_pins.py
+  s_76562c1487d5a7::t_adc0d559ed2f50 42
+.github/file-filters.yml
+  s_76562c1487d5a7::t_e30243d56feb77 60,87
+docs/docs/development-stack.mdx
+  s_76562c1487d5a7::t_ce9188490056a0 217
+development/docker-compose.yml
+  s_76562c1487d5a7::t_e30243d56feb77 34,74
+tests/image/test_version_policy.py
+  s_76562c1487d5a7::t_adc0d559ed2f50 21
+.github/workflows/ci-docker-image.yml
+  s_76562c1487d5a7::t_e30243d56feb77 163,201
+tasks/dev.py
+  s_76562c1487d5a7::t_e30243d56feb77 143,666
+.github/workflows/workflow-nightly-e2e.yml
+  s_76562c1487d5a7::t_e30243d56feb77 333
+tests/test_workflow_contracts.py
+  s_76562c1487d5a7::t_adc0d559ed2f50 51,1090,1098
+  s_76562c1487d5a7::t_30bf80ac7c553e 768-772
+docs/docs/development/guidelines/testing-tiers.md
+  s_76562c1487d5a7::t_c5012804699837 615,631,727
+tests/compose/conftest.py
+  s_76562c1487d5a7::t_c5012804699837 345
+docs/docs/contributing.mdx
+  s_76562c1487d5a7::t_ce9188490056a0 184
+changelog/+dockerfile-in-development.housekeeping.md
+  s_76562c1487d5a7::t_b77904e4f14019 1
+docs/docs/compose-deployment.mdx
+  s_76562c1487d5a7::t_c5012804699837 1529
+tests/dev_stack/test_build_inputs.py
+  s_76562c1487d5a7::t_adc0d559ed2f50 30,68,86,144
+  s_76562c1487d5a7::t_c5012804699837 3
+development/Dockerfile
+  s_76562c1487d5a7::t_e30243d56feb77 1-174
+README.md
+  s_76562c1487d5a7::t_ce9188490056a0 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67b0412674e472295839c696904192437e94552b",
+  "prompts": {},
+  "sessions": {
+    "s_76562c1487d5a7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "28f8add3-ae92-4828-be31-954e2774d958",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
