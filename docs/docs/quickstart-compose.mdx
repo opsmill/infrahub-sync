@@ -54,9 +54,13 @@ directory.
 
 ## Write the credentials
 
-The file needs nine credentials, and defaults none of them. This generates random
-values for each, including the password of the `admin` account. It also gives
-`admin` an API token, and gives the bundled CLI the same token:
+The file requires three credentials: the password of the `admin` account, the
+key that encrypts stored credentials, and the token of the `worker` account. The
+credentials that its services use between themselves have defaults, which suit a
+test deployment. For a deployment that holds real data, replace them as
+[The `.env` file](./compose-deployment.mdx#configuration-prerequisites)
+describes. This generates random values for all nine credentials anyway. It also
+gives `admin` an API token, and gives the bundled CLI the same token:
 
 ```sh
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
@@ -80,8 +84,9 @@ mv -f "$env_file" .env
 docker compose config --quiet
 ```
 
-`config --quiet` prints nothing when every credential is set. Otherwise it names
-the missing one, for example `INFRAHUB_SYNC_PRODUCT_PASSWORD is required`. Keep
+`config --quiet` prints nothing when the three required credentials are set.
+Otherwise it names each missing one, for example
+`INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required`. Keep
 `.env` out of version control and never `source` it. Every variable it can set,
 including the image version, is listed in
 [The `.env` file](./compose-deployment.mdx#configuration-prerequisites).

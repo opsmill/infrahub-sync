@@ -263,7 +263,34 @@ def required_compose_variables() -> set[str]:
 
 def test_the_compose_file_has_required_credentials_to_document() -> None:
     """Guards the credential checks below against a pattern that matches nothing."""
-    assert len(required_compose_variables()) == 9, required_compose_variables()
+    assert required_compose_variables() == {
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD",
+        "INFRAHUB_SYNC_ENCRYPTION_KEY",
+        "INFRAHUB_SYNC_WORKER_TOKEN",
+    }, required_compose_variables()
+
+
+# The credentials the file's own services use between themselves, each with a
+# fixed default in the file.
+INTERNAL_CREDENTIALS = (
+    "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD",
+    "INFRAHUB_SYNC_PRODUCT_PASSWORD",
+    "INFRAHUB_SYNC_PREFECT_PASSWORD",
+    "INFRAHUB_SYNC_PREFECT_AUTH_STRING",
+    "INFRAHUB_SYNC_S3_ACCESS_KEY",
+    "INFRAHUB_SYNC_S3_SECRET_KEY",
+)
+
+
+@pytest.mark.parametrize("variable", INTERNAL_CREDENTIALS)
+def test_the_page_states_the_default_of_every_internal_credential(variable: str) -> None:
+    """An operator replaces a default only if the page says it exists and what it is."""
+    defaults = set(re.findall(r"\$\{" + variable + r":-([^}]+)\}", COMPOSE_FILE.read_text(encoding="utf-8")))
+    rows = [line for line in section(page(), "The `.env` file").splitlines() if line.startswith(f"| `{variable}` |")]
+
+    assert len(defaults) == 1, f"{variable} has no single default in the file: {sorted(defaults)}"
+    assert rows, f"{variable} has no row on the page"
+    assert f"`{defaults.pop()}`" in rows[0], f"the page does not state the default of {variable}"
 
 
 @pytest.mark.parametrize("command", WRAPPER_COMMANDS)

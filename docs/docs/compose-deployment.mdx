@@ -87,27 +87,26 @@ Run every `docker compose` command on this page from the directory that holds
 
 ## The `.env` file {#configuration-prerequisites}
 
-Compose reads `.env` from the directory of `docker-compose.yml`. Nothing in the
-file defaults a credential: each required variable is guarded, and a missing one
-stops Compose before any container starts, with a message naming it:
+Compose reads `.env` from the directory of `docker-compose.yml`. Three
+credentials are required, and they have no default value. When one is missing,
+Compose stops before any container starts, with a message naming each missing
+variable, for example:
 
 ```text
-required variable INFRAHUB_SYNC_PRODUCT_PASSWORD is missing a value: INFRAHUB_SYNC_PRODUCT_PASSWORD is required
+required variable INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is missing a value: INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD is required
 ```
 
 ### Required credentials
 
 | Variable | Used by |
 | --- | --- |
-| `INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD` | `postgres`, `db-bootstrap` |
-| `INFRAHUB_SYNC_PRODUCT_PASSWORD` | `db-bootstrap` and the Sync services: the product database role |
-| `INFRAHUB_SYNC_PREFECT_PASSWORD` | `db-bootstrap`, `prefect-server`: the Prefect database role |
-| `INFRAHUB_SYNC_PREFECT_AUTH_STRING` | `prefect-server` and the Sync services: the Prefect API credential. See [Prefect API authentication](#prefect-api-authentication). |
-| `INFRAHUB_SYNC_S3_ACCESS_KEY` | `object-store` and the Sync services |
-| `INFRAHUB_SYNC_S3_SECRET_KEY` | `object-store` and the Sync services |
 | `INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD` | `sync-api`: the password of the `admin` account |
 | `INFRAHUB_SYNC_ENCRYPTION_KEY` | `sync-api`: the key that encrypts stored credentials. 32 bytes, base64-encoded. Changing it is not supported, and without it every stored credential must be entered again. |
 | `INFRAHUB_SYNC_WORKER_TOKEN` | `sync-api` and `sync-worker`: the token of the `worker` account, which reads the values of stored credentials for a run. It follows the rules of `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN` and must be another value. |
+
+The Sync API port accepts the `admin` password and the worker token, and the
+encryption key protects the stored credentials of your sources and destination,
+so the file gives none of the three a default.
 
 The tokens and passwords of your sources and of your destination Infrahub are not in `.env`.
 An administrator stores them in the Sync API; see [Credentials in a package](#credentials-in-a-package).
@@ -116,6 +115,31 @@ An administrator stores them in the Sync API; see [Credentials in a package](#cr
 administrator account that always exists. It has 12 to 1,024 characters of
 valid UTF-8 text and no default value. `sync-api` applies it at each start, then removes it from its own
 process environment. To change it, see [Recover or rotate the `admin` account](#recover-or-rotate-the-admin-account).
+
+### Internal credentials and their defaults
+
+The services of the file use the credentials below between themselves, on the
+deployment's own network. None of these services publishes a port. Each
+credential has a fixed default, so a test deployment starts with only the three
+required credentials set.
+
+The defaults are written in a public file, so anyone who reads it knows them.
+For any deployment that holds real data, set a random value for each one in
+`.env`, as the generator in [An example `.env`](#an-example-env) does. Set
+them before the first start: PostgreSQL sets a role's password only when it
+creates the role, so changing a password later means changing it in the
+database too.
+
+| Variable | Default | Used by |
+| --- | --- | --- |
+| `INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD` | `infrahub-sync-postgres-admin` | `postgres`, `db-bootstrap` |
+| `INFRAHUB_SYNC_PRODUCT_PASSWORD` | `infrahub-sync-product` | `db-bootstrap` and the Sync services: the product database role |
+| `INFRAHUB_SYNC_PREFECT_PASSWORD` | `infrahub-sync-prefect` | `db-bootstrap`, `prefect-server`: the Prefect database role |
+| `INFRAHUB_SYNC_PREFECT_AUTH_STRING` | `infrahub-sync-prefect-api` | `prefect-server` and the Sync services: the Prefect API credential. See [Prefect API authentication](#prefect-api-authentication). |
+| `INFRAHUB_SYNC_S3_ACCESS_KEY` | `infrahub-sync` | `object-store` and the Sync services |
+| `INFRAHUB_SYNC_S3_SECRET_KEY` | `infrahub-sync-object-store` | `object-store` and the Sync services |
+
+An empty value counts as unset, so it is replaced by the default as well.
 
 The database connection strings are composed inside the file from the role,
 database, and password settings. A password used in them must be URL-safe:
@@ -162,15 +186,17 @@ your own:
 
 ```dotenv
 # Required credentials
+INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=<admin password, at least 12 characters>
+INFRAHUB_SYNC_ENCRYPTION_KEY=<32 random bytes, base64-encoded>
+INFRAHUB_SYNC_WORKER_TOKEN=<worker token, at least 16 characters, not the admin token>
+
+# Internal credentials: replace the defaults for any deployment that holds real data
 INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD=<random hex>
 INFRAHUB_SYNC_PRODUCT_PASSWORD=<random hex>
 INFRAHUB_SYNC_PREFECT_PASSWORD=<random hex>
 INFRAHUB_SYNC_PREFECT_AUTH_STRING=<random hex>
 INFRAHUB_SYNC_S3_ACCESS_KEY=<random hex>
 INFRAHUB_SYNC_S3_SECRET_KEY=<random hex>
-INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD=<admin password, at least 12 characters>
-INFRAHUB_SYNC_ENCRYPTION_KEY=<32 random bytes, base64-encoded>
-INFRAHUB_SYNC_WORKER_TOKEN=<worker token, at least 16 characters, not the admin token>
 
 # An API token of admin, and the same value for the cli service to present
 INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN=<admin token, at least 16 characters>
@@ -561,8 +587,8 @@ docker compose config --quiet
 docker compose up -d --wait --wait-timeout 420
 ```
 
-`config --quiet` prints nothing when every required credential is set, and
-names the first missing one otherwise. `up -d --wait` pulls the images, runs the
+`config --quiet` prints nothing when the three required credentials are set,
+and names each missing one otherwise. `up -d --wait` pulls the images, runs the
 bootstrap jobs, and returns once every service is running and every health check
 passes. `--wait` has no time limit of its own, so `--wait-timeout 420` makes the
 command fail after 420 seconds when a service does not become healthy. Then

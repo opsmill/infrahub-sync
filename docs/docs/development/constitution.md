@@ -125,8 +125,15 @@ Security is enforced at the boundary, and secrets never leak.
   only through the worker route that releases the values of a run in progress, and only to the
   `worker` account. A value MUST NOT appear in any other response, CLI output, web page, log or
   record.
-- One exception: Sync MAY display the value of an API token once, to the account that created
-  it, in the answer to its creation, and nowhere else.
+- Exception for API tokens: Sync MAY display the value of an API token once, to the account
+  that created it, in the answer to its creation, and nowhere else.
+- Exception for the Compose file: the root `docker-compose.yml` MAY give a fixed default to a
+  credential that only its own services use between themselves, on the deployment's own network,
+  when none of those services publishes a port. The file and the operator documentation MUST
+  state each default and say to replace it for a deployment that holds real data. A credential
+  that the published port accepts, the key that encrypts stored credentials, and a credential of
+  a source or destination system MUST NOT have a default value. See
+  [ADR 0059](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0059-the-compose-file-defaults-its-internal-credentials.md).
 - Never print or guess secrets; tracebacks and structured logs MUST NOT contain credentials.
 - Example configurations MUST be authentic but sanitized. They MUST NOT contain real tokens or
   internal hostnames; use placeholder values instead.
@@ -159,7 +166,8 @@ reversible.
 
 - Credentials only via environment variables, a secret manager, or the stored credentials of the
   Sync API, which are encrypted in the Sync database and released only through the worker route;
-  no secrets in code, logs, tracebacks, or example configurations.
+  no secrets in code, logs, tracebacks, or example configurations. The exception is the
+  internal-credential defaults of the root `docker-compose.yml` that Principle VI allows.
 - Default to read-only; the mutating `sync` and `apply` commands require explicit approval and
   confirmed targets.
 - Handle authentication failures (401/403) and authorization boundaries explicitly.
@@ -233,4 +241,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.4.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-24
+**Version**: 1.5.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-26

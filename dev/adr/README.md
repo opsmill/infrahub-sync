@@ -48,7 +48,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the artifact handoff became a Harbor build-and-push workflow, how a tag waits for every
   platform's smoke test, and when `latest` moves.
 - [0016 — The Compose deployment is one tag-pinned file](0016-the-compose-deployment-is-one-tag-pinned-file.md)
-  — why the wrapper and digest binding became a root `docker-compose.yml` pinned by the
+  — **partly superseded by 0045** — why the wrapper and digest binding became a root `docker-compose.yml` pinned by the
   release commit, and what was given up.
 - [0019 — Prefect is an internal component of Sync](0019-prefect-is-an-internal-component-of-sync.md)
   — why Sync runs its own Prefect server and PostgreSQL server instead of Infrahub's task
@@ -183,6 +183,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   that only the Sync API holds, what the two routes of the `worker` account return, which stored
   versions are refused, and the limits of the execution check and of the receipt check.
   Supersedes 0039; partly supersedes 0026 and 0040.
+- [0059 — The Compose file defaults its internal credentials](0059-the-compose-file-defaults-its-internal-credentials.md)
+  — why the six credentials used only between the Compose services have fixed defaults, and why
+  the `admin` password, the worker token and the encryption key stay required. Partly
+  supersedes 0016.
 
 ## Related
 
