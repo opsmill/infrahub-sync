@@ -3332,7 +3332,7 @@ def demo_prepare_netbox_cmd(
 
     On Linux, the worker of the root Compose file does not resolve it.
 
-    Add host.docker.internal:host-gateway to the worker's extra_hosts, or give an address the worker resolves.
+    Add `host.docker.internal:host-gateway` to the worker's `extra_hosts`, or give an address the worker resolves.
 
     A second run with the same addresses changes nothing. It never plans, applies or approves.
     """
