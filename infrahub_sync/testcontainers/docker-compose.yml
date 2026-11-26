@@ -168,7 +168,7 @@ services:
   # deployment's own network. The Prefect UI is off; the documented override
   # snippet turns it on and publishes it on loopback.
   prefect-server:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     restart: unless-stopped
     command:
       - "uvicorn"
@@ -225,7 +225,7 @@ services:
   # registry until an operator registers a package through the API, so this job
   # takes no configuration input and reaches no destination.
   sync-bootstrap:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     restart: "no"
     command: ["python", "-m", "infrahub_sync.service.bootstrap"]
     depends_on:
@@ -244,7 +244,7 @@ services:
     tmpfs: *sync-scratch
 
   sync-api:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     restart: unless-stopped
     depends_on:
       sync-bootstrap:
@@ -308,7 +308,7 @@ services:
       start_period: 20s
 
   sync-worker:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     restart: unless-stopped
     # A registered run reads its declared configuration from PostgreSQL and
     # resolves both adapters from installed code, so this container is given no
@@ -380,7 +380,7 @@ services:
   # entrypoint replaces the image's tini, so `init` puts Docker's own init
   # process in front of the command; that works with images built before tini.
   cli:
-    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a6}"
     profiles: ["cli"]
     restart: "no"
     entrypoint: ["infrahub-sync"]
