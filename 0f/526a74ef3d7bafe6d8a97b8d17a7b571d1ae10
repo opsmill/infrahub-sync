@@ -1,0 +1,25 @@
+dev/adr/0060-a-configuration-uses-one-adapter-version.md
+  s_5c07df28acc2f7::t_475db92f44afd0 1-108
+dev/adr/0061-only-registered-code-runs-in-a-run.md
+  s_5c07df28acc2f7::t_7a8b17e31a7e13 1-117
+docs/docs/development/adr-index.mdx
+  s_5c07df28acc2f7::t_6471a3dbaad2d1 54-55
+dev/adr/README.md
+  s_5c07df28acc2f7::t_6471a3dbaad2d1 190-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f526a74ef3d7bafe6d8a97b8d17a7b571d1ae10",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
