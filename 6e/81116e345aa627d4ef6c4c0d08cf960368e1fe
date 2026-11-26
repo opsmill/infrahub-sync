@@ -1,0 +1,40 @@
+docs/docs/development/guides/adding-an-adapter.md
+  s_5c07df28acc2f7::t_3bc8868b4ff503 51-52
+docs/docs/development/knowledge/repository-tour.md
+  s_5c07df28acc2f7::t_3bc8868b4ff503 410-415
+changelog/+nautobot-adapter-file-only.removed.md
+  s_5c07df28acc2f7::t_d26e736cb48d1a 1-7
+adapters/nautobot/changelog/+carries-pynautobot.changed.md
+  s_5c07df28acc2f7::t_1701db7cb0afbb 1
+docs/docs/reference/sync-http-api.mdx
+  s_5c07df28acc2f7::t_5ce57b2e61215e 50-51
+  s_5c07df28acc2f7::t_3179e1e05a77c6 709,1092
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_5c07df28acc2f7::t_75d1ead9a1a123 272-277
+docs/docs/adapters/nautobot.mdx
+  s_5c07df28acc2f7::t_75d1ead9a1a123 23-31
+examples/nautobot-v1_to_infrahub/nautobot/sync_models.py
+  s_5c07df28acc2f7::t_328c0cb068938b 5-19,24,35,46,59,74,101,115,129,156,169,184,198,223,236,248,263,278,292,303,315,326,341
+docs/docs/compose-deployment.mdx
+  s_5c07df28acc2f7::t_5ce57b2e61215e 397-402
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_5c07df28acc2f7::t_3179e1e05a77c6 253
+examples/nautobot-v1_to_infrahub/nautobot/sync_adapter.py
+  s_5c07df28acc2f7::t_d30ed89b418289 1-3,30-33,38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e81116e345aa627d4ef6c4c0d08cf960368e1fe",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
