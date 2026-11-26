@@ -1,0 +1,20 @@
+tests/adapters_parity/test_nautobot_project.py
+  s_5c07df28acc2f7::t_c369eb5cba95cd 299-379
+  s_5c07df28acc2f7::t_6e2bad375fb7f1 603-607
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6cd0bb7a8929dfbfc92a05dd6b64e69a381a4d8",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
