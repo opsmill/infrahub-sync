@@ -161,10 +161,30 @@ class WebexAdapter(GenericrestapiAdapter):
                     raise TypeError(msg)
                 record.update(details)
 
+    @staticmethod
+    def _resolve_reference_items(
+        value: Any, identifiers: dict[str, str], local_ids: set[str]
+    ) -> tuple[list[Any], list[str]]:
+        """Normalize resolved peers and retain empty items, returning unresolved values separately."""
+        values = value if isinstance(value, list) else [value]
+        normalized: list[Any] = []
+        unresolved: list[str] = []
+        for item in values:
+            if not item:
+                normalized.append(item)
+                continue
+            identifier = str(item.get("id")) if isinstance(item, dict) else str(item)
+            resolved = identifier in local_ids if isinstance(item, dict) else identifier in identifiers
+            if resolved:
+                normalized.append({"id": item["id"] if isinstance(item, dict) else identifiers[identifier]})
+            else:
+                unresolved.append(identifier)
+        return normalized, unresolved
+
     def _skip_unresolved_references(
         self, records: list[dict[str, Any]], element: SchemaMappingModel, model: type[GenericrestapiModel]
     ) -> list[dict[str, Any]]:
-        """Keep complete records whose nonempty peers exist in previously loaded mappings."""
+        """Drop unresolved single references and remove unresolved items from many references."""
         fields = [field for field in element.fields if field.reference and field.mapping and field.static is None]
         peers: dict[str, dict[str, str]] = {}
         for field in fields:
@@ -179,6 +199,7 @@ class WebexAdapter(GenericrestapiAdapter):
         source_ids = {reference: set(identifiers.values()) for reference, identifiers in peers.items()}
         kept: list[dict[str, Any]] = []
         unresolved: set[str] = set()
+        list_items_removed = 0
         for source_record in records:
             missing = False
             record = deepcopy(source_record)
@@ -186,18 +207,14 @@ class WebexAdapter(GenericrestapiAdapter):
                 value = get_value(record, str(field.mapping))
                 identifiers = peers[str(field.reference)]
                 local_ids = source_ids[str(field.reference)]
-                values = value if isinstance(value, list) else [value]
-                normalized = []
-                for item in values:
-                    if not item:
-                        continue
-                    resolved = str(item.get("id")) in local_ids if isinstance(item, dict) else str(item) in identifiers
-                    if not resolved:
-                        missing = True
-                        unresolved.add(str(item.get("id")) if isinstance(item, dict) else str(item))
-                    elif model.is_list(name=field.name):
-                        normalized.append(item if isinstance(item, dict) else {"id": identifiers[str(item)]})
-                if model.is_list(name=field.name) and value:
+                many = model.is_list(name=field.name)
+                normalized, missing_values = self._resolve_reference_items(value, identifiers, local_ids)
+                unresolved.update(missing_values)
+                if many:
+                    list_items_removed += len(missing_values)
+                elif missing_values:
+                    missing = True
+                if many and value:
                     target = record
                     *parts, key = str(field.mapping).split(".")
                     for part in parts:
@@ -205,11 +222,12 @@ class WebexAdapter(GenericrestapiAdapter):
                     target[key] = normalized
             if not missing:
                 kept.append(record)
-        if len(kept) != len(records):
+        if len(kept) != len(records) or list_items_removed:
             logger.warning(
-                "Webex skipped records with unresolved references",
+                "Webex removed unresolved references",
                 model=element.name,
                 dropped=len(records) - len(kept),
+                list_items_removed=list_items_removed,
                 unresolved_values=sorted(unresolved)[:20],
                 unresolved_values_truncated=len(unresolved) > 20,
             )

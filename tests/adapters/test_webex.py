@@ -98,6 +98,7 @@ def test_skip_filtered_location_references(adapter: WebexAdapter, *, enabled: bo
     if enabled:
         assert warnings[0]["model"] == "Record"
         assert warnings[0]["dropped"] == 2
+        assert warnings[0]["list_items_removed"] == 0
         assert warnings[0]["unresolved_values"] == ["filtered-key"]
         assert adapter._records["Record"] == [pages.return_value[0]["items"][0]]
 
@@ -133,17 +134,22 @@ def test_reference_identifier_forms_are_distinct(value: object, adapter: WebexAd
 
 
 @pytest.mark.parametrize(
-    ("items", "kept"),
+    ("items", "expected", "removed"),
     [
-        ([{"id": "location-1"}], True),
-        (["site-key"], True),
-        ([{"id": "location-1"}, {"id": "location-2"}], False),
-        (["site-key", "filtered-key"], False),
-        ([], True),
-        ([None, "", {}], True),
+        ([{"id": "location-1"}], ["site-key"], 0),
+        (["site-key"], ["site-key"], 0),
+        ([{"id": "location-1"}, {"id": "location-2"}], ["site-key"], 1),
+        (["site-key", "filtered-key"], ["site-key"], 1),
+        ([{"id": "location-2"}], [], 1),
+        (["filtered-key", "filtered-key"], [], 2),
+        ([], [], 0),
+        ([None, "", {}], [], 0),
+        ([None, "site-key", "", {}, "filtered-key"], ["site-key"], 1),
     ],
 )
-def test_list_references_drop_whole_record(items: list[Any], adapter: WebexAdapter, *, kept: bool) -> None:
+def test_list_references_keep_resolved_items(
+    items: list[Any], expected: list[str], removed: int, adapter: WebexAdapter
+) -> None:
     _load_locations(adapter)
     mapping = adapter.config.schema_mapping[-1]
     mapping.fields.append(SchemaMappingField(name="peers", mapping="nested.peers", reference="LocationSite"))
@@ -152,10 +158,27 @@ def test_list_references_drop_whole_record(items: list[Any], adapter: WebexAdapt
     adapter.client.pages: Any = Mock(
         return_value=[{"items": [{"id": "room-1", "displayName": "ROOM-1", "sourcePeers": items}]}]
     )
-    adapter.model_loader("Record", RoomWithPeers)
-    assert len(adapter.get_all("Record")) == int(kept)
-    if kept:
-        assert cast("RoomWithPeers", adapter.get("Record", "ROOM-1")).peers == (["site-key"] if any(items) else [])
+    with capture_logs() as logs:
+        adapter.model_loader("Record", RoomWithPeers)
+    assert len(adapter.get_all("Record")) == 1
+    assert cast("RoomWithPeers", adapter.get("Record", "ROOM-1")).peers == expected
+    assert adapter._records["Record"][0]["nested"]["peers"] == [
+        {"id": "location-1"} if item else item
+        for item in items
+        if not item or item in ("site-key", {"id": "location-1"})
+    ]
+    warnings = [event for event in logs if event["log_level"] == "warning"]
+    assert len(warnings) == int(removed > 0)
+    if removed:
+        assert warnings[0]["dropped"] == 0
+        assert warnings[0]["list_items_removed"] == removed
+        assert warnings[0]["unresolved_values"] == sorted(
+            {
+                str(item["id"]) if isinstance(item, dict) else str(item)
+                for item in items
+                if item and item not in ("site-key", {"id": "location-1"})
+            }
+        )
 
 
 def test_unloaded_reference_requires_order_even_with_no_records(adapter: WebexAdapter) -> None:
@@ -198,6 +221,7 @@ def test_warning_truncates_distinct_values(adapter: WebexAdapter) -> None:
         adapter.model_loader("Record", Record)
     warning = next(event for event in logs if event["log_level"] == "warning")
     assert warning["dropped"] == 25
+    assert warning["list_items_removed"] == 0
     assert len(warning["unresolved_values"]) == 20
     assert warning["unresolved_values_truncated"] is True
 
