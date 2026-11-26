@@ -1,0 +1,39 @@
+docs/docs/reference/sync-http-api.mdx
+  s_5c07df28acc2f7::t_0b34ce667303ef 710,1093
+docs/docs/development/knowledge/repository-tour.md
+  s_5c07df28acc2f7::t_0b34ce667303ef 415-418,421-422
+adapters/ipfabricsync/changelog/+ipfabricsync-module-left-sync.changed.md
+  s_5c07df28acc2f7::t_0b34ce667303ef 1
+changelog/+ipfabricsync-adapter-project.housekeeping.md
+  s_5c07df28acc2f7::t_0b34ce667303ef 1
+docs/docs/adapters/ipfabric.mdx
+  s_5c07df28acc2f7::t_275bae18f2dbc2 25-39,69
+docs/docs/readme.mdx
+  s_5c07df28acc2f7::t_275bae18f2dbc2 125-126
+AGENTS.md
+  s_5c07df28acc2f7::t_0b34ce667303ef 100
+adapters/README.md
+  s_5c07df28acc2f7::t_0b34ce667303ef 267
+docs/docs/development/guides/adding-an-adapter.md
+  s_5c07df28acc2f7::t_0b34ce667303ef 50-52
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_5c07df28acc2f7::t_533f0d624d7b79 253
+changelog/+ipfabricsync-adapter-file-only.removed.md
+  s_5c07df28acc2f7::t_0b34ce667303ef 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65e124cea87d924e6b8214a90408d1dd2da20a2a",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
