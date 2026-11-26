@@ -3304,7 +3304,10 @@ def demo_prepare_netbox_cmd(
     branch: str | None = typer.Option(
         None,
         "--branch",
-        help="Infrahub branch to create for the import, after the schema load. A branch that exists is kept.",
+        help=(
+            "Infrahub branch to create for the import, after the schema load. An existing branch is kept "
+            "when it holds the schema of main, and refused otherwise."
+        ),
     ),
     reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the registration."),
     as_json: bool = typer.Option(False, "--json", help="Print the result as one JSON object."),  # noqa: FBT003

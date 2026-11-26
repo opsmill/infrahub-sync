@@ -1016,7 +1016,7 @@ $ infrahub-sync demo prepare netbox [OPTIONS]
 * `--infrahub-url <str>`: Infrahub address written into the package: the address the worker uses.  [required]
 * `--infrahub-address <str>`: Infrahub address this command uses to load the schema. Defaults to --infrahub-url.
 * `--schema-timeout <float>`: Seconds to wait for Infrahub to apply the schema.  [default: 120.0]
-* `--branch <str>`: Infrahub branch to create for the import, after the schema load. A branch that exists is kept.
+* `--branch <str>`: Infrahub branch to create for the import, after the schema load. An existing branch is kept when it holds the schema of main, and refused otherwise.
 * `--reason <str>`: Optional audit reason for the registration.
 * `--json`: Print the result as one JSON object.
 * `--help`: Show this message and exit.
