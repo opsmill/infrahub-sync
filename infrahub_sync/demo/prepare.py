@@ -241,8 +241,15 @@ class InfrahubBranches:
         try:
             data = self._request(address, token, _BRANCH_SCHEMA_LIST, raise_query_error=True)
             reports_schema = True
-        except GraphQLError:
-            # Infrahub before 1.11 does not know `schema_differs_from_default_branch`.
+        except GraphQLError as error:
+            # Infrahub before 1.11 does not know `schema_differs_from_default_branch`; any other
+            # refusal must not turn into an `unknown` answer.
+            if not any(
+                "schema_differs_from_default_branch" in str(item.get("message", "") if isinstance(item, dict) else item)
+                for item in error.errors
+            ):
+                msg = _redact(f"Infrahub at {address} refused a branch request", token)
+                raise DemoBranchError(msg) from None
             data = self._request(address, token, _BRANCH_LIST)
             reports_schema = False
         for item in data.get("Branch") or []:

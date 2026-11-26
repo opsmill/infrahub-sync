@@ -488,6 +488,19 @@ def test_before_infrahub_1_11_infrahub_branches_lists_names_only(
     assert "schema_differs_from_default_branch" not in fake_graphql.requests[1]["query"]
 
 
+def test_infrahub_branches_check_raises_when_infrahub_refuses_for_another_reason(
+    fake_graphql: type[_FakeGraphQL],
+) -> None:
+    fake_graphql.answers = [GraphQLError(errors=[{"message": f"token {INFRAHUB_TOKEN} permission denied"}])]
+
+    with pytest.raises(DemoBranchError) as raised:
+        prepare.InfrahubBranches().check("http://127.0.0.1:8000", INFRAHUB_TOKEN, "netbox-demo-1")
+
+    assert "http://127.0.0.1:8000" in str(raised.value)
+    assert INFRAHUB_TOKEN not in str(raised.value)
+    assert len(fake_graphql.requests) == 1
+
+
 def test_infrahub_branches_creates_the_branch_from_main_without_git(fake_graphql: type[_FakeGraphQL]) -> None:
     fake_graphql.answers = [{"BranchCreate": {"ok": True}}]
 
