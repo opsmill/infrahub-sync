@@ -1,0 +1,20 @@
+tests/cli/test_convert_command.py
+  s_5c07df28acc2f7::t_26be7e9be60632 29,41-42,49-53,73-77,80-84,87,479,481-502,767,770-772,774
+  s_5c07df28acc2f7::t_d241068acb04a4 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e290dbcc515ebf6ae74c83b9557cc817fe73441e",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
