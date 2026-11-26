@@ -1,0 +1,62 @@
+changelog/+demo-prepare.added.md
+  s_b7e124e0850544::t_62ea1d1383ebc6 1
+tests/demo/fakes.py
+  s_b7e124e0850544::t_1653195042bac9 20,187-211
+  s_b7e124e0850544::t_d4dd693f9838a5 212-214
+tests/demo/test_prepare.py
+  s_b7e124e0850544::t_1653195042bac9 13,18,20,313-366,371,373-513
+  s_b7e124e0850544::t_d9fc31396a4998 369-370,372
+  s_b7e124e0850544::t_5259b8579e0557 367-368,514-519
+infrahub_sync/demo/prepare.py
+  s_b7e124e0850544::t_79b0dfe248c301 37-39,49-50,86,88-89,200-213,221-223,227-231,236-253,331-335,347,352-360
+  s_b7e124e0850544::t_cc05ae8e5da2e0 4-7
+  s_b7e124e0850544::t_77d8048e1250c1 1,3,24,36,44-48,51-54,85,87,90-96,122-123,196-199,214-220,224-226,232-235,254-262,321-322,324,328-330,345-346,349-351,361-363,375-376
+tests/cli/test_login_commands.py
+  s_b7e124e0850544::t_62ea1d1383ebc6 351,358-363
+  s_b7e124e0850544::t_69130ca59f34b5 364
+changelog/+demo-prepare-branch.added.md
+  s_b7e124e0850544::t_62ea1d1383ebc6 1
+tasks/dev.py
+  s_b7e124e0850544::t_2cced6bbef78b1 1443,1447,1477,1484
+  s_b7e124e0850544::t_62ea1d1383ebc6 19,209,671,1384,1427,1432,1451,1459
+docs/docs/reference/cli.mdx
+  s_b7e124e0850544::t_803804e11a3432 53,947,961,965,967-995
+  s_b7e124e0850544::t_4f9db7851c4da3 996-997,999,1004,1013
+tasks/netbox.py
+  s_b7e124e0850544::t_62ea1d1383ebc6 110
+infrahub_sync/cli.py
+  s_b7e124e0850544::t_915ea48c71783f 3314-3318,3323
+  s_b7e124e0850544::t_62ea1d1383ebc6 179-181,3284-3285,3312,3319-3322,3324,3326
+  s_b7e124e0850544::t_0cf40d3456a994 3280-3281,3304-3307,3313,3328,3352
+  s_b7e124e0850544::t_66dd6398d6f463 3308
+tests/dev_stack/test_dev_tasks.py
+  s_b7e124e0850544::t_2cced6bbef78b1 832
+  s_b7e124e0850544::t_62ea1d1383ebc6 28,95,114,814
+  s_b7e124e0850544::t_f977569dc2da53 35-36,815-816,831
+tests/cli/test_demo_prepare.py
+  s_b7e124e0850544::t_1653195042bac9 182-192
+  s_b7e124e0850544::t_62ea1d1383ebc6 1,14,22
+  s_b7e124e0850544::t_4013a4773d98b0 39-43,47,114-115,169-181,193
+infrahub_sync/demo/errors.py
+  s_b7e124e0850544::t_77d8048e1250c1 24-27
+tests/image/test_demo_assets.py
+  s_b7e124e0850544::t_62ea1d1383ebc6 1,38
+changelog/+demo-prepare-netbox.changed.md
+  s_b7e124e0850544::t_56ce453b036eb0 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc1f7e076a1100af8de2580278f75de2be925ba9",
+  "prompts": {},
+  "sessions": {
+    "s_b7e124e0850544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a9e16b5-a567-44a0-b993-a44493a00002",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
