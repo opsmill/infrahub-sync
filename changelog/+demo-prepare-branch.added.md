@@ -1,0 +1,1 @@
+`infrahub-sync demo prepare netbox --branch <name>` creates the Infrahub branch for the NetBox demo import with the Infrahub SDK, so the demo no longer needs `infrahubctl`. The `demo prepare netbox` help lists what the command needs: the stored credentials `netbox-token` and `infrahub-token`, an Infrahub that holds no other schema, and `INFRAHUB_API_TOKEN`.

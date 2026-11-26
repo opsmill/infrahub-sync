@@ -348,14 +348,20 @@ def test_a_refused_saved_session_is_removed_and_the_login_hint_is_printed(sync_a
 
 
 def test_demo_prepare_removes_a_refused_saved_session(sync_api: FakeSyncAPI, monkeypatch: pytest.MonkeyPatch) -> None:
-    # `demo prepare` handles a Sync client error itself, outside `_client_errors`.
+    # `demo prepare netbox` handles a Sync client error itself, outside `_client_errors`.
     write_session(URL, ALICE_SESSION)
     monkeypatch.setenv("INFRAHUB_API_TOKEN", VARIABLE_TOKEN)
     monkeypatch.setattr("infrahub_sync.demo.prepare.load_schema", FakeSchemaLoader())
     sync_api.answers["GET /configs"] = sync_api.error(401, "unauthenticated")
 
     result = _invoke(
-        "demo", "prepare", "--netbox-url", "http://netbox:8080", "--infrahub-url", "http://infrahub-server:8000"
+        "demo",
+        "prepare",
+        "netbox",
+        "--netbox-url",
+        "http://netbox:8080",
+        "--infrahub-url",
+        "http://infrahub-server:8000",
     )
 
     assert result.exit_code == 1

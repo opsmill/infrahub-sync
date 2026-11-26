@@ -16,7 +16,7 @@ The `dev` namespace (`dev.build`, `dev.start`, `dev.restart`, `dev.stop`, `dev.d
   dataset seeded into the local Infrahub: one command from a fresh clone to a stack to try.
 - `demo`: `infrahub` plus the local NetBox, and nothing written into Infrahub. `dev.demo`
   starts it, then loads the NetBox demo's schema and registers its configuration with
-  `infrahub-sync demo prepare`, run on the host.
+  `infrahub-sync demo prepare netbox`, run on the host.
 
 `dev.start --preset NAME` and `dev.deps --preset NAME` select one, `dev.infrahub` and
 `dev.preview` are `dev.start` with that preset, and `INFRAHUB_SYNC_DEV_PRESET` selects one
@@ -206,7 +206,7 @@ FRONTEND_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
 FRONTEND_URL = "http://localhost:3000"
 # `dev.demo`: the command it runs on the host, the variables that command reads, and the
 # branch its printed next commands create.
-DEMO_PREPARE_COMMAND = "uv run infrahub-sync demo prepare"
+DEMO_PREPARE_COMMAND = "uv run infrahub-sync demo prepare netbox"
 INFRAHUB_TOKEN_VARIABLE = "INFRAHUB_API_TOKEN"  # noqa: S105 -- a variable name
 SYNC_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
 SYNC_TOKEN_VARIABLE = "INFRAHUB_SYNC_API_TOKEN"  # noqa: S105 -- a variable name
@@ -668,7 +668,7 @@ def build_inputs_hash(root: Path = REPO_BASE) -> str:
     and its bytes. A checkout without the frontend submodule still yields a hash.
     """
     # The demo assets are not hashed on purpose: the dev stack mounts the source tree, and
-    # `dev.demo` runs `demo prepare` on the host.
+    # `dev.demo` runs `demo prepare netbox` on the host.
     digest = hashlib.sha256()
     for name in BUILD_INPUT_FILES:
         digest.update((root / name).read_bytes())
@@ -1381,7 +1381,7 @@ def dev_frontend(context: Context) -> None:
 
 
 def _demo_environment(settings: DevSettings) -> dict[str, str]:
-    """The variables `infrahub-sync demo prepare` reads, for the stack's Infrahub and Sync API.
+    """The variables `infrahub-sync demo prepare netbox` reads, for the stack's Infrahub and Sync API.
 
     The Sync token is the development token when the `admin` account still has it. With a
     token set through ADMIN_ACCOUNT_TOKEN, the command inherits INFRAHUB_SYNC_API_TOKEN from
@@ -1424,12 +1424,12 @@ def _report_demo_netbox(found: str) -> None:
     )
 
 
-# How many lines of `demo prepare` output a failure to read its result shows.
+# How many lines of `demo prepare netbox` output a failure to read its result shows.
 DEMO_OUTPUT_LINES = 4
 
 
 def _prepare_demo(context: Context, settings: DevSettings, environment: Mapping[str, str]) -> dict[str, Any]:
-    """Run `infrahub-sync demo prepare --json` on the host and return the object it prints.
+    """Run `infrahub-sync demo prepare netbox --json` on the host and return the object it prints.
 
     Raises:
         DevStackError: when the command fails or prints no configuration ID and version.
@@ -1440,14 +1440,15 @@ def _prepare_demo(context: Context, settings: DevSettings, environment: Mapping[
             f"--netbox-url {shlex.quote(WORKER_NETBOX_URL)}",
             f"--infrahub-url {shlex.quote(WORKER_INFRAHUB_URL)}",
             f"--infrahub-address {shlex.quote(settings.infrahub_url)}",
+            f"--branch {shlex.quote(DEMO_BRANCH)}",
             "--json",
         ]
     )
-    print(f" - [{NAMESPACE}] Loading the demo schema and registering the NetBox configuration")
+    print(f" - [{NAMESPACE}] Loading the demo schema, creating {DEMO_BRANCH} and registering the NetBox configuration")
     with context.cd(ESCAPED_REPO_PATH):
         result = context.run(command, env=dict(environment), hide="out", warn=True, pty=False)
     if result is None or not result.ok:
-        msg = "`infrahub-sync demo prepare` failed; its error is printed above"
+        msg = "`infrahub-sync demo prepare netbox` failed; its error is printed above"
         raise DevStackError(msg)
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     try:
@@ -1455,7 +1456,7 @@ def _prepare_demo(context: Context, settings: DevSettings, environment: Mapping[
     except ValueError:
         prepared = None
     if not isinstance(prepared, dict) or "config_id" not in prepared or "version" not in prepared:
-        msg = "`infrahub-sync demo prepare --json` printed no configuration ID and version"
+        msg = "`infrahub-sync demo prepare netbox --json` printed no configuration ID and version"
         if lines:
             # Standard output holds the result and any notes, never a token: tokens reach the
             # command through the environment, and its errors go to standard error.
@@ -1473,19 +1474,19 @@ def _print_demo_next_steps(settings: DevSettings, prepared: Mapping[str, Any]) -
     version = shlex.quote(str(prepared["version"]))
     print(f" - [{NAMESPACE}] schema: {prepared.get('schema', 'unknown')}")
     print(f" - [{NAMESPACE}] configuration: {prepared.get('configuration', 'unknown')}")
+    print(f" - [{NAMESPACE}] branch: {prepared.get('branch_state', 'unknown')} {DEMO_BRANCH}")
     print(f" - [{NAMESPACE}] Configuration  {prepared['config_id']}, version {prepared['version']}")
     print(
         f" - [{NAMESPACE}] Web interface  {settings.sync_api_url}  (sign in as admin, with the password in "
         f"ADMIN_ACCOUNT_PASSWORD, by default {ADMIN_PASSWORD})"
     )
     print(f" - [{NAMESPACE}] Sync API       {settings.sync_api_url}")
-    print(f" - [{NAMESPACE}] Next, a first plan on a new branch:")
+    print(f" - [{NAMESPACE}] Next, a first plan on the {DEMO_BRANCH} branch:")
     print(
         f"     export INFRAHUB_ADDRESS={settings.infrahub_url} "
         f"{INFRAHUB_TOKEN_VARIABLE}={_admin_token_label(settings.infrahub_admin_token)}"
     )
     print(f"     export {SYNC_URL_VARIABLE}={settings.sync_api_url} {SYNC_TOKEN_VARIABLE}={sync_token}")
-    print(f"     uv run infrahubctl branch create {DEMO_BRANCH}")
     print(
         f"     uv run infrahub-sync plan --config-id {config_id} --version {version} "
         f'--branch {DEMO_BRANCH} --reason "demo"'

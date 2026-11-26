@@ -1,4 +1,4 @@
-"""`infrahub-sync demo prepare`: exit codes, text and JSON output, no token in output."""
+"""`infrahub-sync demo prepare netbox`: exit codes, text and JSON output, no token in output."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from infrahub_sync.cli import app
 from infrahub_sync.client import APIError, TransportError
 from infrahub_sync.demo import prepare
 from infrahub_sync.demo.errors import DemoSchemaError
-from tests.demo.fakes import FakeSchemaLoader, FakeSyncClient
+from tests.demo.fakes import FakeBranches, FakeSchemaLoader, FakeSyncClient
 
 RUNNER = CliRunner()
 INFRAHUB_TOKEN = "canary-infrahub-token-c41d22"  # noqa: S105 -- test canary, not a secret
@@ -19,6 +19,7 @@ SYNC_TOKEN = "canary-sync-token-9be310"  # noqa: S105 -- test canary, not a secr
 ARGUMENTS = (
     "demo",
     "prepare",
+    "netbox",
     "--netbox-url",
     "http://netbox:8080",
     "--infrahub-url",
@@ -35,10 +36,15 @@ def _tokens(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _invoke(
-    loader: FakeSchemaLoader, monkeypatch: pytest.MonkeyPatch, *extra: str, client: FakeSyncClient | None = None
+    loader: FakeSchemaLoader,
+    monkeypatch: pytest.MonkeyPatch,
+    *extra: str,
+    client: FakeSyncClient | None = None,
+    branches: FakeBranches | None = None,
 ) -> tuple[FakeSyncClient, str]:
     client = client if client is not None else FakeSyncClient()
     monkeypatch.setattr(prepare, "load_schema", loader)
+    monkeypatch.setattr(prepare, "InfrahubBranches", lambda: branches if branches is not None else FakeBranches())
     result = RUNNER.invoke(app, [*ARGUMENTS, *extra], obj={"client": client})
     return client, f"{result.exit_code}\n{result.output}"
 
@@ -105,6 +111,8 @@ def test_json_prints_one_object(monkeypatch: pytest.MonkeyPatch) -> None:
         "infrahub_url": "http://infrahub-server:8000",
         "name": "from-netbox",
         "netbox_url": "http://netbox:8080",
+        "branch": None,
+        "branch_state": None,
         "same_name": 0,
         "schema": "loaded",
         "schema_files": 16,
@@ -158,3 +166,28 @@ def test_an_address_with_userinfo_exits_2_naming_the_option_and_not_the_value(
     assert option in output
     assert "userinfo-canary" not in output
     assert (loader.calls, client.calls) == ([], [])
+
+
+def test_branch_prints_whether_it_was_created(monkeypatch: pytest.MonkeyPatch) -> None:
+    branches = FakeBranches()
+
+    _, output = _invoke(FakeSchemaLoader(), monkeypatch, "--branch", "netbox-demo-1", branches=branches)
+
+    assert output.splitlines()[0] == "0"
+    assert output.splitlines()[-1] == "branch: created netbox-demo-1"
+    assert "netbox-demo-1" in branches.names
+    _assert_no_token(output)
+
+
+def test_a_branch_with_another_schema_exits_1_and_registers_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, output = _invoke(
+        FakeSchemaLoader(),
+        monkeypatch,
+        "--branch",
+        "netbox-demo-1",
+        branches=FakeBranches(names={"main": "same-schema", "netbox-demo-1": "other-schema"}),
+    )
+
+    assert output.startswith("1\n")
+    assert "cause: the branch netbox-demo-1 does not hold the schema of main" in output
+    assert not any(call[0] in {"register_config", "create_config_version"} for call in client.calls)
