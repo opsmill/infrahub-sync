@@ -1,0 +1,37 @@
+adapters/aci/uv.lock
+  s_5c07df28acc2f7::t_9fd8930b1f6071 429
+adapters/genericrestapi/uv.lock
+  s_5c07df28acc2f7::t_e8580378a864fc 429
+adapters/ipfabricsync/uv.lock
+  s_5c07df28acc2f7::t_f4917028af8d88 657
+adapters/msgraphsync/uv.lock
+  s_5c07df28acc2f7::t_d36db9c06ec9ac 850
+adapters/nautobot/uv.lock
+  s_5c07df28acc2f7::t_7a5e54ca3281f7 429
+adapters/netbox/uv.lock
+  s_5c07df28acc2f7::t_e2d90ec0759759 432
+adapters/peeringmanager/uv.lock
+  s_5c07df28acc2f7::t_23aa06230daf67 429
+adapters/prometheus/uv.lock
+  s_5c07df28acc2f7::t_3fd8cd709a7219 429
+adapters/slurpitsync/uv.lock
+  s_5c07df28acc2f7::t_cceaff3fbc84f7 429
+adapters/webex/uv.lock
+  s_5c07df28acc2f7::t_f8ea6f6288fab7 429
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ec9a00ad18fd3b49e6174009d243653e7b40986",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
