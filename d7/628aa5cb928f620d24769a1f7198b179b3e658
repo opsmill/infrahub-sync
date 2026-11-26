@@ -1,0 +1,21 @@
+dev/specs/031-registered-adapters/handoff.md
+  s_5c07df28acc2f7::t_b9cd0ba4f6831f 216-218
+dev/specs/031-registered-adapters/tasks.md
+  s_5c07df28acc2f7::t_68d88d4e0f2091 608-612
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7628aa5cb928f620d24769a1f7198b179b3e658",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
