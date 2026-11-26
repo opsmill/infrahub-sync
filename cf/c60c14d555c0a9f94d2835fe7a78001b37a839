@@ -1,0 +1,23 @@
+dev/specs/031-registered-adapters/tasks.md
+  s_5c07df28acc2f7::t_c5093634d827fc 593
+  s_5c07df28acc2f7::t_57a276d9c553f0 416,419-420
+  s_5c07df28acc2f7::t_7717cea5a64774 600-601
+dev/specs/031-registered-adapters/quickstart-results.md
+  s_5c07df28acc2f7::t_e1cced2f4c312d 989-1109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cfc60c14d555c0a9f94d2835fe7a78001b37a839",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
