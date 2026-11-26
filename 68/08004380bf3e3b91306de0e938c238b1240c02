@@ -1,0 +1,37 @@
+docker-compose.yml
+  s_5c07df28acc2f7::t_8f807c018fa90b 350-353
+  s_5c07df28acc2f7::t_3827e465ec49fb 342-343
+docs/docs/compose-deployment.mdx
+  s_5c07df28acc2f7::t_94b3da1320b243 585-596
+  s_5c07df28acc2f7::t_67cce3b9987975 561-566
+dev/specs/031-registered-adapters/research.md
+  s_5c07df28acc2f7::t_f5a84e5097fa08 900-922
+dev/specs/031-registered-adapters/contracts/cli.md
+  s_5c07df28acc2f7::t_bb228fa8b90d69 230-236
+tests/compose/test_compose_contract.py
+  s_5c07df28acc2f7::t_18ab392adaba5f 269-270
+dev/specs/031-registered-adapters/spec.md
+  s_5c07df28acc2f7::t_4297a7363d5136 507-515
+  s_5c07df28acc2f7::t_3674e654f220d0 161-163
+  s_5c07df28acc2f7::t_dc95bc48cd518b 501-503
+dev/specs/031-registered-adapters/tasks.md
+  s_5c07df28acc2f7::t_d436bdd06a4fe9 614,619-623
+dev/specs/031-registered-adapters/handoff.md
+  s_5c07df28acc2f7::t_f40a49c25049a3 261-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6808004380bf3e3b91306de0e938c238b1240c02",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

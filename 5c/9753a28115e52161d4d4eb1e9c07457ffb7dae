@@ -1,0 +1,21 @@
+tests/adapter_files/test_unpacked_copy.py
+  s_5c07df28acc2f7::t_e6506ac90e367f 374-390
+infrahub_sync/adapter_files/unpacked_copies.py
+  s_5c07df28acc2f7::t_ad74b947906664 182-183,191-193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c9753a28115e52161d4d4eb1e9c07457ffb7dae",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
