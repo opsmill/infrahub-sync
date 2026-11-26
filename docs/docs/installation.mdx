@@ -46,18 +46,15 @@ You run the `infrahub-sync` CLI on any machine that can reach the Sync API, such
 workstation, a CI runner, or the Docker host. The CLI is published on
 [PyPI](https://pypi.org/project/infrahub-sync/) and needs Python 3.10 to 3.13.
 
-The commands below install from PyPI once version 3.0.0 is published there. Until
-then, PyPI has no 3.x version, so run the CLI through the Compose deployment's `cli`
-service instead. From the directory that holds `.env`, run
-`docker compose run --rm --no-deps -T cli <command>`, for example
-`docker compose run --rm --no-deps -T cli configs list`. A command that reads a package
-file needs that file mounted into the container; see
-[Registering a package](./compose-deployment.mdx#registering-a-package).
+Install the version of the image that your deployment runs. The Sync API reports it as
+`server_version` at `/api/version`. Until version 3.0.0, PyPI holds only pre-releases of V3.
+pip and uv install a pre-release only when you name it, so a range such as
+`infrahub-sync>=3,<4` fails until then.
 
 To install the CLI with uv:
 
 ```bash
-uv tool install "infrahub-sync>=3,<4"
+uv tool install "infrahub-sync==<version>"
 ```
 
 To install it with pip instead, use a virtual environment:
@@ -65,11 +62,18 @@ To install it with pip instead, use a virtual environment:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install "infrahub-sync>=3,<4"
+pip install "infrahub-sync==<version>"
 ```
 
-To use the same version as the image your deployment runs, pin that version, for example
-`infrahub-sync==3.0.0`.
+Replace `<version>` with the version of your deployment. The CLI depends on the Infrahub SDK,
+not on `infrahubctl`.
+
+You can also run the CLI through the Compose deployment's `cli` service, without installing
+it. From the directory that holds `.env`, run
+`docker compose run --rm --no-deps -T cli <command>`, for example
+`docker compose run --rm --no-deps -T cli configs list`. A command that reads a package
+file needs that file mounted into the container; see
+[Registering a package](./compose-deployment.mdx#registering-a-package).
 
 Run `infrahub-sync configs --help` to confirm that you installed V3. V2 has no `configs`
 command. Then [connect the CLI to the Sync API](./running-a-sync.mdx#connect-the-cli-to-the-sync-api).
