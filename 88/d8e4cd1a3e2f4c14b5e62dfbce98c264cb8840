@@ -1,0 +1,21 @@
+dev/specs/031-registered-adapters/handoff.md
+  s_a9719f961786d2::t_5d1f4d786fd1b4 12,14,87-90,112-152,222,254-262,271-286
+dev/specs/031-registered-adapters/opsmill-implement-report.md
+  s_a9719f961786d2::t_40841f0b1b861d 10,106-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88d8e4cd1a3e2f4c14b5e62dfbce98c264cb8840",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
