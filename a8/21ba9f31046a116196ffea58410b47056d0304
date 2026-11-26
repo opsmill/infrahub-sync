@@ -1,0 +1,27 @@
+docs/docs/reference/sync-http-api.mdx
+  s_5c07df28acc2f7::t_c27415a3c4b278 708,1091
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_5c07df28acc2f7::t_c27415a3c4b278 253
+infrahub_sync/service/adapter_health.py
+  s_5c07df28acc2f7::t_c27415a3c4b278 19-21
+tests/service/test_earlier_configurations.py
+  s_5c07df28acc2f7::t_c27415a3c4b278 101-102
+infrahub_sync/service/failure_cause.py
+  s_5c07df28acc2f7::t_c27415a3c4b278 727-728
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a821ba9f31046a116196ffea58410b47056d0304",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
