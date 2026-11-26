@@ -1,0 +1,30 @@
+docs/docs/contributing.mdx
+  s_b7e124e0850544::t_94b70f74f7d192 60-61
+docs/docs/reference/sync-http-api.mdx
+  s_b7e124e0850544::t_94b70f74f7d192 50-51
+development/Dockerfile
+  s_b7e124e0850544::t_d89ddf386396c6 49-52
+pyproject.toml
+  s_b7e124e0850544::t_bf6e5c5bf13388 166-169
+  s_b7e124e0850544::t_62ea1d1383ebc6 194
+changelog/+infrahubctl-dev-only.changed.md
+  s_b7e124e0850544::t_803804e11a3432 1
+uv.lock
+  s_b7e124e0850544::t_735bcbeb212b1a 107-112,1317-1321,1351,1412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d6845c24feac4adce6c35878213c559edf1a3f2",
+  "prompts": {},
+  "sessions": {
+    "s_b7e124e0850544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a9e16b5-a567-44a0-b993-a44493a00002",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
