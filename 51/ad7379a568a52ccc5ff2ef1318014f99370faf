@@ -1,0 +1,58 @@
+tests/client/test_public_surface.py
+  s_5c07df28acc2f7::t_d885aa4bc161e0 76
+infrahub_sync/client/__init__.py
+  s_5c07df28acc2f7::t_d885aa4bc161e0 96,203
+docs/docs/reference/sync-http-api.mdx
+  s_5c07df28acc2f7::t_e361f92a49ca87 1098-1101,2351,2369-2371,2376-2381
+dev/specs/031-registered-adapters/tasks.md
+  s_5c07df28acc2f7::t_e0f63a2e09802e 593,596
+tests/cli/test_schedule_commands.py
+  s_5c07df28acc2f7::t_682dff8264bc19 27,368-424
+  s_5c07df28acc2f7::t_d624a2e8cf87e2 425-426
+tests/client/test_models.py
+  s_5c07df28acc2f7::t_d78281cdd02b29 834,840-841
+  s_5c07df28acc2f7::t_397b5cd16e02dc 842-843
+tests/service/test_schedule_routes.py
+  s_5c07df28acc2f7::t_2a147bf6608114 17,32,71,953-1026
+tests/service/test_earlier_configurations.py
+  s_5c07df28acc2f7::t_c3c324b26c3b76 38,185
+  s_5c07df28acc2f7::t_aef75bc08778fe 34
+  s_5c07df28acc2f7::t_20e377d6a28345 7-10,40-48,181-184,186-187,189,192,204,206-208,210-213,215-228,230-256,258-262,264-265,269,271-273
+  s_5c07df28acc2f7::t_6cae5761bbcf83 214,263
+changelog/+schedule-adapter-refusals.changed.md
+  s_5c07df28acc2f7::t_394a9b9372f81f 1
+infrahub_sync/service/schedules.py
+  s_5c07df28acc2f7::t_02ea041b1f451c 53-58,364-369,371-402,1349,1386
+  s_5c07df28acc2f7::t_45b4a2389a885a 76-77
+  s_5c07df28acc2f7::t_c3c324b26c3b76 370,1389
+infrahub_sync/client/models.py
+  s_5c07df28acc2f7::t_9d99be034f88f4 34-35
+  s_5c07df28acc2f7::t_ff755c87c260fb 1145-1163,1204-1207
+infrahub_sync/cli.py
+  s_5c07df28acc2f7::t_86883d2c2a4f47 58,3062-3102,3118-3119
+  s_5c07df28acc2f7::t_1e5c6609c78024 3223-3224,3244-3245
+docs/docs/reference/cli.mdx
+  s_5c07df28acc2f7::t_00e1f092d1d3ce 832-833,852-853
+infrahub_sync/service/models.py
+  s_5c07df28acc2f7::t_d885aa4bc161e0 60,117
+docs/docs/orchestration.mdx
+  s_5c07df28acc2f7::t_e361f92a49ca87 248-253
+frontend/src/api/types.generated.ts
+  s_5c07df28acc2f7::t_a0f45334598e61 3075-3101,3224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "51ad7379a568a52ccc5ff2ef1318014f99370faf",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
