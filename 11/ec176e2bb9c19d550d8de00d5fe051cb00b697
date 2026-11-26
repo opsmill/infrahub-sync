@@ -1,0 +1,20 @@
+dev/specs/031-registered-adapters/handoff.md
+  s_a9719f961786d2::t_f89b342f433258 293-313
+  s_a9719f961786d2::t_66c19e936bcad2 314-340
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "11ec176e2bb9c19d550d8de00d5fe051cb00b697",
+  "prompts": {},
+  "sessions": {
+    "s_a9719f961786d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "768b5b29-9ad6-4826-b57f-e655150bd5c1",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
