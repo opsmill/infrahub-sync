@@ -1,0 +1,25 @@
+tests/adapters_parity/test_genericrestapi_project.py
+  s_5c07df28acc2f7::t_3fee06cfe11d6d 347-399,407
+  s_5c07df28acc2f7::t_9747030ee7989f 65-69
+  s_5c07df28acc2f7::t_0d9ecefdb96ad3 87-151
+  s_5c07df28acc2f7::t_e8cd7d17ba482d 208-209
+  s_5c07df28acc2f7::t_04628084e1189c 400-406
+  s_5c07df28acc2f7::t_c9e8f7db2d2ded 608-610
+  s_5c07df28acc2f7::t_aa13fa64aedc7c 408
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f266d05dbda1e17215cb804756dae7046b44dfc3",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
