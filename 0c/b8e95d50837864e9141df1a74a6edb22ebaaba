@@ -1,0 +1,27 @@
+tests/adapters/test_same_type_sync_filter_role.py
+  s_5c07df28acc2f7::t_90abc3a897a3e8 14-15
+adapters/prometheus/tests/test_prometheus_client_settings.py
+  s_5c07df28acc2f7::t_603c26f059fd1f 1-94
+adapters/prometheus/tests/test_prometheus_filter_role.py
+  s_5c07df28acc2f7::t_ba14cabb8985fa 1-52
+tests/configuration/test_registered_adapter_authority.py
+  s_5c07df28acc2f7::t_970861ef7e7183 1-5
+adapters/prometheus/pyproject.toml
+  s_5c07df28acc2f7::t_83ad31de2331be 43,47-48,59-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0cb8e95d50837864e9141df1a74a6edb22ebaaba",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

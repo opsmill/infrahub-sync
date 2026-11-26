@@ -1,0 +1,34 @@
+docs/docs/reference/sync-http-api.mdx
+  s_5c07df28acc2f7::t_755106470e949a 50-52,710,1093
+adapters/README.md
+  s_5c07df28acc2f7::t_755106470e949a 127,263
+adapters/prometheus/changelog/+prometheus-module-left-sync.changed.md
+  s_5c07df28acc2f7::t_cc18deb1623c52 1
+changelog/+prometheus-adapter-file-only.removed.md
+  s_5c07df28acc2f7::t_d2082925ada04b 1-7
+dev/specs/031-registered-adapters/contracts/http-api.md
+  s_5c07df28acc2f7::t_755106470e949a 253
+docs/docs/adapters/prometheus.mdx
+  s_5c07df28acc2f7::t_755106470e949a 24,27-33
+  s_5c07df28acc2f7::t_2f300f2491b94e 34
+docs/docs/development/guides/adding-an-adapter.md
+  s_5c07df28acc2f7::t_755106470e949a 51
+docs/docs/development/knowledge/repository-tour.md
+  s_5c07df28acc2f7::t_755106470e949a 415-420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "38f59b1eadcda1bf620636a8a91e38608be4fe1a",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

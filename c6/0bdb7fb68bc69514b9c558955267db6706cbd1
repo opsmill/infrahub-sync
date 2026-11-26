@@ -1,0 +1,60 @@
+tests/image/conftest.py
+  s_5c07df28acc2f7::t_14a2707e6ff9e8 62-65,69
+infrahub_sync/adapter_files/declaration.py
+  s_5c07df28acc2f7::t_e99a67e01152f3 41
+tests/compose/test_external_store.py
+  s_5c07df28acc2f7::t_14a2707e6ff9e8 72-75
+tests/configuration/test_adapter_setting_conformance.py
+  s_5c07df28acc2f7::t_ac479d4c8f13ad 31-32
+AGENTS.md
+  s_5c07df28acc2f7::t_fad889db57c992 100
+tests/test_execution_surface.py
+  s_5c07df28acc2f7::t_fad889db57c992 681
+tests/configuration/test_declaration_source.py
+  s_5c07df28acc2f7::t_14a2707e6ff9e8 31,44,54,57
+pyproject.toml
+  s_5c07df28acc2f7::t_e99a67e01152f3 103-105
+tests/test_potenda_plan_artifact.py
+  s_5c07df28acc2f7::t_14a2707e6ff9e8 2014,2016,2024
+tests/adapter_files/test_names.py
+  s_5c07df28acc2f7::t_14a2707e6ff9e8 20-22,33
+tests/adapter_files/test_packaged_declarations.py
+  s_5c07df28acc2f7::t_14a2707e6ff9e8 1,11-14,179
+  s_5c07df28acc2f7::t_b3c81c0f57fbc9 45
+  s_5c07df28acc2f7::t_c94c388ad96663 27
+  s_5c07df28acc2f7::t_3c009e0b7ce0b9 262-264,267,269-274
+tests/runtime_schema/test_preloaded_module_origin.py
+  s_5c07df28acc2f7::t_14a2707e6ff9e8 22
+tests/adapters/test_service_extra_sdk_imports.py
+  s_5c07df28acc2f7::t_d9deaba17d489b 1,3-4,47
+tests/adapters_parity/test_prometheus_project.py
+  s_5c07df28acc2f7::t_9b8c5e2e7012d0 619,626,628-631,635,641-647,651
+  s_5c07df28acc2f7::t_408defa0484bc4 1,3-6,14-18,45,54,70,75,91-114,124-150,156-157,159-160,162-167,169-174,177,179,183,192,196,202
+  s_5c07df28acc2f7::t_12dd6a47e3244e 28
+  s_5c07df28acc2f7::t_a51cda14d57c0a 307-308,311
+  s_5c07df28acc2f7::t_69fc4c927ba914 633-634
+infrahub_sync/service/adapter_health.py
+  s_5c07df28acc2f7::t_fad889db57c992 21-22
+infrahub_sync/execution.py
+  s_5c07df28acc2f7::t_fad889db57c992 414-415
+"examples/prometheus_to_infrahub (node_exporter)/prometheus/sync_adapter.py"
+  s_5c07df28acc2f7::t_dc09b23de8ef11 1-3,12-15,20
+"examples/prometheus_to_infrahub (node_exporter)/prometheus/sync_models.py"
+  s_5c07df28acc2f7::t_356b493df9ca2d 5-18,24,36,52,69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c60bdb7fb68bc69514b9c558955267db6706cbd1",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
