@@ -1,0 +1,36 @@
+adapters/netbox/tests/test_netbox_client_settings.py
+  s_5c07df28acc2f7::t_9713eb10e85df0 41,51
+  s_5c07df28acc2f7::t_3074c5027a84d9 1-40,42-50,52-55
+adapters/netbox/tests/test_netbox_reference_conversion.py
+  s_5c07df28acc2f7::t_3150dda92089f9 1-491
+tests/adapters/test_static_values.py
+  s_5c07df28acc2f7::t_67536d870ec664 1-4,28,57-58,111,114-115,128-129
+tests/adapters/test_peer_not_found_in_source.py
+  s_5c07df28acc2f7::t_9eabecbf9791cd 3,16-18
+tests/adapters/test_same_type_sync_filter_role.py
+  s_5c07df28acc2f7::t_9eabecbf9791cd 13-14
+adapters/netbox/tests/test_netbox_static_values.py
+  s_5c07df28acc2f7::t_25825f4a8918fd 21
+  s_5c07df28acc2f7::t_67536d870ec664 1-19,22-118
+  s_5c07df28acc2f7::t_5e7051c1a7d2ea 119-150,152-191,194-273
+adapters/netbox/tests/test_netbox_benchmark_changes.py
+  s_5c07df28acc2f7::t_412b23d53baccc 1-88
+tests/adapters/test_reference_conversion.py
+  s_5c07df28acc2f7::t_f07ccff5a2b3d9 1-4,47-48,119,138,347,371,486
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c8c1019cb05084ddb388da94523863db7ae0ed5f",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
