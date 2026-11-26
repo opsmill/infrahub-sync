@@ -1,0 +1,21 @@
+tests/adapters_parity/harness.py
+  s_5c07df28acc2f7::t_c47574c0c92b26 265-269,274-276,322,327-329
+tests/adapters_parity/test_genericrestapi_project.py
+  s_5c07df28acc2f7::t_9a0fe58d9ce7ba 408-447,650-651
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb1507a1e9c775585fcfeed5d2bdd017dbfc807d",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
