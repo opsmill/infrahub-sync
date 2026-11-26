@@ -1,0 +1,33 @@
+docs/docs/adapters/genericrestapi.mdx
+  s_5c07df28acc2f7::t_f876a0cb0c6ad7 13-24
+docs/docs/development/knowledge/repository-tour.md
+  s_5c07df28acc2f7::t_f876a0cb0c6ad7 415-423
+docs/docs/reference/sync-http-api.mdx
+  s_5c07df28acc2f7::t_f876a0cb0c6ad7 710,1093
+AGENTS.md
+  s_5c07df28acc2f7::t_f876a0cb0c6ad7 100
+adapters/genericrestapi/changelog/+genericrestapi-module-left-sync.changed.md
+  s_5c07df28acc2f7::t_f876a0cb0c6ad7 1
+adapters/README.md
+  s_5c07df28acc2f7::t_f876a0cb0c6ad7 260
+docs/docs/development/guides/adding-an-adapter.md
+  s_5c07df28acc2f7::t_f876a0cb0c6ad7 50-52
+changelog/+genericrestapi-adapter-file-only.removed.md
+  s_5c07df28acc2f7::t_f876a0cb0c6ad7 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9440e5c8a39cb6fda9e098878c5f5734804a75b9",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
