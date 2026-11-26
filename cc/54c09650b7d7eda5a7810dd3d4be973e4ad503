@@ -1,0 +1,57 @@
+adapters/slurpitsync/tests/test_slurpit_model_loading.py
+  s_5c07df28acc2f7::t_9eb81bfe1a8399 456
+tests/configuration/test_declaration_source.py
+  s_5c07df28acc2f7::t_21ec3d49c1b165 29,43-55
+tests/test_potenda_plan_artifact.py
+  s_5c07df28acc2f7::t_21ec3d49c1b165 2014,2016-2017,2025
+tests/adapters/test_same_type_sync_filter_role.py
+  s_5c07df28acc2f7::t_0a686089c24c21 14-16,38,226
+infrahub_sync/service/adapter_health.py
+  s_5c07df28acc2f7::t_2e3fc5ce99aec6 21-22
+tests/adapters/test_reference_conversion_optional_sdk.py
+  s_5c07df28acc2f7::t_0a686089c24c21 1-8,179
+tests/image/conftest.py
+  s_5c07df28acc2f7::t_5f13fb9abe10f5 62-64,72,75
+tests/adapters/test_service_extra_sdk_imports.py
+  s_5c07df28acc2f7::t_0a686089c24c21 4-6
+tests/adapter_files/test_packaged_declarations.py
+  s_5c07df28acc2f7::t_b635e70076daaf 1,11-12,14-16,168,320-321
+infrahub_sync/adapter_files/declaration.py
+  s_5c07df28acc2f7::t_c694693c21810f 41
+tests/configuration/test_adapter_setting_conformance.py
+  s_5c07df28acc2f7::t_13608c23b48c47 38-39
+adapters/slurpitsync/pyproject.toml
+  s_5c07df28acc2f7::t_98e5904765d973 60-62
+tests/compose/test_external_store.py
+  s_5c07df28acc2f7::t_5f13fb9abe10f5 210-212
+tests/adapters_parity/test_slurpitsync_project.py
+  s_5c07df28acc2f7::t_8104b249da22ea 1,3-7,9-12,40,49,63,92,133-134,136-137,139-146,148-157,160,162,166,175,272-273,500-502,570,573-574,581-589,591-596,598,600,617-618,634,642
+tests/configuration/test_registered_adapter_authority.py
+  s_5c07df28acc2f7::t_0a686089c24c21 4-6,79,150-151
+adapters/slurpitsync/infrahub_sync_slurpitsync/adapter.py
+  s_5c07df28acc2f7::t_9eb81bfe1a8399 11
+tests/configuration/test_block_credential.py
+  s_5c07df28acc2f7::t_21ec3d49c1b165 19,150-153
+  s_5c07df28acc2f7::t_7bff574f1b528a 133
+  s_5c07df28acc2f7::t_67ac4c0dfc9335 154
+tests/adapter_files/test_names.py
+  s_5c07df28acc2f7::t_21ec3d49c1b165 20-22,33
+uv.lock
+  s_5c07df28acc2f7::t_c13c631dd624b7 30,70,86-87,91,103-108,132,162,236-238,250-252,398-399,659,738-739,798-803,820-823,859-860,875,896,919,958,990-991,1108-1109,1126-1127,1142-1143,1160-1161,1297-1298,1301,1313-1317,1326-1327,1347,1349-1350,1360,1368,1379,1381,1386-1387,1442,1449-1454,1484-1495,1510-1520,1537-1547,1559,1748-1749,1953-1955,2070-2071,2188-2189,2196-2197,2209,2215-2216,2226,2230-2231,2236,2248-2289,2361-2362,2371,2659-2661,2678-2681,2696,2703,2706,2738,2742-2744,2757-2758,2763,2775,2777,2789-2790,3022,3035-3037,3463,3511,3574-3575,3592-3593,3605,3617-3618,3630-3633,3710,3756,3821,3925-3927,3941,4064-4065
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc54c09650b7d7eda5a7810dd3d4be973e4ad503",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
