@@ -1,0 +1,72 @@
+docs/docs/development/guidelines/testing.md
+  s_5c07df28acc2f7::t_5672b2c5f705b4 107
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_5c07df28acc2f7::t_6269504b49fe71 142
+  s_5c07df28acc2f7::t_46055c8dacd521 82-84
+adapters/README.md
+  s_5c07df28acc2f7::t_b0451a2e21928f 3-9,11-13,15-16,28-29,35,37,43-47,56,59-90,94,96-103,105-106,111-112,116,118,120-127,132,141-160,163-164,167-170,172,177-180,182-186,197,205-208,210-212,221-222,241-244,247-248,258-259,263-277
+  s_5c07df28acc2f7::t_d507c5aad38500 174-176
+  s_5c07df28acc2f7::t_d8c6c0fbc7afba 249-251
+docs/docs/development/guidelines/testing-adapters.md
+  s_5c07df28acc2f7::t_562f3c3be73fbf 26-27
+  s_5c07df28acc2f7::t_5a355cc17daa24 64,66,68-79,81
+  s_5c07df28acc2f7::t_e8a56c51d0cfd3 130-131
+docs/docs/development/guides/testing-an-adapter.md
+  s_5c07df28acc2f7::t_be2df52f5dae94 9-20,25-26,30,33,40-42,45-47,49-53,56-57,60,63-68,71-74,78-79,81,96-98,100,118-119,121,126-128,131-135,138-172,175-176,191-192,196-198,202,207,212-215
+  s_5c07df28acc2f7::t_d8eb3d96d1c423 43
+docs/docs/development/knowledge/repository-tour.md
+  s_5c07df28acc2f7::t_4a9ae8691eb709 602
+  s_5c07df28acc2f7::t_dfeb29e531e60d 646-648,652-655
+  s_5c07df28acc2f7::t_74fcf8676d9144 52-55
+  s_5c07df28acc2f7::t_9e874a598de7d1 16-18
+  s_5c07df28acc2f7::t_2812f8bdb2fc03 636-640,642
+  s_5c07df28acc2f7::t_762a78d9c1249f 517-518
+  s_5c07df28acc2f7::t_32160e98a7fccf 545-549
+  s_5c07df28acc2f7::t_4ffd392f25190f 63-64
+  s_5c07df28acc2f7::t_61d43ce1b58b1b 421-426
+  s_5c07df28acc2f7::t_a56d5a8d0dc0c2 89
+  s_5c07df28acc2f7::t_64d1c726d12cb0 446-516
+dev/specs/031-registered-adapters/tasks.md
+  s_5c07df28acc2f7::t_e4ecf71fb3e93d 656,661-665
+docs/docs/development/knowledge/adapter-anatomy.md
+  s_5c07df28acc2f7::t_c0708237a0288d 9-15,18-19
+  s_5c07df28acc2f7::t_7ed5aa8993e48d 134-136
+  s_5c07df28acc2f7::t_6eee0ca5d9b9f1 198-224
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_5c07df28acc2f7::t_2979e3f4fcaf1d 101-102,104,106-107,110,112-115,118-120,122-128,132-140
+  s_5c07df28acc2f7::t_95c127575c4ade 204
+  s_5c07df28acc2f7::t_9b8037a8722616 207-208
+  s_5c07df28acc2f7::t_f55a07628d593f 151-152
+  s_5c07df28acc2f7::t_c825ec0f0a1d0e 49-51
+docs/docs/development/knowledge/configuration-foundation.md
+  s_5c07df28acc2f7::t_b924f3d06bfd18 144-174,177-181
+  s_5c07df28acc2f7::t_85c73e8238ca05 189
+  s_5c07df28acc2f7::t_8aa819fe538199 200
+  s_5c07df28acc2f7::t_b01e969896d168 40-41
+  s_5c07df28acc2f7::t_f433d8d2a4c04f 56-61
+docs/docs/development/guides/adding-an-adapter.md
+  s_5c07df28acc2f7::t_429957a27a7c7f 9-47,51-53,57-60,64-66,69-70,74,76,78-86,88-89,91,93-94,97,99-102,107,111-114,120,125-131,133-136,196-228,231-254,256-263,265,267-269,271-276,279,281-286,288-291,293,295,298,301-308,310,312-314,322,338-342,344,346-348,351,354,356-359,361,363-366,376-378,381-383,386-387,390-396,398-399,402,405-407,409,411-420,424-425,427-434,436,440-445
+  s_5c07df28acc2f7::t_410821b8fdd00f 287
+docs/docs/development/knowledge/v2-configuration-conversion.md
+  s_5c07df28acc2f7::t_7918f7b7512c3f 43,48-49
+  s_5c07df28acc2f7::t_86ed81b8028008 44-47
+  s_5c07df28acc2f7::t_06be8b3067290e 31-32
+docs/docs/contributing.mdx
+  s_5c07df28acc2f7::t_f6129c5fc88193 345-352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc2a33dce9e5e6bae8343748bbe2befae792a889",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
