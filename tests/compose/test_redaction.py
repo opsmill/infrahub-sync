@@ -244,7 +244,7 @@ def test_a_failing_compose_command_renders_no_credential(
     del compose_version
 
     refused = compose(
-        ["config", "--format", "json"], environment={**leaking_environment, "INFRAHUB_SYNC_PREFECT_PASSWORD": ""}
+        ["config", "--format", "json"], environment={**leaking_environment, "INFRAHUB_SYNC_WORKER_TOKEN": ""}
     )
 
     assert refused.returncode != 0
