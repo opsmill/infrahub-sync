@@ -176,7 +176,9 @@ app = typer.Typer(
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
 runs_app = typer.Typer(help="Inspect service-owned runs.")
 schedules_app = typer.Typer(help="Start `sync` runs of a configuration version on a cron cadence.")
-demo_app = typer.Typer(help="Prepare a Sync deployment for the NetBox demo.")
+demo_app = typer.Typer(help="Prepare a Sync deployment and an Infrahub for a demo import.")
+demo_prepare_app = typer.Typer(help="Load a demo's schema into Infrahub and register its configuration.")
+demo_app.add_typer(demo_prepare_app, name="prepare")
 app.add_typer(configs_app, name="configs")
 app.add_typer(runs_app, name="runs")
 app.add_typer(schedules_app, name="schedules")
@@ -3275,10 +3277,12 @@ def _echo_preparation(result: demo_prepare.PreparationResult) -> None:
         )
     typer.echo(_display(f"netbox: {result.netbox_url}"))
     typer.echo(_display(f"infrahub: {result.infrahub_url}"))
+    if result.branch is not None:
+        typer.echo(_display(f"branch: {result.branch_state} {result.branch}"))
 
 
-@demo_app.command("prepare")
-def demo_prepare_cmd(
+@demo_prepare_app.command("netbox")
+def demo_prepare_netbox_cmd(
     ctx: typer.Context,
     *,
     netbox_url: str = typer.Option(
@@ -3297,14 +3301,40 @@ def demo_prepare_cmd(
         "--schema-timeout",
         help="Seconds to wait for Infrahub to apply the schema.",
     ),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help=(
+            "Infrahub branch to create for the import, after the schema load. An existing branch is kept "
+            "when it holds the schema of main, and refused otherwise."
+        ),
+    ),
     reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the registration."),
     as_json: bool = typer.Option(False, "--json", help="Print the result as one JSON object."),  # noqa: FBT003
 ) -> None:
-    """Load the demo schema into Infrahub and register the NetBox configuration.
+    """Prepare the NetBox demo import: load its schema, create the import branch, register `from-netbox`.
 
-    Reads the Infrahub token from INFRAHUB_API_TOKEN. A second run with the same addresses changes nothing.
+    Before you run it, an administrator stores the credentials that the configuration names:
 
-    It never plans, applies or approves.
+    infrahub-sync credentials create netbox-token
+
+    infrahub-sync credentials create infrahub-token
+
+    Use an Infrahub that holds no other schema.
+
+    Set INFRAHUB_API_TOKEN to an Infrahub API token that can load a schema and create a branch.
+
+    --netbox-url and --infrahub-url are the addresses the Sync worker uses, not the ones this machine uses.
+
+    A worker in a container reaches a server on the Docker host through host.docker.internal, not localhost.
+
+    Docker Desktop, OrbStack and the development stack resolve host.docker.internal to the Docker host.
+
+    On Linux, the worker of the root Compose file does not resolve it.
+
+    Add `host.docker.internal:host-gateway` to the worker's `extra_hosts`, or give an address the worker resolves.
+
+    A second run with the same addresses changes nothing. It never plans, applies or approves.
     """
     token = os.environ.get(INFRAHUB_TOKEN_VARIABLE, "")
     if not token:
@@ -3315,6 +3345,10 @@ def demo_prepare_cmd(
     if refused is not None:
         typer.echo(f"error: {refused} must not carry a user name or password (user:password@)", err=True)
         typer.echo(f"hint: give {refused} as scheme://host[:port], without user:password@", err=True)
+        raise typer.Exit(2)
+    if branch is not None and not branch.strip():
+        typer.echo("error: --branch must not be empty", err=True)
+        typer.echo("hint: give --branch the name of the Infrahub branch to create, or leave the option out", err=True)
         raise typer.Exit(2)
     with _client_errors():
         _positive_duration(schema_timeout, "schema_timeout")
@@ -3328,6 +3362,7 @@ def demo_prepare_cmd(
                 token=token,
                 schema_timeout=schema_timeout,
                 reason=reason,
+                branch=branch,
             )
         except DemoError as error:
             typer.echo("error: demo preparation stopped", err=True)

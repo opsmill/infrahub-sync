@@ -107,7 +107,7 @@ print(f"Development API token created for {user.username!r}")
 
 # The shipped `from-netbox` package names the public NetBox demo and a default Infrahub.
 # `netbox.demo-package` replaces exactly these two lines and leaves the rest byte for byte;
-# the rewrite lives in `infrahub_sync.demo.package`, shared with `infrahub-sync demo prepare`.
+# the rewrite lives in `infrahub_sync.demo.package`, shared with `infrahub-sync demo prepare netbox`.
 SHIPPED_PACKAGE = REPO_ROOT / "examples" / "netbox_to_infrahub" / "package.yml"
 LOCAL_PACKAGE = STATE_DIR / "from-netbox.local.yml"
 SHIPPED_NETBOX_URL = demo_package_rewrite.SHIPPED_NETBOX_URL

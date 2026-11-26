@@ -91,11 +91,6 @@ service = [
     "cryptography>=50,<51; python_version >= '3.11'",
     # Same reason as in `prefect`: the Prefect server factory needs this FastAPI release.
     "fastapi==0.141.1; python_version >= '3.11'",
-    # `infrahubctl` ships in the SDK's `[ctl]` extra. It belongs to this profile,
-    # not to `dev`: the image installs `--no-dev --extra service`, and a dev-only
-    # placement leaves `infrahubctl` unable to start there for a missing
-    # `ariadne_codegen`. The base install stays free of it.
-    "infrahub-sdk[ctl]>=1.18,<2; python_version >= '3.11'",
     "prefect==3.8.6; python_version >= '3.11'",
     # prefect already resolves this transitively; declaring it directly is what lets
     # `infrahub_sync/adapters/prometheus.py` import `prometheus_client.parser`
@@ -168,6 +163,10 @@ dev = [
     "ty==0.0.32",
     "towncrier>=24.8,<27",
     "rumdl>=0.1.68",
+    # `infrahubctl` ships in the SDK's `[ctl]` extra. Only development tasks, tests and the
+    # nightly checks run it, so it stays out of the base install, the `service` extra and the
+    # image; Infrahub Sync itself talks to Infrahub through the bare `infrahub-sdk`.
+    "infrahub-sdk[ctl]>=1.18,<2; python_version >= '3.11'",
     "infrahub-testcontainers>=1.11.9,<2; python_version >= '3.11'",
     "testcontainers>=4.8,<4.9; python_version >= '3.11'",
 ]
@@ -192,7 +191,7 @@ packages = ["infrahub_sync", "opsmill_prefect_extras"]
 # The NetBox demo's destination schema and configuration package, read by
 # `infrahub_sync/demo/assets.py`. Each file keeps one copy in the repository, at the
 # path other checks already read; the wheel carries it under `infrahub_sync/demo/assets/`
-# so `infrahub-sync demo prepare` works from an installed package or the image. The
+# so `infrahub-sync demo prepare netbox` works from an installed package or the image. The
 # source distribution includes both source paths by default, so a wheel built from it
 # finds them too. See dev/adr/0048-demo-assets-ship-in-the-wheel.md.
 [tool.hatch.build.targets.wheel.force-include]

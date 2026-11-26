@@ -25,13 +25,15 @@ if TYPE_CHECKING:
     from invoke.tasks import Task
 
 ADMIN_TOKEN = dev.PUBLIC_INFRAHUB_ADMIN_TOKEN
-# What `infrahub-sync demo prepare --json` prints on a first run, trimmed to what `dev.demo` reads.
+# What `infrahub-sync demo prepare netbox --json` prints on a first run, trimmed to what `dev.demo` reads.
 PREPARED = {
     "schema": "loaded",
     "configuration": "registered",
     "config_id": "cfg-demo-1",
     "version": 1,
     "name": "from-netbox",
+    "branch": "netbox-demo-1",
+    "branch_state": "created",
 }
 
 
@@ -90,7 +92,7 @@ class FakeDocker:
         self.netbox_running = False
         # False makes the local NetBox probes fail, as when Docker does not answer them.
         self.netbox_probe_ok = True
-        # What `infrahub-sync demo prepare --json` prints, and whether it succeeds.
+        # What `infrahub-sync demo prepare netbox --json` prints, and whether it succeeds.
         self.prepare_stdout = json.dumps(PREPARED)
         self.prepare_ok = True
         self.commands: list[str] = []
@@ -109,7 +111,7 @@ class FakeDocker:
         return None
 
     def _prepare_answer(self, command: str) -> _Result | None:
-        """Answer `infrahub-sync demo prepare`, which `dev.demo` runs on the host."""
+        """Answer `infrahub-sync demo prepare netbox`, which `dev.demo` runs on the host."""
         if command.startswith(dev.DEMO_PREPARE_COMMAND):
             return _Result(self.prepare_stdout, ok=self.prepare_ok)
         return None
@@ -809,8 +811,9 @@ def test_dev_demo_runs_demo_prepare_on_the_host_with_the_tokens_in_the_environme
 
     command, env = _prepare_call(fake)
     assert command == (
-        "uv run infrahub-sync demo prepare --netbox-url http://netbox:8080 "
-        "--infrahub-url http://infrahub-server:8000 --infrahub-address http://127.0.0.1:8091 --json"
+        "uv run infrahub-sync demo prepare netbox --netbox-url http://netbox:8080 "
+        "--infrahub-url http://infrahub-server:8000 --infrahub-address http://127.0.0.1:8091 "
+        "--branch netbox-demo-1 --json"
     )
     assert env == {
         dev.INFRAHUB_TOKEN_VARIABLE: ADMIN_TOKEN,
@@ -825,7 +828,8 @@ def test_dev_demo_runs_demo_prepare_on_the_host_with_the_tokens_in_the_environme
     assert "schema: loaded" in output
     assert "configuration: registered" in output
     assert "Web interface  http://127.0.0.1:8001" in output
-    assert "uv run infrahubctl branch create netbox-demo-1" in output
+    assert "branch: created netbox-demo-1" in output
+    assert "infrahubctl" not in output
     assert (
         'uv run infrahub-sync plan --config-id cfg-demo-1 --version 1 --branch netbox-demo-1 --reason "demo"' in output
     )

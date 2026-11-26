@@ -1,4 +1,4 @@
-"""The image runs `infrahub-sync demo prepare` with no checkout (spec 024, User Story 2).
+"""The image runs `infrahub-sync demo prepare netbox` with no checkout (spec 024, User Story 2).
 
 The image installs the project as a built wheel, so the demo's schema and package must
 come from the bundled `infrahub_sync/demo/assets/` directory, not from the repository
@@ -35,7 +35,7 @@ RESOLVE_PROBE = (
 
 
 def test_the_demo_prepare_command_answers_its_help(image_ref: str) -> None:
-    result = run_in_image(image_ref, ["infrahub-sync", "demo", "prepare", "--help"])
+    result = run_in_image(image_ref, ["infrahub-sync", "demo", "prepare", "netbox", "--help"])
 
     assert result.returncode == 0, result.stderr
 

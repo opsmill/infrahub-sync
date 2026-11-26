@@ -21,3 +21,7 @@ class DemoSchemaError(DemoError):
 
 class DemoAddressError(DemoError):
     """An address option carries `user:password@`; the message names the option, never the value."""
+
+
+class DemoBranchError(DemoError):
+    """Infrahub refused the destination branch, could not be reached, or holds it without the new schema."""

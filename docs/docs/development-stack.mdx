@@ -38,8 +38,8 @@ uv sync --extra dev --extra prefect --extra service
 ```
 
 All three extras are required. The `service` extra installs the Sync API and worker that
-`dev.api` and `dev.worker` run on the host, and `infrahubctl`, which `dev.seed` and the first
-sync below use.
+`dev.api` and `dev.worker` run on the host. The `dev` extra installs `infrahubctl`, which
+`dev.seed` and the first sync below use.
 
 Run every command on this page from the `infrahub-sync` directory. If you already have a
 checkout, run `git switch feature/v3-develop` and `git pull` instead of cloning.
@@ -625,7 +625,7 @@ Use the addresses the worker container can reach, as in step 6.
 | `dev.start [--preset NAME] [--infrahub-network NAME]` | Rebuilds the image when its inputs changed, then starts the containers of the preset and waits until they are healthy. The preset is `sync`, `infrahub`, `preview` or `demo`. |
 | `dev.infrahub` | `dev.start --preset infrahub`: the Sync services and a local Infrahub. |
 | `dev.preview` | `dev.start --preset preview`: a local Infrahub, the local NetBox and the smoke dataset in Infrahub. |
-| `dev.demo` | `dev.start --preset demo`, then `infrahub-sync demo prepare` on your machine: loads the NetBox demo's schema into the local Infrahub and registers its configuration. A new NetBox gets the `demo` dataset; an existing NetBox keeps its data. Prints the web interface address, the configuration ID and the commands for a first plan. |
+| `dev.demo` | `dev.start --preset demo`, then `infrahub-sync demo prepare netbox` on your machine: loads the NetBox demo's schema into the local Infrahub and registers its configuration. A new NetBox gets the `demo` dataset; an existing NetBox keeps its data. Prints the web interface address, the configuration ID and the commands for a first plan. |
 | `dev.restart` | Recreates the Sync containers so they run the mounted code. No rebuild. |
 | `dev.deps [--preset NAME] [--infrahub-network NAME]` | Rebuilds the image when its inputs changed, starts the containers the Sync processes depend on, prints the addresses and returns. |
 | `dev.api` | Runs the Sync API on the host, in the foreground. |

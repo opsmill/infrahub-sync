@@ -104,12 +104,12 @@ name = "ariadne-codegen"
 version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click", marker = "python_full_version >= '3.11'" },
-    { name = "graphql-core", marker = "python_full_version >= '3.11'" },
-    { name = "httpx", marker = "python_full_version >= '3.11'" },
-    { name = "pydantic", marker = "python_full_version >= '3.11'" },
-    { name = "ruff", marker = "python_full_version >= '3.11'" },
-    { name = "toml", marker = "python_full_version >= '3.11'" },
+    { name = "click", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
+    { name = "graphql-core", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
+    { name = "httpx", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
+    { name = "pydantic", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
+    { name = "ruff", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
+    { name = "toml", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7f/77/8de3e8be3e0aca27e2cbe569f93c5ab89b18d221644594a5b8892be09b2a/ariadne_codegen-0.18.0.tar.gz", hash = "sha256:13f28e73eb362cd10563aa8f6458fa022f28a8975cb13afa0c3dddb5476c2d59", size = 70398, upload-time = "2026-03-13T12:04:19.148Z" }
 wheels = [
@@ -1314,11 +1314,11 @@ wheels = [
 
 [package.optional-dependencies]
 ctl = [
-    { name = "ariadne-codegen", marker = "python_full_version >= '3.11'" },
-    { name = "click", marker = "python_full_version >= '3.11'" },
-    { name = "pyarrow", marker = "python_full_version >= '3.11'" },
-    { name = "ruamel-yaml", marker = "python_full_version >= '3.11'" },
-    { name = "typer", marker = "python_full_version >= '3.11'" },
+    { name = "ariadne-codegen", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
+    { name = "click", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
+    { name = "pyarrow", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
+    { name = "ruamel-yaml", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
+    { name = "typer", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
 ]
 
 [[package]]
@@ -1348,6 +1348,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "infrahub-sdk", extra = ["ctl"], marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
     { name = "infrahub-testcontainers", marker = "python_full_version >= '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
     { name = "invoke" },
     { name = "ipython", version = "8.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
@@ -1380,7 +1381,6 @@ service = [
     { name = "boto3", marker = "python_full_version >= '3.11'" },
     { name = "cryptography", marker = "python_full_version >= '3.11'" },
     { name = "fastapi", marker = "python_full_version >= '3.11'" },
-    { name = "infrahub-sdk", extra = ["ctl"], marker = "(python_full_version >= '3.11' and extra == 'extra-13-infrahub-sync-service') or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
     { name = "prefect", marker = "python_full_version >= '3.11'" },
     { name = "prometheus-client", marker = "python_full_version >= '3.11'" },
     { name = "psycopg", extra = ["binary"], marker = "(python_full_version >= '3.11' and extra == 'extra-13-infrahub-sync-service') or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
@@ -1409,7 +1409,7 @@ requires-dist = [
     { name = "fsspec", specifier = ">=2024.6" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "infrahub-sdk", specifier = ">=1.18,<2" },
-    { name = "infrahub-sdk", extras = ["ctl"], marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=1.18,<2" },
+    { name = "infrahub-sdk", extras = ["ctl"], marker = "python_full_version >= '3.11' and extra == 'dev'", specifier = ">=1.18,<2" },
     { name = "infrahub-testcontainers", marker = "python_full_version >= '3.11' and extra == 'dev'", specifier = ">=1.11.9,<2" },
     { name = "infrahub-testcontainers", marker = "python_full_version >= '3.11' and extra == 'testcontainers'", specifier = ">=1.11.9,<2" },
     { name = "invoke", marker = "extra == 'dev'", specifier = ">=2.2.1,<4" },

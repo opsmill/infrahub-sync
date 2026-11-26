@@ -14,7 +14,7 @@ To run it against a local NetBox with the official demo data, follow
 path writes a copy of this package with the addresses the local worker container uses.
 [Import NetBox demo data in one command](../../docs/docs/tutorials/try-the-netbox-demo.mdx)
 prepares the same local path with `uv run invoke dev.demo`, and prepares a Sync service you
-already run with `infrahub-sync demo prepare`.
+already run with `infrahub-sync demo prepare netbox`.
 
 The worker uses the two URLs in this package, `https://demo.netbox.dev` and
 `http://localhost:8000`. Environment variables such as `NETBOX_URL` and

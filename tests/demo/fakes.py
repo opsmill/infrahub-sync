@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from infrahub_sync.client import ConfigMutationRequest
-    from infrahub_sync.demo.prepare import SchemaState
+    from infrahub_sync.demo.prepare import BranchCheck, SchemaState
 
 CREATED_AT = "2026-11-18T12:00:00+00:00"
 
@@ -184,7 +184,34 @@ class FakeSchemaLoader:
         return "loaded" if len(self.calls) == 1 else "unchanged"
 
 
-__all__ = ["FakeSchemaLoader", "FakeSyncClient", "package_name_of"]
+@dataclass
+class FakeBranches:
+    """Holds branches and their schema check in memory and records every call, or raises the given error.
+
+    With `reports_schema` false, it answers like an Infrahub older than 1.11: `unknown` for a branch it holds.
+    """
+
+    names: dict[str, BranchCheck] = field(default_factory=lambda: {"main": "same-schema"})
+    reports_schema: bool = True
+    error: Exception | None = None
+    calls: list[tuple[str, str, str, str]] = field(default_factory=list)
+
+    def check(self, address: str, token: str, name: str) -> BranchCheck:
+        """Record the call and answer whether the branch is held, and with which schema."""
+        self.calls.append(("check", address, token, name))
+        if self.error is not None:
+            raise self.error
+        if name not in self.names:
+            return "missing"
+        return self.names[name] if self.reports_schema else "unknown"
+
+    def create(self, address: str, token: str, name: str) -> None:
+        """Record the call and hold the branch, with the schema of `main`."""
+        self.calls.append(("create", address, token, name))
+        self.names[name] = "same-schema"
+
+
+__all__ = ["FakeBranches", "FakeSchemaLoader", "FakeSyncClient", "package_name_of"]
 
 
 def _sent_package(request: ConfigMutationRequest) -> dict[str, object]:
