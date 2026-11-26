@@ -1,0 +1,19 @@
+tests/configuration/test_adapter_setting_conformance.py
+  s_5c07df28acc2f7::t_809e0bfe61ce0a 1-5,14-24,27-35,56,63-69,107,147,157-159,182,186,191,198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "080dc03033f8c7b15c34fc93068630a208f9dba2",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
