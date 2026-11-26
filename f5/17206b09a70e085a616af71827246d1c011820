@@ -1,0 +1,26 @@
+adapters/peeringmanager/pyproject.toml
+  s_5c07df28acc2f7::t_9bee4291fce37d 18,42-47,50,54-55,58,66-67,71-87
+  s_5c07df28acc2f7::t_0e566070b0eca8 88
+adapters/peeringmanager/tests/test_peeringmanager_client_settings.py
+  s_5c07df28acc2f7::t_a611d2e7ffff9f 1-35,37-97,99-163
+  s_5c07df28acc2f7::t_94d2c683398677 36
+  s_5c07df28acc2f7::t_20528012a9b7a1 98
+adapters/peeringmanager/uv.lock
+  s_5c07df28acc2f7::t_d9d3650dd13a6c 461,474,479-487,612-620,813-830
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f517206b09a70e085a616af71827246d1c011820",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

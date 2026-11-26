@@ -1,0 +1,24 @@
+tests/adapters_parity/test_webex_project.py
+  s_5c07df28acc2f7::t_04628084e1189c 787-798
+  s_5c07df28acc2f7::t_5615d26da78ddd 407
+  s_5c07df28acc2f7::t_9255016701cba9 1050-1054
+  s_5c07df28acc2f7::t_02667ce4f6b575 737-786,799-865
+  s_5c07df28acc2f7::t_139ca65d0b78a9 121-137
+  s_5c07df28acc2f7::t_ce5b0d0e08f266 866
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0b32eddb52e498bb8ddb12f5dbcda41429d475f",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
