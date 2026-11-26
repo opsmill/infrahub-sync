@@ -1,0 +1,19 @@
+infrahub_sync/testcontainers/docker-compose.yml
+  s_5c07df28acc2f7::t_26cce02f78a4c8 342-343,346-357
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cce4409a649cf9ddb69a31a7c46459903d8dbfbe",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
