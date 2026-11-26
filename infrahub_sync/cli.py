@@ -3323,7 +3323,13 @@ def demo_prepare_netbox_cmd(
 
     --netbox-url and --infrahub-url are the addresses the Sync worker uses, not the ones this machine uses.
 
-    A worker in a container reaches a server on the Docker host at host.docker.internal, not localhost.
+    A worker in a container reaches a server on the Docker host through host.docker.internal, not localhost.
+
+    Docker Desktop, OrbStack and the development stack resolve host.docker.internal to the Docker host.
+
+    On Linux, the worker of the root Compose file does not resolve it.
+
+    Add host.docker.internal:host-gateway to the worker's extra_hosts, or give an address the worker resolves.
 
     A second run with the same addresses changes nothing. It never plans, applies or approves.
     """

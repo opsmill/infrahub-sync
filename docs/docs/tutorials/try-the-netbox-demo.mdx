@@ -157,6 +157,9 @@ destination schema, the command stops, names the conflict, and registers nothing
    `--netbox-url` and `--infrahub-url` are the addresses the Sync worker uses. When NetBox or
    Infrahub runs on the Docker host of a Compose deployment, the worker container reaches it at
    `host.docker.internal`, not `localhost`, for example `http://host.docker.internal:8000`.
+   Docker Desktop and OrbStack resolve `host.docker.internal` by themselves. Docker Engine on
+   Linux does not: add `host.docker.internal:host-gateway` to the `extra_hosts` of the
+   `sync-worker` service, or use an address the worker resolves.
    `--infrahub-address` defaults to `--infrahub-url`; set it when this machine reaches Infrahub
    at another address than the worker does, for example `http://127.0.0.1:8000`. Every option is
    listed in [`infrahub-sync demo prepare netbox`](../reference/cli.mdx#infrahub-sync-demo-prepare-netbox).
