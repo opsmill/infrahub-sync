@@ -1,0 +1,44 @@
+tests/configuration/test_contracts.py
+  s_5c07df28acc2f7::t_b163808d582c9d 1764
+tests/adapter_files/test_names.py
+  s_5c07df28acc2f7::t_b163808d582c9d 21-25,36
+infrahub_sync/execution.py
+  s_5c07df28acc2f7::t_ce2e49f3f638c5 177-178
+tests/adapters_parity/test_peeringmanager_project.py
+  s_5c07df28acc2f7::t_edb71bab1e2f7f 1,3-6,36,48,66,73,171-172,174-175,179-184,188,190,194,320-321,323-324,606,609,611-614,622-625,630-638,643-644,646,650,654
+tests/configuration/test_registered_adapter_authority.py
+  s_5c07df28acc2f7::t_7406810a4cf2a2 5-7,81,83,222,240,282,292-293,321,330-334,343,346,350
+infrahub_sync/adapter_files/declaration.py
+  s_5c07df28acc2f7::t_ce2e49f3f638c5 41-43
+tests/image/conftest.py
+  s_5c07df28acc2f7::t_f05db4e1b12203 62-63,75
+tests/configuration/test_declaration_source.py
+  s_5c07df28acc2f7::t_b163808d582c9d 28,50,116
+tests/test_potenda_plan_artifact.py
+  s_5c07df28acc2f7::t_b163808d582c9d 2014,2016-2017,2025
+infrahub_sync/service/adapter_health.py
+  s_5c07df28acc2f7::t_ce2e49f3f638c5 22
+tests/compose/test_external_store.py
+  s_5c07df28acc2f7::t_f05db4e1b12203 73-75
+tests/cli/test_convert_command.py
+  s_5c07df28acc2f7::t_cc4960fbde7534 692-693,705-706,721-722
+tests/adapter_files/test_packaged_declarations.py
+  s_5c07df28acc2f7::t_b507d433c6dbae 1,11-17,156,241,409,411
+  s_5c07df28acc2f7::t_6bfefc39f032e4 87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4746b243ec1fe9aef4a8caa2019fd163b13a181f",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
