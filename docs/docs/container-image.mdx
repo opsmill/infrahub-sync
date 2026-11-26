@@ -162,7 +162,7 @@ registry.opsmill.io` first, because cosign reads the same private registry.
 To build from a checkout instead of pulling, run from the repository root:
 
 ```bash
-docker build -t infrahub-sync:local .
+docker build -f development/Dockerfile -t infrahub-sync:local .
 ```
 
 A local build is unsigned and carries no release labels. Use it for development and

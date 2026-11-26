@@ -57,7 +57,7 @@ contract_declarations: &contract_declarations
   - ".github/workflows/**"
   - ".github/scripts/nightly_e2e.py"
   - ".github/file-filters.yml"
-  - "Dockerfile"
+  - "development/Dockerfile"
 
 uv_files: &uv_files
   - "pyproject.toml"
@@ -84,7 +84,7 @@ documentation_all:
 # suite with the helper that names its image. The last three entries are the
 # gate's own declarations, so re-aiming it faces the gate it aims.
 image_inputs:
-  - "Dockerfile"
+  - "development/Dockerfile"
   - ".dockerignore"
   - "pyproject.toml"
   - "uv.lock"

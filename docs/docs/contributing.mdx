@@ -181,7 +181,7 @@ Every pull request runs lint, the uv check and the unit tests.
 
 When a pull request changes an image input, CI also builds the container image for
 `linux/amd64` and `linux/arm64` on native runners and runs the image smoke test on each. The
-image inputs are the `Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock`, the package
+image inputs are `development/Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock`, the package
 source, the NetBox demo's schema and package that the wheel carries, the root
 `docker-compose.yml`, `tests/image/`, and the workflow and filter files that declare this check. The build pushes nothing and uses no registry credentials, so a pull request
 from a fork runs the same check as one from an internal branch.

@@ -342,7 +342,7 @@ def docker_daemon() -> None:
 
 # How to name the image under test, quoted wherever the suite refuses to guess one.
 IMAGE_USAGE = (
-    "build one with `docker build -t infrahub-sync:compose-test .` and run "
+    "build one with `docker build -f development/Dockerfile -t infrahub-sync:compose-test .` and run "
     f"`{IMAGE_REPOSITORY_ENV}=infrahub-sync {IMAGE_VERSION_ENV}=compose-test uv run pytest -m compose tests/compose`"
 )
 

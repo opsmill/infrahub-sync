@@ -1,6 +1,6 @@
 """The development tasks rebuild `infrahub-sync:dev` only when its build inputs change.
 
-The image carries the SHA-256 of `Dockerfile`, `pyproject.toml`, `uv.lock` and the web
+The image carries the SHA-256 of `development/Dockerfile`, `pyproject.toml`, `uv.lock` and the web
 interface's build inputs under `frontend/` as the label
 `org.opsmill.infrahub-sync.build-inputs`. The tasks compare that label with the
 checkout: a missing image, a missing label or a different value means a build, an equal
@@ -27,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def checkout(tmp_path: Path) -> Path:
     """A copy of the three build inputs and one source file."""
     for name in dev.BUILD_INPUT_FILES:
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO_ROOT / name, tmp_path / name)
     package = tmp_path / "infrahub_sync"
     package.mkdir()
@@ -64,7 +65,7 @@ def test_without_a_frontend_the_hash_is_the_sha256_of_the_three_files_in_order(c
     expected = hashlib.sha256(b"".join((checkout / name).read_bytes() for name in dev.BUILD_INPUT_FILES))
 
     assert dev.build_inputs_hash(checkout) == expected.hexdigest()
-    assert dev.BUILD_INPUT_FILES == ("Dockerfile", "pyproject.toml", "uv.lock")
+    assert dev.BUILD_INPUT_FILES == ("development/Dockerfile", "pyproject.toml", "uv.lock")
 
 
 def _write(path: Path, text: str) -> None:
@@ -82,7 +83,7 @@ def frontend(checkout: Path) -> Path:
 
 
 def test_the_frontend_paths_are_the_paths_the_web_stage_copies() -> None:
-    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile = (REPO_ROOT / "development" / "Dockerfile").read_text(encoding="utf-8")
 
     for path in dev.BUILD_INPUT_FRONTEND_PATHS:
         source = path.replace("frontend/", "fronten[d]/", 1) if "/vendor/" in path else path
@@ -140,7 +141,7 @@ def test_a_missing_submodule_still_yields_a_hash(frontend: Path) -> None:
     assert without_submodule != with_submodule
 
 
-@pytest.mark.parametrize("name", ["Dockerfile", "pyproject.toml", "uv.lock"])
+@pytest.mark.parametrize("name", ["development/Dockerfile", "pyproject.toml", "uv.lock"])
 def test_the_hash_changes_when_a_build_input_changes(checkout: Path, name: str) -> None:
     before = dev.build_inputs_hash(checkout)
     with (checkout / name).open("a", encoding="utf-8") as handle:

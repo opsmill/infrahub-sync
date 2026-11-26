@@ -48,7 +48,7 @@ INVOKE_TASK = re.compile(
 
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
 NIGHTLY_WORKFLOW = WORKFLOWS / "workflow-nightly-e2e.yml"
-DOCKERFILE = REPO_ROOT / "Dockerfile"
+DOCKERFILE = REPO_ROOT / "development" / "Dockerfile"
 
 # What sends a built artifact somewhere this repository cannot take it back from:
 # a package index, a registry, or a published release.
@@ -765,7 +765,11 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
         for index, run in enumerate(runs)
         if run == "uv sync --frozen --extra dev --extra prefect --extra service --extra testcontainers"
     )
-    build = next(index for index, run in enumerate(runs) if run == "docker build -t infrahub-sync:compose-test .")
+    build = next(
+        index
+        for index, run in enumerate(runs)
+        if run == "docker build -f development/Dockerfile -t infrahub-sync:compose-test ."
+    )
     suite = next(
         index
         for index, run in enumerate(runs)
@@ -1083,7 +1087,7 @@ def test_each_platform_builds_on_its_own_native_runner() -> None:
     assert docker_image_job("build")["runs-on"] == "${{ matrix.runner }}"
 
 
-def test_the_build_loads_the_root_dockerfile_under_the_smoke_tag_with_the_callers_labels() -> None:
+def test_the_build_loads_the_development_dockerfile_under_the_smoke_tag_with_the_callers_labels() -> None:
     builds = [step for step in docker_image_build_steps() if _uses(step, BUILD_PUSH_ACTION) and not _pushes(step)]
 
     assert len(builds) == 1, "exactly one local build feeds the smoke test"
@@ -1091,7 +1095,7 @@ def test_the_build_loads_the_root_dockerfile_under_the_smoke_tag_with_the_caller
     assert declared["load"] is True
     assert declared["tags"] == SMOKE_IMAGE
     assert declared["labels"] == "${{ inputs.labels }}"
-    assert declared["file"] == "Dockerfile"
+    assert declared["file"] == "development/Dockerfile"
 
 
 def test_the_smoke_test_runs_against_the_loaded_image() -> None:

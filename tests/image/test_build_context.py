@@ -10,7 +10,7 @@ from tests.image.conftest import REPO_ROOT, docker, external_image_references
 
 pytestmark = pytest.mark.docker
 
-DOCKERFILE = REPO_ROOT / "Dockerfile"
+DOCKERFILE = REPO_ROOT / "development" / "Dockerfile"
 
 # Everything the image build needs, and nothing else. Checked as an equality so a
 # file newly reaching the context fails here rather than shipping unnoticed.

@@ -116,7 +116,7 @@ FROM base AS runtime
 ARG VERSION
 ARG REVISION
 ARG CREATED
-# The SHA-256 of `Dockerfile`, `pyproject.toml`, `uv.lock` and the web interface's
+# The SHA-256 of `development/Dockerfile`, `pyproject.toml`, `uv.lock` and the web interface's
 # build inputs under `frontend/`, set only by the development build. The
 # development tasks compare it with the checkout to decide whether the image
 # needs a rebuild. Release builds leave it empty.

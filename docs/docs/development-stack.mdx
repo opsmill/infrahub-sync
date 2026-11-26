@@ -214,7 +214,7 @@ uv run invoke dev.logs -n sync-api -l 50
 
 ### When the image is rebuilt
 
-The image carries a label with a hash of the three files that shape it: `Dockerfile`,
+The image carries a label with a hash of the three files that shape it: `development/Dockerfile`,
 `pyproject.toml` and `uv.lock`. `dev.start` and `dev.deps` compare that label with the files in
 your checkout and rebuild the image when it is missing or the hash differs, for example after
 you pull a dependency update. A change to Python code alone never changes the hash.

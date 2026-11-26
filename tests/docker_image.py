@@ -4,7 +4,7 @@ The same two settings the root `docker-compose.yml` reads: `INFRAHUB_SYNC_DOCKER
 (the repository) and `VERSION` (the tag). The image smoke suite and the Compose suite
 both read them, so one command picks the image for either:
 
-    docker build -t infrahub-sync:local .
+    docker build -f development/Dockerfile -t infrahub-sync:local .
     INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=local uv run pytest -m docker tests/image
 """
 

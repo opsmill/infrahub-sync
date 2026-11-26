@@ -31,7 +31,7 @@
 # Every Sync-image service mounts `infrahub_sync/` and `opsmill_prefect_extras/`
 # from this checkout, read-only, over the copies the image installed. A code
 # change therefore needs a container restart, not an image rebuild. A change to
-# `Dockerfile`, `pyproject.toml` or `uv.lock` needs a rebuild.
+# `development/Dockerfile`, `pyproject.toml` or `uv.lock` needs a rebuild.
 #
 # Every setting below reads `${NAME:-default}`, so a shell variable of that name
 # changes it and a clean checkout needs none. Compose also auto-loads a `.env`
@@ -71,7 +71,7 @@ include:
 
 x-sync-build: &sync-build
   context: ..
-  dockerfile: Dockerfile
+  dockerfile: development/Dockerfile
 
 # SYNC_IMAGE names another tag, so two checkouts can build and run their own image.
 x-sync-image: &sync-image "${SYNC_IMAGE:-infrahub-sync:dev}"

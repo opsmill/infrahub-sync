@@ -18,7 +18,7 @@ from packaging.version import Version
 
 from tests.image.conftest import REPO_ROOT, external_image_references
 
-DOCKERFILE = REPO_ROOT / "Dockerfile"
+DOCKERFILE = REPO_ROOT / "development" / "Dockerfile"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 LOCK = REPO_ROOT / "uv.lock"
 

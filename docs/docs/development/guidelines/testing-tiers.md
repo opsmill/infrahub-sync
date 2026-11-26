@@ -612,7 +612,7 @@ itself.
 #### Image smoke
 
 ```bash
-docker build -t infrahub-sync:smoke .
+docker build -f development/Dockerfile -t infrahub-sync:smoke .
 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=smoke uv run pytest -m docker tests/image/test_image_artifact.py
 ```
 
@@ -628,7 +628,7 @@ green result as evidence.
 #### Compose (opt-in)
 
 ```bash
-docker build -t infrahub-sync:compose-test .
+docker build -f development/Dockerfile -t infrahub-sync:compose-test .
 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose
 ```
 
@@ -724,7 +724,7 @@ Two variables select the Sync image, the same two the root file reads:
 To test the image built from your checkout, build it and name it with both variables:
 
 ```bash
-docker build -t infrahub-sync:my-test .
+docker build -f development/Dockerfile -t infrahub-sync:my-test .
 INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=my-test uv run pytest -m compose tests/compose/test_testcontainers_fixture.py
 ```
 

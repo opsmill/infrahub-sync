@@ -86,7 +86,7 @@ uv run invoke dev.demo       # the `demo` preset: a local Infrahub and NetBox, r
 ```
 
 `dev.start` builds `infrahub-sync:dev` when the image is missing or its build inputs
-(`Dockerfile`, `pyproject.toml`, `uv.lock`) changed. The stack mounts your checkout's code into
+(`development/Dockerfile`, `pyproject.toml`, `uv.lock`) changed. The stack mounts your checkout's code into
 its containers, so after a code change run `uv run invoke dev.restart`.
 
 | | |

@@ -140,7 +140,7 @@ ADMIN_TOKEN_VARIABLE = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"  # noqa: S105 -- the 
 DEV_IMAGE = "infrahub-sync:dev"
 BUILD_INPUTS_LABEL = "org.opsmill.infrahub-sync.build-inputs"
 # The files whose bytes decide whether the image must be rebuilt, in hashing order.
-BUILD_INPUT_FILES = ("Dockerfile", "pyproject.toml", "uv.lock")
+BUILD_INPUT_FILES = ("development/Dockerfile", "pyproject.toml", "uv.lock")
 # The web interface's build inputs: the paths the Dockerfile's `web` stage copies, in
 # hashing order. A directory contributes every file under it, and a missing path, such
 # as the submodule in a checkout that did not fetch it, contributes nothing.
@@ -663,7 +663,7 @@ def _frontend_build_inputs(root: Path) -> list[Path]:
 def build_inputs_hash(root: Path = REPO_BASE) -> str:
     """Return the SHA-256 of the image's build inputs.
 
-    The hash covers the bytes of `Dockerfile`, `pyproject.toml` and `uv.lock`, in that
+    The hash covers the bytes of `development/Dockerfile`, `pyproject.toml` and `uv.lock`, in that
     order, then, for every file of the web interface's build inputs, its relative path
     and its bytes. A checkout without the frontend submodule still yields a hash.
     """
