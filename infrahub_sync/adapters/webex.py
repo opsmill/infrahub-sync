@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
 import structlog
@@ -160,6 +161,60 @@ class WebexAdapter(GenericrestapiAdapter):
                     raise TypeError(msg)
                 record.update(details)
 
+    def _skip_unresolved_references(
+        self, records: list[dict[str, Any]], element: SchemaMappingModel, model: type[GenericrestapiModel]
+    ) -> list[dict[str, Any]]:
+        """Keep complete records whose nonempty peers exist in previously loaded mappings."""
+        fields = [field for field in element.fields if field.reference and field.mapping and field.static is None]
+        peers: dict[str, dict[str, str]] = {}
+        for field in fields:
+            reference = str(field.reference)
+            if reference not in self._records:
+                msg = f"Webex: {element.name}: referenced mapping {reference} must be loaded first; set explicit order"
+                raise ValueError(msg)
+            peers[reference] = {
+                item.get_unique_id(): str(cast("GenericrestapiModel", item).local_id)
+                for item in self.get_all(reference)
+            }
+        source_ids = {reference: set(identifiers.values()) for reference, identifiers in peers.items()}
+        kept: list[dict[str, Any]] = []
+        unresolved: set[str] = set()
+        for source_record in records:
+            missing = False
+            record = deepcopy(source_record)
+            for field in fields:
+                value = get_value(record, str(field.mapping))
+                identifiers = peers[str(field.reference)]
+                local_ids = source_ids[str(field.reference)]
+                values = value if isinstance(value, list) else [value]
+                normalized = []
+                for item in values:
+                    if not item:
+                        continue
+                    resolved = str(item.get("id")) in local_ids if isinstance(item, dict) else str(item) in identifiers
+                    if not resolved:
+                        missing = True
+                        unresolved.add(str(item.get("id")) if isinstance(item, dict) else str(item))
+                    elif model.is_list(name=field.name):
+                        normalized.append(item if isinstance(item, dict) else {"id": identifiers[str(item)]})
+                if model.is_list(name=field.name) and value:
+                    target = record
+                    *parts, key = str(field.mapping).split(".")
+                    for part in parts:
+                        target = target[part]
+                    target[key] = normalized
+            if not missing:
+                kept.append(record)
+        if len(kept) != len(records):
+            logger.warning(
+                "Webex skipped records with unresolved references",
+                model=element.name,
+                dropped=len(records) - len(kept),
+                unresolved_values=sorted(unresolved)[:20],
+                unresolved_values_truncated=len(unresolved) > 20,
+            )
+        return kept
+
     def model_loader(self, model_name: str, model: type[GenericrestapiModel]) -> None:
         """Fetch, filter and transform records, then use the shared field/peer mapping."""
         element = next((item for item in self.config.schema_mapping if item.name == model_name), None)
@@ -179,6 +234,8 @@ class WebexAdapter(GenericrestapiAdapter):
             )
         filtered = model.filter_records(records=records, schema_mapping=element)
         transformed = model.transform_records(records=filtered, schema_mapping=element)
+        if options.skip_unresolved_references:
+            transformed = self._skip_unresolved_references(transformed, element, model)
         self._records[model_name] = transformed
         logger.info("Webex models loaded", model=model_name, count=len(transformed), fetched=len(records))
         for obj in transformed:

@@ -30,6 +30,7 @@ class WebexResource(BaseModel):
     parent: str | None = None
     details: str | None = None
     read_only: bool = False
+    skip_unresolved_references: bool = False
 
 
 class WebexSettings(BaseModel):

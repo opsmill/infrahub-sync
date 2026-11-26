@@ -100,6 +100,7 @@ The `mapping` field of each schema mapping is its GET path, including `/v1/`. Fi
 | `parent` | Unset | Previously loaded mapping used to expand requests. |
 | `details` | Unset | GET path expanded once per record; returned fields overwrite list fields. |
 | `read_only` | `false` | Excludes source models from diff operations while keeping them available for references. |
+| `skip_unresolved_references` | `false` | Drops records with nonempty references to peers absent from an already loaded mapping, with a warning per mapping. |
 
 For example, a location-dependent request can retrieve workspaces once per location and then request the details of each workspace. The destination kinds and fields must exist in your schema. Replace the workspace resource options in a project that already loads the location mapping:
 
@@ -124,6 +125,46 @@ For a fixed filter on the [Calling List Workspaces endpoint](https://developer.w
 For an endpoint returning one object, set `response_key: null` and `params: {max: null}`. Records without their own ID receive an internal source identifier; map the destination identifiers explicitly. Details load before the shared filters and transforms.
 
 A scalar reference value is already the peer's sync identifier, as in the inventory project's `locationId` and `workspaceId`. A native dict such as `{{ {'id': locationId} }}` instead resolves the peer by its source `local_id`; an absent dict reference raises an error. Choose the form that matches the identifiers in the peer mapping.
+
+### Skip rooms in filtered-out locations
+
+Set `skip_unresolved_references: true` on a workspace resource to skip rooms whose location did not load. The check runs after filters and transforms. Set an explicit `order` that loads every referenced mapping first, including read-only mappings; otherwise the adapter raises a `ValueError` naming both mappings. A mapping that loaded zero records still counts as loaded.
+
+For example, add these settings and mappings to a project whose destination schema defines `LocationSite` and `MeetingRoom`. The location filter keeps site codes such as `ABC0000001` in `notes`, and the read-only mapping makes those locations available for references without syncing them:
+
+```yaml
+source:
+  name: webex
+  settings:
+    resources:
+      LocationSite:
+        read_only: true
+      MeetingRoom:
+        skip_unresolved_references: true
+        params: {type: meetingRoom}
+order: [LocationSite, MeetingRoom]
+schema_mapping:
+  - name: LocationSite
+    mapping: /v1/locations
+    identifiers: [webex_id]
+    filters:
+      - field: notes
+        operation: regex
+        value: '^ABC[0-9]{7}$'
+    fields:
+      - {name: webex_id, mapping: id}
+  - name: MeetingRoom
+    mapping: /v1/workspaces
+    identifiers: [webex_id]
+    fields:
+      - {name: webex_id, mapping: id}
+      - {name: name, mapping: displayName}
+      - {name: parent, mapping: locationId, reference: LocationSite}
+```
+
+This fetches workspaces in one request when the response fits on one page; pagination still applies. It needs neither excluded-ID lists nor one request per location. Scalar references match loaded peers' sync identifiers; dict references such as `{id: location-1}` match their source `local_id`. For list references, **any unresolved nonempty item drops the whole record**. Dict items use `local_id`; scalar items use sync identifiers and are converted to the shared mapper's dict form. Empty or null reference values and list items do not cause a record to be dropped.
+
+Skipped rooms are only visible in the warning log. Each affected mapping logs its name, the number of dropped records and up to 20 distinct unresolved values, with a truncation flag when more exist. No additional warning is emitted when all references resolve. The default `false` preserves existing behavior.
 
 ## Failure handling
 
