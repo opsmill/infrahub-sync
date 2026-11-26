@@ -1,0 +1,38 @@
+.github/workflows/workflow-tests.yml
+  s_5c07df28acc2f7::t_dbc3c2152062a3 174-178
+tests/image/test_no_vendor_client.py
+  s_5c07df28acc2f7::t_3d9d89a0443084 1-25,27-46,48-69,71-98,100-112,115-138
+  s_5c07df28acc2f7::t_ecb34f6760410c 47,70,99,113-114
+  s_5c07df28acc2f7::t_d222f3e95342ff 26
+tests/test_workflow_contracts.py
+  s_5c07df28acc2f7::t_bff0ec49b244cd 898-917,1145-1151,2147
+dev/specs/031-registered-adapters/quickstart.md
+  s_5c07df28acc2f7::t_e05d88c0c3711b 21-26
+docs/docs/development/knowledge/image-publishing.md
+  s_5c07df28acc2f7::t_7548c405c3a961 34-37
+docs/docs/development/guidelines/testing-tiers.md
+  s_5c07df28acc2f7::t_bff0ec49b244cd 623
+  s_5c07df28acc2f7::t_7548c405c3a961 79,618
+dev/specs/031-registered-adapters/tasks.md
+  s_5c07df28acc2f7::t_d222f3e95342ff 560,567-576
+.github/workflows/ci-docker-image.yml
+  s_5c07df28acc2f7::t_7548c405c3a961 185
+tests/image/conftest.py
+  s_5c07df28acc2f7::t_b8b54629acd384 68,81-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0cf1d3a15bcd73f2637bc30f0315ee794fd4e78",
+  "prompts": {},
+  "sessions": {
+    "s_5c07df28acc2f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbc39d46-65b3-4b37-963d-93c800de638e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
