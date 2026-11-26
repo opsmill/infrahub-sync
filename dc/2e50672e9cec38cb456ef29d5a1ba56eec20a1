@@ -13,6 +13,8 @@ dev/specs/031-registered-adapters/spec.md
   s_5c07df28acc2f7::t_44cb32077ff9ae 476-479
   s_5c07df28acc2f7::t_51acb4f7968c0e 349-351
   s_5c07df28acc2f7::t_056967368eaeef 138-167
+dev/specs/031-registered-adapters/tasks.md
+  s_5c07df28acc2f7::t_163b2cfce95cc1 577,582,586,592-595
 ---
 {
   "schema_version": "authorship/3.0.0",
