@@ -9,9 +9,17 @@ from urllib.parse import urlsplit
 
 import pytest
 import requests
+from pydantic import Field
 from structlog.testing import capture_logs
 
-from infrahub_sync import SchemaMappingField, SchemaMappingFilter, SchemaMappingTransform, SyncAdapter, SyncConfig
+from infrahub_sync import (
+    SchemaMappingField,
+    SchemaMappingFilter,
+    SchemaMappingModel,
+    SchemaMappingTransform,
+    SyncAdapter,
+    SyncConfig,
+)
 from infrahub_sync.adapters.webex import WebexAdapter, WebexModel
 from infrahub_sync.adapters.webex_client import WebexHTTPError, WebexResource
 
@@ -25,6 +33,239 @@ class Record(WebexModel):
     parent: str | None = None
     enabled: bool = True
     local_id: str | None = None
+
+
+class LocationSite(Record):
+    _modelname = "LocationSite"
+
+
+class RoomWithPeers(Record):
+    _attributes = (*Record._attributes, "peers")
+    # The shared mapper detects list fields from their default value.
+    peers: list[str] = Field(default=[])
+
+
+def _load_locations(adapter: WebexAdapter) -> None:
+    adapter.config.schema_mapping.insert(
+        0,
+        SchemaMappingModel(
+            name="LocationSite",
+            mapping="/v1/locations",
+            fields=[SchemaMappingField(name="name", mapping="code")],
+            filters=[SchemaMappingFilter(field="notes", operation="regex", value="^ABC[0-9]+$")],
+        ),
+    )
+    adapter.client.options.resources["LocationSite"] = WebexResource(read_only=True)
+    adapter.client.pages: Any = Mock(
+        return_value=[
+            {
+                "items": [
+                    {"id": "location-1", "code": "site-key", "notes": "ABC0000001"},
+                    {"id": "location-2", "code": "filtered-key", "notes": "other"},
+                ]
+            }
+        ]
+    )
+    adapter.model_loader("LocationSite", LocationSite)
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_skip_filtered_location_references(adapter: WebexAdapter, *, enabled: bool) -> None:
+    _load_locations(adapter)
+    adapter.config.schema_mapping[-1].fields.append(
+        SchemaMappingField(name="parent", mapping="locationId", reference="LocationSite")
+    )
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=enabled)
+    pages = Mock(
+        return_value=[
+            {
+                "items": [
+                    {"id": "room-1", "displayName": "ROOM-1", "locationId": "site-key"},
+                    {"id": "room-2", "displayName": "ROOM-2", "locationId": "filtered-key"},
+                    {"id": "room-3", "displayName": "ROOM-3", "locationId": "filtered-key"},
+                ]
+            }
+        ]
+    )
+    adapter.client.pages: Any = pages
+    with capture_logs() as logs:
+        adapter.model_loader("Record", Record)
+    assert len(adapter.get_all("Record")) == (1 if enabled else 3)
+    assert cast("Record", adapter.get("Record", "ROOM-1")).parent == "site-key"
+    pages.assert_called_once()
+    warnings = [event for event in logs if event["log_level"] == "warning"]
+    assert len(warnings) == int(enabled)
+    if enabled:
+        assert warnings[0]["model"] == "Record"
+        assert warnings[0]["dropped"] == 2
+        assert warnings[0]["list_items_removed"] == 0
+        assert warnings[0]["unresolved_values"] == ["filtered-key"]
+        assert adapter._records["Record"] == [pages.return_value[0]["items"][0]]
+
+
+@pytest.mark.parametrize("value", [None, "", [], {}, "site-key", {"id": "location-1"}])
+def test_resolved_or_empty_reference_kept(value: object, adapter: WebexAdapter) -> None:
+    _load_locations(adapter)
+    adapter.config.schema_mapping[-1].fields.append(
+        SchemaMappingField(name="parent", mapping="peer", reference="LocationSite")
+    )
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=True)
+    adapter.client.pages: Any = Mock(
+        return_value=[{"items": [{"id": "room-1", "displayName": "ROOM-1", "peer": value}]}]
+    )
+    with capture_logs() as logs:
+        adapter.model_loader("Record", Record)
+    assert len(adapter.get_all("Record")) == 1
+    assert not [event for event in logs if event["log_level"] == "warning"]
+
+
+@pytest.mark.parametrize("value", ["location-1", {"id": "site-key"}, {"id": "location-2"}])
+def test_reference_identifier_forms_are_distinct(value: object, adapter: WebexAdapter) -> None:
+    _load_locations(adapter)
+    adapter.config.schema_mapping[-1].fields.append(
+        SchemaMappingField(name="parent", mapping="peer", reference="LocationSite")
+    )
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=True)
+    adapter.client.pages: Any = Mock(
+        return_value=[{"items": [{"id": "room-1", "displayName": "ROOM-1", "peer": value}]}]
+    )
+    adapter.model_loader("Record", Record)
+    assert not adapter.get_all("Record")
+
+
+@pytest.mark.parametrize(
+    ("items", "expected", "removed"),
+    [
+        ([{"id": "location-1"}], ["site-key"], 0),
+        (["site-key"], ["site-key"], 0),
+        ([{"id": "location-1"}, {"id": "location-2"}], ["site-key"], 1),
+        (["site-key", "filtered-key"], ["site-key"], 1),
+        ([{"id": "location-2"}], [], 1),
+        (["filtered-key", "filtered-key"], [], 2),
+        ([], [], 0),
+        ([None, "", {}], [], 0),
+        ([None, "site-key", "", {}, "filtered-key"], ["site-key"], 1),
+    ],
+)
+def test_list_references_keep_resolved_items(
+    items: list[Any], expected: list[str], removed: int, adapter: WebexAdapter
+) -> None:
+    _load_locations(adapter)
+    mapping = adapter.config.schema_mapping[-1]
+    mapping.fields.append(SchemaMappingField(name="peers", mapping="nested.peers", reference="LocationSite"))
+    mapping.transforms = [SchemaMappingTransform(field="nested", expression="{{ {'peers': sourcePeers} }}")]
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=True)
+    adapter.client.pages: Any = Mock(
+        return_value=[{"items": [{"id": "room-1", "displayName": "ROOM-1", "sourcePeers": items}]}]
+    )
+    with capture_logs() as logs:
+        adapter.model_loader("Record", RoomWithPeers)
+    assert len(adapter.get_all("Record")) == 1
+    assert cast("RoomWithPeers", adapter.get("Record", "ROOM-1")).peers == expected
+    assert adapter._records["Record"][0]["nested"]["peers"] == [
+        {"id": "location-1"} if item else item
+        for item in items
+        if not item or item in ("site-key", {"id": "location-1"})
+    ]
+    warnings = [event for event in logs if event["log_level"] == "warning"]
+    assert len(warnings) == int(removed > 0)
+    if removed:
+        assert warnings[0]["dropped"] == 0
+        assert warnings[0]["list_items_removed"] == removed
+        assert warnings[0]["unresolved_values"] == sorted(
+            {
+                str(item["id"]) if isinstance(item, dict) else str(item)
+                for item in items
+                if item and item not in ("site-key", {"id": "location-1"})
+            }
+        )
+
+
+def test_unloaded_reference_requires_order_even_with_no_records(adapter: WebexAdapter) -> None:
+    adapter.config.schema_mapping[0].fields.append(
+        SchemaMappingField(name="parent", mapping="peer", reference="LocationSite")
+    )
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=True)
+    adapter.client.pages: Any = Mock(return_value=[{"items": []}])
+    with pytest.raises(ValueError, match=r"Record.*LocationSite must load before.*list LocationSite earlier"):
+        adapter.model_loader("Record", Record)
+
+
+def test_loaded_empty_reference_mapping_drops_nonempty_peers(adapter: WebexAdapter) -> None:
+    _load_locations(adapter)
+    adapter.remove(adapter.get("LocationSite", "site-key"))
+    adapter._records["LocationSite"] = []
+    adapter.config.schema_mapping[-1].fields.append(
+        SchemaMappingField(name="parent", mapping="peer", reference="LocationSite")
+    )
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=True)
+    adapter.client.pages: Any = Mock(
+        return_value=[{"items": [{"id": "room-1", "displayName": "ROOM-1", "peer": "site-key"}]}]
+    )
+    adapter.model_loader("Record", Record)
+    assert not adapter.get_all("Record")
+
+
+def test_self_reference_is_not_checked(adapter: WebexAdapter) -> None:
+    adapter.config.schema_mapping[0].fields.append(
+        SchemaMappingField(name="parent", mapping="parentId", reference="Record")
+    )
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=True)
+    adapter.client.pages: Any = Mock(
+        return_value=[{"items": [{"id": "room-1", "displayName": "ROOM-1", "parentId": "ROOM-0"}]}]
+    )
+    with capture_logs() as logs:
+        adapter.model_loader("Record", Record)
+    assert cast("Record", adapter.get("Record", "ROOM-1")).parent == "ROOM-0"
+    assert not [event for event in logs if event["log_level"] == "warning"]
+
+
+def test_dict_reference_without_id_logs_the_dict(adapter: WebexAdapter) -> None:
+    _load_locations(adapter)
+    adapter.config.schema_mapping[-1].fields.append(
+        SchemaMappingField(name="parent", mapping="peer", reference="LocationSite")
+    )
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=True)
+    adapter.client.pages: Any = Mock(
+        return_value=[{"items": [{"id": "room-1", "displayName": "ROOM-1", "peer": {"name": "x"}}]}]
+    )
+    with capture_logs() as logs:
+        adapter.model_loader("Record", Record)
+    assert not adapter.get_all("Record")
+    warning = next(event for event in logs if event["log_level"] == "warning")
+    assert warning["unresolved_values"] == ["{'name': 'x'}"]
+
+
+def test_list_rewrite_leaves_source_record_unchanged(adapter: WebexAdapter) -> None:
+    _load_locations(adapter)
+    mapping = adapter.config.schema_mapping[-1]
+    mapping.fields.append(SchemaMappingField(name="peers", mapping="nested.peers", reference="LocationSite"))
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=True)
+    source = {"id": "room-1", "displayName": "ROOM-1", "nested": {"peers": ["site-key", "filtered-key"]}}
+    adapter.client.pages: Any = Mock(return_value=[{"items": [source]}])
+    adapter.model_loader("Record", RoomWithPeers)
+    assert source["nested"]["peers"] == ["site-key", "filtered-key"]
+    assert adapter._records["Record"][0]["nested"]["peers"] == [{"id": "location-1"}]
+
+
+def test_warning_truncates_distinct_values(adapter: WebexAdapter) -> None:
+    _load_locations(adapter)
+    adapter.config.schema_mapping[-1].fields.append(
+        SchemaMappingField(name="parent", mapping="peer", reference="LocationSite")
+    )
+    adapter.client.options.resources["Record"] = WebexResource(skip_unresolved_references=True)
+    adapter.client.pages: Any = Mock(
+        return_value=[
+            {"items": [{"id": f"room-{i}", "displayName": f"ROOM-{i}", "peer": f"absent-{i}"} for i in range(25)]}
+        ]
+    )
+    with capture_logs() as logs:
+        adapter.model_loader("Record", Record)
+    warning = next(event for event in logs if event["log_level"] == "warning")
+    assert warning["dropped"] == 25
+    assert warning["list_items_removed"] == 0
+    assert len(warning["unresolved_values"]) == 20
+    assert warning["unresolved_values_truncated"] is True
 
 
 @pytest.fixture(name="adapter")

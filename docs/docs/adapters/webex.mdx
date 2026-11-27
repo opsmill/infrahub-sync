@@ -100,6 +100,7 @@ The `mapping` field of each schema mapping is its GET path, including `/v1/`. Fi
 | `parent` | Unset | Previously loaded mapping used to expand requests. |
 | `details` | Unset | GET path expanded once per record; returned fields overwrite list fields. |
 | `read_only` | `false` | Excludes source models from diff operations while keeping them available for references. |
+| `skip_unresolved_references` | `false` | Drops records with unresolved single references and removes unresolved list items, with counts in a warning per mapping. |
 
 For example, a location-dependent request can retrieve workspaces once per location and then request the details of each workspace. The destination kinds and fields must exist in your schema. Replace the workspace resource options in a project that already loads the location mapping:
 
@@ -124,6 +125,45 @@ For a fixed filter on the [Calling List Workspaces endpoint](https://developer.w
 For an endpoint returning one object, set `response_key: null` and `params: {max: null}`. Records without their own ID receive an internal source identifier; map the destination identifiers explicitly. Details load before the shared filters and transforms.
 
 A scalar reference value is already the peer's sync identifier, as in the inventory project's `locationId` and `workspaceId`. A native dict such as `{{ {'id': locationId} }}` instead resolves the peer by its source `local_id`; an absent dict reference raises an error. Choose the form that matches the identifiers in the peer mapping.
+
+### Skip rooms in filtered-out locations
+
+Set `skip_unresolved_references: true` on a workspace resource to skip rooms whose location did not load. The check runs after filters and transforms. Every referenced mapping, including read-only mappings, must load first. When `order` is omitted, the load order computed from `reference` fields does this. When `order` is set, list each referenced mapping before the mappings that reference it; otherwise the adapter raises a `ValueError` naming both mappings. A mapping that loaded zero records still counts as loaded. A reference from a mapping to itself, such as a location's parent location, is not checked, because the records of that mapping are still loading.
+
+For example, add these settings and mappings to a project whose destination schema defines `LocationSite` and `MeetingRoom`. The location filter keeps site codes such as `ABC0000001` in `notes`, and the read-only mapping makes those locations available for references without syncing them:
+
+```yaml
+source:
+  name: webex
+  settings:
+    resources:
+      LocationSite:
+        read_only: true
+      MeetingRoom:
+        skip_unresolved_references: true
+        params: {type: meetingRoom}
+schema_mapping:
+  - name: LocationSite
+    mapping: /v1/locations
+    identifiers: [webex_id]
+    filters:
+      - field: notes
+        operation: regex
+        value: '^ABC[0-9]{7}$'
+    fields:
+      - {name: webex_id, mapping: id}
+  - name: MeetingRoom
+    mapping: /v1/workspaces
+    identifiers: [webex_id]
+    fields:
+      - {name: webex_id, mapping: id}
+      - {name: name, mapping: displayName}
+      - {name: parent, mapping: locationId, reference: LocationSite}
+```
+
+This fetches workspaces in one request when the response fits on one page; pagination still applies. It needs neither excluded-ID lists nor one request per location. Scalar references match loaded peers' sync identifiers; dict references such as `{id: location-1}` match their source `local_id`. An unresolved nonempty scalar or dict single reference drops the whole record, as with a room's location in this example. For list references, only unresolved nonempty items are removed: a record with one resolved and one unresolved peer keeps the resolved peer, and a record with no resolved peers keeps an empty list. Dict items use `local_id`; resolved items are normalized to `{id: local_id}` for the shared mapper. Because of this normalization, a list reference of scalar sync identifiers works only when this option is on: with the default `false`, the shared mapper expects dict items and stops the run. Empty or null reference values and list items are left alone.
+
+Dropped records and removed list items are only visible in the warning log. Each affected mapping logs its name, the number of dropped records (`dropped`), the number of removed list items (`list_items_removed`) and up to 20 distinct unresolved values, with a truncation flag when more exist. No additional warning is emitted when all references resolve. The default `false` preserves existing behavior.
 
 ## Failure handling
 

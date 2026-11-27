@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
 import structlog
@@ -160,6 +160,100 @@ class WebexAdapter(GenericrestapiAdapter):
                     raise TypeError(msg)
                 record.update(details)
 
+    @staticmethod
+    def _resolve_reference_items(
+        value: Any, identifiers: dict[str, str], local_ids: set[str]
+    ) -> tuple[list[Any], list[str]]:
+        """Normalize resolved peers and retain empty items, returning unresolved values separately."""
+        values = value if isinstance(value, list) else [value]
+        normalized: list[Any] = []
+        unresolved: list[str] = []
+        for item in values:
+            if not item:
+                normalized.append(item)
+                continue
+            if isinstance(item, dict):
+                identifier = str(item["id"]) if "id" in item else str(item)
+                resolved = "id" in item and identifier in local_ids
+            else:
+                identifier = str(item)
+                resolved = identifier in identifiers
+            if resolved:
+                normalized.append({"id": item["id"] if isinstance(item, dict) else identifiers[identifier]})
+            else:
+                unresolved.append(identifier)
+        return normalized, unresolved
+
+    @staticmethod
+    def _with_value(record: dict[str, Any], path: str, value: Any) -> dict[str, Any]:
+        """Return a copy of the record with the dotted path set, copying only the dicts along the path."""
+        *parts, key = path.split(".")
+        result = dict(record)
+        target = result
+        for part in parts:
+            target[part] = dict(target[part])
+            target = target[part]
+        target[key] = value
+        return result
+
+    def _skip_unresolved_references(
+        self, records: list[dict[str, Any]], element: SchemaMappingModel, model: type[GenericrestapiModel]
+    ) -> list[dict[str, Any]]:
+        """Drop unresolved single references and remove unresolved items from many references.
+
+        Self-references are not checked: the mapping is still loading, so its records cannot be peers yet.
+        """
+        fields = [
+            field
+            for field in element.fields
+            if field.reference and field.mapping and field.static is None and field.reference != element.name
+        ]
+        peers: dict[str, dict[str, str]] = {}
+        for field in fields:
+            reference = str(field.reference)
+            if reference not in self._records:
+                msg = (
+                    f"Webex: {element.name}: referenced mapping {reference} must load before this mapping;"
+                    f" if `order` is set, list {reference} earlier"
+                )
+                raise ValueError(msg)
+            peers[reference] = {
+                item.get_unique_id(): str(cast("GenericrestapiModel", item).local_id)
+                for item in self.get_all(reference)
+            }
+        source_ids = {reference: set(identifiers.values()) for reference, identifiers in peers.items()}
+        kept: list[dict[str, Any]] = []
+        unresolved: set[str] = set()
+        list_items_removed = 0
+        for source_record in records:
+            record = source_record
+            missing = False
+            for field in fields:
+                value = get_value(record, str(field.mapping))
+                identifiers = peers[str(field.reference)]
+                local_ids = source_ids[str(field.reference)]
+                many = model.is_list(name=field.name)
+                normalized, missing_values = self._resolve_reference_items(value, identifiers, local_ids)
+                unresolved.update(missing_values)
+                if many:
+                    list_items_removed += len(missing_values)
+                elif missing_values:
+                    missing = True
+                if many and value:
+                    record = self._with_value(record, str(field.mapping), normalized)
+            if not missing:
+                kept.append(record)
+        if len(kept) != len(records) or list_items_removed:
+            logger.warning(
+                "Webex removed unresolved references",
+                model=element.name,
+                dropped=len(records) - len(kept),
+                list_items_removed=list_items_removed,
+                unresolved_values=sorted(unresolved)[:20],
+                unresolved_values_truncated=len(unresolved) > 20,
+            )
+        return kept
+
     def model_loader(self, model_name: str, model: type[GenericrestapiModel]) -> None:
         """Fetch, filter and transform records, then use the shared field/peer mapping."""
         element = next((item for item in self.config.schema_mapping if item.name == model_name), None)
@@ -179,6 +273,8 @@ class WebexAdapter(GenericrestapiAdapter):
             )
         filtered = model.filter_records(records=records, schema_mapping=element)
         transformed = model.transform_records(records=filtered, schema_mapping=element)
+        if options.skip_unresolved_references:
+            transformed = self._skip_unresolved_references(transformed, element, model)
         self._records[model_name] = transformed
         logger.info("Webex models loaded", model=model_name, count=len(transformed), fetched=len(records))
         for obj in transformed:
