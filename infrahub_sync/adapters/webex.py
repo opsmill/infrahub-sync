@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
@@ -173,24 +172,50 @@ class WebexAdapter(GenericrestapiAdapter):
             if not item:
                 normalized.append(item)
                 continue
-            identifier = str(item.get("id")) if isinstance(item, dict) else str(item)
-            resolved = identifier in local_ids if isinstance(item, dict) else identifier in identifiers
+            if isinstance(item, dict):
+                identifier = str(item["id"]) if "id" in item else str(item)
+                resolved = "id" in item and identifier in local_ids
+            else:
+                identifier = str(item)
+                resolved = identifier in identifiers
             if resolved:
                 normalized.append({"id": item["id"] if isinstance(item, dict) else identifiers[identifier]})
             else:
                 unresolved.append(identifier)
         return normalized, unresolved
 
+    @staticmethod
+    def _with_value(record: dict[str, Any], path: str, value: Any) -> dict[str, Any]:
+        """Return a copy of the record with the dotted path set, copying only the dicts along the path."""
+        *parts, key = path.split(".")
+        result = dict(record)
+        target = result
+        for part in parts:
+            target[part] = dict(target[part])
+            target = target[part]
+        target[key] = value
+        return result
+
     def _skip_unresolved_references(
         self, records: list[dict[str, Any]], element: SchemaMappingModel, model: type[GenericrestapiModel]
     ) -> list[dict[str, Any]]:
-        """Drop unresolved single references and remove unresolved items from many references."""
-        fields = [field for field in element.fields if field.reference and field.mapping and field.static is None]
+        """Drop unresolved single references and remove unresolved items from many references.
+
+        Self-references are not checked: the mapping is still loading, so its records cannot be peers yet.
+        """
+        fields = [
+            field
+            for field in element.fields
+            if field.reference and field.mapping and field.static is None and field.reference != element.name
+        ]
         peers: dict[str, dict[str, str]] = {}
         for field in fields:
             reference = str(field.reference)
             if reference not in self._records:
-                msg = f"Webex: {element.name}: referenced mapping {reference} must be loaded first; set explicit order"
+                msg = (
+                    f"Webex: {element.name}: referenced mapping {reference} must load before this mapping;"
+                    f" if `order` is set, list {reference} earlier"
+                )
                 raise ValueError(msg)
             peers[reference] = {
                 item.get_unique_id(): str(cast("GenericrestapiModel", item).local_id)
@@ -201,8 +226,8 @@ class WebexAdapter(GenericrestapiAdapter):
         unresolved: set[str] = set()
         list_items_removed = 0
         for source_record in records:
+            record = source_record
             missing = False
-            record = deepcopy(source_record)
             for field in fields:
                 value = get_value(record, str(field.mapping))
                 identifiers = peers[str(field.reference)]
@@ -215,11 +240,7 @@ class WebexAdapter(GenericrestapiAdapter):
                 elif missing_values:
                     missing = True
                 if many and value:
-                    target = record
-                    *parts, key = str(field.mapping).split(".")
-                    for part in parts:
-                        target = target[part]
-                    target[key] = normalized
+                    record = self._with_value(record, str(field.mapping), normalized)
             if not missing:
                 kept.append(record)
         if len(kept) != len(records) or list_items_removed:
