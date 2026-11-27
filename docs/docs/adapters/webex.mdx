@@ -128,7 +128,7 @@ A scalar reference value is already the peer's sync identifier, as in the invent
 
 ### Skip rooms in filtered-out locations
 
-Set `skip_unresolved_references: true` on a workspace resource to skip rooms whose location did not load. The check runs after filters and transforms. Every referenced mapping, including read-only mappings, must load first. When `order` is omitted, the load order computed from `reference` fields does this. When `order` is set, list each referenced mapping before the mappings that reference it; otherwise the adapter raises a `ValueError` naming both mappings. A mapping that loaded zero records still counts as loaded. A reference from a mapping to itself, such as a location's parent location, is not checked, because the mapping's own records are still loading.
+Set `skip_unresolved_references: true` on a workspace resource to skip rooms whose location did not load. The check runs after filters and transforms. Every referenced mapping, including read-only mappings, must load first. When `order` is omitted, the load order computed from `reference` fields does this. When `order` is set, list each referenced mapping before the mappings that reference it; otherwise the adapter raises a `ValueError` naming both mappings. A mapping that loaded zero records still counts as loaded. A reference from a mapping to itself, such as a location's parent location, is not checked, because the records of that mapping are still loading.
 
 For example, add these settings and mappings to a project whose destination schema defines `LocationSite` and `MeetingRoom`. The location filter keeps site codes such as `ABC0000001` in `notes`, and the read-only mapping makes those locations available for references without syncing them:
 
